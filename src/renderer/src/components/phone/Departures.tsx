@@ -27,10 +27,13 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
  * motion a card fades out in place over 120 ms, without the shrink (v2 §11.3). A card the tab
  * search drops (`filtered`), and the New Tab card a query takes with it (`new-tab`), leave the
  * same way, released by the grid's own commit (`TabOverview`) – as is a group's exit whatever
- * took its cards: a closed group's folder stays, saved, so the commit that takes its card off
- * the grid is the one that releases it (the one whose glide closes the gap, §11.4's leave). A
- * card whose close is still in flight (`closingTabIds`: its page's `beforeunload` may be asking
- * "Leave site?", PUI-28) stands as long as it is, and stands unmoved when the user stays.
+ * took its cards: the group's folder stays (saved on a close, open when a query hides the cards
+ * it has left), so the commit that takes its card off the grid is the one that releases it (the
+ * one whose glide closes the gap, §11.4's leave). A card whose close is still in flight
+ * (`closingTabIds`: its page's `beforeunload` may be asking "Leave site?", PUI-28) stands as long
+ * as it is, and stands unmoved when the user stays – a tab's own close, or a group's whose last
+ * shown card was swiped or closed under a query (`tab.close`); a whole group's X, Close Group and
+ * a close-all go through `folder.close`, which closes its members without the ask.
  */
 export function Departures({
   state,

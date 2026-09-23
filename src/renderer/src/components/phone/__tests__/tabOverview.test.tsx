@@ -1380,6 +1380,141 @@ describe('a group whose every card goes', () => {
     expect(departStore.get().items).toEqual([])
     expect(groupGhost()).toBeNull()
   })
+
+  /**
+   * A group of two under the query "test": the card it keeps (two.test) shown alone – a group of
+   * one at the top left, a beside it, b below, the block's layout – and the card it drops
+   * (one.example) hidden but open; the New Tab card off. The query's exits have run out. From
+   * the grid's default layout (the group across the top, both members in its one row).
+   */
+  const partlyFiltered = (): { m1: Tab; loose: Tab[] } => {
+    const m1 = tab('m1', 'https://one.example/', { folderId: GROUP })
+    const m2 = tab('m2', 'https://two.test/', { folderId: GROUP })
+    const loose = [tab('a', 'https://alpha.test/'), tab('b', 'https://beta.test/')]
+    bodyHeights.set(`group:${GROUP}`, bodyOf(1))
+    render(stateOf([m1, m2, ...loose]))
+    act(() => host!.querySelector<HTMLElement>('[data-testid="overview-search-toggle"]')!.click())
+    place(`group:${GROUP}`, 0, 0, 100, groupOf(1))
+    place('m2', 6, ROW_1)
+    place('a', 110, 0)
+    place('b', 0, groupOf(1) + 10)
+    typeQuery('test')
+    expect(departStore.get().items.map((i) => [i.key, i.kind])).toEqual([
+      ['m1', 'tab'],
+      [NEW_TAB_CELL, 'new-tab']
+    ])
+    act(() => settleSprings())
+    expect(departStore.get().items).toEqual([])
+    expect(grid().querySelector('[data-cell="m1"]')).toBeNull()
+    expect(groupAround('m2')).toBe(`group:${GROUP}`)
+    return { m1, loose }
+  }
+  /** The closes sent (the search's read of the recently closed list under a query is none). */
+  const closes = (): Array<[string, unknown]> =>
+    commands().filter(([name]) => name !== 'session.recentlyClosed')
+
+  it("a partly-filtered group's last shown card's X: the card departs whole as it stands on the grid – one exit, no shrink – while the group stays open with its hidden card, and comes back whole with it", () => {
+    const { m1, loose } = partlyFiltered()
+    const group = cellOf(`group:${GROUP}`)
+    const a = cellOf('a')
+    const b = cellOf('b')
+
+    const close = cellOf('m2').querySelector<HTMLElement>('[aria-label^="Close "]')!
+    act(() => close.click())
+    // The tab closes ALONE – the group is not whole among the pane's tabs (m1 is open, hidden),
+    // so no `folder.close`: it stays open, m1 in it. But on the grid the card is a group whose
+    // every card goes, and it departs as one: the frame's exit where it stands, m2 drawn inside
+    // it, no exit of m2's own – neither the query's kind nor the swipe's.
+    expect(closes()).toEqual([['tab.close', { tabId: 'm2' }]])
+    expect(departStore.get().items).toMatchObject([
+      {
+        key: `group:${GROUP}`,
+        kind: 'group',
+        tabs: [{ id: 'm2' }],
+        rect: { x: 0, y: 0, width: 100, height: groupOf(1) }
+      }
+    ])
+    expect(departStore.get().items[0]).not.toHaveProperty('filtered')
+    expect(departStore.get().items[0]).not.toHaveProperty('flown')
+    expect(departStore.get().hidden.has('m2')).toBe(true)
+    const ghost = groupGhost()!
+    expect(ghost).toBeTruthy()
+    expect(ghost.querySelectorAll('.zen-overview-card')).toHaveLength(1)
+    expect(departStore.get().released.has(`group:${GROUP}`)).toBe(false)
+    expect(group.style.opacity).toBe('0')
+    expect(group.dataset.dissolving).toBeUndefined()
+    expect(layoutAnimations.has(`group:${GROUP}`)).toBe(false)
+
+    // The close lands – the folder stays, OPEN, with m1 – and the card, with nothing left to
+    // show under the query, is off the grid in this very commit: no dissolving shell, no height
+    // spring, the cells below gliding on the same frame as the exit's fade.
+    withoutGroup()
+    render(stateOf([m1, ...loose]))
+    leftInOneCommit(a, b)
+    expect(groupGhost()).toBe(ghost)
+    act(() => frame())
+    expect(parseFloat(ghost.style.opacity)).toBeLessThan(1)
+    expect(ghost.style.transform).toMatch(/^scale\(0\.9\d*\)$/)
+    expect(Math.abs(translate(a).x)).toBeLessThan(110)
+    expect(Math.abs(translate(b).y)).toBeLessThan(groupOf(1) + 10)
+    act(() => settleSprings())
+    expect(a.style.transform).toBe('')
+    expect(b.style.transform).toBe('')
+    expect(departStore.get().items).toEqual([])
+    expect(groupGhost()).toBeNull()
+    expect(grid().querySelector(`[data-cell="group:${GROUP}"]`)).toBeNull()
+
+    // The query cleared: the group is back whole with m1 – its card entering as a card does,
+    // m1 drawn in it with no entrance of its own – and the New Tab card with it.
+    layOut()
+    typeQuery('')
+    const back = cellOf(`group:${GROUP}`)
+    expect(back).toBeTruthy()
+    expect(back).not.toBe(group)
+    expect(back.dataset.dissolving).toBeUndefined()
+    expect(groupAround('m1')).toBe(`group:${GROUP}`)
+    expect(departStore.get().items).toEqual([])
+    act(() => frame())
+    expect(parseFloat(back.style.opacity)).toBeLessThan(1)
+    expect(back.style.opacity).not.toBe('0')
+    expect(cellOf('m1').style.opacity).toBe('')
+    expect(parseFloat(cellOf(NEW_TAB_CELL).style.opacity)).toBeLessThan(1)
+    act(() => settleSprings())
+    expect(back.style.opacity).toBe('')
+  })
+
+  it("a partly-filtered group's last shown card swiped off: the frame leaves whole as it stands, its slot empty, the group open with its hidden card", () => {
+    const { m1, loose } = partlyFiltered()
+    const button = cellOf('m2').querySelector<HTMLElement>('[role="button"]')!
+    const from = at('m2', 0.5, 0.5)
+    pointer('pointerdown', button, from.x, from.y)
+    act(() => elapse(30))
+    pointer('pointermove', button, from.x + 20, from.y)
+    act(() => elapse(30))
+    pointer('pointermove', button, from.x + 90, from.y)
+    act(() => elapse(30))
+    pointer('pointerup', button, from.x + 90, from.y)
+    expect(closes()).toEqual([])
+    expect(departStore.get().items).toEqual([])
+    act(() => settleSprings())
+    // At its rest the tab closes alone (the group stays open with m1) and the card – the last
+    // the grid shows of the group – departs as one: the frame's exit, its slot empty, no
+    // shrink; then off the grid on the commit the close lands, the exit released with it.
+    expect(closes()).toEqual([['tab.close', { tabId: 'm2' }]])
+    expect(departStore.get().items).toMatchObject([
+      { key: `group:${GROUP}`, kind: 'group', flown: true, tabs: [{ id: 'm2' }] }
+    ])
+    const ghost = groupGhost()!
+    expect(ghost).toBeTruthy()
+    expect(ghost.querySelectorAll('.zen-overview-card')).toHaveLength(0)
+    expect(cellOf(`group:${GROUP}`).dataset.dissolving).toBeUndefined()
+    withoutGroup()
+    render(stateOf([m1, ...loose]))
+    leftInOneCommit(cellOf('a'), cellOf('b'))
+    act(() => settleSprings())
+    expect(departStore.get().items).toEqual([])
+    expect(groupGhost()).toBeNull()
+  })
 })
 
 // --- (D) the New Tab card never departs (v2 §11.4) ------------------------------------------------

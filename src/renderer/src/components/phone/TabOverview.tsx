@@ -421,10 +421,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   /**
    * A group's card leaving the grid visibly, with its cards, where it stands: the one exit
    * `Departures` draws over it (the Groups pane has no card, and nothing to leave from). A group
-   * whose every card goes – closed, or dropped by the query (`filtered`, TAB-21) – is a container
-   * with nothing to hold, and its frame departs as a card does (v2 §11.4's leave: this exit fades
-   * in place while the cells below glide up on one spring), never a cut and never the shrink of
-   * a group a card left for the grid (`lost`, below).
+   * whose every card goes – closed, or dropped by the query (`filtered`, TAB-21), or the last the
+   * query left it closed – is a container with nothing to hold, and its frame departs as a card
+   * does (v2 §11.4's leave: this exit fades in place while the cells below glide up on one
+   * spring), never a cut and never the shrink of a group a card left for the grid (`lost`, below).
    */
   const groupExit = (folder: Folder, filtered = false): GroupDeparture | null => {
     const rect = rectOf(flip.element(`group:${folder.id}`))
@@ -658,10 +658,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // row with its header and tint off until the tracker's release at the end of the glide. A group
   // whose last card has left it for the grid (dragged out, ungrouped) lingers, shrinking to
   // nothing on its spring under the loose card that took its cell while the cells below wait; it
-  // leaves once it has settled. A group whose every card has GONE – closed, or dropped by the
-  // query – leaves as the cards do (§11.4's leave): its exit, drawn over it with its cards since
-  // the close or the query (`departAll`, `changeQuery`), fades where the card stood while the
-  // cells below glide up once, in the commit its cell leaves – this one; it never lingers.
+  // leaves once it has settled. A group whose every card has GONE – closed, dropped by the
+  // query, the last the query left it closed – leaves as the cards do (§11.4's leave): its exit,
+  // drawn over it with its cards since the close or the query (`departAll`, `swipedAway`,
+  // `changeQuery`), fades where the card stood while the cells below glide up once, in the
+  // commit its cell leaves – this one; it never lingers.
   const forming = (folder: Folder, tabs: Tab[]): boolean =>
     settled &&
     flip.element(`group:${folder.id}`) === null &&
@@ -914,22 +915,36 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
    */
   const undoable = (tabs: Tab[], close: () => void): void =>
     closeWithUndo({ tabs, settings: state.settings, activeTabId: active?.id ?? null, close })
-  /** The groups every live member of which is among `tabs`: they close, and leave, as groups. */
-  const wholeGroupsAmong = (tabs: Tab[]): Folder[] => {
+  /**
+   * The groups every member of which is among `tabs` – on one of two readings of "every".
+   * `wholeGroupsAmong` reads the pane's whole (`liveMembersOf`): those CLOSE as groups
+   * (`closeSet`'s `folder.close`, the group saved with all its pages, TAB-16). `wholeOnGridAmong`
+   * reads what the card shows (`membersOf`): those LEAVE as groups – the card's one exit
+   * (`departAll`, `swipedAway`). The two readings part under a query that hides some of a
+   * group's cards: the X on the last card it shows closes that tab alone, the group staying
+   * open with its hidden cards, but the card, with nothing left to show, is a group whose every
+   * card has gone – filtered out, closed (ruling 3's words) – and departs as one, never the
+   * shrink of a group a card left for the grid.
+   */
+  const wholeAmong = (tabs: Tab[], membersIn: (folderId: string) => Tab[]): Folder[] => {
     const ids = new Set(tabs.map((t) => t.id))
     return groups.filter((f) => {
-      const live = liveMembersOf(f.id)
-      return live.length > 0 && live.every((t) => ids.has(t.id))
+      const every = membersIn(f.id)
+      return every.length > 0 && every.every((t) => ids.has(t.id))
     })
   }
+  const wholeGroupsAmong = (tabs: Tab[]): Folder[] => wholeAmong(tabs, liveMembersOf)
+  const wholeOnGridAmong = (tabs: Tab[]): Folder[] => wholeAmong(tabs, membersOf)
   /**
-   * Tabs told to close leave the grid visibly. A whole group among them leaves as the group
-   * does – its card's one exit, the cards drawn inside it, in place of theirs (v2 §11.4: the
-   * card fades where it stood and the cells below glide up once, as for any card; the card
-   * itself leaves the grid on the commit its tabs are gone, see `lost`); the rest one by one.
+   * Tabs told to close leave the grid visibly. A group whose every shown card is among them
+   * leaves as the group does – its card's one exit, the cards drawn inside it, in place of
+   * theirs (v2 §11.4: the card fades where it stood and the cells below glide up once, as for
+   * any card; the card itself leaves the grid on the commit its tabs are gone, see `lost`); the
+   * rest one by one. No member of such a group gets an exit of its own – the ones a query hides
+   * have no card to leave from anyway.
    */
   const departAll = (tabs: Tab[]): void => {
-    const whole = wholeGroupsAmong(tabs)
+    const whole = wholeOnGridAmong(tabs)
     const asGroup = new Set(whole.flatMap((f) => liveMembersOf(f.id).map((t) => t.id)))
     const exits: Departure[] = []
     for (const folder of whole) {
@@ -1118,12 +1133,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   })
   /**
    * A card swiped off the grid is already out of sight: just close the tab. A group it was the
-   * last card of leaves whole as it stands – the frame with its slot empty (`flown`) – as on a
-   * close by the X (v2 §11.4's leave; `departAll`).
+   * last card the grid shows of leaves whole as it stands – the frame with its slot empty
+   * (`flown`) – as on a close by the X (v2 §11.4's leave; `departAll`, `wholeOnGridAmong`).
    */
   const swipedAway = (tab: Tab): void => {
     const exits: Departure[] = []
-    for (const folder of wholeGroupsAmong([tab])) {
+    for (const folder of wholeOnGridAmong([tab])) {
       const exit = groupExit(folder)
       if (exit) exits.push({ ...exit, flown: true })
     }
