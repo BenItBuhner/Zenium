@@ -18,6 +18,7 @@ import androidx.webkit.ScriptHandler
 import androidx.webkit.WebResourceResponseCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.zen.chromium.BridgeAdmission
 import app.zen.chromium.Host
 import app.zen.chromium.Profiles
 import app.zen.chromium.TabWebView
@@ -327,7 +328,12 @@ class Extensions(private val host: Host) {
                         "uiLanguage" to Locale.getDefault().toLanguageTag(),
                         "isolatedWorlds" to isolatedWorlds,
                         "worldSlots" to worldSlots.size,
-                        "navigationListener" to NavigationReports.supported
+                        "navigationListener" to NavigationReports.supported,
+                        // The engines' `maxMessageLength`: half the bridge's own message limit,
+                        // as the core re-serializes a delivered message inside `ext.send`'s
+                        // arguments (a string in a string, its quotes escaped) before the
+                        // bridge measures that call (BridgeAdmission).
+                        "messageLimit" to host.chrome.bridge.admission.messageLimitChars / 2
                     )
                 )
             }
@@ -1004,6 +1010,15 @@ class Extensions(private val host: Host) {
         if (message.str("token") != token) return
         val ep = message.str("ep")
         if (ep.isEmpty()) return
+        // The bridge's raw-length admission for this direction (BridgeAdmission): a message over
+        // the host's limit is answered with Chrome's oversized-message error and copied no
+        // further (into the core's event, the core's parse, a delivery). The engines refuse at
+        // half the limit in the sender's realm, so only an older bootstrap or a hand-built
+        // envelope gets this far.
+        if (!host.chrome.bridge.admission.admitUnqueued(text.length)) {
+            refuseBridgeMessage(proxy, ep, message, text.length)
+            return
+        }
         bridgeCounters[0]++
         if (slot != null) {
             val known = endpoints[ep]
@@ -1055,6 +1070,28 @@ class Extensions(private val host: Host) {
             .append(",\"message\":").append(text)
             .append('}')
         chromeEvent("ext.message", Host.RawJson(event.toString()))
+    }
+
+    /**
+     * The answer to a bridge message refused on length: a `msg` or `call` hears its reply fail
+     * with Chrome's text (`runtime.sendMessage`'s promise rejects, `lastError` for a callback);
+     * a `portMsg` has its port closed with it (`onDisconnect`, `lastError`), the one signal the
+     * host can give a port whose message it never saw whole, and one that also ends the
+     * broadcast a page keeps repeating on it. Other kinds are dropped.
+     */
+    private fun refuseBridgeMessage(proxy: JavaScriptReplyProxy, ep: String, message: JSONObject, chars: Int) {
+        val admission = host.chrome.bridge.admission
+        val count = admission.refused.get()
+        if (count == 1 || count % 100 == 0) {
+            Log.w(TAG, "a ${message.str("t")} of $chars chars from $ep refused, over the bridge's message limit of ${admission.messageLimitChars} chars ($count so far)")
+        }
+        val reply = when (message.str("t")) {
+            "msg", "call" -> json("t" to "reply", "ep" to ep, "id" to message.opt("id"), "ok" to false, "error" to BridgeAdmission.MESSAGE_TOO_LONG)
+            "portMsg" -> json("t" to "portDisconnect", "ep" to ep, "portId" to message.str("portId"), "error" to BridgeAdmission.MESSAGE_TOO_LONG)
+            else -> return
+        }.toString()
+        if (debug) recordReply(ep, reply)
+        runCatching { proxy.postMessage(reply) }
     }
 
     /**

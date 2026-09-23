@@ -370,7 +370,10 @@ declare const __zenExtBoot: Boot
         endpointId,
         url: frame.url,
         isTopFrame: frame.isTopFrame,
-        world
+        world,
+        ...(typeof boot.config.messageLimit === 'number' && boot.config.messageLimit > 0
+          ? { maxMessageLength: boot.config.messageLimit }
+          : {})
       },
       engineTransport,
       primordials,

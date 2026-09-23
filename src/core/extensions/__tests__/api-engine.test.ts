@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_MESSAGE_LENGTH,
+  MESSAGE_TOO_LONG,
   createEmulatedEngine,
   type EmulatedEngine,
   type EngineConfig,
@@ -643,6 +645,58 @@ describe('createEmulatedEngine', () => {
       args: ['onBeforeRequest', 1]
     })
     expect(event.hasListener(installer)).toBe(false)
+    await flush()
+  })
+
+  it("refuses an oversized message in the sender's realm with Chrome's error, and the next one goes through (Trust Wallet's store broadcast)", async () => {
+    // The host's limit as `ext.env` hands it over (a 192-MB heap's 6 M chars, halved for the
+    // core's re-serialization): a state broadcast bigger than that never reaches the bridge.
+    const limit = 3 * 1024 * 1024
+    const h = harness({ maxMessageLength: limit })
+    const before = h.sent.length
+    const store = { accounts: 'x'.repeat(limit) }
+
+    // runtime.sendMessage: Chrome's synchronous TypeError, no promise, no callback, nothing posted.
+    expect(() => (h.chrome.runtime.sendMessage as Fn)(store)).toThrow(TypeError)
+    expect(() => (h.chrome.runtime.sendMessage as Fn)(store)).toThrow(
+      MESSAGE_TOO_LONG
+    )
+    let called = false
+    expect(() =>
+      (h.chrome.runtime.sendMessage as Fn)(store, () => {
+        called = true
+      })
+    ).toThrow(MESSAGE_TOO_LONG)
+    await flush()
+    expect(called).toBe(false)
+    expect(h.sent.length).toBe(before)
+
+    // The runtime still answers: a message under the limit posts and its reply settles.
+    const ok = (h.chrome.runtime.sendMessage as Fn)({ type: 'PING' }) as Promise<unknown>
+    const msg = h.last()
+    expect(msg).toMatchObject({ t: 'msg', data: { type: 'PING' } })
+    h.reply(msg.id, 'PONG')
+    await expect(ok).resolves.toBe('PONG')
+
+    // port.postMessage: Chrome's synchronous Error, the port stays connected and usable.
+    const port = (h.chrome.runtime.connect as Fn)({ name: 'store' }) as Record<string, unknown>
+    const portId = h.last().portId
+    expect(() => (port.postMessage as Fn)(store)).toThrow(Error)
+    expect(() => (port.postMessage as Fn)(store)).toThrow(MESSAGE_TOO_LONG)
+    expect(h.last()).toMatchObject({ t: 'connect', portId })
+    ;(port.postMessage as Fn)({ type: 'STATE', size: 'small' })
+    expect(h.last()).toMatchObject({ t: 'portMsg', portId, data: { type: 'STATE', size: 'small' } })
+
+    // The limit is measured on the serialized envelope, so a payload just under it still passes
+    // only while the envelope's own chars leave room; and tabs.sendMessage is measured too.
+    const nearly = { accounts: 'x'.repeat(limit - 200) }
+    expect(() => (h.chrome.runtime.sendMessage as Fn)(nearly)).not.toThrow()
+    expect(() => (h.chrome.tabs.sendMessage as Fn)(7, store)).toThrow(MESSAGE_TOO_LONG)
+
+    // Without a host limit, Chrome's own 64 MB stands.
+    expect(MAX_MESSAGE_LENGTH).toBe(64 * 1024 * 1024)
+    const chromeLike = harness()
+    expect(() => (chromeLike.chrome.runtime.sendMessage as Fn)(store)).not.toThrow()
     await flush()
   })
 })

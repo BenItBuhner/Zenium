@@ -127,7 +127,7 @@ import type { ViewEventPayloads } from './views'
  * (`ext.request`) back here for `getMatchedRules`, the badges and `onRuleMatchedDebug`.
  *
  * Kotlin protocol (runtime → Kotlin), every call keyed by extension id:
- *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots, navigationListener }
+ *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots, navigationListener, messageLimit }
  *  ext.open { id, path }                    → { manifest, locales: { <locale>: <messages.json> } }
  *  ext.configure { id, version, path, allowFileAccess, allowPrivate, units, served, debug }
  *                                           → { units: [{ key, chars, cached }], ms }
@@ -172,6 +172,12 @@ interface RuntimeEnv {
   worldSlots: number
   /** Tab views report navigations through the WebView's navigation listener (`navigation` view events). */
   navigationListener: boolean
+  /**
+   * Chars a serialized message may have on the bridge, the host's from its heap; the engines
+   * throw Chrome's oversized-message error at it (`EngineConfig.maxMessageLength`). Absent
+   * (an older host), Chrome's 64 MB.
+   */
+  messageLimit?: number
 }
 
 interface OpenedExtension {
@@ -686,7 +692,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
               ? env.worldSlots
               : Number.POSITIVE_INFINITY
             : 0,
-          navigationListener: env.navigationListener === true
+          navigationListener: env.navigationListener === true,
+          ...(typeof env.messageLimit === 'number' && env.messageLimit > 0
+            ? { messageLimit: env.messageLimit }
+            : {})
         }
         return this.env
       })
@@ -932,7 +941,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         token: env.token,
         uiLanguage: env.uiLanguage,
         isolatedWorlds,
-        userScriptMessaging: this.data.userScriptMessaging[id] === true
+        userScriptMessaging: this.data.userScriptMessaging[id] === true,
+        ...(env.messageLimit ? { messageLimit: env.messageLimit } : {})
       })
     let units = plan(env.isolatedWorlds)
     if (env.isolatedWorlds && !this.worldsFit(id, units, env.worldSlots)) {
@@ -951,7 +961,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       uiLanguage: env.uiLanguage,
       world: 'isolated',
       late: true,
-      extension: { ...bootFor('with'), groups: [] }
+      extension: { ...bootFor('with'), groups: [] },
+      ...(env.messageLimit ? { messageLimit: env.messageLimit } : {})
     }
     const stats = await this.bridge.call<ConfigureStats>('ext.configure', {
       id,
