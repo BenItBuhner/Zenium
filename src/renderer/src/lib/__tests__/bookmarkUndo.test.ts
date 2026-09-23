@@ -58,7 +58,8 @@ describe('the toast', () => {
     expect(live()).toEqual([['Bookmark deleted', 'Undo']])
     const toast = uiStore.get().toasts[0]
     expect(toast.duration).toBe(BOOKMARK_UNDO_TOAST_MS)
-    expect(BOOKMARK_UNDO_TOAST_MS).toBeGreaterThan(TOAST_ACTION_DURATION)
+    // At least an action toast's clock (§9.33); the number itself is the lead's (#357 Q1).
+    expect(BOOKMARK_UNDO_TOAST_MS).toBeGreaterThanOrEqual(TOAST_ACTION_DURATION)
     pickToastAction(toast.id)
     await Promise.resolve()
     expect(calls).toEqual([['bookmark.undo', { token: 7 }]])
