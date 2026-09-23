@@ -2494,25 +2494,64 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * outcome: a page that reads as a challenge or a refusal, or drew nothing, is `n/m` – the
      * site not serving the runner – with what it showed.
      */
-    private fun liveMarker(label: String, url: String, expr: String, settleMs: Long = 45_000): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun liveMarker(label: String, url: String, expr: String, settleMs: Long = 45_000, desktop: Boolean = false, mirrors: List<String> = emptyList()): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
-        val tab = createTab(url)
-        val view = waitForView(tab)
-        val complete = poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null } == true
-        SystemClock.sleep(scaled(2_000, factor))
-        val found = pollExpr(view, expr, scaled(settleMs, factor))
-        val page = json(tabEval(view, DOM_REPORT))
-        val extra = JSONObject().put("page", found).put("document", page).put("complete", complete).put("console", JSONArray(consoleOf(view).takeLast(10)))
-        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
-        SystemClock.sleep(600)
-        snap("${entry.optString("slug")}-live")
-        val text = page.optString("text")
-        when {
-            found.optBoolean("pass") -> Grade("P", "$label: on ${url.take(60)}: ${found.toString().take(220)}", extra)
-            CHALLENGE_WORDS.containsMatchIn(text) || text.isEmpty() ->
-                Grade("n/m", "$label: ${url.take(60)} did not serve its page to the runner (\"${text.take(80)}\", complete $complete, ${page.optInt("els")} elements); nothing for the extension to act on (not measurable here)", extra)
-            else -> Grade("F", "$label: on ${url.take(60)} (\"${text.take(60)}\"): ${found.toString().take(200)}", extra)
+        val attempts = JSONArray()
+        var grade: Grade? = null
+        val targets = listOf(url) + mirrors
+        for ((index, target) in targets.withIndex()) {
+            val attempt = JSONObject().put("url", target)
+            attempts.put(attempt)
+            val tab = createTab(target)
+            val view = waitForView(tab)
+            if (desktop) {
+                // The desktop site, as the tab's page-controls sheet asks for it: the core sets the
+                // site's override and reloads the tab under Chrome-on-Linux's user agent, so the
+                // page comes as the desktop DOM the extension's selectors are written for
+                // (Buyhatke's scraper reads the product from server-sent selectors for the desktop
+                // page; flipkart served the runner its mobile page and the widget stayed out, rounds 11-12).
+                coreCall("tab.setDesktopSite", """{"tabId":${JSONObject.quote(tab)},"on":true}""")
+                SystemClock.sleep(scaled(1_500, factor))
+            }
+            var complete = poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null } == true
+            SystemClock.sleep(scaled(2_000, factor))
+            var page = json(tabEval(view, DOM_REPORT))
+            // A refusal or an error page (flipkart "refused to connect" once in round 12 and served
+            // the page the run before): one reload before the next mirror is tried.
+            val refused = json(tabEval(view, PAGE_OR_ERROR)).optBoolean("errorPage") || page.optString("text").isEmpty()
+            if (refused) {
+                attempt.put("firstTry", JSONObject().put("complete", complete).put("text", page.optString("text").take(120)).put("els", page.optInt("els")))
+                SystemClock.sleep(scaled(3_000, factor))
+                coreCall("tab.reload", """{"tabId":${JSONObject.quote(tab)}}""")
+                SystemClock.sleep(scaled(1_500, factor))
+                complete = poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null } == true
+                SystemClock.sleep(scaled(2_000, factor))
+                page = json(tabEval(view, DOM_REPORT))
+            }
+            val found = pollExpr(view, expr, scaled(settleMs, factor))
+            page = json(tabEval(view, DOM_REPORT))
+            attempt.put("page", found).put("document", page).put("complete", complete).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            if (desktop) attempt.put("userAgent", tabEval(view, "navigator.userAgent").trim('"').take(160))
+            if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { attempt.put("world", json(it)) }
+            SystemClock.sleep(600)
+            snap("${entry.optString("slug")}-live${if (index > 0) "-$index" else ""}")
+            val text = page.optString("text")
+            val errorPage = json(tabEval(view, PAGE_OR_ERROR)).optBoolean("errorPage")
+            attempt.put("errorPage", errorPage)
+            val extra = JSONObject().put("attempts", attempts).put("page", found).put("document", page).put("complete", complete)
+            val where = target.take(60) + (if (desktop) " (desktop site)" else "")
+            val before = if (index > 0) "; the $index page(s) tried before it did not serve either (attempts)" else ""
+            grade = when {
+                found.optBoolean("pass") -> Grade("P", "$label: on $where: ${found.toString().take(220)}$before", extra)
+                errorPage || CHALLENGE_WORDS.containsMatchIn(text) || NOT_FOUND_WORDS.containsMatchIn(text) || text.isEmpty() ->
+                    Grade("n/m", "$label: $where did not serve its page to the runner (\"${text.take(80)}\", complete $complete, ${page.optInt("els")} elements${if (refused) ", reloaded once" else ""})$before; nothing for the extension to act on (not measurable here)", extra)
+                else -> Grade("F", "$label: on $where (\"${text.take(60)}\"): ${found.toString().take(200)}$before", extra)
+            }
+            // A page that did not serve is no reading: the next mirror of the same shape, if one is named.
+            if (grade.verdict != "n/m" || index == targets.lastIndex) break
+            closeTab(tab)
         }
+        grade!!
     }
 
     /**
@@ -5499,7 +5538,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // the rows above, re-pointed at this round's readings of the spelling, CSS placeholder
         // and postMessage items.
         Row("ohlencieiipommannpdfcmfdpjjmeolj", "PrintFriendly: Print, PDF Editor & Full Page Screenshot", "printfriendly", core = popupFlow("PrintFriendly", "page-a.html?pf", listOf("/printfriendly view/i"), injectedAny("(^|\\s)pf-|printfriendly"), opens = Regex("printfriendly\\.com", RegexOption.IGNORE_CASE))),
-        Row("ojplmecpdpgccookcobabopnaifgidhf", "Buyhatke: Price History & Tracker, Spend Lens", "buyhatke", core = liveMarker("Buyhatke", "https://www.flipkart.com/apple-iphone-15-black-128-gb/p/itm6ac6485515ae4", injectedAny("bh-crx-root|buyhatke"), settleMs = 60_000)),
+        // Read on the desktop site (its scraper's selectors are the desktop page's; flipkart served
+        // the phone its mobile page, rounds 11-12) and on amazon.in when flipkart refuses the runner.
+        Row("ojplmecpdpgccookcobabopnaifgidhf", "Buyhatke: Price History & Tracker, Spend Lens", "buyhatke", core = liveMarker("Buyhatke", "https://www.flipkart.com/apple-iphone-15-black-128-gb/p/itm6ac6485515ae4", injectedAny("bh-crx-root|buyhatke"), settleMs = 60_000, desktop = true, mirrors = listOf("https://www.amazon.in/dp/B0CHX1W1XY"))),
         Row("ckejmhbmlajgoklhgbapkiccekfoccmk", "Mobile simulator - responsive testing tool", "mobile-simulator", core = ::mobileSimulator),
         Row("edlifbnjlicfpckhgjhflgkeeibhhcii", "Screenshot Tool - Screen Capture & Editor", "screenshot-tool", core = popupCapture("Screenshot Tool", "/capture visible area|visible area/i")),
         Row("khncfooichmfjbepaaaebmommgaepoid", "Unhook - Remove YouTube Recommended & Shorts", "unhook", core = { row, entry -> youtube(row, entry, "(function(){var h=document.documentElement;var attrs=[];for(var i=0;i<h.attributes.length;i++){var n=h.attributes[i].name;if(/^hide_|unhook/i.test(n))attrs.push(n)}var related=document.querySelectorAll('ytd-compact-video-renderer, ytm-compact-video-renderer, ytm-video-with-context-renderer');var shown=0;for(var j=0;j<related.length;j++){var r=related[j].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}return JSON.stringify({pass:attrs.length>0,attrs:attrs.slice(0,8),n:attrs.length,related:related.length,relatedShown:shown})})()", "Unhook's hide attributes on a watch page") }),
@@ -7102,6 +7143,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Amazon's interstitial for an automated visitor ("Click the button below to continue
         // shopping") is a challenge page too: the product page behind it never reaches Keepa.
         private val CHALLENGE_WORDS = Regex("access denied|captcha|unusual traffic|verify (that )?you are|not a robot|attention required|just a moment|checking your browser|enable javascript|rate limit|error 403|forbidden|service unavailable|temporarily unavailable|something went wrong|blocked|continue shopping", RegexOption.IGNORE_CASE)
+        /** A live page's "not found" (Amazon's dog page, a store's 404): the site served no product, so a live row's read is `n/m`, not a grade of the extension. */
+        private val NOT_FOUND_WORDS = Regex("couldn.t find that page|page not found|looking for something\\?|this page isn.t available|error 404|404 not found", RegexOption.IGNORE_CASE)
         /** DeepL: the Spanish phrase selected by script with the events a mouse's selection ends in (`mouseup`, `selectionchange`). */
         private const val DEEPL_SELECT =
             "(function(){var el=document.getElementById('phrase')||document.querySelector('p');if(!el)return 'no phrase';var r=document.createRange();r.selectNodeContents(el);var sel=getSelection();sel.removeAllRanges();sel.addRange(r);var b=r.getBoundingClientRect();" +
