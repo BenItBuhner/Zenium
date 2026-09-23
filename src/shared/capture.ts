@@ -50,15 +50,23 @@ export interface PageCaptureResult {
  * (`page.viewport`). CSS pixels of the page throughout, except `zoom` and `devicePixelRatio`.
  */
 export interface PageViewport {
-  /** The layout viewport's scroll offset. */
+  /**
+   * Where the page pixel under the content frame's top-left corner is in the document: the
+   * layout viewport's scroll offset (`window.scrollX/Y`) on desktop; on Android the visual
+   * viewport's (`visualViewport.pageLeft/pageTop`), which a pinch-pan moves too.
+   */
   scrollX: number
   scrollY: number
-  /** The layout viewport's size (`innerWidth` × `innerHeight`, the scrollbar included). */
+  /**
+   * The visible area's size in page CSS pixels: `innerWidth` × `innerHeight` on desktop (the
+   * scrollbar included), the visual viewport's on Android.
+   */
   width: number
   height: number
   /**
-   * The page zoom: how many of the chrome's CSS pixels (the window's DIPs) one page CSS pixel
-   * takes. Electron's zoom factor; on Android the visual viewport's scale (pinch zoom).
+   * How many of the chrome's CSS pixels (the window's DIPs) one page CSS pixel takes: the page
+   * zoom on Electron; on Android the visual viewport's scale (a desktop-layout page squeezed
+   * into the screen is below 1, a pinch zoom above).
    */
   zoom: number
   /** Device pixels per page CSS pixel: the display's scale times `zoom` (`window.devicePixelRatio`). */
@@ -66,6 +74,38 @@ export interface PageViewport {
   /** The document's scrollable size. */
   documentWidth: number
   documentHeight: number
+}
+
+/**
+ * A `PageViewport` out of a host's answer (Android's bridge, a test's fixture): every field a
+ * finite number, a visible area of some size, the ratios above zero (else 1) and the document
+ * never smaller than the visible area. Null for anything else.
+ */
+export function parsePageViewport(raw: unknown): PageViewport | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const num = (key: string): number | null => {
+    const v = r[key]
+    return typeof v === 'number' && Number.isFinite(v) ? v : null
+  }
+  const scrollX = num('scrollX')
+  const scrollY = num('scrollY')
+  const width = num('width')
+  const height = num('height')
+  if (scrollX === null || scrollY === null || width === null || height === null) return null
+  if (!(width > 0) || !(height > 0)) return null
+  const zoom = num('zoom')
+  const dpr = num('devicePixelRatio')
+  return {
+    scrollX: Math.max(0, scrollX),
+    scrollY: Math.max(0, scrollY),
+    width,
+    height,
+    zoom: zoom !== null && zoom > 0 ? zoom : 1,
+    devicePixelRatio: dpr !== null && dpr > 0 ? dpr : 1,
+    documentWidth: Math.max(num('documentWidth') ?? 0, width),
+    documentHeight: Math.max(num('documentHeight') ?? 0, height)
+  }
 }
 
 /**

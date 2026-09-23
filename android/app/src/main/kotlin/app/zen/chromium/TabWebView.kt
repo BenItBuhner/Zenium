@@ -1708,6 +1708,18 @@ class TabWebView(
     }
 
     /**
+     * The page's geometry for the chrome's capture overlay (`page.viewport`): the metrics the
+     * stitcher plans with, in the chrome's terms ([CapturePlan.viewportJson]). Null when the page
+     * cannot answer (no document yet, a crashed renderer).
+     */
+    fun viewport(callback: (JSONObject?) -> Unit) {
+        evaluateJavascript(PageCapture.METRICS_SCRIPT) { result ->
+            val metrics = runCatching { JSONObject(result ?: "") }.getOrNull()?.let { PageCapture.parseMetrics(it) }
+            callback(metrics?.let { CapturePlan.viewportJson(it, width, resources.displayMetrics.density.toDouble()) })
+        }
+    }
+
+    /**
      * What the core hears as the tab's URL. An extension page loaded from its served origin is
      * reported as Chrome spells it (`chrome-extension://<id>/...`, [ExtensionUrls.present]): that
      * is the tab's canonical URL for the core's model, the URL bar and the extension APIs, and

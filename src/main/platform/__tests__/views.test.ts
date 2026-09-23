@@ -13,7 +13,7 @@ import {
   removeForeignDebuggerOwner,
   setDebuggerRecycler
 } from '../pageDebugger'
-import { ElectronTabViewHost, fullPagePaint, type ElectronTabView } from '../views'
+import { ElectronTabViewHost, fullPagePaint, pageViewportFrom, type ElectronTabView } from '../views'
 
 /** The options every `WebContentsView` in the test was constructed with, in order. */
 const constructed: Array<Record<string, unknown>> = []
@@ -1006,5 +1006,241 @@ describe('fullPagePaint', () => {
   it('treats a zoom or scale it cannot read as 100 percent', () => {
     expect(fullPagePaint(Number.NaN, 0)).toEqual({ scale: 1, maxHeight: 12_000 })
     expect(fullPagePaint(-1, Number.POSITIVE_INFINITY)).toEqual({ scale: 1, maxHeight: 12_000 })
+  })
+})
+
+/**
+ * The capture engine's `capture` (`page.capture`): a full page or region through the DevTools
+ * protocol when the debugger is Zenium's to take, and when it is not – an extension's
+ * `chrome.debugger` session (#328's ownership contract), DevTools open – the viewport paint
+ * cropped to the region and marked as the stand-in it is (`fallback: 'viewport'`).
+ */
+describe('ElectronTabView.capture', () => {
+  /** The page's geometry as `VIEWPORT_SCRIPT` reports it: a 1280 × 720 view over a 1280 × 4000 page, scrolled 600 down. */
+  const GEOMETRY = { sx: 0, sy: 600, vw: 1280, vh: 720, dpr: 1, dw: 1280, dh: 4000 }
+
+  /** A `capturePage` bitmap that records its `crop`. */
+  const bitmap = (
+    width: number,
+    height: number
+  ): { image: Electron.NativeImage; crops: Array<{ x: number; y: number; width: number; height: number }> } => {
+    const crops: Array<{ x: number; y: number; width: number; height: number }> = []
+    const make = (w: number, h: number): Electron.NativeImage =>
+      ({
+        isEmpty: () => false,
+        getSize: () => ({ width: w, height: h }),
+        crop: (r: { x: number; y: number; width: number; height: number }) => {
+          crops.push(r)
+          return make(r.width, r.height)
+        },
+        toPNG: () => Buffer.from(`png-${w}x${h}`),
+        toJPEG: (q: number) => Buffer.from(`jpeg-${w}x${h}-${q}`)
+      }) as unknown as Electron.NativeImage
+    return { image: make(width, height), crops }
+  }
+
+  const tabView = (
+    geometry: Record<string, unknown> | null = GEOMETRY,
+    paint = bitmap(1280, 720)
+  ): { view: ElectronTabView; wc: Electron.WebContents; dbg: { log: string[]; commands: Array<{ method: string; params: Record<string, unknown> | undefined }>; taken: boolean }; paint: typeof paint } => {
+    const host = new ElectronTabViewHost(sessions)
+    const view = host.createView(
+      { id: 'tab_1', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
+    Object.assign(wc, {
+      capturePage: () => Promise.resolve(paint.image),
+      executeJavaScriptInIsolatedWorld: () =>
+        geometry === null ? Promise.reject(new Error('Script failed to execute')) : Promise.resolve(geometry)
+    })
+    const dbg = wc.debugger as unknown as {
+      log: string[]
+      commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+      taken: boolean
+      sendCommand: (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
+    }
+    // The protocol paints what it is asked for.
+    const send = dbg.sendCommand.bind(dbg)
+    dbg.sendCommand = async (method, params) => {
+      const result = await send(method, params)
+      if (method === 'Page.getLayoutMetrics') return { cssContentSize: { width: 1280, height: 4000 } }
+      if (method === 'Page.captureScreenshot') return { data: Buffer.from('devtools-png').toString('base64') }
+      return result
+    }
+    return { view, wc, dbg, paint }
+  }
+
+  afterEach(() => {
+    removeForeignDebuggerOwner(1)
+    removeForeignDebuggerOwner(2)
+  })
+
+  it('paints a region through the protocol when the debugger is free, and says nothing of a fallback', async () => {
+    const { view, dbg, paint } = tabView()
+    const result = await view.capture({
+      mode: 'region',
+      region: { x: 100, y: 700, width: 300, height: 200 },
+      format: 'png'
+    })
+    expect(result).toEqual({
+      data: Buffer.from('devtools-png').toString('base64'),
+      mimeType: 'image/png',
+      width: 300,
+      height: 200
+    })
+    expect(result?.fallback).toBeUndefined()
+    const shot = dbg.commands.find((c) => c.method === 'Page.captureScreenshot')
+    expect(shot?.params).toMatchObject({
+      format: 'png',
+      clip: { x: 100, y: 700, width: 300, height: 200, scale: 1 },
+      captureBeyondViewport: true
+    })
+    expect(paint.crops).toEqual([])
+    // The session was Zenium's for the paint and is closed after it.
+    expect(dbg.log).toContain('attach')
+    expect(dbg.log[dbg.log.length - 1]).toBe('detach')
+  })
+
+  it('leaves a page an extension’s chrome.debugger holds alone: the viewport paint cropped to the region, marked as the stand-in', async () => {
+    const { view, wc, dbg, paint } = tabView()
+    addForeignDebuggerOwner(wc.id, 'ext_1')
+    const result = await view.capture({
+      mode: 'region',
+      region: { x: 100, y: 700, width: 300, height: 200 },
+      format: 'png'
+    })
+    // No attach was even tried: `captureBeyondViewport`'s device-metrics override would clobber the extension's.
+    expect(dbg.log).toEqual([])
+    // The region's CSS px minus the scroll offset, at the page's device pixel ratio (1 here).
+    expect(paint.crops).toEqual([{ x: 100, y: 100, width: 300, height: 200 }])
+    expect(result).toEqual({
+      data: Buffer.from('png-300x200').toString('base64'),
+      mimeType: 'image/png',
+      width: 300,
+      height: 200,
+      fallback: 'viewport'
+    })
+  })
+
+  it('falls back the same way when DevTools holds the debugger, and for a full page hands the whole viewport over', async () => {
+    const { view, dbg, paint } = tabView()
+    dbg.taken = true
+    const result = await view.capture({ mode: 'fullPage', format: 'jpeg' })
+    expect(paint.crops).toEqual([])
+    expect(result).toEqual({
+      data: Buffer.from('jpeg-1280x720-75').toString('base64'),
+      mimeType: 'image/jpeg',
+      width: 1280,
+      height: 720,
+      fallback: 'viewport'
+    })
+  })
+
+  it('crops the fallback at the page’s device pixel ratio on a scaled display, and cuts the region at the bitmap’s edge', async () => {
+    // A 2x display: `capturePage` hands over 2560 × 1440 device pixels as a 1x bitmap.
+    const { view, wc, paint } = tabView({ ...GEOMETRY, dpr: 2 }, bitmap(2560, 1440))
+    addForeignDebuggerOwner(wc.id, 'ext_1')
+    const result = await view.capture({
+      mode: 'region',
+      region: { x: 100, y: 700, width: 300, height: 200 },
+      format: 'png'
+    })
+    expect(paint.crops).toEqual([{ x: 200, y: 200, width: 600, height: 400 }])
+    expect(result).toMatchObject({ width: 600, height: 400, fallback: 'viewport' })
+    // A region reaching past the visible area is cut at it; one wholly outside is nothing.
+    await view.capture({ mode: 'region', region: { x: 1200, y: 1200, width: 300, height: 300 }, format: 'png' })
+    expect(paint.crops[1]).toEqual({ x: 2400, y: 1200, width: 160, height: 240 })
+    await expect(
+      view.capture({ mode: 'region', region: { x: 0, y: 3000, width: 10, height: 10 }, format: 'png' })
+    ).resolves.toBeNull()
+  })
+
+  it('a plain viewport capture never touches the debugger and carries no fallback', async () => {
+    const { view, dbg } = tabView()
+    const result = await view.capture({ mode: 'viewport', format: 'png' })
+    expect(dbg.log).toEqual([])
+    expect(result).toEqual({
+      data: Buffer.from('png-1280x720').toString('base64'),
+      mimeType: 'image/png',
+      width: 1280,
+      height: 720
+    })
+  })
+})
+
+/** `page.viewport`: the page's geometry from the isolated world, with the engine's zoom factor. */
+describe('ElectronTabView.viewport', () => {
+  const tabView = (answer: () => Promise<unknown>, zoom = 1): ElectronTabView => {
+    const host = new ElectronTabViewHost(sessions)
+    const view = host.createView(
+      { id: 'tab_1', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
+    Object.assign(wc, { executeJavaScriptInIsolatedWorld: answer, getZoomFactor: () => zoom })
+    return view
+  }
+
+  it('maps the script’s answer, the zoom from the engine', async () => {
+    const view = tabView(() => Promise.resolve({ sx: 0, sy: 600, vw: 1280, vh: 720, dpr: 2.5, dw: 1280, dh: 4000 }), 1.25)
+    await expect(view.viewport()).resolves.toEqual({
+      scrollX: 0,
+      scrollY: 600,
+      width: 1280,
+      height: 720,
+      zoom: 1.25,
+      devicePixelRatio: 2.5,
+      documentWidth: 1280,
+      documentHeight: 4000
+    })
+  })
+
+  it('is null for a page that throws or does not answer in time', async () => {
+    await expect(tabView(() => Promise.reject(new Error('Script failed'))).viewport()).resolves.toBeNull()
+    vi.useFakeTimers()
+    try {
+      const pending = tabView(() => new Promise(() => undefined)).viewport()
+      await vi.advanceTimersByTimeAsync(1500)
+      await expect(pending).resolves.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('pageViewportFrom', () => {
+  const raw = { sx: 10, sy: 20, vw: 800, vh: 600, dpr: 2, dw: 1600, dh: 3000 }
+
+  it('takes a full answer and puts the document and the ratios right', () => {
+    expect(pageViewportFrom(raw, 1)).toEqual({
+      scrollX: 10,
+      scrollY: 20,
+      width: 800,
+      height: 600,
+      zoom: 1,
+      devicePixelRatio: 2,
+      documentWidth: 1600,
+      documentHeight: 3000
+    })
+    // A document narrower than the viewport is the viewport's size; a rubber-band scroll is 0.
+    expect(pageViewportFrom({ ...raw, sx: -5, dw: 100, dh: 100 }, 1)).toMatchObject({
+      scrollX: 0,
+      documentWidth: 800,
+      documentHeight: 600
+    })
+    // No `devicePixelRatio` from the page: the zoom stands in; no usable zoom: 1.
+    expect(pageViewportFrom({ ...raw, dpr: 0 }, 1.5)).toMatchObject({ zoom: 1.5, devicePixelRatio: 1.5 })
+    expect(pageViewportFrom(raw, Number.NaN)).toMatchObject({ zoom: 1 })
+  })
+
+  it('is null for anything short of a laid-out page', () => {
+    expect(pageViewportFrom(null, 1)).toBeNull()
+    expect(pageViewportFrom('x', 1)).toBeNull()
+    expect(pageViewportFrom({ ...raw, vw: 0 }, 1)).toBeNull()
+    expect(pageViewportFrom({ sx: 0, sy: 0 }, 1)).toBeNull()
+    expect(pageViewportFrom({ ...raw, sy: 'a' }, 1)).toBeNull()
   })
 })
