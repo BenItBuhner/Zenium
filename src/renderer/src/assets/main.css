@@ -10960,14 +10960,16 @@
 }
 /*
  * §9.11's desktop footer: in a dialog the actions hug their labels and right-align at the 8
- * gap, primary last – a prompt's Cancel | Delete, a form's Cancel | Create or Add a site alike –
- * and hug no narrower than the button's own 96 at the 32 control height (§9.20: a notice's two
- * buttons are 96 + 8 + 96 inside its 288, a form's the same at the end of its 366). The equal
- * split and its `min-width: 0` (`.zen-settings-sheet-actions > *` above) are the phone sheet's:
- * a dialog is never the phone's – a phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`)
- * – so the pose is the surface's, not a pointer query's, and the phone's rule is not touched.
- * The busy state keeps the button's width: the label stays in the flow unpainted under the
- * spinner (§9.30, extensions.css).
+ * gap, primary last – a form's Cancel | Create or Add a site – and hug no narrower than the
+ * button's own 96 at the 32 control height (§9.20: a form's two buttons are 96 + 8 + 96 at the
+ * end of its 366). A confirmation's Cancel | Delete is not drawn here any more: a Settings
+ * prompt is the program's prompt primitive (`.zen-confirm-dialog-footer` above, the same hug
+ * inside the notice's 288). The equal split and its `min-width: 0`
+ * (`.zen-settings-sheet-actions > *` above) are the phone sheet's: a dialog is never the
+ * phone's – a phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`) – so the pose is the
+ * surface's, not a pointer query's, and the phone's rule is not touched. The busy state keeps
+ * the button's width: the label stays in the flow unpainted under the spinner (§9.30,
+ * extensions.css).
  */
 .zen-settings-dialog .zen-settings-sheet-actions {
   justify-content: flex-end;
