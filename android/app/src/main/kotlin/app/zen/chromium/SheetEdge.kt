@@ -18,8 +18,9 @@ import androidx.core.view.WindowInsetsCompat
  * the bottom, where a bottom sheet meets the screen's edge. The stroke lies inside the bounds,
  * its outer edge on the sheet's radius, [PromptSheetSpec.hairlinePx] wide (one dp in whole
  * pixels, as the chrome's 1 CSS px). The one edge for every native sheet – the prompt sheet
- * ([NativePromptSheet]) and the extension surfaces' sheet (`ExtensionSheet`) – so the pin that
- * holds the prompt sheet to main.css holds the extension sheet too.
+ * ([NativePromptSheet]), the extension surfaces' sheet (`ExtensionSheet`) and the custom tab's
+ * menu ([CustomTabMenuSheet]) – so the pin that holds the prompt sheet to main.css holds the
+ * others too.
  *
  * The sides run through the host's bottom inset – the gesture bar, the three-button bar, the
  * keyboard over them – to the screen's bottom, as `.zen-sheet`'s border runs under the safe area

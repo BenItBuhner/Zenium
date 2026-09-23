@@ -44,6 +44,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         val view = TabWebView(context, tabId, containerId, host)
         view.visibility = View.GONE
         container.addView(view, FrameLayout.LayoutParams(0, 0))
+        host.focusHandoff?.wirePage(view)
         views[tabId] = view
         return view
     }
@@ -59,6 +60,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         host.exitFullscreen(view)
         view.backTransition?.abort()
         host.snapshots.forget(tabId)
+        host.focusHandoff?.unwire(view)
         (view.parent as? ViewGroup)?.removeView(view)
         return view
     }
@@ -84,6 +86,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.visibility = View.GONE
         view.translationX = 0f
         container.addView(view, FrameLayout.LayoutParams(0, 0))
+        host.focusHandoff?.wirePage(view)
         views[viewId] = view
         host.hostEvent("view.adopt", json("viewId" to viewId, "parentTabId" to null, "active" to true))
     }
@@ -174,6 +177,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         fresh.cover.set(dead.cover.topTarget, dead.cover.bottomTarget, snap = true)
         dead.cover.reset()
         container.addView(fresh, if (index >= 0) index else -1, lp ?: FrameLayout.LayoutParams(0, 0))
+        host.focusHandoff?.wirePage(fresh)
         views[tabId] = fresh
         place(fresh)
         return true

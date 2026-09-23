@@ -400,18 +400,18 @@ function BookmarkNodeRow({
   const title = node.title || (folder ? 'Folder' : displayUrl(node.url ?? ''))
   const menuButton = onMenu ? (
     <PhoneIconButton label={`More options for ${title}`} onClick={onMenu}>
-      <EllipsisVertical className="h-5 w-5 opacity-60" strokeWidth={1.75} />
+      <EllipsisVertical className="h-5 w-5" strokeWidth={1.75} />
     </PhoneIconButton>
   ) : null
   return (
     <PhoneListRow
       icon={
         folder ? (
-          <Folder className="h-5 w-5 opacity-70" strokeWidth={1.75} />
+          <Folder className="h-5 w-5" strokeWidth={1.75} />
         ) : (
           <RowFavicon
             src={node.favicon}
-            fallback={<Globe className="h-5 w-5 opacity-60" strokeWidth={1.75} />}
+            fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
           />
         )
       }

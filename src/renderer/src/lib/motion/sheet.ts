@@ -59,20 +59,45 @@ export type SheetDetent = 'collapsed' | 'expanded'
 export const SHEET_PEEK_FRACTION = 0.52
 /** Room (px) kept between the top inset and an expanded sheet, so the page still shows above it. */
 export const SHEET_TOP_MARGIN = 40
+/**
+ * The tallest a sheet whose body is a list of rows stands, as a share of the layer (§9.20: a
+ * dialog or sheet whose body is a list caps at 80 % of the frame and its list scrolls under the
+ * title block – the desktop dialog's `data-body="list"` number, `.zen-settings-dialog`). A form
+ * or a prompt keeps standing as tall as its content, to the top margin.
+ */
+export const SHEET_LIST_MAX_SHARE = 0.8
 /** Detents closer than this (px) fold into one: a second stop a couple of rows away is noise. */
 export const SHEET_MIN_DETENT_GAP = 96
 /** How far (px) the sheet can be stretched past its expanded detent, with diminishing returns. */
 export const SHEET_OVERDRAG = 96
 
-/** The tallest a sheet may be on a layer `layerHeight` px tall under `insetTop` px of status bar. */
-export function sheetMaxHeight(layerHeight: number, insetTop: number): number {
-  return Math.max(0, Math.round(layerHeight - insetTop - SHEET_TOP_MARGIN))
+/**
+ * What a sheet's body is, for how tall it may stand: `content` (the default) as tall as its
+ * content up to the top margin – a form, a prompt, a control panel; `list` a list of rows
+ * (Recently closed, the extensions list, a device picker, a document's outline), capped at
+ * `SHEET_LIST_MAX_SHARE` of the layer, the list scrolling under the title (§9.20).
+ */
+export type SheetBody = 'content' | 'list'
+
+/**
+ * The tallest a sheet may be on a layer `layerHeight` px tall under `insetTop` px of status bar;
+ * a sheet whose body is a list (`body: 'list'`) no taller than `SHEET_LIST_MAX_SHARE` of the
+ * layer either (§9.20).
+ */
+export function sheetMaxHeight(
+  layerHeight: number,
+  insetTop: number,
+  body: SheetBody = 'content'
+): number {
+  const room = layerHeight - insetTop - SHEET_TOP_MARGIN
+  const cap = body === 'list' ? Math.min(room, layerHeight * SHEET_LIST_MAX_SHARE) : room
+  return Math.max(0, Math.round(cap))
 }
 
 /**
  * Detents for content `intrinsic` px tall (grip, body and bottom inset together). Content that
  * fits within the peek height gets a single detent; a taller sheet peeks at about half the
- * room and expands up to the top margin.
+ * room and expands up to the top margin – or, for a list body, to 80 % of the layer (§9.20).
  *
  * Every detent is measured above the bottom inset – the gesture bar, or the keyboard when it is
  * up (`insetBottom` is the larger of the two, as the host reports it): the peek shows
@@ -85,11 +110,12 @@ export function computeDetents(
   intrinsic: number,
   layerHeight: number,
   insetTop: number,
-  insetBottom = 0
+  insetBottom = 0,
+  body: SheetBody = 'content'
 ): SheetDetents {
   const expanded = Math.max(
     0,
-    Math.min(Math.round(intrinsic), sheetMaxHeight(layerHeight, insetTop))
+    Math.min(Math.round(intrinsic), sheetMaxHeight(layerHeight, insetTop, body))
   )
   const bottom = Math.max(0, Math.min(Math.round(insetBottom), layerHeight))
   const peek = bottom + Math.round((layerHeight - bottom) * SHEET_PEEK_FRACTION)

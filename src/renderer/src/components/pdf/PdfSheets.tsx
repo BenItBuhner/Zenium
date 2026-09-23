@@ -104,8 +104,10 @@ function RadioRow({
 /**
  * The document's outline (Chrome's "Contents" drawer): every entry in reading order, children
  * indented under their parent, the page each leads to trailing in the deemphasised ink; the
- * entry whose page is in view is the selected row. An entry without a page (a destination the
- * viewer could not resolve) is listed but not a target.
+ * entry whose page is in view is the selected row, and the sheet opens on it (§9.22: a list
+ * with a current entry lands there, else on its first row – `focus="checked"`, the chassis's
+ * order). An entry without a page (a destination the viewer could not resolve) is listed but
+ * not a target.
  */
 export function PdfOutlineSheet({
   outline,
@@ -125,7 +127,8 @@ export function PdfOutlineSheet({
     <PhoneSheet
       name="pdf-outline"
       title={{ pose: 'header', text: 'Contents' }}
-      focus="dialog"
+      focus="checked"
+      body="list"
       onClose={onClose}
       sheetRef={sheet}
       contentKey={String(rows.length)}

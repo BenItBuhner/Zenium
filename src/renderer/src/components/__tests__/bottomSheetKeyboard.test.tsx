@@ -376,9 +376,9 @@ describe('focus moves into the sheet as it opens (§9.22)', () => {
     expect(active()).toBe(on)
   })
 
-  it("skips a text field – the keyboard must not come up with the sheet – and takes the form's Cancel", () => {
+  it('a form whose first control is a text field takes the dialog itself (§9.22): the keyboard must not come up with the sheet, and Cancel first is the named failure', () => {
     render(
-      <BottomSheet onDismissed={() => undefined}>
+      <BottomSheet onDismissed={() => undefined} label="Rename">
         <input aria-label="Name" />
         <textarea aria-label="Notes" />
         <div className="zen-sheet-footer">
@@ -389,7 +389,41 @@ describe('focus moves into the sheet as it opens (§9.22)', () => {
         </div>
       </BottomSheet>
     )
-    expect(active()).toBe(byText('Cancel'))
+    const sheet = sheets()[0]
+    expect(active()).toBe(sheet)
+    expect(sheet.getAttribute('role')).toBe('dialog')
+    expect(sheet.tabIndex).toBe(-1)
+  })
+
+  it('a notice whose only controls are the chassis footer’s takes the dialog itself, never the footer’s Cancel (§9.22)', () => {
+    render(
+      <BottomSheet
+        onDismissed={() => undefined}
+        label="Install Zen"
+        footer={
+          <>
+            <button type="button">Cancel</button>
+            <button type="button" data-primary>
+              Install
+            </button>
+          </>
+        }
+      >
+        <p>Zen will be added to your home screen.</p>
+      </BottomSheet>
+    )
+    expect(active()).toBe(sheets()[0])
+    expect(active()).not.toBe(byText('Cancel'))
+  })
+
+  it('a field after a row does not move the landing: the first control is the row', () => {
+    render(
+      <BottomSheet onDismissed={() => undefined}>
+        <button type="button">Kind</button>
+        <input aria-label="Name" />
+      </BottomSheet>
+    )
+    expect(active()).toBe(byText('Kind'))
   })
 
   it('with nothing focusable in the body, takes a header control, else the dialog itself', () => {
