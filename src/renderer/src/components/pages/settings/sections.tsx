@@ -34,7 +34,6 @@ import type {
   ShortcutPreset,
   Tab,
   ThirdPartyPinnedBehavior,
-  ToolbarLayout,
   UIState,
   UrlbarBehavior,
   WindowSyncMode
@@ -83,7 +82,14 @@ import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { displayUrl, inputToUrl } from '@shared/url'
 import { homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
+import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
+import {
+  TOOLBAR_LAYOUTS,
+  TOOLBAR_LAYOUT_LABELS,
+  forcesRail,
+  hasTopToolbar
+} from '@shared/toolbarLayout'
 import type { TranslatePreferences } from '@shared/translate'
 import { cmd, run } from '@renderer/lib/api'
 import {
@@ -114,7 +120,7 @@ import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
 import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords'
 import { openOverlay } from '@renderer/lib/ui'
-import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
+import { pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -135,6 +141,14 @@ import {
   vaultProtectionLabel
 } from '../../overlays/settingsCopy'
 import { ModelPickList, PickList } from '../../translate/pickers'
+import { fontsGroups } from './fonts'
+import type { FontsDraft } from './fontsDraft'
+import {
+  addLanguageRow,
+  addLanguageTargets,
+  preferredLanguagesGroups,
+  type AddLanguageList
+} from './languages'
 import {
   AddRouteForm,
   AppIconGrid,
@@ -153,10 +167,12 @@ import {
 } from './blocks'
 import { importGroups } from '../../import/importRows'
 import { extensionsGroups } from './extensions'
+import { LayoutCards } from './LayoutCards'
 import {
   choice,
   onLayout,
   type FieldRow,
+  type InlineAction,
   type RowGroup,
   type SectionModel,
   type SettingsRow
@@ -243,6 +259,19 @@ export interface SectionContext {
    * reads the setting meanwhile.
    */
   downloadDirectory?: string | null
+  /**
+   * The families installed on this computer (`useLocalFonts`), for Appearance › Customise
+   * fonts' family pickers on a host whose engine takes them: null while the list is on its way,
+   * left out where the rows are not drawn (a phone host, a test) – the pickers keep to the
+   * generic families meanwhile.
+   */
+  localFonts?: string[] | null
+  /**
+   * The Customise fonts group's draft (`useFontsDraft`): the ± rows' steps coalesced into one
+   * commit per quiet sequence, the preview following each step (the Android performance gate's
+   * ruling for #350). Left out where no page holds one (a test), the group commits at once.
+   */
+  fontsDraft?: FontsDraft
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -292,7 +321,10 @@ function sorted<T>(map: Record<string, T>): Array<[string, T]> {
   return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
 }
 
-/** A row that only lists something: shows what it is, and holds the rows that act on it. */
+/**
+ * A row that only lists something: shows what it is, and holds the rows that act on it. A row
+ * with one action names it as `action` too, the desktop's inline button (`ItemRow.action`).
+ */
 function item(
   id: string,
   label: string,
@@ -303,6 +335,7 @@ function item(
     keywords?: readonly string[]
     sheetDescription?: string
     disabled?: boolean
+    action?: InlineAction
   } = {}
 ): SettingsRow {
   return {
@@ -313,6 +346,7 @@ function item(
     keywords: extra.keywords,
     leading: extra.leading,
     disabled: extra.disabled,
+    action: extra.action,
     sheet: {
       title: label,
       description: extra.sheetDescription ?? description,
@@ -360,12 +394,25 @@ function numberRow(
  * Groups in the order the design lead set for the tab: identity (Appearance, App icon), then the
  * chrome (URL bar, Pages), then page behaviour (Sites, Site exceptions), Glance last.
  */
-function lookSection({ state, set, pointer, openBarEditor, tab }: SectionContext): RowGroup[] {
+function lookSection({
+  state,
+  set,
+  pointer,
+  formFactor,
+  openBarEditor,
+  tab,
+  localFonts,
+  fontsDraft
+}: SectionContext): RowGroup[] {
   const s = state.settings
   const caps = state.capabilities
   const pc = s.pageControls
   const patchControls = (patch: Partial<typeof pc>): void =>
     set({ pageControls: { ...pc, ...patch } })
+  // The desktop's layout fixes the sidebar at the rail under Collapsed sidebar and Horizontal
+  // tabs (§9.37): there the expanded width is the layout's, not the setting's. The phone and
+  // the tablet have shells of their own, which the layout never reaches (nor does its row).
+  const railSet = (formFactor ?? 'desktop') === 'desktop' && forcesRail(s.toolbarLayout)
   const groups: RowGroup[] = [
     {
       id: 'appearance',
@@ -375,6 +422,9 @@ function lookSection({ state, set, pointer, openBarEditor, tab }: SectionContext
           id: 'color-scheme',
           label: 'Colour scheme',
           value: s.colorScheme,
+          // Pages follow the scheme too (CT-23: the engine's theme source is this setting), so
+          // the row says so – the desktop's description, the phone picker's title block.
+          sheetDescription: 'Websites follow this too.',
           options: [
             { value: 'system', label: 'Follow system' },
             { value: 'light', label: 'Light' },
@@ -382,19 +432,24 @@ function lookSection({ state, set, pointer, openBarEditor, tab }: SectionContext
           ],
           onChange: (v) => set({ colorScheme: v })
         }),
-        choice<ToolbarLayout>({
+        // One layout setting with four pictures (§9.37, §10.4's image radio cards): the desktop's
+        // alone – the phone and the tablet have shells of their own.
+        {
+          kind: 'custom',
           id: 'toolbar-layout',
-          label: 'Toolbar layout',
-          value: s.toolbarLayout,
-          sheetDescription:
-            'Single: everything lives in the sidebar. Multiple: a top toolbar holds navigation.',
-          options: [
-            { value: 'single', label: 'Single toolbar' },
-            { value: 'multiple', label: 'Multiple toolbars' },
-            { value: 'collapsed', label: 'Collapsed toolbar' }
+          label: 'Layout',
+          keywords: [
+            'toolbar layout',
+            'browser layout',
+            'horizontal tabs',
+            'tab strip',
+            ...TOOLBAR_LAYOUTS.map((layout) => TOOLBAR_LAYOUT_LABELS[layout])
           ],
-          onChange: (v) => set({ toolbarLayout: v })
-        }),
+          layouts: ['desktop'],
+          render: () => (
+            <LayoutCards value={s.toolbarLayout} onChange={(v) => set({ toolbarLayout: v })} />
+          )
+        },
         {
           kind: 'switch',
           id: 'tabs-right',
@@ -406,11 +461,19 @@ function lookSection({ state, set, pointer, openBarEditor, tab }: SectionContext
           kind: 'switch',
           id: 'sidebar-expanded',
           label: 'Expanded sidebar',
+          // A dependent row (§10.4) while the layout fixes the rail: laid out at .4 with
+          // `aria-disabled`, showing the width the layout set – the rail, so unchecked – and
+          // saying what set it; live again under Only sidebar and Sidebar and top toolbar. A
+          // live switch stating what the layout overrides would be a lie the page tells, and a
+          // row that left would make the page jump under the layout card.
           // The double-click is a mouse gesture: only a pointer host is told about it.
-          description: pointer
-            ? 'Show tab titles next to their icons. Double-click the sidebar edge to toggle.'
-            : 'Show tab titles next to their icons.',
-          checked: s.sidebarExpanded,
+          description: railSet
+            ? 'Set by the layout.'
+            : pointer
+              ? 'Show tab titles next to their icons. Double-click the sidebar edge to toggle.'
+              : 'Show tab titles next to their icons.',
+          checked: s.sidebarExpanded && !railSet,
+          disabled: railSet,
           onChange: (v) => set({ sidebarExpanded: v })
         },
         {
@@ -467,6 +530,9 @@ function lookSection({ state, set, pointer, openBarEditor, tab }: SectionContext
       empty: 'No sites yet. Zooming a page remembers the zoom for its site here.'
     })
   }
+  // Customise fonts (CT-25) follows Appearance and the zooms: what pages look like, before the
+  // chrome's own look.
+  groups.push(...fontsGroups({ state, set, localFonts, fontsDraft }))
   groups.push({
     id: 'app-icon',
     heading: 'App icon',
@@ -838,9 +904,13 @@ function compactSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'switch',
           id: 'compact-hide-toolbar',
           label: 'Hide top toolbar',
-          description: 'Only applies to the Multiple / Collapsed toolbar layouts.',
+          // A dependent row (§10.4): live only where the layout draws a top toolbar row of its
+          // own – the Only sidebar and Collapsed sidebar layouts keep the navigation in the
+          // sidebar, so there is nothing for the switch to hide.
+          description:
+            'Not in the Only sidebar or Collapsed sidebar layouts, which have no top toolbar to hide.',
           checked: cm.hideToolbar,
-          disabled: s.toolbarLayout === 'single',
+          disabled: !hasTopToolbar(s.toolbarLayout),
           onChange: (v) =>
             set({ compactMode: { ...cm, hideToolbar: v, hideSidebar: v ? cm.hideSidebar : true } })
         }
@@ -2906,15 +2976,16 @@ function passkeysGroup({ passkeys }: AutofillSettingsData): RowGroup {
 // ---------------------------------------------------------------------------
 
 /**
- * Settings › Languages, the desktop pane (`LanguagesSection.tsx`) row for row: whether Zenium
- * offers to translate, the languages the user reads – the first is what pages are translated
- * into – as item rows that promote or remove, the always and never lists, the sites never
- * offered, and the models on the device with their size and a confirmed removal. What the
- * desktop adds through a menulist is an action row here (§9.13: no menulist on a phone settings
- * page) opening a sheet of the languages or models left to pick. The lists read the core's
- * translate state and write through its commands, so both platforms keep one set of rules.
+ * Settings › Languages: the preferred languages first (CT-41, `languages.tsx`: `Settings.
+ * languages` in order with a ⋯ menu per row and Add language – the list translate's "languages
+ * you read" is derived from), then the desktop pane (`LanguagesSection.tsx`) row for row:
+ * whether Zenium offers to translate, the always and never lists, the sites never offered, and
+ * the models on the device with their size and a confirmed removal. What the desktop adds
+ * through a menulist is an action row here (§9.13: no menulist on a phone settings page)
+ * opening a sheet of the languages or models left to pick. The lists read the core's translate
+ * state and write through its commands, so both platforms keep one set of rules.
  */
-function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
+function languagesSection({ state, dictionary, set: setSettings }: SectionContext): RowGroup[] {
   const t = state.translate
   const prefs = t.preferences
   // The "Download a model" sheet lists the registry's pairs, which the core is asked for: asked
@@ -2925,56 +2996,55 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
   const rule = (language: string, value: 'always' | 'never' | 'ask'): void =>
     run('translate.setLanguageRule', { language, rule: value })
 
-  /** The languages in `codes` as item rows, each opening the rows `actions` gives it. */
+  /**
+   * The languages in `codes` as item rows (§10.4: one object, one row in every list on the
+   * page), each opening the one Remove row `remove` describes – the row's one action, so on a
+   * mouse it is #322's inline Remove as well (§10.5: the count picks the form). A preference
+   * removed is plain ink and asks no confirmation.
+   */
   const languageRows = (
     prefix: string,
     codes: readonly string[],
-    actions: (code: string, index: number) => SettingsRow[],
-    description?: (code: string, index: number) => string | undefined
+    remove: (code: string) => { description: string; onPress: () => void }
   ): SettingsRow[] =>
-    codes.map((code, index) =>
-      item(
+    codes.map((code) => {
+      const { description, onPress } = remove(code)
+      const name = catalogueLanguageName(code) ?? languageName(code)
+      return item(
         `${prefix}:${code}`,
-        languageName(code),
-        description?.(code, index),
-        actions(code, index),
-        { keywords: [code] }
+        name,
+        undefined,
+        [
+          {
+            kind: 'action',
+            id: `${prefix}:${code}:ask`,
+            label: 'Remove',
+            description,
+            button: 'Remove',
+            onPress
+          }
+        ],
+        { keywords: [code], action: { label: 'Remove', onPress } }
       )
-    )
+    })
 
-  /** The action row that adds to a list, in a group of its own after it; none when nothing is left. */
-  const addGroup = (
-    id: string,
-    title: string,
-    codes: readonly string[],
-    onAdd: (code: string) => void
-  ): RowGroup[] => {
-    const options = languageOptions(t.languages.filter((code) => !codes.includes(code)))
-    if (options.length === 0) return []
+  /**
+   * The Add language row of a translate list, in a group of its own after it; none when nothing
+   * is left. The same row as the preferred list's (`addLanguageRow`): the phone's find-and-pick
+   * page with the list in its address, the desktop's filtered dialog (§10.2).
+   */
+  const targets = addLanguageTargets({ state, set: setSettings })
+  const addGroup = (id: Exclude<AddLanguageList, 'preferred'>, title: string): RowGroup[] => {
+    if (targets[id].choices.length === 0) return []
     return [
       {
         id: `${id}-add`,
         heading: null,
-        rows: [
-          {
-            kind: 'action',
-            id: `languages-${id}-add`,
-            label: 'Add a language',
-            keywords: [title],
-            button: 'Add…',
-            form: {
-              title,
-              render: (close) => (
-                <PickList label={title} options={options} onPick={onAdd} close={close} />
-              )
-            }
-          }
-        ]
+        rows: [addLanguageRow(`languages-${id}-add`, id, targets[id], { keywords: [title] })]
       }
     ]
   }
 
-  const preferred = prefs.preferred
   const installedBytes = t.installed.reduce((sum, m) => sum + m.bytes, 0)
   const modelRows: SettingsRow[] = [
     ...t.installed.map((m) => {
@@ -3013,11 +3083,12 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
   }
 
   return [
+    ...preferredLanguagesGroups({ state, set: setSettings }),
     {
       id: 'translation',
       heading: 'Translation',
       description:
-        'Pages in other languages are translated on this device, with models Zenium downloads the first time a language pair is used. Nothing leaves the device.',
+        'Pages in other languages are translated on this device, with models Zenium downloads the first time a language pair is used. Pages in your preferred languages are shown as they are. Nothing leaves the device.',
       rows: [
         {
           kind: 'switch',
@@ -3030,99 +3101,52 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
       ]
     },
     {
-      id: 'read',
-      heading: 'Languages you read',
-      description:
-        'Pages in these languages are shown as they are; the first one is the language other pages are translated into.',
-      rows: languageRows(
-        'languages-read',
-        preferred,
-        (code, index) => [
-          ...(index > 0
-            ? [
-                {
-                  kind: 'action',
-                  id: `languages-read:${code}:first`,
-                  label: 'Translate pages into this language',
-                  description: 'Puts it first among the languages you read.',
-                  button: 'Make first',
-                  onPress: () => set({ preferred: [code, ...preferred.filter((c) => c !== code)] })
-                } satisfies SettingsRow
-              ]
-            : []),
-          ...(preferred.length > 1
-            ? [
-                {
-                  kind: 'action',
-                  id: `languages-read:${code}:remove`,
-                  label: 'Remove',
-                  description: 'Pages in this language are offered for translation again.',
-                  button: 'Remove',
-                  onPress: () => set({ preferred: preferred.filter((c) => c !== code) })
-                } satisfies SettingsRow
-              ]
-            : [])
-        ],
-        (_code, index) => (index === 0 ? 'Pages are translated into this language' : undefined)
-      )
-    },
-    ...addGroup('read', 'Add a language you read', preferred, (code) =>
-      set({ preferred: [...preferred, code] })
-    ),
-    {
       id: 'always',
       heading: 'Always translate',
       description: 'Pages in these languages are translated as soon as they load, without asking.',
-      rows: languageRows('languages-always', prefs.alwaysTranslate, (code) => [
-        {
-          kind: 'action',
-          id: `languages-always:${code}:ask`,
-          label: 'Remove',
-          description: 'Zenium asks before translating pages in this language again.',
-          button: 'Remove',
-          onPress: () => rule(code, 'ask')
-        }
-      ]),
+      rows: languageRows('languages-always', prefs.alwaysTranslate, (code) => ({
+        description: 'Zenium asks before translating pages in this language again.',
+        onPress: () => rule(code, 'ask')
+      })),
       empty: 'No languages yet'
     },
-    ...addGroup('always', 'Always translate', prefs.alwaysTranslate, (code) =>
-      rule(code, 'always')
-    ),
+    ...addGroup('always', 'Always translate'),
     {
       id: 'never',
       heading: 'Never translate',
       description: 'Zenium never offers to translate pages in these languages.',
-      rows: languageRows('languages-never', prefs.neverTranslate, (code) => [
-        {
-          kind: 'action',
-          id: `languages-never:${code}:ask`,
-          label: 'Remove',
-          description: 'Zenium offers to translate pages in this language again.',
-          button: 'Remove',
-          onPress: () => rule(code, 'ask')
-        }
-      ]),
+      rows: languageRows('languages-never', prefs.neverTranslate, (code) => ({
+        description: 'Zenium offers to translate pages in this language again.',
+        onPress: () => rule(code, 'ask')
+      })),
       empty: 'No languages yet'
     },
-    ...addGroup('never', 'Never translate', prefs.neverTranslate, (code) => rule(code, 'never')),
+    ...addGroup('never', 'Never translate'),
     {
       id: 'sites',
       heading: 'Sites never translated',
       description:
         'Zenium does not offer to translate these sites. Add one from the translation bar’s options while you are on the site.',
-      rows: prefs.neverTranslateSites.map((site) =>
-        item(`languages-site:${site}`, site, undefined, [
-          {
-            kind: 'action',
-            id: `languages-site:${site}:forget`,
-            label: 'Remove',
-            description: 'Zenium offers to translate this site again.',
-            button: 'Remove',
-            onPress: () =>
-              set({ neverTranslateSites: prefs.neverTranslateSites.filter((s) => s !== site) })
-          }
-        ])
-      ),
+      rows: prefs.neverTranslateSites.map((site) => {
+        const forget = (): void =>
+          set({ neverTranslateSites: prefs.neverTranslateSites.filter((s) => s !== site) })
+        return item(
+          `languages-site:${site}`,
+          site,
+          undefined,
+          [
+            {
+              kind: 'action',
+              id: `languages-site:${site}:forget`,
+              label: 'Remove',
+              description: 'Zenium offers to translate this site again.',
+              button: 'Remove',
+              onPress: forget
+            }
+          ],
+          { action: { label: 'Remove', onPress: forget } }
+        )
+      }),
       empty: 'No sites yet'
     },
     {
@@ -3286,15 +3310,18 @@ function spellcheckGroups(state: UIState, dictionary: DictionaryWords): RowGroup
         {
           kind: 'action',
           id: 'spellcheck-add',
-          label: 'Add a language',
+          label: 'Add language',
           keywords,
           disabled: off,
           button: 'Add…',
           form: {
-            title: 'Add a language to check in',
+            // One copy for the page's three Add rows (the #350 review's nit 3): the group says
+            // what the list is for, the sheet's description what the pick does.
+            title: 'Add language',
+            description: 'Text you type is checked in this language too.',
             render: (close) => (
               <PickList
-                label="Add a language to check in"
+                label="Add language"
                 options={options}
                 onPick={(code) => run('spellcheck.setLanguage', { code, on: true })}
                 close={close}
@@ -4280,6 +4307,7 @@ function shortcutsSection({ state }: SectionContext): RowGroup[] {
           formatBinding(s.binding, state.platform),
           ...(s.unsupported ? ['unsupported'] : [])
         ],
+        layouts: s.layouts,
         bare: true,
         render: () => (
           <ShortcutRow shortcut={s} shortcuts={state.shortcuts} platform={state.platform} />

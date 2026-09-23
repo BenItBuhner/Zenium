@@ -60,7 +60,8 @@ export class SlideMotion {
   private readonly batch: number
 
   constructor(
-    private readonly axis: SlideAxis,
+    /** The axis the items are laid along and slide on: `y` for a column of rows, `x` for the strip. */
+    readonly axis: SlideAxis,
     options: SlideOptions = {}
   ) {
     this.scroller = options.scroller ?? null

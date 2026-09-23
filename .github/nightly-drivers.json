@@ -451,6 +451,20 @@
       "note": "Every scene but the private one (that scene needs the multi-profile WebView: the webview shard's a11y-chrome-private). Last on the shard: TalkBack and the font scale are put back by the runner's reset in any case."
     },
     {
+      "id": "fonts-languages-ui",
+      "class": "FontsLanguagesUiDemo",
+      "shard": "phone-c",
+      "mirrors": "android-fonts-languages-demo.yml",
+      "dir": "fonts-languages-demo",
+      "env": {
+        "DEMO_THEME": "light",
+        "DEMO_ARGS": "-e holdBackgroundWork true"
+      },
+      "timeout": 900,
+      "estimate": 7,
+      "note": "The workflow's arguments; fetches the en → de translation model over the network for Reader View's Translate. On phone C beside the two translate drivers, the shard with the room (65.5 of its 68 with it): phone A holds #322's two-act driver (65), phone B filled to 63.5 with #354's, phone D to 63.5 with #318's, #319's and #321's."
+    },
+    {
       "id": "site-controls",
       "class": "SiteControlsDemo",
       "shard": "phone-c",

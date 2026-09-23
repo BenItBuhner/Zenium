@@ -1142,7 +1142,11 @@ export class AndroidPlatform implements Platform {
    * keeps it for a custom tab (`PageFonts.kt`). The standard family and the sizes take effect
    * there; the generic-family slots do not (`capabilities.genericFontFamilies` is off: Blink's
    * Android font selection never reads them). The preferred languages have no host here:
-   * WebView sends the system's languages (`capabilities.pageLanguages` is off).
+   * WebView sends the system's languages (`capabilities.pageLanguages` is off). Each push is
+   * marked in the chrome document's performance timeline (`performance.mark('fonts.apply')`,
+   * the `blink.user_timing` category the demo harness's trace records, whose names WebView's
+   * tracing keeps), so a run's trace shows how often the pages were restyled: the Android
+   * performance gate's ruling for #350 reads one per sequence of ± presses.
    */
   readonly pageFonts: PageFontsHost
   /**
@@ -1240,7 +1244,12 @@ export class AndroidPlatform implements Platform {
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
     this.privacy = new AndroidPrivacyHost(bridge)
-    this.pageFonts = { apply: (fonts) => bridge.send('fonts.apply', { ...fonts }) }
+    this.pageFonts = {
+      apply: (fonts) => {
+        performance.mark('fonts.apply')
+        bridge.send('fonts.apply', { ...fonts })
+      }
+    }
     const holdBackgroundWork = boot.holdBackgroundWork === true
     this.performance = {
       createBackgroundWorker: () => spawnBackgroundWorker(),

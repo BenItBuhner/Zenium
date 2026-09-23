@@ -77,6 +77,7 @@ import {
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeHomepage } from '../shared/homepage'
+import { sanitizeToolbarLayout } from '../shared/toolbarLayout'
 import {
   allSearchEngines,
   defaultSearchEngineOf,
@@ -620,6 +621,10 @@ export class BrowserState {
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }
+    this.settings.toolbarLayout = sanitizeToolbarLayout(
+      data.settings?.toolbarLayout,
+      DEFAULT_SETTINGS.toolbarLayout
+    )
     this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
       ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
       : []

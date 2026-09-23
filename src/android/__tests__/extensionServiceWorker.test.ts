@@ -8,6 +8,7 @@ import {
   importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  installWorkerScriptRescue,
   platformOperations,
   workerSelf,
   type ScriptDocument,
@@ -503,6 +504,8 @@ describe('importScripts on the worker page', () => {
     context: vm.Context
     ran: string[]
     removed: number
+    /** The page's `error` event for a script that failed outside `appendChild` (a `<script src>` of the document). */
+    dispatch(event: ScriptErrorEvent): void
   } {
     const context = vm.createContext({ log: [] as string[] })
     const ran: string[] = []
@@ -550,6 +553,9 @@ describe('importScripts on the worker page', () => {
       ran,
       get removed() {
         return removed
+      },
+      dispatch: (event: ScriptErrorEvent) => {
+        for (const listener of listeners) listener(event)
       }
     }
   }
@@ -650,6 +656,108 @@ describe('importScripts on the worker page', () => {
     })
     expect(() => bareImport('index.js')).not.toThrow()
     expect(bare.uncaught).toHaveLength(1)
+  })
+
+  it("a worker script whose `let window = self` is the page's early error runs again as a block, where the declaration is legal (Video Downloader PLUS)", () => {
+    const scriptUrl = `${ORIGIN}/main.js`
+    // The page's global is a Window: `window` is its unforgeable property, as `self` is its alias.
+    const text = [
+      '"use strict";',
+      'let window = self;',
+      'var started = window === self;',
+      'function handler() { return "ran" }',
+      'const hidden = 1;',
+      'log.push("main " + started + " " + (function () { return this === undefined })())'
+    ].join('\n')
+    const d = documentInContext()
+    const self = {}
+    d.context.self = self
+    const fetched: string[] = []
+    const warnings: string[] = []
+    installWorkerScriptRescue({
+      scriptUrl,
+      fetchText: (url) => {
+        fetched.push(url)
+        return { status: 200, text }
+      },
+      document: d.document,
+      errors: d.errors,
+      warn: (message) => warnings.push(message)
+    })
+    // The `<script src>`'s failure as the page reports it: nothing of the file ran.
+    let prevented = false
+    const event: ScriptErrorEvent = {
+      message: "Uncaught SyntaxError: Identifier 'window' has already been declared",
+      filename: scriptUrl,
+      preventDefault: () => {
+        prevented = true
+      }
+    }
+    d.dispatch(event)
+    expect(fetched).toEqual([scriptUrl])
+    expect(prevented).toBe(true)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toMatch(/declares 'window'/)
+    // The block: `let window` is the block's, the script's `window` reads it, and the code ran
+    // strict (the hoisted prologue) with its `var` on the global as a worker's would be.
+    expect(d.ran).toHaveLength(1)
+    expect(d.ran[0]).toMatch(/^'use strict';\{"use strict";\nlet window = self;/)
+    expect(d.ran[0]).toMatch(
+      new RegExp(`//# sourceURL=${scriptUrl.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`)
+    )
+    expect(d.context.log).toEqual(['main true true'])
+    expect(d.context.started).toBe(true)
+    expect(d.context.window).toBeUndefined()
+    expect(d.uncaught).toEqual([])
+    expect(d.removed).toBe(1)
+
+    // Once per file, and only for the worker's own file and a Window member a worker lacks.
+    d.dispatch(event)
+    expect(fetched).toHaveLength(1)
+    const other = documentInContext()
+    const otherFetched: string[] = []
+    installWorkerScriptRescue({
+      scriptUrl,
+      fetchText: (url) => {
+        otherFetched.push(url)
+        return { status: 200, text }
+      },
+      document: other.document,
+      errors: other.errors
+    })
+    other.dispatch({
+      message: "Uncaught SyntaxError: Identifier 'window' has already been declared",
+      filename: `${ORIGIN}/lib.js`,
+      preventDefault: () => undefined
+    })
+    other.dispatch({
+      message: "Uncaught SyntaxError: Identifier 'config' has already been declared",
+      filename: scriptUrl,
+      preventDefault: () => undefined
+    })
+    other.dispatch({
+      message: 'Uncaught TypeError: window is not a function',
+      filename: scriptUrl,
+      preventDefault: () => undefined
+    })
+    expect(otherFetched).toEqual([])
+    expect(other.ran).toEqual([])
+    // A sloppy script stays sloppy: no prologue is invented for it.
+    const sloppy = documentInContext()
+    sloppy.context.self = {}
+    installWorkerScriptRescue({
+      scriptUrl,
+      fetchText: () => ({ status: 200, text: 'let document = self; log.push(typeof document)' }),
+      document: sloppy.document,
+      errors: sloppy.errors
+    })
+    sloppy.dispatch({
+      message: "Identifier 'document' has already been declared",
+      filename: scriptUrl,
+      preventDefault: () => undefined
+    })
+    expect(sloppy.ran[0]).toMatch(/^\{let document = self;/)
+    expect(sloppy.context.log).toEqual(['object'])
   })
 })
 

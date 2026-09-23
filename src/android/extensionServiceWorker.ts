@@ -406,6 +406,8 @@ export interface ScriptDocument {
 export interface ScriptErrorEvent {
   error?: unknown
   message?: string
+  /** The failed script's URL, as the page's `ErrorEvent.filename` names it. */
+  filename?: string
   preventDefault(): void
 }
 
@@ -476,6 +478,88 @@ export function importScriptsFor(options: ImportScriptsOptions): (...urls: strin
       if (thrown) throw (thrown as { error: unknown }).error
     }
   }
+}
+
+/**
+ * The Window members a global `let`, `const` or `class` cannot redeclare on the page: the
+ * global's unforgeable properties (`HasRestrictedGlobalProperty`), an early SyntaxError for the
+ * whole script. A worker's global has no `window`, `document` or `top`, and its `location` is
+ * replaceable, so a worker script may declare any of them.
+ */
+const UNFORGEABLE_WINDOW_MEMBERS: ReadonlySet<string> = new Set([
+  'window',
+  'document',
+  'location',
+  'top'
+])
+
+/** `Identifier 'window' has already been declared`, as Blink words the early error (with or without its `Uncaught SyntaxError:` prefix). */
+const REDECLARED_GLOBAL = /Identifier '([^']+)' has already been declared/
+
+/**
+ * `"use strict"` as a script's directive prologue: comments and whitespace, then the directive.
+ * Inside a block the same text is an expression statement and the script would run sloppy.
+ */
+const STRICT_PROLOGUE = /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*(['"])use strict\1\s*;?/
+
+export interface WorkerScriptRescueOptions {
+  /** The worker script's URL as the page loads it (the served spelling). */
+  scriptUrl: string
+  /** A synchronous GET of an extension-origin URL, as `importScripts` has. */
+  fetchText: (url: string) => { status: number; text: string }
+  document: ScriptDocument
+  /** The page (`window`), whose `error` events name a failed script. */
+  errors: ScriptErrorTarget
+  warn?: (message: string) => void
+}
+
+/**
+ * The worker script as a block of the page when its plain load is the early error a worker
+ * never has.
+ *
+ * A worker has no `window`: bundler prologues and hand-written workers alike open with
+ * `let window = self` (Video Downloader PLUS's `main.js`, compat rounds 9 to 11) so the code
+ * after it can spell `window.…`. On the page that stands in for the worker, `window` is the
+ * global's unforgeable property and a global `let` of that name is a SyntaxError for the whole
+ * file: nothing of it ran, and the background was a dead worker with one console line. The
+ * page reports a script element's failure as its `error` event, naming the identifier and the
+ * file; when the identifier is one of [UNFORGEABLE_WINDOW_MEMBERS] and the file the worker's
+ * own, the text is fetched and run once more inside a block, where that declaration is the
+ * block's (and the script's later `window.…` reads its own binding, `self`), and every other
+ * identifier resolves as it did: a `var` and a sloppy-mode function declaration still land on
+ * the global as a worker's do. A strict prologue is hoisted ahead of the block so a strict
+ * script stays strict; the block opens on the prologue's line so the file's line numbers hold
+ * under its `sourceURL`. Top-level `let`, `const` and `class` become the block's alone, which
+ * an `importScripts` file of the same worker would not see; the alternative was the file not
+ * running at all. Once per file: the retried text's own errors are the page's, as any script's.
+ */
+export function installWorkerScriptRescue(options: WorkerScriptRescueOptions): () => void {
+  let done = false
+  const listener = (event: ScriptErrorEvent): void => {
+    if (done) return
+    const match = REDECLARED_GLOBAL.exec(String(event.message ?? ''))
+    if (!match || !UNFORGEABLE_WINDOW_MEMBERS.has(match[1] ?? '')) return
+    if (!event.filename || event.filename !== options.scriptUrl) return
+    done = true
+    const { status, text } = options.fetchText(options.scriptUrl)
+    if (status !== 200) return
+    const parent = options.document.head ?? options.document.documentElement
+    if (!parent) return
+    event.preventDefault()
+    options.warn?.(
+      `[Zenium] the service worker script declares '${match[1]}', which the page standing in for the worker already has; the script runs as a block of the page instead`
+    )
+    const strict = STRICT_PROLOGUE.test(text)
+    const script = options.document.createElement('script')
+    script.textContent = `${strict ? "'use strict';" : ''}{${text}\n}\n//# sourceURL=${options.scriptUrl}`
+    try {
+      parent.appendChild(script)
+    } finally {
+      script.remove()
+    }
+  }
+  options.errors.addEventListener('error', listener)
+  return () => options.errors.removeEventListener('error', listener)
 }
 
 /**

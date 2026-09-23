@@ -34,11 +34,16 @@ import {
   type ShieldResult
 } from './extensionIsolation'
 import { installModuleChrome } from './extensionModuleChrome'
-import { createScriptRecovery, type ScriptRecovery } from './extensionScriptRecovery'
+import {
+  createScriptRecovery,
+  type ScriptRecovery,
+  type ViolationEventLike
+} from './extensionScriptRecovery'
 import {
   importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  installWorkerScriptRescue,
   workerSelf,
   type ServiceWorkerEndpoint,
   type ServiceWorkerMessage
@@ -370,7 +375,10 @@ declare const __zenExtBoot: Boot
         endpointId,
         url: frame.url,
         isTopFrame: frame.isTopFrame,
-        world
+        world,
+        ...(typeof boot.config.messageLimit === 'number' && boot.config.messageLimit > 0
+          ? { maxMessageLength: boot.config.messageLimit }
+          : {})
       },
       engineTransport,
       primordials,
@@ -509,17 +517,28 @@ declare const __zenExtBoot: Boot
       // contract, so it is a synchronous XHR to the extension origin and a classic script
       // element of this page (the generated background page carries no CSP that would refuse it);
       // what the element throws, the page reports to `window` and the call throws to its caller.
+      const fetchText = (url: string): { status: number; text: string } => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('GET', url, false)
+        xhr.send()
+        return { status: xhr.status, text: xhr.responseText }
+      }
       pageWindow.importScripts = importScriptsFor({
         origin,
         base: location.href,
-        fetchText: (url) => {
-          const xhr = new XMLHttpRequest()
-          xhr.open('GET', url, false)
-          xhr.send()
-          return { status: xhr.status, text: xhr.responseText }
-        },
+        fetchText,
         document,
         errors: window
+      })
+      // A worker script that opens `let window = self` is this page's early SyntaxError (`window`
+      // is the global's unforgeable property) and ran not at all; it runs again as a block of the
+      // page, where a worker's declaration is legal (installWorkerScriptRescue).
+      installWorkerScriptRescue({
+        scriptUrl: workerScript,
+        fetchText,
+        document,
+        errors: window,
+        warn: (message) => console.warn(message)
       })
       const worker = installServiceWorkerGlobals(pageWindow, {
         origin,
@@ -666,7 +685,11 @@ declare const __zenExtBoot: Boot
   // A page's CSP has no say over an extension's resources in Chrome; over the emulated origin it
   // has. A `<script src=<extension origin>/…>` the page's `script-src` refused runs in the main
   // world through the host instead; a `<link rel=stylesheet>` its `style-src` refused is read
-  // through the relay and adopted as a constructed sheet (`extensionScriptRecovery.ts`).
+  // through the relay and adopted as a constructed sheet; a module graph a content script's
+  // `import()` asked for, refused by the same policy, is fetched again under the page's own
+  // nonce where the host's bracket gives it the extension's `chrome` on the real global (the
+  // `with` fallback), and recorded where a world would have evaluated it
+  // (`extensionScriptRecovery.ts`).
   scriptRecovery = createScriptRecovery({
     attachedIds: () => attached.map((e) => e.id),
     request: (id, extId, url) =>
@@ -681,10 +704,18 @@ declare const __zenExtBoot: Boot
         })
       ),
     readText: (_extId, url) => relay.fetch(url).then((response) => response.text()),
-    error: primordials.error
+    error: primordials.error,
+    warn: primordials.warn,
+    document,
+    pageModules: content.extension.isolation !== 'world'
   })
   const recovery = scriptRecovery
   window.addEventListener('error', (event) => recovery.onError(event), true)
+  window.addEventListener(
+    'securitypolicyviolation',
+    (event) => recovery.onViolation(event as unknown as ViolationEventLike),
+    true
+  )
   const builtins = collectBuiltins(realWindow)
   // The window's operations at document start, for the `with` fallback's scope proxies; read
   // once per frame, on the first proxy (a frame with worlds never needs it).
@@ -844,9 +875,15 @@ declare const __zenExtBoot: Boot
       if (typeof realWindow.URL === 'function')
         root.URL = scopedUrlClass(realWindow.URL as typeof URL)
       // A module the content script imports evaluates on the real global, not in the proxy's
-      // scope: the host brackets the served module text, and this accessor answers the
-      // extension's `chrome` there while the module's body runs (extensionModuleChrome.ts).
-      installModuleChrome(realWindow, (id) => scopes.get(`${id}/with/content`)?.chrome)
+      // scope: the host brackets the served module text, and these accessors answer the
+      // extension's `chrome` and, as `self`, its scope there while the module's body runs, so
+      // a webpack chunk registers on the content script's own registry
+      // (extensionModuleChrome.ts).
+      installModuleChrome(
+        realWindow,
+        (id) => scopes.get(`${id}/with/content`)?.chrome,
+        (id) => scopes.get(`${id}/with/content`)?.window as object | undefined
+      )
     }
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
     const engine = messaging ? makeEngine(ext, context, frame, root, isolation === 'world') : null

@@ -28,7 +28,7 @@ import {
 import { SheetRestContext, type SheetRest } from '@renderer/lib/motion/sheetRest'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
-import { isTextField, sheetInitialFocus, wrapTab } from '@renderer/lib/popover'
+import { CHECKED, isTextField, sheetInitialFocus, wrapTab } from '@renderer/lib/popover'
 import { holdChromeInert } from '@renderer/lib/portals'
 import { coverPageUnderSheet, uiStore, type SheetCover } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -112,11 +112,15 @@ interface Props {
    */
   fitContent?: boolean
   /**
-   * Come in at the expanded detent rather than the peek: for an editor whose body is the
+   * Come in at the expanded detent rather than the peek: `true` for an editor whose body is the
    * document (the long-screenshot crop), the phone's form of the frame dialog, whose body
-   * scrolls from the start. A sheet of rows or a control panel keeps the peek (§9.13).
+   * scrolls from the start. `'overflow'` is §9.13's picker: a sheet of options that fit the
+   * peek keeps it, and one whose rows exceed the peek comes in expanded and scrolled so that the
+   * checked option (`CHECKED`, lib/popover.ts – the row the chassis also focuses) stands in the
+   * middle of the body, or as near it as the list's end allows. A sheet of rows that is no
+   * picker, or a control panel, keeps the peek.
    */
-  openExpanded?: boolean
+  openExpanded?: boolean | 'overflow'
   /**
    * The body is a list of rows (Recently closed, the extensions list, a device picker, a
    * document's outline): the sheet stands at most 80 % of the layer at its expanded detent and
@@ -267,6 +271,12 @@ export function BottomSheet({
   const touch = useRef<Touch | null>(null)
   const swallowClick = useRef(false)
   const detents = useRef<SheetDetents>({ collapsed: 0, expanded: 0 })
+  /**
+   * An `'overflow'` picker still owes its body the scroll to the checked option: taken by the
+   * first frame that gives the body a height to scroll in (`paint`), since before the motion's
+   * first frame the sheet stands at its intrinsic height and the body has nothing to scroll.
+   */
+  const pendingScroll = useRef(false)
   const insetTop = useRef(0)
   /** The gesture bar, or the keyboard while it is up: the detents are measured above it. */
   const insetBottom = useRef(0)
@@ -317,6 +327,7 @@ export function BottomSheet({
     const frame = m.frame()
     const layer = layerFrame.current
     sheet.style.height = `${frame.height}px`
+    if (pendingScroll.current) scrollToChecked()
     sheet.style.transform = `translate3d(0, ${frame.translateY}px, 0) scale(var(--zen-layer-scale, 1))`
     sheet.style.setProperty('--zen-layer-recede', layer.recede.toFixed(4))
     // Under another sheet the content takes no input (§9.24); the sheet above owns the gesture.
@@ -335,10 +346,47 @@ export function BottomSheet({
     syncLock()
   }
 
+  /**
+   * The detent the sheet comes in to: the peek, unless it opens expanded outright, or is an
+   * `'overflow'` picker whose rows exceed the peek (§9.13) – decided on the detents as measured,
+   * so it is read when the motion presents, not when the sheet mounts.
+   */
+  const openDetent = (): SheetDetent => {
+    if (openExpanded === true) return 'expanded'
+    if (openExpanded === 'overflow') {
+      const { collapsed, expanded } = detents.current
+      return expanded > collapsed ? 'expanded' : 'collapsed'
+    }
+    return 'collapsed'
+  }
+
   /** The detent the sheet rests at or heads for – before it is up, the one it comes in to. */
   const restingDetent = (): SheetDetent => {
     const m = motionRef.current
-    return m?.isOpen ? m.restingDetent : openExpanded ? 'expanded' : 'collapsed'
+    return m?.isOpen ? m.restingDetent : openDetent()
+  }
+
+  /**
+   * An `'overflow'` picker's body opens scrolled to the checked option (§9.13): the option in
+   * the middle of the body's box at the expanded detent, or as near it as the list's ends allow.
+   * Run from `paint` on the first frame that has given the body a height to scroll in, before
+   * the sheet has risen far enough to show its rows; the set scroll holds as the body grows to
+   * the detent (a value past the grown body's end is clamped to it by the scroller). A checked
+   * option already in view at the top, or no checked option, leaves the body at its top.
+   */
+  const scrollToChecked = (): void => {
+    const body = scrollRef.current
+    const { collapsed, expanded } = detents.current
+    // Rows that fit the peek have nowhere to scroll to.
+    if (expanded <= collapsed) pendingScroll.current = false
+    if (!pendingScroll.current || !body || body.scrollHeight <= body.clientHeight) return
+    pendingScroll.current = false
+    const checked = body.querySelector<HTMLElement>(CHECKED)
+    if (!checked) return
+    const bodyHeight = detents.current.expanded - restParts.current.chrome
+    const top =
+      checked.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop
+    body.scrollTop = Math.max(0, Math.round(top - (bodyHeight - checked.offsetHeight) / 2))
   }
 
   /**
@@ -362,7 +410,10 @@ export function BottomSheet({
   const motion = (): SheetMotion =>
     (motionRef.current ??= new SheetMotion({
       detents: () => detents.current,
-      openAt: openExpanded ? 'expanded' : 'collapsed',
+      // Read as the motion presents (after the measure), not as the motion is made.
+      get openAt() {
+        return openDetent()
+      },
       onChange: () => {
         // The page behind recedes and the bottom bar fades with the same progress, through the
         // chassis (`--zen-recede`, main.css); a sheet above recedes this one by its own.
@@ -591,6 +642,8 @@ export function BottomSheet({
     insetBottom.current = insets.bottom
     // New content starts at its top; the old scroll offset belonged to what was there before.
     if (!bottomChanged && scrollRef.current) scrollRef.current.scrollTop = 0
+    // An `'overflow'` picker opens on its checked option: owed until the motion's first frame.
+    if (openExpanded === 'overflow' && !motionRef.current?.isOpen) pendingScroll.current = true
     measure()
     // The keyboard came up under a field that has the focus: the sheet makes room for it.
     if (bottomChanged) keepFieldInView()
