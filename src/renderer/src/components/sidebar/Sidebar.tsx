@@ -115,45 +115,50 @@ export function Sidebar({
         switching={stills.length > 0}
         className="zen-sidebar-pose relative flex min-h-0 flex-1 flex-col"
       >
-        {pose === 'private' ? (
-          <PrivatePanel state={state} compact={compact} />
-        ) : (
-          <>
-            {local ? (
-              <LocalWindowHeader state={state} compact={compact} />
-            ) : (
-              <Essentials
-                essentials={essentials}
-                activeTabId={space.activeTabId}
-                compact={compact}
-              />
-            )}
-            <div className="relative min-h-0 flex-1 overflow-hidden">
-              <div
-                className="zen-space-strip h-full"
-                style={{
-                  transform: `translateX(-${activeIndex * 100}%)`,
-                  width: `${state.spaces.length * 100}%`
-                }}
-              >
-                {state.spaces.map((s) => (
-                  <div
-                    key={s.id}
-                    className="h-full"
-                    style={{ width: `${100 / state.spaces.length}%` }}
-                  >
-                    <SpacePanel
-                      state={state}
-                      space={s}
-                      isActive={s.id === state.activeSpaceId}
-                      compact={compact}
-                    />
-                  </div>
-                ))}
+        {/* The tab strip is the window's navigation landmark (a11y-02): the Essentials tablist and
+            the spaces' tablists – or, in the private pose, the private tabs' – one region a reader
+            jumps to by landmark, whichever pose the sidebar is in. */}
+        <nav aria-label="Tabs" className="flex min-h-0 flex-1 flex-col">
+          {pose === 'private' ? (
+            <PrivatePanel state={state} compact={compact} />
+          ) : (
+            <>
+              {local ? (
+                <LocalWindowHeader state={state} compact={compact} />
+              ) : (
+                <Essentials
+                  essentials={essentials}
+                  activeTabId={space.activeTabId}
+                  compact={compact}
+                />
+              )}
+              <div className="relative min-h-0 flex-1 overflow-hidden">
+                <div
+                  className="zen-space-strip h-full"
+                  style={{
+                    transform: `translateX(-${activeIndex * 100}%)`,
+                    width: `${state.spaces.length * 100}%`
+                  }}
+                >
+                  {state.spaces.map((s) => (
+                    <div
+                      key={s.id}
+                      className="h-full"
+                      style={{ width: `${100 / state.spaces.length}%` }}
+                    >
+                      <SpacePanel
+                        state={state}
+                        space={s}
+                        isActive={s.id === state.activeSpaceId}
+                        compact={compact}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </nav>
         <SidebarBottom state={state} compact={compact} isDark={isDark} pose={pose} />
       </PaneSlot>
       <PaneStills stills={stills} onDone={stillDone} />

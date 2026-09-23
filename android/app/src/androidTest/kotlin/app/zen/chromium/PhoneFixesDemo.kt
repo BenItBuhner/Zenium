@@ -245,10 +245,13 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             finding("  Look and Feel touched $touched; its section over the landing: ${verdict(section)}")
             if (!section) error("Look and Feel did not open under a finger")
             SystemClock.sleep(1_200)
-            // Fix 6: each value row is one node named "label, value" – the value once, after a comma.
-            // The tree is given the time it takes to list the section (the note at the top).
+            // Fix 6: each value row is one control named "label, value" – the value once, after a
+            // comma. The name is the document's (`aria-label`, rows.tsx), read at once; that the
+            // tree lists it as one node so named is TalkBack's side, given the tree's window (the
+            // note at the top; the nightly had the tree without the section for 15 s until a sheet's
+            // inert toggle made Blink serialise it anew, which awaitSettingsRowInTree now asks for).
             val mark = SystemClock.uptimeMillis()
-            val listed = awaitFresh(15_000, "the Look and Feel section") { it.startsWith(COLOR_SCHEME_ROW) }
+            val listed = awaitSettingsRowInTree(COLOR_SCHEME_ROW)
             finding("  the tree ${if (listed != null) "lists" else "does not list"} the section ${SystemClock.uptimeMillis() - mark} ms on; WebView events since the touch: ${eventsSince(mark)}")
             for ((label, value) in VALUE_ROWS) valueRowName(label, value)
             still("settings-look-light")
@@ -305,12 +308,24 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         }
     }
 
-    /** Fix 6: the row labelled `label` is one node in the tree named "label, value" – not "label value", not twice. */
+    /**
+     * Fix 6: the row labelled `label` is one control named "label, value" – not "label value",
+     * not twice. The name is the document's `aria-label` on the row, exposed to assistive
+     * technology (not inert, not aria-hidden, laid out); the tree, once it lists the row (the
+     * section's window has been given by the caller; a row of its own gets a short one here),
+     * must carry that name on one node. A tree that never lists a row the document exposes is
+     * the emulator's tree trailing (noted), not the row's name; a tree that lists it otherwise
+     * is a FAIL.
+     */
     private fun valueRowName(label: String, value: String) {
-        val names = freshNodes { it.startsWith(label) }.map { nodeName(it) }
         val want = "$label, $value"
-        finding("  '$label' in the tree: ${names.map { "'$it'" }} (wanted one node '$want')")
-        expect("'$label' reads '$want' once", names.size == 1 && names[0] == want, "value-row-${label.lowercase().replace(' ', '-')}")
+        val domName = settingsRowName(label)
+        val exposed = settingsRowExposed(label)
+        val node = awaitSettingsRowInTree(label, 4_000)
+        val names = if (node != null) freshNodes { it.startsWith(label) }.map { nodeName(it) } else emptyList()
+        finding("  '$label' in the document: ${domName?.let { "'$it'" } ?: "no such row"}, exposed $exposed; in the tree: ${if (node != null) names.map { "'$it'" } else "not listed"} (wanted one control named '$want')")
+        val treeAgrees = node == null || (names.size == 1 && names[0] == want)
+        expect("'$label' reads '$want' once", domName == want && exposed == true && treeAgrees, "value-row-${label.lowercase().replace(' ', '-')}")
     }
 
     /** The Colour scheme row's own name in the DOM (`aria-label`, fix 6), "" when the row is not there. */

@@ -316,7 +316,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(chevron).toContain('margin-right: 14px')
     expect(
       rule(
-        ":root[data-form-factor='tablet'] .zen-group-fold > .zen-tab:not(.zen-group-row, .justify-center)"
+        ":root[data-form-factor='tablet'] .zen-group-fold > .zen-group-rows > .zen-tab:not(.justify-center)"
       )
     ).toContain('margin-left: 24px')
     expect(rule('.zen-group-fold[data-folding]')).toContain('overflow: hidden')

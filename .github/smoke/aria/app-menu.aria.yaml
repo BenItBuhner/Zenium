@@ -1,0 +1,24 @@
+- menu "Zenium":
+  - menuitem "New Tab"
+  - menuitem "Search Tabs…"
+  - menuitem "New Window"
+  - menuitem "New Private Window"
+  - separator
+  - menuitem "Bookmarks"
+  - menuitem "History"
+  - menuitem "Downloads"
+  - menuitem "Passwords"
+  - menuitem "Add-ons and Themes"
+  - separator
+  - menuitem "Find in Page…"
+  - menuitem "Zoom (100%)"
+  - menuitem "Print…"
+  - menuitem "Save Page As…"
+  - menuitem "Translate Page…"
+  - menuitem "Reader View" [disabled]
+  - menuitem "Listen to This Page" [disabled]
+  - separator
+  - menuitem "Settings"
+  - menuitem "More Tools"
+  - menuitem "Help"
+  - menuitem "Quit"
