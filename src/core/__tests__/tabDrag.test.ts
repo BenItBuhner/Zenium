@@ -26,8 +26,7 @@ import type {
 import { contains, parseDropKey } from '../tabDrag'
 import type { ZenWindow } from '../window'
 
-function memoryIo(): StoreIO {
-  const files: Record<string, string> = {}
+function memoryIo(files: Record<string, string> = {}): StoreIO {
   return {
     readSync: (name) => files[name] ?? null,
     write: async (name, text) => {
@@ -83,14 +82,16 @@ interface Fixture {
 
 const FIRST_BOUNDS: Rect = { x: 0, y: 0, width: 1280, height: 800 }
 
-function fixture(opts: { extensions?: (browser: Browser) => ExtensionHost } = {}): Fixture {
+function fixture(
+  opts: { extensions?: (browser: Browser) => ExtensionHost; files?: Record<string, string> } = {}
+): Fixture {
   const hosts: HostRecord[] = []
   const views: ViewRecord[] = []
   const capabilities = stub<HostCapabilities>({ windows: true, updates: false, agents: false })
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
     capabilities,
-    io: memoryIo(),
+    io: memoryIo(opts.files),
     windows: {
       create: (win: ZenWindow, init: WindowCreateInit) => {
         // Windows without bounds of their own go where the first one is (a cascade in life).
@@ -1388,23 +1389,87 @@ describe('a tab dropped on the content area (split edges and panes)', () => {
 })
 
 describe('Mute Site', () => {
-  it('mutes every tab of the host, remembers it, and lifts it again', () => {
+  it('mutes every tab of the site as its sound setting, remembers it, and lifts it again', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
-    const one = f.openPage(win, 'https://www.example.com/a')
+    const one = f.openPage(win, 'https://example.com/a')
     const two = f.openPage(win, 'https://example.com/b')
     const other = f.openPage(win, 'https://example.org')
     f.browser.handleCommand(win, 'tab.toggleMuteSite', { tabId: one.id })
-    expect(f.browser.state.settings.mutedHosts).toEqual(['example.com'])
+    expect(f.browser.permissions.get('sound', 'https://example.com')).toBe('deny')
+    expect(f.browser.permissions.listForOrigin('https://example.com')).toEqual([
+      { permission: 'sound', decision: 'deny' }
+    ])
+    expect(f.browser.tabs.siteMuted('https://example.com/x')).toBe(true)
     expect(f.browser.tabs.tab(one.id)?.muted).toBe(true)
     expect(f.browser.tabs.tab(two.id)?.muted).toBe(true)
     expect(f.browser.tabs.tab(other.id)?.muted).toBe(false)
     expect(f.views.find((v) => v.tabId === two.id)?.muted).toBe(true)
-    // A new page of the host starts muted.
+    // A new page of the site starts muted.
     const three = f.openPage(win, 'https://example.com/c')
     expect(f.browser.tabs.tab(three.id)?.muted).toBe(true)
+    // Unmuting clears the exception (allow is the default) rather than storing an allow.
     f.browser.handleCommand(win, 'tab.toggleMuteSite', { tabId: two.id })
-    expect(f.browser.state.settings.mutedHosts).toEqual([])
+    expect(f.browser.permissions.get('sound', 'https://example.com')).toBeUndefined()
     for (const t of [one, two, three]) expect(f.browser.tabs.tab(t.id)?.muted).toBe(false)
+    expect(f.browser.state.settings.mutedHosts).toEqual([])
+  })
+
+  it('follows the sound setting from wherever it is changed: a Settings row, a reset, the default', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const page = f.openPage(win, 'https://example.com/a')
+    const other = f.openPage(win, 'https://example.org')
+    f.browser.handleCommand(win, 'permissions.set', {
+      origin: 'https://example.com',
+      permission: 'sound',
+      decision: 'deny'
+    })
+    expect(f.browser.tabs.tab(page.id)?.muted).toBe(true)
+    expect(f.views.find((v) => v.tabId === page.id)?.muted).toBe(true)
+    expect(f.browser.tabs.tab(other.id)?.muted).toBe(false)
+    f.browser.handleCommand(win, 'permissions.resetOrigin', { origin: 'https://example.com' })
+    expect(f.browser.tabs.tab(page.id)?.muted).toBe(false)
+    // Blocking sound everywhere mutes every site; a site's own allow keeps its sound.
+    f.browser.handleCommand(win, 'permissions.setDefault', {
+      permission: 'sound',
+      decision: 'deny'
+    })
+    expect(f.browser.tabs.tab(page.id)?.muted).toBe(true)
+    expect(f.browser.tabs.tab(other.id)?.muted).toBe(true)
+    f.browser.handleCommand(win, 'tab.toggleMuteSite', { tabId: other.id })
+    expect(f.browser.permissions.get('sound', 'https://example.org')).toBe('allow')
+    expect(f.browser.tabs.tab(other.id)?.muted).toBe(false)
+    expect(f.browser.tabs.tab(page.id)?.muted).toBe(true)
+    // A `zen://` page has no site to mute.
+    const zen = f.openPage(win, 'zen://settings')
+    expect(f.browser.tabs.tab(zen.id)?.muted).toBe(false)
+  })
+
+  it('migrates the old mutedHosts list into sound blocks once, for the origins the old rule covered', () => {
+    const f = fixture({
+      files: {
+        'state.json': JSON.stringify({
+          version: 5,
+          settings: { mutedHosts: ['example.com', 'localhost', '10.0.0.2'] }
+        })
+      }
+    })
+    expect(f.browser.state.settings.mutedHosts).toEqual([])
+    expect(f.browser.permissions.listForPermission('sound')).toEqual([
+      { origin: 'http://10.0.0.2', decision: 'deny' },
+      { origin: 'http://localhost', decision: 'deny' },
+      { origin: 'https://10.0.0.2', decision: 'deny' },
+      { origin: 'https://example.com', decision: 'deny' },
+      { origin: 'https://localhost', decision: 'deny' },
+      { origin: 'https://www.example.com', decision: 'deny' }
+    ])
+    const win = f.browser.focusedWindow()
+    const www = f.openPage(win, 'https://www.example.com/watch')
+    const bare = f.openPage(win, 'https://example.com/')
+    const sub = f.openPage(win, 'https://m.example.com/')
+    expect(f.browser.tabs.tab(www.id)?.muted).toBe(true)
+    expect(f.browser.tabs.tab(bare.id)?.muted).toBe(true)
+    expect(f.browser.tabs.tab(sub.id)?.muted).toBe(false)
   })
 })
