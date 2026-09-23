@@ -3,7 +3,7 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { FolderInput, VenetianMask } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { hasTopToolbar } from '@shared/toolbarLayout'
+import { forcesRail, hasTopToolbar } from '@shared/toolbarLayout'
 import { cmd, run } from '@renderer/lib/api'
 import {
   activeSpace,
@@ -28,9 +28,10 @@ interface Props {
   floating?: boolean
   onPointerLeave?: () => void
   /**
-   * Collapsed to the icon rail, or expanded: by default the `sidebarExpanded` setting. The
-   * tablet shell decides for itself (a narrow window keeps the rail docked and floats the
-   * expanded sidebar over the page).
+   * Collapsed to the icon rail, or expanded: by default the `sidebarExpanded` setting, unless
+   * the layout fixes the rail – the Collapsed sidebar layout, and the horizontal layout's rail
+   * beside the frame (`forcesRail`, §9.37). The tablet shell decides for itself (a narrow window
+   * keeps the rail docked and floats the expanded sidebar over the page).
    */
   compact?: boolean
   /**
@@ -57,7 +58,7 @@ export function Sidebar({
   floating,
   onPointerLeave,
   rail = false,
-  compact = rail || !state.settings.sidebarExpanded,
+  compact = rail || forcesRail(state.settings.toolbarLayout) || !state.settings.sidebarExpanded,
   navRow
 }: Props): JSX.Element {
   const space = activeSpace(state)

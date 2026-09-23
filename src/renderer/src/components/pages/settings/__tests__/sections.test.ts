@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ExtensionErrorEntry,
   ExtensionInfo,
+  FormFactor,
   HostCapabilities,
   ImportSource,
   SafetyCheckResult,
@@ -1988,6 +1989,42 @@ describe('the section model', () => {
     for (const layout of ['multiple', 'horizontal'] as const) {
       expect(hide(layout).disabled, layout).toBe(false)
     }
+  })
+
+  it('makes Look and Feel’s Expanded sidebar a dependent row where the layout fixes the rail (§10.4, §9.37): set by Collapsed sidebar and Horizontal tabs, live under the other two', () => {
+    const expanded = (layout: ToolbarLayout, formFactor?: FormFactor): Row => {
+      const s = state({}, { toolbarLayout: layout, sidebarExpanded: true })
+      const look = buildSection(PAGE.sections[0], { ...context(s, true).ctx, formFactor })
+      return row(look, 'sidebar-expanded')
+    }
+    // The rail is the layout's: the row lies at .4 (`disabled` → `aria-disabled`), unchecked
+    // as the sidebar is whatever the setting stored, and its description says what set it.
+    for (const layout of ['collapsed', 'horizontal'] as const) {
+      const r = expanded(layout, 'desktop')
+      if (r.kind !== 'switch') throw new Error('not a switch')
+      expect(r.disabled, layout).toBe(true)
+      expect(r.checked, layout).toBe(false)
+      expect(r.description, layout).toBe('Set by the layout.')
+    }
+    // The two layouts that leave the width to the setting keep the switch live, checked as
+    // stored, with its own words (the pointer host's double-click among them).
+    for (const layout of ['single', 'multiple'] as const) {
+      const r = expanded(layout, 'desktop')
+      if (r.kind !== 'switch') throw new Error('not a switch')
+      expect(r.disabled ?? false, layout).toBe(false)
+      expect(r.checked, layout).toBe(true)
+      expect(r.description, layout).toBe(
+        'Show tab titles next to their icons. Double-click the sidebar edge to toggle.'
+      )
+    }
+    // A context without a form factor is the desktop's page and its search: the row reads the
+    // same. The tablet's shell is its own, which the desktop's layout never reaches: its row
+    // stays live whatever the profile stored.
+    expect(expanded('horizontal').disabled).toBe(true)
+    const tablet = expanded('horizontal', 'tablet')
+    if (tablet.kind !== 'switch') throw new Error('not a switch')
+    expect(tablet.disabled ?? false).toBe(false)
+    expect(tablet.checked).toBe(true)
   })
 
   it('keeps a shell’s controls to its layout: the phone bar’s rows never reach the desktop page or its search (BUG-055)', () => {

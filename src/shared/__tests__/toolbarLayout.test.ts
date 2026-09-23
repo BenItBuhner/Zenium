@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   TOOLBAR_LAYOUT_LABELS,
   TOOLBAR_LAYOUTS,
+  forcesRail,
   hasTopToolbar,
   isHorizontalTabs,
   sanitizeToolbarLayout
@@ -39,5 +40,12 @@ describe('toolbar layout (v2 §9.37, §10.4)', () => {
     expect(hasTopToolbar('horizontal')).toBe(true)
     expect(hasTopToolbar('single')).toBe(false)
     expect(hasTopToolbar('collapsed')).toBe(false)
+  })
+
+  it('names the layouts that fix the sidebar at the rail: Collapsed sidebar and Horizontal tabs, not the two that leave the width to the setting', () => {
+    expect(forcesRail('collapsed')).toBe(true)
+    expect(forcesRail('horizontal')).toBe(true)
+    expect(forcesRail('single')).toBe(false)
+    expect(forcesRail('multiple')).toBe(false)
   })
 })

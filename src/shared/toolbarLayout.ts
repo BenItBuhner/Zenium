@@ -41,3 +41,14 @@ export function isHorizontalTabs(layout: ToolbarLayout): boolean {
 export function hasTopToolbar(layout: ToolbarLayout): boolean {
   return layout === 'multiple' || layout === 'horizontal'
 }
+
+/**
+ * Whether the layout fixes the sidebar at the 56 rail whatever `sidebarExpanded` says: the
+ * Collapsed sidebar layout, which is that rail with the navigation folded into it, and the
+ * horizontal layout, whose rail beside the frame is the sidebar (§9.37). Where it does, the
+ * expanded width is not the user's to choose, and Look and Feel's "Expanded sidebar" is a
+ * dependent row (§10.4) until one of the other two layouts gives the choice back.
+ */
+export function forcesRail(layout: ToolbarLayout): boolean {
+  return layout === 'collapsed' || layout === 'horizontal'
+}

@@ -75,7 +75,12 @@ import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { languageName } from '@shared/languageNames'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
-import { TOOLBAR_LAYOUTS, TOOLBAR_LAYOUT_LABELS, hasTopToolbar } from '@shared/toolbarLayout'
+import {
+  TOOLBAR_LAYOUTS,
+  TOOLBAR_LAYOUT_LABELS,
+  forcesRail,
+  hasTopToolbar
+} from '@shared/toolbarLayout'
 import type { TranslatePreferences } from '@shared/translate'
 import { cmd, run } from '@renderer/lib/api'
 import {
@@ -353,12 +358,22 @@ function numberRow(
  * Groups in the order the design lead set for the tab: identity (Appearance, App icon), then the
  * chrome (URL bar, Pages), then page behaviour (Sites, Site exceptions), Glance last.
  */
-function lookSection({ state, set, pointer, openBarEditor }: SectionContext): RowGroup[] {
+function lookSection({
+  state,
+  set,
+  pointer,
+  formFactor,
+  openBarEditor
+}: SectionContext): RowGroup[] {
   const s = state.settings
   const caps = state.capabilities
   const pc = s.pageControls
   const patchControls = (patch: Partial<typeof pc>): void =>
     set({ pageControls: { ...pc, ...patch } })
+  // The desktop's layout fixes the sidebar at the rail under Collapsed sidebar and Horizontal
+  // tabs (§9.37): there the expanded width is the layout's, not the setting's. The phone and
+  // the tablet have shells of their own, which the layout never reaches (nor does its row).
+  const railSet = (formFactor ?? 'desktop') === 'desktop' && forcesRail(s.toolbarLayout)
   const groups: RowGroup[] = [
     {
       id: 'appearance',
@@ -404,11 +419,19 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
           kind: 'switch',
           id: 'sidebar-expanded',
           label: 'Expanded sidebar',
+          // A dependent row (§10.4) while the layout fixes the rail: laid out at .4 with
+          // `aria-disabled`, showing the width the layout set – the rail, so unchecked – and
+          // saying what set it; live again under Only sidebar and Sidebar and top toolbar. A
+          // live switch stating what the layout overrides would be a lie the page tells, and a
+          // row that left would make the page jump under the layout card.
           // The double-click is a mouse gesture: only a pointer host is told about it.
-          description: pointer
-            ? 'Show tab titles next to their icons. Double-click the sidebar edge to toggle.'
-            : 'Show tab titles next to their icons.',
-          checked: s.sidebarExpanded,
+          description: railSet
+            ? 'Set by the layout.'
+            : pointer
+              ? 'Show tab titles next to their icons. Double-click the sidebar edge to toggle.'
+              : 'Show tab titles next to their icons.',
+          checked: s.sidebarExpanded && !railSet,
+          disabled: railSet,
           onChange: (v) => set({ sidebarExpanded: v })
         },
         {

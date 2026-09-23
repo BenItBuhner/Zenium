@@ -6,7 +6,7 @@ import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
-import { hasTopToolbar, isHorizontalTabs } from '@shared/toolbarLayout'
+import { forcesRail, hasTopToolbar, isHorizontalTabs } from '@shared/toolbarLayout'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
 import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
@@ -136,7 +136,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       sidebarSide,
       sidebarWidth: sidebarHidden
         ? null
-        : settings.sidebarExpanded && !horizontal
+        : settings.sidebarExpanded && !forcesRail(settings.toolbarLayout)
           ? settings.sidebarWidth
           : COLLAPSED_WIDTH
     })

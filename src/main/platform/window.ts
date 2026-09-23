@@ -13,7 +13,7 @@ import { is } from '@electron-toolkit/utils'
 import { ElectronShortcuts } from './shortcuts'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
-import { hasTopToolbar } from '../../shared/toolbarLayout'
+import { forcesRail, hasTopToolbar } from '../../shared/toolbarLayout'
 import type { Browser } from '../../core/browser'
 import type { ZenWindow } from '../../core/window'
 import type {
@@ -532,7 +532,11 @@ export class ElectronWindow implements WindowHost {
     const bounds = this.win.getContentBounds()
     const cursor = screen.getCursorScreenPoint()
     if (sidebarHidden) {
-      const sidebarWidth = state.settings.sidebarExpanded ? state.settings.sidebarWidth : 56
+      // The width the hidden sidebar comes back at: the rail's 56 where the layout fixes it.
+      const sidebarWidth =
+        state.settings.sidebarExpanded && !forcesRail(state.settings.toolbarLayout)
+          ? state.settings.sidebarWidth
+          : 56
       const zone: EdgeZone = {
         edge: state.settings.sidebarSide,
         reveal: COMPACT_REVEAL_ZONE,
