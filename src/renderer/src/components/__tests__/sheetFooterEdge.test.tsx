@@ -144,4 +144,54 @@ describe("the footer's edge (§9.25)", () => {
       expect(ROW + BODY + SHEET_EDGE_PAD + inset).toBe(edge)
     }
   })
+
+  it("a sheet whose body ends on a row stands the body's 8 on the chassis's 8: 16 + inset to the row's box, one gutter and nothing nesting a second", () => {
+    // §9.25 gives every sheet one 16 gutter; a menu is a sheet of rows, and §6's 4 px margins
+    // are between groups, not at the sheet's edge – so the body under the last row brings 8
+    // (`pb-2`), where a `pb-1` stood the row's box 12 + inset off the edge. The rows bring no
+    // margin of their own: `.zen-sheet-item` and `.zen-v2-row` pad inside their box.
+    const components = resolve(__dirname, '..')
+    const BODIES: Array<[file: string, body: RegExp]> = [
+      ['menus/MenuSheet.tsx', /'(flex flex-col pb-\d)',\n\s*nav\.direction > 0/],
+      ['menus/LocalMenu.tsx', /<div className="(zen-v2 flex flex-col pb-\d)">/],
+      [
+        'extensions/V2Menulist.tsx',
+        /<div className="(zen-v2 flex flex-col pb-\d)" role="radiogroup"/
+      ],
+      [
+        'translate/Menulist.tsx',
+        /<div ref=\{rows\} className="(zen-v2 flex flex-col pb-\d)" role="radiogroup"/
+      ],
+      ['phone/OverviewSheet.tsx', /<ul className="(flex flex-col pb-\d)">/],
+      ['phone/ExtensionsSheet.tsx', /<div className="(zen-ext-action-menu flex flex-col pb-\d)">/],
+      ['phone/BarEditorSheet.tsx', /className="(relative flex flex-col pb-\d pt-1)"/],
+      ['reader/ReaderPreferencesPanel.tsx', /<div data-reader-prefs-panel="" className="(pb-\d)">/]
+    ]
+    const BODY = 8
+    for (const [file, body] of BODIES) {
+      const source = readFileSync(resolve(components, file), 'utf8')
+      const found = body.exec(source)
+      expect(found, `${file}: the sheet's body`).not.toBeNull()
+      const pad = found![1].split(/\s+/).filter((c) => /^pb-/.test(c))
+      expect(pad, `${file}: the body under its last row`).toEqual(['pb-2'])
+      for (const [inset, edge] of HOSTS) {
+        expect(BODY + SHEET_EDGE_PAD + inset).toBe(edge)
+      }
+    }
+    for (const row of ['.zen-sheet-item', '.zen-v2-row']) {
+      expect(rule(row), `${row} brings no margin to the edge`).not.toMatch(/\n\s*margin/)
+    }
+    // A body that ends on its own `.zen-sheet-footer` (the external-protocol sheet's two peers
+    // inline) brings nothing: the footer's 8 stands on the chassis's 8 as the chassis's own does.
+    const protocol = readFileSync(resolve(components, 'protocol/ExternalProtocolSheet.tsx'), 'utf8')
+    const phoneBody = /className=\{phone \? '([^']*)' : '[^']*'\}/.exec(protocol)
+    expect(phoneBody, "the external-protocol sheet's phone body").not.toBeNull()
+    expect(phoneBody![1].split(/\s+/).filter((c) => /^pb-/.test(c))).toEqual([])
+    expect(protocol).toMatch(/className="zen-sheet-footer"/)
+    const footer = rule('.zen-sheet-footer')
+    const bottom = Number(/\n\s*padding: \d+px \d+px (\d+)px;/.exec(footer)![1])
+    for (const [inset, edge] of HOSTS) {
+      expect(bottom + SHEET_EDGE_PAD + inset).toBe(edge)
+    }
+  })
 })

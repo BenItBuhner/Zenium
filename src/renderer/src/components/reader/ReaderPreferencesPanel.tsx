@@ -321,7 +321,9 @@ function ReaderPreferencesSheet({
         </h2>
       }
     >
-      <div data-reader-prefs-panel="">{children}</div>
+      <div data-reader-prefs-panel="" className="pb-2">
+        {children}
+      </div>
     </BottomSheet>
   )
 }

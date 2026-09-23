@@ -291,7 +291,7 @@ function ActionMenuSheet({
       sheetRef={sheet}
       contentKey={`${own.length}:${path.map((item) => item.id).join('/')}`}
     >
-      <div className="zen-ext-action-menu flex flex-col pb-1">
+      <div className="zen-ext-action-menu flex flex-col pb-2">
         {groups.map((group, index) => (
           <ul key={index} className="flex flex-col">
             {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
