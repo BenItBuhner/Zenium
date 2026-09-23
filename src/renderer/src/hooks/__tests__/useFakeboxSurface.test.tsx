@@ -45,7 +45,16 @@ function page(): { scrub: (fraction: number) => void; release: () => void } {
   document.body.appendChild(column)
   Object.defineProperty(field, 'getBoundingClientRect', {
     configurable: true,
-    value: () => ({ left: 16, top: 200, width: 380, height: 52, x: 16, y: 200, right: 396, bottom: 252 })
+    value: () => ({
+      left: 16,
+      top: 200,
+      width: 380,
+      height: 52,
+      x: 16,
+      y: 200,
+      right: 396,
+      bottom: 252
+    })
   })
   const unregister = registerFakebox('t', field, column)
   const release = (): void => {

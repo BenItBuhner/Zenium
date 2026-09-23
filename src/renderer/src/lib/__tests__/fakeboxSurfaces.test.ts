@@ -216,9 +216,10 @@ describe('the readers (the stylesheets) and the writer (the controller)', () => 
         body.includes(`${name}: inherit`) || (part && folded.includes(BOX_SUBTREE))
       for (const [, which] of body.matchAll(READ)) {
         const name = `--zen-ntp-${which}`
-        expect(inherits(name), `${label}: reads ${name} under a carrier without inheriting it`).toBe(
-          true
-        )
+        expect(
+          inherits(name),
+          `${label}: reads ${name} under a carrier without inheriting it`
+        ).toBe(true)
       }
     }
   })
@@ -242,7 +243,7 @@ describe('the readers (the stylesheets) and the writer (the controller)', () => 
       ),
       'utf8'
     )
-    expect(probe).toContain("getComputedStyle(document.documentElement)")
+    expect(probe).toContain('getComputedStyle(document.documentElement)')
     for (const name of VARS) expect(probe).toContain(`getPropertyValue('${name}')`)
   })
 })
@@ -438,16 +439,16 @@ describe('the components register the elements the stylesheets read the values o
     const faults: string[] = []
     for (const { path, elements, calls } of files) {
       for (const el of elements) {
-        const classes = el.classes.map((r) => HOOK_READERS[r]!.map((c) => `.${c}`).join('')).join(' ')
+        const classes = el.classes
+          .map((r) => HOOK_READERS[r]!.map((c) => `.${c}`).join(''))
+          .join(' ')
         if (el.refs.length === 0) {
           faults.push(
             el.refText === null
               ? `${path}:${el.line}: <${classes}> carries no ref: pass one to useFakeboxSurface(ref), or the values on it are 0`
               : `${path}:${el.line}: <${classes}> has ref={${el.refText}}: not an identifier passed to useFakeboxSurface, nor a callback assigning the element to one`
           )
-        } else if (
-          !calls.some((c) => el.refs.includes(c.ref) && c.component === el.component)
-        ) {
+        } else if (!calls.some((c) => el.refs.includes(c.ref) && c.component === el.component)) {
           faults.push(
             `${path}:${el.line}: <${classes}> ref \`${el.refs.join(' / ')}\` is not registered: the component must call useFakeboxSurface on it`
           )
