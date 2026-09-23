@@ -10,9 +10,9 @@ name: Android nightly drivers
 # the ones after it. The manifest's check (vitest, and the plan job here) fails when a *Demo class
 # is neither a driver nor skipped with a reason.
 #
-# The shards, each one job of the recipe in android-emulator-demo.yml and all in parallel: four
-# phone shards on the API 34 Google APIs image (phone-a to phone-d, the drivers by their weight so
-# each shard's drivers take about an hour), api35 for the workflows that ask for API 35 (the
+# The shards, each one job of the recipe in android-emulator-demo.yml and all in parallel: five
+# phone shards on the API 34 Google APIs image (phone-a to phone-e, the drivers by their weight so
+# each shard's drivers take under an hour), api35 for the workflows that ask for API 35 (the
 # predictive back, the sheet leave and recede, the wake and status bar, the two profiling
 # drivers), webview for the demos that need the Chromium snapshot WebView swapped into an AOSP
 # image (private tabs, media, fullscreen, the accessibility demo's private scene, the fakebox
@@ -42,6 +42,7 @@ on:
           - phone-b
           - phone-c
           - phone-d
+          - phone-e
           - api35
           - webview
           - tablet

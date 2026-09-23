@@ -6,6 +6,7 @@ import android.app.UiAutomation
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.PointF
 import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
@@ -397,25 +398,40 @@ class BackDemo {
 
     /**
      * [tapLabel], then up to `timeoutMs` for `took` to hold – the step's claim, named by `effect`
-     * (DemoHarness's `touchTapLabelExpecting`, for this driver of its own). A touch that went in
-     * without `took` holding is a fault of the run, reported once the recording is done ([record]).
+     * (DemoHarness's `touchTapLabelExpecting`, for this driver of its own). The finger goes in
+     * once the row is inside the window ([touchPoint]) and two reads of its bounds 350 ms apart
+     * agree, within [ROW_SETTLE_MS]: the menu is still coming up, and the tree lags it on the
+     * emulator – the repairs' fourth proof run's tree had the History row at
+     * `Rect(0, 2199 - 721, 1602)` for two reads, the sheet's first frame below the screen with the
+     * window's edge clipping the row's bottom, and a finger at that centre touched nothing. A row
+     * that never comes inside the window is a fault too. A touch that went in without `took`
+     * holding is a fault of the run, reported once the recording is done ([record]).
      */
     private fun touchLabelExpecting(label: String, effect: String, timeoutMs: Long = 5_000, took: () -> Boolean) {
-        var bounds = findByLabel(label)
+        var bounds: Rect? = null
+        var landing: PointF? = null
+        val settle = SystemClock.uptimeMillis() + ROW_SETTLE_MS
+        while (SystemClock.uptimeMillis() < settle) {
+            val again = findByLabel(label)
+            val at = again?.let { touchPoint(it) }
+            if (again != null && at != null && again == bounds) {
+                landing = at
+                break
+            }
+            bounds = again
+            SystemClock.sleep(350)
+        }
         if (bounds == null) {
             Log.w(TAG, "no node labelled $label to touch")
             return
         }
-        // The finger goes in once two reads of the row's bounds agree: the menu is still coming
-        // up, and the tree lags it on the emulator.
-        val settle = SystemClock.uptimeMillis() + 3_000
-        while (SystemClock.uptimeMillis() < settle) {
-            SystemClock.sleep(350)
-            val again = findByLabel(label) ?: break
-            if (again == bounds) break
-            bounds = again
+        val point = landing ?: touchPoint(bounds) ?: run {
+            val fault = "the '$label' row never came inside the window ${width}x$height within $ROW_SETTLE_MS ms (last at $bounds); no touch went in"
+            Log.e(TAG, "TOUCH FAULT: $fault")
+            touchFaults += fault
+            return
         }
-        Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+        Finger().tap(point.x, point.y)
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             if (took()) {
@@ -427,6 +443,17 @@ class BackDemo {
         val fault = "a touch on '$label' at $bounds did not take: not $effect within $timeoutMs ms"
         Log.e(TAG, "TOUCH FAULT: $fault")
         touchFaults += fault
+    }
+
+    /**
+     * Where a finger touches `bounds`: the middle of their part inside the window; null when no
+     * part is (a row the tree still has below the screen while the sheet slides in – the bounds
+     * the window's edge clipped read inverted, top below bottom, and are empty to [Rect]).
+     */
+    private fun touchPoint(bounds: Rect): PointF? {
+        val reach = Rect(bounds)
+        if (bounds.isEmpty || !reach.intersect(Rect(0, 0, width, height))) return null
+        return PointF(reach.exactCenterX(), reach.exactCenterY())
     }
 
     /** The touches that did not take; [record] fails on them once the recording is done. */
@@ -551,6 +578,8 @@ class BackDemo {
         private const val TAB_ID = "tab_example"
         private const val PILL_LABEL = "Address"
         private const val STEP_MS = 8L
+        /** [touchLabelExpecting]: how long a menu row gets to come inside the touchable band and hold still. */
+        private const val ROW_SETTLE_MS = 8_000L
         /** Inside the system's back-gesture inset on any density. */
         private const val EDGE_X = 2f
     }

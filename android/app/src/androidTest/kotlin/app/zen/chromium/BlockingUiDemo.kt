@@ -130,7 +130,7 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         shot("01b-siteinfo-shield-9")
         beat()
         if (touchTapLabelExpecting("Requests blocked", "the Settings tab is at $SECTION", prefix = true) {
-                activeCoreTab()?.optString("url") == "$SETTINGS_URL/privacy"
+                atPrivacy()
             }
         ) {
             awaitSurface(up = true, timeoutMs = 6_000)
@@ -246,7 +246,7 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         // 6. Sites without blocking: the current site's switch row, off to except it.
         note("\n6. per-site exception from the current site's row")
         // Should the section have been left (a back too many), come back to it before looking for its rows.
-        if (activeCoreTab()?.optString("url") != "$SETTINGS_URL/privacy" && !openPrivacySettings(throughMenu = false)) {
+        if (!atPrivacy() && !openPrivacySettings(throughMenu = false)) {
             note("  the section is not up; skipping the row")
         }
         if (revealRow("Sites without blocking") != null) {
@@ -377,12 +377,12 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
             if (rowBounds(SECTION, 8_000) == null) {
                 Log.w(tag, "no $SECTION category on the landing")
             } else if (!touchTapLabelExpecting(SECTION, "the tab is at the section", prefix = true) {
-                    activeCoreTab()?.optString("url") == "$SETTINGS_URL/privacy"
+                    atPrivacy()
                 }
             ) {
                 Log.w(tag, "the landing's $SECTION row did not take the tab to the section")
             }
-            if (activeCoreTab()?.optString("url") != "$SETTINGS_URL/privacy") {
+            if (!atPrivacy()) {
                 coreInvoke("page.open", """{"id":"settings","section":"privacy"}""")
             }
         } else {
@@ -412,12 +412,26 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val tab = activeCoreTab()
-            if (tab != null && tab.optString("url") == url) return tab
+            if (tab != null && pageIs(tab.optString("url"), url)) return tab
             SystemClock.sleep(250)
         }
         Log.w(tag, "the active tab did not come to $url")
         return null
     }
+
+    /**
+     * Whether a tab's address is the page `url`, its query aside: since #305 the shield row
+     * opens Privacy on the site's group, `zen://settings/privacy?site=<origin>`
+     * (`internalPageUrl`), and the landing reached from a tab already at a section keeps the
+     * tab's address. The nightly's run matched the whole string and read every Settings step
+     * as not taken.
+     */
+    private fun pageIs(address: String, url: String): Boolean =
+        address == url || address.startsWith("$url?") || (url == SETTINGS_URL && address.startsWith("$url/"))
+
+    /** The Settings tab stands at Privacy and Security: the tab's address, or the page's own word (`data-section`). */
+    private fun atPrivacy(): Boolean =
+        activeCoreTab()?.optString("url")?.let { pageIs(it, "$SETTINGS_URL/privacy") } == true || settingsSectionIs(PRIVACY_SECTION)
 
     /**
      * The bounds of the first node whose accessible text reads `text` – exactly or as a prefix: a
@@ -426,6 +440,9 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
      * node the list holds below the fold is scrolled into view first.
      */
     private fun rowBounds(text: String, timeoutMs: Long): Rect? {
+        // The chrome's document first (the tree trails the screen by seconds here; a row it has
+        // and the tree has not yet is a row all the same), the tree's node after.
+        settingsRowRect(text)?.let { return it }
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var revealed = false
         do {
