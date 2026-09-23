@@ -4,11 +4,10 @@ import { Trash2 } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { folderDeleteWords } from '@renderer/lib/folderDelete'
-import { wrapTab } from '@renderer/lib/popover'
+import { returnFocusTo, wrapTab } from '@renderer/lib/popover'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { closeFolderDeleteConfirm, type UiState } from '@renderer/lib/ui'
 import { useEscapeTrap } from '../bookmarks/escape'
-import { focusAnchor } from '../bookmarks/popover'
 
 /**
  * "Delete <folder>?" (TAB-16's desktop half; the phone's `DeleteGroupSheet` in the desktop's
@@ -26,7 +25,9 @@ import { focusAnchor } from '../bookmarks/popover'
  * and the first Tab enters at Cancel, Shift+Tab at Delete; between the two the keys wrap at the
  * ends (lib/popover.ts `wrapTab`). Escape and the scrim are Cancel; a Cancel from the keyboard
  * hands the keyboard back to the folder's header row (§9.5: one hop down), a pointer's to the
- * page.
+ * page. The header stands in the window chrome, which the frame's host keeps inert through the
+ * prompt's way out (§9.5), so it refuses the focus as the prompt leaves: the shared
+ * `returnFocusTo` gives it the focus as the chrome's `inert` lifts.
  */
 export function FolderDeleteDialog({
   state,
@@ -79,7 +80,9 @@ function FolderDeletePrompt({
   }, [])
   const cancel = (): void => {
     closeFolderDeleteConfirm(keyboard)
-    if (keyboard) focusAnchor(`[data-tab-folder="${folderId}"]`)
+    if (!keyboard) return
+    const header = document.querySelector<HTMLElement>(`[data-tab-folder="${folderId}"]`)
+    if (header) returnFocusTo(header)
   }
   const confirm = (): void => {
     // The header the prompt hung from goes with the folder: the page takes the keyboard back.

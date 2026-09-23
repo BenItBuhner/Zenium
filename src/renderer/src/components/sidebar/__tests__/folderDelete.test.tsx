@@ -15,7 +15,8 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
  * the focus as it opens (§9.22 as the #340 verdict reads it: no verb preselected, no ring; Tab
  * enters at Cancel, Shift+Tab at Delete, the keys wrap at the ends), Escape and the scrim as
  * Cancel, the danger verb running `folder.delete` without unpacking; a Cancel from the keyboard
- * hands the keyboard back to the folder's header (§9.5).
+ * hands the keyboard back to the folder's header (§9.5) – once the window chrome's `inert`, held
+ * through the prompt's way out, lifts (lib/popover.ts `returnFocusTo`).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -342,6 +343,35 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(run).not.toHaveBeenCalledWith('folder.delete', expect.anything())
     expect(uiStore.get().folderDeleteConfirm).toBeNull()
     expect(run).toHaveBeenCalledWith('focus.content', undefined)
+  })
+
+  it('a keyboard’s Cancel waits for the chrome’s inert to lift before the header takes the focus (lib/popover.ts returnFocusTo)', async () => {
+    // The strip's header stands in the window chrome, which the frame's host keeps inert through
+    // the prompt's way out (§9.5); an inert control refuses `focus()`, as the header does here
+    // while its chrome is marked.
+    const header = document.querySelector<HTMLElement>('[data-tab-folder="g"]')!
+    const chrome = document.createElement('aside')
+    chrome.setAttribute('inert', '')
+    chrome.appendChild(header)
+    document.body.appendChild(chrome)
+    const focus = header.focus.bind(header)
+    header.focus = (options) => {
+      if (!header.closest('[inert]')) focus(options)
+    }
+    browserStore.set({ state: state([tab('home', null), tab('a', 'g')], [folder()]) })
+    render(<Dialogs />)
+    requestFolderDelete('g', true)
+    await settle()
+    run.mockClear()
+    click(buttons(dialog()!)[0])
+    expect(uiStore.get().folderDeleteConfirm).toBeNull()
+    expect(document.activeElement).not.toBe(header)
+    await settle()
+    expect(document.activeElement).not.toBe(header)
+    act(() => chrome.removeAttribute('inert'))
+    await settle()
+    expect(document.activeElement).toBe(header)
+    expect(run).not.toHaveBeenCalledWith('focus.content', undefined)
   })
 
   it('goes with the folder when it is deleted or emptied under the question', async () => {
