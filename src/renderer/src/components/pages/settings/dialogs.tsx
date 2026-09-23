@@ -516,9 +516,17 @@ function ConfirmRowDialog({ row, close }: { row: ActionRow; close(): void }): JS
   )
 }
 
-/** The control of the row `id` names (`data-row`, rows.tsx), wherever it stands – the page or an item dialog. */
+/**
+ * The control of the row `id` names (`data-row`, rows.tsx), wherever it stands – the page or an
+ * item dialog: the `[data-row]` element itself when it is the control (a pressable row is one
+ * button), else the control inside it – a control row's `data-row` sits on its static `div`
+ * (`ControlRow`) and the 32 px button trails in it. The `div` itself is no place for the focus
+ * (a `.focus()` on it is a no-op and the way back would fall to `body`).
+ */
 function rowControl(id: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`[data-row="${id.replace(/["\\]/g, '\\$&')}"]`)
+  const row = document.querySelector<HTMLElement>(`[data-row="${id.replace(/["\\]/g, '\\$&')}"]`)
+  if (!row) return null
+  return row.matches(TABBABLE) ? row : row.querySelector<HTMLElement>(TABBABLE)
 }
 
 /**

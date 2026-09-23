@@ -6,8 +6,8 @@ import { act, useState, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { DialogStack } from '../dialogs'
-import type { ActionRow, FieldRow, ItemRow, RowGroup } from '../model'
-import type { RowContext, SheetRequest } from '../rows'
+import type { ActionRow, FieldRow, ItemRow, RowGroup, SettingsRow } from '../model'
+import { RowView, type RowContext, type SheetRequest } from '../rows'
 
 /*
  * The desktop's item dialog (dialogs.tsx, v2 §9.24) and a row of it that acts *after* the dialog
@@ -319,6 +319,28 @@ function deleteRow(onPress: () => void): ActionRow {
   }
 }
 
+/**
+ * A page's control row with a confirmation (Security's "Forget all…", sections.tsx): on the
+ * desktop an action row with `button` is `ControlRow` (rows.tsx) – its `data-row` on the static
+ * `div`, the button trailing inside it – and the row stays once its verb has run.
+ */
+function forgetAllRow(onPress: () => void): ActionRow {
+  return {
+    kind: 'action',
+    id: 'security-forget-all',
+    label: 'Forget all site permissions',
+    description: 'Every site asks again the next time it needs something.',
+    button: 'Forget all…',
+    destructive: true,
+    confirm: {
+      title: 'Forget all site permissions?',
+      description: 'Every site asks again the next time it needs something.',
+      action: 'Forget all'
+    },
+    onPress
+  }
+}
+
 /** A confirmation that destroys nothing (a sign-out): its verb is the primary, and the default. */
 function signOutRow(onPress: () => void): ActionRow {
   return {
@@ -361,37 +383,45 @@ function containerRow(remove: ActionRow): ItemRow {
  * drops the last, and a page row stands before the host in the document as the thing that
  * opened the first dialog (its press opens `opens`); `pageRow` names the row it is the control
  * of (`data-row`, as rows.tsx marks an action row's button), when a test wants the prompt's way
- * back to find it. `[data-cover]` around the host stands for an `inert` the stack does not
- * manage.
+ * back to find it; `page` puts the real desktop row (`RowView`, rows.tsx) on the page instead of
+ * the stand-in, its own control opening what the row opens. `[data-cover]` around the host
+ * stands for an `inert` the stack does not manage.
  */
 function Stack({
   groups,
   initial,
   opens,
-  pageRow
+  pageRow,
+  page
 }: {
   groups: readonly RowGroup[]
   initial: readonly SheetRequest[]
   opens?: SheetRequest
   pageRow?: string
+  page?: SettingsRow
 }): JSX.Element {
   const [requests, setRequests] = useState<readonly SheetRequest[]>(initial)
+  const ctx: RowContext = { open: (request) => setRequests([...requests, request]) }
   return (
     <>
-      <button
-        type="button"
-        data-page-row
-        data-row={pageRow}
-        onClick={() => opens && setRequests([...requests, opens])}
-      >
-        Personal
-      </button>
+      {page ? (
+        <RowView row={page} ctx={ctx} variant="desktop" />
+      ) : (
+        <button
+          type="button"
+          data-page-row
+          data-row={pageRow}
+          onClick={() => opens && setRequests([...requests, opens])}
+        >
+          Personal
+        </button>
+      )}
       <div data-cover>
         <FrameDialogHost>
           <DialogStack
             requests={requests}
             groups={groups}
-            ctx={{ open: (request) => setRequests([...requests, request]) }}
+            ctx={ctx}
             closeTop={() => setRequests(requests.slice(0, -1))}
           />
         </FrameDialogHost>
@@ -633,6 +663,50 @@ describe('a prompt holds the focus itself as it opens (§9.22, §9.23)', () => {
     expect(h.querySelector(LIVE_PROMPT)).toBeNull()
     expect(onPress).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(pageRow)
+  })
+
+  it('the way back from a control row’s confirmation is the row’s button – `data-row` sits on the static div (rows.tsx `ControlRow`), which cannot hold the focus – after Escape, and after the verb on a row that stays; never `body`', () => {
+    const onPress = vi.fn()
+    const forgetAll = forgetAllRow(onPress)
+    const groups: RowGroup[] = [{ id: 'security', heading: 'Security', rows: [forgetAll] }]
+    const h = render(<Stack groups={groups} initial={[]} page={forgetAll} />)
+    // The real desktop shape (Security's Forget all…, Agents' Regenerate…, a container's
+    // Delete…, an agent's Disconnect…): the row is a static `div` and the control is the 32 px
+    // button trailing in it.
+    const row = h.querySelector<HTMLElement>('[data-row="security-forget-all"]')!
+    expect(row.tagName).toBe('DIV')
+    expect(row.hasAttribute('data-static')).toBe(true)
+    expect(row.classList.contains('zen-settings-control-row')).toBe(true)
+    const button = row.querySelector<HTMLButtonElement>('button.zen-v2-button')!
+    expect(button.textContent).toBe('Forget all…')
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog')
+
+    // Escape: the prompt goes and the focus is back on the button. Not on the div – in Chromium a
+    // `.focus()` on it is a no-op and the way back falls to `body`; happy-dom lets the div take
+    // it – so the button is the one landing that reads the same in both.
+    act(() => button.focus())
+    act(() => button.click())
+    const prompt = h.querySelector<HTMLElement>(LIVE_PROMPT)!
+    expect(prompt.getAttribute('data-dialog')).toBe('confirm:security-forget-all')
+    expect(document.activeElement).toBe(prompt)
+    escape()
+    expect(h.querySelector(LIVE_PROMPT)).toBeNull()
+    expect(onPress).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(button)
+
+    // The verb, on a row that stays: the row acts once, the prompt goes, and the focus is back
+    // on the same button – the row is still on the page (re-rendered or not, `data-row` finds it).
+    act(() => button.click())
+    const again = h.querySelector<HTMLElement>(LIVE_PROMPT)!
+    expect(document.activeElement).toBe(again)
+    const verb = again.querySelector<HTMLButtonElement>('[data-action="confirm"]')!
+    expect(verb.textContent).toBe('Forget all')
+    act(() => verb.focus())
+    act(() => verb.click())
+    expect(h.querySelector(LIVE_PROMPT)).toBeNull()
+    expect(onPress).toHaveBeenCalledTimes(1)
+    expect(h.querySelector('[data-row="security-forget-all"]')).toBe(row)
+    expect(document.activeElement).toBe(button)
   })
 
   it('an item dialog still opens on its first row, a form on its field (§9.22 leaves the container to a notice)', () => {
