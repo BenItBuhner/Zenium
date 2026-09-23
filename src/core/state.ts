@@ -81,6 +81,7 @@ import {
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeHomepage } from '../shared/homepage'
 import { sanitizeToolbarLayout } from '../shared/toolbarLayout'
+import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
 import {
   allSearchEngines,
   defaultSearchEngineOf,
@@ -635,6 +636,10 @@ export class BrowserState {
     this.settings.toolbarLayout = sanitizeToolbarLayout(
       data.settings?.toolbarLayout,
       DEFAULT_SETTINGS.toolbarLayout
+    )
+    this.settings.devtoolsDock = sanitizeDevtoolsDock(
+      data.settings?.devtoolsDock,
+      DEFAULT_SETTINGS.devtoolsDock
     )
     this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
       ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')

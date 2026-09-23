@@ -4,6 +4,7 @@ import { MonitorSmartphone, Plus, X } from 'lucide-react'
 import type { Rect, SidePanelInfo, SplitGroup, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
+import { devtoolsDockedInFrame } from '@renderer/lib/contentRadius'
 import { coverPrimed, hideFollowsCover } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { fakeboxHoldsChrome, fakeboxMorphStore } from '@renderer/lib/fakeboxMorph'
@@ -74,6 +75,8 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
   useRecedeSurface(frameRef)
   const tab = activeTab(state)
   const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
+  // A developer toolbox docked in the frame's box on a page the window shows (§9.29).
+  const toolboxDocked = devtoolsDockedInFrame(state)
   const glanceActive = ui.glanceActive
   const glanceTabId = state.glance?.tabId ?? null
   const glanceParentId = state.glance?.parentTabId ?? null
@@ -268,7 +271,16 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                     // The page is swapped for this picture on every host: the view goes only
                     // once the picture is painted (see lib/cover.ts, `hideFollowsCover`).
                     cover={hideFollowsCover()}
-                    className="h-full w-full object-cover object-top"
+                    // With a developer toolbox docked in the frame (§9.29) the picture is the
+                    // page's part of the box alone – the toolbox is not in the host's capture –
+                    // so it is drawn at its own size in the page's corner, the toolbox's band
+                    // left to the frame's ground, rather than scaled up over the whole box.
+                    className={cn(
+                      'h-full w-full',
+                      toolboxDocked && !group
+                        ? 'object-contain object-left-top'
+                        : 'object-cover object-top'
+                    )}
                   />
                 ) : null}
                 {/*
