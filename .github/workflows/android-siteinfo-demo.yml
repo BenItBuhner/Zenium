@@ -8,6 +8,8 @@ name: Android site info demo
 # live in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/android-primitives-pass-6-b-9271]
 
 permissions:
   contents: read
