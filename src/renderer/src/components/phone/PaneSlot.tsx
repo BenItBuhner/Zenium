@@ -10,13 +10,15 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 
 /**
  * A pane on its way out: a still of it – its DOM, copied – drawn where it stood while the next
- * pane comes up in the slot; `scrollTop` is where the pane's grid was scrolled to.
+ * pane comes up in the slot; `scrollTop` is where the pane's grid was scrolled to; `theme` the
+ * window's polarity (the root's `data-theme`) as the still was taken, the one it is drawn under.
  */
 export interface PaneStill {
   key: number
   node: HTMLElement
   rect: Rect
   scrollTop: number
+  theme: string
 }
 
 interface SlotProps {
@@ -25,16 +27,23 @@ interface SlotProps {
   root: RefObject<HTMLElement | null>
   onLeave: (still: PaneStill) => void
   className: string
+  /**
+   * A still of the pane before is up over the slot: `data-switching` on the slot, for a surface
+   * whose fade in is the switch's alone and not its entrance (the sidebar's pose; the overview's
+   * pane fades in on its own class whenever it comes up).
+   */
+  switching?: boolean
   children: ReactNode
 }
 
 /**
- * The slot the overview's pane fills. A pane switch is a cross-fade (v2 §11.4): the pane that
- * leaves stays in view 120 ms fading out while the next fades in over the same slot, the way
- * `Departures` keeps a closed card in view while the grid closes its gap. React takes the old
- * pane out of the document in the commit that brings the new one, so its still is taken just
- * before, in `getSnapshotBeforeUpdate` – the one read of the DOM as it stood before a commit,
- * which only a class component has (and which StrictMode does not replay).
+ * The slot the overview's pane fills – and the tablet sidebar's pose (`Sidebar`), which switches
+ * the same way. A pane switch is a cross-fade (v2 §11.4): the pane that leaves stays in view
+ * 120 ms fading out while the next fades in over the same slot, the way `Departures` keeps a
+ * closed card in view while the grid closes its gap. React takes the old pane out of the
+ * document in the commit that brings the new one, so its still is taken just before, in
+ * `getSnapshotBeforeUpdate` – the one read of the DOM as it stood before a commit, which only a
+ * class component has (and which StrictMode does not replay).
  */
 export class PaneSlot extends Component<SlotProps> {
   private readonly el = createRef<HTMLDivElement>()
@@ -51,10 +60,10 @@ export class PaneSlot extends Component<SlotProps> {
   }
 
   render(): JSX.Element {
-    const { pane, className, children } = this.props
+    const { pane, className, switching, children } = this.props
     // A key per pane: the pane comes up fresh, its cells and its fade with it.
     return (
-      <div key={pane} ref={this.el} className={className}>
+      <div key={pane} ref={this.el} className={className} data-switching={switching || undefined}>
         {children}
       </div>
     )
@@ -63,20 +72,47 @@ export class PaneSlot extends Component<SlotProps> {
 
 let stillSeq = 0
 
+/**
+ * The hooks a still sheds. A still is a picture, not the pane: its cells belong to no FLIP set
+ * (`data-cell`), its rows to no strip – lib/tabStrip.ts finds the strip's items by
+ * `data-strip-item`, lib/drag.ts its lists by `data-tab-scroller` / `data-tab-list` and its
+ * targets by `data-drop`, lib/dnd.ts the New Tab row, the Essentials and a space's target – and
+ * its hooks to no test; its own entrance fade must not play again over the fade out
+ * (`zen-overview-pane`). The pane's content keeps its `data-pane`.
+ */
+const HOOKS = [
+  'data-cell',
+  'data-testid',
+  'data-strip-item',
+  'data-strip-parent',
+  'data-tab-id',
+  'data-tab-scroller',
+  'data-tab-list',
+  'data-tab-folder',
+  'data-new-tab',
+  'data-drop',
+  'data-essentials',
+  'data-space-target',
+  'data-strip-empty'
+]
+
+/** The pane's scroller, whose place the still keeps: the overview's grid, or the sidebar's list in view. */
+const SCROLLER = '.zen-overview-grid, [data-tab-scroller][data-active="true"]'
+
 /** The pane's box in the root's layout space, and a copy of its DOM that nothing finds or touches. */
 function takeStill(el: HTMLElement, root: HTMLElement): PaneStill {
   const r = el.getBoundingClientRect()
   const rr = root.getBoundingClientRect()
   const scale = root.offsetWidth ? rr.width / root.offsetWidth : 1
-  const scrollTop = el.querySelector<HTMLElement>('.zen-overview-grid')?.scrollTop ?? 0
+  const scrollTop = el.querySelector<HTMLElement>(SCROLLER)?.scrollTop ?? 0
   const node = el.cloneNode(true) as HTMLElement
-  // A still is a picture, not the pane: its cells belong to no FLIP set, its hooks to no one,
-  // and its own entrance fade must not play again over the fade out. The pane's content keeps
-  // its `data-pane`, by which the still finds its scroller.
+  // The copy's scroller is marked before the hooks go, so the still finds it to scroll it.
+  node.querySelector<HTMLElement>(SCROLLER)?.setAttribute('data-still-scroller', '')
   node.classList.remove('zen-overview-pane')
-  for (const hook of node.querySelectorAll('[data-cell], [data-testid], .zen-overview-grid')) {
-    hook.removeAttribute('data-cell')
-    hook.removeAttribute('data-testid')
+  for (const hook of node.querySelectorAll(
+    [...HOOKS.map((attr) => `[${attr}]`), '.zen-overview-grid'].join(', ')
+  )) {
+    for (const attr of HOOKS) hook.removeAttribute(attr)
     hook.classList.remove('zen-overview-grid')
   }
   return {
@@ -88,7 +124,8 @@ function takeStill(el: HTMLElement, root: HTMLElement): PaneStill {
       width: r.width / scale,
       height: r.height / scale
     },
-    scrollTop
+    scrollTop,
+    theme: el.ownerDocument.documentElement.dataset.theme ?? ''
   }
 }
 
@@ -122,7 +159,7 @@ function Still({
     const el = ref.current
     if (!el) return
     el.replaceChildren(still.node)
-    const scroller = el.querySelector<HTMLElement>('[data-pane]')
+    const scroller = el.querySelector<HTMLElement>('[data-still-scroller]')
     if (scroller) scroller.scrollTop = still.scrollTop
     // 1 → 0 over the same 120 ms the pane coming up takes 0 → 1, reduced motion included (v2
     // §11.4 as amended: content changing in place on a window strip fades the same there).
@@ -141,13 +178,18 @@ function Still({
       if (timer !== null) clearTimeout(timer)
     }
   }, [still, onDone])
+  // A still is a picture of the pane under the polarity it left in: its rows read the window's
+  // live tokens, and §11.6's blend cuts the ink at its midpoint – a still outliving the cut (a
+  // slow frame, reduced motion's cut at once) would draw the rows that left in the other pose's
+  // ink. main.css draws no still whose `data-still-theme` is not the root's.
   return (
     <div
       ref={ref}
-      className="pointer-events-none absolute z-10 flex flex-col overflow-hidden"
+      className="zen-pane-still pointer-events-none absolute z-10 flex flex-col overflow-hidden"
       aria-hidden
       inert
-      data-testid="overview-pane-still"
+      data-testid="pane-still"
+      data-still-theme={still.theme || undefined}
       style={{
         left: still.rect.x,
         top: still.rect.y,

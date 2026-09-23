@@ -161,6 +161,16 @@ function masking(lock: Pick<PrivateLockState, 'locked' | 'lifting'>): boolean {
 }
 
 /**
+ * `masking` for a rendering component: the private tabs' identity is masked on every surface
+ * (the tablet sidebar's private pose lies inert under the lock's veil meanwhile).
+ */
+export function usePrivateMasked(): boolean {
+  const locked = privateLockStore.use((s) => s.locked)
+  const lifting = privateLockStore.use((s) => s.lifting)
+  return masking({ locked, lifting })
+}
+
+/**
  * This tab's card shows nothing of its page: it is private and the private tabs are locked (or
  * the lock is lifting, the cover still over the page). Wherever a card is drawn – the overview's
  * Private pane and its hero, the swipe track's neighbours, a card leaving or in the hand – the
