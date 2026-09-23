@@ -5982,8 +5982,12 @@
    * which the selected part of the page shows undimmed. The marquee's 2 px accent outline sits
    * outside its box, on the dimmed part, so the hole is exactly what the engine gets; its size
    * label is a 13 px pill (`--v2-panel`, the hairline, the control radius) at the marquee's
-   * bottom-right corner, placed by `labelPlacement`. The cursor is a crosshair over the page
-   * while a drag would draw. The toolbar is §9.20's floating toolbar: a panel of the page family
+   * bottom-right corner, placed by `labelPlacement`. A drag draws on the capturable field alone
+   * (`.zen-capture-field`, `clientFrame`: the frame less the classic scrollbar's gutters, from
+   * the frame's top-left corner in either text direction – the gutter is no page content and
+   * the engine never paints it), the box the cursor is a crosshair over; the gutter, dimmed
+   * under the scrim like the rest, keeps the default cursor and a press on it draws nothing.
+   * The toolbar is §9.20's floating toolbar: a panel of the page family
    * at 6 padding – §9.16's control + 12, 44 tall – whose leading run is the 13/69 % hint (the
    * state the page is in, `.zen-capture-hint`), then a 1 × 20 hairline at 8 / 8 (the 8 gap on
    * both sides), the two §9.3 32 px action buttons with 16 glyphs (`.zen-capture-mode`,
@@ -5998,13 +6002,19 @@
     outline: none;
     user-select: none;
   }
-  .zen-capture[data-selecting] {
-    cursor: crosshair;
-  }
   .zen-capture-scrim {
     position: absolute;
     inset: 0;
     background: var(--v2-scrim-modal);
+  }
+  /*
+   * Over the scrim, transparent, placed by the overlay (`left`/`top`/`width`/`height` inline):
+   * it takes the pointer so the crosshair is its own box's and the container above reads the
+   * drag off it; the marquee and its label, which take no pointer, sit over it.
+   */
+  .zen-capture-field {
+    position: absolute;
+    cursor: crosshair;
   }
   .zen-capture-marquee {
     position: absolute;

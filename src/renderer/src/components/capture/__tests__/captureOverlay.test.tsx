@@ -43,11 +43,16 @@ const VIEWPORT: PageViewport = {
   scrollY: 600,
   width: 1200,
   height: 800,
+  clientWidth: 1200,
+  clientHeight: 800,
+  rtl: false,
   zoom: 1,
   devicePixelRatio: 1,
   documentWidth: 1200,
   documentHeight: 3000
 }
+/** The same page with a classic 15 px scrollbar (Linux under Xvfb shows one on a tall page). */
+const SCROLLBAR: PageViewport = { ...VIEWPORT, clientWidth: 1185 }
 const RESULT: PageCaptureResult = {
   dataUrl: 'data:image/png;base64,AAAA',
   width: 400,
@@ -318,6 +323,69 @@ describe('the dimmed page (capture-02)', () => {
     expect(dialog.dataset.capture).toBe('selecting')
     expect(invoke).not.toHaveBeenCalled()
     expect(el.querySelector('[data-capture-toolbar]')).not.toBeNull()
+  })
+
+  it('over a page with a classic scrollbar the drag field is clientWidth wide from the frame’s corner, the toolbar centres on it, a drag is clamped inside it and the engine gets that box; a press on the gutter draws nothing (§5: the gutter is not capturable)', async () => {
+    const computed = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((node, pseudo) =>
+      node instanceof HTMLElement && node.hasAttribute('data-capture-toolbar')
+        ? ({ width: '273.7px' } as CSSStyleDeclaration)
+        : computed(node, pseudo)
+    )
+    const el = open(SCROLLBAR)
+    const dialog = overlay(el)!
+    // The field: the frame less the 15 px gutter, anchored at the frame's top-left corner; the
+    // scrim still covers the whole frame (the gutter is dimmed with the rest).
+    const field = el.querySelector<HTMLElement>('[data-capture-field]')!
+    expect(field.style.left).toBe('0px')
+    expect(field.style.top).toBe('48px')
+    expect(field.style.width).toBe('1185px')
+    expect(field.style.height).toBe('800px')
+    expect(dialog.dataset.selecting).toBe('true')
+    // The toolbar centres on the field (7.5 px left of the frame's centre; 456, not 463).
+    const toolbar = el.querySelector<HTMLElement>('[data-capture-toolbar]')!
+    expect(toolbar.style.left).toBe(`${Math.round(1185 / 2 - 273.7 / 2)}px`)
+    expect(toolbar.style.left).toBe('456px')
+    // A press on the gutter draws nothing.
+    pointer(dialog, 'pointerdown', 1190, 300)
+    pointer(dialog, 'pointermove', 1199, 500)
+    expect(el.querySelector('[data-capture-marquee]')).toBeNull()
+    pointer(dialog, 'pointerup', 1199, 500)
+    expect(dialog.dataset.capture).toBe('selecting')
+    expect(invoke).not.toHaveBeenCalled()
+    // A drag from the page past the gutter stops at the field's edge; the chip reads the box the
+    // engine will get – 185 wide, to the page's clientWidth.
+    pointer(dialog, 'pointerdown', 1000, 200)
+    pointer(dialog, 'pointermove', 1300, 500)
+    const marquee = el.querySelector<HTMLElement>('[data-capture-marquee]')!
+    expect(marquee.style.left).toBe('1000px')
+    expect(marquee.style.width).toBe('185px')
+    expect(marquee.style.height).toBe('300px')
+    expect(el.querySelector('[data-capture-size]')?.textContent).toBe('185 × 300')
+    pointer(dialog, 'pointerup', 1300, 500)
+    expect(invoke).toHaveBeenCalledWith('page.capture', {
+      tabId: 't1',
+      mode: 'region',
+      region: { x: 1000, y: 752, width: 185, height: 300 },
+      format: 'png'
+    })
+    await settle()
+    expect(el.querySelector('[data-capture-result="ok"]')).not.toBeNull()
+  })
+
+  it('a host that reports no client size (an older host’s answer) gets the whole frame as the field', () => {
+    const older = { ...VIEWPORT } as Partial<PageViewport>
+    delete older.clientWidth
+    delete older.clientHeight
+    const el = open(older as PageViewport)
+    const dialog = overlay(el)!
+    const field = el.querySelector<HTMLElement>('[data-capture-field]')!
+    expect(field.style.width).toBe('1200px')
+    expect(field.style.height).toBe('800px')
+    pointer(dialog, 'pointerdown', 1000, 200)
+    pointer(dialog, 'pointermove', 1300, 500)
+    expect(el.querySelector<HTMLElement>('[data-capture-marquee]')!.style.width).toBe('200px')
+    expect(el.querySelector('[data-capture-size]')?.textContent).toBe('200 × 300')
   })
 
   it('a press on the toolbar draws nothing: Visible area captures at once, with no region', async () => {

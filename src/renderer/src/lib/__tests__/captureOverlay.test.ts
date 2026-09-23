@@ -1,6 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CaptureTooLargeError, type PageCaptureResult, type PageViewport } from '@shared/capture'
+import {
+  CaptureTooLargeError,
+  regionFromChrome,
+  type PageCaptureResult,
+  type PageViewport
+} from '@shared/capture'
 import type { Rect, UIState } from '@shared/types'
 
 vi.mock('@renderer/lib/api', () => ({
@@ -13,12 +18,14 @@ import { cmd, run } from '@renderer/lib/api'
 import {
   captureOpener,
   captureReducer,
+  clientFrame,
   closeCapture,
   dragRect,
   FAILED_TITLE,
   fileNameOf,
   fitPicture,
   folderNameOf,
+  inRect,
   LABEL_GAP,
   labelPlacement,
   marqueeOf,
@@ -56,11 +63,16 @@ const VIEWPORT: PageViewport = {
   scrollY: 0,
   width: 1200,
   height: 800,
+  clientWidth: 1200,
+  clientHeight: 800,
+  rtl: false,
   zoom: 1,
   devicePixelRatio: 1,
   documentWidth: 1200,
   documentHeight: 3000
 }
+/** The same page with a classic 15 px scrollbar (Linux, Windows): a column of the frame no capture can take. */
+const SCROLLBAR: PageViewport = { ...VIEWPORT, clientWidth: 1185 }
 const RESULT: PageCaptureResult = {
   dataUrl: 'data:image/png;base64,AAAA',
   width: 400,
@@ -278,6 +290,76 @@ describe('the marquee', () => {
     expect(marqueeOf(drag(-100, -100, -1, -1), FRAME)).toBeNull()
     expect(marqueeOf(drag(1200, 0, 1300, 100), FRAME)).toBeNull()
     expect(marqueeOf(drag(10.2, 10.2, 10.4, 10.4), FRAME)).toBeNull()
+  })
+})
+
+describe('the capturable field (§5: the layout viewport, the scrollbar’s gutter left out)', () => {
+  it('is the frame less the gutter, from the frame’s top-left corner: clientWidth × clientHeight at the zoom', () => {
+    expect(clientFrame(FRAME, SCROLLBAR)).toEqual({ x: 0, y: 0, width: 1185, height: 800 })
+    // A horizontal scrollbar too: a row off the bottom.
+    expect(clientFrame(FRAME, { ...SCROLLBAR, clientHeight: 785 })).toEqual({
+      x: 0,
+      y: 0,
+      width: 1185,
+      height: 785
+    })
+    // The frame away from the window's corner keeps its origin; only the far edges move.
+    const frame: Rect = { x: 240, y: 88, width: 1200, height: 800 }
+    expect(clientFrame(frame, SCROLLBAR)).toEqual({ x: 240, y: 88, width: 1185, height: 800 })
+  })
+
+  it('the gutter is its own width in the chrome’s pixels at any zoom: (width − clientWidth) × zoom', () => {
+    // At 125 % the page reads 960 CSS px across the 1200 frame, 948 of them content: the 12 CSS
+    // px gutter is the same 15 window pixels.
+    const zoomed: PageViewport = { ...VIEWPORT, zoom: 1.25, width: 960, clientWidth: 948 }
+    expect(clientFrame(FRAME, zoomed)).toEqual({ x: 0, y: 0, width: 1185, height: 800 })
+    // At 50 % a 30 CSS px gutter is still 15.
+    const small: PageViewport = { ...VIEWPORT, zoom: 0.5, width: 2400, clientWidth: 2370 }
+    expect(clientFrame(FRAME, small)).toEqual({ x: 0, y: 0, width: 1185, height: 800 })
+  })
+
+  it('is anchored at the top-left corner in a right-to-left document too: rtl is information, not an offset', () => {
+    // Chromium keeps the main frame's vertical scrollbar in the right-hand columns whatever the
+    // document's direction (the engine's measurement), so the field is the same box.
+    expect(clientFrame(FRAME, { ...SCROLLBAR, rtl: true })).toEqual(clientFrame(FRAME, SCROLLBAR))
+  })
+
+  it('is the whole frame where scrollbars overlay the page, where the host reports no client size, and without geometry', () => {
+    expect(clientFrame(FRAME, VIEWPORT)).toEqual(FRAME)
+    // An older host's answer, the fields not there: read through the engine's `clientSide`.
+    const older = { ...VIEWPORT } as Partial<PageViewport>
+    delete older.clientWidth
+    delete older.clientHeight
+    expect(clientFrame(FRAME, older as PageViewport)).toEqual(FRAME)
+    // Nothing usable: a page with no layout yet (0), a value past the visible area.
+    expect(clientFrame(FRAME, { ...VIEWPORT, clientWidth: 0, clientHeight: 0 })).toEqual(FRAME)
+    expect(clientFrame(FRAME, { ...VIEWPORT, clientWidth: 1300 })).toEqual(FRAME)
+    expect(clientFrame(FRAME, null)).toEqual(FRAME)
+  })
+
+  it('a drag past the gutter is clamped at the field’s edge, and its region ends at clientWidth', () => {
+    const field = clientFrame(FRAME, SCROLLBAR)
+    const marquee = marqueeOf(drag(1000, 100, 1300, 300), field)
+    expect(marquee).toEqual({ x: 1000, y: 100, width: 185, height: 200 })
+    // The size chip and the engine's region read the same box: 185 wide, to the page's 1185.
+    expect(marqueeSize(marquee!, field, SCROLLBAR)).toEqual({ width: 185, height: 200 })
+    expect(regionFromChrome(marquee!, field, SCROLLBAR)).toEqual({
+      x: 1000,
+      y: 100,
+      width: 185,
+      height: 200
+    })
+    // A drag wholly on the gutter draws nothing.
+    expect(marqueeOf(drag(1190, 100, 1199, 300), field)).toBeNull()
+  })
+
+  it('a press is inside the field up to its far edges, which are the gutter’s first pixels', () => {
+    const field = clientFrame(FRAME, SCROLLBAR)
+    expect(inRect({ x: 0, y: 0 }, field)).toBe(true)
+    expect(inRect({ x: 1184, y: 799 }, field)).toBe(true)
+    expect(inRect({ x: 1185, y: 100 }, field)).toBe(false)
+    expect(inRect({ x: 100, y: 800 }, field)).toBe(false)
+    expect(inRect({ x: -1, y: 100 }, field)).toBe(false)
   })
 })
 

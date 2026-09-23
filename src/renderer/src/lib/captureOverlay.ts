@@ -1,5 +1,6 @@
 import {
   captureErrorMessage,
+  clientSide,
   isCaptureTooLarge,
   regionFromChrome,
   type PageCaptureMode,
@@ -113,6 +114,41 @@ export function pageFrame(state: UIState, tabId: string, area: Rect, gap: number
     if (pane) return pane.rect
   }
   return area
+}
+
+/**
+ * The part of the page's frame a capture can take, in chrome pixels: the frame less the
+ * scrollbar gutters – the layout viewport, `clientWidth` × `clientHeight` page CSS px at the
+ * page's zoom (the gutter's own width in the chrome's pixels is `(width − clientWidth) × zoom`,
+ * 15 for a classic scrollbar at any zoom), anchored at the frame's top-left corner in either
+ * text direction: Chromium draws the main frame's vertical scrollbar in the right-hand columns
+ * whatever the document's direction (`PageViewport.rtl` is information, not an offset – the
+ * engine's measurement on the packaged build). The gutter is not page content and the engine
+ * never paints it (§5 of its contract: a visible-area picture is `clientWidth` × `clientHeight`,
+ * a region is cut at that edge), so the drag overlay is this box: the marquee is drawn inside
+ * it, the toolbar centres on it, and the size chip reads what the result will be. The frame
+ * itself where a host reports no client size (`clientSide`: an older host's answer, a page
+ * with no layout yet) or where scrollbars overlay the page (`clientWidth === width`: macOS,
+ * Android), and with no geometry at all.
+ */
+export function clientFrame(frame: Rect, viewport: PageViewport | null): Rect {
+  if (!viewport) return frame
+  const zoom = Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1
+  const gutterX = (viewport.width - clientSide(viewport.clientWidth, viewport.width)) * zoom
+  const gutterY = (viewport.height - clientSide(viewport.clientHeight, viewport.height)) * zoom
+  return {
+    x: frame.x,
+    y: frame.y,
+    width: Math.max(0, frame.width - gutterX),
+    height: Math.max(0, frame.height - gutterY)
+  }
+}
+
+/** Whether `at` lies in `rect` (its right and bottom edges excluded, as pixels are counted). */
+export function inRect(at: Point, rect: Rect): boolean {
+  return (
+    at.x >= rect.x && at.y >= rect.y && at.x < rect.x + rect.width && at.y < rect.y + rect.height
+  )
 }
 
 /**

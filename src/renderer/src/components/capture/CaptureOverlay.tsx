@@ -10,9 +10,11 @@ import {
   captureOpener,
   capturePage,
   captureReducer,
+  clientFrame,
   closeCapture,
   fitPicture,
   folderNameOf,
+  inRect,
   labelPlacement,
   marqueeOf,
   marqueeSize,
@@ -74,15 +76,19 @@ export function CaptureLayer(): JSX.Element | null {
  * on the content frame alone (the sidebar and toolbar undimmed and inert), drawn here rather
  * than by the host so the marquee can be a cut-out of it – the selected part of the page shows
  * undimmed inside a 2 px accent outline with its size, in the picture's device pixels, on a 13
- * px label at the marquee's bottom-right corner (above it when there is no room below). A
- * §9.20 floating toolbar at the top centre of the page – 44 tall, on a whole pixel – tells the
+ * px label at the marquee's bottom-right corner (above it when there is no room below). The
+ * drag draws on the capturable part of the page's frame alone (`clientFrame`: the layout
+ * viewport, `clientWidth` × `clientHeight` of the page at its zoom, from the frame's top-left
+ * corner in either text direction – the classic scrollbar's gutter is no page content and the
+ * engine never paints it), the field the cursor is a crosshair over; a press on the gutter
+ * draws nothing. A §9.20 floating toolbar at the top centre of that field – 44 tall, on a
+ * whole pixel – tells the
  * state the page is in as a 13/69 % hint in its leading run ("Drag to select an area": a state
  * the surface cannot leave is never a pressed button), then, past a hairline, holds the two
  * ways that capture at once as §9.3 buttons (Visible area, Full page) and a Cancel at its end.
  * Where the host cannot say where the page is scrolled to, the hint says so instead and the
  * two actions are `aria-disabled` (§9.30), their title the same reason: a paint without the
- * page's geometry is a paint the engine cannot place. The cursor is a crosshair over the page
- * while a drag would draw. A release maps the marquee's
+ * page's geometry is a paint the engine cannot place. A release maps the marquee's
  * chrome box to the page's document (`regionFromChrome`, §3 of the engine's contract) and asks
  * `page.capture`; the answer is the result card (`ResultCard`), a refusal the failed card
  * (`FailedCard`): the engine's budget refusal in its own sentence, "Nothing to capture" for a
@@ -143,6 +149,10 @@ function CaptureOverlay({
     const page = pageFrame(state, tabId, area ?? box, gap)
     return { x: page.x - box.x, y: page.y - box.y, width: page.width, height: page.height }
   }, [area, box, state, tabId, gap])
+  // The part of the frame a capture can take: the frame less the scrollbar gutters, from its
+  // top-left corner. The marquee, the toolbar and the size label are this box's; the scrim and
+  // the stages (the cards, the toast) are the whole frame's.
+  const capturable = useMemo<Rect>(() => clientFrame(frame, viewport), [frame, viewport])
 
   // The chrome is inert while the overlay is up (§9.5, §9.22), as the host would hold it for a
   // dialog with the host's scrim. Declared before `usePopover` so that, as the overlay unmounts,
@@ -177,7 +187,10 @@ function CaptureOverlay({
     const request =
       phase.mode === 'region'
         ? phase.marquee && viewport
-          ? { mode: 'region' as const, region: regionFromChrome(phase.marquee, frame, viewport) }
+          ? {
+              mode: 'region' as const,
+              region: regionFromChrome(phase.marquee, capturable, viewport)
+            }
           : null
         : { mode: phase.mode }
     if (!request || (request.mode === 'region' && !request.region)) {
@@ -221,37 +234,38 @@ function CaptureOverlay({
   const selecting = phase.kind === 'selecting'
   const canSelect = selecting && viewport !== null
 
-  // The toolbar rests on whole pixels (§9.16): centred on the page's frame from a measured
-  // width – the labels' widths are the font's, fractional – with the left rounded in window
-  // pixels. A `translate: -50%` from that width would leave the box on a fraction, and the
-  // hairline and the separator smeared over two columns; only the pop's own transform plays.
+  // The toolbar rests on whole pixels (§9.16): centred on the capturable part of the page's
+  // frame from a measured width – the labels' widths are the font's, fractional – with the left
+  // rounded in window pixels. A `translate: -50%` from that width would leave the box on a
+  // fraction, and the hairline and the separator smeared over two columns; only the pop's own
+  // transform plays.
   useLayoutEffect(() => {
     const el = toolbarRef.current
     if (!el) return
     const width = parseFloat(getComputedStyle(el).width) || el.offsetWidth
-    const left = Math.round(box.x + frame.x + frame.width / 2 - width / 2) - box.x
-    const top = Math.round(box.y + frame.y + TOOLBAR_INSET) - box.y
+    const left = Math.round(box.x + capturable.x + capturable.width / 2 - width / 2) - box.x
+    const top = Math.round(box.y + capturable.y + TOOLBAR_INSET) - box.y
     el.style.left = `${left}px`
     el.style.top = `${top}px`
-  }, [box, frame, selecting])
+  }, [box, capturable, selecting])
 
   // The size label sits at the marquee's corner once it has a width to place (`labelPlacement`).
   const marquee =
     phase.kind === 'selecting' && phase.drag
-      ? marqueeOf(phase.drag, frame)
+      ? marqueeOf(phase.drag, capturable)
       : phase.kind === 'capturing'
         ? phase.marquee
         : null
   useLayoutEffect(() => {
     const el = labelRef.current
     if (!el || !marquee) return
-    const { x, y } = labelPlacement(marquee, frame, {
+    const { x, y } = labelPlacement(marquee, capturable, {
       width: el.offsetWidth,
       height: el.offsetHeight
     })
     el.style.left = `${x}px`
     el.style.top = `${y}px`
-  }, [marquee, frame])
+  }, [marquee, capturable])
 
   // A toast stands §9.33's 2.8 s – 5 s with an action to reach – a newer one restarting the clock.
   useEffect(() => {
@@ -283,9 +297,13 @@ function CaptureOverlay({
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
     if (!canSelect || e.button !== 0) return
     if (e.target instanceof Element && e.target.closest('[data-capture-toolbar]')) return
+    // A press outside the capturable field – on the scrollbar's gutter – draws nothing: the
+    // marquee is never drawn over what the engine would not paint.
+    const at = toRoot(e)
+    if (!inRect(at, capturable)) return
     e.preventDefault()
     ref.current?.setPointerCapture(e.pointerId)
-    dispatch({ type: 'dragStart', at: toRoot(e) })
+    dispatch({ type: 'dragStart', at })
   }
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
     if (selecting && phase.drag) dispatch({ type: 'dragMove', at: toRoot(e) })
@@ -293,7 +311,7 @@ function CaptureOverlay({
   const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>): void => {
     if (!(selecting && phase.drag)) return
     dispatch({ type: 'dragMove', at: toRoot(e) })
-    dispatch({ type: 'dragEnd', frame })
+    dispatch({ type: 'dragEnd', frame: capturable })
   }
   const onPointerCancel = (): void => {
     if (selecting && phase.drag) dispatch({ type: 'dragCancel' })
@@ -368,11 +386,15 @@ function CaptureOverlay({
           ? 'Drag over the page to select an area, or take the visible area or the full page from the toolbar. Escape cancels.'
           : `${NO_GEOMETRY}, so nothing can be captured. Escape cancels.`}
       </p>
+      {/* The field a drag draws on: the frame less the scrollbar gutters, the crosshair's box. */}
+      {canSelect && (
+        <div className="zen-capture-field" style={rectStyle(capturable)} data-capture-field />
+      )}
       {marquee && (
         <>
           <div className="zen-capture-marquee" style={rectStyle(marquee)} data-capture-marquee />
           <div ref={labelRef} className="zen-capture-size zen-v2-panel" data-capture-size>
-            {sizeText(marqueeSize(marquee, frame, viewport))}
+            {sizeText(marqueeSize(marquee, capturable, viewport))}
           </div>
         </>
       )}
