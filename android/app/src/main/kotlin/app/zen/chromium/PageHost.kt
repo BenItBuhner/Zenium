@@ -153,6 +153,19 @@ interface PageHost {
     fun pullEvent(tabId: String, phase: String, payload: JSONObject?) {}
 
     /**
+     * The edge drag that goes back or forward in a page's history moved on (GN-04): `start`
+     * (`{ edge }`), `move` (`{ travel, time }`, CSS px), `release` or `cancel` (see `lib/historyNav.ts`).
+     */
+    fun historyNavEvent(tabId: String, phase: String, payload: JSONObject?) {}
+
+    /**
+     * Whether the system navigates with its three buttons rather than gestures: only then do the
+     * pages' edges belong to the app, and the history drag arms (`HistoryNavGesture`). A host
+     * that does not know says false, and no page arms it.
+     */
+    val threeButtonNavigation: Boolean get() = false
+
+    /**
      * Zenium's items for the floating toolbar over `text` selected in a page (`Menus.selectionToolbar`
      * in the core): `reply` gets the JSON text of `[{ id, title }]` in order, or null for none. A
      * host without a core (a custom tab) has none; the system's toolbar stands as it is.

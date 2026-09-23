@@ -30,6 +30,8 @@ import {
   type Folder,
   type MenuAnchor,
   type MenuItemDescriptor,
+  type NavigationDirection,
+  type NavigationSnapshotEntry,
   type PhoneBarItemId,
   type Platform as PlatformOs,
   type Rect,
@@ -3955,4 +3957,26 @@ export function navigationWindow(
   if (start < 0) start = 0
   const end = Math.min(length, start + max)
   return { start: Math.max(0, end - max), end }
+}
+
+/**
+ * The entries behind (`back`) or ahead of (`forward`) the current one, nearest first and at most
+ * `limit` of them, each with its index in the stack – Chrome's `getDirectedNavigationHistory`,
+ * the list its Back button's long press shows. The current entry is never in it; an index off
+ * the stack, or a stack of one, gives an empty list.
+ */
+export function directedNavigationHistory(
+  entries: readonly NavigationSnapshotEntry[],
+  index: number,
+  direction: NavigationDirection,
+  limit: number
+): Array<{ index: number; url: string; title: string }> {
+  const out: Array<{ index: number; url: string; title: string }> = []
+  if (index < 0 || index >= entries.length) return out
+  const step = direction === 'back' ? -1 : 1
+  for (let i = index + step; i >= 0 && i < entries.length && out.length < limit; i += step) {
+    const entry = entries[i]
+    out.push({ index: i, url: entry.url, title: entry.title })
+  }
+  return out
 }
