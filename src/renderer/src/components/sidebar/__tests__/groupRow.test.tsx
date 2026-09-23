@@ -284,7 +284,11 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(row.hasAttribute('data-saved')).toBe(false)
     const glyph = row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
     expect(glyph.hasAttribute('data-saved')).toBe(false)
-    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('76 141 255')
+    // §9.14's pair on the glyph; main.css picks `--zen-group-rgb` from it by the root's theme.
+    expect(glyph.hasAttribute('data-group-rgb')).toBe(true)
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-light')).toBe('22 108 221')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-dark')).toBe('138 180 248')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('')
     expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
     expect(glyph.querySelector('.zen-group-row-icon')).toBeNull()
     expect(row.querySelector('[data-testid="group-row-name"]')?.textContent).toBe('Research')

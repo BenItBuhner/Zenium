@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Ellipsis,
@@ -38,7 +38,7 @@ import {
   type OverviewState
 } from '@renderer/lib/gestures/stage'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
-import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
+import { groupColorVars, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
@@ -2100,8 +2100,15 @@ function GroupSheet({
   )
 }
 
+/** A sheet row's leading dot in the group's colour – the scheme's set (§9.14's pair), following a theme flip live. */
 function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Element {
-  return <span className="h-2.5 w-2.5 rounded-full" style={{ background: groupColorHex(color) }} />
+  return (
+    <span
+      className="h-2.5 w-2.5 rounded-full bg-[rgb(var(--zen-group-rgb))]"
+      data-group-rgb=""
+      style={groupColorVars(color) as CSSProperties}
+    />
+  )
 }
 
 /**

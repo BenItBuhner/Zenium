@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { stageStore } from '@renderer/lib/gestures/stage'
 import type { TabSwitchState } from '@renderer/lib/gestures/stage'
-import { groupColorChannels, groupOf } from '@renderer/lib/groups'
+import { type GroupColorVars, groupColorVars, groupOf } from '@renderer/lib/groups'
 import { activeTab } from '@renderer/lib/selectors'
 import { TabPreview } from './TabPreview'
 
@@ -52,7 +52,7 @@ export function TabSwitchStage({ state, area }: Props): JSX.Element {
         key={tab.id}
         index={index}
         area={area}
-        group={group ? { name: group.name, rgb: groupColorChannels(group.color) } : null}
+        group={group ? { name: group.name, colorVars: groupColorVars(group.color) } : null}
       >
         <TabPreview tab={tab} cover={tab.id === current} sharp />
       </StageCard>
@@ -90,7 +90,7 @@ function StageCard({
 }: {
   index: number
   area: Rect
-  group: { name: string; rgb: string } | null
+  group: { name: string; colorVars: GroupColorVars } | null
   children: JSX.Element
 }): JSX.Element {
   const card = useRef<HTMLDivElement>(null)
@@ -134,7 +134,8 @@ function StageCard({
         <div
           ref={ribbon}
           className="zen-group-ribbon absolute inset-x-0 top-0 flex h-7 items-center gap-2 px-3 text-[12px] font-semibold"
-          style={{ opacity: at.ribbon, '--zen-group-rgb': group.rgb } as CSSProperties}
+          data-group-rgb=""
+          style={{ opacity: at.ribbon, ...group.colorVars } as CSSProperties}
         >
           <span className="zen-group-dot h-2 w-2 shrink-0 rounded-full" />
           <span className="min-w-0 truncate">{group.name}</span>
