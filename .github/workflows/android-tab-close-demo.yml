@@ -11,11 +11,6 @@ name: Android tab close demo
 # cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY (the coordinator's one authorised run, and one retry, of #404's harness repairs on
-  # the five drivers the PR touches; no token in the project can dispatch); removed in the next
-  # commit.
-  push:
-    branches: [cursor/android-harness-nightly-repairs-h3-011b]
 
 permissions:
   contents: read
