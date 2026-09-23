@@ -163,9 +163,25 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
 
         // 5. A row under a finger: the tab back into the grid, the overview leaving onto it.
         step("5. A row under a finger: Hacker News back to the start of the grid, the overview leaving onto it") {
+            val atRest = topSheetTransform()
             val touched = touchDom("Hacker News", row("Hacker News"))
-            // The restore motion frame by frame: the sheet leaving, the overview closing onto the tab.
-            repeat(RESTORE_FRAMES) { still("restore-frame-${it + 1}") }
+            // The restore motion frame by frame. The first run's four stills, taken straight after
+            // the tap, all showed the sheet still at rest (the click reaches React some hundreds of
+            // milliseconds after the finger lifts), so the frames wait for the motion: two while the
+            // sheet is under way (its transform off its resting value), then one as it is gone and
+            // the overview begins to leave, and one more into the overview's departure.
+            val started = SystemClock.uptimeMillis()
+            val moving = awaitUntil(4_000, pollMs = 30) { topSheetTransform().let { it.isEmpty() || it != atRest } }
+            val movingAfter = SystemClock.uptimeMillis() - started
+            still("restore-frame-1")
+            SystemClock.sleep(120)
+            still("restore-frame-2")
+            val gone = awaitUntil(4_000, pollMs = 30) { sheetCount() == 0 }
+            val goneAfter = SystemClock.uptimeMillis() - started
+            still("restore-frame-3")
+            SystemClock.sleep(150)
+            still("restore-frame-4")
+            finding("  the frames: the sheet under way $moving after $movingAfter ms, gone $gone after $goneAfter ms")
             val left = awaitUntil(12_000) { !inDom(".zen-overview") }
             SystemClock.sleep(1_800)
             still("restored-tab-light")
@@ -489,6 +505,10 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
     /** How many sheets the chrome has mounted (a closing one counts until its spring has carried it out). */
     private fun sheetCount(): Int = domCount(".zen-sheet")
 
+    /** The top sheet's inline transform (position and recede share it), empty with no sheet up. */
+    private fun topSheetTransform(): String =
+        jsString("(function(){var e=$TOP_SHEET;return e?e.style.transform:''})()")
+
     /** The top sheet is mounted and its box has stood still: its spring is done. */
     private fun awaitSheetAtRest(timeoutMs: Long): Boolean {
         val mounted = awaitDom("document.querySelectorAll('.zen-sheet').length>=1", timeoutMs)
@@ -501,13 +521,19 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
     private fun awaitStacked(timeoutMs: Long): Boolean =
         awaitDom("(function(){var s=document.querySelectorAll('.zen-sheet');return s.length===2&&+s[0].style.getPropertyValue('--zen-layer-recede')>0.9})()", timeoutMs)
 
-    /** The chassis stack as SettingsTabDemo reads it: sheets, the lower sheet's recede, its inert/recessed state, the scrims. */
+    /**
+     * The chassis stack as SettingsTabDemo reads it: sheets, the lower sheet's recede, its
+     * inert/recessed state, the scrims. `data-recessed` is a bare toggle since #168
+     * (`toggleAttribute`, its value the empty string), so it is read by presence – a reading of
+     * `dataset.recessed === 'true'` (the pre-#168 form SettingsTabDemo still carries) says false
+     * over a sheet that stands recessed.
+     */
     private fun stackReading(): JSONObject {
         val raw = jsString(
             "(function(){var s=Array.from(document.querySelectorAll('.zen-sheet'));var l=s[0];" +
                 "var scrims=Array.from(document.querySelectorAll('.zen-sheet-scrim')).map(function(e){return Math.round(+getComputedStyle(e).opacity*100)/100});" +
                 "return JSON.stringify({sheets:s.length,recede:l?l.style.getPropertyValue('--zen-layer-recede').trim():''," +
-                "recessed:!!(l&&l.dataset.recessed==='true'&&l.inert),scrims:scrims,lit:scrims.filter(function(o){return o>0.05}).length})})()"
+                "recessed:!!(l&&l.hasAttribute('data-recessed')&&l.inert),scrims:scrims,lit:scrims.filter(function(o){return o>0.05}).length})})()"
         )
         return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
     }
@@ -638,12 +664,12 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
     private fun domCount(selector: String): Int =
         jsString("String(document.querySelectorAll(${JSONObject.quote(selector)}).length)").toIntOrNull() ?: -1
 
-    private fun awaitUntil(timeoutMs: Long, test: () -> Boolean): Boolean {
+    private fun awaitUntil(timeoutMs: Long, pollMs: Long = POLL_MS, test: () -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (true) {
             if (test()) return true
             if (SystemClock.uptimeMillis() >= deadline) return false
-            SystemClock.sleep(POLL_MS)
+            SystemClock.sleep(pollMs)
         }
     }
 
@@ -674,8 +700,6 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
         private const val DAY_MS = 24L * 60 * 60 * 1000
         /** The clock the passes run on: past Chrome's 21-day default, short of nothing else. */
         private const val ARCHIVE_CLOCK_DAYS = 22L
-        /** Stills taken back to back while the restore's motion runs. */
-        private const val RESTORE_FRAMES = 4
         private const val POLL_MS = 200L
         private const val STEADY_MS = 350L
         /** How long the tree gets to list the entry (a note, never a claim). */
