@@ -13,6 +13,7 @@ import { cn } from '@renderer/lib/utils'
 import { PrivateLockCover } from '../phone/PrivateLockCover'
 import { ENTER_BATCH, ListMotionContext } from './listMotion'
 import { NewTabButton, StripRowItem } from './SpacePanel'
+import { TabSet } from './TabSet'
 
 interface Props {
   state: UIState
@@ -89,14 +90,16 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
             aria-label="Private tabs"
             data-tab-list="private"
           >
-            {stripRows(tabs, state.splitGroups).map((row) => (
-              <StripRowItem
-                key={rowKey(row)}
-                row={row}
-                activeTabId={activeTabId}
-                compact={compact}
-              />
-            ))}
+            <TabSet tabs={tabs}>
+              {stripRows(tabs, state.splitGroups).map((row) => (
+                <StripRowItem
+                  key={rowKey(row)}
+                  row={row}
+                  activeTabId={activeTabId}
+                  compact={compact}
+                />
+              ))}
+            </TabSet>
           </div>
           <NewTabButton
             compact={compact}

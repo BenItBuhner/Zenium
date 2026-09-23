@@ -1,0 +1,5 @@
+- tooltip "Back (Alt+←)"
+
+# facts
+- button "Back (Alt+←)" [focused describedby=zen-tooltip]: Back (Alt+←)
+- tooltip "Back (Alt+←)" [side=below by=focus]

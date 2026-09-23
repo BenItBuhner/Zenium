@@ -126,13 +126,8 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     /** 2. Damping, in the Research group, swiped off the grid, then Undo. */
     private fun swipeOff(start: List<Pair<String, String?>>) {
         finding("\n2. Damping (group Research) swiped off the grid, Undo on the toast")
-        val damping = show(card(DAMPING))
-        val f = Finger()
-        f.down(damping.exactCenterX(), damping.exactCenterY())
-        f.moveBy(1.1f * damping.width(), 0f, 220)
-        f.up()
-        finding("  swipe from ${damping.exactCenterX().roundToInt()},${damping.exactCenterY().roundToInt()} by ${(1.1f * damping.width()).roundToInt()} px")
-        expect("the tab is closed once the card has flown off", awaitTab(DAMPING, exists = false, timeoutMs = 10_000))
+        val flown = swipeUntil("Damping's card", { if (inDom(card(DAMPING))) show(card(DAMPING)) else null }) { !tabExists(DAMPING) }
+        expect("the tab is closed once the card has flown off", flown)
         val toast = awaitToast("Closed ")
         expect("the toast reads 'Closed <title>': '${toast.orEmpty()}'", toast != null)
         still("closed-swipe-toast")
@@ -447,6 +442,41 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
             touch(box, what)
             if (awaitUntil(waitMs, took)) return true
             if (attempt < attempts) finding("  (the touch on $what did not take, attempt $attempt: touching again)")
+        }
+        return took()
+    }
+
+    /**
+     * A swipe that has to take, in [touchUntil]'s shape: swipe the card `read` finds – from its
+     * centre, sideways by [SWIPE_BY] of its width over [SWIPE_MS] – watch `took` for `waitMs`,
+     * and while the card still stands (read again: it may have moved) swipe again, up to
+     * `attempts` times, each retry recorded as a finding. A card `read` no longer finds is flying
+     * or gone: no second finger goes in, `took` is waited for. The nightly (run 35822500800,
+     * phone-c) saw one swipe's down and up reach the card – its group's `:active` ink – and its
+     * moves move nothing, in a run where a tap did not take either; under the retry a card that
+     * does not swipe off is a product fault to bisect, one that goes on the second finger is
+     * input lost on the emulator. Whether it took in the end.
+     */
+    private fun swipeUntil(
+        what: String,
+        read: () -> Rect?,
+        attempts: Int = TOUCH_ATTEMPTS,
+        waitMs: Long = SWIPE_TOOK_WAIT,
+        took: () -> Boolean
+    ): Boolean {
+        for (attempt in 1..attempts) {
+            val box = read() ?: run {
+                finding("  ($what has left the grid before attempt $attempt: waiting for the close)")
+                return awaitUntil(waitMs, took)
+            }
+            val by = SWIPE_BY * box.width()
+            finding("  swipe from ${box.exactCenterX().roundToInt()},${box.exactCenterY().roundToInt()} by ${by.roundToInt()} px on $what${if (attempt > 1) " (attempt $attempt)" else ""}")
+            val f = Finger()
+            f.down(box.exactCenterX(), box.exactCenterY())
+            f.moveBy(by, 0f, SWIPE_MS)
+            f.up()
+            if (awaitUntil(waitMs, took)) return true
+            if (attempt < attempts) finding("  (the swipe on $what did not take, attempt $attempt: the card still stands, swiping again)")
         }
         return took()
     }
@@ -807,6 +837,14 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         private const val TAP_HOLD_MS = 16L
         /** How long a touch has to show it took before it is made again. */
         private const val TOUCH_TOOK_WAIT = 900L
+        /** A swipe's travel, in widths of the card, and its duration ([swipeUntil]). */
+        private const val SWIPE_BY = 1.1f
+        private const val SWIPE_MS = 220L
+        /**
+         * How long a swipe has to show it took (the card's fling and the tab's close through the
+         * page's unload check, some 1.2 s on the emulator) before it is made again.
+         */
+        private const val SWIPE_TOOK_WAIT = 3_000L
         /**
          * The same for the toast's Undo, shorter: a touch read as a hold restarts the toast's
          * clock with a second at least, and the next touch has to come within it.

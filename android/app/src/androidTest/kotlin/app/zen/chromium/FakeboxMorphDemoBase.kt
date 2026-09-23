@@ -403,42 +403,80 @@ abstract class FakeboxMorphDemoBase(
      * and the tap is aimed a little ahead of the box toward the omnibox's field, where the box
      * will be over the tap's 60 ms ([RETAP_LEAD]: less than the turn's, since the box is caught
      * at any pace of the spring's, the fastest included).
+     *
+     * The catch is a race the driver can lose on a slow host: a reading of the machine costs two
+     * turns of the app's UI thread, and the nightly (run 35822500800, phone-e) had that thread
+     * blocked through the whole band – Choreographer skipping 45 to 62 frames back to back – while
+     * the sampler recorded three in-band frames over 1.9 s that no reading returned in time. So,
+     * as [midFlightBack] and [turnRound]: up to [ATTEMPTS] tries, each miss recorded with why the
+     * loop ended (the deadline, the flight landed first, an in-band reading without the double's
+     * box) and the band frames the sampler saw in that attempt; the first attempt whose second
+     * tap went in is the one judged. [RETAP_FROM] and [RETAP_TO] stand: the band is not loosened.
      */
     private fun retapMidFlight(scene: String) {
         section("$scene: a second tap on the double mid-flight changes nothing")
-        settleAtRest()
-        val g = geometry()
-        startSampling()
-        tapField()
-        var retapped: PointF? = null
+        var kept: List<FakeboxMorph.Frame>? = null
+        var keptOpened = false
+        var g: FakeboxMorph.Geometry? = null
         var at = ""
-        val deadline = SystemClock.uptimeMillis() + 6_000
-        while (SystemClock.uptimeMillis() < deadline) {
-            val s = snapshot()
-            val ph = s.optString("ph")
-            val m = s.optDouble("m", 0.0)
-            if (ph == "opening" && m > RETAP_FROM && m < RETAP_TO) {
-                val box = s.optJSONObject("d") ?: break
-                val target = s.optJSONObject("of")
-                val cy = (box.getDouble("y") + box.getDouble("h") / 2).toFloat()
-                val ty = target?.let { (it.getDouble("y") + it.getDouble("h") / 2).toFloat() } ?: cy
-                val p = PointF(((box.getDouble("x") + box.getDouble("w") / 2) * density).toFloat(), FakeboxMorph.lerp(cy, ty, RETAP_LEAD) * density)
-                Finger().tap(p.x, p.y)
-                retapped = p
-                at = "m ${"%.2f".format(m)}"
+        for (attempt in 1..ATTEMPTS) {
+            settleAtRest()
+            g = geometry()
+            startSampling()
+            tapField()
+            var retapped: PointF? = null
+            var missed = "the deadline of $RETAP_DEADLINE_MS ms passed with no reading of the double between $RETAP_FROM and $RETAP_TO"
+            val deadline = SystemClock.uptimeMillis() + RETAP_DEADLINE_MS
+            while (SystemClock.uptimeMillis() < deadline) {
+                val s = snapshot()
+                val ph = s.optString("ph")
+                val m = s.optDouble("m", 0.0)
+                if (ph == "opening" && m > RETAP_FROM && m < RETAP_TO) {
+                    val box = s.optJSONObject("d")
+                    if (box == null) {
+                        missed = "the reading at m ${"%.2f".format(m)} carried no box for the double"
+                        break
+                    }
+                    val target = s.optJSONObject("of")
+                    val cy = (box.getDouble("y") + box.getDouble("h") / 2).toFloat()
+                    val ty = target?.let { (it.getDouble("y") + it.getDouble("h") / 2).toFloat() } ?: cy
+                    val p = PointF(((box.getDouble("x") + box.getDouble("w") / 2) * density).toFloat(), FakeboxMorph.lerp(cy, ty, RETAP_LEAD) * density)
+                    Finger().tap(p.x, p.y)
+                    retapped = p
+                    at = "m ${"%.2f".format(m)}"
+                    break
+                }
+                if (ph == "open") {
+                    missed = "the flight had landed (phase open) before a reading found the double between $RETAP_FROM and $RETAP_TO"
+                    break
+                }
+                SystemClock.sleep(6)
+            }
+            val opened = awaitPhase("open", 8_000)
+            awaitIme(shown = true, timeoutMs = 4_000)
+            SystemClock.sleep(900)
+            val frames = stopSampling("$scene-$attempt")
+            val band = frames.filter { it.phase == "opening" && it.morph > RETAP_FROM && it.morph < RETAP_TO }
+            finding(
+                "  attempt $attempt: second tap ${retapped?.let { "at $it ($at)" } ?: "NOWHERE ($missed)"}; open $opened; " +
+                    "the sampler's band frames: ${band.size}${if (band.isEmpty()) "" else " (m ${band.joinToString("/") { "%.2f".format(it.morph) }} at ${band.joinToString("/") { "${it.t}" }} ms)"}; " +
+                    FakeboxMorph.describe(frames)
+            )
+            if (retapped != null) {
+                kept = frames
+                keptOpened = opened
                 break
             }
-            if (ph == "open") break
-            SystemClock.sleep(6)
+            // A miss ends as the scene always did: the field closed ([closeUrlField] is a no-op
+            // on a field that never opened) and the machine at rest before the next attempt, or
+            // before the next scene when this was the last.
+            closeUrlField()
+            awaitPhase("rest", 6_000)
         }
-        val opened = awaitPhase("open", 8_000)
-        awaitIme(shown = true, timeoutMs = 4_000)
-        SystemClock.sleep(900)
-        val frames = stopSampling(scene)
-        finding("  second tap ${retapped?.let { "at $it ($at)" } ?: "NOWHERE (the flight was over before the double was caught between $RETAP_FROM and $RETAP_TO)"}; open $opened; ${FakeboxMorph.describe(frames)}")
-        check(scene, "the double was caught mid-flight for the second tap", retapped != null, at.ifEmpty { "not caught" })
-        check(scene, "the flight went on to the landing unturned", opened && frames.none { it.phase == "closing" }, "open $opened, phases ${frames.map { it.phase }.distinct()}")
-        judge(scene, frames, reducedRun = false, g = g, opening = true)
+        check(scene, "the double was caught mid-flight for the second tap (within $ATTEMPTS attempts)", kept != null, if (kept == null) "not caught" else at)
+        val frames = kept ?: return
+        check(scene, "the flight went on to the landing unturned", keptOpened && frames.none { it.phase == "closing" }, "open $keptOpened, phases ${frames.map { it.phase }.distinct()}")
+        judge(scene, frames, reducedRun = false, g = g!!, opening = true)
         closeUrlField()
         awaitPhase("rest", 6_000)
     }
@@ -586,18 +624,19 @@ abstract class FakeboxMorphDemoBase(
 
     /**
      * A tap on the double on its way back: the omnibox dismissed by a back, and once the field is
-     * near the page (the value under [TURN_AT]: the spring's tail, where the box still moves but
-     * slowly) a finger on the double – the closing turns into an opening with the velocity
-     * carried, and lands open. The double turns on a click, which wants the finger down and up
-     * on it: the tap is aimed a little ahead of the box, toward the page's field, where the box
-     * will be over the tap's 60 ms; up to [ATTEMPTS] tries, the first the judge sees turn round
-     * (`turnedRound`) is the one kept.
+     * on its way (the value under [TURN_AT]: the spring past its first frames, the box moving) a
+     * finger on the double – the closing turns into an opening with the velocity carried, and
+     * lands open. The double turns on a click, which wants the finger down and up on it: the tap
+     * is aimed ahead of the box, toward the page's field, where the box will be when the click
+     * lands – a lead per try ([TAP_LEADS]), since that lag is the machine's; up to [ATTEMPTS]
+     * tries, the first the judge sees turn round (`turnedRound`) is the one kept.
      */
     private fun turnRound(scene: String) {
         section("$scene: a tap on the double on its way back turns it round")
         var kept: List<FakeboxMorph.Frame>? = null
         var g: FakeboxMorph.Geometry? = null
         for (attempt in 1..ATTEMPTS) {
+            val lead = TAP_LEADS[(attempt - 1).coerceAtMost(TAP_LEADS.lastIndex)]
             settleAtRest()
             g = geometry()
             tapField()
@@ -616,10 +655,10 @@ abstract class FakeboxMorphDemoBase(
                 if (ph == "closing" && m < TURN_AT) {
                     val box = s.optJSONObject("d") ?: break
                     val rest = g.rest
-                    // Ahead of the box: the fraction of the way to the field's rest box it covers in about a tap.
-                    val cy = FakeboxMorph.lerp((box.getDouble("y") + box.getDouble("h") / 2).toFloat(), rest.cy, TAP_LEAD)
+                    // Ahead of the box: the fraction of the way to the field's rest box it covers before the click lands.
+                    val cy = FakeboxMorph.lerp((box.getDouble("y") + box.getDouble("h") / 2).toFloat(), rest.cy, lead)
                     turned = PointF((rest.cx * density), cy * density)
-                    seen = "m ${"%.2f".format(m)}"
+                    seen = "m ${"%.2f".format(m)}, lead $lead"
                     Finger().tap(turned.x, turned.y)
                     break
                 }
@@ -678,21 +717,44 @@ abstract class FakeboxMorphDemoBase(
         tapField()
         awaitPhase("open", 8_000)
         SystemClock.sleep(600)
-        startSampling()
-        if (!awaitSurface(true, 2_000)) finding("  the chrome does not own the back")
-        val f = Finger()
-        f.down(EDGE_X, height * 0.5f)
-        f.moveBy(0.28f * width, 0f, 520)
-        f.hold(900)
-        // The chrome's word on the pull, read while the finger holds: the hold has no clock in
-        // the system's back, and on the emulator the pull reached the field after the 900 ms
-        // (the repairs' third proof run read 'open' at 1.00 with the finger down while the
-        // scene's own frames held a pulled pair), so the read waits [PULL_READ_MS] for it.
-        var held = snapshot()
-        val heldBy = SystemClock.uptimeMillis() + PULL_READ_MS
-        while (held.optString("lk") != "pulled" && SystemClock.uptimeMillis() < heldBy) {
-            f.hold(100)
+        // The pull, held, and the chrome's word on it read while the finger holds: the hold has
+        // no clock in the system's back, and on the emulator the pull reached the field after the
+        // 900 ms (the repairs' third proof run read 'open' at 1.00 with the finger down while the
+        // scene's own frames held a pulled pair), so the read waits [PULL_READ_MS] for it. When
+        // no word comes in that time the swipe never became a back gesture: the emulator's
+        // recogniser withdraws one now and then under load (#393's retry, run 35880635017: the
+        // shell's BackAnimationController "Finishing gesture with event action: 3", mTriggerBack
+        // false, 90 ms after the DOWN; the app's callback never called; the finger's travel an
+        // ordinary touch the page idled through at 1.00). So the finger goes back to the edge
+        // and off, and the swipe is made once more ([PULL_SWIPES]), the miss a finding with the
+        // frames its sample held; the swipe that was read as a pull is the one judged.
+        var held = JSONObject()
+        lateinit var f: Finger
+        for (swipe in 1..PULL_SWIPES) {
+            startSampling()
+            if (!awaitSurface(true, 2_000)) finding("  the chrome does not own the back")
+            f = Finger()
+            f.down(EDGE_X, height * 0.5f)
+            f.moveBy(0.28f * width, 0f, 520)
+            f.hold(900)
             held = snapshot()
+            val heldBy = SystemClock.uptimeMillis() + PULL_READ_MS
+            while (held.optString("lk") != "pulled" && SystemClock.uptimeMillis() < heldBy) {
+                f.hold(100)
+                held = snapshot()
+            }
+            if (held.optString("lk") == "pulled" || swipe == PULL_SWIPES) break
+            // Off at the edge – an ordinary touch's end when the gesture was never recognised,
+            // the cancel when it was and the word came late – the field's rest waited for, and again.
+            f.moveBy(-(0.28f * width) + 4f, 0f, 320)
+            f.up()
+            val after = awaitPullRest()
+            val missed = stopSampling("$scene-cancel-missed-$swipe")
+            finding(
+                "  (swipe $swipe was not read as a pull within $PULL_READ_MS ms of the hold: look '${held.optString("lk")}', value ${"%.2f".format(held.optDouble("m"))}; " +
+                    "${missed.count { it.pulled }} pulled frame(s) of ${missed.size}; ${FakeboxMorph.describe(missed)}; " +
+                    "the finger off at the edge, the field at phase ${after.optString("ph")}, look '${after.optString("lk")}', value ${"%.2f".format(after.optDouble("m"))}; swiping once more)"
+            )
         }
         shot("$scene-held")
         // Back to the edge and off: the system cancels a gesture let go where it began.
@@ -701,14 +763,7 @@ abstract class FakeboxMorphDemoBase(
         SystemClock.sleep(1_200)
         // The spring back to the omnibox at 14 fps takes longer than the 1.2 s (the first two
         // proof runs read it at 0.80 and 0.72, still 'pulled'): the read waits for its rest.
-        var cancelled = snapshot()
-        val cancelledBy = SystemClock.uptimeMillis() + PULL_READ_MS
-        while (!(cancelled.optString("ph") == "open" && cancelled.optString("lk") == "open" && cancelled.optDouble("m") > 0.99) &&
-            SystemClock.uptimeMillis() < cancelledBy
-        ) {
-            SystemClock.sleep(100)
-            cancelled = snapshot()
-        }
+        val cancelled = awaitPullRest()
         val frames1 = stopSampling(scene + "-cancel")
         finding(
             "  held: look '${held.optString("lk")}', value ${"%.2f".format(held.optDouble("m"))}; " +
@@ -755,6 +810,20 @@ abstract class FakeboxMorphDemoBase(
         report(scene, FakeboxMorph.noJump(frames2))
         report(scene, FakeboxMorph.barStays(frames2))
         frames2.lastOrNull()?.let { report(scene, FakeboxMorph.resolved(it, "", false)) }
+    }
+
+    /**
+     * The field's rest at the omnibox after a pull let go – phase open, look open, value past
+     * 0.99 – waited for up to [PULL_READ_MS]; the last reading, whatever it says.
+     */
+    private fun awaitPullRest(): JSONObject {
+        var s = snapshot()
+        val by = SystemClock.uptimeMillis() + PULL_READ_MS
+        while (!(s.optString("ph") == "open" && s.optString("lk") == "open" && s.optDouble("m") > 0.99) && SystemClock.uptimeMillis() < by) {
+            SystemClock.sleep(100)
+            s = snapshot()
+        }
+        return s
     }
 
     /**
@@ -1272,20 +1341,35 @@ abstract class FakeboxMorphDemoBase(
         /** The interruption scenes race the spring (some 300 ms of flight): tries before the scene counts as failed. */
         private const val ATTEMPTS = 3
         /**
-         * The closing's value under which the double is caught for the turn: the spring's second
-         * half (`SPRING_SNAPPY` 420 / 40 is all but critically damped: .25 at about 140 ms, .16 at
-         * 170, at rest by 320), where some 180 ms remain – a reading of the machine comes back
-         * once a frame or so, so the tail alone (.16) may never be read in time – and the box
-         * still moves, which the tap's lead ([TAP_LEAD]) allows for.
+         * The closing's value under which the double is caught for the turn. The reading that
+         * catches it lags the machine – a snapshot is a round trip through the chrome's main
+         * thread and the page's, and the tap's click another – and the emulator stretches both:
+         * its closing (`SPRING_SNAPPY` 420 / 40, stepped at most 64 ms a frame on frames 350–500
+         * ms apart) is home in 2.1–2.25 s of wall, a reading comes back about once a second and
+         * the click lands 0.6–0.95 s after it, so a window opening only in the spring's tail is
+         * read late and the click meets the field at rest.
+         * The value is under .6 from the spring's third frame (about 80 ms of wall; 67 ms of
+         * spring time at a phone's rate), so the first reading past the spring's start
+         * qualifies and the click lands with the field still on its way – at .01–.2 on the
+         * emulator, in the tail at a phone's rate.
          */
-        private const val TURN_AT = 0.25
-        /** How far from the box's centre toward the field's rest box the turn's tap is aimed: where the box will be mid-tap. */
-        private const val TAP_LEAD = 0.4f
+        private const val TURN_AT = 0.6
+        /**
+         * How far from the box's centre toward the field's rest box the turn's tap is aimed on
+         * each try: where the box will be when the click lands. That lag differs by an order of
+         * magnitude between the emulator (0.6–0.95 s: from a reading at .3–.6 the box is at .01–.2
+         * when the click lands, four fifths of its remaining way home) and a phone (tens of ms:
+         * a little way further along), so the tries walk the lead from the emulator's to a
+         * phone's; a box some 50 px tall on 260 px of travel forgives about .1 of the value.
+         */
+        private val TAP_LEADS = floatArrayOf(0.8f, 0.6f, 0.4f)
         /** The opening's values between which the double is caught for the second tap: any pace of the flight but its two ends. */
         private const val RETAP_FROM = 0.1
         private const val RETAP_TO = 0.95
         /** The second tap's lead toward the omnibox's field: a little, since the box may be caught at the spring's fastest. */
         private const val RETAP_LEAD = 0.15f
+        /** How long one attempt polls the machine for an in-band reading of the double before the miss is recorded. */
+        private const val RETAP_DEADLINE_MS = 6_000L
         /** How far through the travel the page is scrolled for a tap part way. */
         private const val PART_WAY = 0.45f
         /**
@@ -1294,6 +1378,12 @@ abstract class FakeboxMorphDemoBase(
          * drawing at 14 fps with gaps of half a second.
          */
         private const val PULL_READ_MS = 3_000L
+        /**
+         * The pulled scene's edge swipes: the swipe, and one more when the first was not read as
+         * a pull within [PULL_READ_MS] – the emulator's back recogniser withdrew it under load
+         * (#393's retry, run 35880635017). Harmless on a phone, where the first is read.
+         */
+        private const val PULL_SWIPES = 2
         /**
          * The measured window of a cost scene ([morphCost]) from the touch: the flight and its
          * landing with nothing read from the chrome meanwhile. The emulator's flights in runs 1

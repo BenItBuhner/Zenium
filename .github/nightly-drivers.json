@@ -1048,6 +1048,16 @@
       "estimate": 7
     },
     {
+      "id": "primitives-5",
+      "class": "Primitives5Demo",
+      "shard": "webview",
+      "mirrors": "android-primitives-5-demo.yml",
+      "dir": "primitives-5-demo",
+      "timeout": 1200,
+      "estimate": 8,
+      "note": "Seeds 43-48 on a device. The veil (47) needs a private surface, so the multi-profile WebView: the reason it sits here, not on a phone shard. Sets and clears its own device PIN."
+    },
+    {
       "id": "media",
       "class": "MediaDemo",
       "shard": "webview",
@@ -1123,7 +1133,7 @@
       "shard": "tablet",
       "mirrors": "android-tab-groups-demo.yml:tablet",
       "dir": "tablet-groups-demo",
-      "estimate": 2
+      "estimate": 2.5
     },
     {
       "id": "tablet-private",

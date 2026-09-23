@@ -3,6 +3,7 @@ package app.zen.chromium
 import android.graphics.PointF
 import android.graphics.RectF
 import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.junit.Test
@@ -32,6 +33,11 @@ import kotlin.math.roundToInt
  *  5. Colour cascades into the nine radio rows, Blue checked; a touch on Green recolours the
  *     group at once and closes the menu, the dot following;
  *  6. Rename Group… puts the field in the name's slot; typing and Enter rename the group;
+ *  6b. the fault's order, forced (nightly §6 failed 3 of 5: the host's focus move asked for at
+ *     the pick landed on the page's view a frame after the field mounted and blurred it away):
+ *     the pick now leaves the keyboard in the chrome, and the harness does the move itself once
+ *     the field is up – the field survives it, a touch on it brings the keyboard back, and the
+ *     rename completes;
  *  7. Close Group (2 Tabs): the tabs close (no toast: the sidebar's closes carry none), the row
  *     stays as the SAVED group – the ring in the glyph slot, the count of the pages it keeps, no
  *     chevron – the core keeping the two pages in order;
@@ -82,6 +88,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         holdMenu()
         colour()
         rename()
+        renameSurvivesFocusMove()
         closeToSaved()
         openSaved()
         ungroup()
@@ -225,6 +232,83 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         still("renamed")
     }
 
+    // --- 6b. the field survives the host's focus move, forced ------------------------------------
+
+    /**
+     * The fault's order, forced. The pick used to hand the focus back to the page (`focus.content`)
+     * and the host's move – `Host.kt`'s `view.focus`, `tab.requestFocus()` – landed on the page's
+     * view a frame after the rename field had mounted and taken the focus, blurring it away
+     * (`FolderRename` committed on blur). The pick no longer asks for the move (`pickMenuItem`,
+     * `keepsKeyboard`), so the harness does what the host did, in-process on the main thread, once
+     * the field is up: the field has to survive it (a blur the host caused does not commit), and a
+     * touch on it has to bring the keyboard back so the rename completes. The name goes from §6's
+     * "Reading" to "Review": the touch leaves the caret where the finger landed, so the old text is
+     * cleared by keys first (End, then a Backspace per character) – every act a user's.
+     */
+    private fun renameSurvivesFocusMove() {
+        section("6b. The field survives the host's focus move landing after its mount (the fault's order, forced)")
+        openGroupMenu() ?: return
+        val editing = touchUntil("Rename Group…", { menuRow("Rename Group") }, { inDom(RENAME_FIELD) }, waitMs = 3_000)
+        check("Rename Group… puts the field in the name's slot again, focused", editing && awaitJs(FIELD_FOCUSED), "field ${inDom(RENAME_FIELD)}, active ${activeTag()}")
+        check("the pick leaves the keyboard in the chrome: the field takes it", awaitIme(true, 4_000), "ime ${imeShown()}")
+        SystemClock.sleep(400)
+        val moved = forceFocusToPage()
+        check("the forced focus move lands on the page's view (the fault's order)", moved, "chrome focused ${chromeFocused()}")
+        SystemClock.sleep(800)
+        finding("  (after the move: field ${inDom(RENAME_FIELD)}, ime ${imeShown()}, chrome focused ${chromeFocused()})")
+        check("the field survives the host's focus move: still in the name's slot, its rename still open", inDom(RENAME_FIELD) && jsText(RENAMING) == FOLDER, "field ${inDom(RENAME_FIELD)}, renaming '${jsText(RENAMING)}'")
+        check("the move committed nothing: the name in the core is still Reading", folderName() == "Reading", "name ${folderName()}")
+        still("rename-field-after-focus-move")
+        val back = touchUntil("the rename field", { domRect(RENAME_FIELD) }, { imeShown() && jsBoolean(FIELD_FOCUSED) }, waitMs = 4_000)
+        check("a touch on the field brings the focus and the keyboard back to it", back, "ime ${imeShown()}, active ${activeTag()}")
+        clearFieldByKeys()
+        typeAndEnter("Review")
+        check("Enter saves the name typed after the forced move", awaitCore { folderName(it) == "Review" }, "name ${folderName()}")
+        check("the field leaves and the row reads the name typed after the forced move", awaitDomGone(RENAME_FIELD) && awaitJs("(document.querySelector('$NAME')||{}).textContent==='Review'"), "name '${textOf(NAME)}'")
+        if (imeShown()) {
+            back()
+            awaitIme(false)
+        }
+        SystemClock.sleep(600)
+        still("renamed-after-focus-move")
+    }
+
+    /**
+     * The host's focus move, done by the harness: the active page's view takes the Android focus,
+     * as `Host.kt`'s `view.focus` has it (`tab.requestFocus()`). Whether it took: the view asked
+     * and the chrome's WebView no longer holds the focus.
+     */
+    private fun forceFocusToPage(): Boolean {
+        val tabId = activeCoreTab()?.optString("id")?.takeIf { it.isNotEmpty() } ?: run {
+            finding("  (no active tab in the core to move the focus to)")
+            return false
+        }
+        var took = false
+        instrumentation.runOnMainSync {
+            val host = (activity as? MainActivity)?.host ?: return@runOnMainSync
+            val view = host.tabs.get(tabId) ?: return@runOnMainSync
+            took = view.requestFocus() && !host.chrome.hasFocus()
+        }
+        finding("  (the harness moved the Android focus to the page's view of $tabId, as the host's view.focus does: took $took)")
+        return took
+    }
+
+    private fun chromeFocused(): Boolean {
+        var focused = false
+        instrumentation.runOnMainSync { focused = (activity as? MainActivity)?.host?.chrome?.hasFocus() == true }
+        return focused
+    }
+
+    /** The field's text cleared by keys: End, then a Backspace per character (the field is read for their count). */
+    private fun clearFieldByKeys() {
+        val length = jsText("(document.querySelector('$RENAME_FIELD')||{value:''}).value").length
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MOVE_END)
+        repeat(length) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL) }
+        SystemClock.sleep(200)
+    }
+
+    private fun activeTag(): String = jsText("document.activeElement&&document.activeElement.tagName")
+
     // --- 7. Close Group -> saved -----------------------------------------------------------------
 
     private fun closeToSaved() {
@@ -334,6 +418,10 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         private const val NAME = "$GROUP_ROW [data-testid=\"group-row-name\"]"
         private const val COUNT = "$GROUP_ROW [data-testid=\"group-row-count\"]"
         private const val RENAME_FIELD = "$GROUP_ROW input"
+        /** The rename field is the chrome document's active element (§6b's reads; §6 keeps its own). */
+        private const val FIELD_FOCUSED = "(function(){var i=document.querySelector('$RENAME_FIELD');return !!i&&document.activeElement===i})()"
+        /** The group whose inline rename is open, off the chrome's UI store ('' when none). */
+        private const val RENAMING = "(window.__zenStores.ui.get().renamingFolderId||'')"
         private const val MENU = ".zen-v2-menu"
         private const val MENU_ITEM = ".zen-v2-menu-item"
         private const val RADIO = ".zen-v2-menu [role=\"menuitemradio\"]"
