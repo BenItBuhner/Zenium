@@ -37,10 +37,11 @@ export interface PageCaptureResult {
   /** Picture pixels per CSS pixel of the area captured (`width / cssWidth`). */
   devicePixelRatio: number
   /**
-   * The full page or region asked for could not be painted and the visible area (cropped to
-   * the region where one was given) came back instead: the debugger is another's (DevTools
-   * open, an extension's `chrome.debugger` session), the paint failed, or the host cannot read
-   * the page's geometry. The UI says so rather than pass the crop off as the whole.
+   * The full page or region asked for could not be painted and the visible area (minus the
+   * scrollbar gutters, as a viewport capture is; cropped to the region where one was given)
+   * came back instead: the debugger is another's (DevTools open, an extension's
+   * `chrome.debugger` session), the paint failed, or the host cannot read the page's geometry.
+   * The UI says so rather than pass the crop off as the whole.
    */
   fallback?: 'viewport'
 }
@@ -64,6 +65,23 @@ export interface PageViewport {
   width: number
   height: number
   /**
+   * The visible area minus the scrollbar gutters, in page CSS pixels – the layout viewport as
+   * `documentElement.clientWidth` × `clientHeight` report it on desktop, where a classic
+   * scrollbar (Linux, Windows) takes a column or row of the frame that is not page content;
+   * this is what a visible-area capture paints (§5 of the contract), as Chrome's does, and what
+   * the chrome's drag overlay should size itself to (the gutter is not capturable). Equal to
+   * `width` × `height` where scrollbars overlay the page (macOS, Android's WebView) and for a
+   * host that does not say.
+   */
+  clientWidth: number
+  clientHeight: number
+  /**
+   * The document's direction is right-to-left: the vertical scrollbar's gutter
+   * (`width - clientWidth`) sits on the LEFT of the visible area, not the right, and the layout
+   * viewport's origin is to its right.
+   */
+  rtl: boolean
+  /**
    * How many of the chrome's CSS pixels (the window's DIPs) one page CSS pixel takes: the page
    * zoom on Electron; on Android the visual viewport's scale (a desktop-layout page squeezed
    * into the screen is below 1, a pinch zoom above).
@@ -78,8 +96,11 @@ export interface PageViewport {
 
 /**
  * A `PageViewport` out of a host's answer (Android's bridge, a test's fixture): every field a
- * finite number, a visible area of some size, the ratios above zero (else 1) and the document
- * never smaller than the visible area. Null for anything else.
+ * finite number, a visible area of some size, the ratios above zero (else 1), the document
+ * never smaller than the visible area, and the area minus the gutters (`clientWidth` /
+ * `clientHeight`) within the visible area – the visible area itself for a host that does not
+ * say (an older host's answer), whose scrollbars are then taken as overlaying the page. Null
+ * for anything else.
  */
 export function parsePageViewport(raw: unknown): PageViewport | null {
   if (!raw || typeof raw !== 'object') return null
@@ -101,11 +122,28 @@ export function parsePageViewport(raw: unknown): PageViewport | null {
     scrollY: Math.max(0, scrollY),
     width,
     height,
+    clientWidth: clientSide(num('clientWidth'), width),
+    clientHeight: clientSide(num('clientHeight'), height),
+    rtl: r.rtl === true,
     zoom: zoom !== null && zoom > 0 ? zoom : 1,
     devicePixelRatio: dpr !== null && dpr > 0 ? dpr : 1,
     documentWidth: Math.max(num('documentWidth') ?? 0, width),
     documentHeight: Math.max(num('documentHeight') ?? 0, height)
   }
+}
+
+/**
+ * A side of the visible area minus its scrollbar gutter, as a host reports it: a size within
+ * the visible area's side; the side itself (no gutter) for nothing usable – a host that does
+ * not say, a page with no layout yet (0), a value past the visible area.
+ */
+export function clientSide(reported: number | null | undefined, visible: number): number {
+  return typeof reported === 'number' &&
+    Number.isFinite(reported) &&
+    reported > 0 &&
+    reported <= visible
+    ? reported
+    : visible
 }
 
 /**
@@ -171,10 +209,11 @@ function formatInt(n: number): string {
 
 /**
  * The area a request captures, in CSS pixels of the page, given the page's geometry: the
- * region clamped to the document, the viewport, or the document cut at `CAPTURE_MAX_HEIGHT`.
- * Null for a region that lies outside the document (nothing to capture). Without the geometry
- * (`viewport` null: the host cannot read the page) a region is taken as given and the rest is
- * unknown (null): the host decides.
+ * region clamped to the document, the visible area minus the scrollbar gutters (`clientWidth`
+ * × `clientHeight`, what a visible-area capture paints), or the document cut at
+ * `CAPTURE_MAX_HEIGHT`. Null for a region that lies outside the document (nothing to capture).
+ * Without the geometry (`viewport` null: the host cannot read the page) a region is taken as
+ * given and the rest is unknown (null): the host decides.
  */
 export function captureArea(
   request: PageCaptureRequest,
@@ -196,8 +235,8 @@ export function captureArea(
     return {
       x: viewport.scrollX,
       y: viewport.scrollY,
-      width: viewport.width,
-      height: viewport.height
+      width: clientSide(viewport.clientWidth, viewport.width),
+      height: clientSide(viewport.clientHeight, viewport.height)
     }
   return {
     x: 0,

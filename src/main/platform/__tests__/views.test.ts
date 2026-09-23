@@ -18,6 +18,7 @@ import {
   fullPageCut,
   protocolClip,
   pageViewportFrom,
+  visibleAreaClip,
   type ElectronTabView
 } from '../views'
 
@@ -1298,6 +1299,124 @@ describe('ElectronTabView.capture', () => {
       height: 720
     })
   })
+
+  // The visible-area picture is the layout viewport minus the scrollbar gutters, as Chrome's
+  // is: `capturePage` paints the whole widget, a classic scrollbar's column included; the page
+  // reports the area without it (`clientWidth` / `clientHeight`) and the bitmap is cut to it.
+  it('cuts a viewport capture to the layout viewport minus a 15 px scrollbar gutter: clientWidth × dpr wide, no gutter column', async () => {
+    const { view, dbg, paint } = tabView({ ...GEOMETRY, cw: 1265, ch: 720 })
+    const result = await view.capture({ mode: 'viewport', format: 'png' })
+    expect(dbg.log).toEqual([])
+    expect(paint.crops).toEqual([{ x: 0, y: 0, width: 1265, height: 720 }])
+    expect(result).toEqual({
+      data: Buffer.from('png-1265x720').toString('base64'),
+      mimeType: 'image/png',
+      width: 1265,
+      height: 720
+    })
+    // On a 2x display the gutter is 30 device pixels; a horizontal scrollbar takes the bottom rows.
+    const scaled = tabView({ ...GEOMETRY, dpr: 2, cw: 1265, ch: 705 }, bitmap(2560, 1440))
+    await expect(scaled.view.capture({ mode: 'viewport', format: 'png' })).resolves.toMatchObject({
+      width: 2530,
+      height: 1410
+    })
+    expect(scaled.paint.crops).toEqual([{ x: 0, y: 0, width: 2530, height: 1410 }])
+  })
+
+  it('anchors the cut at the right in a right-to-left document, whose scrollbar sits on the left', async () => {
+    const { view, paint } = tabView({ ...GEOMETRY, cw: 1265, ch: 720, rtl: true })
+    await expect(view.capture({ mode: 'viewport', format: 'png' })).resolves.toMatchObject({
+      width: 1265,
+      height: 720
+    })
+    expect(paint.crops).toEqual([{ x: 15, y: 0, width: 1265, height: 720 }])
+  })
+
+  it('cuts the fallback stand-in the same way, and measures a region from the visible area’s origin, cut at its edge', async () => {
+    // DevTools holds the debugger: a full page comes back as the visible area, minus the gutter.
+    const { view, dbg, paint } = tabView({ ...GEOMETRY, cw: 1265, ch: 720 })
+    dbg.taken = true
+    await expect(view.capture({ mode: 'fullPage', format: 'png' })).resolves.toEqual({
+      data: Buffer.from('png-1265x720').toString('base64'),
+      mimeType: 'image/png',
+      width: 1265,
+      height: 720,
+      fallback: 'viewport'
+    })
+    expect(paint.crops).toEqual([{ x: 0, y: 0, width: 1265, height: 720 }])
+    // A region reaching past the visible area is cut at the area's edge, never into the gutter.
+    await view.capture({
+      mode: 'region',
+      region: { x: 1200, y: 1200, width: 300, height: 300 },
+      format: 'png'
+    })
+    expect(paint.crops[1]).toEqual({ x: 1200, y: 600, width: 65, height: 120 })
+    // In a right-to-left document the region's origin is past the left-hand gutter.
+    const rtl = tabView({ ...GEOMETRY, cw: 1265, ch: 720, rtl: true })
+    addForeignDebuggerOwner(rtl.wc.id)
+    await expect(
+      rtl.view.capture({
+        mode: 'region',
+        region: { x: 100, y: 700, width: 300, height: 200 },
+        format: 'png'
+      })
+    ).resolves.toMatchObject({ width: 300, height: 200, fallback: 'viewport' })
+    expect(rtl.paint.crops).toEqual([{ x: 115, y: 100, width: 300, height: 200 }])
+  })
+
+  it('leaves a page with overlay scrollbars – the area minus the gutters is the whole viewport – as it is', async () => {
+    const { view, paint } = tabView({ ...GEOMETRY, cw: 1280, ch: 720, rtl: true })
+    await expect(view.capture({ mode: 'viewport', format: 'png' })).resolves.toMatchObject({
+      width: 1280,
+      height: 720
+    })
+    expect(paint.crops).toEqual([])
+    // A page that did not answer the geometry read: the bitmap stands as it is.
+    const blind = tabView(null)
+    await expect(blind.view.capture({ mode: 'viewport', format: 'png' })).resolves.toMatchObject({
+      width: 1280,
+      height: 720
+    })
+    expect(blind.paint.crops).toEqual([])
+  })
+})
+
+/** The part of a `capturePage` bitmap that is page content, in its pixels. */
+describe('visibleAreaClip', () => {
+  const page = { clientWidth: 1265, clientHeight: 705, rtl: false, devicePixelRatio: 1 }
+
+  it('is the area minus the gutters at the page’s device pixel ratio, anchored left, or right for a right-to-left page', () => {
+    expect(visibleAreaClip(page, { width: 1280, height: 720 })).toEqual({
+      x: 0,
+      y: 0,
+      width: 1265,
+      height: 705
+    })
+    expect(visibleAreaClip({ ...page, rtl: true }, { width: 1280, height: 720 })).toEqual({
+      x: 15,
+      y: 0,
+      width: 1265,
+      height: 705
+    })
+    expect(visibleAreaClip({ ...page, devicePixelRatio: 1.5 }, { width: 1920, height: 1080 })).toEqual({
+      x: 0,
+      y: 0,
+      width: 1898,
+      height: 1058
+    })
+  })
+
+  it('never reaches past the bitmap and is the whole bitmap where scrollbars overlay the page', () => {
+    expect(
+      visibleAreaClip({ ...page, clientWidth: 1300, clientHeight: 800 }, { width: 1280, height: 720 })
+    ).toEqual({ x: 0, y: 0, width: 1280, height: 720 })
+    expect(
+      visibleAreaClip(
+        { clientWidth: 1280, clientHeight: 720, rtl: true, devicePixelRatio: Number.NaN },
+        { width: 1280, height: 720 }
+      )
+    ).toEqual({ x: 0, y: 0, width: 1280, height: 720 })
+  })
 })
 
 /** `page.viewport`: the page's geometry from the isolated world, with the engine's zoom factor. */
@@ -1316,7 +1435,19 @@ describe('ElectronTabView.viewport', () => {
 
   it('maps the script’s answer, the zoom from the engine', async () => {
     const view = tabView(
-      () => Promise.resolve({ sx: 0, sy: 600, vw: 1280, vh: 720, dpr: 2.5, dw: 1280, dh: 4000 }),
+      () =>
+        Promise.resolve({
+          sx: 0,
+          sy: 600,
+          vw: 1280,
+          vh: 720,
+          cw: 1268,
+          ch: 720,
+          rtl: true,
+          dpr: 2.5,
+          dw: 1280,
+          dh: 4000
+        }),
       1.25
     )
     await expect(view.viewport()).resolves.toEqual({
@@ -1324,6 +1455,9 @@ describe('ElectronTabView.viewport', () => {
       scrollY: 600,
       width: 1280,
       height: 720,
+      clientWidth: 1268,
+      clientHeight: 720,
+      rtl: true,
       zoom: 1.25,
       devicePixelRatio: 2.5,
       documentWidth: 1280,
@@ -1355,6 +1489,9 @@ describe('pageViewportFrom', () => {
       scrollY: 20,
       width: 800,
       height: 600,
+      clientWidth: 800,
+      clientHeight: 600,
+      rtl: false,
       zoom: 1,
       devicePixelRatio: 2,
       documentWidth: 1600,
@@ -1372,6 +1509,20 @@ describe('pageViewportFrom', () => {
       devicePixelRatio: 1.5
     })
     expect(pageViewportFrom(raw, Number.NaN)).toMatchObject({ zoom: 1 })
+  })
+
+  it('takes the area minus the scrollbar gutters within the viewport, and the direction', () => {
+    expect(pageViewportFrom({ ...raw, cw: 785, ch: 585, rtl: true }, 1)).toMatchObject({
+      clientWidth: 785,
+      clientHeight: 585,
+      rtl: true
+    })
+    // Not laid out (0), past the viewport, or missing: the viewport itself – no gutter.
+    expect(pageViewportFrom({ ...raw, cw: 0, ch: 700, rtl: 'rtl' }, 1)).toMatchObject({
+      clientWidth: 800,
+      clientHeight: 600,
+      rtl: false
+    })
   })
 
   it('is null for anything short of a laid-out page', () => {
