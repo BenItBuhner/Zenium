@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { returnFocusTo, wrapTab } from '@renderer/lib/popover'
@@ -71,7 +71,8 @@ export interface ConfirmDialogProps {
  * the unreadable stack of §9"; §9.5: "never the 400 of the dialog it covers"). The place is read
  * once, as the prompt mounts, before its first paint.
  *
- * The keyboard (§9.22 as amended by the design lead on #392): the CONTAINER holds the focus as
+ * The keyboard (§9.22 as amended by the design lead on #392; `useConfirmKeyboard` below, the
+ * one implementation of it, exported for any held container): the CONTAINER holds the focus as
  * the prompt opens – its root is `tabIndex -1`, the container the keyboard is sent to and cannot
  * reach by Tab, so the chassis draws no ring on it
  * (`[role='alertdialog'][tabindex='-1']:focus-visible` in main.css) and no verb is preselected.
@@ -106,8 +107,89 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
   )
 }
 
-/** The control an Enter belongs to rather than to the prompt: a button answers its own Enter. */
-const OWN_ENTER = 'button, a[href], [role="button"], select, textarea'
+/**
+ * The control an Enter belongs to rather than to the prompt: a button answers its own Enter. A
+ * text input is not one – a field's Enter is the prompt's default, as a form's Enter submits it.
+ */
+export const OWN_ENTER = 'button, a[href], [role="button"], select, textarea'
+
+/** What `useConfirmKeyboard` holds a container to. */
+export interface ConfirmKeyboard {
+  /**
+   * A destructive prompt has no default (§9.22 as amended on #392): Enter from the container is
+   * consumed – nothing beneath answers it – and confirms nothing.
+   */
+  destructive: boolean
+  /** The verb: what Enter from the container activates on a prompt that is not `destructive`. */
+  confirm: () => void
+  /**
+   * Listening at all; `false` leaves every key alone – a container that stands under another
+   * surface (a sheet under a sheet), or one that has no default action. Default `true`.
+   */
+  enabled?: boolean
+  /**
+   * Wrap Tab at the container's ends (lib/popover.ts `wrapTab`); `false` where a chassis wraps
+   * it already (a popover's window-level wrap, the phone's `BottomSheet`). Default `true`.
+   */
+  tab?: boolean
+  /**
+   * The held container, when `ref` is not it: found up from the ref's element as the listener
+   * is placed (a sheet's body to the chassis's dialog root: `(body) => body.closest('[role="dialog"]')`).
+   * Default: the ref's element itself.
+   */
+  container?: (el: HTMLElement) => HTMLElement | null
+}
+
+/**
+ * The confirmation prompt's keyboard (§9.22 as amended by the design lead on #392) on any held
+ * container – the primitive's own, a level of a popover, a phone sheet's dialog root – with no
+ * assumption about what the container is: a native `keydown` listener on the element the ref
+ * (or `container`) names, so a focus held on the container itself, above where a body's markup
+ * begins, is heard too. Tab wraps at the container's ends (`wrapTab`), unless the chassis does.
+ * An Enter with no modifier, not a held key's repeat and not one composing text, from anything
+ * but a control that answers its own Enter (`OWN_ENTER`) is the prompt's: consumed – prevented
+ * and stopped, so nothing beneath answers it – and, on a prompt whose verb is the primary, the
+ * verb (`confirm`). A DESTRUCTIVE prompt has no default: §6 draws it with no primary because
+ * the app recommends neither answer, and a default key is a recommendation as much as a fill,
+ * so the key is swallowed and confirms nothing; a focused button still answers its own Enter
+ * and Space as any button does. Escape is not here: it is the surface's (`useEscape`, one hop).
+ *
+ * `destructive`, `confirm` and `container` are read at the key, never re-binding the listener;
+ * `enabled` and `tab` re-place it. The one implementation: the primitive below holds its root
+ * with it, and the phone's `ConfirmSheet` takes it in place of its own copy of the rule.
+ */
+export function useConfirmKeyboard(
+  ref: RefObject<HTMLElement | null>,
+  keyboard: ConfirmKeyboard
+): void {
+  const latest = useRef(keyboard)
+  useLayoutEffect(() => {
+    latest.current = keyboard
+  })
+  const { enabled = true, tab = true } = keyboard
+  useEffect(() => {
+    if (!enabled) return
+    const el = ref.current
+    const root = el && (latest.current.container ? latest.current.container(el) : el)
+    if (!root) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Tab') {
+        if (tab) wrapTab(root, e)
+        return
+      }
+      if (e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+      if (e.repeat || e.isComposing) return
+      if (e.target instanceof Element && e.target.closest(OWN_ENTER)) return
+      e.preventDefault()
+      e.stopPropagation()
+      const { destructive, confirm } = latest.current
+      if (destructive) return
+      confirm()
+    }
+    root.addEventListener('keydown', onKey)
+    return () => root.removeEventListener('keydown', onKey)
+  }, [ref, enabled, tab])
+}
 
 function ConfirmPanel({
   name,
@@ -187,6 +269,9 @@ function ConfirmPanel({
     if (latest.current.busy) return
     latest.current.onConfirm()
   }
+  // The keyboard (§9.22 as amended): Tab wrapping at the ends; Enter from the held container or
+  // its check row as the verb – or, on a destructive prompt, swallowed and answering nothing.
+  useConfirmKeyboard(ref, { destructive, confirm })
   return (
     <div
       {...data}
@@ -201,23 +286,6 @@ function ConfirmPanel({
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-confirm-dialog zen-animate-pop', className)}
       onMouseDown={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        const root = ref.current
-        if (!root) return
-        if (e.key === 'Tab') {
-          wrapTab(root, e.nativeEvent)
-          return
-        }
-        if (e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
-        if (e.repeat || e.nativeEvent.isComposing) return
-        if (e.target instanceof Element && e.target.closest(OWN_ENTER)) return
-        e.preventDefault()
-        e.stopPropagation()
-        // No default on a destructive prompt (§9.22 as amended): the key is the prompt's to
-        // swallow – it reaches nothing beneath – and confirms nothing.
-        if (destructive) return
-        confirm()
-      }}
     >
       <V2TitleBlock
         id={titleId}

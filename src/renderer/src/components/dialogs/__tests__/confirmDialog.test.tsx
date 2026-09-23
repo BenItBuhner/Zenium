@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, useState, type JSX, type ReactElement, type ReactNode } from 'react'
+import { act, useRef, useState, type JSX, type ReactElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 /*
@@ -29,8 +29,9 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { FrameDialogHost, useFrameDialog } = await import('@renderer/lib/portals')
-const { ConfirmDialog } = await import('../ConfirmDialog')
+const { ConfirmDialog, OWN_ENTER, useConfirmKeyboard } = await import('../ConfirmDialog')
 type Props = Parameters<typeof ConfirmDialog>[0]
+type Keyboard = Parameters<typeof useConfirmKeyboard>[1]
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ')
@@ -377,6 +378,168 @@ describe('the keyboard (§9.22)', () => {
     expect(onCancel).toHaveBeenCalledTimes(3)
     click(verb)
     expect(onConfirm).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the exported keyboard (useConfirmKeyboard) on a bare container', () => {
+  /**
+   * Any held container – no dialog, no host: a `tabIndex -1` box with a text field and two
+   * buttons, held by the hook alone. `inner` puts the ref on a body inside it and names the box
+   * through `container`, a phone sheet's shape.
+   */
+  function Bare(props: Partial<Keyboard> & { inner?: boolean }): JSX.Element {
+    const { inner = false, confirm = () => undefined, destructive = false, ...rest } = props
+    const ref = useRef<HTMLDivElement>(null)
+    useConfirmKeyboard(ref, { destructive, confirm, ...rest })
+    const controls = (
+      <>
+        <input data-field />
+        <button data-cancel>Cancel</button>
+        <button data-verb>Verb</button>
+      </>
+    )
+    return (
+      <div data-bare tabIndex={-1} ref={inner ? undefined : ref}>
+        {inner ? (
+          <div data-body ref={ref}>
+            {controls}
+          </div>
+        ) : (
+          controls
+        )}
+      </div>
+    )
+  }
+  const box = (): HTMLElement => document.querySelector<HTMLElement>('[data-bare]')!
+  const part = (name: string): HTMLElement => box().querySelector<HTMLElement>(`[data-${name}]`)!
+
+  it('exports the own-Enter selector the phone’s sheet keeps a copy of: buttons, links, selects and textareas, never a text input', () => {
+    expect(OWN_ENTER).toBe('button, a[href], [role="button"], select, textarea')
+    render(<Bare />)
+    expect(part('cancel').matches(OWN_ENTER)).toBe(true)
+    expect(part('field').matches(OWN_ENTER)).toBe(false)
+  })
+
+  it('Enter from the container, or from a text field in it, is the verb – once, with no modifier, not a held key’s repeat, not one composing – and reaches nothing beneath; on a button it is that button’s own', async () => {
+    const confirm = vi.fn()
+    const beneath = vi.fn()
+    document.addEventListener('keydown', beneath)
+    render(<Bare confirm={confirm} />)
+    await settle()
+    act(() => box().focus())
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(beneath).not.toHaveBeenCalled()
+    // A field's Enter submits the prompt as a form's does: an input is not an own-Enter control.
+    act(() => part('field').focus())
+    expect(press(part('field'), 'Enter').defaultPrevented).toBe(true)
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(press(box(), 'Enter', { repeat: true }).defaultPrevented).toBe(false)
+    for (const init of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { shiftKey: true }])
+      expect(press(box(), 'Enter', init).defaultPrevented).toBe(false)
+    expect(press(box(), 'Enter', { isComposing: true }).defaultPrevented).toBe(false)
+    expect(confirm).toHaveBeenCalledTimes(2)
+    // Enter on a button is the button's – left alone, and it bubbles on as any key does.
+    act(() => part('cancel').focus())
+    expect(press(part('cancel'), 'Enter').defaultPrevented).toBe(false)
+    expect(press(part('verb'), 'Enter').defaultPrevented).toBe(false)
+    expect(confirm).toHaveBeenCalledTimes(2)
+    // The repeat, the four modified, the composing one and the two buttons' own: eight bubbled.
+    expect(beneath).toHaveBeenCalledTimes(8)
+    expect(press(box(), ' ').defaultPrevented).toBe(false)
+    document.removeEventListener('keydown', beneath)
+  })
+
+  it('a destructive container has no default: Enter from it, or from its field, is swallowed and confirms nothing, and a button’s own Enter is left to the button', async () => {
+    const confirm = vi.fn()
+    const beneath = vi.fn()
+    document.addEventListener('keydown', beneath)
+    render(<Bare destructive confirm={confirm} />)
+    await settle()
+    act(() => box().focus())
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+    expect(press(part('field'), 'Enter').defaultPrevented).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(beneath).not.toHaveBeenCalled()
+    expect(press(part('verb'), 'Enter').defaultPrevented).toBe(false)
+    expect(press(part('verb'), ' ').defaultPrevented).toBe(false)
+    expect(confirm).not.toHaveBeenCalled()
+    document.removeEventListener('keydown', beneath)
+  })
+
+  it('Tab from the container enters at its first control, Shift+Tab at its last, and wraps at the ends; a step within is the browser’s; `tab: false` leaves the key to the chassis', async () => {
+    render(<Bare />)
+    await settle()
+    const [field, cancel, verb] = [part('field'), part('cancel'), part('verb')]
+    act(() => box().focus())
+    expect(press(box(), 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(field)
+    expect(press(field, 'Tab').defaultPrevented).toBe(false)
+    act(() => verb.focus())
+    expect(press(verb, 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(field)
+    expect(press(field, 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(verb)
+    act(() => box().focus())
+    expect(press(box(), 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(verb)
+    expect(cancel).not.toBe(document.activeElement)
+
+    render(<Bare tab={false} />)
+    await settle()
+    act(() => box().focus())
+    expect(press(box(), 'Tab').defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(box())
+    // Enter is still the hook's.
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+  })
+
+  it('`enabled: false` leaves every key alone, and back on it listens again; `container` places the listener on the element found up from the ref – a sheet’s body to its dialog root', async () => {
+    const confirm = vi.fn()
+    render(<Bare confirm={confirm} enabled={false} />)
+    await settle()
+    act(() => box().focus())
+    expect(press(box(), 'Enter').defaultPrevented).toBe(false)
+    expect(press(box(), 'Tab').defaultPrevented).toBe(false)
+    expect(confirm).not.toHaveBeenCalled()
+    render(<Bare confirm={confirm} enabled />)
+    await settle()
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+    expect(confirm).toHaveBeenCalledTimes(1)
+
+    act(() => root.unmount())
+    root = createRoot(container)
+    const later = vi.fn()
+    render(
+      <Bare
+        inner
+        confirm={later}
+        container={(body) => body.closest<HTMLElement>('[data-bare]')}
+      />
+    )
+    await settle()
+    // The focus held on the box, above the body the ref names: heard, because the listener
+    // stands on the box.
+    act(() => box().focus())
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+    expect(later).toHaveBeenCalledTimes(1)
+    expect(press(box(), 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(part('field'))
+  })
+
+  it('reads the verb and the destructive flag at the key, not at the binding: a prompt whose verb turns busy or destructive answers as it stands', async () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    render(<Bare confirm={first} />)
+    await settle()
+    render(<Bare confirm={second} />)
+    act(() => box().focus())
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledTimes(1)
+    render(<Bare confirm={second} destructive />)
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+    expect(second).toHaveBeenCalledTimes(1)
   })
 })
 
