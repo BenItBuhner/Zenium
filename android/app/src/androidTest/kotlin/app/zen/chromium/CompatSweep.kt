@@ -5042,10 +5042,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /**
      * The screen strip a finger reaches the app in, in screen px: below the status bar and above
-     * the navigation bar's window, the bottom band the larger of the bars' inset, the tappable
-     * inset and [NAV_BAR_WINDOW_DP] – the band DemoHarness taps within (a gesture bar reports a
-     * thinner inset than the strip the system takes touches from; the taps the system took for
-     * its own, Overview opened and the launcher on screen, were within 48 dp of the bottom edge).
+     * the navigation bar's window, the bottom band the larger of the bars' inset and the tappable
+     * inset – the band DemoHarness taps within. (The band was held to 48 dp by hand while the
+     * recipe's plain `cmd overlay enable` left the gestural overlay on beside the three-button
+     * one and SystemUI reported the gestural bar's 24 dp under a 48 dp button window – the taps
+     * the system took for its own, Overview opened and the launcher on screen, were within 48 dp
+     * of the bottom edge; the recipe enables the buttons exclusively now and the insets say 48.)
      */
     private fun touchableBand(view: View): Rect {
         var result = Rect(0, 0, Int.MAX_VALUE, Int.MAX_VALUE)
@@ -5056,9 +5058,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val all = ViewCompat.getRootWindowInsets(root)
             val bars = all?.getInsets(WindowInsetsCompat.Type.systemBars())
             val tappable = all?.getInsets(WindowInsetsCompat.Type.tappableElement())
-            val bottomBand = maxOf(
-                bars?.bottom ?: 0, tappable?.bottom ?: 0, (NAV_BAR_WINDOW_DP * root.resources.displayMetrics.density).roundToInt()
-            )
+            val bottomBand = maxOf(bars?.bottom ?: 0, tappable?.bottom ?: 0)
             result = Rect(
                 location[0] + (bars?.left ?: 0), location[1] + (bars?.top ?: 0),
                 location[0] + root.width - (bars?.right ?: 0), location[1] + root.height - bottomBand
@@ -5319,8 +5319,6 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** Taps on the prompt's own button before the command answers it, and the wait between them. */
         private const val PROMPT_TAPS = 2
         private const val PROMPT_RETAP_MS = 3_000L
-        /** The navigation bar's window is at least this tall, whatever inset it reports (see [touchableBand]). */
-        private const val NAV_BAR_WINDOW_DP = 48
         /** A button's part inside the touchable band has to be this tall for a finger to aim at it. */
         private const val MIN_TOUCH_OVERLAP_DP = 12
         /** The buttons that turn a page's confirm or prompt down (WebView's JsDialogHelper labels them Cancel). */

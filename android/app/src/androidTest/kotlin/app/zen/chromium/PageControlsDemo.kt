@@ -248,7 +248,7 @@ open class PageControlsDemo protected constructor(
         SystemClock.sleep(1_000)
         probe("default zoom 100")
         if (openSettings("Accessibility")) {
-            if (reveal(DEFAULT_ZOOM_ROW) != null) {
+            if (revealRow(DEFAULT_ZOOM_ROW) != null) {
                 SystemClock.sleep(800)
                 clickByLabel("Zoom in")
                 SystemClock.sleep(900)
@@ -307,14 +307,14 @@ open class PageControlsDemo protected constructor(
      * the pause – and the next back went to the system, which put the app away.
      *
      * With every surface down, the Settings tab may still be in front (a back at a section only
-     * pops it to the landing): [leaveSettingsTab] on every way out, not just the last – the
+     * pops it to the landing): [closeSettingsTab] on every way out, not just the last – the
      * audit's second run left it in front from here, and the menu's page items did nothing.
      */
     protected fun ensureChromeClear(): Boolean {
         for (attempt in 1..4) {
             val handle = findByLabel(HANDLE_LABEL)
             val surface = chromeSurfaceUp()
-            if (!surface && handle == null) return leaveSettingsTab()
+            if (!surface && handle == null) return closeSettingsTab()
             Log.i(tag, "chrome surface up (host=$surface, handle=${handle != null}); clearing, attempt $attempt")
             when {
                 surface && attempt <= 2 -> backWhileSurfaceUp()
@@ -327,7 +327,7 @@ open class PageControlsDemo protected constructor(
         }
         val clear = !chromeSurfaceUp()
         if (!clear) Log.w(tag, "a chrome surface stayed up")
-        return clear && leaveSettingsTab()
+        return clear && closeSettingsTab()
     }
 
     /** Back, unless the host has meanwhile dropped its surface (the back would then leave the app). */
@@ -339,22 +339,22 @@ open class PageControlsDemo protected constructor(
      * Settings is a tab since #134: a back at its section pops it to the landing (the host's
      * surface goes down) and the tab stays in front, where the menu's page items (Zoom…, Dark
      * Theme for This Site) take no press. A back at the landing closes the tab to the one that
-     * opened it (`rootBackAction`'s opener rule), waited out on the core's word of which tab is
-     * active. True once no Settings tab is in front.
+     * opened it (`rootBackAction`'s opener rule). The harness's [leaveSettingsTab] walks the two
+     * backs by the chrome document's `data-section`; the core's word of which tab is active is
+     * the claim, with a plain back as the way out should the document not have answered. True
+     * once no Settings tab is in front.
      */
-    private fun leaveSettingsTab(): Boolean {
+    private fun closeSettingsTab(): Boolean {
         if (!settingsTabActive()) return true
+        Log.i(tag, "the Settings tab is in front; back to its opener")
+        leaveSettingsTab()
         for (attempt in 1..2) {
-            Log.i(tag, "the Settings tab is in front; back to its opener, attempt $attempt")
-            back()
-            val deadline = SystemClock.uptimeMillis() + 6_000
-            while (SystemClock.uptimeMillis() < deadline) {
-                if (!settingsTabActive()) {
-                    SystemClock.sleep(1_000)
-                    return true
-                }
-                SystemClock.sleep(200)
+            if (awaitTrue(6_000) { !settingsTabActive() }) {
+                SystemClock.sleep(1_000)
+                return true
             }
+            Log.i(tag, "the Settings tab is still in front; back, attempt $attempt")
+            back()
         }
         Log.w(tag, "the Settings tab stayed in front")
         return false
@@ -365,17 +365,15 @@ open class PageControlsDemo protected constructor(
         runCatching { activeCoreTab()?.optString("url").orEmpty().startsWith(SETTINGS_URL) }.getOrDefault(false)
 
     /**
-     * Scroll the Settings row whose text starts with `label` into view and return where it is;
-     * null when there is none. A phone Settings row is one button whose label and value (or
-     * description) run together in the tree ("Colour scheme Light"), so [reveal]'s exact label
-     * finds nothing.
+     * Scroll the Settings row labelled `label` into view and return where it is; null when
+     * there is none. The chrome document's word first, the tree's second
+     * ([revealSettingsRow]): on the emulator's software GPU the tree lists a section's rows
+     * seconds after they are on screen (the nightly's run 35737412086 had the cern.ch exception
+     * on the recording and "no cern.ch exception" from the tree), and a phone Settings row is
+     * one button whose label and value run together there ("Colour scheme Light"), so [reveal]'s
+     * exact label finds nothing either way.
      */
-    protected fun revealRow(label: String): Rect? {
-        val node = findNode { it.startsWith(label) } ?: return null
-        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
-        SystemClock.sleep(1_500)
-        return findNode { it.startsWith(label) }?.let { row -> Rect().also { row.getBoundsInScreen(it) } }
-    }
+    protected fun revealRow(label: String): Rect? = revealSettingsRow(label)
 
     /** Open the app menu from a clear chrome; true once the host and the tree both show it. */
     protected fun openMenu(): Boolean {
@@ -435,13 +433,18 @@ open class PageControlsDemo protected constructor(
     }
 
     /**
-     * Settings from the app menu (the Settings tab up on its landing, `section` among its rows),
-     * then the section over the landing. [ensureChromeClear] leaves the tab again afterwards.
+     * Settings from the app menu (the Settings tab up on its landing), then the section labelled
+     * `section` over the landing, each proven by the chrome document's `data-section`
+     * ([openSettingsSection]); the chrome cleared first, as [openMenu] has it.
+     * [ensureChromeClear] leaves the tab again afterwards.
      */
     protected fun openSettings(section: String): Boolean {
-        if (!pickMenuItem("Settings", null) { findByLabel(section) != null }) return false
-        if (waitFor(section, 6_000) == null || !clickByLabel(section)) {
+        val id = SETTINGS_SECTIONS.entries.firstOrNull { it.value == section }?.key ?: error("no Settings section labelled '$section' on record")
+        ensureForeground()
+        if (!ensureChromeClear()) return false
+        if (!openSettingsSection(id)) {
             Log.w(tag, "no $section section in Settings")
+            ensureChromeClear()
             return false
         }
         SystemClock.sleep(1_200)
@@ -450,9 +453,11 @@ open class PageControlsDemo protected constructor(
 
     /**
      * Scroll a Settings row with a switch into view, take `shotName` if asked, and flip the
-     * switch. The row's label and the switch (labelled after the row) both answer to `row`; the
-     * switch is the checkable one, and it is clicked through the tree first, then with a finger
-     * at its bounds should the tree's click not have flipped it. False when the row is not there.
+     * switch: the whole row is the target (`role="switch"` with `aria-checked`, rows.tsx), so a
+     * finger on the row's document rect flips it, the document's `aria-checked` the word that it
+     * did; the tree's click on the checkable node is the way there should the touch not have
+     * taken (the tree's state stands in where the document has no such switch). False when the
+     * row is not there.
      */
     protected fun toggleSwitch(row: String, shotName: String?): Boolean {
         val bounds = revealRow(row)
@@ -462,22 +467,21 @@ open class PageControlsDemo protected constructor(
         }
         SystemClock.sleep(800)
         if (shotName != null) snap(shotName)
-        val switch = findSwitch(row)
-        if (switch == null) {
-            Log.w(tag, "no switch labelled $row; tapping the row's trailing edge")
-            Finger().tap(width - 62 * density, bounds.exactCenterY())
-            return true
-        }
-        val was = switch.isChecked
-        switch.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        SystemClock.sleep(900)
-        if (findSwitch(row)?.isChecked == was) {
-            Log.w(tag, "$row did not flip through the tree; tapping it")
-            val rect = Rect().also { switch.getBoundsInScreen(it) }
-            Finger().tap(rect.exactCenterX(), rect.exactCenterY())
+        val read = { settingsSwitchOn(row) ?: findSwitch(row)?.isChecked }
+        val was = read()
+        val flipped = { val now = read(); now != null && now != was }
+        if (!touchSettingsRowExpecting(row, "the $row switch flipped", timeoutMs = 5_000, took = flipped) && !flipped()) {
+            val switch = findSwitch(row)
+            if (switch == null) {
+                Log.w(tag, "no switch labelled $row in the tree either; tapping the row's trailing edge")
+                Finger().tap(width - 62 * density, bounds.exactCenterY())
+            } else {
+                Log.w(tag, "$row did not flip under the finger; clicking it through the tree")
+                switch.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
             SystemClock.sleep(900)
         }
-        Log.i(tag, "$row: ${if (was) "on" else "off"} -> ${findSwitch(row)?.isChecked?.let { if (it) "on" else "off" } ?: "?"}")
+        Log.i(tag, "$row: ${was?.let { if (it) "on" else "off" } ?: "?"} -> ${read()?.let { if (it) "on" else "off" } ?: "?"}")
         return true
     }
 
@@ -490,14 +494,14 @@ open class PageControlsDemo protected constructor(
     }
 
     /**
-     * Pick `next` in the picker of a Settings row that reads `current`. The trigger is clicked
-     * through the tree (the picker opens on a click from anything but a mouse), with a finger at
-     * its bounds should the tree's click not have taken; the option is then under a finger – the
-     * picker's injected touch (the rule in DemoHarness): the picker must close on it with the
-     * row reading `next` (a touch through to the host's scrim, #192, closes it with `current`),
-     * else the run fails at its end and the tree's click sets the value for the rest of the
-     * recording. False when the row, the trigger or the option is not there; true once the row
-     * reads `next`.
+     * Pick `next` in the picker of a Settings row that reads `current`. A finger on the row
+     * opens the picker (its option listed by the chrome document, the tree second), the tree's
+     * click on the row standing in should the touch not have taken; the option is then under a
+     * finger – the picker's injected touch (the rule in DemoHarness): the picker must close on
+     * it with the row reading `next` by the document (a touch through to the host's scrim,
+     * #192, closes it with `current`), else the run fails at its end and the tree's click sets
+     * the value for the rest of the recording. False when the row or the option is not there;
+     * true once the row reads `next`.
      */
     protected fun chooseOption(row: String, current: String, next: String): Boolean {
         if (revealRow(row) == null) {
@@ -505,27 +509,25 @@ open class PageControlsDemo protected constructor(
             return false
         }
         SystemClock.sleep(600)
-        val trigger = findByLabel(current) ?: findNode { it.startsWith(row) && it.endsWith(current) }?.let { node ->
-            Rect().also { node.getBoundsInScreen(it) }
+        if (!settingsRowReads(row, current) && !rowReads(row, current)) {
+            Log.w(tag, "the $row row does not read $current (document '${settingsRowValue(row)}')")
         }
-        if (trigger == null || !clickByLabel(current) && !rowClicked(row, current)) {
-            Log.w(tag, "no $row menulist reading $current")
-            return false
-        }
-        if (waitFor(next, 3_000) == null) {
-            Log.w(tag, "$row did not open through the tree; tapping it")
-            Finger().tap(trigger.exactCenterX(), trigger.exactCenterY())
-            if (waitFor(next, 3_000) == null) {
+        val option = { settingsRowListed(next) || findByLabel(next) != null }
+        if (!touchSettingsRow(row)) rowClicked(row, current)
+        if (!awaitTrue(4_000, option)) {
+            Log.w(tag, "$row did not open under the finger; clicking it through the tree")
+            if (!clickByLabel(current) && !rowClicked(row, current)) clickSettingsRow(row)
+            if (!awaitTrue(4_000, option)) {
                 Log.w(tag, "no $next option under $row")
                 return false
             }
         }
-        val reads = { rowReads(row, next) && findByLabel(current) == null }
-        if (!touchTapLabelExpecting(next, "the picker closed with the $row row reading $next", timeoutMs = 6_000, took = reads) && !reads()) {
+        val reads = { settingsRowReads(row, next) || rowReads(row, next) && findByLabel(current) == null }
+        if (!touchSettingsRowExpecting(next, "the picker closed with the $row row reading $next", timeoutMs = 6_000, took = reads) && !reads()) {
             clickByLabel(next)
             SystemClock.sleep(900)
         }
-        val took = reads()
+        val took = awaitTrue(2_000, reads)
         Log.i(tag, "$row: $current -> ${if (took) next else "still $current"}")
         return took
     }

@@ -74,12 +74,12 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(2_000)
 
         // 4. Hold a card and let go: its actions. Make a group and name it. Tabs that were never
-        //    visited keep their seeded titles, which is what the labels below rely on.
-        val hn = find(HN)
-        f.press(hn.exactCenterX(), hn.exactCenterY())
-        f.hold(600)
-        shot("03-card-held")
-        f.up()
+        //    visited keep their seeded titles, which is what the labels below rely on. The hold is
+        //    read back off the document (the sheet's rows) before New Group is asked of the tree:
+        //    once in the repairs' proof runs the 600 ms hold put up no sheet – the down reached the
+        //    chrome behind a long frame of the software GPU and useCardLift's 380 ms never elapsed
+        //    on it – and a second hold is the demo's own gesture again, not a different claim.
+        holdForCardMenu(f, HN)
         SystemClock.sleep(1_500)
         // The card menu's rows are Title Case since #236 (v2 §9.1, the #207 ruling); this read
         // "New group" until run 35726774762, the first `overview` sequence after it.
@@ -158,7 +158,35 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 
+    /**
+     * Hold [card] 600 ms and let go, until its action sheet (OverviewSheet.tsx's rows, the tab's
+     * `New Group` among them) is in the chrome's document: [CARD_MENU_TRIES] holds at most, the
+     * first one's still kept as `03-card-held`.
+     */
+    private fun holdForCardMenu(f: Finger, card: Card) {
+        repeat(CARD_MENU_TRIES) { attempt ->
+            val rect = find(card)
+            f.press(rect.exactCenterX(), rect.exactCenterY())
+            f.hold(600)
+            if (attempt == 0) shot("03-card-held")
+            f.up()
+            if (awaitTrue(4_000) { cardMenuUp() }) return
+            Log.w(tag, "the hold on $card put up no card menu; holding again (${attempt + 2}/$CARD_MENU_TRIES)")
+            SystemClock.sleep(1_000)
+        }
+        error("no card menu after $CARD_MENU_TRIES holds on $card")
+    }
+
+    /** Whether a card's action sheet is in the document: a sheet row reading `New Group`. */
+    private fun cardMenuUp(): Boolean =
+        chromeJs(
+            "(function(){return Array.prototype.some.call(document.querySelectorAll('.zen-sheet-item')," +
+                "function(e){return /New Group/.test(e.textContent||'')})})()"
+        ) == "true"
+
     private companion object {
+        /** [holdForCardMenu]: how many holds a card gets before the demo gives up on its menu. */
+        const val CARD_MENU_TRIES = 2
         /** The seeded cards the sequence handles, by the titles they carry before and after their pages load. */
         val HN = tabCard("Hacker News", "news.ycombinator.com")
         val TEA = tabCard("Tea - Wikipedia")

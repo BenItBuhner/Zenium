@@ -1,6 +1,6 @@
 {
   "name": "zenium",
-  "version": "0.4.9",
+  "version": "0.4.13",
   "description": "Zenium: Zen Browser's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron on desktop, the system WebView on Android).",
   "main": "./out/main/index.js",
   "desktopName": "zenium.desktop",
@@ -64,6 +64,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.1.1",
+    "axe-core": "4.13.0",
     "electron": "^44.3.0",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",

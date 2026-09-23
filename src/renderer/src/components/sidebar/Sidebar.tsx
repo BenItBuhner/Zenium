@@ -81,31 +81,39 @@ export function Sidebar({
       aria-label="Sidebar"
     >
       <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
-      {local ? (
-        <LocalWindowHeader state={state} compact={compact} />
-      ) : (
-        <Essentials essentials={essentials} activeTabId={space.activeTabId} compact={compact} />
-      )}
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div
-          className="zen-space-strip h-full"
-          style={{
-            transform: `translateX(-${activeIndex * 100}%)`,
-            width: `${state.spaces.length * 100}%`
-          }}
-        >
-          {state.spaces.map((s) => (
-            <div key={s.id} className="h-full" style={{ width: `${100 / state.spaces.length}%` }}>
-              <SpacePanel
-                state={state}
-                space={s}
-                isActive={s.id === state.activeSpaceId}
-                compact={compact}
-              />
-            </div>
-          ))}
+      {/* The tab strip is the window's navigation landmark (a11y-02): the Essentials tablist and
+          the spaces' tablists, one region a reader jumps to by landmark. */}
+      <nav aria-label="Tabs" className="flex min-h-0 flex-1 flex-col">
+        {local ? (
+          <LocalWindowHeader state={state} compact={compact} />
+        ) : (
+          <Essentials essentials={essentials} activeTabId={space.activeTabId} compact={compact} />
+        )}
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div
+            className="zen-space-strip h-full"
+            style={{
+              transform: `translateX(-${activeIndex * 100}%)`,
+              width: `${state.spaces.length * 100}%`
+            }}
+          >
+            {state.spaces.map((s) => (
+              <div
+                key={s.id}
+                className="h-full"
+                style={{ width: `${100 / state.spaces.length}%` }}
+              >
+                <SpacePanel
+                  state={state}
+                  space={s}
+                  isActive={s.id === state.activeSpaceId}
+                  compact={compact}
+                />
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      </nav>
       <SidebarBottom state={state} compact={compact} isDark={isDark} />
       {!compact && !floating && !coarse && <Resizer state={state} />}
     </aside>
