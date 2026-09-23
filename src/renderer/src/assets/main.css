@@ -1262,6 +1262,104 @@
   .zen-tab:hover .zen-tab-close {
     opacity: 1;
   }
+
+  /*
+   * The horizontal tab strip (design language v2 §9.37, `components/strip/TabStrip.tsx`): the
+   * sidebar's rows along the caption band. The band draws nothing of its own – no surface, no
+   * hairline – on the window family. A regular tab holds the strip's one width
+   * (`--zen-strip-tab-width`, 240 at rest, 120 at the floor, set on the regular list); a pinned
+   * tab is the 32 favicon-only square; a group's chip takes its own width up to a tab's. The
+   * regular region scrolls with no scrollbar (the edge fades say there is more).
+   */
+  .zen-tab-strip .zen-tab:not(.zen-split-seg) {
+    flex: none;
+  }
+  .zen-tab-strip [data-tab-list='regular'] .zen-tab:not([data-tab-folder], .zen-split-seg) {
+    width: var(--zen-strip-tab-width, 240px);
+  }
+  .zen-tab-strip .zen-tab[data-tab-folder] {
+    width: auto;
+    max-width: 240px;
+    gap: 8px;
+  }
+  .zen-tab-strip [data-strip-pinned] .zen-tab:not(.zen-split-seg) {
+    width: 32px;
+    justify-content: center;
+    padding: 0;
+  }
+  .zen-tab-strip .zen-split-row {
+    width: var(--zen-strip-tab-width, 240px);
+    flex: none;
+  }
+  .zen-strip-scroller {
+    scrollbar-width: none;
+  }
+  .zen-strip-scroller::-webkit-scrollbar {
+    display: none;
+  }
+  /*
+   * The trailing slot (§9.37): the sidebar's 24, one box. An inactive tab's state glyph sits in
+   * it at rest and the × takes its place while the pointer is on the tab – the glyph hidden, the
+   * × over it, nothing in the title moving. The active tab keeps its × always and carries its
+   * state glyph in flow ahead of the slot (`.zen-tab-state`), dropped under 160 where the ×
+   * alone fits (the tab is its own container). A tab whose slot went to its title
+   * (`data-slot="title"`) has no slot until the hover brings the × – Firefox's clip width.
+   */
+  .zen-tab-strip [data-tab-list='regular'] .zen-tab:not([data-tab-folder], .zen-split-seg) {
+    container-type: inline-size;
+  }
+  .zen-tab-slot {
+    position: relative;
+    display: block;
+    width: 24px;
+    height: 24px;
+    flex: none;
+  }
+  .zen-tab-slot > * {
+    position: absolute;
+    inset: 0;
+  }
+  .zen-tab-strip .zen-tab[data-active='true'] .zen-tab-close {
+    opacity: 1;
+  }
+  .zen-tab-strip .zen-tab:hover .zen-tab-slot > :not(.zen-tab-close) {
+    visibility: hidden;
+  }
+  .zen-tab-strip .zen-tab[data-slot='title']:not(:hover) .zen-tab-slot {
+    display: none;
+  }
+  .zen-tab-state {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+  }
+  @container (max-width: 159px) {
+    .zen-tab-state {
+      display: none;
+    }
+  }
+  /*
+   * A group in the strip: the shell spans the band's height so the group's colour can run as
+   * one continuous 2 px line in the band's top inset (y 2–4) from the chip's start to the last
+   * member's end, bridging the 4 px gaps – never a dash per pill; the fold runs the shell's
+   * width, clipped (`.zen-group-fold[data-folding]`). The shell's height and alignment are its
+   * utilities (`h-full items-end`): a components-layer rule would lose to them. The line wears
+   * the group's colour as the §9.14 pair (`data-group-rgb` with `groupColorVars` on itself, as
+   * the chip's glyph does), so the theme's pick recolours it with the dot.
+   */
+  .zen-strip-group-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 2px;
+    height: 2px;
+    border-radius: 1px;
+    background: rgb(var(--zen-group-rgb));
+    pointer-events: none;
+  }
   /* Zen 1.19: page-load progress runs along the bottom edge of the tab. */
   .zen-tab-progress {
     position: absolute;
@@ -9778,6 +9876,54 @@
   white-space: nowrap;
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
+}
+/*
+ * Look and Feel › Layout (components/pages/settings/LayoutCards.tsx; §9.37, §10.4's image radio
+ * cards, Zen's Browser layout): the label over four picture cards in one row of the column, 8
+ * apart, each the shared card radio (the 2 px accent outline on the choice) holding a line
+ * drawing of the window at 8 : 5 in the page's ink and fill, its caption 13 centred beneath.
+ * Under 560 (the block is the query's container) the row folds to two columns, §10.4's phone
+ * grid.
+ */
+.zen-settings-layout-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  container-type: inline-size;
+}
+.zen-settings-layout-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+@container (max-width: 560px) {
+  .zen-settings-layout-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.zen-settings-layout-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+}
+/*
+ * §9.37 names the captions, and Sidebar and top toolbar is wider than a card: the caption wraps
+ * to two balanced lines instead of the icon grid's ellipsis, and the row's stretch keeps the
+ * four cards one height.
+ */
+.zen-settings-layout-card > .zen-settings-icon-caption {
+  white-space: normal;
+  text-align: center;
+  text-wrap: balance;
+}
+.zen-settings-layout-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 8 / 5;
+  color: var(--v2-text);
 }
 .zen-settings-swatches {
   display: flex;

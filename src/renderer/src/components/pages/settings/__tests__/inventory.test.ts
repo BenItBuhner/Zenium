@@ -349,7 +349,8 @@ function desktopState(): UIState {
 const INVENTORY: Record<string, readonly string[]> = {
   look: [
     'Colour scheme',
-    'Toolbar layout',
+    // The overlay's 'Toolbar layout' menulist is the Layout card grid (§9.37, §10.4).
+    'Layout',
     'Tabs on the right',
     'Expanded sidebar',
     'Remove browser padding',

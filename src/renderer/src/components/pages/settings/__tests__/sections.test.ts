@@ -11,6 +11,7 @@ import type {
   Settings,
   SyncStatus,
   Tab,
+  ToolbarLayout,
   UIState
 } from '@shared/types'
 import { defaultScope } from '@core/sync/records'
@@ -1974,6 +1975,62 @@ describe('the section model', () => {
     expect(findRow(desktop.groups, 'bookmarks-bar')?.kind).toBe('value')
   })
 
+  it('gates compact mode’s Hide top toolbar on the layout having a top toolbar (§10.4): off in Only sidebar and Collapsed sidebar, live in the other two', () => {
+    const hide = (layout: ToolbarLayout): Row =>
+      row(section('compact', state({}, { toolbarLayout: layout })), 'compact-hide-toolbar')
+    // The Only sidebar and Collapsed sidebar layouts keep the navigation in the sidebar: nothing
+    // to hide, the switch off and the description naming both.
+    for (const layout of ['single', 'collapsed'] as const) {
+      const r = hide(layout)
+      expect(r.kind).toBe('switch')
+      expect(r.disabled, layout).toBe(true)
+      expect(r.description).toBe(
+        'Not in the Only sidebar or Collapsed sidebar layouts, which have no top toolbar to hide.'
+      )
+    }
+    // The layouts with a toolbar row of their own – the multiple layout's, the horizontal
+    // layout's row under the strip – keep the switch live.
+    for (const layout of ['multiple', 'horizontal'] as const) {
+      expect(hide(layout).disabled, layout).toBe(false)
+    }
+  })
+
+  it('makes Look and Feel’s Expanded sidebar a dependent row where the layout fixes the rail (§10.4, §9.37): set by Collapsed sidebar and Horizontal tabs, live under the other two', () => {
+    const expanded = (layout: ToolbarLayout, formFactor?: FormFactor): Row => {
+      const s = state({}, { toolbarLayout: layout, sidebarExpanded: true })
+      const look = buildSection(PAGE.sections[0], { ...context(s, true).ctx, formFactor })
+      return row(look, 'sidebar-expanded')
+    }
+    // The rail is the layout's: the row lies at .4 (`disabled` → `aria-disabled`), unchecked
+    // as the sidebar is whatever the setting stored, and its description says what set it.
+    for (const layout of ['collapsed', 'horizontal'] as const) {
+      const r = expanded(layout, 'desktop')
+      if (r.kind !== 'switch') throw new Error('not a switch')
+      expect(r.disabled, layout).toBe(true)
+      expect(r.checked, layout).toBe(false)
+      expect(r.description, layout).toBe('Set by the layout.')
+    }
+    // The two layouts that leave the width to the setting keep the switch live, checked as
+    // stored, with its own words (the pointer host's double-click among them).
+    for (const layout of ['single', 'multiple'] as const) {
+      const r = expanded(layout, 'desktop')
+      if (r.kind !== 'switch') throw new Error('not a switch')
+      expect(r.disabled ?? false, layout).toBe(false)
+      expect(r.checked, layout).toBe(true)
+      expect(r.description, layout).toBe(
+        'Show tab titles next to their icons. Double-click the sidebar edge to toggle.'
+      )
+    }
+    // A context without a form factor is the desktop's page and its search: the row reads the
+    // same. The tablet's shell is its own, which the desktop's layout never reaches: its row
+    // stays live whatever the profile stored.
+    expect(expanded('horizontal').disabled).toBe(true)
+    const tablet = expanded('horizontal', 'tablet')
+    if (tablet.kind !== 'switch') throw new Error('not a switch')
+    expect(tablet.disabled ?? false).toBe(false)
+    expect(tablet.checked).toBe(true)
+  })
+
   it('keeps a shell’s controls to its layout: the phone bar’s rows never reach the desktop page or its search (BUG-055)', () => {
     const host = state({
       platform: 'linux',
@@ -3507,10 +3564,16 @@ describe('searching the rows', () => {
     expect(hits.map((h) => [h.row.id, h.caption])).toEqual([['new-container', 'Containers']])
   })
 
-  it('reads a value row’s current label and a field row’s display', () => {
+  it('reads a value row’s option labels, a custom row’s keywords and a field row’s display', () => {
     const look = section('look')
-    const scheme = row(look, 'toolbar-layout')
-    expect(rowText(scheme)).toContain('Collapsed toolbar')
+    const scheme = row(look, 'color-scheme')
+    expect(rowText(scheme)).toContain('Follow system')
+    // The layout cards are a custom row: its captions are its keywords, so a search for a
+    // layout's name lands on the grid.
+    const layout = row(look, 'toolbar-layout')
+    expect(layout.kind).toBe('custom')
+    expect(rowText(layout)).toContain('Collapsed sidebar')
+    expect(rowText(layout)).toContain('Horizontal tabs')
     const tabs = section('tabs')
     const max = row(tabs, 'essentials-max')
     expect(max.kind).toBe('field')

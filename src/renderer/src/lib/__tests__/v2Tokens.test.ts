@@ -266,7 +266,11 @@ const V2_FILES: ReadonlyArray<string> = [
   // browser line in the warn / danger ink, the notes and the results in the deemphasised ink;
   // a result's glyph (the dialog's and the pane's Last import row) in the danger ink on failure.
   'components/import/ImportDialog.tsx',
-  'components/import/ResultGlyph.tsx'
+  'components/import/ResultGlyph.tsx',
+  // Look and Feel's Layout cards (§9.37, §10.4): each picture is a line drawing in the page
+  // ink, its frame in the surface fill and its selected row in the accent, so one drawing
+  // reads in both schemes.
+  'components/pages/settings/LayoutCards.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */

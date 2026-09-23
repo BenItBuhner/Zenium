@@ -222,6 +222,116 @@ describe('the scope proxy of the with-fallback', () => {
     delete scope.settings
     expect(scope.settings).toBeUndefined()
   })
+
+  it("shows a message listener the scope as the event's source when the page's window posted it (Redux DevTools' content script)", () => {
+    const win = fakeWindow()
+    const proto = Object.getPrototypeOf(win) as Any
+    // The window as an event target: listeners by type, a dispatch that calls them as the DOM does.
+    const listeners = new Map<string, unknown[]>()
+    class FakeMessageEvent {
+      constructor(
+        readonly source: unknown,
+        readonly data: unknown
+      ) {}
+      stopPropagation(this: FakeMessageEvent): string {
+        return this instanceof FakeMessageEvent ? 'stopped' : 'lost this'
+      }
+    }
+    const methods = {
+      addEventListener(this: unknown, type: string, fn: unknown): void {
+        if (this !== win) throw new TypeError('Illegal invocation')
+        const list = listeners.get(type) ?? []
+        if (!list.includes(fn)) list.push(fn)
+        listeners.set(type, list)
+      },
+      removeEventListener(this: unknown, type: string, fn: unknown): void {
+        listeners.set(
+          type,
+          (listeners.get(type) ?? []).filter((l) => l !== fn)
+        )
+      }
+    }
+    for (const [name, fn] of Object.entries(methods))
+      Object.defineProperty(proto, name, { value: fn, configurable: true })
+    let handler: unknown = null
+    Object.defineProperty(proto, 'onmessage', {
+      get: () => handler,
+      set: (value: unknown) => {
+        handler = value
+      },
+      configurable: true
+    })
+    const dispatch = (type: string, event: unknown): void => {
+      for (const l of listeners.get(type) ?? [])
+        if (typeof l === 'function') l.call(win, event)
+        else (l as { handleEvent: (e: unknown) => void }).handleEvent(event)
+      if (type === 'message' && typeof handler === 'function') handler.call(win, event)
+    }
+    const otherWindow = { frame: true }
+    const scope = createScopeProxy(win, collectBuiltins(win), collectOperations(win))
+
+    // content.bundle.js: `if (e.source !== window) return`, `window` the scope's.
+    const seen: unknown[] = []
+    const b = function (this: unknown, e: FakeMessageEvent): void {
+      if (e.source !== scope) return
+      seen.push({
+        data: e.data,
+        self: this === scope,
+        instance: e instanceof FakeMessageEvent,
+        stop: e.stopPropagation(),
+        ctor: e.constructor === FakeMessageEvent
+      })
+    }
+    ;(scope.addEventListener as (t: string, f: unknown, o?: unknown) => void)('message', b, false)
+    ;(scope.addEventListener as (t: string, f: unknown) => void)('message', b)
+    expect(listeners.get('message')).toHaveLength(1)
+    dispatch('message', new FakeMessageEvent(win, { source: '@devtools-page', type: 'INIT' }))
+    expect(seen).toEqual([
+      {
+        data: { source: '@devtools-page', type: 'INIT' },
+        self: true,
+        instance: true,
+        stop: 'stopped',
+        ctor: true
+      }
+    ])
+    // Another frame's message keeps its source and its identity (Clear Cache's `p.source === d.contentWindow`).
+    const fromFrame = new FakeMessageEvent(otherWindow, { type: 'cc-resize' })
+    let got: unknown = null
+    const frames = (e: unknown): void => {
+      got = e
+    }
+    ;(scope.addEventListener as (t: string, f: unknown) => void)('message', frames)
+    dispatch('message', fromFrame)
+    expect(got).toBe(fromFrame)
+    expect((got as FakeMessageEvent).source).toBe(otherWindow)
+    expect(seen).toHaveLength(1)
+    // A `handleEvent` listener and `onmessage` go the same way; a removal finds the wrapper.
+    const handled: unknown[] = []
+    const objectListener = {
+      handleEvent: (e: FakeMessageEvent) => handled.push(e.source === scope)
+    }
+    ;(scope.addEventListener as (t: string, f: unknown) => void)('message', objectListener)
+    scope.onmessage = (e: FakeMessageEvent): unknown =>
+      handled.push(`on:${String(e.source === scope)}`)
+    dispatch('message', new FakeMessageEvent(win, 1))
+    expect(handled).toEqual([true, 'on:true'])
+    ;(scope.removeEventListener as (t: string, f: unknown) => void)('message', b)
+    ;(scope.removeEventListener as (t: string, f: unknown) => void)('message', frames)
+    ;(scope.removeEventListener as (t: string, f: unknown) => void)('message', objectListener)
+    expect(listeners.get('message')).toEqual([])
+    // Other event types are registered as given.
+    const click = (): void => undefined
+    ;(scope.addEventListener as (t: string, f: unknown) => void)('click', click)
+    expect(listeners.get('click')).toEqual([click])
+    // The page's own listener still sees the real window as the source.
+    let pageSource: unknown = null
+    methods.addEventListener.call(win, 'message', (e: FakeMessageEvent) => {
+      pageSource = e.source
+    })
+    dispatch('message', new FakeMessageEvent(win, 2))
+    expect(pageSource).toBe(win)
+  })
 })
 
 /**

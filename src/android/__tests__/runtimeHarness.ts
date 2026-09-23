@@ -56,6 +56,8 @@ export class FakeKotlin implements RuntimeBridge {
   readonly files = new Map<string, string>()
   /** Background pages Kotlin holds right now, by extension id. */
   readonly backgrounds = new Set<string>()
+  /** The engine snapshot's build count `blocking.stats` answers; null for a host without the call. */
+  blockingBuilds: number | null = null
   /** When set, `ext.exec` is rejected with the message it returns for the given arguments. */
   failExec: ((args: Record<string, unknown>) => string | null) | null = null
   /** When set, what `ext.exec` answers (the script's value) for the given arguments. */
@@ -259,6 +261,9 @@ export class FakeKotlin implements RuntimeBridge {
       case 'ext.hosts':
         this.hosts.set(String(args.id), (args.hosts as string[]) ?? [])
         return undefined
+      case 'blocking.stats':
+        if (this.blockingBuilds === null) throw new Error(`no such bridge method ${method}`)
+        return { sets: 1, filters: 0, rules: 1, builds: this.blockingBuilds, lastBuildMs: 1, indexChars: 100 }
       default:
         throw new Error(`no such bridge method ${method}`)
     }
@@ -447,6 +452,8 @@ export interface Harness {
   active: { id: string | null }
   /** The core's request-blocking engine the declarativeNetRequest sink feeds (`browser.blocking.engine`). */
   engine: RuleEngine
+  /** How often the runtime flushed the blocking store's index (`browser.blocking.store.whenSettled`). */
+  blockingFlushes: { count: number }
   /** The user's containers in the model (`state.model.containers`); private is not one. */
   containers: Container[]
   /** Every `tabs.createTab` the runtime made, in order: the new tab's id and whether it was activated. */
@@ -622,8 +629,21 @@ export function harness(
     }
   })
   // As in the Browser constructor: `createExtensions` (this runtime) runs before the blocking
-  // service exists, so the engine is attached afterwards and must be read lazily.
-  ;(browser as unknown as { blocking: { engine: RuleEngine } }).blocking = { engine }
+  // service exists, so the engine is attached afterwards and must be read lazily. The store's
+  // settle (the index flushed to disk) is counted: a rule update's answer asks for it.
+  const blockingFlushes = { count: 0 }
+  ;(
+    browser as unknown as {
+      blocking: { engine: RuleEngine; store: { whenSettled: () => Promise<void> } }
+    }
+  ).blocking = {
+    engine,
+    store: {
+      whenSettled: async () => {
+        blockingFlushes.count++
+      }
+    }
+  }
   const tick = (ms: number): void => {
     clock.now += ms
     for (;;) {
@@ -645,6 +665,7 @@ export function harness(
     spaces,
     active,
     engine,
+    blockingFlushes,
     containers,
     created,
     clock,
