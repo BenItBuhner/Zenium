@@ -29,11 +29,6 @@ name: Android motion perf
 # profile, some ten more for the drivers. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
-  # TEMPORARY (the coordinator's one authorised run of the group's leave scene on the fix's
-  # head: no token in the project can dispatch); removed in the next commit, with the push run's
-  # scene default below (`overview-group-leave` in place of `all`).
-  push:
-    branches: [cursor/android-perf-group-leave-fix-cf22]
   workflow_dispatch:
     inputs:
       theme:
@@ -82,7 +77,7 @@ jobs:
         PERF_OUT=artifacts/android-motion-perf
         PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
-        DEMO_SCENES=${{ inputs.scenes || 'overview-group-leave' }}
+        DEMO_SCENES=${{ inputs.scenes || 'all' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
@@ -106,7 +101,7 @@ jobs:
         PERF_OUT=artifacts/android-motion-perf
         PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
-        DEMO_SCENES=${{ inputs.scenes || 'overview-group-leave' }}
+        DEMO_SCENES=${{ inputs.scenes || 'all' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
