@@ -90,7 +90,7 @@ export function ClosedTabRow({
       icon={
         <RowFavicon
           src={entry.favicon}
-          fallback={<Globe className="h-5 w-5 opacity-60" strokeWidth={1.75} />}
+          fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
         />
       }
       title={title}

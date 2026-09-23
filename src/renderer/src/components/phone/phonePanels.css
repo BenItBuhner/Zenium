@@ -148,6 +148,15 @@
     height: 100%;
     border-radius: var(--v2-radius-checkbox);
   }
+  /*
+   * The stand-in for a picture the row does not have – the globe where a page offered no
+   * favicon (`RowFavicon`'s fallback) – draws at 69%, 10.4's one exception to the full-ink lead:
+   * it reads as the absence it is and not as a site's mark beside the real favicons around it.
+   * A kind glyph (a folder, a device, the closed window) is the row's subject and stays full.
+   */
+  .zen-list-standin {
+    opacity: 0.69;
+  }
   .zen-list-text {
     display: flex;
     min-width: 0;

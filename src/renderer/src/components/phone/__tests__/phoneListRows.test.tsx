@@ -9,7 +9,8 @@ import {
   PhoneGroupHeading,
   PhoneIconButton,
   PhoneListRow,
-  PhoneSelectionHeader
+  PhoneSelectionHeader,
+  RowFavicon
 } from '../PhoneList'
 
 /*
@@ -303,6 +304,47 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
       }
     }
     expect(judged).toBeGreaterThanOrEqual(5)
+  })
+
+  it('draws the stand-in for a missing favicon at 69% (§10.4’s one exception), the real favicon full', () => {
+    // The one glyph §10.4 dims: a stand-in for a picture the row does not have, the globe where a
+    // page offered no favicon, at 69% "so it reads as the absence it is and not as a site's mark
+    // beside the real favicons around it". One class carries the value; the callers name it.
+    expect(rule('.zen-list-standin')).toMatch(/opacity: 0?\.69\b/)
+    const phone = resolve(__dirname, '..')
+    const callers = [
+      'OtherDevicesGroup.tsx',
+      'PhoneBookmarksPanel.tsx',
+      'PhoneHistoryPanel.tsx',
+      'RecentlyClosedSheet.tsx'
+    ]
+    let standIns = 0
+    for (const file of callers) {
+      const source = readFileSync(resolve(phone, file), 'utf8')
+      for (const at of source.matchAll(/fallback=\{<Globe([^<>]*)/g)) {
+        standIns++
+        const className = /className="([^"]*)"/.exec(at[1])?.[1] ?? ''
+        expect(className.split(/\s+/), `${file}: the globe stand-in`).toContain('zen-list-standin')
+        expect(
+          className,
+          `${file}: the stand-in's ink is the class's, not a utility's`
+        ).not.toMatch(/opacity-/)
+      }
+    }
+    expect(standIns).toBeGreaterThanOrEqual(5)
+    // The fallback stands only where there is no picture: a favicon that arrives is drawn full.
+    const missing = render(
+      <RowFavicon src={null} fallback={<span data-standin className="zen-list-standin" />} />
+    )
+    expect(missing.querySelector('[data-standin]')).not.toBeNull()
+    expect(missing.querySelector('img')).toBeNull()
+    const present = render(
+      <RowFavicon src="https://example.com/favicon.ico" fallback={<span data-standin />} />
+    )
+    const img = present.querySelector<HTMLImageElement>('img.zen-list-favicon')!
+    expect(img).not.toBeNull()
+    expect(img.className).not.toMatch(/standin|opacity/)
+    expect(present.querySelector('[data-standin]')).toBeNull()
   })
 })
 
