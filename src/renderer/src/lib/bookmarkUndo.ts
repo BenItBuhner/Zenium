@@ -3,11 +3,13 @@ import { run } from './api'
 import { dismissToast, pushToast } from './ui'
 
 /**
- * The toast a bookmark delete leaves on the desktop and tablet layouts (bookmarks-31, v2 §9.33:
- * one line, one action): "Bookmark deleted" with Undo, which names the delete's own token so it
- * brings back that delete and nothing edited since. One such toast is live at a time – a second
- * delete replaces the first's, whose delete stays undoable from the manager (Ctrl+Z). Its clock
- * runs longer than a plain action toast's: an accidental delete is noticed late.
+ * The toast a bookmark delete leaves, on every layout (bookmarks-31, v2 §9.33: one line, one
+ * action): "Bookmark deleted" with Undo, which names the delete's own token so it brings back
+ * that delete and nothing edited since. On the phone it is the tab row's Remove Bookmark that
+ * speaks through it; the phone panels' deletes carry their own Undo and commit `quiet`, so the
+ * core says nothing for them. One such toast is live at a time – a second delete replaces the
+ * first's, whose delete stays undoable from the manager (Ctrl+Z). Its clock runs longer than a
+ * plain action toast's: an accidental delete is noticed late.
  */
 // 8 s: §9.33's grant for Undo toasts (the lead's, #357), above the 5 s a plain action toast keeps (`TOAST_ACTION_DURATION`).
 export const BOOKMARK_UNDO_TOAST_MS = 8000

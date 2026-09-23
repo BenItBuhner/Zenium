@@ -4248,9 +4248,12 @@ export interface Commands {
   'bookmark.move': { args: { ids: string[]; parentId: string; index?: number }; result: void }
   /**
    * Remove bookmarks and folders (folders with all their contents). Undoable: the window hears
-   * `bookmark.deleted` with the edit's token for its toast (bookmarks-31).
+   * `bookmark.deleted` with the edit's token for its toast (bookmarks-31) – unless `quiet`, for
+   * a caller whose own undo already spoke (the phone panels' deferred deletes: `removeWithUndo`
+   * waits out its toast before the command runs, so the core's word would be a second one).
+   * The delete stays undoable (the manager's Ctrl+Z) either way.
    */
-  'bookmark.remove': { args: { ids: string[] }; result: void }
+  'bookmark.remove': { args: { ids: string[]; quiet?: boolean }; result: void }
   /**
    * Take back the newest delete, move or rename (the manager's Ctrl+Z), or the one edit `token`
    * names (a delete's toast). What came back or moved, under its current ids, with the token of

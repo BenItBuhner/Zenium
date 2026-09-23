@@ -277,11 +277,10 @@ export function useMainEvents(): void {
         void openReaderPreferences(tabId)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
-      // A delete's toast with Undo (bookmarks-31). The phone's panels keep their own: the delete
-      // itself waits out the toast there (`removeWithUndo`), so the core's word would be a second one.
-      onEvent('bookmark.deleted', (removal) => {
-        if (!isPhone()) showBookmarkDeleted(removal)
-      }),
+      // A delete's toast with Undo (bookmarks-31), on every layout – the phone's tab row's Remove
+      // Bookmark speaks through it too. The phone's panels keep their own: the delete itself
+      // waits out the toast there (`removeWithUndo`) and commits `quiet`, so the core says nothing.
+      onEvent('bookmark.deleted', (removal) => showBookmarkDeleted(removal)),
       // The delete undone from the manager (Ctrl+Z) or another window: its toast goes down.
       onEvent('bookmark.undone', (undone) => bookmarkEditUndone(undone)),
       // Take Screenshot's picture is in the gallery (SH-07): the preview card in the toast's slot

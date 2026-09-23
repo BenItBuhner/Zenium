@@ -21,6 +21,7 @@ vi.stubGlobal('window', {
 const { BOOKMARK_UNDO_TOAST_MS, bookmarkDeletedMessage, bookmarkEditUndone, showBookmarkDeleted } =
   await import('../bookmarkUndo')
 const { TOAST_ACTION_DURATION, pickToastAction, uiStore } = await import('../ui')
+const { viewportStore } = await import('../formFactor')
 
 const live = (): Array<[string, string | undefined]> =>
   uiStore
@@ -36,6 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  viewportStore.set({ formFactor: 'desktop' })
 })
 
 describe('what the toast says', () => {
@@ -65,6 +67,16 @@ describe('the toast', () => {
     await Promise.resolve()
     expect(calls).toEqual([['bookmark.undo', { token: 7 }]])
     expect(live()).toEqual([])
+  })
+
+  it("is the phone's too: the tab row's Remove Bookmark shows the same word with Undo (#357 G2; the panels' deferred deletes commit quiet instead)", async () => {
+    viewportStore.set({ formFactor: 'phone' })
+    showBookmarkDeleted({ token: 8, count: 1, kind: 'bookmark' })
+    expect(live()).toEqual([['Bookmark deleted', 'Undo']])
+    expect(uiStore.get().toasts[0].duration).toBe(BOOKMARK_UNDO_TOAST_MS)
+    pickToastAction(uiStore.get().toasts[0].id)
+    await Promise.resolve()
+    expect(calls).toEqual([['bookmark.undo', { token: 8 }]])
   })
 
   it('a second delete replaces the first toast; the first delete stays for the manager to undo', () => {

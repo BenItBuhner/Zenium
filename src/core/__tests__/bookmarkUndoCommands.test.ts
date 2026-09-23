@@ -2,14 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { BOOKMARKS_BAR_ID } from '../../shared/bookmarks'
 import type { BookmarkNode, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
-import type { Platform, StoreIO, WindowHost } from '../platform'
+import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import type { ZenWindow } from '../window'
 
 /**
  * The bookmark edits' commands as the windows hear of them (bookmarks-31): a delete tells the
  * window that made it (`bookmark.deleted`, the toast with Undo); an undo – the manager's Ctrl+Z
  * or a toast's Undo – tells every window which edit went back (`bookmark.undone`), so a toast
- * still offering that delete goes down wherever it is.
+ * still offering that delete goes down wherever it is. A `quiet` delete (the phone panels'
+ * deferred commits, whose own Undo already spoke) goes on the undo stack without a word; the
+ * phone's other way to a delete, the tab row's Remove Bookmark, is told like the desktop's.
  */
 
 function memoryIo(): StoreIO {
@@ -38,11 +40,17 @@ interface Sent {
   winId: string
 }
 
-function fixture(): { browser: Browser; win: ZenWindow; sent: Sent[] } {
+/** A desktop host with windows, or a phone-shaped one: a single window, no page tabs. */
+function fixture(shape: 'desktop' | 'phone' = 'desktop'): {
+  browser: Browser
+  win: ZenWindow
+  sent: Sent[]
+} {
   const sent: Sent[] = []
+  const phone = shape === 'phone'
   const platform: Platform = {
-    info: { os: 'linux' as PlatformOs, version: '0.0.0' },
-    capabilities: stub<HostCapabilities>({ windows: true, pageTabs: true }),
+    info: { os: (phone ? 'android' : 'linux') as PlatformOs, version: '0.0.0' },
+    capabilities: stub<HostCapabilities>({ windows: !phone, pageTabs: !phone }),
     io: memoryIo(),
     windows: {
       create: (win: ZenWindow) =>
@@ -59,7 +67,16 @@ function fixture(): { browser: Browser; win: ZenWindow; sent: Sent[] } {
           }
         })
     },
-    views: stub(),
+    // A tab's view answers what loading it asks and records nothing (the tests are the words').
+    views: stub<TabViewHost>({
+      createView: () =>
+        stub<TabView>({
+          isDestroyed: () => false,
+          isVisible: () => false,
+          getZoom: () => 1,
+          executeJavaScript: () => Promise.resolve(true)
+        })
+    }),
     menus: stub(),
     dialogs: stub(),
     clipboard: stub(),
@@ -73,7 +90,9 @@ function fixture(): { browser: Browser; win: ZenWindow; sent: Sent[] } {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
-  return { browser, win: browser.focusedWindow(), sent }
+  const win = browser.focusedWindow()
+  if (phone) browser.handleCommand(win, 'window.formFactor', { formFactor: 'phone' })
+  return { browser, win, sent }
 }
 
 const heard = (sent: Sent[], name: string): Array<[string, unknown]> =>
@@ -129,5 +148,47 @@ describe('bookmark.remove and bookmark.undo, as the windows hear them', () => {
       [f.win.id, { token: 2, kind: 'move' }],
       [other.id, { token: 2, kind: 'move' }]
     ])
+  })
+
+  it('a quiet delete says nothing to the window and still goes on the undo stack (#357 G2, the phone panels’ deferred commits)', () => {
+    const f = fixture('phone')
+    const a = f.browser.handleCommand(f.win, 'bookmark.create', {
+      parentId: BOOKMARKS_BAR_ID,
+      title: 'A',
+      url: 'https://a.test/',
+      type: 'url'
+    }) as BookmarkNode
+    f.sent.length = 0
+
+    f.browser.handleCommand(f.win, 'bookmark.remove', { ids: [a.id], quiet: true })
+    expect(f.browser.bookmarks.get(a.id)).toBeNull()
+    // No `bookmark.deleted`, no toast: the panel's own Undo toast already ran its course.
+    expect(f.sent.map((s) => s.name)).not.toContain('bookmark.deleted')
+    expect(f.sent.map((s) => s.name)).not.toContain('toast')
+
+    // The delete is on the stack all the same: the manager's Ctrl+Z brings it back, and says so.
+    expect(f.browser.handleCommand(f.win, 'bookmark.undo', {})).toMatchObject({
+      kind: 'remove',
+      token: 1
+    })
+    expect(f.browser.bookmarks.tree.children(BOOKMARKS_BAR_ID).map((n) => n.title)).toEqual(['A'])
+    expect(heard(f.sent, 'bookmark.undone')).toEqual([[f.win.id, { token: 1, kind: 'remove' }]])
+  })
+
+  it("on a phone the tab row's Remove Bookmark (Ctrl+D's path) is told like the desktop's: bookmark.deleted for the toast with Undo, no bare word (#357 G2)", () => {
+    const f = fixture('phone')
+    const tab = f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, f.win)
+    f.browser.toggleBookmark(tab.id, f.win)
+    expect(f.browser.bookmarks.has('https://a.test/')).toBe(true)
+    expect(f.browser.tabs.tab(tab.id)?.bookmarked).toBe(true)
+    f.sent.length = 0
+
+    f.browser.toggleBookmark(tab.id, f.win)
+    expect(f.browser.bookmarks.has('https://a.test/')).toBe(false)
+    expect(heard(f.sent, 'bookmark.deleted')).toEqual([
+      [f.win.id, { token: 1, count: 1, kind: 'bookmark' }]
+    ])
+    // Not the old "Bookmark removed" toast: the core's one word is the event the chrome toasts.
+    expect(f.sent.map((s) => s.name)).not.toContain('toast')
   })
 })

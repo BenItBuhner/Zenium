@@ -1421,12 +1421,14 @@ export class Browser {
 
   /**
    * Delete bookmarks and folders as the user asked (the manager, the bar, the star dialog's
-   * Remove, Ctrl+D on a bookmarked page): undoable, and the window hears of it for the toast
-   * whose Undo brings them back (bookmarks-31).
+   * Remove, Ctrl+D or a tab row's Remove Bookmark on a bookmarked page): undoable, and the window
+   * hears of it for the toast whose Undo brings them back (bookmarks-31) – unless `quiet`, for a
+   * caller whose own undo UI already spoke (the phone panels' deferred deletes); the delete is
+   * on the undo stack all the same.
    */
-  deleteBookmarks(ids: readonly string[], win: ZenWindow): void {
+  deleteBookmarks(ids: readonly string[], win: ZenWindow, quiet = false): void {
     const removal = this.bookmarkUndo.remove(ids)
-    if (removal) this.emit('bookmark.deleted', removal, win)
+    if (removal && !quiet) this.emit('bookmark.deleted', removal, win)
   }
 
   /**
@@ -2977,7 +2979,7 @@ export class Browser {
       'bookmark.update': ({ id, title, url }) => void this.bookmarkUndo.update(id, { title, url }),
       'bookmark.move': ({ ids, parentId, index }) =>
         void this.bookmarkUndo.move(ids, parentId, index),
-      'bookmark.remove': ({ ids }, win) => this.deleteBookmarks(ids, win),
+      'bookmark.remove': ({ ids, quiet }, win) => this.deleteBookmarks(ids, win, quiet),
       'bookmark.undo': ({ token }) => this.undoBookmarkEdit(token),
       'bookmark.open': ({ id, newTab, tabId, background }, win) =>
         this.openBookmark(id, newTab, tabId, win, Boolean(background)),

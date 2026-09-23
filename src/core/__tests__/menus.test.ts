@@ -3442,6 +3442,20 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     expect(enabled(h, 'Reopen Closed Tab')).toBe(false)
   })
 
+  it("the phone row's Remove Bookmark (the drawer's hold menu) is told as the desktop's: bookmark.deleted for the toast with Undo, no bare word (#357 G2)", () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    item(h, 'Bookmark Tab').click!()
+    expect(h.browser.bookmarks.has(PAGE_URL)).toBe(true)
+    h.sent.length = 0
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    expect(labels(h.shown())).toContain('Remove Bookmark')
+    item(h, 'Remove Bookmark').click!()
+    expect(h.browser.bookmarks.has(PAGE_URL)).toBe(false)
+    expect(h.sent).toContain('bookmark.deleted')
+    expect(h.sent).not.toContain('toast')
+  })
+
   describe('Close Tabs Above / Below / Other Tabs share one scope: the regular tabs, pinned and Essentials exempt', () => {
     /** A pinned row P, an essential E, regular rows A B C, in that order in the space. */
     function strip(): Harness & { ids: Record<string, string> } {
