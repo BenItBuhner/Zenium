@@ -48,7 +48,10 @@ import { StripAxisContext, type StripAxis } from '../stripAxis'
  * with the rows it had kept drawn until the spring rests; a hold brings the group's menu at the
  * finger; a SAVED group – its tabs closed, its pages kept (TAB-16) – as a row with the ring and
  * the count of its pages whose tap opens it; the desktop's row on its own contract (TAB-16's
- * desktop half – desktopGroups.test.tsx), its fold no spring.
+ * desktop half – desktopGroups.test.tsx), its fold the same spring (W4-2): the block's height
+ * on SPRING_GENTLE with the rows it had – its tabs, or a saved folder's pages – kept drawn
+ * until the spring rests, and the cut under reduced motion (§11.3); the strip's chip (§9.37)
+ * the same fold along `x`.
  */
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
@@ -65,16 +68,32 @@ function rule(selector: string): string {
 const ROW = 44
 const GAP = 2
 
+/** The strip's chip along `x`, and a member tab's width beside it. */
+const CHIP = 120
+const STRIP_TAB = 180
+
 // happy-dom lays nothing out: the fold reads the block's and the header's `offsetHeight`, so
-// the block answers with the rows it holds and the header with the row.
+// the block answers with the rows it holds – its tabs, or a saved folder's pages – and the
+// header with the row; along the strip's `x` the same by `offsetWidth`, the chip and the tabs.
 Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
   configurable: true,
   get(this: HTMLElement): number {
     if (this.classList.contains('zen-group-fold')) {
-      const rows = this.querySelectorAll('[data-tab-id]').length
+      const rows = this.querySelectorAll('[data-tab-id], [data-saved-page]').length
       return ROW + rows * (ROW + GAP)
     }
     if (this.classList.contains('zen-tab')) return ROW
+    return 0
+  }
+})
+Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+  configurable: true,
+  get(this: HTMLElement): number {
+    if (this.classList.contains('zen-group-fold')) {
+      const rows = this.querySelectorAll('[data-tab-id]').length
+      return CHIP + rows * (STRIP_TAB + GAP)
+    }
+    if (this.classList.contains('zen-strip-group-chip')) return CHIP
     return 0
   }
 })
@@ -201,6 +220,17 @@ const header = (): HTMLElement => q<HTMLElement>('[data-tab-folder="g"]')!
 const shell = (): HTMLElement => q<HTMLElement>('.zen-group-fold')!
 const memberRows = (): string[] =>
   [...shell().querySelectorAll<HTMLElement>('[data-tab-id]')].map((el) => el.dataset.tabId!)
+/** A saved folder's page rows in the block (the desktop's, TAB-16), by title. */
+const pageRows = (): string[] =>
+  [...shell().querySelectorAll<HTMLElement>('[data-saved-page]')].map((el) =>
+    el.getAttribute('aria-label')!
+  )
+
+const PAGES = [
+  { url: 'https://alpha.example/', title: 'ALPHA' },
+  { url: 'https://beta.example/', title: 'BETA' },
+  { url: 'https://delta.example/', title: 'DELTA' }
+]
 
 const frames = new Map<number, (t: number) => void>()
 let nextFrame = 1
@@ -636,7 +666,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(memberRows()).toEqual(['one', 'two'])
   })
 
-  it('leaves the desktop’s folder row on its own contract: Zen’s 32 header with the group’s glyph and no bar, the fold the state’s alone', () => {
+  it('leaves the desktop’s folder row on its own contract: Zen’s 32 header with the group’s glyph and no bar, its fold the same spring', () => {
     // Stale `savedTabs` beside live members are no saved group: the row is an open folder's.
     panel(
       grouped(),
@@ -658,11 +688,159 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(shell().dataset.groupKind).toBe('open')
     expect(row.querySelector('[data-testid="group-count"]')?.textContent).toBe('2')
     expect(row.querySelector('[data-testid="group-row-count"]')).toBeNull()
-    // The desktop's fold is the state's alone: no spring, the rows gone with the state.
+    // The desktop's fold is the tablet's spring (W4-2): the rows kept for the commit that folds,
+    // the block clipped, its height run from the whole to the header alone on SPRING_GENTLE…
+    const whole = ROW + 2 * (ROW + GAP)
     panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    expect(shell().hasAttribute('data-folding')).toBe(true)
+    expect(shell().style.height).toBe(`${whole}px`)
+    expect(folds()).toEqual([{ from: whole, to: ROW }])
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    act(() => {
+      frame()
+      frame()
+    })
+    const mid = parseFloat(shell().style.height)
+    expect(mid).toBeLessThan(whole)
+    expect(mid).toBeGreaterThan(ROW)
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    // …and at rest the clip lifts, the layout holds the header's height, the kept rows go.
+    settle()
+    expect(shell().style.height).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(memberRows()).toEqual([])
+  })
+
+  it('keeps a saved folder’s pages through the desktop’s fold (W4-2, #360’s F5): the block measures whole as it shuts, the pages drawn until the spring rests, and back in the commit that unfolds', () => {
+    // A SAVED folder unfolded on the desktop: its pages under the header as rows of the block.
+    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES })], 'desktop')
+    const row = header()
+    expect(row.hasAttribute('data-saved')).toBe(true)
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+    expect(shell().dataset.groupKind).toBe('saved')
+    expect(memberRows()).toEqual([])
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
     expect(folds()).toEqual([])
+    // Folded: the pages stay for the folding commit – so the shell measures the whole block,
+    // header and three page rows, not the header alone – clipped, the height on SPRING_GENTLE
+    // from that whole to the header. (Before W4-2 the pages went with the state and the fold
+    // measured `whole == alone`: a cut shut and a spring open.)
+    const whole = ROW + PAGES.length * (ROW + GAP)
+    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES, collapsed: true })], 'desktop')
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    expect(shell().hasAttribute('data-folding')).toBe(true)
+    expect(shell().style.height).toBe(`${whole}px`)
+    expect(folds()).toEqual([{ from: whole, to: ROW }])
+    expect(header().getAttribute('aria-expanded')).toBe('false')
+    expect(header().querySelector('[data-testid="group-count"]')?.textContent).toBe('3')
+    act(() => {
+      frame()
+      frame()
+    })
+    const mid = parseFloat(shell().style.height)
+    expect(mid).toBeLessThan(whole)
+    expect(mid).toBeGreaterThan(ROW)
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    // At rest the pages go and the clip lifts; the loose rows were never touched.
+    settle()
+    expect(pageRows()).toEqual([])
+    expect(shell().querySelector('[data-saved-pages]')).toBeNull()
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(shell().style.height).toBe('')
+    expect(q('[data-tab-id="gamma"]')).not.toBeNull()
+    // Unfolded: the pages back in that commit, the height from the header to the whole.
+    starts.length = 0
+    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES })], 'desktop')
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    expect(shell().hasAttribute('data-folding')).toBe(true)
+    expect(shell().style.height).toBe(`${ROW}px`)
+    expect(folds()).toEqual([{ from: ROW, to: whole }])
+    act(() => {
+      frame()
+      frame()
+    })
+    expect(parseFloat(shell().style.height)).toBeGreaterThan(ROW)
+    expect(parseFloat(shell().style.height)).toBeLessThan(whole)
+    settle()
+    expect(shell().style.height).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    expect(header().getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('cuts under reduced motion (§11.3): the height jumps, the block never clipped, the rows gone in the folding commit', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined
+    }))
+    // The desktop's open folder…
+    panel(grouped(), [folder()], 'desktop')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    // The spring is asked for the fold and jumps to its target in the same breath: no frame
+    // scheduled, the clip on and off within the commit, the kept rows released with it.
+    expect(folds()).toEqual([{ from: ROW + 2 * (ROW + GAP), to: ROW }])
+    expect(frames.size).toBe(0)
     expect(memberRows()).toEqual([])
     expect(shell().hasAttribute('data-folding')).toBe(false)
     expect(shell().style.height).toBe('')
+    expect(header().getAttribute('aria-expanded')).toBe('false')
+    // …and its saved folder, the same cut over its pages (the unfold that opens it here is a
+    // jump of its own; the recorder is cleared after it).
+    panel([tab('home')], [folder({ savedTabs: PAGES })], 'desktop')
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    expect(frames.size).toBe(0)
+    starts.length = 0
+    panel([tab('home')], [folder({ savedTabs: PAGES, collapsed: true })], 'desktop')
+    expect(folds()).toEqual([{ from: ROW + PAGES.length * (ROW + GAP), to: ROW }])
+    expect(frames.size).toBe(0)
+    expect(pageRows()).toEqual([])
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(shell().style.height).toBe('')
+    // The tablet's row takes the same cut.
+    panel(grouped(), [folder()])
+    starts.length = 0
+    panel(grouped(), [folder({ collapsed: true })])
+    expect(folds()).toEqual([{ from: ROW + 2 * (ROW + GAP), to: ROW }])
+    expect(frames.size).toBe(0)
+    expect(memberRows()).toEqual([])
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+  })
+
+  it('folds the strip’s chip along `x` (§9.37): the block’s width on SPRING_GENTLE from the chip with its members to the chip alone, the members kept until it rests', () => {
+    panel(grouped(), [folder()], 'desktop', 'synced', 'x')
+    expect(header().className).toContain('zen-strip-group-chip')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    const whole = CHIP + 2 * (STRIP_TAB + GAP)
+    panel(grouped(), [folder({ collapsed: true })], 'desktop', 'synced', 'x')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    expect(shell().hasAttribute('data-folding')).toBe(true)
+    expect(shell().style.width).toBe(`${whole}px`)
+    expect(shell().style.height).toBe('')
+    expect(folds()).toEqual([{ from: whole, to: CHIP }])
+    act(() => {
+      frame()
+      frame()
+    })
+    const mid = parseFloat(shell().style.width)
+    expect(mid).toBeLessThan(whole)
+    expect(mid).toBeGreaterThan(CHIP)
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    settle()
+    expect(shell().style.width).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(memberRows()).toEqual([])
+    // Unfolded: the members back, the width from the chip to the whole.
+    starts.length = 0
+    panel(grouped(), [folder()], 'desktop', 'synced', 'x')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    expect(shell().style.width).toBe(`${CHIP}px`)
+    expect(folds()).toEqual([{ from: CHIP, to: whole }])
+    settle()
+    expect(shell().style.width).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
   })
 })
