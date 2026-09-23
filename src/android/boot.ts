@@ -195,8 +195,10 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
  * the status bar follows the chrome's own spring, not a guess at it) – so the gradient reaches
  * behind the status bar and its icons stay legible; and hand the chrome's `--zen-scrim` token
  * over, so what the host draws natively (the page behind an in-page back) dims with the same
- * space-tinted scrim as the chrome's own sheets. `useTheme` announces each paint that matters
- * (`zen-theme-painted`); before its first one the space theme is worked out from the state.
+ * space-tinted scrim as the chrome's own sheets, and `--v2-accent` / `--v2-on-accent`, so a native
+ * primary control (the page dialog sheet's OK, PUI-27) is the chrome's own. `useTheme` announces
+ * each paint that matters (`zen-theme-painted`); before its first one the space theme is worked
+ * out from the state.
  */
 function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Browser): void {
   let last = ''
@@ -220,10 +222,12 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
     // a blend ahead of it (`pageScheme.ts`).
     handed = schemeForPages(handed, state.settings.colorScheme, dark, systemDark.matches)
     const scrim = computedTokenColor('--zen-scrim') ?? ''
-    const key = `${handed}|${dark}|${background}|${scrim}`
+    const accent = computedTokenColor('--v2-accent') ?? ''
+    const onAccent = computedTokenColor('--v2-on-accent') ?? ''
+    const key = `${handed}|${dark}|${background}|${scrim}|${accent}|${onAccent}`
     if (key === last) return
     last = key
-    bridge.send('chrome.setTheme', { dark, scheme: handed, background, scrim })
+    bridge.send('chrome.setTheme', { dark, scheme: handed, background, scrim, accent, onAccent })
   }
   const apply = (state: UIState): void => {
     // The token is read back from the document a frame later, once React has written the

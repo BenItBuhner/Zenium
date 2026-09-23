@@ -4,6 +4,7 @@ import { announce, startAnnouncer, zoomAnnouncement } from '@renderer/lib/announ
 import { installedMessage } from '@shared/webApp'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
+import { bookmarkEditUndone, showBookmarkDeleted } from '@renderer/lib/bookmarkUndo'
 import { openCapture } from '@renderer/lib/captureOverlay'
 import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { chromeUnderPages } from '@renderer/lib/cover'
@@ -283,6 +284,12 @@ export function useMainEvents(): void {
         void openReaderPreferences(tabId)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
+      // A delete's toast with Undo (bookmarks-31), on every layout – the phone's tab row's Remove
+      // Bookmark speaks through it too. The phone's panels keep their own: the delete itself
+      // waits out the toast there (`removeWithUndo`) and commits `quiet`, so the core says nothing.
+      onEvent('bookmark.deleted', (removal) => showBookmarkDeleted(removal)),
+      // The delete undone from the manager (Ctrl+Z) or another window: its toast goes down.
+      onEvent('bookmark.undone', (undone) => bookmarkEditUndone(undone)),
       // Take Screenshot's picture is in the gallery (SH-07): the preview card in the toast's slot
       // on the layouts with the message layer; the sidebar layout's narrow well takes a toast
       // with Share for its one action.

@@ -141,6 +141,7 @@ function stateOf(collapsed = false): UIState {
     boosts: [],
     extensions: [],
     bookmarks: [],
+    closingTabIds: [],
     // Sync off: the tab search's reach has no other devices to look through (TAB-21).
     sync: { enabled: false, scope: { openTabs: false } }
   } as unknown as UIState
