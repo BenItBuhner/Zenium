@@ -10,7 +10,8 @@
 //     percentiles, the stage most often long – REPORTED, never gated (on the recipe's software
 //     GPU every frame is late whatever the chrome does); (2) the GATE's columns per scene – the
 //     chrome WebView renderer main thread's time per frame (mean / p95 / max), layouts and paints
-//     and style recalculations per frame, long tasks, from the scene's Blink trace; the ratios
+//     and style recalculations per frame, long tasks (by CPU, with the count by wall time beside
+//     it where the trace carried thread times – RULING 5), from the scene's Blink trace; the ratios
 //     against the scene's same-run baseline (p95 / baseline p95, janky share less the baseline's)
 //     – and the verdict. The budgets per scene kind under them; each scene's stage table and
 //     trace line folded under that. Printed to stdout (the workflow appends it to
@@ -172,7 +173,16 @@ function perFrameCell(record, key, decimals = 2) {
 function longTasksCell(record) {
   const t = record.trace
   if (!t || !t.found) return '–'
-  return t.longTasks ? `${t.longTasks} (longest ${fixed(t.longestTaskMs, 0)} ms${cpuNote(t)})` : '0'
+  const longest =
+    t.longTasks || t.longTasksWall ? ` (longest ${fixed(t.longestTaskMs, 0)} ms${cpuNote(t)})` : ''
+  return `${t.longTasks}${wallNote(t)}${longest}`
+}
+
+/** RULING 5 (#350): the counted long tasks are by the thread's own clock; the count by wall time is reported beside it – never gated – where the trace carried thread times (an older record has no `longTasksWall`; one without thread times carries the same number under both names). */
+function wallNote(t) {
+  return typeof t.longTasksWall === 'number' && typeof t.longestTaskCpuMs === 'number'
+    ? ` by CPU, ${t.longTasksWall} by wall`
+    : ''
 }
 
 /** The longest task's time on the CPU beside its wall time, when the trace carried thread times: the gap is time off the CPU, not the chrome's work. */
@@ -217,7 +227,7 @@ function folded(record) {
         `${t.workMs?.compile >= 0.5 ? ` (compiling ${fixed(t.workMs.compile, 0)} ms)` : ''}` +
         `${t.workMs ? ` (style ${fixed(t.workMs.styleRecalc, 0)}, layout ${fixed(t.workMs.layout, 0)}, paint ${fixed(t.workMs.paint, 0)} ms)` : ''}; ` +
         `layouts ${t.layoutCount}, paints ${t.paintCount}, style recalcs ${t.styleRecalcCount} (${fixed(t.perFrame?.styleRecalc, 2)}/frame), ` +
-        `layer updates ${t.layerChurn} (${fixed(t.perFrame?.layerChurn, 1)}/frame); long tasks ${t.longTasks}, longest ${fixed(t.longestTaskMs, 0)} ms${t.longTasks ? cpuNote(t) : ''}.`,
+        `layer updates ${t.layerChurn} (${fixed(t.perFrame?.layerChurn, 1)}/frame); long tasks ${t.longTasks}${wallNote(t)}, longest ${fixed(t.longestTaskMs, 0)} ms${cpuNote(t)}.`,
       ''
     )
   } else if (t) {

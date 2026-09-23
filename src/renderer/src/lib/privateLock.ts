@@ -92,6 +92,14 @@ export interface PrivateLockHost {
   unlock(reason: string): Promise<{ locked: boolean }>
   /** The switch's confirmation: the same prompt; resolves whether the user passed. */
   verify(reason: string): Promise<boolean>
+  /**
+   * The lock's masked tree is in the document (every private identity behind the mask, the
+   * cover over the tab in front): the host's veil over the chrome (`LockVeil.kt`, §9.19) may
+   * fall once the frame carrying it is on the display – the host times that frame itself from
+   * its WebView's visual-state callback. Reported after every `locked: true` the host announces,
+   * once the render it caused has committed; a host without a veil has none to set.
+   */
+  masked?(): void
 }
 
 let host: PrivateLockHost | null = null
@@ -103,7 +111,8 @@ export function setPrivateLockHost(next: PrivateLockHost | null): void {
 /**
  * `private.lock` from the host: the lock as it stands, and whether a screen lock is set. A lock
  * that came off (the screen lock passed, the last private tab closed, the switch turned off, a
- * screen lock removed while the app was away) lifts the cover if one is up.
+ * screen lock removed while the app was away) lifts the cover if one is up. A lock that stands
+ * is reported back as masked once its tree has committed (`PrivateLockHost.masked`).
  */
 export function applyPrivateLock(payload: { locked?: unknown; screenLock?: unknown }): void {
   const patch: Partial<PrivateLockState> = {}
@@ -114,6 +123,23 @@ export function applyPrivateLock(payload: { locked?: unknown; screenLock?: unkno
   }
   if (Object.keys(patch).length) privateLockStore.set(patch)
   if (payload.locked === false) release()
+  if (payload.locked === true) reportMasked()
+}
+
+/**
+ * Tell the host the lock's masked tree is committed. The store's `set` queued React's sync-lane
+ * render of every subscriber as a microtask (`useSyncExternalStore`); one queued after it runs
+ * once that commit has written the masked tree to the document, so the host's visual-state
+ * callback posted from the report times the first frame that carries the mask and no earlier
+ * one. A lock released before the microtask runs has no masked frame to report – the host's
+ * veil is down already on its own word.
+ */
+function reportMasked(): void {
+  const h = host
+  if (!h?.masked) return
+  queueMicrotask(() => {
+    if (host === h && privateLockStore.get().locked) h.masked?.()
+  })
 }
 
 /**

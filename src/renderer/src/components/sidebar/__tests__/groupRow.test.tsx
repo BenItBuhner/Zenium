@@ -377,7 +377,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
   it('keeps the folder’s own icon in the glyph slot where the desktop gave it one', () => {
     panel(grouped(), [folder({ icon: '🔬' })])
     const glyph = header().querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.querySelector('.zen-group-row-icon')?.textContent).toBe('🔬')
+    expect(glyph.querySelector('.zen-group-row-icon')?.getAttribute('data-icon')).toBe('🔬')
     expect(glyph.querySelector('.zen-group-row-dot')).toBeNull()
   })
 
@@ -416,7 +416,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     panel(grouped(), [folder({ icon: '🔬' })], 'desktop', 'synced', 'x')
     chip = header()
     glyph = chip.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.querySelector('.zen-group-row-icon')?.textContent).toBe('🔬')
+    expect(glyph.querySelector('.zen-group-row-icon')?.getAttribute('data-icon')).toBe('🔬')
     expect(glyph.querySelector('.zen-group-row-dot')).toBeNull()
   })
 

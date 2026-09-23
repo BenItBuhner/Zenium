@@ -245,10 +245,17 @@ describe('the field’s engine mark (NTP-09)', () => {
   const slot = (): HTMLElement =>
     host!.querySelector<HTMLElement>('.zen-ntp-field [data-testid="engine-field-glyph"]')!
 
-  it('shows the magnifier for the vendor’s default, and no favicon', () => {
+  it('leads with the vendor’s default’s favicon too, the magnifier until it loads (v2 §6)', () => {
     render(tab('r', 'default'), withEngine('google'))
+    const img = slot().querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+    expect(img.getAttribute('src')).toBe('https://www.google.com/favicon.ico')
     expect(slot().querySelector('svg')).not.toBeNull()
-    expect(slot().querySelector('img')).toBeNull()
+    expect(img.className).toContain('invisible')
+    act(() => {
+      img.dispatchEvent(new Event('load'))
+    })
+    expect(slot().querySelector('svg')).toBeNull()
+    expect(img.className).toContain('h-5 w-5')
   })
 
   it('shows the chosen engine’s favicon at 20 once it loads, the magnifier until then', () => {

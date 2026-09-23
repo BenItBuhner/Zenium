@@ -1269,8 +1269,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
               className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2"
               style={fieldGrowFrom(barLayout(state))}
             >
-              {/* The engine's mark (NTP-09): its favicon when it is not the vendor's default, the
-                letter tile otherwise; the morph's double draws the same (FakeboxMorphLayer). */}
+              {/* The engine's mark (v2 §6; NTP-09): its favicon at 20, whichever engine it is, the
+                letter tile until it loads or for an engine without one; the morph's double
+                draws the same (FakeboxMorphLayer). */}
               <EngineFieldGlyph engine={engine} fallback="tile" />
               <input
                 ref={inputRef}

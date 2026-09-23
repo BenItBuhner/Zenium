@@ -390,8 +390,9 @@ function SearchField({
         )}
         onClick={tapFakebox}
       >
-        {/* The magnifier, or the engine's favicon when the engine is not the vendor's default
-            (NTP-09): the double the morph paints carries the same mark (FakeboxMorphLayer). */}
+        {/* The engine's favicon at 20 leads the resting field (v2 §6; NTP-09), the magnifier until
+            it loads or for an engine without one: the double the morph paints carries the same
+            mark (FakeboxMorphLayer). */}
         <EngineFieldGlyph engine={engine} fallback="magnifier" className="zen-ntp-placeholder" />
         {/* The pill's words (PhoneShell), one string for the address wherever it is asked for. */}
         <span className="zen-ntp-placeholder min-w-0 flex-1 truncate">Search or enter address</span>

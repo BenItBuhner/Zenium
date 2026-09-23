@@ -27,8 +27,8 @@ import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@re
 import type { StripSlot } from '@renderer/lib/tabStripLayout'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { GroupGlyph } from '../GroupGlyph'
 import { SpaceGlyph } from '../SpaceGlyph'
-import { DEFAULT_FOLDER_ICON } from '../phone/GroupCard'
 import { useLongPress } from '../phone/useLongPress'
 import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon, type FaviconSource } from './Favicon'
@@ -36,6 +36,7 @@ import { ENTER_BATCH, ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
 import { useStripAxis } from './stripAxis'
 import { TabItem } from './TabItem'
+import { TabSet } from './TabSet'
 import { useGroupFold } from './useGroupFold'
 
 interface Props {
@@ -160,15 +161,17 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                     data-tab-list="pinned"
                     {...tablistProps(`${space.name} pinned tabs`)}
                   >
-                    {stripRows(pinned, state.splitGroups).map((row) => (
-                      <StripRowItem
-                        key={rowKey(row)}
-                        row={row}
-                        activeTabId={activeTabId}
-                        compact={compact}
-                        parent={pinnedHeaderKey}
-                      />
-                    ))}
+                    <TabSet tabs={pinned}>
+                      {stripRows(pinned, state.splitGroups).map((row) => (
+                        <StripRowItem
+                          key={rowKey(row)}
+                          row={row}
+                          activeTabId={activeTabId}
+                          compact={compact}
+                          parent={pinnedHeaderKey}
+                        />
+                      ))}
+                    </TabSet>
                   </div>
                 )}
               </>
@@ -225,14 +228,16 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                   data-tab-list="regular"
                   {...tablistProps(`${space.name} tabs`)}
                 >
-                  {stripRows(loose, state.splitGroups).map((row) => (
-                    <StripRowItem
-                      key={rowKey(row)}
-                      row={row}
-                      activeTabId={activeTabId}
-                      compact={compact}
-                    />
-                  ))}
+                  <TabSet tabs={loose}>
+                    {stripRows(loose, state.splitGroups).map((row) => (
+                      <StripRowItem
+                        key={rowKey(row)}
+                        row={row}
+                        activeTabId={activeTabId}
+                        compact={compact}
+                      />
+                    ))}
+                  </TabSet>
                 </div>
               )}
             </div>
@@ -474,8 +479,8 @@ interface FolderRowProps {
  * A group's header and its member rows. In the sidebar the header is a folder row – the group's
  * glyph, name, count, chevron – with the members indented beneath it; on the tablet the
  * full-width group row (§9.36). In the horizontal strip (§9.37, the list's axis `x`) the header
- * is the group's chip – 32 tall at radius 8, the shared group glyph (`GroupRowGlyph`: the 16 box,
- * the 10 colour dot, the 2 px ring of a saved group, or the folder's own icon), the name at
+ * is the group's chip – 32 tall at radius 8, the one group glyph (`GroupGlyph`, §9.37: the 16 box,
+ * the 10 colour dot, the 10 ring at a 2 stroke of a saved group, or the folder's own icon), the name at
  * 13/600 – ahead of its members, and the group's colour runs as one continuous 2 px line in the
  * band's top inset from the chip's start to the last member's end, bridging the gaps
  * (`.zen-strip-group-line` on the shell, never a dash per pill), wearing the colour as the §9.14
@@ -510,7 +515,7 @@ export function FolderRow({
   //
   // The desktop's row (TAB-16's desktop half, tabs-15): Zen's folder header on §5's 32 row, the
   // group's colour in the glyph slot alone – the same dot, saved ring or own icon as the tablet's
-  // (`GroupRowGlyph`) – and the rows' 20 px indent as the bracket that says which rows are the
+  // (`GroupGlyph`) – and the rows' 20 px indent as the bracket that says which rows are the
   // folder's (§9.36: no group line down the block, no fill across the row); the count as the
   // tablet row's 13 tabular aside at 69%, folded and open alike – the tabs it holds, or the
   // pages a saved one keeps; a SAVED folder stays in the strip as a saved group, a disclosure
@@ -648,7 +653,7 @@ export function FolderRow({
           <>
             {/* The chip's glyph is the shared group glyph (§9.36 / §9.37): the 16 box with the
                 10 colour dot, the saved ring, or the folder's own icon – one glyph on every host. */}
-            <GroupRowGlyph folder={folder} saved={saved} />
+            <GroupGlyph folder={folder} saved={saved} />
             {renaming ? (
               <FolderRename folder={folder} />
             ) : (
@@ -683,7 +688,7 @@ export function FolderRow({
           </>
         ) : tablet ? (
           <>
-            <GroupRowGlyph folder={folder} saved={saved} />
+            <GroupGlyph folder={folder} saved={saved} />
             {!compact &&
               (renaming ? (
                 <FolderRename folder={folder} />
@@ -713,7 +718,7 @@ export function FolderRow({
             {/* The group's mark in the glyph slot – the 10 dot of its colour, the 2 px ring for
                 a saved one, the folder's own icon where it has one – the tablet row's and the
                 phone card's (Chrome's saved-group mark is the hollow one). */}
-            <GroupRowGlyph folder={folder} saved={saved} />
+            <GroupGlyph folder={folder} saved={saved} />
             {!compact &&
               (renaming ? (
                 <FolderRename folder={folder} />
@@ -770,17 +775,19 @@ export function FolderRow({
           )}
           {...tablistProps(`${folder.name} tabs`, horizontal ? 'horizontal' : 'vertical')}
         >
-          {stripRows(drawn.tabs, splitGroups).map((row) => (
-            <StripRowItem
-              key={rowKey(row)}
-              row={row}
-              activeTabId={activeTabId}
-              compact={compact}
-              indent={!horizontal}
-              parent={key}
-              slot={slot}
-            />
-          ))}
+          <TabSet tabs={drawn.tabs}>
+            {stripRows(drawn.tabs, splitGroups).map((row) => (
+              <StripRowItem
+                key={rowKey(row)}
+                row={row}
+                activeTabId={activeTabId}
+                compact={compact}
+                indent={!horizontal}
+                parent={key}
+                slot={slot}
+              />
+            ))}
+          </TabSet>
         </div>
       )}
       {/* A saved folder's pages, unfolded (the sidebar's disclosure): buttons that open the
@@ -882,33 +889,6 @@ function SavedPageRow({
         </>
       )}
     </div>
-  )
-}
-
-/**
- * What stands for a group in the row's glyph slot (the favicon's 16 box), on the tablet and the
- * desktop alike: a 10 px dot of its colour for an open group, a 2 px ring of it for a saved one
- * – the Groups pane's two states, Chrome's filled and hollow group marks – or the folder's own
- * icon where the desktop gave it one, as the phone card's `GroupBadge` keeps it.
- * `.zen-group-row-glyph` in main.css draws it.
- */
-function GroupRowGlyph({ folder, saved }: { folder: Folder; saved: boolean }): JSX.Element {
-  const own = folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? folder.icon : null
-  return (
-    <span
-      className="zen-group-row-glyph"
-      data-saved={saved || undefined}
-      data-testid="group-row-glyph"
-      data-group-rgb=""
-      style={groupColorVars(folder.color) as CSSProperties}
-      aria-hidden
-    >
-      {own ? (
-        <span className="zen-group-row-icon">{own}</span>
-      ) : (
-        <span className="zen-group-row-dot" />
-      )}
-    </span>
   )
 }
 
