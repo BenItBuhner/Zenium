@@ -769,7 +769,6 @@ describe('a confirmation sheet’s keyboard is the prompt primitive’s (§9.22 
   })
 })
 
-
 /*
  * A form's `close` is a plain `() => void`, whatever the form binds it to. The sheet's own
  * dismiss takes an optional `then` to run once the sheet has landed, and `FormBody` used to hand
