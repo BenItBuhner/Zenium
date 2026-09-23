@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { SavedGroupTab, Tab } from '@shared/types'
-import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
+import { SPRING_GENTLE, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
 import { useListMotion } from './listMotion'
 
 /**
@@ -21,8 +21,17 @@ const NO_ROWS: GroupRows = { tabs: [], pages: [] }
  * motion): the block of the header and its rows (`shell`) runs its height on `SPRING_GENTLE`
  * between the header (`header`) alone and the whole – a container breathing, as the overview's
  * group card folds – clipped to the shell on the way, so the rows fold up under the header and
- * unfold from it rather than cut; the rows below follow the height as it moves, so nothing
- * crosses anything. Folding shut, the rows it had stay drawn until the spring rests (React's
+ * unfold from it rather than cut; the rows below follow the fold's height in layout at their
+ * constant gap – one motion, no spring of their own (a second would gap on the way down and
+ * overlap on the way up), the list's FLIP on `SPRING_SNAPPY` picking up at the commits (§9.36
+ * as amended by the lead's #398 ruling) – so nothing crosses anything. The header's chevron
+ * turns with the fold: the shell carries `--zen-fold-progress`, the extent's place between the
+ * header alone (0) and the whole (1), written here on every frame beside the extent, and the
+ * stylesheet turns the one glyph 90° on it (`.zen-group-row-chevron`) – §11.1's one value for
+ * the height and the angle, so the folded state reads no earlier than the container rests. At
+ * rest the property comes off the shell and the header's state binds the rest angle
+ * (`aria-expanded`, read on the shell); under reduced motion nothing is written and the rest
+ * angle binds in the folding commit – the cut. Folding shut, the rows it had stay drawn until the spring rests (React's
  * "storing information from previous renders", so they are there for the very commit that
  * folds) and go then; unfolding, the rows come back in that commit. The live rows are placed
  * for the list's FLIP (`SlideMotion.placeNext`) – their arrival is this motion's, not a row's
@@ -99,12 +108,17 @@ export function useGroupFold(
   return drawn
 }
 
+/** The shell's custom property the chevron turns on: the fold's progress, 0 shut to 1 open. */
+const PROGRESS = '--zen-fold-progress'
+
 /**
  * The fold's motion: the shell's extent along the list's axis – its height in the sidebar, its
- * width in the strip – on the spring, the shell clipped while it runs (`data-folding`). After
- * each frame `follow` lets the list's baseline follow the layout; at rest `onRest` releases the
- * rows kept for the fold, the shell holding the shut extent until `release` (the commit that
- * removed them) where it rested shut, the layout holding it where it rested open.
+ * width in the strip – on the spring, the shell clipped while it runs (`data-folding`), and the
+ * fold's progress written beside the extent on every frame (`--zen-fold-progress`, the
+ * chevron's angle). After each frame `follow` lets the list's baseline follow the layout; at
+ * rest `onRest` releases the rows kept for the fold, the shell holding the shut extent – and
+ * the progress at 0 – until `release` (the commit that removed them) where it rested shut, the
+ * layout holding the extent and the header's state the angle where it rested open.
  */
 class GroupFold {
   private readonly spring: SpringAnimation
@@ -113,6 +127,14 @@ class GroupFold {
   private shut = false
   /** Rested shut: the extent held on the shell until the kept rows' removal commits. */
   private holding = false
+  /** The run's ends, measured in `run`: the header alone and the whole block. */
+  private alone = 0
+  private whole = 0
+  /**
+   * The run is the cut (reduced motion, §11.3): the spring jumps in `start`, and no progress is
+   * written – the header's rest value binds the angle in the folding commit, as the height cuts.
+   */
+  private cut = false
 
   constructor(
     private readonly shell: RefObject<HTMLDivElement | null>,
@@ -128,6 +150,7 @@ class GroupFold {
         const el = this.shell.current
         if (!el) return
         el.style[this.property] = `${Math.max(0, extent)}px`
+        this.progress(extent)
         this.follow()
       },
       () => {
@@ -136,12 +159,15 @@ class GroupFold {
           if (this.shut) {
             // The kept rows are still in the DOM: the layout would hold the whole block for
             // the frame before their removal commits. Stand at the header's extent, clipped,
-            // until `release`.
+            // until `release` – the chevron at the header's angle with it, exactly (the last
+            // frame stood a hair off), gone with the extent there.
             el.style[this.property] = `${this.spring.destination}px`
+            this.progress(this.alone)
             this.holding = true
           } else {
-            // Open: the layout holds the whole.
+            // Open: the layout holds the whole, the header's state the angle.
             el.style[this.property] = ''
+            el.style.removeProperty(PROGRESS)
             delete el.dataset.folding
           }
           this.follow()
@@ -149,6 +175,20 @@ class GroupFold {
         onRest()
       }
     )
+  }
+
+  /**
+   * The extent's place between the header alone (0) and the whole (1), on the shell for the
+   * chevron – the same value as the extent, one frame. Nothing under the cut, and nothing where
+   * the ends meet (a block with no rows: nothing turns, the rest value stands).
+   */
+  private progress(extent: number): void {
+    if (this.cut) return
+    const el = this.shell.current
+    const span = this.whole - this.alone
+    if (!el || span <= 0) return
+    const at = Math.min(1, Math.max(0, (extent - this.alone) / span))
+    el.style.setProperty(PROGRESS, at.toFixed(4))
   }
 
   /** The block has just been committed folded (`collapsed`) or unfolded: run the extent there. */
@@ -167,19 +207,32 @@ class GroupFold {
     const alone = measure(head)
     const to = collapsed ? alone : whole
     const from = flying ?? (collapsed ? whole : alone)
+    // The ends the progress reads from, this run's – a fold reversed mid-flight measures its
+    // own and the spring goes on writing from them.
+    this.whole = whole
+    this.alone = alone
+    this.cut = reducedMotion()
     el.dataset.folding = ''
     el.style[this.property] = `${from}px`
+    // The start's progress with the start's extent, in this commit: the header's state has
+    // already turned to the rest the fold heads for, and the glyph must not read it before the
+    // first frame does.
+    this.progress(from)
     if (flying === null) anim.start(from, 0, to)
     else anim.retarget(to)
   }
 
-  /** The kept rows are gone from the DOM: the layout holds the header's extent from here. */
+  /**
+   * The kept rows are gone from the DOM: the layout holds the header's extent from here, and
+   * the header's state the chevron's angle.
+   */
   release(): void {
     if (!this.holding) return
     this.holding = false
     const el = this.shell.current
     if (!el) return
     el.style[this.property] = ''
+    el.style.removeProperty(PROGRESS)
     delete el.dataset.folding
   }
 

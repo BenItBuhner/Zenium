@@ -7901,7 +7901,8 @@
  * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
  * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
  * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
- * = the X's 2 + 22); a saved row, with nothing to fold, keeps the chevron's box empty so the
+ * = the X's 2 + 22), turned with the fold (`.zen-group-row-chevron` below); a saved row, with
+ * nothing to fold, keeps the chevron's box empty so the
  * counts share one edge. The name being edited takes the name's slot at the same 14. The rail
  * shows the glyph alone, centred. The rows of an open group – their own tablist under the
  * header (`.zen-group-rows`) – sit 24 in (§9.36), where the desktop's indent is 20 and the
@@ -7937,8 +7938,35 @@
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
+/*
+ * The disclosure's chevron turns with the fold (§9.36 as amended – the lead's #398 ruling – and
+ * §11.1's one value): ONE glyph, `ChevronRight`, rotated 90° on the fold's progress – 0 folded
+ * (›), 1 open (⌄), every angle between as the rows fold – by the same value that drives the
+ * block's height, so the folded state reads no earlier than the container rests (a swap of
+ * glyphs at the folding commit read it 250 ms before). The REST value is the header's state –
+ * `aria-expanded` on the header – declared on the SHELL, since an element's own declaration
+ * beats an inherited one and the in-flight value is the shell's: `useGroupFold` writes
+ * `--zen-fold-progress` inline on the shell every spring frame, (extent − alone) / (whole −
+ * alone), and inline beats the stylesheet there; at rest the hook takes it off and the state
+ * binds. No `transition`: the spring is the one clock (§11), and under reduced motion the hook
+ * writes nothing, so the rest value binds in the commit – the cut (§11.3). §11.4's "chrome
+ * switches at the end of the glide" is about properties that cannot animate; an angle is not
+ * one of them. The strip's chip draws no chevron (§9.37); the property stands on its shell
+ * unread.
+ */
+.zen-group-fold:has(> [aria-expanded='true']) {
+  --zen-fold-progress: 1;
+}
+.zen-group-fold:has(> [aria-expanded='false']) {
+  --zen-fold-progress: 0;
+}
 .zen-group-row-chevron {
   flex-shrink: 0;
+  transform: rotate(calc(var(--zen-fold-progress) * 90deg));
+  transform-origin: center;
+}
+/* The tablet row's chevron box: 16 on the close X's column, at the row's 69 % (§9.36). */
+.zen-group-row .zen-group-row-chevron {
   width: 16px;
   height: 16px;
   margin-right: 14px;
