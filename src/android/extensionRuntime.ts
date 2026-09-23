@@ -219,7 +219,7 @@ export interface ExtRequestEvent {
    * carry it); 0 from a tab that keeps no count.
    */
   document: number
-  /** `allow` | `block` | `redirect` | `upgrade`. */
+  /** `allow` | `block` | `redirect` | `upgrade` | `modifyHeaders`. */
   action: string
   /** The rule set and rule that decided, when one did (`ext:<id>:…` for an extension's). */
   matchedSet: string | null

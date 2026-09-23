@@ -892,6 +892,98 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
   })
 
+  it("an engine decision that rewrote a request's headers credits the extension's modifyHeaders rule: matched rules, the badge and onRuleMatchedDebug (User-Agent Switcher's session rule)", async () => {
+    const h = harness()
+    const dnr = manifest({
+      permissions: ['declarativeNetRequest', 'declarativeNetRequestFeedback'],
+      host_permissions: ['<all_urls>']
+    })
+    // A sideloaded zip counts as unpacked on the phone: `onRuleMatchedDebug` fires for it.
+    await h.runtime.attach(record(h, { source: 'zip' }, dnr))
+    await h.runtime.dnr.whenSynced(ID)
+    backgroundUp(h, 'bg1', ['declarativeNetRequest.onRuleMatchedDebug'])
+    const badge = await call(h, 'bg1', 'declarativeNetRequest', 'setExtensionActionOptions', [
+      { displayActionCountAsBadgeText: true }
+    ])
+    expect(badge.error).toBeUndefined()
+    // User-Agent Switcher's shape: a session rule that sets the User-Agent of every document
+    // and fetch, installed by the background when the user picks an agent.
+    const agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0'
+    const added = await call(h, 'bg1', 'declarativeNetRequest', 'updateSessionRules', [
+      {
+        addRules: [
+          {
+            id: 1,
+            priority: 1,
+            action: {
+              type: 'modifyHeaders',
+              requestHeaders: [{ header: 'User-Agent', operation: 'set', value: agent }]
+            },
+            condition: { resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest'] }
+          }
+        ]
+      }
+    ])
+    expect(added.error).toBeUndefined()
+    await h.runtime.dnr.whenSynced(ID)
+    // The session set is in the engine, and the core's mirror of it takes the same decision the
+    // Kotlin engine takes on the phone: the headers rewritten, the rule named.
+    const setId = `ext:${ID}:_session`
+    expect(h.engine.summary(setId)).toMatchObject({ source: 'dnr', enabled: true, ruleCount: 1 })
+    expect(
+      h.engine.decide({
+        url: 'https://www.flipkart.com/',
+        type: 'main_frame',
+        method: 'GET',
+        partition: 'default'
+      })
+    ).toMatchObject({
+      action: 'modifyHeaders',
+      requestHeaders: [{ header: 'User-Agent', operation: 'set', value: agent }],
+      matched: { setId, ruleId: 1 }
+    })
+    // Kotlin reports the decision it applied as `ext.request` (`platform.ts` hands the event to
+    // `onRequest`): the rule's match is logged, counted on the badge and, for the unpacked
+    // extension, raised as `onRuleMatchedDebug` with Chrome's request details.
+    const chromeTab = h.runtime.api.tabs.chromeIdFor('t1')
+    h.runtime.onRequest({
+      tabId: 't1',
+      requestId: '21',
+      url: 'https://www.flipkart.com/',
+      type: 'main_frame',
+      method: 'GET',
+      initiator: null,
+      mainFrame: true,
+      document: 1,
+      action: 'modifyHeaders',
+      matchedSet: setId,
+      matchedRule: 1,
+      micros: 31,
+      cpuMicros: 24
+    })
+    expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('1')
+    const matched = await call(h, 'bg1', 'declarativeNetRequest', 'getMatchedRules', [
+      { tabId: chromeTab }
+    ])
+    expect(
+      (matched.result as { rulesMatchedInfo: Array<Record<string, unknown>> }).rulesMatchedInfo
+    ).toMatchObject([{ rule: { ruleId: 1, rulesetId: '_session' }, tabId: chromeTab }])
+    const debug = events(h, 'bg1', 'declarativeNetRequest.onRuleMatchedDebug')
+    expect(debug).toHaveLength(1)
+    expect((debug[0].args as Array<Record<string, unknown>>)[0]).toEqual({
+      rule: { ruleId: 1, rulesetId: '_session' },
+      request: {
+        requestId: '21',
+        url: 'https://www.flipkart.com/',
+        method: 'GET',
+        frameId: 0,
+        parentFrameId: -1,
+        tabId: chromeTab,
+        type: 'main_frame'
+      }
+    })
+  })
+
   it("a webRequest listener's RequestFilter picks its requests: Violentmonkey's installer hears the .user.js main frame, not the page's script", async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest', 'tabs'] })))
