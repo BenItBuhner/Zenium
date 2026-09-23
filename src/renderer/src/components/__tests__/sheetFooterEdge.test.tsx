@@ -123,4 +123,25 @@ describe("the footer's edge (§9.25)", () => {
       expect(px(body, 'padding-bottom') + SHEET_EDGE_PAD + inset).toBe(edge)
     }
   })
+
+  it("the New Tab page's Customize sheet, ending on a control row, stands the row's 4 and the body's 4 on the chassis's 8: 16 + inset, not 28", () => {
+    // The sheet has no footer slot: its last control is the Choose-picture button in a
+    // `.zen-v2-control-row`, whose own 4 below the 40 button (§9.21: the row is the control plus
+    // 8) is the first of the three. The body brings 4 (`pb-1`), the chassis its 8 – a `pb-4`
+    // there stacked a 16 on the row's 4 and stood 28 + inset off the edge.
+    const source = readFileSync(resolve(__dirname, '../newtab/CustomizeSheet.tsx'), 'utf8')
+    const body = /className="zen-ntp-customize ([^"]*)"/.exec(source)
+    expect(body, 'the customize body').not.toBeNull()
+    const pad = body![1].split(/\s+/).filter((c) => /^pb-/.test(c))
+    expect(pad).toEqual(['pb-1'])
+    const BODY = 4
+    const row = rule('.zen-v2-control-row')
+    const rowPad = /\n\s*padding: (\d+)px 16px;/.exec(row)
+    expect(rowPad, 'the control row pads 4 above and below').not.toBeNull()
+    const ROW = Number(rowPad![1])
+    expect(ROW).toBe(4)
+    for (const [inset, edge] of HOSTS) {
+      expect(ROW + BODY + SHEET_EDGE_PAD + inset).toBe(edge)
+    }
+  })
 })
