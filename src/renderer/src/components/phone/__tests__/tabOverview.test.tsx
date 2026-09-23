@@ -18,9 +18,12 @@ import { BLANK_URL, SETTINGS_URL } from '@shared/url'
 const SPACE = 'space'
 const GROUP = 'g'
 
-/** The browser: every command is taken; a group made on the grid is `GROUP`. */
-const invoke = vi.fn<(name: string, args?: unknown) => Promise<string | null>>(async (name) =>
-  name === 'folder.create' ? GROUP : null
+/**
+ * The browser: every command is taken; a group made on the grid is `GROUP`; nothing was closed
+ * lately (the search's reach, `useSearchReach`, reads the list while a query stands).
+ */
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) =>
+  name === 'folder.create' ? GROUP : name === 'session.recentlyClosed' ? [] : null
 )
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -1181,6 +1184,200 @@ describe('a group changing height', () => {
     expect(cellOf('c').style.transform).toBe('')
     expect(cellOf('a').style.transform).toBe('')
     expect(cellOf('b').style.transform).toBe('')
+  })
+})
+
+// --- (C′) a group whose every card goes leaves whole (v2 §11.4, ruling 3) -------------------------
+
+describe('a group whose every card goes', () => {
+  const bodyOf = (rows: number): number => rows * 130 + (rows - 1) * 12 + GROUP_PAD
+  const groupOf = (rows: number): number => GROUP_HEADER + bodyOf(rows)
+  /** The exit `Departures` draws over a group card: a `.zen-group` that is no cell of the grid. */
+  const groupGhost = (): HTMLElement | null =>
+    [...host!.querySelectorAll<HTMLElement>('.zen-group')].find(
+      (el) => !el.hasAttribute('data-cell')
+    ) ?? null
+  /** A group of one at the top left, a loose card beside it, a row below, the New Tab card. */
+  const withOne = (): UIState =>
+    stateOf([
+      tab('m1', 'https://one.example/', { folderId: GROUP }),
+      tab('a', 'https://alpha.test/'),
+      tab('b', 'https://beta.test/')
+    ])
+  const layOut = (): void => {
+    bodyHeights.set(`group:${GROUP}`, bodyOf(1))
+    place(`group:${GROUP}`, 0, 0, 100, groupOf(1))
+    place('m1', 6, ROW_1)
+    place('a', 110, 0)
+    place('b', 0, groupOf(1) + 10)
+    place(NEW_TAB_CELL, 110, groupOf(1) + 10)
+  }
+  /** The grid without the group: a takes its column, the row below moves up. */
+  const withoutGroup = (): void => {
+    place('a', 0, 0)
+    place('b', 110, 0)
+    place(NEW_TAB_CELL, 0, 140)
+  }
+  const typeQuery = (text: string): void => {
+    const input = host!.querySelector<HTMLInputElement>('#overview-search')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    act(() => {
+      setter?.call(input, text)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+  /**
+   * The commit that takes the group's card off the grid: no dissolving card, no height spring
+   * to wait for, the exit released, and every cell drawn where it was, about to glide.
+   */
+  const leftInOneCommit = (a: HTMLElement, b: HTMLElement): void => {
+    expect(grid().querySelector(`[data-cell="group:${GROUP}"]`)).toBeNull()
+    expect(grid().querySelector('[data-dissolving]')).toBeNull()
+    expect(layoutAnimations.has(`group:${GROUP}`)).toBe(false)
+    expect(departStore.get().released.has(`group:${GROUP}`)).toBe(true)
+    expect(translate(a)).toEqual({ x: 110, y: 0 })
+    expect(translate(b)).toEqual({ x: -110, y: groupOf(1) + 10 })
+  }
+
+  it("its last card's X: the frame departs in place as a card does – one exit, no shrink, the cells below gliding on the same frame", () => {
+    layOut()
+    render(withOne())
+    const group = cellOf(`group:${GROUP}`)
+    const a = cellOf('a')
+    const b = cellOf('b')
+    const plus = cellOf(NEW_TAB_CELL)
+    const close = cellOf('m1').querySelector<HTMLElement>('[aria-label^="Close "]')!
+    act(() => close.click())
+    // The group closes as a group – saved with its page – and departs as one: the frame's exit,
+    // m1 drawn inside it, and no exit of m1's own.
+    expect(commands()).toEqual([['folder.close', { folderId: GROUP }]])
+    expect(departStore.get().items).toMatchObject([
+      {
+        key: `group:${GROUP}`,
+        kind: 'group',
+        tabs: [{ id: 'm1' }],
+        rect: { x: 0, y: 0, width: 100, height: groupOf(1) }
+      }
+    ])
+    expect(departStore.get().hidden.has('m1')).toBe(true)
+    const ghost = groupGhost()!
+    expect(ghost).toBeTruthy()
+    expect(ghost.querySelectorAll('.zen-overview-card')).toHaveLength(1)
+    // The exit stands still over the card until the browser shows the close; the card is whole
+    // under it, not shrinking.
+    expect(departStore.get().released.has(`group:${GROUP}`)).toBe(false)
+    expect(ghost.style.opacity).toBe('')
+    expect(group.style.opacity).toBe('0')
+    expect(group.dataset.dissolving).toBeUndefined()
+    expect(layoutAnimations.has(`group:${GROUP}`)).toBe(false)
+
+    // The close lands (the folder stays, saved): the card is off the grid in this very commit.
+    withoutGroup()
+    render(stateOf([tab('a', 'https://alpha.test/'), tab('b', 'https://beta.test/')]))
+    leftInOneCommit(a, b)
+    expect(groupGhost()).toBe(ghost)
+    expect(translate(plus)).toEqual({ x: 110, y: groupOf(1) + 10 - 140 })
+    // One frame: the exit fades and shrinks where the card stood, and every cell moves – the
+    // one wave, on the same spring frame.
+    act(() => frame())
+    expect(parseFloat(ghost.style.opacity)).toBeLessThan(1)
+    expect(ghost.style.transform).toMatch(/^scale\(0\.9\d*\)$/)
+    expect(Math.abs(translate(a).x)).toBeLessThan(110)
+    expect(Math.abs(translate(b).y)).toBeLessThan(groupOf(1) + 10)
+    expect(Math.abs(translate(plus).y)).toBeLessThan(groupOf(1) + 10 - 140)
+    act(() => settleSprings())
+    expect(a.style.transform).toBe('')
+    expect(b.style.transform).toBe('')
+    expect(plus.style.transform).toBe('')
+    expect(departStore.get().items).toEqual([])
+    expect(groupGhost()).toBeNull()
+  })
+
+  it('the search dropping its every card: the frame leaves whole – one exit, its card drawn in it – and comes back whole', () => {
+    layOut()
+    render(withOne())
+    const group = cellOf(`group:${GROUP}`)
+    const a = cellOf('a')
+    const b = cellOf('b')
+    act(() => host!.querySelector<HTMLElement>('[data-testid="overview-search-toggle"]')!.click())
+    // "test" is in a's and b's addresses and not in m1's: the group's one card is dropped, and
+    // the group with it – one exit, m1 drawn inside it, none of m1's own; the New Tab card's
+    // beside it (§9.34). The grid re-lays out without them.
+    withoutGroup()
+    typeQuery('test')
+    expect(departStore.get().items.map((i) => [i.key, i.kind])).toEqual([
+      [`group:${GROUP}`, 'group'],
+      [NEW_TAB_CELL, 'new-tab']
+    ])
+    expect(departStore.get().items[0]).toMatchObject({ filtered: true, tabs: [{ id: 'm1' }] })
+    expect(departStore.get().hidden.has('m1')).toBe(true)
+    leftInOneCommit(a, b)
+    const ghost = groupGhost()!
+    expect(ghost.querySelectorAll('.zen-overview-card')).toHaveLength(1)
+    act(() => frame())
+    expect(parseFloat(ghost.style.opacity)).toBeLessThan(1)
+    expect(Math.abs(translate(b).y)).toBeLessThan(groupOf(1) + 10)
+    act(() => settleSprings())
+    expect(departStore.get().items).toEqual([])
+    expect(groupGhost()).toBeNull()
+    expect(a.style.transform).toBe('')
+    expect(b.style.transform).toBe('')
+
+    // The query cleared: the group is back whole, its card entering as the exit run backwards
+    // – fading in from .9 – with m1 drawn in it and no entrance of m1's own; the New Tab card
+    // comes back with it.
+    layOut()
+    typeQuery('')
+    const back = cellOf(`group:${GROUP}`)
+    expect(back).toBeTruthy()
+    expect(back).not.toBe(group)
+    expect(back.dataset.dissolving).toBeUndefined()
+    expect(departStore.get().items).toEqual([])
+    act(() => frame())
+    expect(parseFloat(back.style.opacity)).toBeLessThan(1)
+    expect(back.style.opacity).not.toBe('0')
+    expect(cellOf('m1').style.opacity).toBe('')
+    expect(parseFloat(cellOf(NEW_TAB_CELL).style.opacity)).toBeLessThan(1)
+    act(() => settleSprings())
+    expect(back.style.opacity).toBe('')
+    expect(cellOf(NEW_TAB_CELL).style.opacity).toBe('')
+  })
+
+  it('its last card swiped off: the frame leaves whole as it stands on the close, its slot empty', () => {
+    layOut()
+    render(withOne())
+    const button = cellOf('m1').querySelector<HTMLElement>('[role="button"]')!
+    const from = at('m1', 0.5, 0.5)
+    pointer('pointerdown', button, from.x, from.y)
+    act(() => elapse(30))
+    pointer('pointermove', button, from.x + 20, from.y)
+    act(() => elapse(30))
+    pointer('pointermove', button, from.x + 90, from.y)
+    act(() => elapse(30))
+    pointer('pointerup', button, from.x + 90, from.y)
+    // The card is flying off on its spring; nothing has closed yet.
+    expect(commands()).toEqual([])
+    expect(departStore.get().items).toEqual([])
+    act(() => settleSprings())
+    // At its rest the tab closes, and the group – of that one card – departs as one: the
+    // frame's exit where the card stood, with no card drawn in it (that one has flown) and the
+    // count as it read; the card itself is whole, not shrinking.
+    expect(commands()).toEqual([['tab.close', { tabId: 'm1' }]])
+    expect(departStore.get().items).toMatchObject([
+      { key: `group:${GROUP}`, kind: 'group', flown: true, tabs: [{ id: 'm1' }] }
+    ])
+    const ghost = groupGhost()!
+    expect(ghost).toBeTruthy()
+    expect(ghost.querySelectorAll('.zen-overview-card')).toHaveLength(0)
+    expect(ghost.querySelector('.zen-group-header')!.textContent).toContain('1')
+    expect(cellOf(`group:${GROUP}`).dataset.dissolving).toBeUndefined()
+    // The close lands: off the grid at once, the exit released.
+    withoutGroup()
+    render(stateOf([tab('a', 'https://alpha.test/'), tab('b', 'https://beta.test/')]))
+    leftInOneCommit(cellOf('a'), cellOf('b'))
+    act(() => settleSprings())
+    expect(departStore.get().items).toEqual([])
+    expect(groupGhost()).toBeNull()
   })
 })
 

@@ -26,7 +26,9 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
  * so the collapse and the neighbours' glide start on the same frame (v2 §11.4). Under reduced
  * motion a card fades out in place over 120 ms, without the shrink (v2 §11.3). A card the tab
  * search drops (`filtered`), and the New Tab card a query takes with it (`new-tab`), leave the
- * same way, released by the grid's own commit (`TabOverview`).
+ * same way, released by the grid's own commit (`TabOverview`) – as is a group's exit whatever
+ * took its cards: a closed group's folder stays, saved, so the commit that takes its card off
+ * the grid is the one that releases it (the one whose glide closes the gap, §11.4's leave).
  */
 export function Departures({
   state,
@@ -137,7 +139,7 @@ function Exit({ item, activeTabId }: { item: Departure; activeTabId: string | nu
           style={{ transform: item.folder.collapsed ? 'rotate(-90deg)' : 'none' }}
         />
       </div>
-      {!item.folder.collapsed && (
+      {!item.folder.collapsed && !item.flown && (
         <div
           className="grid gap-3"
           style={{
