@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, useEffect, useRef, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Rect } from '@shared/types'
+import { ConfirmDialog } from '../../components/dialogs/ConfirmDialog'
 import { dispatchBackEvent, topBackSurface } from '../back'
 import { viewportStore } from '../formFactor'
 import { registerRecedeLayer } from '../motion/recede'
@@ -1716,6 +1717,58 @@ describe('the frame behind the host is inert with the chrome (a11y-32)', () => {
     )
     endExit()
     expect(inert(content())).toBe(false)
+  })
+
+  it('W4-1’s confirmation prompt under the cover: opened from a control in the frame, it holds the keyboard while the frame is inert, and its one-hop return (returnFocusTo) waits for the frame’s cover to lift', async () => {
+    const settle = (): Promise<void> =>
+      act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    const prompt = (open: boolean): ReactElement => (
+      <Frame>
+        <FrameDialogHost frame>
+          {open && (
+            <ConfirmDialog
+              name="quit"
+              title="Quit Zenium?"
+              action="Quit"
+              onCancel={() => undefined}
+              onConfirm={() => undefined}
+            />
+          )}
+        </FrameDialogHost>
+      </Frame>
+    )
+    render(prompt(false))
+    // The find bar's Next, a control of the frame the host covers; it refuses the focus while
+    // it stands under an `inert`, as a browser's does.
+    const opener = mount!.querySelector<HTMLButtonElement>('[data-find-next]')!
+    const focus = opener.focus.bind(opener)
+    opener.focus = (options) => {
+      if (!opener.closest('[inert]')) focus(options)
+    }
+    opener.focus()
+    expect(document.activeElement).toBe(opener)
+    rerender(prompt(true))
+    await settle()
+    const dialog = mount!.querySelector<HTMLElement>('[role="alertdialog"]')!
+    expect(document.activeElement).toBe(dialog)
+    expect(opener.closest('[inert]')).toBe(content())
+    expect(inert(chrome('toolbar'))).toBe(true)
+    rerender(prompt(false))
+    await settle()
+    // The prompt has left; the frame is held for its panel's way out, so the control refuses
+    // the focus – and the prompt's return leaves it on nothing else, not `body`'s.
+    expect(mount!.querySelector('[role="alertdialog"]:not([data-leaving])')).toBeNull()
+    expect(inert(content())).toBe(true)
+    expect(document.activeElement).not.toBe(opener)
+    endExit()
+    await settle()
+    expect(inert(content())).toBe(false)
+    expect(inert(chrome('toolbar'))).toBe(false)
+    expect(document.activeElement).toBe(opener)
   })
 
   it('holdFrameInert on its own covers the siblings and releases once', () => {
