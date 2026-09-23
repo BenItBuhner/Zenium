@@ -19,6 +19,9 @@ name: Android media demo
 # the Now playing chip and the media sheet with every control under a finger, the Picture in
 # picture and Switch to tab rows, Settings > Notifications; stills `services-android-media-android-ui-*`).
 on:
+  push:
+    branches:
+      - cursor/android-notifications-a4f5
   workflow_dispatch:
     inputs:
       driver:
