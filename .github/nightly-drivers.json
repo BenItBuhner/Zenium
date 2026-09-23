@@ -148,14 +148,14 @@
     {
       "id": "inactive-tabs",
       "class": "InactiveTabsDemo",
-      "shard": "phone-a",
+      "shard": "phone-d",
       "mirrors": "android-inactive-tabs-demo.yml",
       "dir": "inactive-tabs-demo",
       "env": {
         "DEMO_THEME": "light"
       },
       "estimate": 6,
-      "note": "The Inactive tabs surface (TAB-20 / SET-34) on the overview demo's profile: the archive pass through the drivers' clock, the sheet's rows, restore, Close all's prompt, the Settings group, in both colour schemes (eleven scenes). On phone-a beside the Settings tab demo, whose environment it takes; phone-a and phone-d stood level at 55 minutes."
+      "note": "The Inactive tabs surface (TAB-20 / SET-34) on the overview demo's profile: the archive pass through the drivers' clock, the sheet's rows, restore, Close all's prompt, the Settings group, in both colour schemes (eleven scenes). On phone-d, the lightest phone shard once #387's relaunch race joined phone-a (phone-a 60 / phone-d 61 with it here; the Settings tab demo's environment, taken through its own env line)."
     },
     {
       "id": "pdf-viewer",
