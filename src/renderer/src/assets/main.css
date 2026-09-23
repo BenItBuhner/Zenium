@@ -11659,6 +11659,71 @@
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
 }
+/*
+ * A page of prose (components/pages/about/Prose.tsx: What's new, the legal pages): the body's
+ * 15/400 text at the column's 32 – the rows' 16 gutter inside the body's 16 – its first line
+ * 8 under the header (§10.3), each block 12 from the next, at most 40 under the last. A `##` is
+ * §9.27's shared 15/600 heading 20 over its text; a `###` the 13/600 sub-heading in the
+ * deemphasised ink; a list keeps its marks inside a 20 indent at the body line; inline code and
+ * a fenced block sit in the row fill at the inner radius in the small size. The text is
+ * selectable – a page to read, unlike the chrome around it. Tokens only (§9.34).
+ */
+.zen-page-prose {
+  padding: 8px 16px 0;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.zen-page-prose > * {
+  margin: 0 0 12px;
+}
+.zen-page-prose > :last-child {
+  margin-bottom: 0;
+}
+.zen-v2-heading.zen-page-prose-heading {
+  margin: 20px 0 8px;
+  font-size: var(--v2-font-heading);
+  line-height: var(--v2-line-heading);
+}
+.zen-page-prose > .zen-page-prose-heading:first-child {
+  margin-top: 0;
+}
+.zen-page-prose-subheading {
+  margin: 16px 0 4px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-small);
+}
+.zen-page-prose-list {
+  padding-inline-start: 20px;
+}
+.zen-page-prose-list > li {
+  margin: 0 0 4px;
+}
+.zen-page-prose-list > li:last-child {
+  margin-bottom: 0;
+}
+.zen-page-prose-code,
+.zen-page-prose-pre {
+  border-radius: var(--v2-radius-inner);
+  background: var(--v2-fill);
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+  font-size: var(--v2-font-small);
+}
+.zen-page-prose-code {
+  padding: 1px 4px;
+}
+.zen-page-prose-pre {
+  padding: 8px 12px;
+  overflow-x: auto;
+  line-height: var(--v2-line-small);
+}
+.zen-page-prose-pre > code {
+  font: inherit;
+}
 
 /* -------------------------------------------------------------------------
  * The bookmarks manager (components/pages/bookmarks/*, §10.1, §10.5): the page frame above,

@@ -9,10 +9,13 @@ import {
   manifestSource,
   parseUpdateManifest,
   pickUpdateAsset,
+  releaseHighlights,
+  releaseNotesFromList,
   selectReleaseFromList,
   updateModeFor,
   type UpdateChannel,
   type UpdateManifest,
+  type UpdateNotes,
   type UpdateProgress,
   type UpdateRelease,
   type UpdateSignatureState,
@@ -191,8 +194,11 @@ export class UpdateService {
     const channel = effectiveChannel(settings, version)
     this.set({ phase: 'checking', channel, error: null })
     try {
-      const { manifest, signature } = await this.fetchManifest(channel)
+      const { manifest, signature, notes } = await this.fetchManifest(channel)
       const lastCheckedAt = Date.now()
+      // The running version's notes ride along whatever the check finds (What's new reads
+      // them); a check that brought none keeps the ones an earlier check did.
+      const kept = notes ?? this.current.notes
       if (!isNewerVersion(manifest.version, version)) {
         this.set({
           phase: 'up-to-date',
@@ -202,14 +208,15 @@ export class UpdateService {
           signerMismatch: false,
           packageChange: false,
           lastCheckedAt,
-          signature
+          signature,
+          notes: kept
         })
         if (opts.manual) this.browser.toast(`Zenium ${version} is up to date.`)
         return
       }
       if (this.current.phase === 'ready' && this.current.release?.version === manifest.version) {
         // Already fetched exactly this version; nothing to redo.
-        this.set({ lastCheckedAt, signature })
+        this.set({ lastCheckedAt, signature, notes: kept })
         return
       }
       const target = this.current.target
@@ -242,7 +249,8 @@ export class UpdateService {
         signerMismatch,
         packageChange,
         lastCheckedAt,
-        signature
+        signature,
+        notes: kept
       })
       const mode = updateModeFor(target.kind)
       if (settings.autoDownload && mode === 'in-place' && asset && !signerMismatch) {
@@ -261,12 +269,23 @@ export class UpdateService {
     }
   }
 
-  private async fetchManifest(
-    channel: UpdateChannel
-  ): Promise<{ manifest: UpdateManifest; signature: UpdateSignatureState }> {
+  /**
+   * The newest release's manifest, verified, and – riding on the same requests – the running
+   * version's release notes where either carried them: the beta channel's release list (its
+   * entries' `body`), or the manifest itself when it is the running version's and carries
+   * `notes` (the stable channel, once the pipeline writes them). Nothing is fetched for the
+   * notes alone.
+   */
+  private async fetchManifest(channel: UpdateChannel): Promise<{
+    manifest: UpdateManifest
+    signature: UpdateSignatureState
+    notes: UpdateNotes | null
+  }> {
     const source = manifestSource(channel, UPDATE_REPOSITORY)
+    const version = this.current.currentVersion
     let manifestUrl: string
     let signatureUrl: string | null
+    let notes: UpdateNotes | null = null
     if (source.kind === 'latest') {
       manifestUrl = source.manifestUrl
       signatureUrl = source.signatureUrl
@@ -275,15 +294,18 @@ export class UpdateService {
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28'
       })
-      const candidate = selectReleaseFromList(JSON.parse(list))
+      const parsed: unknown = JSON.parse(list)
+      const candidate = selectReleaseFromList(parsed)
       if (!candidate) throw new Error('no release with an update manifest has been published yet')
       manifestUrl = candidate.manifestUrl
       signatureUrl = candidate.signatureUrl
+      notes = notesOf(version, releaseNotesFromList(parsed, version))
     }
     const manifestText = await this.fetchText(manifestUrl)
     const manifest = parseUpdateManifest(manifestText, UPDATE_REPOSITORY)
+    if (!notes && manifest.version === version) notes = notesOf(version, manifest.notes ?? null)
     const keys = this.host.publicKeys()
-    if (keys.length === 0) return { manifest, signature: 'unenforced' }
+    if (keys.length === 0) return { manifest, signature: 'unenforced', notes }
     if (!signatureUrl) throw new Error('the release manifest is not signed; refusing to update')
     const response = await this.browser.platform.net.fetchText(signatureUrl, {
       headers: { Accept: 'application/json' },
@@ -298,7 +320,7 @@ export class UpdateService {
     }
     if (!verifyManifestSignature(manifestText, envelope, keys))
       throw new Error('the release manifest signature does not match; refusing to update')
-    return { manifest, signature: 'verified' }
+    return { manifest, signature: 'verified', notes }
   }
 
   private async fetchText(url: string, headers: Record<string, string> = {}): Promise<string> {
@@ -371,6 +393,13 @@ function decodeBase64(text: string): Uint8Array | null {
   } catch {
     return null
   }
+}
+
+/** The highlights of a release's notes as What's new keeps them; null for none, or none worth a page. */
+function notesOf(version: string, body: string | null): UpdateNotes | null {
+  if (!body) return null
+  const text = releaseHighlights(body)
+  return text ? { version, text } : null
 }
 
 function describeError(error: unknown): string {

@@ -289,6 +289,74 @@ describe('UpdateService', () => {
     expect(service.status().phase).toBe('available')
     expect(service.status().release?.tag).toBe('v0.2.0-beta.1')
     expect(host.downloads).toBe(0)
+    // The list had no entry for the running 0.1.0: nothing for What's new.
+    expect(service.status().notes).toBeNull()
+  })
+
+  it('keeps the running version’s notes from the beta list – the highlights alone – for What’s new, on the same request (SET-54)', async () => {
+    const host = new FakeHost(NSIS)
+    const list = JSON.stringify([
+      {
+        tag_name: 'v0.2.0-beta.1',
+        prerelease: true,
+        body: '## Highlights\n\n- Newer things.\n\n## Downloads\n\n| a |',
+        assets: [
+          {
+            name: 'update-manifest.json',
+            browser_download_url: `https://github.com/${UPDATE_REPOSITORY}/releases/download/v0.2.0-beta.1/update-manifest.json`
+          }
+        ]
+      },
+      {
+        tag_name: 'v0.1.0',
+        prerelease: false,
+        body: '## Highlights\n\n- **Spaces** arrived.\n\n## Downloads\n\n| a |',
+        assets: []
+      }
+    ])
+    const { browser, fetched } = fakeBrowser(
+      '0.1.0',
+      {
+        [`https://api.github.com/repos/${UPDATE_REPOSITORY}/releases?per_page=30`]: {
+          ok: true,
+          status: 200,
+          text: list
+        },
+        [`https://github.com/${UPDATE_REPOSITORY}/releases/download/v0.2.0-beta.1/update-manifest.json`]:
+          { ok: true, status: 200, text: manifestFor('0.2.0-beta.1') }
+      },
+      { channel: 'beta', autoDownload: false }
+    )
+    const service = new UpdateService(browser, host)
+    expect(service.status().notes).toBeNull()
+    await service.check({ manual: false })
+    expect(service.status().phase).toBe('available')
+    expect(service.status().notes).toEqual({ version: '0.1.0', text: '- **Spaces** arrived.' })
+    // Two requests, the check's own: the list and the manifest – none for the notes.
+    expect(fetched).toHaveLength(2)
+  })
+
+  it('reads the notes off the stable manifest when it is the running version’s and carries them, and keeps them across a check that brings none', async () => {
+    const host = new FakeHost(NSIS)
+    const withNotes = JSON.parse(manifestFor('0.1.0')) as Record<string, unknown>
+    withNotes.notes = '## Highlights\n\n- Here.\n\n## Downloads'
+    const responses: Responses = {
+      [`${LATEST}/update-manifest.json`]: { ok: true, status: 200, text: JSON.stringify(withNotes) }
+    }
+    const noted = fakeBrowser('0.1.0', responses, { autoDownload: false })
+    const service = new UpdateService(noted.browser, host)
+    await service.check({ manual: false })
+    expect(service.status().phase).toBe('up-to-date')
+    expect(service.status().notes).toEqual({ version: '0.1.0', text: '- Here.' })
+    // The next check finds a manifest without notes (a newer release's): the running version's stay.
+    responses[`${LATEST}/update-manifest.json`] = {
+      ok: true,
+      status: 200,
+      text: manifestFor('0.2.0')
+    }
+    await service.check({ manual: false })
+    expect(service.status().phase).toBe('available')
+    expect(service.status().notes).toEqual({ version: '0.1.0', text: '- Here.' })
   })
 
   it('refuses unsigned or badly signed manifests when a key is built in', async () => {

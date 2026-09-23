@@ -115,6 +115,7 @@ import {
   NEW_TAB_PRESET_LABELS,
   newTabBackgroundValue
 } from '@renderer/lib/newTabSettings'
+import { openPage } from '@renderer/lib/pages'
 import { setPrivateLockOnLeave } from '@renderer/lib/privateLock'
 import { formatRate } from '@renderer/lib/readAloud'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
@@ -4606,6 +4607,19 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
           }
     )
   }
+  // What's new (SET-54; Chrome's What's new): the running version's highlights, a chrome page
+  // (`zen://whats-new`) on every layout with page tabs.
+  if (state.capabilities.pageTabs) {
+    rows.push({
+      kind: 'action',
+      id: 'whats-new',
+      label: 'What’s new',
+      description: `The highlights of Zenium ${state.version}`,
+      leaves: 'chevron',
+      keywords: ["what's new", 'release notes', 'highlights', 'changes'],
+      onPress: () => openPage('whats-new')
+    })
+  }
   rows.push(
     {
       kind: 'info',
@@ -4623,5 +4637,34 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
       onPress: () => run('app.openExternal', { url: 'https://zen-browser.app' })
     }
   )
-  return [{ id: 'about', heading: 'About', rows }]
+  const groups: RowGroup[] = [{ id: 'about', heading: 'About', rows }]
+  // Legal (SET-55; Chrome's Legal information): the Privacy notice and the Terms, chrome pages
+  // (`zen://privacy-notice`, `zen://terms`) on every layout with page tabs.
+  if (state.capabilities.pageTabs) {
+    groups.push({
+      id: 'legal',
+      heading: 'Legal',
+      rows: [
+        {
+          kind: 'action',
+          id: 'privacy-notice',
+          label: 'Privacy notice',
+          description: 'What Zenium keeps on this device and what leaves it.',
+          leaves: 'chevron',
+          keywords: ['privacy notice', 'legal', 'data'],
+          onPress: () => openPage('privacy-notice')
+        },
+        {
+          kind: 'action',
+          id: 'terms',
+          label: 'Terms',
+          description: 'The terms Zenium is provided under.',
+          leaves: 'chevron',
+          keywords: ['terms', 'legal', 'licence', 'license'],
+          onPress: () => openPage('terms')
+        }
+      ]
+    })
+  }
+  return groups
 }

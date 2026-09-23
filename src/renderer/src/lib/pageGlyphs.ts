@@ -1,4 +1,12 @@
-import { Download, History, Settings, Star, type LucideIcon } from 'lucide-react'
+import {
+  Download,
+  FileText,
+  History,
+  Settings,
+  Sparkles,
+  Star,
+  type LucideIcon
+} from 'lucide-react'
 import type { InternalPageGlyph } from '@shared/internalPages'
 
 /**
@@ -10,5 +18,7 @@ export const PAGE_GLYPHS: Readonly<Record<InternalPageGlyph, LucideIcon>> = {
   settings: Settings,
   history: History,
   star: Star,
-  download: Download
+  download: Download,
+  sparkles: Sparkles,
+  'file-text': FileText
 }

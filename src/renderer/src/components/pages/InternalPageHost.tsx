@@ -2,6 +2,8 @@ import type { JSX } from 'react'
 import { internalPageOf, parseInternalPageUrl } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { cn } from '@renderer/lib/utils'
+import { LegalPage } from './about/LegalPage'
+import { WhatsNewPage } from './about/WhatsNewPage'
 import { BookmarkManager } from './bookmarks/BookmarkManager'
 import { DownloadsPage } from './downloads/DownloadsPage'
 import { HistoryPage } from './history/HistoryPage'
@@ -12,8 +14,8 @@ import { SettingsPage } from './settings/SettingsPage'
  * `render: 'chrome'`) has no WebView, so the chrome draws the page itself where the page would
  * be – an opaque `--v2-page` surface filling the content frame edge to edge at the frame's own
  * radius (v2 §10.1), nothing behind it. One component per registered chrome page id – Settings,
- * History, the bookmarks manager, Downloads – each reading its section and query from
- * `tab.url`; a document page renders nothing here, its view shows it. `data-surface="page"`
+ * History, the bookmarks manager, Downloads, What's new, the two legal pages – each reading its
+ * section and query from `tab.url`; a document page renders nothing here, its view shows it. `data-surface="page"`
  * puts the page family of tokens (§9.29) on the root, for every chip, badge and icon button
  * drawn inside.
  *
@@ -55,6 +57,11 @@ function pageFor(id: string, state: UIState, tab: Tab): JSX.Element | null {
       return <BookmarkManager state={state} tab={tab} />
     case 'downloads':
       return <DownloadsPage state={state} tab={tab} />
+    case 'whats-new':
+      return <WhatsNewPage state={state} tab={tab} />
+    case 'privacy-notice':
+    case 'terms':
+      return <LegalPage id={id} state={state} tab={tab} />
     default:
       return null
   }

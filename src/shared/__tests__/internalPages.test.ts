@@ -32,6 +32,9 @@ describe('the page registry', () => {
       'history',
       'bookmarks',
       'downloads',
+      'whats-new',
+      'privacy-notice',
+      'terms',
       'print',
       'pdf'
     ])
@@ -98,6 +101,37 @@ describe('the page registry', () => {
         sections: []
       })
     }
+  })
+
+  it('registers What’s new and the two legal pages as singleton chrome page tabs of every layout with page tabs, no panel form (SET-54, SET-55)', () => {
+    for (const [id, title, glyph] of [
+      ['whats-new', 'What’s new', 'sparkles'],
+      ['privacy-notice', 'Privacy notice', 'file-text'],
+      ['terms', 'Terms', 'file-text']
+    ] as const) {
+      expect(INTERNAL_PAGES[id]).toMatchObject({
+        id,
+        title,
+        render: 'chrome',
+        singleton: true,
+        glyph,
+        pill: { showStar: false },
+        splittable: false,
+        sections: []
+      })
+      // No overlay and no layouts: a tab wherever the host draws page tabs, the phone included.
+      expect(INTERNAL_PAGES[id].overlay).toBeUndefined()
+      expect(INTERNAL_PAGES[id].layouts).toBeUndefined()
+      expect(pageOpensAsTab(INTERNAL_PAGES[id], { pageTabs: true }, 'phone')).toBe(true)
+      expect(pageOpensAsTab(INTERNAL_PAGES[id], { pageTabs: false }, 'desktop')).toBe(false)
+    }
+    // Their rows are found from the landing's search under About; 'privacy' alone stays the
+    // Privacy section's own, so About carries 'notice', not 'privacy notice'.
+    const about = SETTINGS_SECTIONS.find((s) => s.id === 'about')!
+    expect(about.keywords).toEqual(
+      expect.arrayContaining(["what's new", 'release notes', 'legal', 'notice', 'terms'])
+    )
+    expect(matchSections(SETTINGS_SECTIONS, 'privacy').map((s) => s.id)).toEqual(['privacy'])
   })
 
   it('opens a chrome page as a tab where the host draws page tabs and the layout is one of its own', () => {

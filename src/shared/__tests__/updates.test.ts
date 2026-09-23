@@ -9,6 +9,9 @@ import {
   parseUpdateManifest,
   parseVersion,
   pickUpdateAsset,
+  RELEASE_HIGHLIGHTS_MAX,
+  releaseHighlights,
+  releaseNotesFromList,
   sanitizeUpdateSettings,
   selectReleaseFromList,
   updateModeFor,
@@ -133,6 +136,66 @@ describe('manifest sources', () => {
     expect(selectReleaseFromList([])).toBeNull()
     expect(selectReleaseFromList({ message: 'rate limited' })).toBeNull()
   })
+
+  it('finds the running version’s notes in the same list – its body – and nothing for a version the list lacks or a draft (SET-54)', () => {
+    const list = [
+      { tag_name: 'v0.4.36', prerelease: false, body: '## Highlights\n\n- Newer.' },
+      { tag_name: 'v0.4.35', prerelease: false, body: '## Highlights\n\n- **Gestures** (#381).' },
+      { tag_name: 'v0.4.34', prerelease: false, body: '   ' },
+      { tag_name: 'v0.4.33', draft: true, body: 'a draft' }
+    ]
+    expect(releaseNotesFromList(list, '0.4.35')).toBe('## Highlights\n\n- **Gestures** (#381).')
+    expect(releaseNotesFromList(list, '0.4.34')).toBeNull()
+    expect(releaseNotesFromList(list, '0.4.33')).toBeNull()
+    expect(releaseNotesFromList(list, '0.4.30')).toBeNull()
+    expect(releaseNotesFromList({ message: 'rate limited' }, '0.4.35')).toBeNull()
+  })
+})
+
+describe('releaseHighlights', () => {
+  const body = [
+    '## Highlights',
+    '',
+    'A patch on top of 0.4.34.',
+    '',
+    '- **Desktop: the site glyph** (#406) – what a page is using.',
+    '',
+    '### Upgrading',
+    '',
+    '- **Android**: installs in place.',
+    'Zenium **0.4.35** for Windows, macOS, Linux and Android.',
+    '',
+    '## Downloads',
+    '',
+    '| Platform | Download |',
+    '',
+    '## Installing'
+  ].join('\n')
+
+  it('keeps the Highlights section – its sub-headings with it – and drops the download table and everything after', () => {
+    const text = releaseHighlights(body)
+    expect(text.startsWith('A patch on top of 0.4.34.')).toBe(true)
+    expect(text).toContain('### Upgrading')
+    expect(text.endsWith('Zenium **0.4.35** for Windows, macOS, Linux and Android.')).toBe(true)
+    expect(text).not.toContain('## Downloads')
+    expect(text).not.toContain('| Platform')
+  })
+
+  it('without a Highlights heading keeps what stands before the first section, or the first section whole when the notes open on one', () => {
+    expect(releaseHighlights('Just a line.\r\n\r\n- one\r\n## Downloads\r\ntable')).toBe(
+      'Just a line.\n\n- one'
+    )
+    expect(releaseHighlights("## What's Changed\n\n- a\n- b\n\n## Downloads\n\nx")).toBe('- a\n- b')
+    expect(releaseHighlights('- only bullets\n- here')).toBe('- only bullets\n- here')
+    expect(releaseHighlights('  \n\n')).toBe('')
+  })
+
+  it('bounds the text to a page of highlights', () => {
+    const long = `## Highlights\n\n${'word '.repeat(4_000)}`
+    const text = releaseHighlights(long)
+    expect(text.length).toBeLessThanOrEqual(RELEASE_HIGHLIGHTS_MAX + 1)
+    expect(text.endsWith('…')).toBe(true)
+  })
 })
 
 function manifestAsset(tag: string): Record<string, unknown> {
@@ -157,6 +220,13 @@ describe('parseUpdateManifest', () => {
     expect(parsed.assets[6].signer).toBe('b'.repeat(64))
     // Feeds outside the release are dropped silently; they are only hints.
     expect(Object.keys(parsed.feeds)).toEqual(['windows-x64'])
+    // Notes are text the pipeline may add one day (What's new); a manifest without them is whole.
+    expect(parsed.notes).toBeUndefined()
+    expect(parseUpdateManifest(manifest({ notes: '## Highlights\n\n- One.' }), REPO).notes).toBe(
+      '## Highlights\n\n- One.'
+    )
+    expect(parseUpdateManifest(manifest({ notes: '  ' }), REPO).notes).toBeUndefined()
+    expect(parseUpdateManifest(manifest({ notes: 7 }), REPO).notes).toBeUndefined()
   })
 
   it('rejects manifests that point anywhere but this repository', () => {

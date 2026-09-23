@@ -514,6 +514,52 @@ describe('the section model', () => {
     })
   })
 
+  it('opens What’s new and the Legal group’s Privacy notice and Terms as chrome pages, on a host with page tabs alone (SET-54, SET-55)', () => {
+    const about = section('about')
+    expect(about.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['about', 'About'],
+      ['legal', 'Legal']
+    ])
+    expect(about.groups[0]!.rows.map((r) => r.id)).toEqual([
+      'version',
+      'check-updates',
+      'default-browser',
+      'whats-new',
+      'engine',
+      'upstream'
+    ])
+    const whatsNew = row(about, 'whats-new')
+    expect(whatsNew).toMatchObject({
+      kind: 'action',
+      label: 'What’s new',
+      description: 'The highlights of Zenium 0.3.0-test',
+      leaves: 'chevron'
+    })
+    if (whatsNew.kind !== 'action') throw new Error('not an action row')
+    whatsNew.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('page.open', { id: 'whats-new', section: undefined })
+
+    expect(about.groups[1]!.rows.map((r) => [r.id, r.label])).toEqual([
+      ['privacy-notice', 'Privacy notice'],
+      ['terms', 'Terms']
+    ])
+    for (const id of ['privacy-notice', 'terms'] as const) {
+      const legal = row(about, id)
+      if (legal.kind !== 'action') throw new Error('not an action row')
+      expect(legal.leaves).toBe('chevron')
+      legal.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('page.open', { id, section: undefined })
+    }
+    // The landing's search finds them under About by their words.
+    expect(searchRows([about], 'privacy notice').map((h) => h.row.id)).toEqual(['privacy-notice'])
+    expect(searchRows([about], 'release notes').map((h) => h.row.id)).toEqual(['whats-new'])
+
+    // A host without page tabs has nowhere to open a chrome page: the rows stay away.
+    const noTabs = section('about', state({ capabilities: { ...ANDROID, pageTabs: false } }))
+    expect(findRow(noTabs.groups, 'whats-new')).toBeNull()
+    expect(noTabs.groups.map((g) => g.id)).toEqual(['about'])
+  })
+
   it('carries #115’s Privacy and security groups (tracking-*) at Chrome’s tracking-prevention position, behind requestBlocking', () => {
     const privacy = section('privacy', blockingState())
     // The engine's groups sit between #135's Safety check and Clear browsing data groups; their
