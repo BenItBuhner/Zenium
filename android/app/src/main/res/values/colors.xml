@@ -42,6 +42,6 @@
     <color name="v2_on_accent_light">#FFFFFF</color>
     <color name="v2_on_accent_dark">#15141A</color>
     <!-- The danger ink (the zen-danger status ink): a destructive peer's label (Exit page, Remove). -->
-    <color name="v2_danger_light">#C43434</color>
+    <color name="v2_danger_light">#B02A2A</color>
     <color name="v2_danger_dark">#FF8080</color>
 </resources>
