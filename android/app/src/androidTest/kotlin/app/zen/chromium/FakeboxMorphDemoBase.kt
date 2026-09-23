@@ -467,10 +467,11 @@ abstract class FakeboxMorphDemoBase(
                 keptOpened = opened
                 break
             }
-            if (opened) {
-                closeUrlField()
-                awaitPhase("rest", 6_000)
-            }
+            // A miss ends as the scene always did: the field closed ([closeUrlField] is a no-op
+            // on a field that never opened) and the machine at rest before the next attempt, or
+            // before the next scene when this was the last.
+            closeUrlField()
+            awaitPhase("rest", 6_000)
         }
         check(scene, "the double was caught mid-flight for the second tap (within $ATTEMPTS attempts)", kept != null, if (kept == null) "not caught" else at)
         val frames = kept ?: return
