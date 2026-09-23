@@ -16,6 +16,9 @@ name: Android homepage and new tab page demo
 # this file only picks the driver.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-homepage-ntp-e05e
 
 permissions:
   contents: read
