@@ -18,7 +18,7 @@ vi.stubGlobal('window', {
   }
 })
 
-const { BOOKMARK_UNDO_TOAST_MS, bookmarkDeletedMessage, showBookmarkDeleted } =
+const { BOOKMARK_UNDO_TOAST_MS, bookmarkDeletedMessage, bookmarkEditUndone, showBookmarkDeleted } =
   await import('../bookmarkUndo')
 const { TOAST_ACTION_DURATION, pickToastAction, uiStore } = await import('../ui')
 
@@ -80,5 +80,22 @@ describe('the toast', () => {
     vi.advanceTimersByTime(1)
     expect(live()).toHaveLength(0)
     expect(calls).toEqual([])
+  })
+
+  it("goes down when its delete is undone elsewhere (the manager's Ctrl+Z), and stays for another edit's undo", () => {
+    showBookmarkDeleted({ token: 4, count: 1, kind: 'bookmark' })
+    // A move taken back, or an older delete: not this toast's business.
+    bookmarkEditUndone({ token: 9, kind: 'move' })
+    bookmarkEditUndone({ token: 3, kind: 'remove' })
+    expect(live()).toEqual([['Bookmark deleted', 'Undo']])
+    bookmarkEditUndone({ token: 4, kind: 'remove' })
+    expect(live()).toEqual([])
+    // Nothing was asked of the core: the undo already happened.
+    expect(calls).toEqual([])
+    // A later word about the same token finds no toast and does nothing.
+    bookmarkEditUndone({ token: 4, kind: 'remove' })
+    showBookmarkDeleted({ token: 5, count: 2, kind: 'folder' })
+    bookmarkEditUndone({ token: 4, kind: 'remove' })
+    expect(live()).toEqual([['2 folders deleted', 'Undo']])
   })
 })

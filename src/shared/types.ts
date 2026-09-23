@@ -4252,11 +4252,17 @@ export interface Commands {
   'bookmark.remove': { args: { ids: string[] }; result: void }
   /**
    * Take back the newest delete, move or rename (the manager's Ctrl+Z), or the one edit `token`
-   * names (a delete's toast). What came back or moved, under its current ids; null for nothing.
+   * names (a delete's toast). What came back or moved, under its current ids, with the token of
+   * the edit taken back; null for nothing. Every window hears `bookmark.undone`.
    */
   'bookmark.undo': {
     args: { token?: number }
-    result: { kind: 'remove' | 'move' | 'update'; ids: string[]; parentId: string | null } | null
+    result: {
+      kind: 'remove' | 'move' | 'update'
+      token: number
+      ids: string[]
+      parentId: string | null
+    } | null
   }
   /**
    * Open a bookmark (records `dateLastUsed`); `background` with `newTab` is a tab behind the
@@ -5179,6 +5185,11 @@ export interface Events {
    * nodes of `kind`; `bookmark.undo` with the `token` brings them back (the toast's Undo).
    */
   'bookmark.deleted': { token: number; count: number; kind: 'bookmark' | 'folder' | 'mixed' }
+  /**
+   * An edit was taken back (`bookmark.undo`, from any window): the token of the edit and its
+   * kind. A delete's toast still offering that token goes down – its delete is undone already.
+   */
+  'bookmark.undone': { token: number; kind: 'remove' | 'move' | 'update' }
   /** Open the "Bookmark all tabs" dialog for these tabs. */
   'bookmark.allTabs': { tabIds: string[]; defaultTitle: string }
   'space.edit': { spaceId: string }

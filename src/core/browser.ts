@@ -35,7 +35,7 @@ import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
-import { BookmarkUndoStack } from './bookmarkUndo'
+import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
@@ -1423,6 +1423,19 @@ export class Browser {
   deleteBookmarks(ids: readonly string[], win: ZenWindow): void {
     const removal = this.bookmarkUndo.remove(ids)
     if (removal) this.emit('bookmark.deleted', removal, win)
+  }
+
+  /**
+   * Take back the newest bookmark edit, or the one `token` names: every window hears which, so
+   * the toast of a delete undone from the manager (or another window) goes down with it.
+   */
+  undoBookmarkEdit(token?: number): BookmarkUndone | null {
+    const undone = this.bookmarkUndo.undo(token)
+    if (undone) {
+      const word = { token: undone.token, kind: undone.kind }
+      for (const w of this.allWindows()) w.send('bookmark.undone', word)
+    }
+    return undone
   }
 
   /** Open the bookmarks below the given nodes in a new window (private when asked). */
@@ -2961,7 +2974,7 @@ export class Browser {
       'bookmark.move': ({ ids, parentId, index }) =>
         void this.bookmarkUndo.move(ids, parentId, index),
       'bookmark.remove': ({ ids }, win) => this.deleteBookmarks(ids, win),
-      'bookmark.undo': ({ token }) => this.bookmarkUndo.undo(token),
+      'bookmark.undo': ({ token }) => this.undoBookmarkEdit(token),
       'bookmark.open': ({ id, newTab, tabId, background }, win) =>
         this.openBookmark(id, newTab, tabId, win, Boolean(background)),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),

@@ -12,6 +12,8 @@ import { dismissToast, pushToast } from './ui'
 export const BOOKMARK_UNDO_TOAST_MS = 8000
 
 let liveToastId: number | null = null
+/** The delete the live toast offers to undo. */
+let liveToken: number | null = null
 
 /** What the toast says for `count` top-level nodes of `kind`. */
 export function bookmarkDeletedMessage(removal: Events['bookmark.deleted']): string {
@@ -23,8 +25,20 @@ export function bookmarkDeletedMessage(removal: Events['bookmark.deleted']): str
 
 export function showBookmarkDeleted(removal: Events['bookmark.deleted']): void {
   if (liveToastId !== null) dismissToast(liveToastId)
+  liveToken = removal.token
   liveToastId = pushToast(bookmarkDeletedMessage(removal), 'info', {
     duration: BOOKMARK_UNDO_TOAST_MS,
     action: { label: 'Undo', onPick: () => run('bookmark.undo', { token: removal.token }) }
   })
+}
+
+/**
+ * An edit was taken back somewhere – the manager's Ctrl+Z, another window's toast: when it is
+ * the delete the live toast offers, the toast goes down, its Undo having nothing left to do.
+ */
+export function bookmarkEditUndone(undone: Events['bookmark.undone']): void {
+  if (liveToastId === null || undone.token !== liveToken) return
+  dismissToast(liveToastId)
+  liveToastId = null
+  liveToken = null
 }

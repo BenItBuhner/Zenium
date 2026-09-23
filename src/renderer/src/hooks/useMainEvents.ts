@@ -4,7 +4,7 @@ import { announce, startAnnouncer, zoomAnnouncement } from '@renderer/lib/announ
 import { installedMessage } from '@shared/webApp'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
-import { showBookmarkDeleted } from '@renderer/lib/bookmarkUndo'
+import { bookmarkEditUndone, showBookmarkDeleted } from '@renderer/lib/bookmarkUndo'
 import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
@@ -282,6 +282,8 @@ export function useMainEvents(): void {
       onEvent('bookmark.deleted', (removal) => {
         if (!isPhone()) showBookmarkDeleted(removal)
       }),
+      // The delete undone from the manager (Ctrl+Z) or another window: its toast goes down.
+      onEvent('bookmark.undone', (undone) => bookmarkEditUndone(undone)),
       // Take Screenshot's picture is in the gallery (SH-07): the preview card in the toast's slot
       // on the layouts with the message layer; the sidebar layout's narrow well takes a toast
       // with Share for its one action.

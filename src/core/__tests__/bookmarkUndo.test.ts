@@ -167,10 +167,11 @@ describe('BookmarkUndoStack', () => {
     undo.update(ids.b, { title: 'B' })
     undo.move([ids.b], BOOKMARKS_BAR_ID, 3)
     expect(bar(service)).toEqual(['a', 'c', 'd', 'B'])
-    undo.remove([ids.b])
+    const removal = undo.remove([ids.b])
     expect(bar(service)).toEqual(['a', 'c', 'd'])
 
-    expect(undo.undo()?.kind).toBe('remove')
+    // Ctrl+Z (no token) takes the newest edit back and says which: the delete the toast holds.
+    expect(undo.undo()).toMatchObject({ kind: 'remove', token: removal?.token })
     expect(bar(service)).toEqual(['a', 'c', 'd', 'B'])
     // The move and the rename were made on the old id; the stack follows it to the new one.
     expect(undo.undo()?.kind).toBe('move')
@@ -187,7 +188,10 @@ describe('BookmarkUndoStack', () => {
     undo.move([ids.d], BOOKMARKS_BAR_ID, 0)
     expect(bar(service)).toEqual(['d', 'b', 'c'])
 
-    expect(undo.undo(removal.token)?.kind).toBe('remove')
+    const undone = undo.undo(removal.token)
+    expect(undone?.kind).toBe('remove')
+    // The result names the edit taken back, so the toast offering that token can go down.
+    expect(undone?.token).toBe(removal.token)
     // Back before b, the row that followed it – not at its bare old index, which d took since.
     expect(bar(service)).toEqual(['d', 'a', 'b', 'c'])
     expect(undo.depth).toBe(1)

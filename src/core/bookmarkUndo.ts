@@ -51,9 +51,14 @@ export interface BookmarkRemoval {
   kind: 'bookmark' | 'folder' | 'mixed'
 }
 
-/** What an undo did, for the surface that asked (the manager selects what came back). */
+/**
+ * What an undo did, for the surface that asked (the manager selects what came back) and for
+ * every window (a delete's toast goes down once its delete is undone from anywhere).
+ */
 export interface BookmarkUndone {
   kind: BookmarkUndoEntry['kind']
+  /** The token of the edit taken back – the one a delete's toast names. */
+  token: number
   /** The nodes concerned, under their current ids. */
   ids: string[]
   /** The folder the first of them stands in now. */
@@ -126,6 +131,11 @@ export class BookmarkUndoStack {
         : this.entries.findIndex((e) => e.token === token)
     if (at < 0) return null
     const [entry] = this.entries.splice(at, 1)
+    const undone = this.takeBack(entry)
+    return undone ? { ...undone, token: entry.token } : null
+  }
+
+  private takeBack(entry: BookmarkUndoEntry): Omit<BookmarkUndone, 'token'> | null {
     switch (entry.kind) {
       case 'remove':
         return this.restore(entry.nodes, entry.placements)
@@ -205,7 +215,7 @@ export class BookmarkUndoStack {
   private restore(
     nodes: readonly BookmarkNode[],
     placements: readonly Placement[]
-  ): BookmarkUndone | null {
+  ): Omit<BookmarkUndone, 'token'> | null {
     const placement = new Map(placements.map((p) => [p.id, p]))
     const restored: string[] = []
     for (const node of nodes) {
@@ -228,7 +238,7 @@ export class BookmarkUndoStack {
   }
 
   /** Move nodes back to where they stood, the lowest old index first, so each lands on its place. */
-  private replace(placements: readonly Placement[]): BookmarkUndone | null {
+  private replace(placements: readonly Placement[]): Omit<BookmarkUndone, 'token'> | null {
     const moved: string[] = []
     for (const p of [...placements].sort((a, b) => a.index - b.index)) {
       const id = this.resolve(p.id)
@@ -238,7 +248,7 @@ export class BookmarkUndoStack {
     return moved.length ? this.undone('move', moved) : null
   }
 
-  private undone(kind: BookmarkUndoEntry['kind'], ids: string[]): BookmarkUndone {
+  private undone(kind: BookmarkUndoEntry['kind'], ids: string[]): Omit<BookmarkUndone, 'token'> {
     return { kind, ids, parentId: this.bookmarks.get(ids[0])?.parentId ?? null }
   }
 }
