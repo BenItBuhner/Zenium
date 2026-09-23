@@ -38,6 +38,7 @@ import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
 import { ShareLayer } from './share/SharePopover'
 import { FolderDeleteDialog } from './sidebar/FolderDeleteDialog'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
+import { NameWindowDialog } from './windowName/NameWindowDialog'
 import { ZoomBubble } from './zoom/ZoomBubble'
 import { ReaderPreferencesPanel } from './reader/ReaderPreferencesPanel'
 
@@ -65,7 +66,7 @@ const TAB_ICONS = [
  * requests wait on, the permission prompts a page's requests wait on, the screen-capture picker
  * a page's `getDisplayMedia` waits on, the page's own dialogs
  * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes or
- * Zenium quits, the new tab page's add / edit shortcut dialog, the extension install and
+ * Zenium quits, Chrome's Name window prompt, the new tab page's add / edit shortcut dialog, the extension install and
  * permission prompts, the site-information popover's "Clear site data?" confirmation, the
  * sidebar's "Delete <folder>?" prompt, the Clear browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
  * password", `LeakWarnings`), the autofill prompts (save / update a login,
@@ -129,6 +130,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <PermissionPrompts state={state} />
       <PageDialogs state={state} />
       <WindowPromptDialog state={state} />
+      <NameWindowDialog state={state} />
       <ExtensionPromptDialog />
       <ClearBrowsingDataDialog />
       <ImportDialog state={state} />

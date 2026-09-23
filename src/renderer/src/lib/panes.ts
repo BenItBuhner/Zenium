@@ -2,6 +2,7 @@ import type { FocusPaneRequest, PaneId } from '@shared/types'
 import { focusEdge } from '@shared/focusEdge'
 import { run } from './api'
 import { noteInput } from './lastInput'
+import { chromeInertHeld } from './portals'
 import { closeUrlbar, uiStore } from './ui'
 
 /**
@@ -30,6 +31,16 @@ export const URLBAR_LEAVE_EVENT = 'zen-urlbar-leave'
  * keyboard the bar holds: the bar asks the chrome's keyboard back and focuses its field.
  */
 export const URLBAR_KEYBOARD_EVENT = 'zen-urlbar-keyboard'
+
+/**
+ * The mark of a chrome field a page taking the keyboard does not blur ({@link pageTookKeyboard}):
+ * the chrome's keyboard is asked back (`focus.chrome`) and the field stays the document's focused
+ * element, for Chromium to give it the frame's focus again. The open URL bar's field is that by
+ * the bar's state; a field carries the mark for the moments a page's taking is its own doing –
+ * the tab rename field while the opening pair's first click, the row's activation, hands the
+ * keyboard to the page (sidebar/TabItem.tsx).
+ */
+export const KEEPS_KEYBOARD_ATTR = 'data-keeps-keyboard'
 
 /**
  * The pane the keyboard moves to from `current` – forward (`next`, F6) or back (`prev`,
@@ -191,8 +202,11 @@ export function releaseChromeFocus(doc: Document = document): boolean {
  * beside them is live, a view taking the keyboard there is the user's press, and the blur is
  * what keeps their focus ring honest. The empty split pane's bar (`urlbar.pane`) sits beside
  * live panes the same way: a sibling page taking the keyboard is the user's press and the field
- * is let go as any control; the pane's own blank page taking it is the race. Returns what was
- * done: `kept` (the bar's), `released` (a control was blurred), `none`.
+ * is let go as any control; the pane's own blank page taking it is the race. A field marked
+ * {@link KEEPS_KEYBOARD_ATTR} is the bar's case for as long as it carries the mark – the tab
+ * rename field in its first moments, whose opening pair's first click handed the keyboard to
+ * the page: it is not blurred and the chrome's keyboard is asked back. Returns what was done:
+ * `kept` (the bar's, or a marked field's), `released` (a control was blurred), `none`.
  */
 export function pageTookKeyboard(
   tabId: string,
@@ -201,6 +215,10 @@ export function pageTookKeyboard(
   const { urlbar } = uiStore.get()
   if (urlbar.open && (!urlbar.pane || urlbar.tabId === tabId)) {
     doc.defaultView?.dispatchEvent(new CustomEvent(URLBAR_KEYBOARD_EVENT))
+    return 'kept'
+  }
+  if (doc.activeElement?.closest(`[${KEEPS_KEYBOARD_ATTR}]`)) {
+    run('focus.chrome', undefined)
     return 'kept'
   }
   return releaseChromeFocus(doc) ? 'released' : 'none'
@@ -240,12 +258,41 @@ export function paneFirstControl(pane: PaneId, doc: Document = document): HTMLEl
 }
 
 /**
+ * The mark a pane shortcut leaves on the control it lands the keyboard on. The chord (F6,
+ * Shift+F6, Shift+Alt+T, Shift+Alt+B) is consumed in the main process (`before-input-event`,
+ * platform/window.ts), so the chrome document never sees a key: the focus moved here by script
+ * after any mouse use reads to Chromium's `:focus-visible` heuristic as the mouse's – no ring,
+ * and no chrome tooltip – until the next key the document does see (measured by the a11y-2
+ * drive, 2026-09-23: Shift+Alt+T after the app menu's mouse clicks focused Reload with
+ * `:focus-visible` false; the Tab after it rang). The mark stands in for the heuristic where
+ * the chrome reads it: the tooltip counts it as keyboard focus (components/Tooltip.tsx). The
+ * ring is still `:focus-visible`'s alone (§1, main.css's base floor and the v2 and pill forms):
+ * a `[data-keyboard-focus]:focus` form beside each is the seam, the lead's to rule on. It goes
+ * with the control's blur.
+ */
+export const KEYBOARD_FOCUS_ATTR = 'data-keyboard-focus'
+
+/** Set before the focus lands: the tooltip host reads it in the synchronous `focusin`. */
+function markKeyboardFocus(target: HTMLElement): void {
+  if (target.hasAttribute(KEYBOARD_FOCUS_ATTR)) return
+  target.setAttribute(KEYBOARD_FOCUS_ATTR, '')
+  target.addEventListener('blur', () => target.removeAttribute(KEYBOARD_FOCUS_ATTR), {
+    once: true
+  })
+}
+
+/**
  * Move the keyboard as a pane shortcut asked. Into a chrome pane: the chrome takes the keyboard
  * (`focus.chrome`) and the pane's target is focused; into the page: the active view takes it
  * (`focus.content`). Leaving the toolbar puts its URL bar away. A named pane that is not on
  * screen leaves the keyboard where it is (Chrome's Shift+Alt+B with the bar hidden does nothing).
+ * So does every move while a dialog or sheet holds the chrome inert (`chromeInertHeld`, §9.5,
+ * a11y-32): the panes are behind its cover, and the page with them – asking the core for the
+ * page's focus would only leave it pending, to land on the page as the dialog closes and take
+ * the keyboard off wherever the dialog returned it. The dialog holds the keyboard until it closes.
  */
 export function focusPane(request: FocusPaneRequest, doc: Document = document): PaneId | null {
+  if (chromeInertHeld()) return null
   const from = currentPane(doc, 'move' in request ? request.from : 'chrome')
   let to: PaneId
   let target: HTMLElement | null
@@ -267,6 +314,7 @@ export function focusPane(request: FocusPaneRequest, doc: Document = document): 
   }
   if (!target) return null
   run('focus.chrome', undefined)
+  markKeyboardFocus(target)
   target.focus()
   // After the target has the keyboard: the bar closing must not ask for the page's focus, which
   // would arrive later and take the keyboard back off the target.

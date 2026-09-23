@@ -116,9 +116,11 @@ import {
   extensionPageOf,
   getDomain,
   inputToUrl,
+  isBlankTabUrl,
   isEmptyTabUrl,
   isWebPageUrl,
-  presentedUrl
+  presentedUrl,
+  titleForUrl
 } from '../shared/url'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { QrStartOutcome } from '../shared/qrScan'
@@ -139,8 +141,7 @@ import {
   DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
   sanitizeAutofillSettings,
-  sanitizePasswordSettings,
-  spaceLabel
+  sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
@@ -206,6 +207,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'webapp.install',
   'translate.selection',
   'import.open',
+  'clearBrowsingData.open',
+  'windowName.open',
   'capture.start'
 ])
 
@@ -353,6 +356,8 @@ export class Browser {
    * (`start({ windows: false })`), and they come up the first time a browser window is needed.
    */
   private startupWindowsPending = false
+  /** `start({ restoreLastSession: true })`: the last session comes back over the setting. */
+  private restoreLastSessionForced = false
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -712,7 +717,8 @@ export class Browser {
       localSpace,
       cascadeFrom: opts.bounds ? undefined : from,
       opener: from,
-      app
+      app,
+      name: opts.persisted?.name ?? null
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -1065,7 +1071,23 @@ export class Browser {
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
     if (!tab || !view) return
-    if (view.hasDocument()) return
+    // What the tab keeps: nothing when no document ever committed (a link's new tab that went
+    // straight to the download), and nothing of the user's when it is the blank page a new tab
+    // holds until an address is typed into it – the address typed there turned into this
+    // download, and the tab would stay behind titled with the download's host over an empty
+    // page (BUG-030 / downloads-01). Chrome's rule for both: a tab opened for the download alone
+    // closes; one with a past keeps it.
+    const kept = view.getURL()
+    if (view.hasDocument() && !isBlankTabUrl(kept)) {
+      // The document stays, the new tab page's included (Chrome keeps that tab too). The typed
+      // address never became the tab's: its row and address bar go back to the document.
+      if (kept && tab.url !== kept) {
+        tab.url = kept
+        tab.title = view.getTitle() || titleForUrl(kept)
+        this.state.commit()
+      }
+      return
+    }
     if (!tab.pinned && !tab.essential && !view.canGoBack()) {
       this.tabs.closeTab(tab.id)
     } else {
@@ -1076,9 +1098,12 @@ export class Browser {
   /**
    * Bring the browser up. `windows: false` leaves the session's browser windows unopened – a run
    * that begins with `--app=<url>` shows the app's window alone, as Chrome does, and opens the
-   * browser proper the first time something asks for a browser window.
+   * browser proper the first time something asks for a browser window. `restoreLastSession`
+   * (the desktop's `--restore-last-session`) brings the last session back on this launch
+   * whatever "Restore previous session" says, as the switch overrides Chrome's startup setting.
    */
-  start(options: { windows?: boolean } = {}): void {
+  start(options: { windows?: boolean; restoreLastSession?: boolean } = {}): void {
+    this.restoreLastSessionForced = options.restoreLastSession === true
     if (this.state.settings.pinnedResetOnStartup) {
       for (const tab of Object.values(this.state.model.tabs)) {
         if ((tab.pinned || tab.essential) && tab.pinnedUrl) tab.url = tab.pinnedUrl
@@ -1113,7 +1138,7 @@ export class Browser {
     this.pageFonts.start()
     // With "restore previous session" off, the last session's tabs are forgotten at once, whether
     // or not a window opens now.
-    if (!this.state.settings.restoreSession) this.state.forgetSession()
+    if (!this.restoreSessionAtStartup()) this.state.forgetSession()
     if (options.windows === false) this.startupWindowsPending = true
     else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
@@ -1142,7 +1167,7 @@ export class Browser {
    */
   private openStartupWindows(): ZenWindow[] {
     this.startupWindowsPending = false
-    const { restoreSession } = this.state.settings
+    const restoreSession = this.restoreSessionAtStartup()
     const restore =
       restoreSession && this.state.capabilities.windows
         ? this.state.restoredWindows
@@ -1158,6 +1183,11 @@ export class Browser {
       this.session.onUncleanStart()
     }
     return opened
+  }
+
+  /** "Restore previous session", or the launch's `--restore-last-session` over it. */
+  private restoreSessionAtStartup(): boolean {
+    return this.restoreLastSessionForced || this.state.settings.restoreSession
   }
 
   // ---------------------------------------------------------------------------
@@ -1389,8 +1419,10 @@ export class Browser {
       this.toast('There are no pages to bookmark.', 'info', win)
       return
     }
-    // A whole space is offered under the space's name (the engine's default); picked tabs count.
-    const defaultTitle = tabIds ? `${pages.length} tabs` : spaceLabel(space)
+    // A whole space is offered under the space's name alone – its icon is its picture, not a
+    // character of the name or a leading glyph in the field (§9.12, pr-386 gate 1); picked tabs
+    // count.
+    const defaultTitle = tabIds ? `${pages.length} tabs` : space.name
     this.emit('bookmark.allTabs', { tabIds: pages.map((t) => t.id), defaultTitle }, win)
   }
 
@@ -1546,6 +1578,18 @@ export class Browser {
     this.emit('import.open', undefined, win)
   }
 
+  /**
+   * The macOS menu bar's "Warn Before Quitting (⌘Q)" (Chrome's checkbox): the one setting behind
+   * Zenium's quit warning – `requestQuit` asks "Quit Zenium?" while it is set, and a window with
+   * several tabs asks before it closes on the same setting. Set with no window needed: the menu
+   * bar stands with every window closed.
+   */
+  setWarnBeforeQuitting(on: boolean): void {
+    if (this.state.settings.warnOnCloseWindow === on) return
+    this.state.settings.warnOnCloseWindow = on
+    this.state.commit()
+  }
+
   async importBookmarks(win: ZenWindow): Promise<BookmarkImportResult | null> {
     const files = await this.platform.dialogs.pickTextFiles(
       { title: 'Import bookmarks', extensions: ['html', 'htm'] },
@@ -1659,13 +1703,17 @@ export class Browser {
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder – after its last
    * member, in that member's container – active, with the new tab page (or the URL bar) as any
-   * new tab. Resolves with the tab's id.
+   * new tab. On a SAVED folder the folder opens first – its pages back as its tabs, as Open
+   * Folder brings them – and the new tab joins behind them (open-then-add): the row takes a
+   * tab without losing what the folder kept. Resolves with the tab's id.
    */
   newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
     const folder = this.state.model.folders[folderId]
     if (!folder) throw new Error('Folder not found')
-    // The group's members are its regular ones: a private tab in it lends neither its place
-    // nor its container to a tab the group's menu makes.
+    this.tabs.restoreSavedFolder(folderId, win)
+    // The group's members are its regular ones – the pages just brought back among them: a
+    // private tab in it lends neither its place nor its container to a tab the group's menu
+    // makes.
     const members = regularFolderTabs(this.state.model, folderId)
     const last = members[members.length - 1]
     const created = this.tabs.createTab(
@@ -1730,47 +1778,20 @@ export class Browser {
     const m = this.state.model
     const folder = m.folders[folderId]
     if (!folder) return null
-    const now = Date.now()
     // The group's live members are its regular ones: a private tab in it is not what a regular
     // surface's row opens (`regularFolderTabs`).
     const live = regularFolderTabs(m, folderId)
     if (live.length > 0) {
       folder.collapsed = false
-      folder.lastUsedAt = now
+      folder.lastUsedAt = Date.now()
       this.tabs.activateTab(live[0].id, win)
       this.state.commit()
       return live[0].id
     }
-    const saved = folder.savedTabs ?? []
-    if (saved.length === 0) return null
-    const space = getSpace(m, folder.spaceId)
-    if (!space) return null
-    const restored: Tab[] = []
-    for (const page of saved) {
-      const last = restored[restored.length - 1]
-      const tab = this.tabs.createTab(
-        {
-          url: page.url,
-          spaceId: space.id,
-          active: false,
-          load: false,
-          // The first at the end of the space's tabs, as Chrome reopens a saved group; each
-          // next one behind the one before, so the group keeps its order.
-          index: last ? undefined : Number.MAX_SAFE_INTEGER,
-          afterTabId: last?.id,
-          containerId: space.containerId,
-          folderId
-        },
-        win
-      )
-      // The row and the card read as the page did until it loads again.
-      tab.title = page.title || tab.title
-      tab.favicon = page.favicon ?? null
-      restored.push(tab)
-    }
-    folder.savedTabs = null
-    folder.collapsed = false
-    folder.lastUsedAt = now
+    // The pages back as the group's tabs, at the end of the space's tabs as Chrome reopens a
+    // saved group, in their order; the group unfolded and used now (`restoreSavedFolder`).
+    const restored = this.tabs.restoreSavedFolder(folderId, win)
+    if (restored.length === 0) return null
     this.tabs.activateTab(restored[0].id, win)
     this.state.commit()
     return restored[0].id
@@ -2375,6 +2396,9 @@ export class Browser {
       case 'folder': {
         const folder = m.folders[drop.folderId]
         if (!folder) return
+        // A SAVED folder opens first, as it does for a tab dropped on it (`moveToFolder`): its
+        // pages back as its tabs, the dropped addresses behind them.
+        tabs.restoreSavedFolder(folder.id, win)
         placement = {
           spaceId: folder.spaceId,
           section: 'regular',
@@ -2497,6 +2521,10 @@ export class Browser {
     }
     if (message.type === 'focus') {
       this.revealTab(tabId)
+      return
+    }
+    if (message.type === 'editing') {
+      this.keys.setEditing(tabId, message.editing === true)
       return
     }
     if (message.type === 'pdf') {
@@ -3129,6 +3157,7 @@ export class Browser {
       'window.minimize': (_a, win) => win.host.minimize(),
       'window.toggleMaximize': (_a, win) =>
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
+      'window.captionDoubleClick': (_a, win) => win.captionDoubleClick(),
       'window.close': (_a, win) => void this.requestWindowClose(win),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
       'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),
@@ -3144,6 +3173,7 @@ export class Browser {
       'window.newPrivate': (_a, win) => void this.openWindow('private', win),
       'window.openUrl': ({ url, kind }, win) => this.openUrlInWindow(url, kind, win),
       'window.moveTabsToSpace': ({ spaceId }, win) => tabs.moveLocalTabsToSpace(win, spaceId),
+      'window.setName': ({ name }, win) => win.setName(name),
 
       'page.screenshot': ({ tabId, fullPage }, win) =>
         this.actions.run(fullPage ? 'page.captureFullPage' : 'page.screenshot', {

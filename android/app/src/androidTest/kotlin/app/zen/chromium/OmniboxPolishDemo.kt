@@ -42,10 +42,12 @@ import java.io.FileInputStream
  *     history?", the row's text as its description, Cancel | Remove in the footer); a REAL touch
  *     on Remove forgets the entry (the core's `history.delete`, read back through
  *     `history.search`) and the row leaves; a hold answered with Cancel keeps its row.
- *  4. NTP-09: the default engine's favicon at the field's start when the engine is not the
- *     vendor's default – in the omnibox's field, in the new tab page's resting field, in the
- *     field the page's tap morphs into – 20 CSS px, loaded; the vendor's default shows the tile
- *     and the magnifier as before.
+ *  4. NTP-09: the default engine's favicon at the field's start – in the omnibox's field, in the
+ *     new tab page's resting field, in the field the page's tap morphs into – 20 CSS px, loaded;
+ *     the vendor's default leads its fields the same way (v2 §6: the engine's favicon at 20 is
+ *     the field's leading glyph, whichever engine it is): both slots carry its site's favicon
+ *     from the registry, the tile and the magnifier painted until it loads, so a slot is never
+ *     blank – whether the emulator reaches the site is the network's, recorded and not claimed.
  *  5. OMN-23: a link on the clipboard, a hold on the empty field: the system's floating toolbar
  *     carries "Paste and go" beside its Paste (sentence case, the system's); a REAL touch on it
  *     loads the link. Text on the clipboard: "Paste and search", and the touch searches it.
@@ -324,7 +326,9 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             closeField()
             awaitMorphPhase("rest", 10_000)
             settle(8_000)
-            // The vendor's default: no favicon, the fields' own glyphs as before.
+            // The vendor's default leads its fields the same way (v2 §6): both slots carry its
+            // site's favicon from the registry, the magnifier and the tile painted until it loads.
+            // Whether it loads is the emulator's network, so the load is recorded, not claimed.
             coreInvoke("settings.update", "{\"searchEngineId\":${JSONObject.quote(VENDOR_ENGINE_ID)}}")
             SystemClock.sleep(1_200)
             val restingDefault = glyph(NTP_FIELD)
@@ -332,12 +336,13 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             Finger().tap(q.x, q.y)
             awaitMorphPhase("open", 12_000)
             awaitChrome("!!document.querySelector('.zen-omnibox-field [data-testid=engine-field-glyph]')", 8_000)
+            val vendorLoaded = awaitChrome(faviconLoadedJs(".zen-omnibox-field"), 6_000)
             SystemClock.sleep(1_500)
             shot("08-vendor-default-glyphs")
             val fieldDefault = glyph(".zen-omnibox-field")
-            val plain = !restingDefault.favicon && !fieldDefault.favicon && fieldDefault.text == "G"
-            finding("  the vendor's default picked: the resting field $restingDefault; the omnibox field $fieldDefault ${verdict(plain)}")
-            if (!plain) failures += "the vendor's default engine drew a favicon or lost its tile ($fieldDefault)"
+            val marked = listOf(restingDefault, fieldDefault).all { it.carries(VENDOR_FAVICON_URL) && (!it.favicon || it.favicon20(VENDOR_FAVICON_URL)) }
+            finding("  the vendor's default picked: the resting field $restingDefault; the omnibox field $fieldDefault (its favicon loaded here $vendorLoaded) ${verdict(marked)}")
+            if (!marked) failures += "the vendor's default engine's fields do not carry its favicon, or a slot went blank (resting $restingDefault; field $fieldDefault)"
             closeField()
             awaitMorphPhase("rest", 10_000)
             settle(8_000)
@@ -618,21 +623,25 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
 
     /**
      * A field's leading glyph as the DOM has it: a favicon image shown (its address, its box) or
-     * the slot's own mark (its text; the address of an image that is there but not shown, for
-     * the record), or nothing when the field itself is not up.
+     * the slot's own mark (its text, or an icon; the address of an image that is there but not
+     * shown, for the record), or nothing when the field itself is not up. [painted] is whether
+     * anything is drawn in the slot at all – the favicon, the tile's letter or the magnifier –
+     * since a slot waiting for its image must never be blank.
      */
-    private class Glyph(val present: Boolean, val favicon: Boolean, val src: String, val loaded: Boolean, val w: Double, val h: Double, val text: String) {
+    private class Glyph(val present: Boolean, val favicon: Boolean, val src: String, val loaded: Boolean, val w: Double, val h: Double, val text: String, val painted: Boolean) {
         fun favicon20(url: String): Boolean = favicon && src == url && loaded && Math.abs(w - 20.0) < 0.6 && Math.abs(h - 20.0) < 0.6
+        /** The slot carries the favicon at [url] – shown, or held for its load with the fallback painted – and is not blank. */
+        fun carries(url: String): Boolean = present && src == url && painted
         override fun toString(): String = when {
             !present -> "NO FIELD on the page"
             favicon -> "favicon '${src.take(48)}${if (src.length > 48) "…" else ""}' loaded $loaded at ${"%.1f".format(w)}x${"%.1f".format(h)} CSS px"
-            else -> "no favicon shown, the slot's mark '${text.ifEmpty { "(icon)" }}'" + (if (src.isNotEmpty()) " (an image '${src.take(48)}…' present, loaded $loaded)" else "")
+            else -> "no favicon shown, the slot's mark '${text.ifEmpty { if (painted) "(icon)" else "(BLANK)" }}'" + (if (src.isNotEmpty()) " (an image '${src.take(48)}…' present, loaded $loaded)" else "")
         }
     }
 
     private fun glyph(scope: String): Glyph {
         val o = runCatching { JSONObject(chromeValue(glyphJs(scope))) }.getOrElse { JSONObject() }
-        return Glyph(o.optBoolean("present"), o.optBoolean("favicon"), o.optString("src"), o.optBoolean("loaded"), o.optDouble("w", 0.0), o.optDouble("h", 0.0), o.optString("text"))
+        return Glyph(o.optBoolean("present"), o.optBoolean("favicon"), o.optString("src"), o.optBoolean("loaded"), o.optDouble("w", 0.0), o.optDouble("h", 0.0), o.optString("text"), o.optBoolean("painted"))
     }
 
     private fun glyphJs(scope: String): String =
@@ -640,8 +649,9 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             "var i=s.querySelector('$FAVICON');var g=s.querySelector('[data-testid=engine-field-glyph]');" +
             "var loaded=!!(i&&i.complete&&i.naturalWidth>0);" +
             "if(loaded&&getComputedStyle(i).visibility!=='hidden'){var r=i.getBoundingClientRect();" +
-            "return JSON.stringify({present:true,favicon:true,src:i.getAttribute('src'),loaded:true,w:r.width,h:r.height})}" +
-            "return JSON.stringify({present:true,favicon:false,src:i?i.getAttribute('src'):'',loaded:loaded,w:0,h:0,text:g?g.textContent.trim():''})})()"
+            "return JSON.stringify({present:true,favicon:true,src:i.getAttribute('src'),loaded:true,w:r.width,h:r.height,painted:true})}" +
+            "var t=g?g.textContent.trim():'';var painted=!!(g&&(t||g.querySelector('svg')));" +
+            "return JSON.stringify({present:true,favicon:false,src:i?i.getAttribute('src'):'',loaded:loaded,w:0,h:0,text:t,painted:painted})})()"
 
     /** The favicon image inside `scope` has loaded and is shown (the fallback given up for it). */
     private fun faviconLoadedJs(scope: String): String =
@@ -1110,6 +1120,8 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         /** The seeded default engine (the state's `searchEngines[0]`) and the vendor's default. */
         private const val ENGINE_ID = "custom:brew-notes"
         private const val VENDOR_ENGINE_ID = "google"
+        /** The vendor's default's mark as the shipped registry keeps it (`DEFAULT_SEARCH_ENGINES[0].favicon`). */
+        private const val VENDOR_FAVICON_URL = "https://www.google.com/favicon.ico"
         /** The engine's mark: a 16 px "B" tile, sized so the image has an intrinsic width whatever the WebView's SVG rules. */
         private const val FAVICON_SVG =
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\" rx=\"4\" fill=\"#3b5bdb\"/>" +

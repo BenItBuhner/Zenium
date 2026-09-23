@@ -524,5 +524,12 @@ describe('the app menu under ⋯', () => {
     // Below the bar (top 44) to the margin: 800 − 44 − 8. Above there is no room, so it stays.
     expect(menu.style.top).toBe('44px')
     expect(menu.style.maxHeight).toBe(`${800 - 44 - 8}px`)
+    // A level that shrinks to the room scrolls, and a scroller has to read as the keyboard's
+    // own (axe's scrollable-region-focusable, the CI walkthrough's audit): the panel – which
+    // holds the focus when the pointer opened it, §9.22 – stands at 0, its rows at -1.
+    expect(menu.getAttribute('tabindex')).toBe('0')
+    expect(document.activeElement).toBe(menu)
+    for (const row of menu.querySelectorAll('[role^="menuitem"]'))
+      expect(row.getAttribute('tabindex')).toBe('-1')
   })
 })

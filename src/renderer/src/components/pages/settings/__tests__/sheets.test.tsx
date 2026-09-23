@@ -2,12 +2,13 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, type ReactElement } from 'react'
+import { act, useState, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { SheetFooter } from '../blocks'
 import type { ActionRow, DetailRow, FieldRow, ItemRow, RowGroup, ValueRow } from '../model'
+import type { SheetRequest } from '../rows'
 import { SheetStack } from '../sheets'
 
 /*
@@ -485,11 +486,12 @@ describe('a Settings sheet whose form claims the footer', () => {
 })
 
 /*
- * Where the focus lands as a Settings sheet opens (§9.22): a confirmation is a title-and-notice
- * sheet, so it holds its container – named by the question, described by the paragraph – and
- * never Cancel, its first button (the failure the section names: the way out read first); a
- * field sheet, whose first control is a text field, holds its container too – the chassis's own
- * exception, the keyboard must not come up with the sheet; a picker opens on its checked option.
+ * Where the focus lands as a Settings sheet opens (§9.22): a confirmation takes the desktop
+ * prompt primitive's shape (`ConfirmDialog`, §9.22 as amended on #392) – the container holds
+ * the focus, named by the question and described by the paragraph, and no verb is preselected;
+ * a field sheet, whose first control is a text field, holds its container too – the chassis's
+ * own exception, the keyboard must not come up with the sheet; a picker opens on its checked
+ * option.
  */
 describe('where a Settings sheet lands the focus (§9.22)', () => {
   function stack(requests: Parameters<typeof SheetStack>[0]['requests'], rows: RowGroup[]): void {
@@ -510,7 +512,7 @@ describe('where a Settings sheet lands the focus (§9.22)', () => {
       (b) => b.textContent ?? ''
     )
 
-  it('a confirmation holds its container, never Cancel', async () => {
+  it('a confirmation holds its container – no verb preselected, no ring on it', async () => {
     const onPress = vi.fn()
     const row: ActionRow = {
       kind: 'action',
@@ -531,6 +533,9 @@ describe('where a Settings sheet lands the focus (§9.22)', () => {
     expect(buttons()).toEqual(['Cancel', 'Clear'])
     expect(document.activeElement).toBe(sheet)
     expect(sheet.getAttribute('tabindex')).toBe('-1')
+    // main.css: `:root [role='dialog'][tabindex='-1']:focus-visible { outline: none }` – the
+    // held container draws no ring, as the primitive's `alertdialog` draws none.
+    expect(sheet.matches("[role='dialog'][tabindex='-1']")).toBe(true)
     const block = sheet.querySelector<HTMLElement>('.zen-sheet-title-block')!
     expect(block.querySelector('h2')?.textContent).toBe('Clear browsing data?')
     expect(sheet.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
@@ -567,5 +572,251 @@ describe('where a Settings sheet lands the focus (§9.22)', () => {
     const checked = options().find((o) => o.getAttribute('aria-checked') === 'true')
     expect(checked?.textContent).toBe('Google')
     expect(document.activeElement).toBe(checked)
+  })
+})
+
+/*
+ * The confirmation sheet's keyboard (`ConfirmSheet`, sheets.tsx) is the desktop prompt
+ * primitive's (`ConfirmDialog`, components/dialogs; §9.22 as amended by the design lead on
+ * #392), on the phone's chassis: the container holds the focus as the sheet opens; Tab enters
+ * the sheet's own order – which on a sheet holds the chassis's grabber first, then Cancel, then
+ * the verb, the verb never first – and Shift+Tab reaches the verb; Enter from the held container
+ * is the verb on a prompt that is not destructive and INERT on one that is (a destructive prompt
+ * has no default: the lead's ruling), while a focused button keeps its own Enter; Escape is
+ * Cancel and the focus goes back to the row that opened the sheet. The sheet stays a sheet: the
+ * split footer, the verb in the danger ink with no primary when destructive – nothing of the
+ * desktop's visuals comes over.
+ */
+describe('a confirmation sheet’s keyboard is the prompt primitive’s (§9.22 as amended on #392, §10.4)', () => {
+  function confirmRow(destructive: boolean, onPress: () => void): ActionRow {
+    return destructive
+      ? {
+          kind: 'action',
+          id: 'clear-data',
+          label: 'Clear browsing data',
+          destructive: true,
+          confirm: {
+            title: 'Clear browsing data?',
+            description: 'History, cookies and site data go.',
+            action: 'Clear'
+          },
+          onPress
+        }
+      : {
+          kind: 'action',
+          id: 'sync-sign-out',
+          label: 'Sign out',
+          confirm: {
+            title: 'Sign out of sync?',
+            description: 'Your bookmarks and passwords stay on this device.',
+            action: 'Sign out'
+          },
+          onPress
+        }
+  }
+
+  /**
+   * The page's stack as `useSheetStack` keeps it: the row's button on the page opens the
+   * confirmation's request, `closeTop` drops it once the sheet has gone.
+   */
+  function Page({ row }: { row: ActionRow }): ReactElement {
+    const [requests, setRequests] = useState<readonly SheetRequest[]>([])
+    return (
+      <>
+        <button
+          type="button"
+          data-row={row.id}
+          onClick={() => setRequests([{ kind: 'confirm', rowId: row.id }])}
+        >
+          {row.label}
+        </button>
+        <FrameDialogHost>
+          <SheetStack
+            requests={requests}
+            groups={[{ id: 'group', heading: null, rows: [row] }]}
+            ctx={{ open: () => undefined }}
+            closeTop={() => setRequests([])}
+          />
+        </FrameDialogHost>
+      </>
+    )
+  }
+
+  const sheetEl = (): HTMLElement | null =>
+    mount!.querySelector<HTMLElement>('.zen-sheet[role="dialog"]')
+  const pageRow = (): HTMLElement => mount!.querySelector<HTMLElement>('[data-row]')!
+  /** The sheet's controls in the order Tab visits them (`focusableIn`, lib/popover.ts). */
+  const tabOrder = (sheet: HTMLElement): HTMLElement[] =>
+    [...sheet.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex]')].filter(
+      (el) => el.tabIndex >= 0
+    )
+
+  /** Opens the row's confirmation from its page button (focused, as a keyboard's press leaves it) and lets the sheet come up. */
+  async function open(row: ActionRow): Promise<HTMLElement> {
+    render(<Page row={row} />)
+    act(() => pageRow().focus())
+    act(() => pageRow().click())
+    await settle()
+    rest()
+    const sheet = sheetEl()
+    expect(sheet).not.toBeNull()
+    return sheet!
+  }
+
+  function key(from: Element, init: KeyboardEventInit): KeyboardEvent {
+    const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+    act(() => {
+      from.dispatchEvent(e)
+    })
+    return e
+  }
+  const tab = (from: Element, shift = false): KeyboardEvent =>
+    key(from, { key: 'Tab', shiftKey: shift })
+  const enter = (from: Element): KeyboardEvent => key(from, { key: 'Enter' })
+  const escape = (): KeyboardEvent => key(window as unknown as Element, { key: 'Escape' })
+
+  it('opens with the focus on the container and the split footer under the title block: Cancel then the verb, the danger verb with no primary', async () => {
+    const sheet = await open(confirmRow(true, () => undefined))
+    expect(document.activeElement).toBe(sheet)
+    expect(sheet.getAttribute('tabindex')).toBe('-1')
+    const footer = sheet.querySelector<HTMLElement>(
+      '.zen-settings-sheet-body > .zen-settings-sheet-actions'
+    )!
+    expect(footer).not.toBeNull()
+    const [cancel, verb] = [...footer.querySelectorAll<HTMLButtonElement>('button')]
+    expect(cancel!.textContent).toBe('Cancel')
+    expect(verb!.textContent).toBe('Clear')
+    expect(verb!.classList.contains('zen-settings-danger-button')).toBe(true)
+    expect(verb!.hasAttribute('data-primary')).toBe(false)
+    // The desktop primitive's panel is not on the phone.
+    expect(mount!.querySelector('.zen-confirm-dialog, [role="alertdialog"]')).toBeNull()
+  })
+
+  it('Tab from the container enters the sheet’s order – the chassis’s grabber, Cancel, then the verb, the verb never first – and Shift+Tab reaches the verb', async () => {
+    const sheet = await open(confirmRow(true, () => undefined))
+    const order = tabOrder(sheet)
+    expect(order.map((el) => el.textContent)).toEqual(['', 'Cancel', 'Clear'])
+    const [grabber, cancel, verb] = order
+    expect(grabber!.classList.contains('zen-sheet-handle-hit')).toBe(true)
+    // From the container, Tab enters at the first control: the chassis's move (`wrapTab`).
+    expect(document.activeElement).toBe(sheet)
+    expect(tab(sheet).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(grabber)
+    // A step within the sheet is the browser's: the grabber to Cancel, Cancel to the verb.
+    expect(tab(grabber!).defaultPrevented).toBe(false)
+    act(() => cancel!.focus())
+    expect(tab(cancel!).defaultPrevented).toBe(false)
+    // At the verb Tab wraps to the first control; Shift+Tab from the container enters at the verb.
+    act(() => verb!.focus())
+    expect(tab(verb!).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(grabber)
+    act(() => sheet.focus())
+    expect(tab(sheet, true).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(verb)
+  })
+
+  it('Enter from the held container of a DESTRUCTIVE prompt does nothing: no default – the key is consumed, the sheet stands, the row does not act', async () => {
+    const onPress = vi.fn()
+    const sheet = await open(confirmRow(true, onPress))
+    expect(document.activeElement).toBe(sheet)
+    expect(enter(sheet).defaultPrevented).toBe(true)
+    rest()
+    expect(sheetEl()).toBe(sheet)
+    expect(sheet.closest('[data-leaving]')).toBeNull()
+    expect(onPress).not.toHaveBeenCalled()
+    // Enter on a button is the button's own: the sheet does not take it, and does not act on it.
+    const [cancel, verb] = [
+      ...sheet.querySelectorAll<HTMLButtonElement>('.zen-settings-sheet-actions button')
+    ]
+    act(() => cancel!.focus())
+    expect(enter(cancel!).defaultPrevented).toBe(false)
+    act(() => verb!.focus())
+    expect(enter(verb!).defaultPrevented).toBe(false)
+    rest()
+    expect(onPress).not.toHaveBeenCalled()
+    expect(sheetEl()).toBe(sheet)
+  })
+
+  it('Enter from the held container of a prompt that is not destructive is the verb: the sheet leaves, then the row acts, once', async () => {
+    const onPress = vi.fn()
+    const sheet = await open(confirmRow(false, onPress))
+    const verb = sheet.querySelector<HTMLButtonElement>(
+      '.zen-settings-sheet-actions button:last-child'
+    )!
+    expect(verb.textContent).toBe('Sign out')
+    expect(verb.hasAttribute('data-primary')).toBe(true)
+    expect(verb.classList.contains('zen-settings-danger-button')).toBe(false)
+    expect(document.activeElement).toBe(sheet)
+    expect(enter(sheet).defaultPrevented).toBe(true)
+    // The verb runs once the sheet has gone (`dismiss(after)`), not before.
+    expect(onPress).not.toHaveBeenCalled()
+    rest()
+    await settle()
+    expect(onPress).toHaveBeenCalledTimes(1)
+    expect(sheetEl()).toBeNull()
+  })
+
+  it('Escape is Cancel: the sheet leaves without the row acting, and the focus goes back to the row that opened it – never to Cancel', async () => {
+    const onPress = vi.fn()
+    const sheet = await open(confirmRow(true, onPress))
+    expect(document.activeElement).toBe(sheet)
+    escape()
+    rest()
+    await settle()
+    expect(sheetEl()).toBeNull()
+    expect(onPress).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(pageRow())
+  })
+})
+
+/*
+ * A form's `close` is a plain `() => void`, whatever the form binds it to. The sheet's own
+ * dismiss takes an optional `then` to run once the sheet has landed, and `FormBody` used to hand
+ * that dismiss over as it was: a form binding `close` straight to a button (`onClick={close}`)
+ * passed the click's event as `then`, and the sheet's landing threw calling it – before the
+ * chrome heard the sheet was gone, which left the chrome inert with the sheet still mounted
+ * (#145: the phone's Clear browsing data sheet on Cancel, every nightly's site-controls FAIL).
+ */
+describe('a form’s close closes its sheet however the form binds it', () => {
+  it('Cancel bound straight to onClick lands the sheet and the stack hears of it', async () => {
+    const closeTop = vi.fn()
+    const row: ActionRow = {
+      kind: 'action',
+      id: 'clear-data',
+      label: 'Clear browsing data',
+      form: {
+        title: 'Clear browsing data',
+        // The hazard itself: `close` as the click handler, so it is called with the event.
+        render: (close) => (
+          <div className="zen-settings-sheet-actions">
+            <button type="button" className="zen-v2-button" onClick={close}>
+              Cancel
+            </button>
+          </div>
+        )
+      }
+    }
+    render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={[{ kind: 'form', rowId: row.id }]}
+          groups={[{ id: 'privacy', heading: null, rows: [row] }]}
+          ctx={{ open: () => undefined }}
+          closeTop={closeTop}
+        />
+      </FrameDialogHost>
+    )
+    await settle()
+    rest()
+    const cancel = [
+      ...mount!.querySelectorAll<HTMLButtonElement>('.zen-settings-sheet-actions button')
+    ].find((b) => b.textContent === 'Cancel')!
+    expect(cancel).toBeDefined()
+    // The click, the leave spring to rest, the landing: no throw, and the stack drops the request.
+    expect(() => {
+      act(() => cancel.click())
+      rest()
+    }).not.toThrow()
+    expect(closeTop).toHaveBeenCalledTimes(1)
   })
 })

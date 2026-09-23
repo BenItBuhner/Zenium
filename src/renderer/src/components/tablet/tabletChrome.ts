@@ -49,6 +49,14 @@ const CLOSED: TabletDrawerState = { phase: 'closed', progress: 0 }
  */
 export const tabletDrawerStore = createStore<TabletDrawerState>(CLOSED, 'tablet-drawer')
 
+/**
+ * The drawer panel's transform at `progress`: off screen past its own edge at 0, in place at 1.
+ * Written to the panel per frame by the drawer (`TabletDrawer`), not rendered.
+ */
+export function tabletDrawerShift(progress: number, side: 'left' | 'right'): string {
+  return `translateX(${(1 - progress) * 100 * (side === 'left' ? -1 : 1)}%)`
+}
+
 /** How far the drawer travels, in px – its width. Set by the drawer once it has measured itself. */
 let travel = 240
 

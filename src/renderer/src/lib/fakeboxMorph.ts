@@ -1,11 +1,21 @@
 /**
  * The phone new tab page's field becoming the omnibox and back (NTP-02 / MOT-08): the impure half
  * of `lib/motion/fakebox.ts`. It keeps the machine's state, measures the field, the pill's slot and
- * the omnibox's field, runs the one spring, writes the morph's values to the root once per frame
+ * the omnibox's field, runs the one spring, writes the morph's values once per frame
  * (`--zen-ntp-morph`, read by the sheet, the bar and the page; `--zen-ntp-pill`, read by the
  * pill's slot), and hooks the omnibox's open and close: a tap opens the bar as the field sets
  * out, a dismissal is held until the field has run back. `FakeboxMorphLayer` paints the field's
  * double from the pose handed to it here.
+ *
+ * The values go on the root – the one readable pair, which the Android harness's probe reads
+ * there – and on each element that reads them (`registerFakeboxSurface`: the page's field and
+ * column here, the gear, the bar, the pill's slot and the omnibox's sheet by their components;
+ * the double's box by its layer). main.css registers both properties non-inheriting, as the
+ * recede's (`lib/motion/recede.ts`): a value that inherits and changes on the root every frame
+ * has the whole chrome's style recalculated every frame – 12 to 13 ms per scroll or spring frame
+ * on the emulator (the wave 5 baseline sweep's `ntp-scrub-top` and `ntp-morph-close-bottom`);
+ * written where it is read, a frame recalculates those elements alone. An element that is not
+ * registered reads 0.
  *
  * Nothing here runs unless a new tab page has registered its field, and the desktop never does.
  * Under reduced motion (v2 §11.3) the spring's part is a cut: the machine still runs, so the
@@ -115,9 +125,9 @@ export const SPRING_FAKEBOX = SPRING_SNAPPY
 /** Under reduced motion the omnibox arrives and leaves on a 120 ms fade in place (v2 §11.3). */
 export const FAKEBOX_REDUCED_FADE_MS = 120
 
-/** The morph's value on the root: 0 the page's, 1 the omnibox's. */
+/** The morph's value, on the root and on each surface: 0 the page's, 1 the omnibox's. */
 export const FAKEBOX_VAR = '--zen-ntp-morph'
-/** The handover to the pill on the root: 0 the field's, 1 the pill's slot filled in. */
+/** The handover to the pill, on the same elements: 0 the field's, 1 the pill's slot filled in. */
 export const FAKEBOX_PILL_VAR = '--zen-ntp-pill'
 
 /**
@@ -142,6 +152,11 @@ interface Registration {
 }
 
 let registration: Registration | null = null
+/**
+ * The elements main.css reads the values on (`registerFakeboxSurface`), each carrying them on
+ * its own inline style: the root's do not inherit (the header).
+ */
+const surfaces = new Set<HTMLElement>()
 let machine: FakeboxState = FAKEBOX_REST
 let geometry: FakeboxGeometry | null = null
 let travel = 120
@@ -209,13 +224,38 @@ export function registerFakebox(
   registration = mine
   measure()
   if (scroller) machine = scrolled(machine, scroller.scrollTop, geometry ?? measure())
+  // The field fades on the handover and the column on the morph (main.css `.zen-ntp-field`,
+  // `.zen-ntp-fades`): both carry the values for as long as this registration stands.
+  const releaseField = registerFakeboxSurface(field)
+  const releaseScroller = scroller ? registerFakeboxSurface(scroller) : null
   publish()
   paint()
   watch()
   return () => {
+    // Released before the guard, whichever registration stands: React runs an effect's cleanup
+    // before its next setup, so a page re-registering the same field and column (its tab or dock
+    // changed) releases them here and registers them again at once, written by the new paint();
+    // a registration another has replaced releases only its own, gone elements.
+    releaseField()
+    releaseScroller?.()
     if (registration !== mine) return
     registration = null
     reset()
+  }
+}
+
+/**
+ * An element main.css reads the morph's values on – the bar, the pill's slot, the omnibox's
+ * sheet, the page's gear (`hooks/useFakeboxSurface.ts`) – takes them on its own inline style
+ * from now until the returned release runs (its unmount): the pose of the moment at once, then
+ * every write of the morph's. The root's values do not inherit (the header): an element that
+ * is not registered reads 0, and nothing is written to it.
+ */
+export function registerFakeboxSurface(el: HTMLElement): () => void {
+  surfaces.add(el)
+  writeValues(el.style, geometry && registration ? poseOf(machine, geometry) : null)
+  return () => {
+    if (surfaces.delete(el)) writeValues(el.style, null)
   }
 }
 
@@ -483,18 +523,29 @@ function publish(): void {
 function paint(): void {
   const root = document.documentElement.style
   if (!geometry || !registration) {
-    root.removeProperty(FAKEBOX_VAR)
-    root.removeProperty(FAKEBOX_PILL_VAR)
+    writeValues(root, null)
+    for (const surface of surfaces) writeValues(surface.style, null)
     lastPose = null
     settle()
     return
   }
   const pose = poseOf(machine, geometry)
-  root.setProperty(FAKEBOX_VAR, pose.open.toFixed(4))
-  root.setProperty(FAKEBOX_PILL_VAR, pose.pill.toFixed(4))
+  writeValues(root, pose)
+  for (const surface of surfaces) writeValues(surface.style, pose)
   if (lastPose && !samePose(lastPose, pose)) wrote()
   lastPose = pose
   painter?.({ pose: paintedPose(geometry), state: machine, geometry, moving })
+}
+
+/** The two values on one element's inline style, or neither (the properties' initial 0). */
+function writeValues(style: CSSStyleDeclaration, pose: FakeboxPose | null): void {
+  if (!pose) {
+    style.removeProperty(FAKEBOX_VAR)
+    style.removeProperty(FAKEBOX_PILL_VAR)
+    return
+  }
+  style.setProperty(FAKEBOX_VAR, pose.open.toFixed(4))
+  style.setProperty(FAKEBOX_PILL_VAR, pose.pill.toFixed(4))
 }
 
 const samePose = (a: FakeboxPose, b: FakeboxPose): boolean =>

@@ -29,6 +29,7 @@ import {
   type Folder,
   type MenuAnchor,
   type MenuItemDescriptor,
+  type PhoneBarItemId,
   type Platform as PlatformOs,
   type Rect,
   type Settings,
@@ -38,6 +39,7 @@ import {
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
+import { phoneBarHas } from '../shared/phoneBar'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
@@ -171,6 +173,13 @@ const SELECTION_LABEL_MAX = 50
 const SPELLING_SUGGESTIONS_MAX = 5
 /** The "Spell check" submenu lists the user's languages, not every dictionary there is. */
 const SPELLCHECK_MENU_LANGUAGES_MAX = 8
+/**
+ * A device's submenu under Tabs from Other Devices lists this many of its tabs, newest activity
+ * first, as Recently Closed lists ten; the rest read as a count, Open All in Tabs opens them all.
+ */
+const REMOTE_TABS_MENU_MAX = 10
+/** The name a device with none reads under; the engine fills one in, a seeded list may not. */
+const UNNAMED_DEVICE = 'Another device'
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -1839,13 +1848,24 @@ export class Menus {
 
   /**
    * The tab strip's menu (tabs-35): the New Tab row's and the empty space below the rows share
-   * it. Chrome's strip trio first – New tab, Reopen closed tab, Bookmark all tabs… – then
-   * Zenium's own: the space's folders and spaces, Clear Unpinned Tabs.
+   * it. Chrome's strip rows first – New tab, Reopen closed tab, Bookmark all tabs…, and on the
+   * desktop Name window… (context-menus-108) – then Zenium's own: the space's folders and
+   * spaces, Clear Unpinned Tabs.
    */
   showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const space = win.activeSpace()
     const local = Boolean(win.localSpace)
+    const nameWindow: MenuItemTemplate[] =
+      win.formFactor === 'desktop'
+        ? [
+            {
+              label: 'Name Window…',
+              action: 'window.name',
+              click: () => this.browser.emit('windowName.open', undefined, win)
+            }
+          ]
+        : []
     this.popup(
       [
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
@@ -1868,6 +1888,7 @@ export class Menus {
           action: 'bookmark.allTabs',
           click: () => this.browser.bookmarkTabs(win)
         },
+        ...nameWindow,
         { type: 'separator' },
         ...(local
           ? []
@@ -2023,10 +2044,13 @@ export class Menus {
     if (win) this.browser.tabs.switchSpace(spaceId, win)
   }
 
-  /** How a window is named in "Move Tab to Another Window" and tab search: its active tab, like Chrome's submenu. */
+  /**
+   * How a window is named in "Move Tab to Another Window" and tab search: the name the user
+   * gave it (Name Window…), else its active tab, like Chrome's submenu.
+   */
   windowLabel(win: ZenWindow): string {
-    const title = this.browser.tabs.activeTitleFor(win)?.trim()
-    const label = title ? (title.length > 60 ? `${title.slice(0, 57)}…` : title) : 'Empty window'
+    const title = win.name ?? this.browser.tabs.activeTitleFor(win)?.trim()
+    const label = title ? clipLabel(title, 60) : 'Empty window'
     return win.isPrivate ? `${label} (Private)` : label
   }
 
@@ -2041,25 +2065,36 @@ export class Menus {
     const live = this.browser.liveFolders.get(folderId)
     // The desktop's folder is the sidebar's tab group, saved when its tabs close (TAB-16, the
     // desktop half of the shared groups). Its menu runs act / change / destroy in four groups:
-    // what the folder does (Open Folder while it is saved, New Tab in Folder while it is open),
+    // what the folder does (Open Folder while it is saved, then New Tab in Folder on either),
     // what changes it (Edit Folder… – Chrome's group editor bubble, tabs-13: name, colour and
-    // the group's actions in one surface beside the header – and the live folder's items or
-    // Make Live Folder…), what ends one half of an open folder and can be undone (Unpack Folder
-    // leaves the tabs loose to regroup, Close Folder closes them and the folder stays SAVED with
-    // their pages, Open Folder brings them back), then Delete Folder alone – Chrome's for a saved
+    // the group's actions in one surface beside the header – the live folder's items or Make
+    // Live Folder…, and last, for an open folder with tabs on a host with windows to give, Move
+    // Folder to New Window – a change of place, filed with the verbs that change the folder as
+    // the tab menu files Move Tab to New Window with its place-changing verbs, not beside New
+    // Tab), what ends one half of an open folder and can be undone (Unpack Folder leaves the
+    // tabs loose to regroup, Close Folder closes them and the folder stays SAVED with their
+    // pages, Open Folder brings them back), then Delete Folder alone – Chrome's for a saved
     // group – which forgets what the folder holds, or closes its tabs with it, and so asks first
     // through the chrome's prompt when there is anything to lose (`folder.confirmDelete`). New
-    // Tab in Folder is an open folder's alone: on a saved one the first tab it holds again
-    // forgets the pages it kept (the model's `folderOpened` rule), a loss no plain-ink verb may
-    // carry (§5, §9.1); Open Folder brings them back first. No Rename Folder… and no Expand or
-    // Collapse Folder: each duplicates a control the row already has (the editor's Name field,
-    // the header's own click). Zen's word is Folder; the touch hosts say Group.
+    // Tab in Folder on a saved folder opens it first – its pages back as its tabs – and adds the
+    // tab behind them (`newTabInFolder`), so the plain-ink verb loses nothing (§5, §9.1). Move
+    // Folder to New Window (Chrome's Move group to new window, context-menus-107) takes the
+    // folder's tabs and the folder to a window of their own beside this one
+    // (`moveFolderToNewWindow`); the saved folder keeps its three rows (Open Folder brings the
+    // pages back here). No Rename Folder… and no Expand or Collapse Folder: each duplicates a
+    // control the row already has (the editor's Name field, the header's own click). Zen's word
+    // is Folder; the touch hosts say Group.
+    const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     const saved = isSavedFolder(state.model, folder)
     const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
     const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
-    const act: Template = saved
-      ? [{ label: `Open Folder (${tabs})`, click: () => this.browser.openFolder(folderId, win) }]
-      : [{ label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }]
+    const act: Template = [
+      ...when(saved, {
+        label: `Open Folder (${tabs})`,
+        click: () => this.browser.openFolder(folderId, win)
+      }),
+      { label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }
+    ]
     const change: Template = [
       {
         label: 'Edit Folder…',
@@ -2097,7 +2132,11 @@ export class Menus {
               label: 'Make Live Folder…',
               click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
             }
-          ]) as Template)
+          ]) as Template),
+      ...when(!saved && count > 0 && state.capabilities.windows, {
+        label: 'Move Folder to New Window',
+        click: () => void this.browser.tabs.moveFolderToNewWindow(folderId, win)
+      })
     ]
     const end: Template =
       count && !saved
@@ -2420,6 +2459,71 @@ export class Menus {
     ]
   }
 
+  /**
+   * Chrome's "Tabs from other devices" block of the History submenu (shortcuts-menus-108) – and
+   * the macOS History menu's – from services' `open-tabs` records as the engine lists them
+   * (`sync.tabsFromDevices`, the read the History page's group makes, #326): a header, then one
+   * submenu per device, the most recently published first, of the device's tabs, newest activity
+   * first, each with its favicon; a row opens the tab through the held-tab rule (#314: a tab this
+   * browser already holds under the same id comes to the front instead), and the submenu ends
+   * with the page's device menu's Open All in Tabs. A device the page's heading menu hid (Hide
+   * Device, the core's set, `PageService.hideDevice`) is left out here too, as Chrome's "Hide for
+   * now" takes the device out of its menu; the page's way back, Show Hidden Devices, follows the
+   * devices while any is hidden, and stands under the header alone – over §9.17's sentence –
+   * when every one is. The block follows the page's rulings for when there is nothing: with sync
+   * off, or Open tabs out of what syncs, or nothing published by any device, there is no block
+   * at all (the lead's #326 amendment to §10.1 – a sentence with no way out would be a permanent
+   * line of nothing for the single-device user; the page one row up, Show Full History, carries
+   * the settings doors). The header is a note kind (`note`): the chrome's menu writes it in the
+   * deemphasised ink on a row that takes no focus and answers no click – a heading, not a
+   * command greyed out at .4 (the #396 review's A7; #299 B2's complaint) – while a native menu,
+   * which has no such row, shows the disabled item, Chrome's own form of the header. `open` is
+   * how a row opens its tabs, since the mac bar stands with no window of its own
+   * (`applicationMenu`'s `withWindow` finds or opens one).
+   */
+  tabsFromDevicesItems(open: (tabs: readonly SyncRemoteTab[]) => void): Template {
+    const { sync, pages } = this.browser
+    const status = sync.status()
+    if (!status.enabled || !status.scope.openTabs) return []
+    const hidden = new Set(pages.hiddenDeviceIds())
+    const lists = sync.tabsFromDevices().filter((device) => device.tabs.length > 0)
+    const shown = lists.filter((device) => !hidden.has(device.deviceId))
+    const hiddenCount = lists.length - shown.length
+    if (shown.length === 0 && hiddenCount === 0) return []
+    const header: MenuItemTemplate = {
+      label: 'Tabs from Other Devices',
+      enabled: false,
+      note: true
+    }
+    const devices: Template = shown.map((device) => {
+      const tabs = [...device.tabs].sort((a, b) => b.lastActive - a.lastActive)
+      const rows: Template = tabs.slice(0, REMOTE_TABS_MENU_MAX).map((tab) => ({
+        label: clipLabel(tab.title.trim() || displayUrl(tab.url), 60),
+        icon: tab.favicon,
+        click: () => open([tab])
+      }))
+      if (tabs.length > REMOTE_TABS_MENU_MAX)
+        rows.push({ label: `${tabs.length - REMOTE_TABS_MENU_MAX} more…`, enabled: false })
+      return {
+        label: clipLabel(device.deviceName.trim() || UNNAMED_DEVICE, 40),
+        submenu: [
+          ...rows,
+          { type: 'separator' },
+          { label: 'Open All in Tabs', click: () => open(tabs) }
+        ]
+      }
+    })
+    const allHidden: Template =
+      shown.length === 0
+        ? [{ label: "You've hidden every device", enabled: false, note: true }]
+        : []
+    const showHidden: Template =
+      hiddenCount > 0
+        ? [{ label: 'Show Hidden Devices', click: () => pages.showHiddenDevices() }]
+        : []
+    return [header, ...devices, ...allHidden, ...showHidden]
+  }
+
   // ---------------------------------------------------------------------------
   // History page
   // ---------------------------------------------------------------------------
@@ -2674,9 +2778,10 @@ export class Menus {
    * tab's return to its own window, `Session.showRestored`); the other held tabs stay where they
    * are, and the tabs that do open all open behind – the first of them takes the front only when
    * no held tab did. A held tab no window can show now (a space of a window that is gone) is
-   * left as it is too: the user has it.
+   * left as it is too: the user has it. The History submenu's rows and the mac bar's take the
+   * same path with one tab (`tabsFromDevicesItems`), so a row for a held tab brings it forward.
    */
-  private openRemoteTabs(remote: readonly SyncRemoteTab[], win: ZenWindow): void {
+  openRemoteTabs(remote: readonly SyncRemoteTab[], win: ZenWindow): void {
     const { tabs } = this.browser
     let front = true
     for (const tab of remote) {
@@ -2717,26 +2822,43 @@ export class Menus {
    * "Open <app>" and goes to the app's start URL instead (PWA-11). The install item is offered
    * only where the window's chrome has an install surface up to take it (`ChromeSurface`: the
    * phone's sheet; the desktop's dialog is UI work to come, and its menu item comes with it).
+   * The phone's flat list takes the pair as one row; the sidebar layouts split it, the install
+   * row a save (`installItems`, Chrome's Save and share carries Create shortcut…) and Open in
+   * <app> a window action (`openAppItems`, in More Tools).
    */
   private homeScreenItems(active: Tab | undefined, win: ZenWindow): Template {
+    return [...this.openAppItems(active, win), ...this.installItems(active, win)]
+  }
+
+  /**
+   * "Open in <app>" inside an installed app's scope: the desktop launches the app's own window
+   * (Chrome), the phone goes to the app's start URL in this tab.
+   */
+  private openAppItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser
     if (!active || !webApps.canPin(active, win)) return []
-    const surface = webApps.surface
     const pinned = webApps.pinnedFor(active.url)
-    if (pinned) {
-      // Desktop: "Open in <app>" launches the app's own window (Chrome); the phone goes to the
-      // app's start URL in this tab.
-      return [
-        {
-          label: openAppMenuLabel(surface, pinned.name),
-          click: () => webApps.launch(pinned.id, win)
-        }
-      ]
-    }
+    if (!pinned) return []
+    return [
+      {
+        label: openAppMenuLabel(webApps.surface, pinned.name),
+        click: () => webApps.launch(pinned.id, win)
+      }
+    ]
+  }
+
+  /**
+   * The install row – Create Shortcut…, Install <app>…, or the phone's Add to Home Screen – for
+   * a page no installed app owns, while the window's chrome has the install surface up.
+   */
+  private installItems(active: Tab | undefined, win: ZenWindow): Template {
+    const { webApps } = this.browser
+    if (!active || !webApps.canPin(active, win)) return []
+    if (webApps.pinnedFor(active.url)) return []
     if (!surfaceMounted(win, 'install')) return []
     return [
       {
-        label: installMenuLabel(surface, active.webApp),
+        label: installMenuLabel(webApps.surface, active.webApp),
         click: () => webApps.openInstall(active.id, win)
       }
     ]
@@ -2746,17 +2868,20 @@ export class Menus {
    * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One set of items for
    * every layout, in two orders. The sidebar layouts (desktop and tablet) take Firefox's groups
    * (design language v2 §6 "Menus"): the tabs and windows; the library – bookmarks, history,
-   * downloads, passwords, add-ons; the page's actions; the app's – Settings, More Tools, Help,
-   * Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
-   * eighteen rows and three separators (a fourth under the "Now Playing…" row while the media
-   * hub's button has folded), so the menu stands on an 800 px window without scrolling (§6: a
-   * menu is exempt from §9.20's 60% cap and takes the room to the window's bottom margin). What
-   * Firefox's count leaves out is not lost but moves into a submenu: History carries the
-   * recently closed list as Chrome's does, Zoom the fullscreen toggle as Firefox's zoom row
-   * does, More Tools the install row with Zenium's space and window actions, the captures, the
-   * developer tools and the resources (Chrome's More tools carried "Create shortcut…" and
-   * holds its window and task-manager rows the same way), Help the menu bar's Help entries and
-   * the About row. The phone layout – which has no
+   * downloads, passwords, add-ons; the page's actions, closing with Chrome's Save and share –
+   * Save Page As…, Create Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – as
+   * the submenu Chrome folds it into (shortcuts-menus-120; Firefox keeps save and print in the
+   * flat list, and a flat group here spent rows the menu has not got); the app's – Settings,
+   * More Tools, Help, Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
+   * eighteen rows and three separators (§6's ceiling; a fourth under the "Now Playing…" row
+   * while the media hub's button has folded), so the menu stands on an 800 px window without
+   * scrolling (§6: a menu is exempt from §9.20's 60% cap and takes the room to the window's
+   * bottom margin). What Firefox's count leaves out is not lost but moves into a submenu:
+   * History carries the recently closed list as Chrome's does, Zoom the fullscreen toggle as
+   * Firefox's zoom row does, More Tools Zenium's space and window actions with an installed
+   * app's Open in <app>, the captures, the developer tools and the resources (Chrome's More
+   * tools holds its window and task-manager rows the same way), Help the menu bar's Help
+   * entries and the About row. The phone layout – which has no
    * sidebar, window frame or keyboard to speak of – keeps Chrome's phone menu (TB-08): the icon
    * row first, then the tabs, library, page and app groups in one flat list, without the items
    * that only act on a window (Chrome's phone menu has none of them either). An item the host
@@ -2837,6 +2962,13 @@ export class Menus {
       action: 'window.newUnsynced',
       click: () => this.browser.openWindow('unsynced', win)
     })
+    // Chrome's More tools › Name window… (shortcuts-menus-121): the desktop's, whose OS title
+    // bar and window switcher read the name; a tablet's one window has neither.
+    const nameWindow = desktop({
+      label: 'Name Window…',
+      action: 'window.name',
+      click: () => this.browser.emit('windowName.open', undefined, win)
+    })
     const newPrivateWindow = when(caps.windows, {
       label: 'New Private Window',
       action: 'window.newPrivate',
@@ -2910,6 +3042,14 @@ export class Menus {
       label: 'Add-ons and Themes',
       action: 'addons.open',
       click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
+    })
+    // Chrome's Delete browsing data (Ctrl+Shift+Delete), a top-level row since Chrome moved it out
+    // of More tools: the library group's last row on the sidebar layouts, the dialog the History
+    // page's button and Settings › Privacy open. The phone's form is the Settings sheet.
+    const deleteBrowsingData = sidebar({
+      label: 'Delete Browsing Data…',
+      action: 'privacy.clearBrowsingData',
+      click: () => this.browser.actions.run('privacy.clearBrowsingData', { sourceTabId: null, win })
     })
     // The desktop's alone: Zen's compact mode is the hover-revealed sidebar, which a finger
     // cannot reveal; the tablet's sidebar collapses to its rail from the toolbar.
@@ -2994,6 +3134,10 @@ export class Menus {
     // phone, a submenu on the sidebar layouts.
     const sendToDevices = this.sendToDevicesItems(active, win)
     const homeScreen = this.homeScreenItems(active, win)
+    // The sidebar layouts split the phone's pair: the install row is a save, Open in <app> a
+    // window action.
+    const createShortcut = sidebar(...this.installItems(active, win))
+    const openInApp = sidebar(...this.openAppItems(active, win))
     const print = when(caps.print, {
       label: 'Print…',
       action: 'page.printPreview',
@@ -3086,8 +3230,9 @@ export class Menus {
       this.popup(
         [
           // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set,
-          // the star, Download page, Page info and Reload / Stop, which the chrome draws as a
-          // row of icon buttons from each item's glyph.
+          // the star, Download page, Page info and Reload / Stop – less what the user's bar
+          // carries (§9.13) – which the chrome draws as a row of icon buttons from each item's
+          // glyph.
           ...this.phoneIconRow(active, win),
           separator,
           newTab,
@@ -3152,49 +3297,70 @@ export class Menus {
         ...newPrivateWindow,
         separator,
         // The library. History is Chrome's submenu: the page first, then the recently closed
-        // list, which had a submenu of its own on the row before.
+        // list, which had a submenu of its own on the row before, then the other devices' tabs
+        // (their block stands only while sync lists some; `tabsFromDevicesItems`).
         bookmarks,
         {
           label: 'History',
-          submenu: [showHistory('Show Full History'), separator, ...this.recentlyClosedItems(win)]
+          submenu: tidySeparators([
+            showHistory('Show Full History'),
+            separator,
+            ...this.recentlyClosedItems(win),
+            separator,
+            ...this.tabsFromDevicesItems((tabs) => this.openRemoteTabs(tabs, win))
+          ])
         },
         downloads,
         ...passwords,
         ...addons,
+        ...deleteBrowsingData,
         separator,
-        // The page's actions, in the brief's order: find, zoom, print, save, share and
-        // translate, then the reader's; the long tail is the app group's More Tools. Web
-        // capture sits between the save and the share, where Edge's menu keeps it.
+        // The page's actions: find, zoom, translate, then the reader's and the per-site
+        // controls; the long tail is the app group's More Tools.
         findInPage,
         ...zoomSheet,
         ...zoom,
-        ...print,
-        savePageAs,
-        ...webCapture,
-        ...share,
-        ...sendToDevices,
         ...translate,
         readerView,
         ...textPreferences,
         ...listen,
         ...pageControls,
+        // Chrome's Save and share (shortcuts-menus-120) closes the page group as its last row,
+        // folded into a submenu as Chrome folds it (the #396 review's ruling 1): the saves first
+        // – Save Page As…, the install row (Create Shortcut…, or Install <app>…), Web Capture…
+        // between the save and the print where Edge's menu keeps it, Print… – then the shares,
+        // Share… and Send to Your Devices. No Cast row: Zenium has no cast target. Folded, the
+        // top level keeps #299's count whatever the host gates – twenty rows and three
+        // separators on the Linux build, 661 px – and stands whole on an 800 px window (§6).
+        {
+          label: 'Save and Share',
+          submenu: [
+            savePageAs,
+            ...createShortcut,
+            ...webCapture,
+            ...print,
+            ...share,
+            ...sendToDevices
+          ]
+        },
         separator,
         // The app's, in Firefox's order and §6's: settings, tools, help, quit.
         settings,
         {
           label: 'More Tools',
-          // Firefox's "More tools" row of its app group; Chrome's More tools, which carried
-          // "Create shortcut…" first and carries its window rows (Name window…), Task manager
-          // and Developer tools the same way, gives the submenu its contents: the install row
-          // (Create Shortcut…, or Open in <app>), Zenium's space and window actions, the
-          // window's layout toggles, the captures, then the developer's and the resources.
+          // Firefox's "More tools" row of its app group; Chrome's More tools, which carries its
+          // window rows (Name window…), Task manager and Developer tools, gives the submenu its
+          // contents: an installed app's Open in <app>, Zenium's space and window actions with
+          // Chrome's Name Window…, the window's layout toggles, the captures, then the
+          // developer's and the resources.
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
           submenu: tidySeparators([
-            ...homeScreen,
+            ...openInApp,
             separator,
             ...newSpace,
             ...newBlankWindow,
+            ...nameWindow,
             separator,
             ...compactMode,
             splitView,
@@ -3286,38 +3452,43 @@ export class Menus {
   }
 
   /**
-   * Chrome's icon row at the head of the phone's app menu (matrix TB-08): Forward, the bookmark
-   * star, Download page, Page info and Reload / Stop, each an item with a `glyph` the chrome draws
-   * as a 44 px icon button (design language v2 §9.3) named by its label. Every button runs what
-   * the bar's own button for it runs – the row consumes the core's commands and adds none – and a
-   * button whose action has nowhere to go (Forward on the last entry, Download off the web) is
-   * disabled rather than dropped (§9.30), so the row keeps its shape from one opening to the next.
+   * Chrome's icon row at the head of the phone's app menu (matrix TB-08): Forward, Home while a
+   * homepage is set, the bookmark star, Download page, Page info and Reload / Stop (v2 §9.13's
+   * six), each an item with a `glyph` the chrome draws as a 44 px icon button (§9.3) named by its
+   * label. Every button runs what the bar's own button for it runs – the row consumes the core's
+   * commands and adds none – and a button whose action has nowhere to go (Forward on the last
+   * entry, Download off the web) is disabled rather than dropped (§9.30), so the row keeps its
+   * shape from one opening to the next. An action the bar carries is not repeated in the row
+   * (§9.13; Firefox's customisation: a control lives once): the user's bar is `settings.phoneBar`
+   * (`shared/phoneBar.ts`, what the chrome draws – its four of the six, Forward, Home, Bookmark
+   * and Reload / Stop, need nothing of the host), and each leaves the row while the bar holds
+   * it; Download page and Page info have no bar item and always stand. Home the bar shows only
+   * while a homepage is set, as the row does, so the two agree on when there is a Home at all.
    */
   private phoneIconRow(active: Tab | undefined, win: ZenWindow): Template {
     const { tabs } = this.browser
+    const bar = this.browser.state.settings.phoneBar
+    const unlessOnBar = (id: PhoneBarItemId, item: MenuItemTemplate): Template =>
+      phoneBarHas(bar, id) ? [] : [item]
     return [
-      {
+      ...unlessOnBar('forward', {
         label: 'Forward',
         glyph: 'forward',
         action: 'nav.forward',
         enabled: Boolean(active?.canGoForward),
         click: () => active && tabs.goForward(active.id)
-      },
+      }),
       // Home (TB-15 / NTP-30, v2 §9.13): a button wherever it lives – the bar's item when the
       // user adds it, this glyph otherwise, never a text row among New Tab and New Private Tab
       // (a row reads as a destination). The tab goes to the homepage; with the homepage off
-      // there is no Home anywhere, as Chrome's button leaves the toolbar. Not repeating it here
-      // while the bar carries it is §9.13's rule for the whole row, a follow-up once the menu
-      // model can see the bar as the chrome draws it.
+      // there is no Home anywhere, as Chrome's button leaves the toolbar.
       ...(this.browser.newTab.homepageUrl() !== null
-        ? [
-            {
-              label: 'Home',
-              glyph: 'home',
-              enabled: Boolean(active),
-              click: () => active && this.browser.goHome(active.id, win)
-            } satisfies MenuItemTemplate
-          ]
+        ? unlessOnBar('home', {
+            label: 'Home',
+            glyph: 'home',
+            enabled: Boolean(active),
+            click: () => active && this.browser.goHome(active.id, win)
+          })
         : []),
       // The star (TB-16), with Chrome's flow as the phone's Bookmarks submenu ran it before: a
       // page that is not bookmarked is saved and toasted with Edit, a bookmarked one opens its
@@ -3325,14 +3496,14 @@ export class Menus {
       // words, Chrome's: "Bookmark" outlined, "Edit Bookmark" filled). A plain item, not a
       // checkbox (a stateful glyph, not a toggle): a press never unchecks it, and the mouse
       // popover would otherwise mark a checked action row.
-      {
+      ...unlessOnBar('bookmark', {
         label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark',
         glyph: 'star',
         action: 'bookmark.add',
         checked: Boolean(active?.bookmarked),
         enabled: Boolean(active) && this.browser.bookmarkable(active!.url),
         click: () => active && this.browser.starTab(active.id, win)
-      },
+      }),
       // Chrome's Download keeps the page for later; `page.savePage` is the core's way (the host
       // writes an archive into Downloads and files it there). A page of the web only.
       {
@@ -3354,15 +3525,18 @@ export class Menus {
       },
       // Reload and Stop share the last slot, as they share the bar's button: Stop while the page
       // loads, Reload otherwise. The menu is a picture of the moment it opened, like any menu.
-      active?.loading
-        ? { label: 'Stop', glyph: 'stop', action: 'nav.stop', click: () => tabs.stop(active.id) }
-        : {
-            label: 'Reload',
-            glyph: 'reload',
-            action: 'nav.reload',
-            enabled: Boolean(active),
-            click: () => active && tabs.reload(active.id)
-          }
+      ...unlessOnBar(
+        'reload',
+        active?.loading
+          ? { label: 'Stop', glyph: 'stop', action: 'nav.stop', click: () => tabs.stop(active.id) }
+          : {
+              label: 'Reload',
+              glyph: 'reload',
+              action: 'nav.reload',
+              enabled: Boolean(active),
+              click: () => active && tabs.reload(active.id)
+            }
+      )
     ]
   }
 
