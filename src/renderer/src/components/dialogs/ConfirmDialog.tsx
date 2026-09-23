@@ -68,7 +68,8 @@ export interface ConfirmDialogProps {
  * the prompt has one, a check row as the body's only element, then the §9.11 footer: Cancel and
  * the verb, 96 | 8 | 96 hugging the right at 16, the verb in the danger ink when the answer
  * destroys something and the accent primary otherwise. Nothing else: a prompt with more is a
- * form dialog. The width is §9.20's, by content and by place: the 320 notice for a title block
+ * form dialog (the one-field prompt is `PromptDialog` below, on the same panel). The width is
+ * §9.20's, by content and by place: the 320 notice for a title block
  * and its two buttons; 400 when the prompt carries the check row ("takes 400 only when it
  * carries a row or a field (a credential row, a checkbox)" – at 320 the quit prompt's two
  * sentences ran to three lines and its checkbox label wrapped, measured); and the notice again,
@@ -105,6 +106,56 @@ export interface ConfirmDialogProps {
  * `isolation` and its rank.
  */
 export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <ConfirmPanel {...props} />
+    </FrameDialogPortal>
+  )
+}
+
+/** A prompt's one field (§9.12): its name, its value, and whether the value is selected on open. */
+export interface PromptField {
+  /**
+   * The field's name, its `aria-label` – a one-field prompt whose title names what is asked
+   * draws no visible label (§9.12: the title is the label), and never a placeholder standing in
+   * for one (the #396 ruling: a placeholder is example text; Chrome's field here is empty).
+   */
+  label: string
+  value: string
+  onChange: (next: string) => void
+  maxLength?: number
+  /** Select the value as the prompt opens, so typing replaces it (a rename, a window's name). */
+  autoSelect?: boolean
+}
+
+export type PromptDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructive'> & {
+  /** The body's one element: the field, `.zen-v2-field` at the body's full width under the description. */
+  field: PromptField
+}
+
+/**
+ * The one-field prompt (§9.23's composition with §9.12's field): the confirmation primitive
+ * above with a text field for its body's one element – "Name window", a rename – and nothing
+ * else; a prompt that needs a second field, a menulist or a validation message is a form dialog
+ * (`pages/settings`' `SettingsDialog`, the bookmarks' `EditBookmarkDialog`). A thin export
+ * composed on the same panel rather than a `field` prop on `ConfirmDialog`: the confirmation's
+ * public surface stays what §9.23 names (title, description, at most a check row, two buttons),
+ * `destructive` and the check row do not combine with a field (a value asked for has a primary,
+ * and a field with a row is a form), and each consumer reads as what it is. The one panel keeps
+ * the chassis, the width rule, the keyboard and the return in one place.
+ *
+ * The width is §9.20's `form` 400 – "takes 400 only when it carries a row or a field" – and the
+ * 320 notice again when it opens over another dialog in the slot ("place beats content").
+ *
+ * The focus lands IN THE FIELD as the prompt opens (selected when `autoSelect`): a prompt
+ * carrying a field is a form, and a form focuses its first field – §9.22's container-focus
+ * rule, which the confirmation above keeps, is for title-and-notice prompts, whose only
+ * controls are the way out. Enter in the field is the verb (the primitive's default key: a text
+ * input is not an `OWN_ENTER` control, so the field's Enter submits as a form's does); Tab wraps
+ * field → Cancel → verb; Escape and the scrim are Cancel, one hop. The footer is the
+ * confirmation's: Cancel | verb at 96 | 8 | 96 (§9.11), the verb the accent primary.
+ */
+export function PromptDialog(props: PromptDialogProps): JSX.Element {
   return (
     <FrameDialogPortal>
       <ConfirmPanel {...props} />
@@ -205,28 +256,30 @@ function ConfirmPanel({
   destructive = false,
   busy = false,
   checkbox,
+  field,
   onCancel,
   onConfirm,
   returnFocus,
   data,
   className
-}: ConfirmDialogProps): JSX.Element {
+}: ConfirmDialogProps & { field?: PromptField }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  const fieldRef = useRef<HTMLInputElement>(null)
   const id = useId()
   const titleId = `${id}title`
   const descriptionId = `${id}description`
-  const latest = useRef({ onConfirm, busy, returnFocus })
+  const latest = useRef({ onConfirm, busy, returnFocus, autoSelect: field?.autoSelect })
   useLayoutEffect(() => {
-    latest.current = { onConfirm, busy, returnFocus }
+    latest.current = { onConfirm, busy, returnFocus, autoSelect: field?.autoSelect }
   })
   useEscape(onCancel)
   useFrameDialog({ onScrimPress: onCancel })
 
-  // The width (§9.20), before the first paint: 400 for a prompt carrying the check row, the 320
-  // notice otherwise – and the notice whatever it carries when it covers another dialog in the
-  // slot (a panel on its way out is not one). Read as the prompt mounts; the row's presence is
-  // the one prop that can move it.
-  const hasRow = checkbox !== undefined
+  // The width (§9.20), before the first paint: 400 for a prompt carrying the check row or the
+  // field, the 320 notice otherwise – and the notice whatever it carries when it covers another
+  // dialog in the slot (a panel on its way out is not one). Read as the prompt mounts; the row's
+  // presence is the one prop that can move it.
+  const hasRow = checkbox !== undefined || field !== undefined
   useLayoutEffect(() => {
     const root = ref.current
     if (!root) return
@@ -245,7 +298,13 @@ function ConfirmPanel({
       active instanceof HTMLElement && active !== document.body && !root.contains(active)
         ? active
         : null
-    root.focus({ preventScroll: true })
+    // The container holds the focus (§9.22) – unless the prompt carries a field: a form
+    // focuses its first field, selected when asked, so typing replaces the value.
+    const input = fieldRef.current
+    if (input) {
+      input.focus({ preventScroll: true })
+      if (latest.current.autoSelect) input.select()
+    } else root.focus({ preventScroll: true })
     return () => {
       const wanted = latest.current.returnFocus
       // A getter's element is the target and its `false` is nowhere, as a plain value's; its
@@ -277,7 +336,8 @@ function ConfirmPanel({
     <div
       {...data}
       ref={ref}
-      role="alertdialog"
+      // A confirmation is an alertdialog; a prompt asking for a value is a dialog with a form.
+      role={field ? 'dialog' : 'alertdialog'}
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
@@ -296,6 +356,19 @@ function ConfirmPanel({
         descriptionId={descriptionId}
       />
       <div className="zen-confirm-dialog-body">
+        {field && (
+          <input
+            ref={fieldRef}
+            type="text"
+            className="zen-v2-field"
+            aria-label={field.label}
+            value={field.value}
+            onChange={(e) => field.onChange(e.target.value)}
+            maxLength={field.maxLength}
+            spellCheck={false}
+            autoComplete="off"
+          />
+        )}
         {checkbox && (
           <label className="zen-v2-row zen-v2-check-row zen-confirm-dialog-check">
             <span className="zen-v2-row-body">

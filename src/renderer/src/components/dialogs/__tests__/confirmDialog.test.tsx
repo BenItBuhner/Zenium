@@ -29,12 +29,20 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { FrameDialogHost, useFrameDialog } = await import('@renderer/lib/portals')
-const { ConfirmDialog, OWN_ENTER, useConfirmKeyboard } = await import('../ConfirmDialog')
+const { ConfirmDialog, OWN_ENTER, PromptDialog, useConfirmKeyboard } =
+  await import('../ConfirmDialog')
 type Props = Parameters<typeof ConfirmDialog>[0]
+type PromptProps = Parameters<typeof PromptDialog>[0]
 type Keyboard = Parameters<typeof useConfirmKeyboard>[1]
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ')
+/** The first rule at `selector` in main.css, comments and runs of whitespace gone. */
+const rule = (selector: string): string => {
+  const at = bare.indexOf(`${selector} {`)
+  expect(at, selector).toBeGreaterThanOrEqual(0)
+  return bare.slice(at, bare.indexOf('}', at))
+}
 
 let container: HTMLDivElement
 let root: Root
@@ -378,6 +386,163 @@ describe('the keyboard (§9.22)', () => {
     expect(onCancel).toHaveBeenCalledTimes(3)
     click(verb)
     expect(onConfirm).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the one-field prompt (PromptDialog, §9.12 on the primitive)', () => {
+  const fieldBase: PromptProps = {
+    name: 'rename',
+    title: 'Name window',
+    description:
+      'The name stands in the title bar and in tab search in place of the active tab’s title.',
+    action: 'Save',
+    field: { label: 'Window name', value: 'Research', onChange: () => undefined },
+    onCancel: () => undefined,
+    onConfirm: () => undefined
+  }
+  function Field(props: Partial<PromptProps> & { open?: boolean }): JSX.Element {
+    const { open = true, ...rest } = props
+    return (
+      <FrameDialogHost frame>{open && <PromptDialog {...fieldBase} {...rest} />}</FrameDialogHost>
+    )
+  }
+  const prompt = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[data-confirm="rename"]:not([data-leaving])')
+  const input = (): HTMLInputElement => prompt()!.querySelector<HTMLInputElement>('input')!
+
+  it('is a dialog (not an alertdialog) at §9.20’s 400 – the field takes the form width – with the field as the body’s first element at the body’s full width: the shared .zen-v2-field, named by its aria-label, no placeholder, no visible label; the verb is the primary', async () => {
+    render(<Field field={{ ...fieldBase.field, maxLength: 120 }} />)
+    await settle()
+    const d = prompt()!
+    expect(d.getAttribute('role')).toBe('dialog')
+    expect(d.getAttribute('aria-modal')).toBe('true')
+    expect(d.style.width).toBe('400px')
+    for (const cls of ['zen-v2-dialog', 'zen-confirm-dialog', 'zen-animate-pop'])
+      expect(d.classList.contains(cls), cls).toBe(true)
+    expect(d.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Name window')
+    expect(d.querySelectorAll('.zen-v2-title-block-description')).toHaveLength(1)
+    const body = d.querySelector('.zen-confirm-dialog-body')!
+    expect(body.children).toHaveLength(2)
+    const f = input()
+    expect(body.firstElementChild).toBe(f)
+    expect(f.type).toBe('text')
+    expect(f.classList.contains('zen-v2-field')).toBe(true)
+    expect(f.getAttribute('aria-label')).toBe('Window name')
+    expect(f.hasAttribute('placeholder')).toBe(false)
+    expect(d.querySelector('label')).toBeNull()
+    expect(f.value).toBe('Research')
+    expect(f.maxLength).toBe(120)
+    expect(f.getAttribute('autocomplete')).toBe('off')
+    expect(f.getAttribute('spellcheck')).toBe('false')
+    // The field runs the body's full width: `.zen-v2-field` is a block at 100% (main.css).
+    expect(rule('.zen-v2-field')).toContain('width: 100%')
+    expect(rule('.zen-v2-field')).toContain('display: block')
+    const [cancel, verb] = buttons(d)
+    expect(cancel.textContent).toBe('Cancel')
+    expect(verb.textContent).toBe('Save')
+    expect(verb.hasAttribute('data-primary')).toBe(true)
+    expect(d.querySelector('[data-danger]')).toBeNull()
+    expect(d.hasAttribute('data-destructive')).toBe(false)
+    expect(body.lastElementChild!.classList.contains('zen-confirm-dialog-footer')).toBe(true)
+  })
+
+  it('focuses the field as it opens – a form, not §9.22’s held container – selecting the value when asked, and answers its change', async () => {
+    const onChange = vi.fn()
+    render(<Field field={{ ...fieldBase.field, onChange, autoSelect: true }} />)
+    await settle()
+    const f = input()
+    expect(document.activeElement).toBe(f)
+    expect(f.selectionStart).toBe(0)
+    expect(f.selectionEnd).toBe('Research'.length)
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(f, 'Trip')
+      f.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(onChange).toHaveBeenCalledWith('Trip')
+
+    // Without `autoSelect` the caret is placed and nothing is selected.
+    render(<Field open={false} />)
+    await settle()
+    render(<Field field={{ ...fieldBase.field, value: 'Kept' }} />)
+    await settle()
+    expect(document.activeElement).toBe(input())
+    expect(input().selectionStart).toBe(input().selectionEnd)
+  })
+
+  it('Enter in the field is the verb (an input is no own-Enter control), Escape cancels one hop, Tab wraps field → Cancel → verb → field', async () => {
+    const onConfirm = vi.fn()
+    const onCancel = vi.fn()
+    render(<Field onConfirm={onConfirm} onCancel={onCancel} />)
+    await settle()
+    const d = prompt()!
+    const f = input()
+    expect(press(f, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+    expect(press(f, 'Enter', { repeat: true }).defaultPrevented).toBe(false)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+    pressEscape()
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    pressScrim()
+    expect(onCancel).toHaveBeenCalledTimes(2)
+    const [cancel, verb] = buttons(d)
+    act(() => verb.focus())
+    expect(press(verb, 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(f)
+    expect(press(f, 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(verb)
+    // Enter on a button is the button's own.
+    act(() => cancel.focus())
+    expect(press(cancel, 'Enter').defaultPrevented).toBe(false)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+    click(verb)
+    expect(onConfirm).toHaveBeenCalledTimes(2)
+  })
+
+  it('over another dialog it is the 320 notice even with its field (§9.5: place beats content), and returns to that dialog’s control', async () => {
+    function ItemDialog(): JSX.Element {
+      useFrameDialog({})
+      return (
+        <div role="dialog" tabIndex={-1} data-dialog="item">
+          <button data-action="rename">Rename</button>
+        </div>
+      )
+    }
+    function Stack({ prompt }: { prompt: boolean }): JSX.Element {
+      return (
+        <FrameDialogHost frame>
+          <ItemDialog />
+          {prompt && <PromptDialog {...fieldBase} />}
+        </FrameDialogHost>
+      )
+    }
+    render(<Stack prompt={false} />)
+    await settle()
+    const rename = document.querySelector<HTMLButtonElement>('[data-action="rename"]')!
+    act(() => rename.focus())
+    render(<Stack prompt />)
+    await settle()
+    const d = prompt()!
+    expect(d.previousElementSibling).toBe(document.querySelector('[data-dialog="item"]'))
+    expect(d.style.width).toBe('320px')
+    expect(document.activeElement).toBe(input())
+    render(<Stack prompt={false} />)
+    await settle()
+    expect(document.activeElement).toBe(rename)
+  })
+
+  it('returns nothing of its own with returnFocus false, as a prompt whose closer hands the keyboard to the page asks', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    render(<Field returnFocus={false} />)
+    await settle()
+    expect(document.activeElement).toBe(input())
+    render(<Field open={false} returnFocus={false} />)
+    await settle()
+    endExit()
+    await settle()
+    expect(document.activeElement).not.toBe(opener)
   })
 })
 
@@ -762,12 +927,6 @@ describe('the way back (§9.5, §9.22)', () => {
 })
 
 describe('the chrome and the motion (main.css)', () => {
-  const rule = (selector: string): string => {
-    const at = bare.indexOf(`${selector} {`)
-    expect(at, selector).toBeGreaterThanOrEqual(0)
-    return bare.slice(at, bare.indexOf('}', at))
-  }
-
   it('lays the notice out on the card padding with no hairline and no footer margin: 128 for one description line, 148 for two', () => {
     expect(rule('.zen-confirm-dialog')).toContain('flex-direction: column')
     const body = rule('.zen-confirm-dialog-body')
