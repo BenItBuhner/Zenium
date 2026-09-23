@@ -259,6 +259,28 @@ describe('the window prompt', () => {
     expect(run).toHaveBeenCalledWith('focus.content', undefined)
   })
 
+  it('holds the page under its picture for the host’s one scrim (§9.5, #294): the frame dialog cover stands from the open to the end of the way out – ContentArea draws no dim of its own while it does (pr-392 A2)', async () => {
+    expect(uiStore.get().frameDialogCover).toBe(0)
+    render(<Dialogs prompt={quit()} />)
+    await settle()
+    // The host's scrim is up, and the cover with it: the one signal the content frame reads.
+    expect(document.querySelector('.zen-frame-scrim')).not.toBeNull()
+    expect(uiStore.get().frameDialogCover).toBe(1)
+    render(<Dialogs prompt={null} />)
+    await settle()
+    // The panel and the scrim are on their way out: the cover holds, so the page stays under
+    // its picture with no second dim while the scrim fades.
+    expect(document.querySelector('.zen-frame-scrim[data-leaving]')).not.toBeNull()
+    expect(uiStore.get().frameDialogCover).toBe(1)
+    act(() => {
+      for (const panel of document.querySelectorAll('.zen-frame-dialogs-slot > [data-leaving]'))
+        panel.dispatchEvent(new Event('animationend'))
+    })
+    await settle()
+    expect(document.querySelector('.zen-frame-scrim')).toBeNull()
+    expect(uiStore.get().frameDialogCover).toBe(0)
+  })
+
   it('leaves the keyboard with a chrome control that asked with its ring showing: the prompt’s own one-hop return governs, the page is not asked', async () => {
     const chrome = document.createElement('div')
     chrome.setAttribute('data-surface', 'window')
