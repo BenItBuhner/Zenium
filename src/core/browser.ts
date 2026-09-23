@@ -116,9 +116,11 @@ import {
   extensionPageOf,
   getDomain,
   inputToUrl,
+  isBlankTabUrl,
   isEmptyTabUrl,
   isWebPageUrl,
-  presentedUrl
+  presentedUrl,
+  titleForUrl
 } from '../shared/url'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { QrStartOutcome } from '../shared/qrScan'
@@ -1046,7 +1048,23 @@ export class Browser {
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
     if (!tab || !view) return
-    if (view.hasDocument()) return
+    // What the tab keeps: nothing when no document ever committed (a link's new tab that went
+    // straight to the download), and nothing of the user's when it is the blank page a new tab
+    // holds until an address is typed into it – the address typed there turned into this
+    // download, and the tab would stay behind titled with the download's host over an empty
+    // page (BUG-030 / downloads-01). Chrome's rule for both: a tab opened for the download alone
+    // closes; one with a past keeps it.
+    const kept = view.getURL()
+    if (view.hasDocument() && !isBlankTabUrl(kept)) {
+      // The document stays, the new tab page's included (Chrome keeps that tab too). The typed
+      // address never became the tab's: its row and address bar go back to the document.
+      if (kept && tab.url !== kept) {
+        tab.url = kept
+        tab.title = view.getTitle() || titleForUrl(kept)
+        this.state.commit()
+      }
+      return
+    }
     if (!tab.pinned && !tab.essential && !view.canGoBack()) {
       this.tabs.closeTab(tab.id)
     } else {

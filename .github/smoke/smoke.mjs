@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,downloads]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
@@ -92,6 +92,7 @@ import {
   parseAxeAllowlist
 } from './aria.mjs'
 import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fixture.mjs'
+import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import {
   COOKIE_PATH,
@@ -4432,7 +4433,17 @@ async function main() {
       crash: scenarioCrash,
       'clear-on-exit': scenarioClearOnExit,
       scale: scenarioScale,
-      dark: scenarioDark
+      dark: scenarioDark,
+      [DOWNLOADS_SCENARIO]: () =>
+        scenarioDownloads({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          fixture: bootSite,
+          isLinux: IS_LINUX
+        })
     }[name]
     if (!run) {
       result.scenarios[name] = { fatal: `unknown scenario ${name}` }
