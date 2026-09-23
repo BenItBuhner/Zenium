@@ -212,6 +212,55 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     expect((saved.registered as Record<string, unknown[]>)[ID]).toHaveLength(1)
   })
 
+  it('folds a burst of registerContentScripts into one follow-up plan after the one in flight', async () => {
+    // webext-dynamic-content-scripts (bundled in eJOY) registers each manifest script for
+    // each additional origin without a wait between the calls; a plan per call recompiled the
+    // unit eighty-one times on the emulator.
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    expect(h.kt.calledWith('ext.configure')).toHaveLength(1)
+    let open: () => void = () => undefined
+    h.kt.configureGate = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    const origins = ['https://a.example/*', 'https://b.example/*', 'https://c.example/*']
+    const register = (matches: string, i: number): number => {
+      const id = nextCallId()
+      message(h, 'bg1', {
+        t: 'call',
+        id,
+        ns: 'scripting',
+        method: 'registerContentScripts',
+        args: [[{ id: `webext-dynamic-${i}`, matches: [matches], js: ['cs.js'] }]]
+      })
+      return id
+    }
+    // The first call's plan goes to Kotlin and waits there; the two that follow while it is
+    // in flight are recorded at once and wait for the one follow-up.
+    const ids = [register(origins[0], 0)]
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    ids.push(register(origins[1], 1), register(origins[2], 2))
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(h.runtime.registered(ID)).toHaveLength(3)
+    open()
+    await until(() => ids.every((id) => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id)))
+    for (const id of ids) {
+      const reply = h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)!
+      expect(reply.error).toBeUndefined()
+    }
+    // The attach's plan, the first registration's, and ONE follow-up carrying all three.
+    const plans = h.kt.calledWith('ext.configure')
+    expect(plans).toHaveLength(3)
+    const last = JSON.stringify(plans[2].units)
+    for (const origin of ['https://a.example', 'https://b.example', 'https://c.example'])
+      expect(last).toContain(origin)
+    h.kt.configureGate = null
+    // Nothing left in flight: a later change plans as ever, once.
+    await h.runtime.setRegistered(ID, [])
+    expect(h.kt.calledWith('ext.configure')).toHaveLength(4)
+  })
+
   it('fires runtime.onInstalled once per version when the background is ready, then onStartup', async () => {
     const h = harness()
     await h.runtime.attach(record(h))

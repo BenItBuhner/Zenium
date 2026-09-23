@@ -942,11 +942,46 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   }
 
   /**
+   * A plan on its way to Kotlin, per extension, and the one follow-up due after it. A burst of
+   * `registerContentScripts` calls (eJOY's bundled webext-dynamic-content-scripts registers
+   * each manifest script for each additional origin, eighty-one calls without a wait between
+   * them) re-planned and recompiled the extension's units once per call: eighty-one compiles
+   * in thirty-six seconds on the emulator, each over a larger unit than the last (compat
+   * round 13). A call that arrives while a plan is in flight shares ONE follow-up, planned from
+   * the state at the time it runs – so it carries every registration recorded by then – and
+   * resolves when that landed; nothing an extension awaits resolves before its plan is live.
+   */
+  private readonly configuring = new Map<string, { landed: Promise<void>; next: Promise<void> | null }>()
+
+  /**
    * Plan the extension's units from its manifest, registered scripts and world configuration
    * and hand them to Kotlin; a plan identical to the last one is not sent again (Kotlin keeps
    * its compiled units per extension and version, so every other extension is untouched).
+   * Plans of one extension go one at a time ([configuring]).
    */
-  private async configure(ext: Attached): Promise<void> {
+  private configure(ext: Attached): Promise<void> {
+    const id = ext.record.id
+    const inFlight = this.configuring.get(id)
+    if (inFlight) {
+      // Whatever the plan in flight comes to, one more follows it for the state since; an
+      // extension detached or replaced meanwhile plans for itself.
+      const again = (): Promise<void> =>
+        this.extensions.get(id) === ext ? this.configure(ext) : Promise.resolve()
+      inFlight.next ??= inFlight.landed.then(again, again)
+      return inFlight.next
+    }
+    const entry: { landed: Promise<void>; next: Promise<void> | null } = {
+      landed: Promise.resolve(),
+      next: null
+    }
+    entry.landed = this.configureNow(ext).finally(() => {
+      if (this.configuring.get(id) === entry) this.configuring.delete(id)
+    })
+    this.configuring.set(id, entry)
+    return entry.landed
+  }
+
+  private async configureNow(ext: Attached): Promise<void> {
     const env = await this.ensureEnv()
     const id = ext.record.id
     const bootFor = (isolation: IsolationMode): ExtensionBoot =>

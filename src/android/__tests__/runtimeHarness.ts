@@ -112,10 +112,22 @@ export class FakeKotlin implements RuntimeBridge {
     return jar
   }
 
+  /**
+   * While set, `ext.configure` is answered only once this settles: a compile taking its time
+   * on Kotlin's io thread, for tests of what the runtime does with the calls that arrive
+   * meanwhile. The call is recorded when it is answered.
+   */
+  configureGate: Promise<void> | null = null
+
   call<T = void>(method: string, args?: unknown): Promise<T> {
     if (method === 'ext.exec' && this.failExec) {
       const rejection = this.failExec((args ?? {}) as Record<string, unknown>)
       if (rejection !== null) return Promise.reject(new Error(rejection))
+    }
+    if (method === 'ext.configure' && this.configureGate) {
+      return this.configureGate.then(
+        () => this.dispatch(method, (args ?? {}) as Record<string, unknown>) as T
+      )
     }
     const result = this.dispatch(method, (args ?? {}) as Record<string, unknown>) as T
     return Promise.resolve(result)
