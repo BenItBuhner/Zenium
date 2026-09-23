@@ -28,8 +28,8 @@ const inner = (pillWidth: number): number => pillWidth - PILL_PADDING
 const ids = (s: ReadonlySet<string>): string[] => [...s].sort()
 
 describe('the pill chip overflow rule (M8)', () => {
-  it('orders the tiers: site, state, star, zoom, shield, informational, blocked permissions (§9.29, omnibox-38)', () => {
-    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'zoom', 'shield', 'info', 'blocked'])
+  it('orders the tiers: site, state, star, zoom, shield, informational (§9.29)', () => {
+    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'zoom', 'shield', 'info'])
   })
 
   it('hides nothing before the pill has been measured', () => {
@@ -121,80 +121,6 @@ describe('the pill chip overflow rule (M8)', () => {
     expect(addressWidth(inner(126), chips, fittingChips(inner(126), chips))).toBeGreaterThanOrEqual(
       MIN_ADDRESS_WIDTH
     )
-  })
-
-  // omnibox-38: the pill's word on the page using the camera, the microphone or the screen is a
-  // state chip – Chrome keeps its in-use icon in the narrowest omnibox – and the icons of the
-  // permissions the user blocked on the site are the lowest tier, the first to go.
-  describe('the in-use chip and the blocked-permission icons (omnibox-38)', () => {
-    const inUse: PillChipSpec = { id: 'in-use', tier: 'state', width: CHIP_WIDTH.iconButton }
-    const blockedCamera: PillChipSpec = {
-      id: 'blocked-camera',
-      tier: 'blocked',
-      width: CHIP_WIDTH.iconButton
-    }
-    const blockedMic: PillChipSpec = {
-      id: 'blocked-microphone',
-      tier: 'blocked',
-      width: CHIP_WIDTH.iconButton
-    }
-    const chips: PillChipSpec[] = [...five, inUse, blockedCamera, blockedMic]
-
-    it('the in-use chip is never hidden, however narrow the pill', () => {
-      // The 240 sidebar's 96 px pill: site, the blocked pop-ups chip and the in-use chip stay.
-      expect(ids(fittingChips(inner(96), chips))).toEqual(['in-use', 'popups', 'site'])
-      expect(ids(fittingChips(40, chips))).toEqual(['in-use', 'popups', 'site'])
-    })
-
-    it('the blocked-permission icons return last, after translate, and drop first', () => {
-      const at = (pill: number): string[] => ids(fittingChips(inner(pill), chips))
-      // Everything: site 26 + popups 34 + in-use 34 + star 26 + zoom 26 + translate 26 +
-      // two blocked icons 68 = 240; + 56 = 296 → pill 312.
-      expect(at(312)).toEqual([
-        'blocked-camera',
-        'blocked-microphone',
-        'in-use',
-        'popups',
-        'site',
-        'star',
-        'translate',
-        'zoom'
-      ])
-      // One pixel short: the last blocked icon is the first chip to go; the first stays.
-      expect(at(311)).toEqual([
-        'blocked-camera',
-        'in-use',
-        'popups',
-        'site',
-        'star',
-        'translate',
-        'zoom'
-      ])
-      // Without either blocked icon: 172 + 56 = 228 → pill 244; under it translate is next.
-      expect(at(278)).toEqual([
-        'blocked-camera',
-        'in-use',
-        'popups',
-        'site',
-        'star',
-        'translate',
-        'zoom'
-      ])
-      expect(at(277)).toEqual(['in-use', 'popups', 'site', 'star', 'translate', 'zoom'])
-      expect(at(244)).toEqual(['in-use', 'popups', 'site', 'star', 'translate', 'zoom'])
-      expect(at(243)).toEqual(['in-use', 'popups', 'site', 'star', 'zoom'])
-    })
-
-    it('a blocked icon never shows over a hidden informational chip', () => {
-      // Room for a blocked icon's width but translate, above it, does not fit: the door is shut.
-      const narrowTranslate: PillChipSpec[] = [
-        { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
-        { id: 'translate', tier: 'info', width: 60 },
-        { id: 'blocked-camera', tier: 'blocked', width: 8 }
-      ]
-      // 26 (site) + 66 (translate) + 56 = 148 for translate; give 140.
-      expect(ids(fittingChips(140, narrowTranslate))).toEqual(['site'])
-    })
   })
 
   it('the address keeps its minimum whenever an optional chip is shown', () => {

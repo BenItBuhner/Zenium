@@ -2,26 +2,20 @@
  * Which of the address pill's chips fit, and which hide when the pill cannot hold them all
  * (design language v2 §9.29's tier; Chrome's LocationBarView lays its decorations out the same
  * way). The chips have a priority: the site icon always; then the chips that report a state the
- * user cannot otherwise see (blocked pop-ups, a save prompt's key, the camera / microphone /
- * screen the page is using right now – Chrome keeps its in-use icon in the narrowest omnibox) –
- * never hidden; then the star; then the zoom chip (a per-page deviation the user has to undo);
- * then the blocking shield (its count is not a state, §9.29: the site information the site icon
- * opens carries it, and it marks the same state on every page); the informational chips
- * (translate, Reader View) next; and lowest the blocked-permission icons (a camera, microphone,
- * location or notifications the user blocked on the site, Chrome's crossed-out glyphs): a
- * standing decision rather than a live state, restated in the site information, so they are the
- * first to go. Hiding order, first to last: the blocked-permission icons, translate and Reader
- * View, shield, zoom, star (design lead's ruling on #267, §9.29; the blocked icons under them
- * by omnibox-38). The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do
+ * user cannot otherwise see (blocked pop-ups, a save prompt's key) – never hidden; then the
+ * star; then the zoom chip (a per-page deviation the user has to undo); then the blocking
+ * shield (its count is not a state, §9.29: the site information the site icon opens carries
+ * it, and it marks the same state on every page); the informational chips (translate, Reader
+ * View) lowest. Hiding order, first to last: translate and Reader View, shield, zoom, star
+ * (design lead's ruling on #267, §9.29). The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do
  * the chips hide, from the lowest priority up; once one does not fit, none below it shows. A
  * hidden chip's action stays reachable from the app menu and the tab's menu (Bookmark, Zoom,
- * Translate Page, Reader View) and from the site information (the blocking state, the blocked
- * permissions).
+ * Translate Page, Reader View) and from the site information (the blocking state).
  *
  * Pure, so the rule is unit-tested without a DOM; the pill measures itself and asks.
  */
 
-export type ChipTier = 'site' | 'state' | 'star' | 'shield' | 'zoom' | 'info' | 'blocked'
+export type ChipTier = 'site' | 'state' | 'star' | 'shield' | 'zoom' | 'info'
 
 /** Highest priority first: what hides when the pill runs out of room hides from the end. */
 export const CHIP_PRIORITY: readonly ChipTier[] = [
@@ -30,8 +24,7 @@ export const CHIP_PRIORITY: readonly ChipTier[] = [
   'star',
   'zoom',
   'shield',
-  'info',
-  'blocked'
+  'info'
 ]
 
 /** The tiers no width ever hides: the address's own icon and the state the page cannot show. */
@@ -66,9 +59,8 @@ export const PILL_TOOLS_TIER = 110
 /**
  * Nominal boxes, the chips' negative margins folded in (§9.3): the site icon's 24 less its 4 px
  * lead-in, the star's 28 less its 8 px trail, the 20 px chips (zoom, translate, Reader View),
- * the 28 px icon buttons (blocked pop-ups, the shield, the autofill key, the in-use chip, each
- * blocked-permission icon) and what a count badge adds to one of them (the 4 px gap and a 20 px
- * two-digit pill).
+ * the 28 px icon buttons (blocked pop-ups, the shield, the autofill key) and what a count badge
+ * adds to one of them (the 4 px gap and a 20 px two-digit pill).
  */
 export const CHIP_WIDTH = {
   site: 20,

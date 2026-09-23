@@ -69,8 +69,9 @@ import {
  * form of footer (§9.20) – a hairline in the gutter under the rows, then Clear site data and
  * Reload at 12. The detail levels answer the same commands the Android sheet does (`site.*`,
  * `permissions.*`), so the two surfaces show one site the same way. Everything it shows comes
- * from one `siteInfo.snapshot` reading, taken again after every action. The pill's in-use chip
- * and blocked-permission icons open it on the Permissions level (`level`, omnibox-38).
+ * from one `siteInfo.snapshot` reading, taken again after every action. The pill's site-
+ * information slot opens it on the Permissions level while it shows a live capture or a blocked
+ * permission (`level`, omnibox-38).
  */
 export function SiteInfoPopover({
   tab,
@@ -89,8 +90,9 @@ export function SiteInfoPopover({
   /** The store let go of the site (another surface took over, the tab closed): leave now. */
   closing: boolean
   /**
-   * The level it opens on: the overview, or Permissions from the pill's in-use chip and its
-   * blocked-permission icons (omnibox-38), with the overview a Back away as from any level.
+   * The level it opens on: the overview, or Permissions from the pill's site-information slot
+   * while it carries a capture or a block (omnibox-38), with the overview a Back away as from
+   * any level.
    */
   level?: LevelId
   /** Escape, a press outside, a window resize: the owner starts the exit. */

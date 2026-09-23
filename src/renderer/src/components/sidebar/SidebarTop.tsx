@@ -5,14 +5,21 @@ import {
   AppWindow,
   ArrowLeft,
   ArrowRight,
+  BellOff,
   BookOpenText,
+  Camera,
+  CameraOff,
   Copy,
   File,
   Info,
   Languages,
   Lock,
+  MapPinOff,
+  Mic,
+  MicOff,
   MoreHorizontal,
   RotateCw,
+  ScreenShare,
   Search,
   Sparkles,
   TriangleAlert,
@@ -34,7 +41,7 @@ import { PRIVATE_TAB_PLACEHOLDER, unlockPrivateTabs, useTabMasked } from '@rende
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
-import { blockedPermissionsOf } from '@renderer/lib/siteChips'
+import { siteChipName, siteSlotState, type SiteSlotState } from '@renderer/lib/siteChips'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
@@ -53,7 +60,6 @@ import { ExtensionIcon } from '../extensions/ExtensionIcon'
 import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
-import { BlockedPermissionChip, CaptureChip } from '../urlbar/PermissionChips'
 import { PillChip } from '../urlbar/PillChip'
 import { CHIP_WIDTH, fittingChips, type PillChipSpec } from '../urlbar/pillChipTiers'
 import { TOOLBAR_STROKE } from '../v2/controls'
@@ -255,10 +261,9 @@ export function NavRow({
   // The chips fit or hide by priority (`pillChipTiers.ts`, design language v2 §9.29; the #226
   // finding of five chips running past a 240 px sidebar's pill): the pill measures its content
   // box and asks which of the chips present fit beside an address that keeps its minimum. The
-  // site icon and the state chips – blocked pop-ups, a save prompt's key, the camera /
-  // microphone / screen in use (omnibox-38) – are never hidden; the star, the shield, the zoom
-  // chip, the informational chips (translate, Reader View) and, lowest, the blocked-permission
-  // icons hide from the lowest priority up. The hover-only extras (Boost, Copy URL) are the
+  // site icon and the state chips – blocked pop-ups, a save prompt's key – are never hidden;
+  // the star, the shield, the zoom chip and the informational chips (translate, Reader View)
+  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL) are the
   // stylesheet's container query's, as is the 130 px tier under which every tool after the
   // address goes (`zen-pill-chip`; §9.29's threshold, which the star's return here matches). A
   // hidden chip's action stays in the app menu and the tab's menu; a chip whose popover is up
@@ -282,11 +287,15 @@ export function NavRow({
     !state.capabilities.pageControls &&
     isZoomed(tab, state.settings.pageControls, state.pageEnvironment)
   )
-  // What the page holds right now and what the user blocked on its site (omnibox-38): the
-  // in-use chip's reading is the tab's (`Tab.capture`, folded from the frames' reports), the
-  // blocked icons' the engine's live rules; neither speaks of a masked page.
-  const capture = tab && !masked ? (tab.capture ?? null) : null
-  const blockedPermissions = tab && isWebPage ? blockedPermissionsOf(state, tab) : []
+  // The site-information slot's state (omnibox-38, §9.29): the glyph the leading chip draws in
+  // place of the connection's while the page holds the camera, the microphone or the screen
+  // (`Tab.capture`, folded from the frames' reports) or, at rest, while the user has a
+  // permission blocked on the site (the engine's live rules) – by the ruled precedence, a
+  // certificate error's glyph over both. Never a second chip: a state the slot can carry adds
+  // nothing to the tier, so the address keeps its width at 240 whatever the state. A masked
+  // page and an extension's page (its icon in the slot) say nothing of it.
+  const slot: SiteSlotState | null =
+    tab && !masked && !extension ? siteSlotState(state, tab, indicator.state) : null
   const chipsPresent: PillChipSpec[] = []
   if (tab && url) chipsPresent.push({ id: 'site', tier: 'site', width: CHIP_WIDTH.site })
   if (shieldState !== 'no-site') {
@@ -295,14 +304,6 @@ export function NavRow({
       id: 'shield',
       tier: 'shield',
       width: CHIP_WIDTH.iconButton + (counted ? CHIP_WIDTH.badge : 0)
-    })
-  }
-  if (capture) chipsPresent.push({ id: 'in-use', tier: 'state', width: CHIP_WIDTH.iconButton })
-  for (const permission of blockedPermissions) {
-    chipsPresent.push({
-      id: `blocked:${permission}`,
-      tier: 'blocked',
-      width: CHIP_WIDTH.iconButton
     })
   }
   if (tab && blocked.length > 0) {
@@ -511,13 +512,22 @@ export function NavRow({
                 aria-hidden="true"
               />
             ) : url && tab ? (
-              // The site icon: connection state at a glance, site information on click.
+              // The site-information slot (§9.19's 24 box): the site's state at a glance, site
+              // information on click. Its glyph is one state at a time (§9.29): the connection's
+              // – the lock, the info circle, a certificate error's triangle – or, in its place,
+              // the camera / microphone / screen the page is using, or the crossed-out glyph of
+              // the first permission blocked on the site (`slot`). Its name says which
+              // ("Site information · Camera and microphone blocked") and the tooltip carries the
+              // state's name (`PillChip`'s `title` → `data-tooltip`; a11y-26).
               <PillChip
-                label="Site information"
-                title={indicator.title}
+                label={siteChipName(slot)}
+                title={slot ? slot.label : indicator.title}
                 popup="dialog"
                 expanded={siteInfoOpen}
+                data-site-chip=""
                 data-indicator={indicator.state}
+                data-slot-state={slot?.kind ?? 'connection'}
+                data-slot-glyph={slot?.glyph}
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] hover:opacity-100',
                   indicator.state === 'certificate-error' && 'text-[var(--v2-danger)] opacity-100',
@@ -526,15 +536,20 @@ export function NavRow({
                 onActivate={(e) => {
                   const chip = e.currentTarget
                   const r = chip.getBoundingClientRect()
+                  // A state in the slot leads straight to the Permissions level, where its row
+                  // is changed (omnibox-38); the connection's glyph opens the overview.
                   void openSiteInfo(
                     tab,
                     { x: r.left, y: r.top, width: r.width, height: r.height },
-                    chip
+                    chip,
+                    { level: slot ? 'permissions' : 'overview' }
                   )
                 }}
               >
                 {extension ? (
                   <ExtensionIcon icon={extension.icon} size={16} box={16} />
+                ) : slot ? (
+                  <SlotGlyph glyph={slot.glyph} />
                 ) : (
                   <IndicatorGlyph state={indicator.state} scheme={tab.url.split(':')[0] ?? ''} />
                 )}
@@ -550,16 +565,6 @@ export function NavRow({
                 collapsed={!fits.has('shield')}
               />
             )}
-            {tab && capture && <CaptureChip tab={tab} capture={capture} />}
-            {tab &&
-              blockedPermissions.map((permission) => (
-                <BlockedPermissionChip
-                  key={permission}
-                  tab={tab}
-                  permission={permission}
-                  collapsed={!fits.has(`blocked:${permission}`)}
-                />
-              ))}
             {tab &&
               !masked &&
               !extension &&
@@ -823,6 +828,27 @@ function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>, mounted: boole
     return () => observer.disconnect()
   }, [ref, mounted])
   return width
+}
+
+/**
+ * The slot's state glyphs (omnibox-38; Chrome's location-bar icons): the camera, the microphone
+ * or the sharing glyph while the page captures, the crossed-out camera, microphone, location or
+ * bell for a permission blocked on the site. Drawn at §9.19's 16 in the 24 box, at the row's
+ * stroke like every 16 px glyph in the row (§9.3); the ink is the chip's.
+ */
+const SLOT_GLYPHS = {
+  camera: Camera,
+  microphone: Mic,
+  display: ScreenShare,
+  'camera-off': CameraOff,
+  'microphone-off': MicOff,
+  'geolocation-off': MapPinOff,
+  'notifications-off': BellOff
+} as const
+
+function SlotGlyph({ glyph }: { glyph: SiteSlotState['glyph'] }): JSX.Element {
+  const Glyph = SLOT_GLYPHS[glyph]
+  return <Glyph className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} aria-hidden />
 }
 
 /**

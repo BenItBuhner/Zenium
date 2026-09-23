@@ -456,8 +456,9 @@ export interface Tab {
   alert?: TabAlert | null
   /**
    * The kinds behind a `recording` / `capturing` alert (omnibox-38): which of the camera, the
-   * microphone and the screen the page holds, for the URL pill's in-use chip, whose glyph and
-   * name say which. Folded with `alert` from the same reports; null while nothing is captured.
+   * microphone and the screen the page holds, for the URL pill's site-information slot, whose
+   * glyph and name say which. Folded with `alert` from the same reports; null while nothing is
+   * captured.
    */
   capture?: TabCapture | null
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */

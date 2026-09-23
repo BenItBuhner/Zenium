@@ -61,9 +61,9 @@ export function tabAlertFor(reports: Iterable<Omit<CaptureStateReport, 'id'>>): 
 }
 
 /**
- * What the tab is capturing, kind by kind (omnibox-38): the URL pill's in-use chip names the
- * camera, the microphone or the screen where the `alert` above only ranks them. Picture-in-
- * picture is no capture and is not here.
+ * What the tab is capturing, kind by kind (omnibox-38): the URL pill's site-information slot
+ * names the camera, the microphone or the screen where the `alert` above only ranks them.
+ * Picture-in-picture is no capture and is not here.
  */
 export interface TabCapture {
   camera: boolean

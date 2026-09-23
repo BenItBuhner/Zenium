@@ -12109,10 +12109,7 @@
  * family through the §9.29 control roles: the deemphasised ink at rest and no lit state (§9.22 –
  * the glyph and the badge say what there is to say), the full ink and the window fill under the
  * pointer or while its popover is up. The count is live, so its figures are tabular (§4): the
- * badge inherits it, and 9 → 10 → 11 widens the pill by a glyph and never by a jitter. The
- * pill's other 28 px permission chips wear the same chassis (omnibox-38, `PermissionChips.tsx`):
- * the camera / microphone / sharing chip while the page captures, and the crossed-out icon of
- * a permission the user blocked on the site.
+ * badge inherits it, and 9 → 10 → 11 widens the pill by a glyph and never by a jitter.
  */
 .zen-v2-blocked-chip {
   display: inline-flex;

@@ -1141,7 +1141,7 @@ export class TabManager {
    * dropped when nothing is; the tab's `alert` is folded from all of them with Chrome's priority
    * (recording > capturing > picture-in-picture) and the row repaints when it changes. The
    * kinds behind it (`capture`: camera, microphone, display; omnibox-38) are folded from the same
-   * reports for the URL pill's in-use chip.
+   * reports for the URL pill's site-information slot, whose glyph says which.
    */
   onCaptureState(tabId: string, raw: unknown): void {
     const tab = this.tab(tabId)
