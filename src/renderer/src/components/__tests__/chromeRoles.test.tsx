@@ -221,7 +221,7 @@ describe('the sidebar’s landmarks and its toolbar row (a11y-02)', () => {
     expect(q('[role="tablist"][aria-label="Essentials"]', nav)).toBeTruthy()
     // The New Tab row and the spaces row are the strip's neighbours, not its tabs.
     expect(q('[data-new-tab]', nav)).toBeTruthy()
-    expect(nav.contains(q('button[title="New Space"]', aside))).toBe(false)
+    expect(nav.contains(q('button[aria-label="New Space"]', aside))).toBe(false)
   })
 
   it('says the toolbar runs vertically when the sidebar is the icon rail', () => {

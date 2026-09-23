@@ -732,8 +732,10 @@ describe('the site-data viewer', () => {
       )
       return { el, onClose }
     }
+    // The viewer's dialog is the Settings chassis's `role=dialog`; its prompt is the program's
+    // prompt primitive (`ConfirmDialog`, `role=alertdialog`).
     const dialogs = (el: ParentNode): HTMLElement[] =>
-      Array.from(el.querySelectorAll<HTMLElement>('[role="dialog"]'))
+      Array.from(el.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]'))
     const viewerDialog = (el: ParentNode): HTMLElement =>
       el.querySelector<HTMLElement>('[data-dialog="form:site-data-see-all"]')!
     // A prompt on its way out (the host keeps the panel `data-leaving`, inert and hidden through
@@ -772,7 +774,7 @@ describe('the site-data viewer', () => {
       expect(description?.textContent).toBe('Sites that stored cookies or data on this device.')
     })
 
-    it('prompts before clearing all: the prompt a 320 notice over the viewer’s dialog, which stands inert; the prompt itself takes the focus, named by its title and described by its line; Escape closes the prompt alone and the focus returns to Clear all', async () => {
+    it('prompts before clearing all: the prompt the primitive’s 320 notice over the viewer’s dialog, which stands inert; the prompt itself takes the focus, named by its title and described by its line; Enter from it is inert (destructive: no default); Escape closes the prompt alone and the focus returns to Clear all', async () => {
       invoke.mockImplementationOnce(async () => listing())
       const { el, onClose } = open()
       await settle()
@@ -782,22 +784,40 @@ describe('the site-data viewer', () => {
       act(() => clearAll.click())
       expect(dialogs(el)).toHaveLength(2)
       const p = prompt(el)!
+      // The program's prompt primitive (`ConfirmDialog`), the harness's handle kept on its root.
+      expect(p.getAttribute('role')).toBe('alertdialog')
+      expect(p.classList.contains('zen-confirm-dialog')).toBe(true)
+      expect(p.getAttribute('data-confirm')).toBe('site-data-clear-all')
+      expect(p.hasAttribute('data-destructive')).toBe(true)
       const title = p.querySelector('.zen-v2-title-block-title')
       const line = p.querySelector('.zen-v2-title-block-description')
       expect(title?.textContent).toBe('Clear all site data?')
       expect(line?.textContent).toContain('signs you out everywhere')
-      // §9.20's notice: a title block and the two footer buttons, nothing else, at 320.
+      // §9.20's notice: a title block and the two footer buttons, nothing else, at 320 – the
+      // notice whatever it covers (the lead's ruling on #392).
       expect(p.style.width).toBe('320px')
-      expect(p.querySelectorAll('button')).toHaveLength(2)
-      expect(p.querySelector('.zen-settings-row, input')).toBeNull()
+      const [cancel, verb] = [...p.querySelectorAll<HTMLButtonElement>('button')]
+      expect([cancel, verb].map((b) => b?.textContent)).toEqual(['Cancel', 'Clear all'])
+      expect(verb!.hasAttribute('data-danger')).toBe(true)
+      expect(p.querySelector('[data-primary], .zen-settings-row, input')).toBeNull()
       expect(viewerDialog(el).hasAttribute('inert')).toBe(true)
       expect(p.hasAttribute('inert')).toBe(false)
-      // §9.22: a title-and-notice surface focuses its container, never Cancel – the way out would
-      // be the first thing announced – so the dialog is named and described for the reading.
+      // §9.22 as amended on #392: the primitive's container holds the focus – no verb preselected
+      // – so the prompt is named and described for the reading.
       expect(document.activeElement).toBe(p)
       expect(p.getAttribute('tabindex')).toBe('-1')
       expect(p.getAttribute('aria-labelledby')).toBe(title?.id)
       expect(p.getAttribute('aria-describedby')).toBe(line?.id)
+      expect(invoke).toHaveBeenCalledTimes(1)
+
+      // A destructive prompt has no default: Enter from the held container is consumed and
+      // clears nothing – the prompt stands.
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      act(() => {
+        p.dispatchEvent(enter)
+      })
+      expect(enter.defaultPrevented).toBe(true)
+      expect(prompt(el)).toBe(p)
       expect(invoke).toHaveBeenCalledTimes(1)
 
       escape()
@@ -806,6 +826,7 @@ describe('the site-data viewer', () => {
       expect(viewerDialog(el).hasAttribute('inert')).toBe(false)
       await settle()
       expect(document.activeElement).toBe(clearAll)
+      expect(invoke).toHaveBeenCalledTimes(1)
 
       // The next Escape is the viewer dialog's.
       escape()
@@ -1017,11 +1038,23 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     // §9.20's notice: a title block and the two buttons, nothing else (the chassis's handle aside).
     expect(labels(prompt)).toEqual(['Cancel', 'Clear site data'])
     expect(prompt.querySelector('.zen-settings-row, input')).toBeNull()
-    // §9.22: the container takes the focus, never Cancel.
+    // §9.22 as amended on #392 (the prompt primitive's shape, `ConfirmSheet`): the container
+    // takes the focus, no verb preselected.
     expect(document.activeElement).toBe(prompt)
     expect(prompt.getAttribute('tabindex')).toBe('-1')
     expect(prompt.getAttribute('aria-labelledby')).toBe(title?.id)
     expect(prompt.getAttribute('aria-describedby')).toBe(line?.id)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    // A destructive prompt has no default: Enter from the held container is consumed and clears
+    // nothing – the sheet stands.
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    act(() => {
+      prompt.dispatchEvent(enter)
+    })
+    expect(enter.defaultPrevented).toBe(true)
+    await settle()
+    expect(topSheet(el)).toBe(prompt)
+    expect(standing(el)).toHaveLength(2)
     expect(invoke).toHaveBeenCalledTimes(1)
 
     invoke.mockImplementationOnce(async () => null)

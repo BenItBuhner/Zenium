@@ -3144,16 +3144,8 @@
   .zen-group-header:active {
     background: rgb(var(--zen-group-rgb) / 0.12);
   }
-  /* A group's own icon is a glyph (§4: glyphs hold while text scales): the WebView's text zoom
-     multiplies every font size, so the badge divides its 14 by the zoom first and lands on 14
-     at every system font size, inside its 16 box (run 2's overflow probe: +15 px at 1.8). */
-  .zen-group-badge {
-    font-size: calc(14px / var(--zen-text-zoom));
-  }
-  .zen-group-dot {
-    background: rgb(var(--zen-group-rgb));
-    box-shadow: 0 0 0 3px rgb(var(--zen-group-rgb) / 0.25);
-  }
+  /* The header's mark is the one group glyph (`.zen-group-row-glyph`, §9.37), as the strip's
+     chip, the ribbon and the Groups pane's rows draw it: no dot or badge of the card's own. */
   /* A card being swiped off the grid is positioned per frame; the press transition would lag it. */
   .zen-overview-card[data-swiping] {
     transition: none;
@@ -3732,8 +3724,9 @@
     background: var(--v2-border);
   }
   /*
-   * The phone app menu's icon row (TB-08; v2 §9.3): Chrome's Forward, star, Download, Page info
-   * and Reload / Stop as the sheet's first group – five shared `.zen-v2-icon-button`s (44 × 44,
+   * The phone app menu's icon row (TB-08; v2 §9.3): Chrome's Forward, Home, star, Download, Page
+   * info and Reload / Stop as the sheet's first group – §9.13's six, less what the user's bar
+   * carries (the core's menu model leaves those out) – shared `.zen-v2-icon-button`s (44 × 44,
    * 20 px glyphs at stroke 1.75, radius 8, the press fill, .4 when disabled) spread across the
    * sheet's width with the outer boxes on the 16 gutter (§9.25), one row tall. The star's fill is
    * a second, filled star over the outline whose opacity and scale the fill spring writes per
@@ -4445,6 +4438,34 @@
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
+  }
+  /*
+   * The chrome tooltip (components/Tooltip.tsx, lib/tooltip.ts; v2 draft §9.31, a11y-26): the
+   * platform's plain tooltip as a page surface in the chrome layer – `--v2-panel` under the 1 px
+   * `--v2-border` hairline and nothing else (no shadow, no arrow), the control radius
+   * (`--v2-radius-control`: 4 on the desktop, a plain round corner – §2 keeps the squircle for
+   * radius 8 and up, so no `corner-shape` here) – its text 13/400 on a 20 line (§4: 13 → 20,
+   * `--v2-line-small`) in `--v2-text`, padding 4 8, so a one-line tooltip stands 30 tall. It
+   * sizes to its text up to a list popover's 320 and wraps past that (a long address on the
+   * pill), and takes no pointer. Placed by `placeTooltip`; it appears with the panels' pop, a
+   * 120 ms fade under reduced motion (`zen-animate-pop`, §11.3).
+   */
+  .zen-tooltip {
+    position: fixed;
+    z-index: 80;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: 320px;
+    padding: 4px 8px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    color: var(--v2-text);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-weight: 400;
+    overflow-wrap: anywhere;
+    pointer-events: none;
   }
   /*
    * The tab search popover (components/tabsearch/TabSearchPopover.tsx; tabs-17): the shared
@@ -7895,9 +7916,13 @@
  * row like Zen's folder, not a chip – the 44 row at full width on the list's 46 pitch, the
  * phone overview's own group header (`GroupCard`'s "Reading · 2 ▾") on the sidebar's grid. In
  * the glyph slot – the favicon's 16 box, so the group's mark centres on the favicon column – a
- * 10 dot of the group's colour (`--zen-group-rgb`) for an open group, a 2 px ring of it for a
- * SAVED one, its tabs closed and its pages kept (the Groups pane's two states); a folder given
- * its own icon on the desktop keeps it, as a glyph at 14 that holds while text scales (§4).
+ * 10 dot of the group's colour (`--zen-group-rgb`) for an open group, the 10 as a ring at a 2
+ * stroke for a SAVED one, its tabs closed and its pages kept (the Groups pane's two states); a
+ * folder given its own icon on the desktop keeps it, as a glyph at 14 that holds while text
+ * scales (§4). This is THE group glyph (§9.37; the lead on #360: one glyph everywhere), the
+ * shared `GroupGlyph` component: the phone's card header and Departures ghost, the Groups
+ * pane's rows, the strip's chip face, the swipe track's ribbon and the sheets' leading boxes
+ * draw these same rules – no 8 or 12 dot, no halo, no badge of a host's own.
  * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
  * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
  * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
@@ -7932,6 +7957,14 @@
   font-size: calc(14px / var(--zen-text-zoom, 1));
   line-height: 1;
 }
+/* The own icon as generated content, so no row's or header's `textContent` carries the glyph
+   (the drivers read rows by their text; a glyph is no part of what a row says). */
+.zen-group-row-icon::before {
+  content: attr(data-icon);
+}
+/* The count is the aside on every host and in both states (#360's verdict on §9.36): the phone
+   overview's group card header (`GroupCard`, the Departures ghost) reads it too – never a pill on
+   the tinted header, never a badge beside the group's dot (§9.19). */
 .zen-group-row-count {
   flex-shrink: 0;
   color: var(--v2-control-text-deemphasized, var(--zen-muted));
@@ -8818,9 +8851,10 @@
  * one row rule: the disabled row of an empty group keeps its no-fill, the static rename row its
  * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
  * gutter's end; the first heading stands under the segment (or the space strip), which already
- * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
- * open group, the same as a 2 px ring for a saved one, whose tabs are closed (the §9.14 pair on
- * the glyph, `--zen-group-rgb` the theme's pick). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
+ * carries its air, at 4. The row's glyph in the 20 box is the one group glyph
+ * (`.zen-group-row-glyph`, §9.37: the 10 dot for an open group, the 10 ring at a 2 stroke for a
+ * saved one, whose tabs are closed; the §9.14 pair on the glyph, `--zen-group-rgb` the theme's
+ * pick). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
  * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
  * own 40 is for a list whose field carries 8 under it, and the segment carries none.
  */
@@ -8846,16 +8880,6 @@
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-small);
   font-variant-numeric: tabular-nums;
-}
-.zen-overview-group-glyph {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: rgb(var(--zen-group-rgb));
-}
-.zen-overview-group-glyph[data-saved] {
-  border: 2px solid rgb(var(--zen-group-rgb));
-  background: transparent;
 }
 /* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
 .zen-overview-groups .zen-overview-group-rename {
@@ -10873,14 +10897,16 @@
 }
 /*
  * §9.11's desktop footer: in a dialog the actions hug their labels and right-align at the 8
- * gap, primary last – a prompt's Cancel | Delete, a form's Cancel | Create or Add a site alike –
- * and hug no narrower than the button's own 96 at the 32 control height (§9.20: a notice's two
- * buttons are 96 + 8 + 96 inside its 288, a form's the same at the end of its 366). The equal
- * split and its `min-width: 0` (`.zen-settings-sheet-actions > *` above) are the phone sheet's:
- * a dialog is never the phone's – a phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`)
- * – so the pose is the surface's, not a pointer query's, and the phone's rule is not touched.
- * The busy state keeps the button's width: the label stays in the flow unpainted under the
- * spinner (§9.30, extensions.css).
+ * gap, primary last – a form's Cancel | Create or Add a site – and hug no narrower than the
+ * button's own 96 at the 32 control height (§9.20: a form's two buttons are 96 + 8 + 96 at the
+ * end of its 366). A confirmation's Cancel | Delete is not drawn here any more: a Settings
+ * prompt is the program's prompt primitive (`.zen-confirm-dialog-footer` above, the same hug
+ * inside the notice's 288). The equal split and its `min-width: 0`
+ * (`.zen-settings-sheet-actions > *` above) are the phone sheet's: a dialog is never the
+ * phone's – a phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`) – so the pose is the
+ * surface's, not a pointer query's, and the phone's rule is not touched. The busy state keeps
+ * the button's width: the label stays in the flow unpainted under the spinner (§9.30,
+ * extensions.css).
  */
 .zen-settings-dialog .zen-settings-sheet-actions {
   justify-content: flex-end;
