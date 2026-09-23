@@ -249,7 +249,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * device turns to match it, then the device's again ([FullscreenRotation], MED-02); given back
      * on exit. The sensor speaks through [deviceTurned] while the screen is held.
      */
-    private val rotation = FullscreenRotation(
+    private val rotation: FullscreenRotation = FullscreenRotation(
         schedule = ::postDelayed,
         apply = { orientation ->
             activity.requestedOrientation = orientation
