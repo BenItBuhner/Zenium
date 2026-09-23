@@ -414,6 +414,9 @@ function lookSection({
   // tabs (§9.37): there the expanded width is the layout's, not the setting's. The phone and
   // the tablet have shells of their own, which the layout never reaches (nor does its row).
   const railSet = (formFactor ?? 'desktop') === 'desktop' && forcesRail(s.toolbarLayout)
+  // The hover flyout is the Collapsed sidebar layout's alone: the one layout whose rail still
+  // carries the tab rows a flyout would show in full.
+  const hoverRail = (formFactor ?? 'desktop') === 'desktop' && s.toolbarLayout === 'collapsed'
   const groups: RowGroup[] = [
     {
       id: 'appearance',
@@ -476,6 +479,24 @@ function lookSection({
           checked: s.sidebarExpanded && !railSet,
           disabled: railSet,
           onChange: (v) => set({ sidebarExpanded: v })
+        },
+        {
+          kind: 'switch',
+          id: 'sidebar-expand-on-hover',
+          label: 'Expand on hover',
+          // The Collapsed sidebar layout's own row (tabs-03): the rail flies out over the page
+          // after a short dwell and folds back when the pointer leaves. Under the other three
+          // layouts there is no rail to fly out (or, under Horizontal tabs, no tab rows in it),
+          // so the row is a §10.4 dependent row of the layout card – .4, `aria-disabled`, still
+          // laid out, its description the way back to the layout that uses it.
+          description: hoverRail
+            ? 'Rest the pointer on the sidebar to show it in full until the pointer leaves.'
+            : 'Only in the Collapsed sidebar layout.',
+          keywords: ['flyout', 'hover', 'collapsed sidebar', 'rail'],
+          layouts: ['desktop'],
+          checked: s.sidebarExpandOnHover && hoverRail,
+          disabled: !hoverRail,
+          onChange: (v) => set({ sidebarExpandOnHover: v })
         },
         {
           kind: 'switch',

@@ -281,7 +281,9 @@ export function measureRow(row: HTMLElement): RowMeasure | null {
       axis: 'x'
     }
   }
-  const aside = row.closest<HTMLElement>('aside')
+  // The collapsed rail's flyout (`useRailFlyout`) is the sidebar's box out over the page: a card
+  // for one of its rows hangs off the flyout's inner edge, not the rail's under it.
+  const aside = row.closest<HTMLElement>('[data-rail-flyout], aside')
   if (!aside) return null
   return {
     anchor: toRect(row.getBoundingClientRect()),
