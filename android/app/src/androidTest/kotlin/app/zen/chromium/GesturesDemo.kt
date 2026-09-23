@@ -125,6 +125,8 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         shot("00-third-stop")
         backHistoryPopup()
         returnToThird()
+        backHistoryDragRelease()
+        returnToThird()
         edgeDragArmed()
         edgeDragShort()
         paneSwipes()
@@ -173,6 +175,40 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         awaitLoaded(url("first"))
         settle()
         shot("02-after-popup-jump")
+    }
+
+    /**
+     * At `third` again, the other reading of v2 §9.13's popover exception ("the finger never
+     * lifts – it drags to a row and releases"): the finger that opened the popup drags to the
+     * row for `second` and lets go there, and the release is the pick (`useBarHold` hit-tests its
+     * pointerup for a `data-hold-pick` row) – a jump of one entry, the popup gone with it.
+     */
+    private fun backHistoryDragRelease() {
+        section("GN-08: the held finger drags to a row and releases on it")
+        val target = backButtonPoint() ?: run {
+            touchFault("the bar's Back button was not found")
+            return
+        }
+        val f = Finger()
+        f.press(target.x, target.y)
+        claim("the popup opened with the finger still down", awaitTrue(3_000) { popupRows() > 0 })
+        val row = domBox("document.querySelector('[data-testid=\"back-history-entry\"][data-index=\"1\"]')")?.let { touchPoint(it) }
+        if (row == null) {
+            touchFault("the popup's row for the second stop was not touchable")
+            f.up()
+            back()
+            return
+        }
+        // The finger travels from the button to the row over the bar's edge and lets go on it.
+        f.moveBy(row.x - target.x, row.y - target.y, 400)
+        f.hold(120)
+        f.up()
+        val jumped = awaitTrue(8_000) { activeUrl() == url("second") }
+        claim("the held finger released over the row for the second stop jumped one entry back to it (now at ${activeUrl()})", jumped)
+        claim("the popup closed on the release's pick", awaitTrue(3_000) { popupRows() == 0 })
+        awaitLoaded(url("second"))
+        settle()
+        shot("02b-after-drag-release-jump")
     }
 
     /** Back to the end of the history for the drags, by the core (no gesture of the matrix). */
