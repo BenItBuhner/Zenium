@@ -759,6 +759,44 @@ describe('downloads in progress (downloads-35)', () => {
     expect(other.prompt).toBeNull()
   })
 
+  it('the private window’s count is the private downloads alone; the quit’s is every download (#357 B2)', async () => {
+    const f = fixture()
+    f.browser.state.settings.warnOnCloseWindow = false
+    const first = firstWindow(f)
+    f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, first)
+    const secret = f.browser.openWindow('private', first)
+    if (!secret) throw new Error('no private window')
+    f.browser.tabs.createTab({ url: 'https://p.test/', active: true }, secret)
+    const regular = download(f, 'regular.zip')
+    const hidden = download(f, 'secret.zip', true)
+
+    // The last private window closing: one download ends with it, the regular one goes on.
+    const closing = f.browser.requestWindowClose(secret)
+    await tick()
+    expect(secret.prompt).toMatchObject({
+      kind: 'close-tabs',
+      count: 0,
+      downloads: { count: 1, end: 'private-window' }
+    })
+    f.browser.windowPrompts.respond(secret.prompt!.id, false)
+    await expect(closing).resolves.toBe(false)
+    expect(f.closes.get(secret.id)).toBeUndefined()
+    expect(f.browser.downloads.item(regular)).toMatchObject({ state: 'progressing' })
+    expect(f.browser.downloads.item(hidden)).toMatchObject({ state: 'progressing' })
+
+    // Quitting ends both: the count is every download, from whichever window asks.
+    const quitting = f.browser.requestQuit(first)
+    await tick()
+    expect(first.prompt).toMatchObject({
+      kind: 'quit',
+      count: 0,
+      downloads: { count: 2, end: 'quit' }
+    })
+    f.browser.windowPrompts.respond(first.prompt!.id, false)
+    await expect(quitting).resolves.toBe(false)
+    expect(f.quits).toBe(0)
+  })
+
   it('the tabs warning and the download question make one prompt', async () => {
     const f = fixture()
     const win = firstWindow(f)
