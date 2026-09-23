@@ -6,6 +6,7 @@ import { act, useState, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { DialogStack } from '../dialogs'
+import { useSheetDismiss } from '../sheetContext'
 import type { ActionRow, FieldRow, ItemRow, RowGroup, SettingsRow } from '../model'
 import { RowView, type RowContext, type SheetRequest } from '../rows'
 
@@ -821,5 +822,65 @@ describe('Escape gives the focus back down the stack one hop at a time (§9.22, 
     h.removeAttribute('inert')
     await tick()
     expect(document.activeElement).toBe(removeRow)
+  })
+})
+
+/*
+ * The dialog's dismiss as the forms inside know it (`useSheetDismiss`) takes an optional `after`
+ * to run once the dialog is gone. A form that binds it straight to a button (`onClick={dismiss}`)
+ * hands it the click's event instead; the phone sheet's landing used to throw calling one (#145),
+ * and the desktop host runs `after` at once – so it runs only a function, the two hosts alike.
+ */
+describe('a desktop dialog’s dismiss runs only a function as its after', () => {
+  /**
+   * A form whose Cancel binds the sheet dismiss itself to the click, the hazard as written. The
+   * types refuse it (`after` is no `MouseEvent`), which is how a form gets there: through a
+   * `close` retyped as `() => void` on the way (`FormBody` did that on the phone); the cast
+   * stands in for that retyping so the test drives the runtime shape.
+   */
+  function Cancel(): JSX.Element {
+    const dismiss = useSheetDismiss() as unknown as () => void
+    return (
+      <button type="button" onClick={dismiss}>
+        Cancel
+      </button>
+    )
+  }
+
+  it('Cancel bound straight to onClick closes the dialog and raises no error', () => {
+    // React hands an event handler's throw to `window.onerror` (`reportError`), not to the
+    // caller, so the dialog closed either way and the failure was a console error alone – on
+    // the phone the same call landed before the sheet told the chrome it was gone (#145).
+    const errors: unknown[] = []
+    const onError = (e: ErrorEvent): void => {
+      errors.push(e.error ?? e.message)
+      e.preventDefault()
+    }
+    window.addEventListener('error', onError)
+    const closeTop = vi.fn()
+    const row: ActionRow = {
+      kind: 'action',
+      id: 'clear-data',
+      label: 'Clear browsing data',
+      form: { title: 'Clear browsing data', render: () => <Cancel /> }
+    }
+    const groups: RowGroup[] = [{ id: 'privacy', heading: null, rows: [row] }]
+    const requests: SheetRequest[] = [{ kind: 'form', rowId: row.id }]
+    const h = render(
+      <FrameDialogHost>
+        <DialogStack requests={requests} groups={groups} ctx={ctx} closeTop={closeTop} />
+      </FrameDialogHost>
+    )
+    const cancel = [...h.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+      (b) => b.textContent === 'Cancel'
+    )!
+    expect(cancel).toBeDefined()
+    try {
+      act(() => cancel.click())
+    } finally {
+      window.removeEventListener('error', onError)
+    }
+    expect(closeTop).toHaveBeenCalledTimes(1)
+    expect(errors).toEqual([])
   })
 })

@@ -768,3 +768,55 @@ describe('a confirmation sheet’s keyboard is the prompt primitive’s (§9.22 
     expect(document.activeElement).toBe(pageRow())
   })
 })
+
+/*
+ * A form's `close` is a plain `() => void`, whatever the form binds it to. The sheet's own
+ * dismiss takes an optional `then` to run once the sheet has landed, and `FormBody` used to hand
+ * that dismiss over as it was: a form binding `close` straight to a button (`onClick={close}`)
+ * passed the click's event as `then`, and the sheet's landing threw calling it – before the
+ * chrome heard the sheet was gone, which left the chrome inert with the sheet still mounted
+ * (#145: the phone's Clear browsing data sheet on Cancel, every nightly's site-controls FAIL).
+ */
+describe('a form’s close closes its sheet however the form binds it', () => {
+  it('Cancel bound straight to onClick lands the sheet and the stack hears of it', async () => {
+    const closeTop = vi.fn()
+    const row: ActionRow = {
+      kind: 'action',
+      id: 'clear-data',
+      label: 'Clear browsing data',
+      form: {
+        title: 'Clear browsing data',
+        // The hazard itself: `close` as the click handler, so it is called with the event.
+        render: (close) => (
+          <div className="zen-settings-sheet-actions">
+            <button type="button" className="zen-v2-button" onClick={close}>
+              Cancel
+            </button>
+          </div>
+        )
+      }
+    }
+    render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={[{ kind: 'form', rowId: row.id }]}
+          groups={[{ id: 'privacy', heading: null, rows: [row] }]}
+          ctx={{ open: () => undefined }}
+          closeTop={closeTop}
+        />
+      </FrameDialogHost>
+    )
+    await settle()
+    rest()
+    const cancel = [
+      ...mount!.querySelectorAll<HTMLButtonElement>('.zen-settings-sheet-actions button')
+    ].find((b) => b.textContent === 'Cancel')!
+    expect(cancel).toBeDefined()
+    // The click, the leave spring to rest, the landing: no throw, and the stack drops the request.
+    expect(() => {
+      act(() => cancel.click())
+      rest()
+    }).not.toThrow()
+    expect(closeTop).toHaveBeenCalledTimes(1)
+  })
+})
