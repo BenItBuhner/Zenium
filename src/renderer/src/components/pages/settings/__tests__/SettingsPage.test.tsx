@@ -537,7 +537,11 @@ describe('Find in Settings (§10.5)', () => {
       expect(start, selector).toBeGreaterThan(-1)
       return css.slice(start, css.indexOf('\n}', start))
     }
-    expect(rule('.zen-settings-find')).toMatch(/^ {2}padding: 16px 16px 8px;$/m)
+    // The find's side padding is the 16; its top and bottom are the column's two custom
+    // properties (16 and 8), which the column's scroll padding reads too.
+    expect(rule('.zen-settings-find')).toMatch(
+      /^ {2}padding: var\(--zen-settings-find-pad-top\) 16px var\(--zen-settings-find-pad-bottom\);$/m
+    )
     expect(rule('.zen-settings-search')).toMatch(/^ {2}margin: 0 16px 8px;$/m)
     expect(rule('.zen-settings-find > .zen-settings-search')).toMatch(
       /^ {2}max-width: var\(--v2-content-max\);$/m
@@ -1071,8 +1075,16 @@ describe('a landing reaches the top of the column at a 1000 px window (the deskt
   })
 
   it('main.css: the pad is the column body’s padding-bottom only under `data-landing`, and the desktop column’s scroll padding is the find field’s box', () => {
-    expect(rule('.zen-settings-content')).toMatch(
-      /^ {2}scroll-padding-top: calc\(var\(--v2-control\) \+ 24px\);$/m
+    // The field's box: the control between the two paddings the column names and the field
+    // reads (`.zen-settings-find`), so the scroll padding and the field's padding cannot drift.
+    const column = rule('.zen-settings-content').replace(/\s+/g, ' ')
+    expect(column).toContain('--zen-settings-find-pad-top: 16px;')
+    expect(column).toContain('--zen-settings-find-pad-bottom: 8px;')
+    expect(column).toContain(
+      'scroll-padding-top: calc( var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom) );'
+    )
+    expect(rule('.zen-settings-find')).toMatch(
+      /^ {2}padding: var\(--zen-settings-find-pad-top\) 16px var\(--zen-settings-find-pad-bottom\);$/m
     )
     const selectors =
       '.zen-settings-page[data-landing] .zen-settings-scroll > .zen-settings-body,\n' +

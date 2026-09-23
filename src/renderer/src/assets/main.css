@@ -10396,9 +10396,15 @@
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
-  /* The column's top for anything scrolled into view is the sticky find field's bottom edge
-     (its box below: 16 + the control + 8), so a landed group's heading shows under the field. */
-  scroll-padding-top: calc(var(--v2-control) + 24px);
+  /* The find field's padding above and below its control (`.zen-settings-find` reads these): the
+     column's top for anything scrolled into view is the field's bottom edge – its whole box,
+     16 + the control + 8 – so a landed group's heading shows under the field, and the two
+     rules cannot drift apart. */
+  --zen-settings-find-pad-top: 16px;
+  --zen-settings-find-pad-bottom: 8px;
+  scroll-padding-top: calc(
+    var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom)
+  );
 }
 /*
  * A landing (`?row=` / `?site=`, `SettingsPage`'s `landingPad`): the column pads its end by what
@@ -10423,7 +10429,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 16px 16px 8px;
+  padding: var(--zen-settings-find-pad-top) 16px var(--zen-settings-find-pad-bottom);
   background: var(--v2-page);
 }
 .zen-settings-find > .zen-settings-search {
