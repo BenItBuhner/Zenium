@@ -47,7 +47,7 @@ import { usePageSearch } from '../usePageSearch'
 import { BookmarkRow } from './BookmarkRow'
 import { Breadcrumb } from './Breadcrumb'
 import { DropIndicator } from './DropIndicator'
-import { FolderTree } from './FolderTree'
+import { FolderTree, type FolderTreeHandle } from './FolderTree'
 import { type BookmarkDrag, useBookmarkDrag } from './useBookmarkDrag'
 import { useFlip } from './useFlip'
 
@@ -89,7 +89,8 @@ function initialFolder(tree: BookmarkTree, platform: Platform): string {
  * (`usePageSearch`: replaced, not pushed), so a restored tab comes back where it was.
  *
  * Chrome's manager otherwise: search across the whole tree, drag and drop with §9.4's caret and
- * outlines (`useBookmarkDrag`), the manual order and the sorts, multi-select (click, Shift for
+ * outlines (`useBookmarkDrag`; a drag held over a closed tree folder opens its branch after the
+ * bar's hold and leaves it open, bookmarks-26), the manual order and the sorts, multi-select (click, Shift for
  * a run, Ctrl+A, Ctrl+arrow to move the focus alone and Space to toggle the focused row; the
  * selected on `--v2-selected`, §9.6), the row and empty-space context menus, the row's ⋮, cut /
  * copy / paste, F2 and the inline rename (§9.12), Delete, Enter and double-click to open
@@ -174,10 +175,15 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
   useFlip(listRef, rowIds.join('|'))
 
   const canReorder = !searching && sort === 'manual'
+  // A drag held over a closed tree folder opens its branch (bookmarks-26): the tree's own fold,
+  // and the folder stays open after the drop, as Chrome's manager leaves it.
+  const treeHandle = useRef<FolderTreeHandle>(null)
+  const onHoldFolder = useCallback((id: string) => treeHandle.current?.expand(id), [])
   const { drag, target, startDrag, ghostRef } = useBookmarkDrag({
     tree,
     canReorder,
-    scrollRef: listRef
+    scrollRef: listRef,
+    onHoldFolder
   })
   const dropFolderId =
     target && (target.position === 'into' || target.position === 'append') ? target.parentId : null
@@ -790,6 +796,7 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
             }}
           >
             <FolderTree
+              ref={treeHandle}
               tree={tree}
               currentId={searching ? '' : folderId}
               onOpen={navigate}

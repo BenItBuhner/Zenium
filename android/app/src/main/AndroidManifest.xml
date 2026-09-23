@@ -212,6 +212,21 @@
                 <data android:scheme="http" />
                 <data android:scheme="https" />
             </intent-filter>
+            <!-- "Open with Zenium" for a document on the device (a downloaded page, a PDF, an
+                 SVG): the twin of the desktop's file associations (electron-builder.yml). The
+                 host reads the document itself (LocalDocuments.kt); a page never reaches these
+                 schemes on its own. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="text/html" />
+                <data android:mimeType="application/xhtml+xml" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="image/svg+xml" />
+            </intent-filter>
         </activity>
 
         <!-- Another app's custom tab (CustomTabActivity.kt). Its own, empty affinity keeps it out of

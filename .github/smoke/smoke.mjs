@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads,notifications,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -110,10 +110,34 @@
 //                shows the same group, tabs and ratio without "Restore pages?"; Unsplit View
 //                (Ctrl+Alt+U) dissolves it, the active tab's view has the whole area, all three
 //                tabs stay (Linux job; two launches: split and split-restore)
+//   notifications  a page's Web Notification on the OS (os-27/os-28/os-30; notifications-
+//                scenario.mjs): a profile past onboarding whose permissions.json allows
+//                notifications for the fixture origin reads `Notification.permission ===
+//                'granted'`; on Windows the AppUserModelId class key the app registers for
+//                itself (DisplayName, IconUri) and, for the installed build, the shortcuts'
+//                System.AppUserModel.ID; `new Notification()` fires `show` and Electron's toast
+//                log (ELECTRON_DEBUG_NOTIFICATIONS) says "Notification created"; Windows then has
+//                the per-sender Notifications\Settings key Settings lists the app from (the
+//                banner, the platform's store and a UI Automation click on the banner are
+//                recorded, not judged: the runner's session shows no banner); the
+//                notification's `click`, dispatched in the page under a user gesture, brings
+//                its tab back to the front through the preload's focus IPC and the core's reveal
+//                (Windows jobs; the click's app path runs everywhere)
+//   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
+//                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
+//                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
+//                to change your default web browser?" dialog answers; the dialog is on the
+//                screenshot and, where System Events may (the GitHub runners allow UI
+//                scripting), found among every process's windows and answered "Use", after
+//                which the app has to see to https (held with http on macOS 26, claimed
+//                otherwise) and resolve the request true once LaunchServices reports http
+//                held; LaunchServices' LSHandlers are read before and after for the record
+//                (macOS jobs)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs, pip and the
-// split pair run on Linux under Xvfb only.
+// restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash
+// pair, clear-on-exit, the two mv3-worker legs, pip and the split pair run on Linux under Xvfb
+// only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -144,8 +168,10 @@ import {
   withAriaFacts
 } from './aria.mjs'
 import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fixture.mjs'
+import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-browser-scenario.mjs'
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
+import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
 import {
   COOKIE_PATH,
   FIXTURE_COOKIE,
@@ -622,9 +648,12 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
     )
     // The page script's gesture reports and blocked pop-ups, timed: what the pop-up step reads
     // when a window.open was refused (did the frame's gesture reach the app, and before the ask?).
+    // And the page's focus requests (a notification's onclick calling window.focus(), which the
+    // page preload forwards as {type:'focus'}): what the notifications scenario reads to tell the
+    // page's ask from the core's reveal.
     wc.on('ipc-message', (event, channel, message) => {
       const kind = message && typeof message === 'object' ? message.type : undefined
-      if (channel !== 'zen:page' || (kind !== 'activation' && kind !== 'popup-blocked')) return
+      if (channel !== 'zen:page' || !['activation', 'popup-blocked', 'focus'].includes(kind)) return
       emit({
         type: 'page-message',
         wc: wc.id,
@@ -5988,6 +6017,38 @@ async function main() {
           log,
           fixture: bootSite,
           isLinux: IS_LINUX
+        }),
+      [NOTIFICATIONS_SCENARIO]: () =>
+        scenarioNotifications({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          writeJson,
+          grabScreen,
+          ps,
+          fixture: bootSite,
+          label: opts.label,
+          // The installed build's shortcuts carry the AUMID (the installer's WinShell); the
+          // unpacked build has none and rides on the class key it registers for itself.
+          expectShortcuts: IS_WIN && opts.label === 'installed',
+          isWin: IS_WIN
+        }),
+      [DEFAULT_BROWSER_SCENARIO]: () =>
+        scenarioDefaultBrowser({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          writeJson,
+          grabScreen,
+          sh,
+          osascript,
+          exe: opts.exe,
+          outDir,
+          isMac: IS_MAC
         })
     }[name]
     if (!run) {

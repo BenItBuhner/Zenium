@@ -1,9 +1,18 @@
-import type { JSX, KeyboardEvent, MouseEvent } from 'react'
-import { useRef, useState } from 'react'
+import type { JSX, KeyboardEvent, MouseEvent, Ref } from 'react'
+import { useCallback, useImperativeHandle, useRef, useState } from 'react'
 import { ChevronRight, Folder, FolderOpen } from 'lucide-react'
 import type { BookmarkNode } from '@shared/types'
 import type { BookmarkTree } from '@shared/bookmarks'
 import { cn } from '@renderer/lib/utils'
+
+/** What the manager asks of the tree from outside its rows. */
+export interface FolderTreeHandle {
+  /**
+   * Open a folder's branch – a drag held over its row (bookmarks-26) – with the tree's own fold
+   * (a cut, as the twisty's is); a branch already open, or a folder with none, is left as it is.
+   */
+  expand: (id: string) => void
+}
 
 interface Props {
   tree: BookmarkTree
@@ -14,6 +23,7 @@ interface Props {
   /** Folder a drag is about to drop into (highlighted). */
   dropFolderId: string | null
   className?: string
+  ref?: Ref<FolderTreeHandle>
 }
 
 /** Each level of the tree steps its rows this much further in (the folder chooser's step). */
@@ -30,6 +40,13 @@ const INDENT = 16
  * One tab stop (§9.22, the tree pattern): the shown folder's row, or the first root's; the
  * arrows walk the visible rows, Right opens a closed folder's branch and Left closes it (or
  * steps to the parent), Enter and Space show the folder, Home and End jump.
+ *
+ * A drag held over a closed branch opens it (bookmarks-26, Chrome's manager): the row carries
+ * `data-bm-hold` while it folds, the manager's drag hook times the hold (`HOLD_TO_OPEN_MS`) and
+ * asks `expand` through the handle; the branch opens with the tree's own fold – a cut, the
+ * twisty's turn its one motion (§11.3: nothing to slow under reduced motion) – and stays open
+ * after the drop, as Chrome leaves it: the drag showed the user where the folder's children
+ * are, and folding them back would take that away.
  */
 export function FolderTree({
   tree,
@@ -37,7 +54,8 @@ export function FolderTree({
   onOpen,
   onContextMenu,
   dropFolderId,
-  className
+  className,
+  ref
 }: Props): JSX.Element {
   const root = useRef<HTMLUListElement>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
@@ -52,14 +70,18 @@ export function FolderTree({
       else next.add(id)
       return next
     })
-  const setOpen = (id: string, open: boolean): void =>
-    setCollapsed((prev) => {
-      if (prev.has(id) === !open) return prev
-      const next = new Set(prev)
-      if (open) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  const setOpen = useCallback(
+    (id: string, open: boolean): void =>
+      setCollapsed((prev) => {
+        if (prev.has(id) === !open) return prev
+        const next = new Set(prev)
+        if (open) next.delete(id)
+        else next.add(id)
+        return next
+      }),
+    []
+  )
+  useImperativeHandle(ref, () => ({ expand: (id) => setOpen(id, true) }), [setOpen])
 
   const rows = (): HTMLElement[] => [
     ...(root.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])
@@ -134,6 +156,7 @@ export function FolderTree({
           aria-expanded={branch ? open : undefined}
           aria-level={depth + 1}
           data-bm-drop={`into:${node.id}`}
+          data-bm-hold={(branch && !open) || undefined}
           data-target={dropFolderId === node.id || undefined}
           className="zen-bm-tree-row"
           style={{ paddingLeft: 16 + depth * INDENT }}

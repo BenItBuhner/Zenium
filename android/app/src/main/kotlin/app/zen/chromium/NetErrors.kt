@@ -17,6 +17,8 @@ import android.webkit.WebViewClient
  */
 object NetErrors {
     const val FAILED = -2
+    /** A local document the host could not read (LocalDocuments), as WebView reports a missing file. */
+    const val FILE_NOT_FOUND = -6
     /** The request engine (or Chrome's extension layer) refused the navigation itself. */
     const val BLOCKED_BY_CLIENT = -20
     const val CONNECTION_REFUSED = -102
@@ -33,7 +35,7 @@ object NetErrors {
     /** The codes the error page has copy for, by their Chromium name (keep equal to `NET_ERRORS` in `zenPages.ts`). */
     private val BY_NAME = mapOf(
         "ERR_FAILED" to FAILED,
-        "ERR_FILE_NOT_FOUND" to -6,
+        "ERR_FILE_NOT_FOUND" to FILE_NOT_FOUND,
         "ERR_TIMED_OUT" to -7,
         "ERR_BLOCKED_BY_CLIENT" to BLOCKED_BY_CLIENT,
         "ERR_NETWORK_ACCESS_DENIED" to -21,

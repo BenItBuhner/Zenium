@@ -33,7 +33,7 @@
 export type PillChipFold = 'glyph' | 'sheet' | 'live'
 
 export interface PillChipFoldSpec {
-  /** A stable id (`lock`, `blocked`, `translate`, `media`, `save-prompt`). */
+  /** A stable id (`lock` and the glyph's other states, `blocked`, `translate`, `media`, `save-prompt`). */
   id: string
   fold: PillChipFold
 }
@@ -47,9 +47,17 @@ export interface PillFold<T extends PillChipFoldSpec> {
   yielded: T[]
 }
 
-/** The fold each of the pill's known chips takes; an unknown id is informational and folds. */
+/**
+ * The fold each of the pill's known chips takes; an unknown id is informational and folds. The
+ * glyph has one id per connection state (ERR-09: the lock, the open lock of a plain http page,
+ * the triangle of a failed certificate, the shield of a Safe Browsing verdict) so that a
+ * navigation changing the verdict cross-fades the slot; each is the one glyph and folds alike.
+ */
 export const PILL_CHIP_FOLDS: Readonly<Record<string, PillChipFold>> = {
   lock: 'glyph',
+  'not-secure': 'glyph',
+  'certificate-error': 'glyph',
+  dangerous: 'glyph',
   blocked: 'sheet',
   translate: 'sheet',
   'save-prompt': 'live',

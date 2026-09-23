@@ -1,9 +1,10 @@
 /* eslint-disable react-refresh/only-export-components -- the pill's chip kit: the run that draws the chips ships with the chip models it draws and the rows the site-information sheet lists */
 import type { JSX, ReactNode } from 'react'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { AudioLines, Languages, Lock, Shield, ShieldOff } from 'lucide-react'
+import { AudioLines, Languages, Shield, ShieldOff } from 'lucide-react'
 import { siteOriginOf } from '@shared/blocking'
 import { internalPageOf } from '@shared/internalPages'
+import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import type { TranslateTabState } from '@shared/translate'
 import type { Tab, UIState } from '@shared/types'
 import { isWebPageUrl } from '@shared/url'
@@ -20,6 +21,7 @@ import {
   type PillChipFold,
   type PillFold
 } from '@renderer/lib/pillChips'
+import { securityToneClass, securityVerdict } from '@renderer/lib/securityVerdict'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
 import { barStateOf, isTranslating, pairLabel, translateStateOf } from '@renderer/lib/translate'
 import { openMediaSheet, overlayAvailable } from '@renderer/lib/ui'
@@ -38,11 +40,31 @@ import { PillChip } from '../urlbar/PillChip'
  */
 
 /**
- * The chips the phone pill knows after the address, in the pill's order. `save-prompt` is
+ * The chips the phone pill knows after the address, in the pill's order. The first four are the
+ * one site-information glyph in its states (`securityVerdict`, ERR-09): the lock on a secure
+ * page, the open lock on a plain http page, the triangle over a certificate that failed, the
+ * shield on a Safe Browsing verdict – one id per state, so a navigation that changes the
+ * verdict cross-fades the slot (§11.4) as the lock and the media chip do. `save-prompt` is
  * §9.29's other state chip – a save-password or save-address key – for when the phone grows one
  * (the desktop has `AutofillChip`); the slot rule already holds for it.
  */
-export type PillChipId = 'lock' | 'blocked' | 'translate' | 'media' | 'save-prompt'
+export type PillChipId =
+  | 'lock'
+  | 'not-secure'
+  | 'certificate-error'
+  | 'dangerous'
+  | 'blocked'
+  | 'translate'
+  | 'media'
+  | 'save-prompt'
+
+/** The glyph slot's chip id for a connection state that has a verdict to draw. */
+const VERDICT_CHIP_IDS = {
+  secure: 'lock',
+  insecure: 'not-secure',
+  'certificate-error': 'certificate-error',
+  dangerous: 'dangerous'
+} as const satisfies Partial<Record<IndicatorState, PillChipId>>
 
 /** How long a chip's arrival or departure cross-fades, on opacity (v2 §11.4; the same under reduced motion). */
 export const CHIP_FOLD_FADE_MS = 120
@@ -139,28 +161,43 @@ export function phonePillChips(
   const identity = !ctx.locked
   const chips: PillChipModel[] = []
 
-  // The lock: the pill's one site-information glyph after the host – a secure connection, and no
-  // lock over a certificate that failed verification (the interstitial, or the page the user
-  // proceeded to). It opens the site information, as the favicon ahead of the host does.
-  const secure =
-    identity && tab.url.startsWith('https://') && !tab.certificateError && !extension && !page
-  if (secure) {
+  // The pill's one site-information glyph after the host, in the connection's state (ERR-09;
+  // `securityVerdict` – the same glyph, tone and name the sheet's title block draws): the lock
+  // on a secure page, quiet in the deemphasised window ink (§9.19, §9.29: "secure" is the state
+  // of nearly every page and a colour that is always on says nothing); the open lock in the
+  // warn ink on a plain http page – "Not secure", the word the address speaks; the triangle in
+  // the danger ink over a certificate that failed verification, proceeded past or not. Chrome
+  // Android's omnibox carries the security icon alone the same way (no verbose text), and the
+  // glyph takes the lock's room exactly (Bennett's OMN-02 ruling on the chip room: a text chip
+  // would cost the host about 65 px of its 170 and take it under the 150 floor). It opens the
+  // site information, as the favicon ahead of the host does, where the verdict is explained. The
+  // Safe Browsing and HTTPS-only interstitials stand at the address they block, so they carry
+  // the shield and the open lock the address speaks ("Dangerous", "Not secure"), as Chrome's
+  // omnibox does over its interstitials; a plain error page reads as an internal page and has
+  // none. Nothing on an internal page (Settings) or an extension's page: there is no site.
+  const connection =
+    identity && !extension && !page
+      ? securityIndicator(tab.url, tab.errorCode ?? null, tab.certificateError ?? null).state
+      : null
+  const verdict = connection ? securityVerdict(connection) : null
+  if (verdict && connection && connection in VERDICT_CHIP_IDS) {
+    const id = VERDICT_CHIP_IDS[connection as keyof typeof VERDICT_CHIP_IDS]
+    const Glyph = verdict.glyph
     chips.push({
-      id: 'lock',
-      fold: pillChipFold('lock'),
+      id,
+      fold: pillChipFold(id),
       spoken: '',
       render: (interactive) => (
         <PillChip
           inert={!interactive}
-          label="Connection is secure"
+          label={verdict.name}
           popup="dialog"
           expanded={ctx.siteInfoOpen}
           data-site-info
-          // Quiet: the deemphasised window ink (§9.19, §9.29), never a status colour – "secure"
-          // is the state of nearly every page.
-          className={cn(CHIP_CLASS, 'zen-pill-quiet')}
+          data-verdict={verdict.tone}
+          className={cn(CHIP_CLASS, securityToneClass(verdict.tone) || 'zen-pill-quiet')}
         >
-          <Lock className="h-3.5 w-3.5" />
+          <Glyph className="h-3.5 w-3.5" />
         </PillChip>
       )
     })

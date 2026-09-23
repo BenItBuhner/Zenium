@@ -174,6 +174,8 @@ export function androidCapabilities({
     reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,
+    // Chrome for Android's Inactive tabs: the archive pass and the overview's entry (TAB-20).
+    inactiveTabs: true,
     secureDns: false,
     quitsThroughCore: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.

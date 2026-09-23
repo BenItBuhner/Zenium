@@ -24,6 +24,12 @@ describe('pillChipFold: what each chip is to the pill at rest', () => {
     expect(pillChipFold('translate')).toBe('sheet')
   })
 
+  it('the glyph’s other states are the one glyph too (ERR-09): the open lock, the triangle, the shield', () => {
+    expect(pillChipFold('not-secure')).toBe('glyph')
+    expect(pillChipFold('certificate-error')).toBe('glyph')
+    expect(pillChipFold('dangerous')).toBe('glyph')
+  })
+
   it('knows the transient state chips: the media chip and a save-prompt key', () => {
     expect(pillChipFold('media')).toBe('live')
     expect(pillChipFold('save-prompt')).toBe('live')
@@ -33,7 +39,16 @@ describe('pillChipFold: what each chip is to the pill at rest', () => {
     expect(pillChipFold('reader')).toBe('sheet')
     expect(pillChipFold('extension-action')).toBe('sheet')
     expect(Object.keys(PILL_CHIP_FOLDS).sort()).toEqual(
-      ['blocked', 'lock', 'media', 'save-prompt', 'translate'].sort()
+      [
+        'blocked',
+        'certificate-error',
+        'dangerous',
+        'lock',
+        'media',
+        'not-secure',
+        'save-prompt',
+        'translate'
+      ].sort()
     )
   })
 })

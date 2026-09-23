@@ -67,6 +67,7 @@ const ELECTRON: HostCapabilities = {
   pageControls: false,
   darkenSites: true,
   privateTabs: false,
+  inactiveTabs: false,
   secureDns: true,
   quitsThroughCore: true,
   newTabPage: true,

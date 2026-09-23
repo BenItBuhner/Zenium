@@ -169,6 +169,12 @@ export interface HostCapabilities {
    * windows. Desktop hosts offer private windows instead (`windows`).
    */
   privateTabs: boolean
+  /**
+   * Chrome for Android's Inactive tabs (TAB-20): idle tabs leave the grid for the archive the
+   * overview lists, and the Tabs settings screen carries the threshold. Off, no pass runs and
+   * nothing is archived (the desktop, whose Chrome has no archive).
+   */
+  inactiveTabs: boolean
   /** The host can point the resolver at DNS-over-HTTPS servers (desktop); Android uses the system's Private DNS. */
   secureDns: boolean
   /**
@@ -1442,7 +1448,10 @@ export interface HistoryVisit {
 }
 
 export interface HistoryQuery {
-  /** Every whitespace-separated term must occur in the title or URL (case-insensitive). */
+  /**
+   * Every whitespace-separated term must start a word in the title or URL (case-folded; the
+   * scheme and `www.` do not count), as Chrome's history search reads a query (`wordMatch.ts`).
+   */
   text?: string
   /** Inclusive lower bound of `visitTime`. */
   fromMs?: number
@@ -2331,8 +2340,25 @@ export interface Settings {
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
   /**
-   * Hosts the user chose "Mute Site" for (lower-case hostnames without `www.`): every tab on
-   * such a host is muted, new pages of the host start muted, and leaving the host lifts the mute.
+   * Inactive tabs (TAB-20, SET-34; Chrome's archive): a tab nobody has looked at for this many
+   * days leaves the grid for the Inactive tabs list, its page kept as a recently-closed entry
+   * keeps one (`InactiveTabsService`). Chrome's ladder: 0 (Never), 7, 14 or 21, 21 by default
+   * (`TabArchiveSettings.DEFAULT_ARCHIVE_TIME_HOURS`). Distinct from the sleeping-tabs timeout
+   * above, which only unloads a page and leaves its card where it is. Absent in profiles from
+   * before it existed (read as the default).
+   */
+  inactiveTabsArchiveDays: InactiveTabsArchiveDays
+  /**
+   * Inactive tabs the user never came back for are closed for good after `INACTIVE_TAB_AUTO_CLOSE_DAYS`
+   * (Chrome's `DEFAULT_AUTODELETE_TIME_HOURS`, worded as months). Absent in older profiles
+   * (read as on: Chrome's steady state once its promo has been answered).
+   */
+  inactiveTabsAutoClose: boolean
+  /**
+   * @deprecated Where "Mute Site" kept its hosts (lower-case hostnames without `www.`) before
+   * the `sound` content setting became the one source of a site's mute. Migrated into `sound`
+   * blocks on load (`TabManager.migrateMutedHosts`) and empty from then on; kept so an older
+   * profile or device still reads and syncs.
    */
   mutedHosts: string[]
   searchEngineId: string
@@ -3077,6 +3103,93 @@ export interface PermissionPrompt {
 }
 
 // ---------------------------------------------------------------------------
+// Device choosers: Web Bluetooth, WebUSB, Web Serial, WebHID
+// ---------------------------------------------------------------------------
+
+/** The device kinds a page may ask to connect to: the `bluetooth`, `usb`, `serial`, `hid` rows. */
+export type DeviceKind = 'bluetooth' | 'usb' | 'serial' | 'hid'
+
+/** One device the engine enumerated for a chooser. */
+export interface DeviceCandidate {
+  /**
+   * The engine's id for this request (`deviceId`, a serial `portId`, a Bluetooth address):
+   * opaque, and stable while the chooser is open.
+   */
+  id: string
+  /** The row's title: the engine's name for the device, else "Unknown device (vendor:product)". */
+  name: string
+  /** A second line where there is one (a serial number, a port's path); '' otherwise. */
+  detail: string
+}
+
+/**
+ * A page called `navigator.<kind>.requestDevice()` (`requestPort()` for serial): the chrome
+ * shows one modal list per request, as Chrome's chooser bubble does, and the list stays live –
+ * the host adds and removes candidates while the request is open. Answered by `devices.respond`
+ * with the picked candidate (Connect) or null (Cancel: the page's promise rejects with
+ * `NotFoundError`, as in Chrome). Withdrawn when the page navigates or the tab closes.
+ */
+export interface DeviceChooser {
+  id: string
+  /** Tab whose page asks; the chooser is tab-modal. Null when the host could not say. */
+  tabId: string | null
+  /** The requesting frame's site (`permissionSite`), shown through `displayOrigin`. */
+  origin: string
+  kind: DeviceKind
+  candidates: DeviceCandidate[]
+  /** Bluetooth: the adapter is still scanning and the list may still grow. */
+  scanning: boolean
+  /**
+   * What the empty state can say about the platform: nothing, or that Linux hands USB and HID
+   * devices to a browser only through a udev rule (Chrome's own empty state says the same).
+   */
+  hint: 'none' | 'linux-udev'
+  requestedAt: number
+}
+
+/**
+ * A device a site was connected to through a chooser: the DATA of its `usb` / `serial` / `hid`
+ * / `bluetooth` setting, never a plain allow – the setting stays `ask` (the chooser is the
+ * prompt) and `block` refuses the site every device without one. `deviceId` is the engine's id
+ * of the session the grant was made in; the identity fields find the device again in a later
+ * session, as Chrome persists only the devices it can recognise by serial number.
+ */
+export interface DeviceGrant {
+  origin: string
+  kind: DeviceKind
+  deviceId: string
+  name: string
+  vendorId: number | null
+  productId: number | null
+  serialNumber: string | null
+  /** Unix milliseconds. */
+  grantedAt: number
+}
+
+/**
+ * Bluetooth pairing while a site connects a device: the OS wants a confirmation, a PIN compared
+ * or a PIN typed. Shown by the chrome as a second dialog over the chooser's tab; answered by
+ * `devices.respondPairing`.
+ */
+export interface DevicePairingPrompt {
+  id: string
+  tabId: string | null
+  deviceId: string
+  /** The device's name where the chooser knew it; else its id. */
+  deviceName: string
+  kind: 'confirm' | 'confirmPin' | 'providePin'
+  /** `confirmPin`: the PIN the device shows, for the user to compare; '' otherwise. */
+  pin: string
+}
+
+/** The user's answer to a pairing prompt; cancelling sends null instead. */
+export interface DevicePairingResponse {
+  confirmed: boolean
+  /** `providePin`: what the user typed. */
+  pin?: string
+}
+
+// ---------------------------------------------------------------------------
 // Clear browsing data and Safety check
 // ---------------------------------------------------------------------------
 
@@ -3360,6 +3473,11 @@ export interface UIState {
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
   recentlyClosed: ClosedEntrySummary[]
+  /**
+   * How many tabs the Inactive tabs archive holds (TAB-20): the count on the overview's entry
+   * row. The rows themselves come through `inactiveTabs.list`, read again on `inactiveTabs.changed`.
+   */
+  archivedTabCount: number
   media: MediaState[]
   findResult: FindResult | null
   /** Tab id whose devtools are open (for the toolbar indicator). */
@@ -3409,6 +3527,12 @@ export interface UIState {
   permissionPrompts: PermissionPrompt[]
   /** Pending HTTP authentication and client-certificate prompts, oldest first. */
   securityPrompts: SecurityPrompt[]
+  /** Open device choosers (a page's `requestDevice()`), oldest first; one shows per tab. */
+  deviceChoosers: DeviceChooser[]
+  /** Pending Bluetooth pairing prompts, oldest first. */
+  devicePairings: DevicePairingPrompt[]
+  /** Every device a site is connected to (Settings › Site settings and the site-information rows). */
+  deviceGrants: DeviceGrant[]
   /** Pending `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, oldest first. */
   pageDialogs: PageDialog[]
   /**
@@ -3780,7 +3904,7 @@ export interface Commands {
   'tab.reload': { args: { tabId: string; skipCache?: boolean }; result: void }
   'tab.stop': { args: { tabId: string }; result: void }
   'tab.toggleMute': { args: { tabId: string }; result: void }
-  /** "Mute Site" / "Unmute Site": every tab of the host, remembered in `settings.mutedHosts`. */
+  /** "Mute Site" / "Unmute Site": every tab of the site, remembered as its `sound` content setting. */
   'tab.toggleMuteSite': { args: { tabId: string }; result: void }
   'tab.togglePin': { args: { tabId: string }; result: void }
   'tab.toggleEssential': { args: { tabId: string }; result: void }
@@ -4271,6 +4395,39 @@ export interface Commands {
    * line; the lead's #326 ruling): Open All in Tabs and Hide Device.
    */
   'history.deviceMenu': { args: { deviceId: string } & MenuAnchor; result: void }
+
+  /**
+   * The Inactive tabs archive (TAB-20): the archived tabs, the newest archived first – what the
+   * overview's Inactive tabs sheet lists. Every window hears `inactiveTabs.changed` when the
+   * list changes.
+   */
+  'inactiveTabs.list': { args: void; result: ArchivedTabSummary[] }
+  /**
+   * Bring an archived tab back into its space – at the start of its regular tabs, as Chrome
+   * restores one ("Restore tab at the 'start' of the list") – to the front, its last use read
+   * as now.
+   */
+  'inactiveTabs.restore': { args: { id: string }; result: void }
+  /** Every archived tab back into its space, the first of them to the front. */
+  'inactiveTabs.restoreAll': { args: void; result: void }
+  /** Close one archived tab: it goes to the recently closed list, where History finds it. */
+  'inactiveTabs.close': { args: { id: string }; result: void }
+  /**
+   * The sheet's "Close all" (behind its confirmation): every archived tab closed for good, as
+   * Chrome's. None goes to the recently closed list – a bulk close would flush that 25-entry undo
+   * list – and History keeps their pages, which is what the prompt promises.
+   */
+  'inactiveTabs.closeAll': { args: void; result: void }
+  /**
+   * Run the archive pass and the auto-close sweep now, as if the clock read `now` (the default is
+   * the real clock). The passes run on their own after the chrome has started and on their
+   * cadence; this is the instrumentation drivers' hook, so a threshold of days is crossed
+   * without a wait. Resolves with what the passes did.
+   */
+  'inactiveTabs.runPasses': {
+    args: { now?: number }
+    result: { archived: number; closed: number }
+  }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
   /**
@@ -5056,6 +5213,21 @@ export interface Commands {
     args: { id: string; response: SecurityPromptResponse | null }
     result: void
   }
+  /** Answer a device chooser: the picked candidate's id (Connect), or null (Cancel). */
+  'devices.respond': { args: { id: string; deviceId: string | null }; result: void }
+  /** Answer a Bluetooth pairing prompt (null cancels the pairing). */
+  'devices.respondPairing': {
+    args: { id: string; response: DevicePairingResponse | null }
+    result: void
+  }
+  /**
+   * Take a site's connection to one device (or, without `deviceId`, to every device of the
+   * kind) away: the site must ask again through a chooser (Chrome's "Revoke").
+   */
+  'devices.forget': {
+    args: { origin: string; kind: DeviceKind; deviceId?: string }
+    result: void
+  }
   /** Answer a page's `alert` / `confirm` / `prompt` or "Leave site?" dialog. */
   'pageDialog.respond': { args: { id: string; response: PageDialogResponse }; result: void }
   /** Answer the window-modal question the window is showing ("Close N tabs?"). */
@@ -5394,6 +5566,8 @@ export interface Events {
   /** The History page's hidden devices changed (`history.hideDevice`, `history.showHiddenDevices`): the ids now hidden. */
   'history.hiddenDevicesChanged': string[]
   'session.recentlyClosedChanged': void
+  /** The Inactive tabs archive changed (a pass, a restore, a close): read `inactiveTabs.list` again. */
+  'inactiveTabs.changed': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –
    * from the Android host – whether the system bars are still on their way back from a page's
@@ -5553,6 +5727,31 @@ export interface ClosedTabEntry {
   windowId: string | null
   navigation: NavigationSnapshot | null
 }
+
+/**
+ * A tab in the Inactive tabs archive (TAB-20): what a recently-closed entry keeps of a tab –
+ * the record, its place and its back/forward stack – with the moment it left the grid, so the
+ * auto-close sweep counts from the archiving and not from the last use (Chrome's `archivedTimeMs`).
+ * `closedAt` is that same moment; an archived tab the user closes moves to the recently closed
+ * list as a plain entry stamped with the close.
+ */
+export interface ArchivedTabEntry extends ClosedTabEntry {
+  archivedAt: number
+}
+
+/** An archived tab as the Inactive tabs sheet lists it. */
+export interface ArchivedTabSummary {
+  id: string
+  title: string
+  url: string
+  favicon: string | null
+  /** When the tab was last in view, as ms since the epoch: the row's "last used". */
+  lastActiveAt: number
+  archivedAt: number
+}
+
+/** The archive threshold's ladder, in days; 0 is Never (Chrome's `ARCHIVE_TIME_DELTA_DAYS_OPTS`). */
+export type InactiveTabsArchiveDays = 0 | 7 | 14 | 21
 
 export interface ClosedWindowEntry {
   kind: 'window'
