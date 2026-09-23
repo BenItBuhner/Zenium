@@ -4870,8 +4870,35 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             result.put("page", page)
             backgroundView(row.id)?.let { result.put("events", json(tabEval(it, WEBREQ_PROBE_READ))) }
             result.put("engine", JSONArray(engineSeen.toList()))
+            result.put("headProbe", headProbe(listOf("$BASE/clip.mp4", "$BASE/stream?clip=2", "$BASE/data.json?xhr=1")))
             result.put("summary", summary())
             return result
+        }
+
+        /**
+         * The cost of the alternative the engine ask weighs against a response-stage relay – a
+         * runtime-side `HEAD` of each observed load, doubling the requests: its wall time from
+         * this process to the fixture server and what it answered (status, content-type,
+         * content-length, `Accept-Ranges`), per URL of the page.
+         */
+        private fun headProbe(urls: List<String>): JSONArray {
+            val out = JSONArray()
+            for (url in urls) {
+                val started = SystemClock.uptimeMillis()
+                val entry = JSONObject().put("url", url.takeLast(40))
+                runCatching {
+                    val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    connection.requestMethod = "HEAD"
+                    connection.connectTimeout = 5_000
+                    connection.readTimeout = 5_000
+                    entry.put("status", connection.responseCode).put("contentType", connection.contentType)
+                        .put("contentLength", connection.getHeaderField("Content-Length")).put("acceptRanges", connection.getHeaderField("Accept-Ranges"))
+                    connection.disconnect()
+                }.onFailure { entry.put("error", it.toString().take(80)) }
+                entry.put("ms", SystemClock.uptimeMillis() - started)
+                out.put(entry)
+            }
+            return out
         }
 
         fun stop() {
