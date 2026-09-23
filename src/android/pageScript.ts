@@ -238,6 +238,10 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     // sees only the <iframe>. The view lets a frame's fullscreen report through alone
     // (TabWebView.onPageMessage); the host weighs it against the top document's.
     reportFullscreen: true,
+    // Rotate-to-fullscreen (MED-02): the turn of the screen takes a playing video with native
+    // controls fullscreen and the turn away brings it back, inside the page's own `change` event
+    // (shared/rotateToFullscreen.ts); the host holds and releases the screen (FullscreenRotation.kt).
+    rotateToFullscreen: true,
     send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
     // The fullscreen exit hint (GN-20): the chrome is under the fullscreen layer, so the hint
     // is drawn in the page's top layer, as the desktop's fullscreen hints are.

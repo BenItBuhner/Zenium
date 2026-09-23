@@ -16,6 +16,7 @@ import { INSTALL_PROMPT_EVENTS, type InstallPromptShimEvents } from './installPr
 import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
+import { fullscreenElementOf, installRotateToFullscreen } from './rotateToFullscreen'
 import type { CaptureStateReport } from './captureState'
 
 /**
@@ -149,6 +150,12 @@ export interface PageScriptTransport {
    */
   reportFullscreen?: boolean
   /**
+   * Hosts whose device turns (Android): a video playing inline goes fullscreen as the screen turns
+   * to its orientation and leaves as it turns away, Chrome's rule, asked for inside the turn's
+   * own event – the one place Blink lets a page ask without a touch (`rotateToFullscreen.ts`).
+   */
+  rotateToFullscreen?: boolean
+  /**
    * Hosts that offer a page's own search engine (Chrome for Android's "Recently visited" engines):
    * the script posts the address of the first `<link rel="search"
    * type="application/opensearchdescription+xml">` once per document; the browser fetches and
@@ -239,6 +246,7 @@ export function installPageScript(transport: PageScriptTransport): void {
       onReadAloud: transport.onReadAloud.bind(transport)
     })
   if (transport.reportFullscreen) installFullscreenReporter(transport)
+  if (transport.rotateToFullscreen) installRotateToFullscreen()
   // The reader document's extras (EDGE-13: line focus, syllables) – a `zen://reader` document
   // only; `installReaderExtras` finds no article anywhere else.
   if (location.protocol === 'zen:') installReaderExtrasWhenReady(document)
@@ -330,15 +338,6 @@ export function installActivationReporter(transport: Pick<PageScriptTransport, '
 // ---------------------------------------------------------------------------
 // Fullscreen video: the size the host turns the screen by
 // ---------------------------------------------------------------------------
-
-/** The document's fullscreen element, under either name the engines have given it. */
-function fullscreenElementOf(doc: Document): Element | null {
-  return (
-    doc.fullscreenElement ??
-    (doc as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ??
-    null
-  )
-}
 
 /**
  * The video a fullscreen element shows: the element itself, or – a player's wrapper in

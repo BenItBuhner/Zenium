@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Rect
 import android.net.Uri
@@ -21,6 +22,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Choreographer
 import android.view.HapticFeedbackConstants
+import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
@@ -235,8 +237,24 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private var fullscreenVideoTab: TabWebView? = null
     private var fullscreenVideoSize: Pair<Int, Int>? = null
     private var fullscreenVideoFromFrame = false
-    /** The activity's orientation is the fullscreen video's ([FullscreenOrientation]); given back on exit. */
-    private var fullscreenOrientationHeld = false
+    /**
+     * The activity's orientation is the fullscreen video's ([FullscreenOrientation]) until the
+     * device turns to match it, then the device's again ([FullscreenRotation], MED-02); given back
+     * on exit. The sensor speaks through [deviceTurned] while the screen is held.
+     */
+    private val rotation = FullscreenRotation(
+        schedule = { delayMs, block ->
+            val run = Runnable { block() }
+            main.postDelayed(run, delayMs)
+            val cancel: () -> Unit = { main.removeCallbacks(run) }
+            cancel
+        },
+        apply = { orientation ->
+            activity.requestedOrientation = orientation
+            orientationSensor.follow(rotation.phase == FullscreenRotation.Phase.HELD)
+        }
+    )
+    private val orientationSensor = DeviceOrientationSensor(activity) { angle -> deviceTurned(angle) }
     /**
      * The bars' way back after a fullscreen: the chrome holds its return fade while they settle
      * (MED-01, v2 §11.5). [MainActivity] carries its word on every `insets`.
@@ -1061,22 +1079,40 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     private fun turnForVideo(videoWidth: Int, videoHeight: Int) {
         val orientation = FullscreenOrientation.forVideo(videoWidth, videoHeight)
-        if (orientation == FullscreenOrientation.RELEASED) {
-            releaseFullscreenOrientation()
+        if (orientation == FullscreenOrientation.RELEASED) releaseFullscreenOrientation()
+        else rotation.hold(orientation)
+    }
+
+    private fun releaseFullscreenOrientation() = rotation.release()
+
+    /**
+     * The device's way up in the sensor's degrees ([DeviceOrientationSensor]; -1 flat): while a
+     * fullscreen video holds the screen, the device turning to match releases the screen to the
+     * device, so a turn back turns the screen and the page leaves the fullscreen (MED-02,
+     * [FullscreenRotation]). A demo stands in for the sensor here: an emulator never turns.
+     */
+    fun deviceTurned(angle: Int) {
+        rotation.onDevice(FullscreenRotation.deviceLandscape(angle, naturalLandscape()))
+    }
+
+    /** Whether the device's natural way up is landscape (a tablet's): the display's rotation against the configuration. */
+    private fun naturalLandscape(): Boolean {
+        val displayRotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { activity.display?.rotation }.getOrNull() ?: Surface.ROTATION_0
         } else {
-            fullscreenOrientationHeld = true
-            activity.requestedOrientation = orientation
+            @Suppress("DEPRECATION")
+            activity.windowManager.defaultDisplay.rotation
         }
+        val upright = displayRotation == Surface.ROTATION_0 || displayRotation == Surface.ROTATION_180
+        val landscapeNow = activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        return if (upright) landscapeNow else !landscapeNow
     }
 
-    private fun releaseFullscreenOrientation() {
-        if (!fullscreenOrientationHeld) return
-        fullscreenOrientationHeld = false
-        activity.requestedOrientation = FullscreenOrientation.RELEASED
-    }
+    /** Whether the fullscreen video holds the screen in landscape right now – or has handed it to the device (the demos read it). */
+    val fullscreenLandscape: Boolean get() = rotation.phase != FullscreenRotation.Phase.OFF
 
-    /** Whether the fullscreen video holds the screen in landscape right now (the demos read it). */
-    val fullscreenLandscape: Boolean get() = fullscreenOrientationHeld
+    /** Whether the screen, turned for the fullscreen video, follows the device again (the demos read it). */
+    val fullscreenFollowsDevice: Boolean get() = rotation.phase == FullscreenRotation.Phase.FOLLOWING
 
     /** The user is leaving for Home or Recents ([MainActivity.onUserLeaveHint]): Android 8-11's way into picture-in-picture. */
     fun onUserLeaveHint() = media.onUserLeaveHint()
@@ -1870,6 +1906,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         security.shutdown()
         translate.shutdown()
         tabs.destroyAll()
+        orientationSensor.follow(false)
         // Not the request engine: it is the process's, and a custom tab may still be using it.
         // The chrome too: a WebView that outlives its activity keeps its document – and the
         // browser core inside it – running against a host that is gone, and would even rebuild
