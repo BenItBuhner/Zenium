@@ -245,6 +245,9 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/SpaceGlyph.tsx',
   // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
   'components/siteinfo/SiteInfoSheet.tsx',
+  // The connection verdict the pill's chip and the site-information sheet share (ERR-09, §9.19's
+  // ink rule): the warn and danger inks of the open lock, the triangle and the shield.
+  'lib/securityVerdict.ts',
   // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
   // desktop popover, dialog and pane primitives' metrics and inks; the Settings panes' card
   // padding and deemphasised ink; the builder rows' glyph ink. (The pill carries no private

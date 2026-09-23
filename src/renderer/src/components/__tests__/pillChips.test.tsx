@@ -995,11 +995,21 @@ describe('phone pill (PillContent)', () => {
     for (const chip of chips) expect(chip.getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('has no lock chip on a plain http page', () => {
+  it('draws the Not secure chip in the lock’s room on a plain http page (ERR-09)', () => {
     const http = tab('http://example.com/')
     const el = render(<PillContent state={state(http)} tab={http} space={space} interactive />)
-    // No chip draws the state, so the address says it (A11Y-01 on OMN-02).
-    expect(labels(focusable(el))).toEqual(['Address, example.com, Not secure', 'Site information'])
+    // The open lock takes the lock's room – same chassis, the warn ink – and the address says
+    // the state as before (A11Y-01 on OMN-02).
+    const order = focusable(el)
+    expect(labels(order)).toEqual([
+      'Address, example.com, Not secure',
+      'Site information',
+      'Not secure'
+    ])
+    expectChip(order[2], 'Not secure')
+    expect(order[2].hasAttribute('data-site-info')).toBe(true)
+    expect(order[2].getAttribute('data-verdict')).toBe('warn')
+    expect(order[2].querySelector('svg.lucide-lock-open')).not.toBeNull()
   })
 
   it('names an extension’s page after the extension, its icon in the slot, no lock or translate chip (§10.1)', () => {
