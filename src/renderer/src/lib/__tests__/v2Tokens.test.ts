@@ -144,12 +144,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-overview-card[data-selected]::after {', '/*\n   * The lock cover of "Lock private tabs'],
   // The lock cover of "Lock private tabs when you leave Zenium" (components/phone/
   // PrivateLockCover.tsx, INC-05 / SET-17): the panel-toned base under a locked private tab's
-  // blurred picture. Its block ends where the empty private pane's card begins.
-  ['.zen-private-lock {', '/*\n   * The private pane with nothing in it'],
-  // The empty private pane's explainer card (components/phone/TabOverview.tsx `PrivateEmpty`,
-  // TAB-03): a §9.33 message card on §9.20's chrome, its title and detail on the page family's
-  // type and inks. Its block ends where the phone sheet chassis begins.
-  ['.zen-private-explainer {', '/*\n   * The phone sheet chassis'],
+  // blurred picture. Its block ends where the phone sheet chassis begins.
+  ['.zen-private-lock {', '/*\n   * The phone sheet chassis'],
   // The zen-v2-* controls inside the chassis (components/newtab/CustomizeSheet.tsx): the
   // description and the control row; the rows, heading, switch and card radio are the shared
   // primitives below (§9.34, the Settings tab's block).

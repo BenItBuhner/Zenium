@@ -3530,41 +3530,6 @@
   }
 
   /*
-   * The private pane with nothing in it (TAB-03, `PrivateEmpty` in TabOverview.tsx): Chrome's
-   * incognito description on a §9.33 message card – §9.20's chrome (`--v2-panel`, the hairline,
-   * the card radius, the panel shadow) 8 px inside the pane's edges and capped at 560, the 20 px
-   * mask on the title's first line, the title 15/600, the detail 13 at 69% – a page surface
-   * (`data-surface="page"`) on the private pane's backdrop, its middle at 45% of the pane
-   * (§9.17's page form) with the pane's one button 16 below it. The detail runs to its length:
-   * the card explains rather than reports, and the two-line clamp is a toast's.
-   */
-  .zen-private-explainer {
-    display: flex;
-    gap: 12px;
-    box-sizing: border-box;
-    width: 100%;
-    max-width: 560px;
-    padding: 12px 16px;
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-card);
-    background: var(--v2-panel);
-    color: var(--v2-text);
-    box-shadow: var(--v2-shadow-panel);
-    text-align: start;
-  }
-  .zen-private-explainer-title {
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-    font-weight: 600;
-  }
-  .zen-private-explainer-detail {
-    margin-top: 2px;
-    font-size: var(--v2-font-small);
-    line-height: var(--v2-line-small);
-    color: var(--v2-text-deemphasized);
-  }
-
-  /*
    * The phone sheet chassis (design language v2 §6 sheets, §3, §9.16, §9.25): a neutral, opaque
    * dialog surface with a hairline edge and the sheet shadow, radius 12 on top, no side padding
    * of its own – rows run edge to edge and carry the 16 px gutter themselves. Dark adds nothing:
@@ -8816,8 +8781,15 @@
  * open group, the same as a 2 px ring for a saved one, whose tabs are closed (the §9.14 pair on
  * the glyph, `--zen-group-rgb` the theme's pick). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
  * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
- * own 40 is for a list whose field carries 8 under it, and the segment carries none.
+ * own 40 is for a list whose field carries 8 under it, and the segment carries none. The Private
+ * pane at none (TAB-03, `PrivateEmpty` in TabOverview.tsx; `.zen-overview-private-empty`) is the
+ * same note under the same two rules – "No private tabs" in the window ink the private theme
+ * paints, its New private tab follow-up the note's own secondary button (§9.17: 16 beneath, 88
+ * minimum at 40), which `.zen-overview .zen-v2-button` above already reads to the window fill –
+ * never a message card (§9.34). One rule for both panes, the Groups pane's selector last where
+ * its test pins it.
  */
+.zen-overview-private-empty,
 .zen-overview-groups {
   --v2-text: var(--v2-control-text);
   --v2-text-deemphasized: var(--v2-control-text-deemphasized);
@@ -8857,6 +8829,7 @@
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
 }
+.zen-overview-private-empty > .zen-phone-empty,
 .zen-overview-groups > .zen-phone-empty {
   padding-top: 48px;
 }

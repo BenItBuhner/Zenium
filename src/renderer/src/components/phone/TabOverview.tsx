@@ -117,6 +117,7 @@ import { cardHeaderHeight } from './overviewCardHeader'
 import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
+import { PhoneEmptyNote } from './PhoneList'
 import { noteSheetOpener } from './phonePanel'
 import { PrivateLockCover } from './PrivateLockCover'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
@@ -2295,50 +2296,26 @@ function PaneSegment({
 }
 
 /**
- * What private browsing does and does not do, in Chrome's words for its incognito description
- * ("Chrome won't save: your browsing history, cookies and site data, information entered in
- * forms" / "Your activity might still be visible to: websites you visit, your employer or
- * school, your internet service provider") as two sentences – the private new tab page's
- * `PRIVATE_EXPLAINER` lists, one vocabulary (NTP-31).
- */
-export const PRIVATE_EXPLAINER_DETAIL =
-  "Zenium won't save your browsing history, cookies, site data or what you enter in forms. Websites you visit, your employer or school and your internet service provider can still see your activity."
-
-/**
- * The private pane with nothing in it (TAB-03): Chrome's incognito description on a §9.33
- * message card – §9.20's chrome 8 px inside the pane's edges and capped at 560, the 20 px mask
- * on the title's first line, the title 15/600, the detail 13 at 69% running to its length –
- * with its middle at 45% of the pane (§9.17's page form) and the pane's one button 16 below it,
- * on the private theme's backdrop. The title stays the pane's fact ("No private tabs"); the card
- * says what private does and does not do.
+ * The private pane with nothing in it (TAB-03): a standing state, not a message – a list's
+ * empty room as §9.34 writes it for this pane. §9.17's one sentence, "No private tabs", on the
+ * phone panels' note (`PhoneEmptyNote`: 15/400 at 69%, centred in the 32 gutter, top-anchored),
+ * its first line 48 under the segment as the Groups pane's is (`.zen-overview-private-empty` in
+ * main.css, the same rule), with New private tab as its one follow-up – the note's secondary
+ * button 16 beneath, 88 minimum at 40 – never a message card, no title-plus-description pair.
+ * What private browsing keeps and does not keep is the private new tab page's to say (§9.29,
+ * NTP-31), not the empty pane's. In the window family the private theme paints (§9.29): a
+ * child of the pane's flow, so it stands under the segment whatever the pane's height.
  */
 function PrivateEmpty(): JSX.Element {
   return (
     <div
-      className="relative min-h-0 flex-1"
+      className="zen-overview-private-empty relative min-h-0 flex-1"
       data-pane="private"
       data-testid="overview-private-empty"
     >
-      <div
-        className="absolute inset-x-0 flex -translate-y-1/2 flex-col items-center px-2"
-        style={{ top: '45%' }}
-      >
-        <div className="zen-private-explainer" data-surface="page">
-          <VenetianMask className="mt-px h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
-          <div className="min-w-0 flex-1">
-            <h2 className="zen-private-explainer-title">No private tabs</h2>
-            <p className="zen-private-explainer-detail">{PRIVATE_EXPLAINER_DETAIL}</p>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="zen-v2-button mt-4"
-          data-testid="overview-private-empty-new"
-          onClick={() => newTabOn('private')}
-        >
-          New private tab
-        </button>
-      </div>
+      <PhoneEmptyNote action={{ label: 'New private tab', onSelect: () => newTabOn('private') }}>
+        No private tabs
+      </PhoneEmptyNote>
     </div>
   )
 }

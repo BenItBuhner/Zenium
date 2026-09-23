@@ -2012,37 +2012,57 @@ describe('the private pane', () => {
     }
   })
 
-  it('with no private tab the private pane is the explainer, whose button asks for a private tab', async () => {
-    const { PRIVATE_EXPLAINER_DETAIL } = await import('../TabOverview')
+  it('with no private tab the private pane is §9.17’s sentence with New private tab as its one follow-up, never a card', () => {
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
     act(() => segment('private').click())
     expect(host!.querySelector('.zen-overview-grid')).toBeNull()
     const empty = host!.querySelector<HTMLElement>('[data-testid="overview-private-empty"]')!
-    expect(empty.querySelector('h2')!.textContent).toBe('No private tabs')
-    // TAB-03: Chrome's words about what private does and does not do, on a §9.33 message card –
-    // a page surface, the mask on the title's line, the title 15/600, the detail 13 at 69% – and
-    // the pane's one button under it. The title stays the pane's fact.
-    const card = empty.querySelector<HTMLElement>('.zen-private-explainer')!
-    expect(card).not.toBeNull()
-    expect(card.getAttribute('data-surface')).toBe('page')
-    expect(card.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
-    expect(card.querySelector('h2')!.className).toBe('zen-private-explainer-title')
-    expect(card.querySelector('.zen-private-explainer-detail')!.textContent).toBe(
-      PRIVATE_EXPLAINER_DETAIL
-    )
-    expect(PRIVATE_EXPLAINER_DETAIL).toBe(
-      "Zenium won't save your browsing history, cookies, site data or what you enter in forms. Websites you visit, your employer or school and your internet service provider can still see your activity."
-    )
-    // No cover: with nothing open there is nothing the lock protects, and the card is not a card of a tab.
+    // TAB-03 as §9.34 writes it: a standing state, not a message – the phone panels' one-sentence
+    // note (the Groups pane's, `PhoneEmptyNote`) in the pane's flow under the segment, "No private
+    // tabs" and the follow-up beneath it; no title-plus-description pair, no glyph, no message
+    // card (the explainer of what private keeps is the private new tab page's, NTP-31).
+    expect(empty.classList.contains('zen-overview-private-empty')).toBe(true)
+    const note = empty.querySelector<HTMLElement>(':scope > .zen-phone-empty')!
+    expect(note).not.toBeNull()
+    expect(note.querySelector('p')!.textContent).toBe('No private tabs')
+    expect(empty.querySelector('h2')).toBeNull()
+    expect(empty.querySelector('svg')).toBeNull()
+    expect(empty.querySelector('.zen-private-explainer')).toBeNull()
+    expect(empty.querySelector('[data-surface="page"]')).toBeNull()
+    expect(empty.textContent).toBe('No private tabsNew private tab')
+    // No cover: with nothing open there is nothing the lock protects.
     expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
     expect(countShown()).toBe('0 tabs')
-    const button = empty.querySelector<HTMLElement>('[data-testid="overview-private-empty-new"]')!
-    // A button, so sentence case (v2 §9.1); the menus' rows stay Title Case.
+    // The follow-up is the note's secondary button (§9.17: 88 minimum at 40, 16 beneath, never
+    // primary) – the one control in the pane. A button, so sentence case (v2 §9.1).
+    const buttons = Array.from(empty.querySelectorAll<HTMLElement>('button'))
+    expect(buttons).toHaveLength(1)
+    const button = buttons[0]!
+    expect(button.classList.contains('zen-v2-button')).toBe(true)
+    expect(button.classList.contains('zen-phone-empty-action')).toBe(true)
+    expect(button.hasAttribute('data-primary')).toBe(false)
     expect(button.textContent).toBe('New private tab')
     expect(newTabRequests(() => act(() => button.click()))).toEqual([
       { containerId: PRIVATE_CONTAINER_ID }
     ])
-    // The first private tab replaces the explainer with the grid.
+    // The pane's two rules are the Groups pane's own (main.css): the window family's inks and
+    // fills read to the note, and the 48 under the segment; nothing of the card is left.
+    const rules = rulesOf(readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8'))
+    const family = rules.find((r) => r.selectors.includes('.zen-overview-private-empty'))!
+    expect(family.selectors).toContain('.zen-overview-groups')
+    expect(family.declarations.get('--v2-text-deemphasized')?.value).toBe(
+      'var(--v2-control-text-deemphasized)'
+    )
+    expect(family.declarations.get('--v2-fill')?.value).toBe('var(--v2-control-fill)')
+    const top = rules.find((r) =>
+      r.selectors.includes('.zen-overview-private-empty > .zen-phone-empty')
+    )!
+    expect(top.selectors).toContain('.zen-overview-groups > .zen-phone-empty')
+    expect(top.declarations.get('padding-top')?.value).toBe('48px')
+    expect(rules.some((r) => r.selectors.some((s) => s.includes('.zen-private-explainer')))).toBe(
+      false
+    )
+    // The first private tab replaces the sentence with the grid.
     render(
       withPrivate(
         stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], [])
