@@ -99,9 +99,7 @@ const slotCentre = (i: number): { x: number; y: number } => ({
  * tile's box; nothing else has a size.
  */
 function layOut(): void {
-  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
-    this: Element
-  ) {
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
     const cell = this.closest<HTMLElement>('li.zen-ntp-site')
     if (!cell || !cell.parentElement) return new DOMRect(0, 0, 0, 0)
     const slot = slotRect([...cell.parentElement.children].indexOf(cell))
@@ -175,7 +173,9 @@ async function render(pins: readonly NewTabShortcut[] = PINS): Promise<void> {
     document.body.appendChild(host)
     root = createRoot(host)
   }
-  act(() => root!.render(createElement(NewTabPage, { state: stateWith(pins), tab: TAB, hidden: false })))
+  act(() =>
+    root!.render(createElement(NewTabPage, { state: stateWith(pins), tab: TAB, hidden: false }))
+  )
   // The history's answer lands and the grid draws.
   await act(async () => {
     await Promise.resolve()
@@ -413,7 +413,8 @@ describe('reordering the shortcuts by hold-and-drag', () => {
     expect(a.style.transform).toBe('')
     // …arriving on the fade (the spring's rest ran no frames).
     const fade = animate.mock.calls.find(
-      (call) => (call as unknown[])[1] && ((call as unknown[])[1] as { duration: number }).duration === 120
+      (call) =>
+        (call as unknown[])[1] && ((call as unknown[])[1] as { duration: number }).duration === 120
     )
     expect(fade).toBeDefined()
     expect(frames).toHaveLength(0)
