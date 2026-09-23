@@ -47,6 +47,24 @@ describe('placeTooltip', () => {
     )
   })
 
+  it('the clamp at a margin lands on the whole pixel inside it, never a fraction over', () => {
+    // The ⋯ tooltip measured 95.2 wide against the 240 sidebar: the clamp is 136.8, and a
+    // round to 137 would end at 232.2, past the margin at 232. It lands on 136 (measured by the
+    // a11y-2 drive, 2026-09-23).
+    const wide = { width: 95.2, height: 30 }
+    const placed = placeTooltip(control(204, 44), wide, viewport, sidebar, page)
+    expect(placed.box.left).toBe(136)
+    expect(placed.box.left + wide.width).toBeLessThanOrEqual(sidebar.width - POPOVER_MARGIN)
+    // A pane starting on a fraction: the margin's inner edge is the next whole pixel.
+    const shifted: Rect = { x: 0.5, y: 0, width: 240, height: 1000 }
+    expect(placeTooltip(control(0, 40), size, viewport, shifted, page).box.left).toBe(9)
+    // Centred with room to spare: the centre rounded, as before.
+    expect(
+      placeTooltip({ x: 100.3, y: 40, width: 28, height: 28 }, size, viewport, sidebar, page).box
+        .left
+    ).toBe(66)
+  })
+
   it('flips above a control at the bottom of its pane', () => {
     const bottom = control(100, 1000 - 8 - 28)
     expect(placeTooltip(bottom, size, viewport, sidebar, page).box).toEqual({
@@ -233,6 +251,23 @@ describe('TooltipController', () => {
     controller.pointerEnter(a)
     tick(TOOLTIP_DELAY)
     expect(state.target).toBe(a)
+  })
+
+  it('Escape on a keyboard tooltip silences nothing: the pointer’s first visit shows it after the dwell', () => {
+    // The a11y-2 drive's finding (2026-09-23): Escape on the focused Back button's tooltip left
+    // Back silent for a pointer that had never been on it, so its first hover showed nothing
+    // until the pointer had left it once.
+    controller.focus(a)
+    expect(controller.dismiss()).toBe(true)
+    expect(state.target).toBeNull()
+    controller.pointerEnter(a)
+    tick(TOOLTIP_DELAY)
+    expect(state).toEqual({ target: a, by: 'pointer' })
+    // The keyboard's Escape still leaves it down on the control: nothing re-shows for the focus.
+    controller.pointerLeave(a)
+    controller.focus(a)
+    expect(controller.dismiss()).toBe(true)
+    expect(state.target).toBeNull()
   })
 
   it('dismiss with nothing showing says so – Escape is not the tooltip’s then', () => {

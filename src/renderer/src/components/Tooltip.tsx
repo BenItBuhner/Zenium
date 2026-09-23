@@ -70,9 +70,12 @@ export function Tooltip(): JSX.Element | null {
       const prev = tooltipTargetOf(e.target)
       if (prev && prev !== tooltipTargetOf(e.relatedTarget)) tooltip.pointerLeave(prev)
     }
+    // The control is the nearest element carrying the text, the keyboard's test is on the
+    // element that took the focus: a control may be a box around its focusable part (the URL
+    // pill – the group carries the address, its button inside takes the Tab stop).
     const onFocusIn = (e: FocusEvent): void => {
       const next = tooltipTargetOf(e.target)
-      if (next && keyboardFocus(next)) tooltip.focus(next)
+      if (next && e.target instanceof HTMLElement && keyboardFocus(e.target)) tooltip.focus(next)
     }
     const onFocusOut = (e: FocusEvent): void => {
       const prev = tooltipTargetOf(e.target)
@@ -240,13 +243,13 @@ function releaseHold(hold: { current: Hold | null }): void {
 }
 
 /**
- * Whether focus landing on a control came from the keyboard – `:focus-visible` (a pointer's
- * press focuses a button without it, and its tooltip is the pointer's to show after the wait).
- * A DOM without the pseudo-class (a test's) counts every focus as the keyboard's.
+ * Whether the focus that landed on `focused` came from the keyboard – `:focus-visible` (a
+ * pointer's press focuses a button without it, and its tooltip is the pointer's to show after
+ * the wait). A DOM without the pseudo-class (a test's) counts every focus as the keyboard's.
  */
-function keyboardFocus(target: HTMLElement): boolean {
+function keyboardFocus(focused: HTMLElement): boolean {
   try {
-    return target.matches(':focus-visible')
+    return focused.matches(':focus-visible')
   } catch {
     return true
   }

@@ -75,7 +75,7 @@ export class TooltipController {
   private timer: ReturnType<typeof setTimeout> | null = null
   /** The control a tooltip is on its way to, waiting out the delay. */
   private pending: HTMLElement | null = null
-  /** The control whose tooltip a press or Escape took down; nothing shows for it until a leave. */
+  /** The control whose pointer tooltip a press or Escape took down; nothing shows for it until the pointer leaves. */
   private silenced: HTMLElement | null = null
   /** Until when the browse window is open (`TOOLTIP_BROWSE` after a pointer leave). */
   private browseUntil = 0
@@ -145,15 +145,18 @@ export class TooltipController {
   }
 
   /**
-   * A press anywhere, or Escape: the tooltip goes, and the control it was on stays silent until
-   * the pointer leaves it. Returns whether there was one to take down – Escape is consumed only
-   * then.
+   * A press anywhere, or Escape: the tooltip goes, and – when the pointer put it up – the
+   * control it was on stays silent until the pointer leaves it (Chrome's: a clicked button's
+   * tooltip does not come back under the still pointer). One the keyboard put up silences
+   * nothing: the pointer is not on the control, and its first visit should show the tooltip
+   * after the dwell as on any other. Returns whether there was one to take down – Escape is
+   * consumed only then.
    */
   dismiss(): boolean {
-    const shown = this.store.get().target
+    const { target: shown, by } = this.store.get()
     this.cancel()
     if (shown === null) return false
-    this.silenced = shown
+    if (by === 'pointer') this.silenced = shown
     this.clear()
     return true
   }
@@ -289,12 +292,17 @@ function fitTooltip(anchor: Rect, size: Size, field: Rect): TooltipBox | null {
   return null
 }
 
-/** Centred on the control, then slid the least distance that keeps it inside the field's margin. */
+/**
+ * Centred on the control, then slid the least distance that keeps it inside the field's margin
+ * – on a whole pixel, the margin's bounds rounded inwards first, so the clamp never rounds the
+ * box a fraction out over the margin (a 95.2 wide tooltip against a 240 pane clamps to 136.8;
+ * rounded to 137 it would end 0.2 past the margin – it lands on 136).
+ */
 function slideLeft(anchor: Rect, size: Size, field: Rect): number {
-  const min = field.x + POPOVER_MARGIN
-  const max = Math.max(min, field.x + field.width - POPOVER_MARGIN - size.width)
-  const centred = anchor.x + anchor.width / 2 - size.width / 2
-  return Math.round(Math.min(Math.max(centred, min), max))
+  const min = Math.ceil(field.x + POPOVER_MARGIN)
+  const max = Math.max(min, Math.floor(field.x + field.width - POPOVER_MARGIN - size.width))
+  const centred = Math.round(anchor.x + anchor.width / 2 - size.width / 2)
+  return Math.min(Math.max(centred, min), max)
 }
 
 function intersects(box: TooltipBox, size: Size, page: Rect): boolean {

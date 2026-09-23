@@ -139,6 +139,35 @@ describe('Tooltip host', () => {
     expect(reload.hasAttribute('aria-describedby')).toBe(false)
   })
 
+  it('a control that is a box around its focusable part shows on the part’s keyboard focus (the URL pill)', () => {
+    // The pill group carries the address as its tooltip; the button inside it takes the Tab
+    // stop. `:focus-visible` is the focused button's, never the group's – the a11y-2 drive
+    // (2026-09-23) found the pill silent on every keyboard focus for testing it on the group.
+    const group = document.createElement('div')
+    group.setAttribute(TOOLTIP_ATTR, 'example.com – Site information')
+    const button = document.createElement('button')
+    button.textContent = 'example.com'
+    group.appendChild(button)
+    aside.appendChild(group)
+    const focusVisible = (el: Element, is: boolean): void => {
+      const matches = el.matches.bind(el)
+      el.matches = (selector: string): boolean =>
+        selector === ':focus-visible' ? is : matches(selector)
+    }
+    focusVisible(group, false)
+    focusVisible(button, true)
+    act(() => button.focus())
+    expect(shown()!.textContent).toBe('example.com – Site information')
+    expect(shown()!.getAttribute('data-by')).toBe('focus')
+    expect(group.getAttribute('aria-describedby')).toBe(TOOLTIP_ID)
+    expect(button.hasAttribute('aria-describedby')).toBe(false)
+    // A pointer's press focuses the button without `:focus-visible`: nothing for the keyboard.
+    act(() => button.blur())
+    focusVisible(button, false)
+    act(() => button.focus())
+    expect(shown()).toBeNull()
+  })
+
   it('Escape takes it down and is consumed only then', () => {
     const seen: string[] = []
     const onKey = (e: KeyboardEvent): void => {
