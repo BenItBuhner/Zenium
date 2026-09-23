@@ -10,6 +10,7 @@ import type {
   Settings,
   SyncStatus,
   Tab,
+  ToolbarLayout,
   UIState
 } from '@shared/types'
 import { defaultScope } from '@core/sync/records'
@@ -1967,6 +1968,26 @@ describe('the section model', () => {
     const desktop = buildSection(PAGE.sections[0], { ...context().ctx, formFactor: 'desktop' })
     expect(findRow(desktop.groups, 'navigation-bar')).toBeNull()
     expect(findRow(desktop.groups, 'bookmarks-bar')?.kind).toBe('value')
+  })
+
+  it('gates compact mode’s Hide top toolbar on the layout having a top toolbar (§10.4): off in Only sidebar and Collapsed sidebar, live in the other two', () => {
+    const hide = (layout: ToolbarLayout): Row =>
+      row(section('compact', state({}, { toolbarLayout: layout })), 'compact-hide-toolbar')
+    // The Only sidebar and Collapsed sidebar layouts keep the navigation in the sidebar: nothing
+    // to hide, the switch off and the description naming both.
+    for (const layout of ['single', 'collapsed'] as const) {
+      const r = hide(layout)
+      expect(r.kind).toBe('switch')
+      expect(r.disabled, layout).toBe(true)
+      expect(r.description).toBe(
+        'Not in the Only sidebar or Collapsed sidebar layouts, which have no top toolbar to hide.'
+      )
+    }
+    // The layouts with a toolbar row of their own – the multiple layout's, the horizontal
+    // layout's row under the strip – keep the switch live.
+    for (const layout of ['multiple', 'horizontal'] as const) {
+      expect(hide(layout).disabled, layout).toBe(false)
+    }
   })
 
   it('keeps a shell’s controls to its layout: the phone bar’s rows never reach the desktop page or its search (BUG-055)', () => {

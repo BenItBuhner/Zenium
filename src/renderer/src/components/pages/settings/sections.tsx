@@ -75,7 +75,7 @@ import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { languageName } from '@shared/languageNames'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
-import { TOOLBAR_LAYOUTS, TOOLBAR_LAYOUT_LABELS } from '@shared/toolbarLayout'
+import { TOOLBAR_LAYOUTS, TOOLBAR_LAYOUT_LABELS, hasTopToolbar } from '@shared/toolbarLayout'
 import type { TranslatePreferences } from '@shared/translate'
 import { cmd, run } from '@renderer/lib/api'
 import {
@@ -755,9 +755,13 @@ function compactSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'switch',
           id: 'compact-hide-toolbar',
           label: 'Hide top toolbar',
-          description: 'Not in the Only sidebar layout, which has no top toolbar to hide.',
+          // A dependent row (§10.4): live only where the layout draws a top toolbar row of its
+          // own – the Only sidebar and Collapsed sidebar layouts keep the navigation in the
+          // sidebar, so there is nothing for the switch to hide.
+          description:
+            'Not in the Only sidebar or Collapsed sidebar layouts, which have no top toolbar to hide.',
           checked: cm.hideToolbar,
-          disabled: s.toolbarLayout === 'single',
+          disabled: !hasTopToolbar(s.toolbarLayout),
           onChange: (v) =>
             set({ compactMode: { ...cm, hideToolbar: v, hideSidebar: v ? cm.hideSidebar : true } })
         }
