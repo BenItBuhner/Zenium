@@ -11,6 +11,7 @@ import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
+import { DEVTOOLS_DOCK_ROWS } from '../shared/devtoolsDock'
 import {
   BLANK_URL,
   NEW_TAB_URL,
@@ -3218,6 +3219,21 @@ export class Menus {
       enabled: Boolean(active),
       click: () => active && tabs.toggleDevtools(active.id)
     })
+    // Where the toolbox stands (design language v2 §9.29: Chrome's and Zen's dock side – bottom
+    // or right, the last choice remembered, undocked on offer): three radio rows under Developer
+    // Tools, the current one checked. A choice made inside the toolbox is remembered too; its
+    // fourth button (left) has no row here, so none is checked while it stands there.
+    const devtoolsDock = when(
+      caps.devtools,
+      ...DEVTOOLS_DOCK_ROWS.map(
+        ({ dock, label }): MenuItemTemplate => ({
+          label,
+          type: 'radio',
+          checked: state.settings.devtoolsDock === dock,
+          click: () => tabs.setDevtoolsDock(dock, win)
+        })
+      )
+    )
     const about: MenuItemTemplate = { label: `About Zenium ${state.version}`, enabled: false }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
@@ -3353,7 +3369,7 @@ export class Menus {
           // window rows (Name window…), Task manager and Developer tools, gives the submenu its
           // contents: an installed app's Open in <app>, Zenium's space and window actions with
           // Chrome's Name Window…, the window's layout toggles, the tablet's captures, then the
-          // resources and the developer's.
+          // resources and the developer's – the toolbox row and its dock rows (§9.29).
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
           // The two captures are the tablet's: on the desktop they fold into Save and Share's
@@ -3374,7 +3390,8 @@ export class Menus {
             ...when(win.formFactor !== 'desktop', screenshot, captureFullPage),
             separator,
             ...resources,
-            ...devtools
+            ...devtools,
+            ...devtoolsDock
           ])
         },
         {
