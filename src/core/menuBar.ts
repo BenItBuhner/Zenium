@@ -6,6 +6,7 @@ import type {
   ShortcutAction,
   SplitGroup,
   SplitLayout,
+  SyncRemoteTab,
   Tab
 } from '../shared/types'
 import { BOOKMARKS_BAR_ID } from '../shared/bookmarks'
@@ -82,7 +83,9 @@ const OPENS_WINDOW: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>([
   'addons.open',
   'bookmark.sidebar',
   'bookmark.library',
-  'space.new'
+  'space.new',
+  // The dialog is a window's chrome's: Chrome opens a window for it too.
+  'privacy.clearBrowsingData'
 ])
 
 /** The window the user is in, without opening one (unlike `Browser.focusedWindow`). */
@@ -129,18 +132,37 @@ export function applicationMenu(browser: Browser): Template {
   const settings = (section: string): (() => void) =>
     withWindow((w) => void browser.pages.open('settings', section, w), true)
 
+  // Chrome's application menu (`main_menu_builder.mm`): About; Settings, Delete Browsing Data,
+  // Import; Services; the hide trio; Warn Before Quitting; Quit.
+  const warnBeforeQuitting = state.settings.warnOnCloseWindow
   const zenium: MenuItemTemplate = {
     label: 'Zenium',
     submenu: [
       { label: 'About Zenium', role: 'about' },
       { type: 'separator' },
       { label: 'Settings…', action: 'settings.open' },
+      { label: 'Delete Browsing Data…', action: 'privacy.clearBrowsingData' },
+      // The Bookmarks menu's row again, where Chrome's application menu also keeps it.
+      {
+        label: 'Import Bookmarks and Settings…',
+        click: withWindow((w) => browser.openImportDialog(w), true)
+      },
       { type: 'separator' },
       { label: 'Services', role: 'services', submenu: [] },
       { type: 'separator' },
       { label: 'Hide Zenium', role: 'hide' },
       { label: 'Hide Others', role: 'hideOthers' },
       { label: 'Show All', role: 'unhide' },
+      { type: 'separator' },
+      // Chrome's checkbox, arming the one quit warning Zenium has: `requestQuit` asks "Quit
+      // Zenium?" while it is set (the same setting warns before a window with several tabs
+      // closes). The chord in the label is Chrome's wording; the role below owns the key.
+      {
+        label: 'Warn Before Quitting (⌘Q)',
+        type: 'checkbox',
+        checked: warnBeforeQuitting,
+        click: () => browser.setWarnBeforeQuitting(!browser.state.settings.warnOnCloseWindow)
+      },
       { type: 'separator' },
       // The role's chord stays registered: it is what quits with every window closed.
       { label: 'Quit Zenium', role: 'quit' }
@@ -275,6 +297,7 @@ export function applicationMenu(browser: Browser): Template {
       { type: 'separator' },
       { label: 'Reopen Closed Tab', action: 'tab.reopenClosed' },
       recentlyClosed(browser),
+      ...tabsFromOtherDevices(browser),
       { type: 'separator' },
       { label: 'Show Full History', action: 'history.sidebar' }
     ]
@@ -317,6 +340,9 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Select Next Tab', action: 'tab.next', enabled: Boolean(active) },
       { label: 'Select Previous Tab', action: 'tab.prev', enabled: Boolean(active) },
       { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) },
+      { type: 'separator' },
+      // Chrome's Window › Name Window…, in a group of its own as Chrome's menu has it.
+      { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
       { type: 'separator' },
       { label: 'Next Space', action: 'space.next', enabled: Boolean(win) && !local },
       { label: 'Previous Space', action: 'space.prev', enabled: Boolean(win) && !local },
@@ -365,6 +391,22 @@ function recentlyClosed(browser: Browser): MenuItemTemplate {
       click: restore(e.id)
     }))
   }
+}
+
+/**
+ * Chrome's "Tabs From Other Devices" block of the mac History menu, after Recently Closed and
+ * behind its own separator: the app menu's block (`Menus.tabsFromDevicesItems` – the header,
+ * the devices as submenus of their tabs, the hidden devices' way back) with a row opening its
+ * tab in the front window through the held-tab rule, or in a window opened for it when none is
+ * up (the bar stands without one). Nothing while sync lists no device, as in the app menu.
+ */
+function tabsFromOtherDevices(browser: Browser): Template {
+  const open = (tabs: readonly SyncRemoteTab[]): void => {
+    const win = frontWindow(browser) ?? browser.ensureWindow()
+    browser.menus.openRemoteTabs(tabs, win)
+  }
+  const items = browser.menus.tabsFromDevicesItems(open)
+  return items.length ? [{ type: 'separator' }, ...items] : []
 }
 
 /** The bookmarks bar's entries, folders as submenus, after a separator (Chrome lists them there). */

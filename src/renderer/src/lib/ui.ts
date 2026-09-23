@@ -371,6 +371,8 @@ export interface UiState {
   permissionPromptOpen: boolean
   /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
   clearBrowsingDataOpen: boolean
+  /** Chrome's Name window prompt (`windowName/NameWindowDialog`) is up over the page. */
+  nameWindowOpen: boolean
   /**
    * Chrome's "Import bookmarks and settings" dialog is up over Settings (or the page); `source`
    * is the `ImportSource.id` it opens on (the first-run offer's pick), else the first browser.
@@ -595,6 +597,7 @@ export const uiStore = createStore<UiState>(
     barMenuOpen: false,
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
+    nameWindowOpen: false,
     importDialog: null,
     printPreview: null,
     autofillPrompt: null,
@@ -1134,6 +1137,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.capture &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.nameWindowOpen &&
     !ui.importDialog &&
     !ui.printPreview &&
     !ui.autofillPrompt &&
@@ -1199,6 +1203,7 @@ export function invalidateSnapshot(): void {
     !ui.capture &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.nameWindowOpen &&
     !ui.importDialog &&
     !ui.printPreview &&
     !ui.autofillPrompt &&
@@ -1903,6 +1908,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.install !== null ||
     ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||
+    ui.nameWindowOpen ||
     ui.importDialog !== null ||
     ui.printPreview !== null ||
     ui.autofillPrompt !== null ||
@@ -2152,6 +2158,26 @@ export async function openClearBrowsingData(activeTabId: string | null): Promise
 export function closeClearBrowsingData(): void {
   if (!uiStore.get().clearBrowsingDataOpen) return
   uiStore.set({ clearBrowsingDataOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * Chrome's Name window prompt (`windowName/NameWindowDialog`, shortcuts-menus-121): a §9.23
+ * dialog through the frame dialog host over the page's picture, which has to exist first for
+ * the scrim to dim; the keyboard goes to the chrome for its field.
+ */
+export async function openNameWindow(activeTabId: string | null): Promise<void> {
+  if (uiStore.get().nameWindowOpen) return
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ nameWindowOpen: true })
+}
+
+/** The prompt is gone (answered or cancelled): the page's picture is dropped and the keyboard goes back. */
+export function closeNameWindow(): void {
+  if (!uiStore.get().nameWindowOpen) return
+  uiStore.set({ nameWindowOpen: false })
   invalidateSnapshot()
   returnFocusToPage()
 }

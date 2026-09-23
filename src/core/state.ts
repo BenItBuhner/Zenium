@@ -157,6 +157,8 @@ export interface PersistedWindow {
   /** Per-space selected tab. */
   selection: Record<string, string>
   compact: boolean
+  /** The name the user gave the window (`ZenWindow.name`); absent in profiles written before it. */
+  name?: string | null
 }
 
 /**
@@ -893,7 +895,12 @@ export class BrowserState {
         tabs[tab.id] = tab
       }
       essentialTabIds = m.essentialTabIds
-      folders = m.folders
+      // A blank or private window's folders and split views stay its own, as its tabs do; a
+      // folder whose space is gone (moved with its tabs into a blank window since closed) is
+      // no window's until the next load drops it, as load drops any folder without a space.
+      folders = {}
+      const persisted = new Set(m.spaces.map((s) => s.id))
+      for (const f of Object.values(m.folders)) if (persisted.has(f.spaceId)) folders[f.id] = f
       splitGroups = {}
       for (const g of Object.values(m.splitGroups))
         if (!m.localSpaces[g.spaceId]) splitGroups[g.id] = g
@@ -903,7 +910,10 @@ export class BrowserState {
       tabs = {}
       for (const id of space.tabIds) if (m.tabs[id]) tabs[id] = m.tabs[id]
       essentialTabIds = []
+      // The window's own folders: a folder moved into it with its tabs (`moveFolderToNewWindow`)
+      // lives in its space, as the window's split views do.
       folders = {}
+      for (const f of Object.values(m.folders)) if (f.spaceId === space.id) folders[f.id] = f
       splitGroups = {}
       for (const g of Object.values(m.splitGroups))
         if (g.spaceId === space.id) splitGroups[g.id] = g
