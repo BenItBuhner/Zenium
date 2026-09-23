@@ -432,6 +432,42 @@ describe('the worker lifecycle events', () => {
     expect(worker.prompt).toBeUndefined()
   })
 
+  it("takes Worker and SharedWorker off the worker global too, as bare identifiers and through self (JSONVue's WORKER_API_AVAILABLE)", () => {
+    // The page's global as the WebView has it: both constructors on it, writable and configurable.
+    const page = new EventTarget() as EventTarget & Any
+    for (const name of ['Worker', 'SharedWorker']) {
+      Object.defineProperty(page, name, {
+        value: class {
+          constructor() {
+            throw new Error(`the page's ${name} ran`)
+          }
+        },
+        writable: true,
+        configurable: true
+      })
+    }
+    installServiceWorkerGlobals(page, {
+      origin: ORIGIN,
+      scriptUrl: SCRIPT,
+      version: '1.0.0',
+      send: () => undefined,
+      openTab: () => undefined,
+      prefix: 'w:'
+    })
+    expect(page.Worker).toBeUndefined()
+    expect(page.SharedWorker).toBeUndefined()
+    // Through `self`: absent, as in Chrome's ServiceWorkerGlobalScope.
+    const self = workerSelf(page)
+    expect('Worker' in self).toBe(false)
+    expect((self as Any).SharedWorker).toBeUndefined()
+    // The guard as JSONVue's background.js spells it, a bare identifier of the script's global:
+    // false, so the inline formatter runs and no `new Worker('js/workers/formatter.js')` dies
+    // on its error event.
+    const context = vm.createContext(page)
+    expect(vm.runInContext('typeof Worker != "undefined"', context)).toBe(false)
+    expect(vm.runInContext('typeof SharedWorker', context)).toBe('undefined')
+  })
+
   it("the global is a WorkerGlobalScope and a ServiceWorkerGlobalScope, through self too, and neither constructs (Google Dictionary's importScripts guard)", () => {
     const { worker } = pair()
     const scope = worker.WorkerGlobalScope as (new () => never) & { prototype: object }

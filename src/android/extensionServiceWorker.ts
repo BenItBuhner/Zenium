@@ -568,7 +568,8 @@ export function installWorkerScriptRescue(options: WorkerScriptRescueOptions): (
  * scripts and their libraries test for or polyfill (`window`, `document`, `localStorage`, the
  * frame tree), and the page-only schedulers a hidden page never runs (`requestAnimationFrame`).
  * Constructors (`DOMParser`, `XMLHttpRequest`, `Image`) are left visible: they are writable, a
- * polyfill replaces them, and the real ones work on the page.
+ * polyfill replaces them, and the real ones work on the page. `Worker` and `SharedWorker` are
+ * not: a service worker's global has neither, and a script branches on them (JSONVue).
  */
 export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey>([
   'window',
@@ -595,6 +596,8 @@ export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey
   'alert',
   'confirm',
   'prompt',
+  'Worker',
+  'SharedWorker',
   'print',
   'open',
   'find',
@@ -932,7 +935,14 @@ export function installServiceWorkerGlobals(
     // finger pressed it away (Tampermonkey's internal-error confirm did, in the sweep).
     alert: undefined,
     confirm: undefined,
-    prompt: undefined
+    prompt: undefined,
+    // Nor does a `ServiceWorkerGlobalScope` have `Worker` or `SharedWorker` (Chrome nests no
+    // worker in a service worker). A script that reads `typeof Worker` as a bare identifier
+    // sees the page's global, not `self`, so the page's constructors go too: JSONVue's
+    // `WORKER_API_AVAILABLE` picks the branch that spawns `js/workers/formatter.js` and dies
+    // on the error event, where Chrome runs its inline formatter.
+    Worker: undefined,
+    SharedWorker: undefined
   })
   installWorkerScopeInterfaces(target)
 
