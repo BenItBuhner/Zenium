@@ -58,7 +58,13 @@ export interface ConfirmDialogProps {
  * the prompt has one, a check row as the body's only element, then the §9.11 footer: Cancel and
  * the verb, 96 | 8 | 96 hugging the right at 16, the verb in the danger ink when the answer
  * destroys something and the accent primary otherwise. Nothing else: a prompt with more is a
- * form dialog.
+ * form dialog. The width is §9.20's, by content and by place: the 320 notice for a title block
+ * and its two buttons; 400 when the prompt carries the check row ("takes 400 only when it
+ * carries a row or a field (a credential row, a checkbox)" – at 320 the quit prompt's two
+ * sentences ran to three lines and its checkbox label wrapped, measured); and the notice again,
+ * row or not, when it opens over another dialog in the slot ("a 400 prompt over a 400 dialog is
+ * the unreadable stack of §9"; §9.5: "never the 400 of the dialog it covers"). The place is read
+ * once, as the prompt mounts, before its first paint.
  *
  * The keyboard (§9.22): the CONTAINER holds the focus as the prompt opens – its root is
  * `tabIndex -1`, the container the keyboard is sent to and cannot reach by Tab, so the chassis
@@ -119,6 +125,19 @@ function ConfirmPanel({
   useEscape(onCancel)
   useFrameDialog({ onScrimPress: onCancel })
 
+  // The width (§9.20), before the first paint: 400 for a prompt carrying the check row, the 320
+  // notice otherwise – and the notice whatever it carries when it covers another dialog in the
+  // slot (a panel on its way out is not one). Read as the prompt mounts; the row's presence is
+  // the one prop that can move it.
+  const hasRow = checkbox !== undefined
+  useLayoutEffect(() => {
+    const root = ref.current
+    if (!root) return
+    let below = root.previousElementSibling
+    while (below?.hasAttribute('data-leaving')) below = below.previousElementSibling
+    root.style.width = `${hasRow && !below ? POPOVER_WIDTH.form : POPOVER_WIDTH.list}px`
+  }, [hasRow])
+
   useEffect(() => {
     const root = ref.current
     if (!root) return
@@ -171,7 +190,6 @@ function ConfirmPanel({
       data-surface="page"
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-confirm-dialog zen-animate-pop', className)}
-      style={{ width: POPOVER_WIDTH.list }}
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         const root = ref.current

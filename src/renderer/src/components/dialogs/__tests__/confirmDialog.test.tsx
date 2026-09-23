@@ -8,7 +8,8 @@ import { createRoot, type Root } from 'react-dom/client'
 /*
  * The §9.23 confirmation prompt (components/dialogs/ConfirmDialog.tsx): one exported primitive
  * on the frame dialog host for every "Quit Zenium?", "Delete <folder>?" and "Clear site data?"
- * – a 320 notice (§9.20) with a title block, at most a check row for a body and the §9.11
+ * – a 320 notice (§9.20; 400 when it carries the check row) with a title block, at most a check
+ * row for a body and the §9.11
  * footer; the container holding the focus as it opens with no ring (§9.22), Tab entering at the
  * first control and Shift+Tab at the verb with the keys wrapping at the ends, Enter from the
  * container or the check row activating the verb as the prompt's default button – a destructive
@@ -174,7 +175,7 @@ describe('the confirmation prompt', () => {
     expect(d.querySelector('[data-primary]')).toBeNull()
   })
 
-  it('takes a check row as the body’s only element, the shared checkbox with a 15 label, and answers its change', async () => {
+  it('takes a check row as the body’s only element at §9.20’s 400 for a prompt with a row, the shared checkbox with a 15 label, and answers its change', async () => {
     const onChange = vi.fn()
     render(
       <Prompt
@@ -187,6 +188,9 @@ describe('the confirmation prompt', () => {
     )
     await settle()
     const d = dialog()!
+    // §9.20: the notice is 320 and "takes 400 only when it carries a row or a field (a
+    // credential row, a checkbox)".
+    expect(d.style.width).toBe('400px')
     const body = d.querySelector('.zen-confirm-dialog-body')!
     expect(body.children).toHaveLength(2)
     const row = body.firstElementChild as HTMLLabelElement
@@ -416,7 +420,7 @@ describe('the way back (§9.5, §9.22)', () => {
     expect(document.activeElement).toBe(elsewhere)
   })
 
-  it('over an item dialog, returns to that dialog’s control – covered under the prompt, its inert dropped a render later – and not to body', async () => {
+  it('over an item dialog it is the 320 notice even with a check row (§9.5: never the 400 of the dialog it covers), and returns to that dialog’s control – covered under the prompt, its inert dropped a render later – not to body', async () => {
     /** A form dialog on the host that covers itself while its prompt stands, as the settings dialogs do. */
     function ItemDialog({
       covered,
@@ -457,6 +461,7 @@ describe('the way back (§9.5, §9.22)', () => {
               {...base}
               action="Clear"
               destructive
+              checkbox={{ label: 'Also clear cookies', checked: false, onChange: () => {} }}
               onCancel={() => setPrompt(false)}
               onConfirm={() => setPrompt(false)}
             />
@@ -477,6 +482,12 @@ describe('the way back (§9.5, §9.22)', () => {
     const d = dialog()!
     expect(document.activeElement).toBe(d)
     expect(item.hasAttribute('inert')).toBe(true)
+    // The later sibling in the one slot, above the dialog it covers – and the notice's width
+    // over it although it carries a row (alone, the row would make it 400).
+    expect(d.parentElement).toBe(item.parentElement)
+    expect(d.previousElementSibling).toBe(item)
+    expect(d.style.width).toBe('320px')
+    expect(d.querySelector('.zen-confirm-dialog-check')).not.toBeNull()
     // The prompt answers and leaves; the item dialog is still covered as the cleanup runs.
     press(d, 'Enter')
     await settle()

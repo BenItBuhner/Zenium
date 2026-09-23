@@ -135,7 +135,8 @@ describe('the window prompt', () => {
     expect(d.dataset.confirm).toBe('window-prompt')
     expect(d.dataset.windowPrompt).toBe('quit')
     expect(d.hasAttribute('data-downloads')).toBe(false)
-    expect(d.style.width).toBe('320px')
+    // With the tabs warning's checkbox the prompt carries a row: §9.20's 400, not the notice's 320.
+    expect(d.style.width).toBe('400px')
     expect(d.querySelector('h2')!.textContent).toBe('Quit Zenium?')
     expect(d.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
       'You are about to quit with 3 tabs open.'
