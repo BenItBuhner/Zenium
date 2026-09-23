@@ -1,0 +1,43 @@
+name: Android primitives pass 4 demo
+
+# Runs the fourth primitives pass on a device, each claim under the finger or the key that names
+# it: a list sheet (Recently closed, seeded with twenty entries) landing on its first row with its
+# leading glyphs at full ink, capped at 80 % of the frame once dragged up and scrolling inside the
+# cap, its last row's gap to the frame's edge measured against 16 + the host's bottom inset
+# (§9.22, §9.25, §10.4, §11.3); a prompt sheet (Clear history) holding the focus on its container
+# with no ring and its footer at the one formula; a value sheet (Settings › Colour scheme) landing
+# on the checked option with its footer at the formula; a hardware keyboard's Tab off the page's
+# last control landing in the chrome's first control with the keyboard's ring, Shift+Tab back onto
+# the page's last, Tab through the chrome onto the page's first, Shift+Tab off the page's first
+# onto the chrome's last (A11Y-09's remainder); and the custom tab's menu sheet edge read from a
+# screenshot: a one-dp hairline along the top and both sides, none along the bottom. The driver
+# (PrimitivesPass4Demo) writes its findings next to the recording – the footers' measured gaps and
+# the inset the host reported – and a claim that does not hold fails the run. Dispatch-only, like
+# the other demos. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
+# this file only picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches: [cursor/android-primitives-pass-4-a6ba]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-primitives-4-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Primitives pass 4 demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PrimitivesPass4Demo
+        DEMO_DIR=primitives-4-demo
+        DEMO_OUT=artifacts/android-primitives-4-demo
+        DEMO_VIDEO=android-primitives-4-demo.mp4
+      artifact-name: android-primitives-4-demo
+      artifact-path: artifacts/android-primitives-4-demo/
