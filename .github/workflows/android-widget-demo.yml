@@ -1,0 +1,96 @@
+name: Android widget demo
+
+# Records the Home-screen search widget and the launcher's deep links (WID-01, WID-07, OMN-33) on
+# a hardware-accelerated Android emulator, once in each colour scheme, and uploads the video, the
+# stills, the frame sheets and the findings: the widget's 4x1 face bound on an AppWidgetHost of
+# the driver's (`appwidget grantbind`) and inflated as a launcher inflates it, in the system's
+# night mode over a wallpaper-like backdrop – Zenium's mark, the omnibox's hint, the mic, the
+# mask; a real finger on each part with Zenium in front (the mic lands in voice search on a
+# stand-in recogniser, the pill in the omnibox with the keyboard up – its landing traced, RULING
+# 5's long tasks by the renderer's own clock – the mask in a new private tab); the COLD landings
+# with the browser's task removed and the widget's own PendingIntent replayed for search, private
+# and scan, every frame from the send to the landing grabbed and read for the previous tab's page
+# (a full-bleed orange page the profile restores as its active tab), which must never paint: the
+# landing opens its own tab in the boot's run, before the chrome's first frame; the launcher's
+# four static shortcuts read from the manifest in rank order, Search fired cold through the
+# trampoline with the same frame read, Scan QR code and New tab fired warm from Home. A check
+# that fails in the driver fails the run (widget-findings.txt in the artifact).
+#
+# The engine. The API 34 Google APIs image's WebView 113 has no profiles, so its private landing
+# is the toast that says so (a check of its own); the `profiles` job runs the same driver on an
+# AOSP image with a Chromium snapshot SystemWebView.apk swapped in (as android-private-demo.yml
+# does, with its swiftshader_indirect) for the private tab's landing still. Dispatch-only, like
+# the other demos: about a quarter of an hour a job, and it says nothing about a change being
+# correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file picks the driver, the themes and the engines. The retry for a harness reason is a second
+# dispatch: the theme matrix has no single emulator-died output to key a second boot on.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-widget-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Widget demo (${{ matrix.theme }})
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header); the
+      # theme reaches the driver as its `theme` argument, seeds the profile's colour scheme and
+      # sets the system's night mode, which the launcher's inflation of the face follows.
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.WidgetDemo
+        DEMO_DIR=widget-demo
+        DEMO_OUT=artifacts/android-widget-demo
+        DEMO_VIDEO=android-widget-demo-${{ matrix.theme }}.mp4
+        DEMO_THEME=${{ matrix.theme }}
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-widget-demo-${{ matrix.theme }}
+      artifact-path: artifacts/android-widget-demo/
+
+  profiles:
+    name: Widget demo, private landing on profiles (${{ matrix.theme }}, Chromium snapshot WebView on an AOSP image)
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.WidgetDemo
+        DEMO_DIR=widget-demo
+        DEMO_OUT=artifacts/android-widget-demo-profiles
+        DEMO_VIDEO=android-widget-demo-profiles-${{ matrix.theme }}.mp4
+        DEMO_THEME=${{ matrix.theme }}
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-widget-demo-profiles-${{ matrix.theme }}
+      artifact-path: artifacts/android-widget-demo-profiles/
+      timeout-minutes: 60

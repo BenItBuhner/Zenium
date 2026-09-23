@@ -162,7 +162,7 @@ describe('the landing words', () => {
 })
 
 describe('landing from a widget or a shortcut', () => {
-  it("search: a new blank tab is active in this turn – the page never paints – and the omnibox goes up over it", () => {
+  it('search: a new blank tab is active in this turn – the page never paints – and the omnibox goes up over it', () => {
     const { browser, win, page } = running()
     const { over, calls } = recorder()
 

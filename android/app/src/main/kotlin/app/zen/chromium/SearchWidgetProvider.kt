@@ -60,7 +60,8 @@ class SearchWidgetProvider : AppWidgetProvider() {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 .putExtra(Landing.EXTRA, landing)
 
-        private fun pendingIntent(context: Context, face: Face): PendingIntent =
+        /** The very token the launcher holds for `face`; `WidgetDemo` replays it for a cold start. */
+        internal fun pendingIntent(context: Context, face: Face): PendingIntent =
             PendingIntent.getActivity(
                 context,
                 face.requestCode,

@@ -158,6 +158,18 @@
       "note": "The Inactive tabs surface (TAB-20 / SET-34) on the overview demo's profile: the archive pass through the drivers' clock, the sheet's rows, restore, Close all's prompt, the Settings group, in both colour schemes (eleven scenes). On phone-d, the lightest phone shard once #387's relaunch race joined phone-a (phone-a 60 / phone-d 61 with it here; the Settings tab demo's environment, taken through its own env line)."
     },
     {
+      "id": "widget",
+      "class": "WidgetDemo",
+      "shard": "phone-d",
+      "mirrors": "android-widget-demo.yml",
+      "dir": "widget-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 5,
+      "note": "The Home-screen search widget and the launcher's deep links (WID-01, WID-07, OMN-33; W5-9): the face bound on the driver's AppWidgetHost, a finger on its mic / pill / mask, the cold landings with the browser's task removed and the widget's own PendingIntent replayed, every frame read for the previous tab's page (never painted), the four static shortcuts. The workflow runs light and dark and a profiles leg; the nightly runs light on this image, where the private landing is the toast (no WebView profiles) – the private tab's landing on profiles is the private tabs demo's on the webview shard. On phone-d, the lightest phone shard (62 before it, 67 with it)."
+    },
+    {
       "id": "pdf-viewer",
       "class": "PdfViewerDemo",
       "shard": "phone-a",
