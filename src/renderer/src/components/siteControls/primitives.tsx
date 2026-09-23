@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
+import type { CSSProperties, JSX, MouseEvent, ReactNode, RefObject } from 'react'
 import {
   useCallback,
   useEffect,
@@ -895,6 +895,7 @@ export function ListRow({
   role,
   'aria-label': ariaLabel,
   'aria-checked': ariaChecked,
+  'aria-haspopup': ariaHasPopup,
   'aria-expanded': ariaExpanded,
   'aria-controls': ariaControls,
   ...data
@@ -904,7 +905,8 @@ export function ListRow({
   leading?: ReactNode
   trailing?: ReactNode
   chevron?: boolean
-  onClick?: () => void
+  /** The press; its event carries the row for an action that anchors a popover to it. */
+  onClick?: (event: MouseEvent<HTMLButtonElement>) => void
   disabled?: boolean
   busy?: boolean
   danger?: boolean
@@ -915,6 +917,8 @@ export function ListRow({
   role?: 'switch'
   'aria-label'?: string
   'aria-checked'?: boolean
+  /** An action row that opens a picker over the panel (the reader's Translate): the popup's kind. */
+  'aria-haspopup'?: 'listbox' | 'dialog'
   /** A disclosure row (Chrome's "More settings"): what it opens, and whether it is open. */
   'aria-expanded'?: boolean
   'aria-controls'?: string
@@ -995,6 +999,7 @@ export function ListRow({
         aria-label={ariaLabel}
         aria-checked={role === 'switch' ? ariaChecked : undefined}
         aria-busy={busy || undefined}
+        aria-haspopup={ariaHasPopup}
         aria-expanded={ariaExpanded}
         aria-controls={ariaExpanded ? ariaControls : undefined}
         onClick={busy ? undefined : onClick}
@@ -1075,6 +1080,8 @@ export function Menulist<V extends string>({
   readOnly?: boolean
   autoFocus?: boolean
   className?: string
+  /** A class on the popup's panel (`V2Menulist`'s `popupClassName`). */
+  popupClassName?: string
 }): JSX.Element {
   return <V2Menulist {...props} className={cn('w-auto min-w-[140px] shrink-0', className)} />
 }
@@ -1095,6 +1102,7 @@ export function ChoiceRow<V extends string>({
   readOnly = false,
   autoFocus = false,
   controlClassName,
+  popupClassName,
   leading
 }: {
   label: string
@@ -1109,6 +1117,8 @@ export function ChoiceRow<V extends string>({
   autoFocus?: boolean
   /** The menulist's own classes – a column that gives every control one width (§9.13). */
   controlClassName?: string
+  /** A class on the menulist's popup panel: a surface's own width floor for a long list. */
+  popupClassName?: string
   leading?: ReactNode
 }): JSX.Element {
   return (
@@ -1128,6 +1138,7 @@ export function ChoiceRow<V extends string>({
           readOnly={readOnly}
           autoFocus={autoFocus}
           className={controlClassName}
+          popupClassName={popupClassName}
         />
       }
     />

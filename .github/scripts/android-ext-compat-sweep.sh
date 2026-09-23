@@ -207,8 +207,8 @@ app_silence() {
   # The seconds between the app process's last logcat line (the driver's HANG lines left out:
   # they are the watch's own) and the guest's last line; 0 when either is missing.
   local pid=$1 last_app last_any
-  last_app=$(grep -E "\( *${pid}\)" "$out/logcat.txt" 2> /dev/null | grep -v 'CompatSweep.*HANG' | tail -n 1 | cut -c1-18)
-  last_any=$(tail -n 1 "$out/logcat.txt" 2> /dev/null | cut -c1-18)
+  last_app=$(grep -E "\( *${pid}\)" "$out/logcat.txt" 2> /dev/null | grep -v 'CompatSweep.*HANG' | tail -n 1 | cut -c1-18 || true)
+  last_any=$(tail -n 1 "$out/logcat.txt" 2> /dev/null | cut -c1-18 || true)
   if [ -z "$last_app" ] || [ -z "$last_any" ]; then echo 0; return; fi
   echo $(( $(logcat_epoch "$last_any") - $(logcat_epoch "$last_app") ))
 }
@@ -285,7 +285,9 @@ while kill -0 "$driver_pid" 2> /dev/null; do
   fi
   if timeout 60 adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
   if [ "$hung" -eq 0 ]; then
-    app_pid=$(timeout 30 adb shell pidof "$app_id" 2> /dev/null | tr -d '\r' | awk '{print $1}')
+    # `pidof` exits 1 while the app is dead (a crash the instrumentation is still winding down):
+    # under pipefail that would end the driver here, before `note_emulator_death` and `collect`.
+    app_pid=$(timeout 30 adb shell pidof "$app_id" 2> /dev/null | tr -d '\r' | awk '{print $1}' || true)
     if [ -n "$app_pid" ]; then
       silence=$(app_silence "$app_pid")
       if [ "${silence:-0}" -ge "$hang_silence_s" ]; then dump_hang "$app_pid" "$silence"; fi

@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FolderInput, VenetianMask } from 'lucide-react'
 import type { UIState } from '@shared/types'
+import { forcesRail, hasTopToolbar } from '@shared/toolbarLayout'
 import { cmd, run } from '@renderer/lib/api'
 import { privateInTabs, sidebarPose, tabsOnPane } from '@renderer/lib/privateTabs'
 import {
@@ -30,9 +31,10 @@ interface Props {
   floating?: boolean
   onPointerLeave?: () => void
   /**
-   * Collapsed to the icon rail, or expanded: by default the `sidebarExpanded` setting. The
-   * tablet shell decides for itself (a narrow window keeps the rail docked and floats the
-   * expanded sidebar over the page).
+   * Collapsed to the icon rail, or expanded: by default the `sidebarExpanded` setting, unless
+   * the layout fixes the rail – the Collapsed sidebar layout, and the horizontal layout's rail
+   * beside the frame (`forcesRail`, §9.37). The tablet shell decides for itself (a narrow window
+   * keeps the rail docked and floats the expanded sidebar over the page).
    */
   compact?: boolean
   /**
@@ -41,6 +43,14 @@ interface Props {
    * own and passes false.
    */
   navRow?: boolean
+  /**
+   * The horizontal layout's rail (design language v2 §9.37): the 56 column beside the frame from
+   * the toolbar row down – Essentials as 44 tiles, the spaces' 32 glyphs with the current on
+   * `--v2-window-fill`, + and palette, the compact player – with no navigation row and no tab
+   * rows, which the strip along the caption band carries. It starts level with the frame at 82
+   * and ends level with the frame's bottom, its last box 8 above.
+   */
+  rail?: boolean
 }
 
 export const COLLAPSED_WIDTH = 56
@@ -50,7 +60,8 @@ export function Sidebar({
   isDark,
   floating,
   onPointerLeave,
-  compact = !state.settings.sidebarExpanded,
+  rail = false,
+  compact = rail || forcesRail(state.settings.toolbarLayout) || !state.settings.sidebarExpanded,
   navRow
 }: Props): JSX.Element {
   const space = activeSpace(state)
@@ -68,7 +79,7 @@ export function Sidebar({
     : privateInTabs(state)
       ? tabsOnPane(essentialsFor(state, space), 'tabs')
       : essentialsFor(state, space)
-  const showToolbar = navRow ?? state.settings.toolbarLayout !== 'multiple'
+  const showToolbar = navRow ?? !hasTopToolbar(state.settings.toolbarLayout)
   const side = state.settings.sidebarSide
   // Touch screens have no hover target for the resize handle; the width is a setting there.
   const { coarse } = useViewport()
@@ -79,7 +90,9 @@ export function Sidebar({
   // tabs. The pose follows the tab in view as the window's theme does (§11.6's 240 ms blend);
   // its own switch is a pane switch (v2 §11.4): the pose leaving stays in view as a still of
   // itself fading out over the slot while the next fades in – `PaneSlot` takes the still as the
-  // pose goes, `PaneStills` draws it until its 120 ms are up, as the overview's panes do.
+  // pose goes, `PaneStills` draws it until its 120 ms are up, as the overview's panes do. The
+  // hooks come before the rail's return below: the rail is the desktop's (§9.37), where private
+  // browsing is a window and the pose is always regular, but a hook's order is the component's.
   const pose = sidebarPose(state)
   const asideRef = useRef<HTMLElement>(null)
   const [stills, setStills] = useState<PaneStill[]>([])
@@ -88,6 +101,42 @@ export function Sidebar({
     (key: number) => setStills((s) => s.filter((still) => still.key !== key)),
     []
   )
+
+  if (rail) {
+    // Docked, the rail is a stretched item of the columns row with the window's 8 gutter above
+    // and below it: it starts level with the frame at 82 and ends level with the frame's bottom,
+    // its last box 8 above that (SidebarBottom's padding). Floating, it fills its p-2 box.
+    return (
+      <aside
+        className={cn(
+          'relative flex shrink-0 flex-col',
+          floating && 'zen-panel zen-animate-in h-full'
+        )}
+        style={{
+          width: COLLAPSED_WIDTH,
+          marginTop: floating ? 0 : 'var(--zen-padding)',
+          marginBottom: floating ? 0 : 'var(--zen-padding)'
+        }}
+        onPointerLeave={onPointerLeave}
+        data-side={side}
+        data-surface="window"
+        data-pane="tabs"
+        data-rail
+        aria-label="Sidebar"
+      >
+        {/* The Essentials tiles as their own navigation landmark (a11y-02): the tab rows are the
+            strip's, the window's Tabs navigation, in this layout. */}
+        <nav aria-label="Essentials" className="flex min-h-0 flex-1 flex-col">
+          {local ? (
+            <LocalWindowHeader state={state} compact />
+          ) : (
+            <Essentials essentials={essentials} activeTabId={space.activeTabId} compact />
+          )}
+        </nav>
+        <SidebarBottom state={state} compact isDark={isDark} />
+      </aside>
+    )
+  }
 
   return (
     // A window surface (design language v2 §9.29): the tab strip's chips draw in the window family.

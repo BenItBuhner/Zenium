@@ -7,6 +7,8 @@ import {
   cdpFontFamilyChanges,
   chromiumFontPreferences,
   electronFontDefaults,
+  FONT_RESTYLE_SCRIPT,
+  fontSizesMove,
   isDefaultFontSettings,
   monospaceFontSize,
   sanitizeFontSettings
@@ -143,5 +145,23 @@ describe('the engine’s terms', () => {
     expect(isDefaultFontSettings(DEFAULT_FONT_SETTINGS)).toBe(true)
     expect(isDefaultFontSettings({ ...DEFAULT_FONT_SETTINGS, size: 17 })).toBe(false)
     expect(isDefaultFontSettings({ ...DEFAULT_FONT_SETTINGS, fixed: 'monospace' })).toBe(false)
+  })
+
+  it('tells a size move (Blink restyles by itself) from a family move (the document must be asked)', () => {
+    const has = { ...DEFAULT_FONT_SETTINGS, standard: 'Georgia' }
+    expect(fontSizesMove(has, { ...has, standard: 'Palatino' })).toBe(false)
+    expect(fontSizesMove(has, { ...has, fixed: 'Fira Code' })).toBe(false)
+    expect(fontSizesMove(has, { ...has, size: 17 })).toBe(true)
+    expect(fontSizesMove(has, { ...has, minimumSize: 12 })).toBe(true)
+    expect(fontSizesMove(has, has)).toBe(false)
+    // The script an open document gets after a family move: a fresh, unused custom property,
+    // registered (which marks every element for a style recalc), nothing that renders or fails loud.
+    expect(FONT_RESTYLE_SCRIPT).toMatch(
+      /^\(\(\) => \{ try \{ CSS\.registerProperty\(\{ name: '--zenium-fonts-'/
+    )
+    expect(FONT_RESTYLE_SCRIPT).toContain("syntax: '*', inherits: false")
+    expect(FONT_RESTYLE_SCRIPT).toContain('catch {}')
+    // Valid script, and one that a document without the API leaves silent.
+    expect(() => new Function(FONT_RESTYLE_SCRIPT)).not.toThrow()
   })
 })

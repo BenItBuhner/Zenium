@@ -89,6 +89,8 @@ export interface ContentBootConfig {
    */
   late?: boolean
   extension: ExtensionBoot
+  /** The host's bridge message limit in chars (`EngineConfig.maxMessageLength`); absent, Chrome's 64 MB. */
+  messageLimit?: number
 }
 
 /** One content-script group's run, as the debug bootstrap records it (`__zenExtStats`). */
@@ -170,6 +172,8 @@ export interface PageBootConfig {
   uiLanguage: string
   context: PageContext
   extension: ExtensionBoot
+  /** The host's bridge message limit in chars (`EngineConfig.maxMessageLength`); absent, Chrome's 64 MB. */
+  messageLimit?: number
 }
 
 export type BootConfig = ContentBootConfig | PageBootConfig

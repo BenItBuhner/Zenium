@@ -577,6 +577,18 @@ abstract class DemoHarness(
     }
 
     /**
+     * The text field named `label`: the WebView reports an input's accessible name (its
+     * `aria-label`, else its placeholder) as the EditText's hint and its value as the text, so
+     * [findByLabel] and [findNode], which read the description and the text, never see a field's
+     * name (the history / bookmarks driver's search field found this first). The editable node
+     * whose hint, text or description carries `label`; null without one.
+     */
+    protected fun findField(label: String): AccessibilityNodeInfo? = findNodeWhere { node ->
+        node.isEditable &&
+            listOfNotNull(node.hintText, node.text, node.contentDescription).any { it.toString().contains(label) }
+    }
+
+    /**
      * The first node (breadth-first) that `accept`s, with its state: a row's label and the switch
      * labelled after it both answer to the label, only one of them is checkable.
      */
