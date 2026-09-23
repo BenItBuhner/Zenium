@@ -1,19 +1,19 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
-import { returnFocusTo, wrapTab } from '@renderer/lib/popover'
+import { wrapTab } from '@renderer/lib/popover'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { V2TitleBlock } from '../extensions/v2'
+import {
+  answerEnter,
+  holdFocus,
+  releaseFocus,
+  resolveReturnFocus,
+  type ConfirmReturnFocus
+} from './confirmFocus'
 
-/**
- * Where the keyboard goes as a prompt leaves (§9.5, §9.22): the control that had it as the
- * prompt opened (the default, `undefined`), an element or a function read at the leave (a
- * consumer that decides by the answer – a keyboard's Cancel to the row it came from, a Delete
- * whose row goes with it to nothing), or `false` for no return of the prompt's own (a consumer
- * that hands the keyboard to the page itself).
- */
-export type ConfirmReturnFocus = HTMLElement | (() => HTMLElement | null | undefined) | false
+export type { ConfirmReturnFocus } from './confirmFocus'
 
 export interface ConfirmDialogProps {
   /** The prompt's name on its root, `data-confirm="<name>"`: a test's and a drive's handle. */
@@ -71,27 +71,28 @@ export interface ConfirmDialogProps {
  * the unreadable stack of §9"; §9.5: "never the 400 of the dialog it covers"). The place is read
  * once, as the prompt mounts, before its first paint.
  *
- * The keyboard (§9.22 as amended by the design lead on #392): the CONTAINER holds the focus as
- * the prompt opens – its root is `tabIndex -1`, the container the keyboard is sent to and cannot
- * reach by Tab, so the chassis draws no ring on it
- * (`[role='alertdialog'][tabindex='-1']:focus-visible` in main.css) and no verb is preselected.
- * Tab enters at Cancel, Shift+Tab at the verb, and between them the keys wrap at the ends
- * (lib/popover.ts `wrapTab`). On a prompt whose verb is the primary (Quit), Enter from the
- * container, or from the check row, activates the verb as the prompt's default button – as
+ * The keyboard (§9.22 as amended by the design lead on #392; the machinery is `confirmFocus.ts`,
+ * shared with the confirmation that is a level of the site-information sheet, §10.4): the
+ * CONTAINER holds the focus as the prompt opens – its root is `tabIndex -1`, the container the
+ * keyboard is sent to and cannot reach by Tab, so the chassis draws no ring on it
+ * (`[role='alertdialog'][tabindex='-1']:focus-visible` in main.css) and no verb is preselected
+ * (`holdFocus`). Tab enters at Cancel, Shift+Tab at the verb, and between them the keys wrap at
+ * the ends (lib/popover.ts `wrapTab`). On a prompt whose verb is the primary (Quit), Enter from
+ * the container, or from the check row, activates the verb as the prompt's default button – as
  * Firefox's and Chrome's dialogs answer Enter from the dialog itself, because they draw the verb
  * as their primary. A DESTRUCTIVE prompt has no default: §6 draws it with no primary because
  * the app recommends neither answer, and a default key is a recommendation as much as a fill –
  * so Enter from its held container (or its check row) is inert, consumed and answering nothing;
  * Tab reaches Cancel then the verb, and a focused button answers Enter and Space as any button
  * does (a double Return through a native menu – Shift+F10, Up, Return, Return – lands on the
- * container and deletes nothing). Enter on a button is that button's own in either form.
- * Escape and a press on the scrim are Cancel.
+ * container and deletes nothing). Enter on a button is that button's own in either form
+ * (`answerEnter`). Escape and a press on the scrim are Cancel.
  *
- * The return (§9.5, one hop down): as the prompt leaves, the keyboard goes back to where it
- * came from through `returnFocusTo`, which waits for an `inert` to lift – the window chrome's,
- * held by the host through the prompt's exit animation, or a lower dialog's, whose owner drops
- * its cover a render later than this cleanup runs – and never lets the focus fall to `body`;
- * unless something else took the focus meanwhile. The panel renders through
+ * The return (§9.5, one hop down; `releaseFocus`): as the prompt leaves, the keyboard goes back
+ * to where it came from through `returnFocusTo`, which waits for an `inert` to lift – the
+ * window chrome's, held by the host through the prompt's exit animation, or a lower dialog's,
+ * whose owner drops its cover a render later than this cleanup runs – and never lets the focus
+ * fall to `body`; unless something else took the focus meanwhile. The panel renders through
  * `FrameDialogPortal`: into the nearest host from inside a page or a dialog, else the frame's.
  *
  * Motion is the host's: the §9.5 pop in and out, the §11.3 120 ms fade in place under reduced
@@ -105,9 +106,6 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
     </FrameDialogPortal>
   )
 }
-
-/** The control an Enter belongs to rather than to the prompt: a button answers its own Enter. */
-const OWN_ENTER = 'button, a[href], [role="button"], select, textarea'
 
 function ConfirmPanel({
   name,
@@ -152,34 +150,13 @@ function ConfirmPanel({
     const root = ref.current
     if (!root) return
     // The opener: whatever held the focus as the prompt came – a control of the chrome, a row
-    // of a page, or a lower dialog's control for a prompt over one – and not `body`.
-    const active = document.activeElement
-    const opener =
-      active instanceof HTMLElement && active !== document.body && !root.contains(active)
-        ? active
-        : null
-    root.focus({ preventScroll: true })
+    // of a page, or a lower dialog's control for a prompt over one – and not `body`. Given the
+    // keyboard back as the prompt leaves, when the leave loses it (kept in the slot on its way
+    // out, fallen to `body`, or under an `inert`); a focus the user or a dialog opened over the
+    // way out has already placed is left alone.
+    const opener = holdFocus(root)
     return () => {
-      const wanted = latest.current.returnFocus
-      const target =
-        wanted === false
-          ? null
-          : wanted === undefined
-            ? opener
-            : typeof wanted === 'function'
-              ? wanted()
-              : wanted
-      if (!target?.isConnected) return
-      // Only a focus the prompt's leave loses is given back: one still on the prompt (kept in
-      // the slot on its way out), fallen to `body`, or under an `inert`; one the user or a
-      // dialog opened over the way out has already placed is left alone.
-      const now = document.activeElement
-      const lost =
-        !now ||
-        now === document.body ||
-        root.contains(now) ||
-        now.closest('[inert], [data-leaving]') !== null
-      if (lost) returnFocusTo(target)
+      releaseFocus(root, resolveReturnFocus(latest.current.returnFocus, opener))
     }
   }, [])
 
@@ -208,15 +185,9 @@ function ConfirmPanel({
           wrapTab(root, e.nativeEvent)
           return
         }
-        if (e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
-        if (e.repeat || e.nativeEvent.isComposing) return
-        if (e.target instanceof Element && e.target.closest(OWN_ENTER)) return
-        e.preventDefault()
-        e.stopPropagation()
-        // No default on a destructive prompt (§9.22 as amended): the key is the prompt's to
-        // swallow – it reaches nothing beneath – and confirms nothing.
-        if (destructive) return
-        confirm()
+        // The prompt's Enter: the default on a plain prompt, swallowed on a destructive one
+        // (§9.22 as amended) – the key reaches nothing beneath either way.
+        if (answerEnter(e.nativeEvent, destructive, confirm)) e.stopPropagation()
       }}
     >
       <V2TitleBlock
