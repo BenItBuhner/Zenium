@@ -84,6 +84,85 @@ export function collectOperations(realWindow: object): Set<PropertyKey> {
   return operations
 }
 
+/** The listener shapes `addEventListener` takes. */
+type Listener = AnyFunction | { handleEvent: AnyFunction }
+
+interface MessageListeners {
+  /**
+   * `addEventListener` / `removeEventListener` of the scope, over the window's own (bound): a
+   * `message` listener goes in and out as its wrapper, so a pair of calls with the same
+   * function adds and removes the same thing.
+   */
+  registrar(bound: AnyFunction): AnyFunction
+  /** The wrapper of a listener (for `onmessage`); a non-listener as it is. */
+  listener(listener: unknown): unknown
+}
+
+/**
+ * `message` listeners of the scope see the scope as `event.source` when the page's own window
+ * is: in Chrome a content script's `window.addEventListener('message', ...)` receives the page's
+ * `window.postMessage` with `event.source === window`, the world's global being one WindowProxy
+ * with the page's. Under the `with` fallback `window` is the scope proxy and `event.source` the
+ * real WindowProxy, so Redux DevTools' content script (`if (e.source !== window) return`)
+ * dropped every message its page hook posted and its monitor never saw a store (compat round
+ * 10, row 12). The listener gets a proxy of the event whose `source` is the scope for that one
+ * case; another frame's window (`e.source === iframe.contentWindow`) stays what it is, as do
+ * the event's other members – methods called on the event itself, constructors kept.
+ */
+function createMessageListeners(realWindow: object, scope: () => object): MessageListeners {
+  const wrappers = new WeakMap<object, Listener>()
+  const eventFor = (event: unknown): unknown => {
+    if (typeof event !== 'object' || event === null) return event
+    if ((event as { source?: unknown }).source !== realWindow) return event
+    return new Proxy(event, {
+      get(target, key) {
+        if (key === 'source') return scope()
+        const value = Reflect.get(target, key) as unknown
+        if (typeof value === 'function' && !('prototype' in (value as object)))
+          return bindToReceiver(value as AnyFunction, target)
+        return value
+      }
+    })
+  }
+  const listener = (raw: unknown): unknown => {
+    if (typeof raw === 'function') {
+      let wrapper = wrappers.get(raw) as AnyFunction | undefined
+      if (!wrapper) {
+        wrapper = function messageListener(this: unknown, event: unknown): unknown {
+          return nativeApply(raw as AnyFunction, this === realWindow ? scope() : this, [
+            eventFor(event)
+          ])
+        }
+        wrappers.set(raw, wrapper)
+      }
+      return wrapper
+    }
+    if (
+      typeof raw === 'object' &&
+      raw !== null &&
+      typeof (raw as { handleEvent?: unknown }).handleEvent === 'function'
+    ) {
+      let wrapper = wrappers.get(raw) as { handleEvent: AnyFunction } | undefined
+      if (!wrapper) {
+        wrapper = {
+          handleEvent: (event: unknown): unknown =>
+            (raw as { handleEvent: AnyFunction }).handleEvent(eventFor(event))
+        }
+        wrappers.set(raw, wrapper)
+      }
+      return wrapper
+    }
+    return raw
+  }
+  return {
+    registrar: (bound) =>
+      function register(type: unknown, raw: unknown, ...rest: unknown[]): unknown {
+        return bound(type, type === 'message' ? listener(raw) : raw, ...rest)
+      },
+    listener
+  }
+}
+
 /**
  * A per-extension stand-in for `window` / `self` / `globalThis`: expandos land in a private
  * store and never reach the page, reads of browser globals fall through to the real window with
@@ -122,6 +201,9 @@ export function createScopeProxy(
     }
     return false
   }
+  let messages: MessageListeners | null = null
+  const messageListeners = (): MessageListeners =>
+    (messages ??= createMessageListeners(realWindow, () => proxy))
   const proxy: Any = new Proxy(target, {
     get(_t, key) {
       if (key in store) return store[key]
@@ -140,7 +222,15 @@ export function createScopeProxy(
         if (operations.has(key) || (!('prototype' in fn) && key[0] === key[0].toLowerCase())) {
           let b = bound.get(key)
           if (!b || b.of !== value) {
-            b = { of: value, fn: bindToReceiver(value as AnyFunction, realWindow) }
+            const receiver = bindToReceiver(value as AnyFunction, realWindow)
+            // The scope's own `addEventListener` / `removeEventListener`: a `message` listener
+            // sees this scope as the event's `source` when the page's window is (see
+            // createMessageListeners).
+            const fn =
+              key === 'addEventListener' || key === 'removeEventListener'
+                ? messageListeners().registrar(receiver)
+                : receiver
+            b = { of: value, fn }
             bound.set(key, b)
           }
           return b.fn
@@ -150,7 +240,7 @@ export function createScopeProxy(
     },
     set(_t, key, value) {
       if (!(key in store) && builtins.has(key) && findSetter(key)) {
-        win[key] = value
+        win[key] = key === 'onmessage' ? messageListeners().listener(value) : value
         return true
       }
       store[key] = value
