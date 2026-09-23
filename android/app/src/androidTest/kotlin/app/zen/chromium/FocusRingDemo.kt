@@ -249,9 +249,14 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
             // A history row is labelled "<title>, <host>, <time>" (PhoneHistoryPanel.tsx): by prefix.
             val first = HISTORY[0].second
             val second = HISTORY[1].second
+            // The rows sit below the list's fold since the panel leads with the other devices'
+            // group (#316, TAB-02); the list is scrolled through the chrome to bring each row into
+            // view before its bounds are read – stage-setting, as the history's seeding is – and
+            // the touches stay real.
+            finding("  the row '$first' scrolled into the list's view: ${verdict(revealHistoryRow(first))}")
             val firstRow = awaitNode(8_000) { it.startsWith("$first,") } ?: error("no row reads '$first, …'")
             val bounds = steadyBounds(firstRow) ?: error("the row '$first' went away")
-            val point = touchPoint(bounds) ?: error("no part of the row '$first' is inside the touchable window")
+            val point = touchPoint(bounds, scrollClip(firstRow)) ?: error("no part of the row '$first' is inside the touchable window and its list")
             Finger().apply {
                 press(point.x, point.y)
                 up()
@@ -262,6 +267,7 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
             expect("the held row reads checked in the DOM", rowChecked(first) == "true", "history-first-checked")
             SystemClock.sleep(1_000)
             still("history-selection-light")
+            revealHistoryRow(second)
             val ticked = touchTapLabelExpecting("$second,", "the row '$second' reads checked", prefix = true) { rowChecked(second) == "true" }
             expect("a real touch on a second row ticks its checkbox", ticked, "history-second-checked")
             expect("the tree reads two checked checkboxes", awaitTreeCount(4_000, 2) { it.isCheckable && it.isChecked }, "history-tree")
@@ -279,6 +285,7 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
             theme("dark")
             still("history-two-checked-dark")
             theme("light")
+            revealHistoryRow(second)
             val unticked = touchTapLabelExpecting("$second,", "the row '$second' reads unchecked again", prefix = true) { rowChecked(second) == "false" }
             expect("a second touch unticks it", unticked, "history-second-unticked")
             back()
@@ -292,6 +299,22 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
     /** The selection header's count ("2 selected", `h2.zen-phone-title`); "" while no selection is on. */
     private fun headerText(): String =
         chromeValue("(function(){var e=document.querySelector('.zen-phone-panel h2.zen-phone-title');return e?e.textContent.trim().replace(/\\s+/g,' ').slice(0,60):''})()")
+
+    /**
+     * Scroll the History list so the row titled `title` (its label starts with the title and a
+     * comma, checkbox or button) stands in the middle of the list's view, and give the tree a
+     * moment to follow; true when the document has the row. The rows' tree bounds are read
+     * after this, so a row the list keeps below its fold is the harness's refusal, not a touch
+     * on the chrome beneath.
+     */
+    private fun revealHistoryRow(title: String): Boolean {
+        val shown = chromeValue(
+            "(function(){var r=document.querySelector('.zen-phone-row > .zen-list-main[aria-label^=\"' + ${JSONObject.quote("$title,")} + '\"]');" +
+                "if(!r)return 'false';r.scrollIntoView({block:'center',behavior:'instant'});return 'true'})()"
+        ) == "true"
+        if (shown) SystemClock.sleep(600)
+        return shown
+    }
 
     /** The `aria-checked` of the history row titled `title` (its label starts with the title and a comma); "" when no such checkbox row. */
     private fun rowChecked(title: String): String =

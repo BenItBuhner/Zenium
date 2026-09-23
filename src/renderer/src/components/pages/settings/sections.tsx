@@ -15,6 +15,7 @@ import type {
   GpuMode,
   HomepageMode,
   ImportSource,
+  InactiveTabsArchiveDays,
   NewTabBackgroundKind,
   NewTabPosition,
   NewTabPreset,
@@ -38,7 +39,13 @@ import type {
   WindowSyncMode
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
+import {
+  CONTAINER_COLORS,
+  CONTAINER_ICONS,
+  INACTIVE_TAB_AUTO_CLOSE_DAYS,
+  INACTIVE_TABS_ARCHIVE_DAYS,
+  spaceLabel
+} from '@shared/defaults'
 import { resolveDownloadSettings } from '@shared/downloads'
 import {
   MAX_NEW_TAB_SHORTCUTS,
@@ -1593,6 +1600,7 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
     },
     ...sleepingTabsGroups(s, set)
   )
+  if (state.capabilities.inactiveTabs) groups.push(...inactiveTabsGroups(s, set))
   return groups
 }
 
@@ -1724,6 +1732,73 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
               />
             )
           }
+        }
+      ]
+    }
+  ]
+}
+
+/** "Never", "After 7 days inactive": the threshold's labels, Chrome's own words. */
+export function archiveDaysLabel(days: InactiveTabsArchiveDays): string {
+  return days === 0 ? 'Never' : `After ${days} days inactive`
+}
+
+/**
+ * The auto-close switch's description, its period read off the core's constant in months the
+ * way Chrome's `getAutoDeleteTimeDeltaMonths` counts them (days / 30): "Inactive tabs are closed
+ * after 3 months".
+ */
+export function autoCloseDescription(days: number = INACTIVE_TAB_AUTO_CLOSE_DAYS): string {
+  const months = Math.max(1, Math.round(days / 30))
+  return `Inactive tabs are closed after ${months === 1 ? '1 month' : `${months} months`}`
+}
+
+/**
+ * Inactive tabs on a phone (TAB-20, SET-34; Chrome's "Move to inactive section"): a tab the user
+ * has not opened for the threshold leaves the grid for the switcher's Inactive tabs list, and –
+ * with the switch on – is closed for good after `INACTIVE_TAB_AUTO_CLOSE_DAYS` there (Chrome
+ * 152's 90 days, worded in months by {@link autoCloseDescription}). The
+ * value row's options are Chrome's four in Chrome's words, the current one as the row's
+ * description (§10.4); the switch reads at .4 while the threshold is Never (§10.4), as Chrome
+ * greys it, and its description names the period. A group of its own after Sleeping tabs, the
+ * two being different things – a sleeping tab keeps its place in the grid – which the heading's
+ * description says. Phone only, where the archive lives (`capabilities.inactiveTabs`).
+ */
+function inactiveTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void): RowGroup[] {
+  const never = s.inactiveTabsArchiveDays === 0
+  const keywords = ['inactive tabs', 'archive', 'move to inactive', 'unused tabs', 'auto close']
+  return [
+    {
+      id: 'inactive-tabs',
+      heading: 'Inactive tabs',
+      layouts: ['phone'],
+      description:
+        "Tabs you haven't used for a while move out of the grid into Inactive tabs, where you can bring them back or close them. Sleeping tabs stay in the grid and only free memory.",
+      rows: [
+        choice({
+          id: 'inactive-tabs-after',
+          label: 'Move to inactive',
+          keywords,
+          value: String(s.inactiveTabsArchiveDays),
+          options: INACTIVE_TABS_ARCHIVE_DAYS.map((days) => ({
+            value: String(days),
+            label: archiveDaysLabel(days)
+          })),
+          onChange: (v) =>
+            set({
+              inactiveTabsArchiveDays:
+                INACTIVE_TABS_ARCHIVE_DAYS.find((days) => String(days) === v) ?? 21
+            })
+        }),
+        {
+          kind: 'switch',
+          id: 'inactive-tabs-auto-close',
+          label: 'Automatically close inactive tabs',
+          description: autoCloseDescription(),
+          keywords,
+          checked: s.inactiveTabsAutoClose,
+          disabled: never,
+          onChange: (v) => set({ inactiveTabsAutoClose: v })
         }
       ]
     }

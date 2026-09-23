@@ -6900,19 +6900,20 @@
   /*
    * The field becoming the omnibox (NTP-02 / MOT-08, Chrome's fakebox, v2 §11.8;
    * lib/motion/fakebox.ts is the machine, lib/fakeboxMorph.ts drives it, FakeboxMorphLayer
-   * paints the field's double). One value, `--zen-ntp-morph` on the root (0 the page's field, 1
-   * the omnibox's), written per frame by the controller, moves everything besides the double's
-   * rectangle: the bar and the double's page-field content go over its first half, the page is
-   * gone by six tenths of it, the omnibox's sheet arrives from four tenths and the double's
-   * omnibox-field content over the second half; the omnibox's own field draws nothing until the
-   * landing. A second value, `--zen-ntp-pill`, is the handover to the pill at the end of the
-   * scroll scrub: the field fades out by it as the pill's slot – the well the field left, #27's –
-   * fills in with the pill's own look and words under it (at a top dock the double carried to
-   * the slot; at a bottom dock the page's own field, riding out of the frame with the page). The
-   * root's `data-fakebox` names the phase (scrub, docked, opening, open, pulled, closing): while
-   * the morph owns the bar, the omnibox's own entrance animations (the pill-grow and its fades,
-   * which are the cut's) yield to it, and the page's own field yields to the double
-   * (`data-away`).
+   * paints the field's double). One value, `--zen-ntp-morph` (0 the page's field, 1 the
+   * omnibox's), written per frame by the controller on the root and on every element that reads
+   * it (registered non-inheriting: the `@property` note by `--zen-recede`), moves everything
+   * besides the double's rectangle: the bar and the double's page-field content go over its
+   * first half, the page is gone by six tenths of it, the omnibox's sheet arrives from four
+   * tenths and the double's omnibox-field content over the second half; the omnibox's own field
+   * draws nothing until the landing. A second value, `--zen-ntp-pill`, written the same way, is
+   * the handover to the pill at the end of the scroll scrub: the field fades out by it as the
+   * pill's slot – the well the field left, #27's – fills in with the pill's own look and words
+   * under it (at a top dock the double carried to the slot; at a bottom dock the page's own
+   * field, riding out of the frame with the page). The root's `data-fakebox` names the phase
+   * (scrub, docked, opening, open, pulled, closing): while the morph owns the bar, the omnibox's
+   * own entrance animations (the pill-grow and its fades, which are the cut's) yield to it, and
+   * the page's own field yields to the double (`data-away`).
    */
   :root[data-form-factor='phone'] .zen-ntp-field[data-away] {
     visibility: hidden;
@@ -6942,10 +6943,15 @@
    * (`.zen-fakebox-content`, its width set by the layer) inside a clip the box's size, so it
    * never re-wraps or re-truncates on the way; the controls ride the box's right edge. The value
    * the double reads is its own pose's, written on the box by the layer (under reduced motion it
-   * holds a scrubbed field's look while it fades in place).
+   * holds a scrubbed field's look while it fades in place); the looks and the contents under
+   * the box take the box's by name, the values not inheriting on their own.
    */
   :root[data-form-factor='phone'] .zen-fakebox {
     corner-shape: var(--zen-corner);
+  }
+  :root[data-form-factor='phone'] .zen-fakebox * {
+    --zen-ntp-morph: inherit;
+    --zen-ntp-pill: inherit;
   }
   :root[data-form-factor='phone'] .zen-fakebox[data-moving] {
     will-change: left, top, width, height;
@@ -7010,12 +7016,14 @@
    * would draw over an empty handover (run 3's `top-rest`, one frame at .15 on the emulator,
    * where the fade started late; a faint ghost of the words for two frames on a phone). An
    * important declaration outranks the animation; nothing restarts when the class comes off.
+   * The pill carries the handover (PhoneShell registers it); its words take the pill's by name.
    */
   :root[data-form-factor='phone'] .zen-phone-pill.zen-pill-away {
     background: rgb(var(--zen-fg-rgb) / calc(0.04 + 0.03 * var(--zen-ntp-pill, 0)));
     box-shadow: inset 0 1px 2px rgb(0 0 0 / calc(0.06 * (1 - var(--zen-ntp-pill, 0))));
   }
   :root[data-form-factor='phone'] .zen-phone-pill.zen-pill-away > * {
+    --zen-ntp-pill: inherit;
     opacity: var(--zen-ntp-pill, 0) !important;
     pointer-events: none;
   }
@@ -7341,6 +7349,29 @@
 @property --zen-layer-radius {
   syntax: '*';
   inherits: false;
+}
+/*
+ * The new tab page's morph values (NTP-02, lib/fakeboxMorph.ts) the same way: `--zen-ntp-morph`
+ * and `--zen-ntp-pill` are written per frame – the scroll scrub's and the spring's – on the root
+ * (the one readable pair; the Android harness's probe reads them there) and on each element
+ * that reads them (`registerFakeboxSurface`: the page's field and column, its gear, the bar, the
+ * pill's slot, the omnibox's sheet; the double's box by its layer), and registered
+ * non-inheriting, so a frame recalculates those elements' style alone. Inheriting from the
+ * root they cost the whole chrome's style every frame: 12 to 13 ms of the scrub's 18 to 20 ms
+ * frames and 11 to 18 ms of every spring frame on the emulator (the wave 5 baseline sweep's
+ * `ntp-scrub-top` and `ntp-morph-close-bottom`, run 35822500800). What reads them under a
+ * surface – the pill's words, the double's looks and contents – takes its element's value by an
+ * explicit `inherit` (the rules with the readers); anything else reading them sees 0.
+ */
+@property --zen-ntp-morph {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+@property --zen-ntp-pill {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
 }
 :root {
   --zen-recede-gain: 1;
@@ -8597,6 +8628,14 @@
    padding). */
 .zen-v2-icon-button.zen-print-page-step {
   border-radius: 9999px;
+}
+/* The tab overview's Inactive tabs entry (TAB-20; §9.34 modifier): the icon button let grow past
+   its square for the §9.19 count badge trailing the glyph after 8, the pair inset 12 so the
+   glyph's edge stands at the segment row's 16 gutter. */
+.zen-v2-icon-button.zen-overview-inactive {
+  width: auto;
+  gap: 8px;
+  padding: 0 12px;
 }
 
 /*
