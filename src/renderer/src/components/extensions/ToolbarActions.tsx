@@ -70,7 +70,7 @@ export function ToolbarActions({
         ref={puzzle}
         type="button"
         className="zen-toolbar-button zen-ext-puzzle"
-        title="Extensions"
+        data-tooltip="Extensions"
         aria-label="Extensions"
         aria-haspopup="dialog"
         aria-expanded={panelAnchor !== null}
@@ -119,7 +119,7 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
         ref={ref}
         type="button"
         className="zen-toolbar-button zen-ext-action relative"
-        title={actionTitle(ext)}
+        data-tooltip={actionTitle(ext)}
         aria-label={actionTitle(ext)}
         aria-haspopup={ext.popup ? 'dialog' : undefined}
         aria-expanded={ext.popup ? open : undefined}
