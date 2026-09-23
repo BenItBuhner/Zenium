@@ -36,6 +36,7 @@ import { ENTER_BATCH, ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
 import { useStripAxis } from './stripAxis'
 import { TabItem } from './TabItem'
+import { TabSet } from './TabSet'
 import { useGroupFold } from './useGroupFold'
 
 interface Props {
@@ -157,15 +158,17 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                     data-tab-list="pinned"
                     {...tablistProps(`${space.name} pinned tabs`)}
                   >
-                    {stripRows(pinned, state.splitGroups).map((row) => (
-                      <StripRowItem
-                        key={rowKey(row)}
-                        row={row}
-                        activeTabId={activeTabId}
-                        compact={compact}
-                        parent={pinnedHeaderKey}
-                      />
-                    ))}
+                    <TabSet tabs={pinned}>
+                      {stripRows(pinned, state.splitGroups).map((row) => (
+                        <StripRowItem
+                          key={rowKey(row)}
+                          row={row}
+                          activeTabId={activeTabId}
+                          compact={compact}
+                          parent={pinnedHeaderKey}
+                        />
+                      ))}
+                    </TabSet>
                   </div>
                 )}
               </>
@@ -222,14 +225,16 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                   data-tab-list="regular"
                   {...tablistProps(`${space.name} tabs`)}
                 >
-                  {stripRows(loose, state.splitGroups).map((row) => (
-                    <StripRowItem
-                      key={rowKey(row)}
-                      row={row}
-                      activeTabId={activeTabId}
-                      compact={compact}
-                    />
-                  ))}
+                  <TabSet tabs={loose}>
+                    {stripRows(loose, state.splitGroups).map((row) => (
+                      <StripRowItem
+                        key={rowKey(row)}
+                        row={row}
+                        activeTabId={activeTabId}
+                        compact={compact}
+                      />
+                    ))}
+                  </TabSet>
                 </div>
               )}
             </div>
@@ -765,17 +770,19 @@ export function FolderRow({
           )}
           {...tablistProps(`${folder.name} tabs`, horizontal ? 'horizontal' : 'vertical')}
         >
-          {stripRows(drawn, splitGroups).map((row) => (
-            <StripRowItem
-              key={rowKey(row)}
-              row={row}
-              activeTabId={activeTabId}
-              compact={compact}
-              indent={!horizontal}
-              parent={key}
-              slot={slot}
-            />
-          ))}
+          <TabSet tabs={drawn}>
+            {stripRows(drawn, splitGroups).map((row) => (
+              <StripRowItem
+                key={rowKey(row)}
+                row={row}
+                activeTabId={activeTabId}
+                compact={compact}
+                indent={!horizontal}
+                parent={key}
+                slot={slot}
+              />
+            ))}
+          </TabSet>
         </div>
       )}
       {/* A saved folder's pages, unfolded (the sidebar's disclosure): buttons that open the
