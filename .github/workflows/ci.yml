@@ -86,12 +86,17 @@ jobs:
         # is not setuid and ubuntu-24.04 denies unprivileged user namespaces. Every profile lives
         # under a temporary XDG_CONFIG_HOME; the scenarios, their screenshots and result.json land
         # in smoke-out/unpacked. boot and restore run on every platform; the crash pair (a killed
-        # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only
-        # (clear-on-exit too, in the step after this one) –
+        # run, then "Restore pages?"), the Chrome-preset shortcut walkthrough, pip and the split
+        # pair run here only (clear-on-exit too, in the step after this one) –
         # the walkthrough ends with a pop-up opened by a real xdotool click on a button inside a
         # cross-origin iframe of a local fixture (the #142 regressions: the frame's gesture must
-        # reach the pop-up blocker and the pop-up's page must run the page preload). Known bugs
-        # are named through .github/smoke/known-failures.json.
+        # reach the pop-up blocker and the pop-up's page must run the page preload); pip puts a
+        # fixture page's playing video into Chromium's picture-in-picture window through the media
+        # hub's button (the X server shows the window; xwininfo from x11-utils reads it) and brings
+        # it back with the page.pip chord; split makes a split view with the chord, drops a third
+        # tab on the content's edge, un-splits a pane, drags the divider, quits, finds the split
+        # and its ratio back on the relaunch and unsplits it. Known bugs are named through
+        # .github/smoke/known-failures.json.
         # --disable-gpu (both smoke steps): under Xvfb there is no GPU, and Chromium's GPU process
         # finds that out by probing GL through Mesa – some 190 MB of libgallium/libLLVM paged in
         # from the runner's disk on the run's first launch – before it settles on the software
@@ -105,7 +110,7 @@ jobs:
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split
           --extra-args="--no-sandbox --disable-gpu"
       - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
         # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches
@@ -122,10 +127,41 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label clear-on-exit
           --out "$SMOKE_OUT" --scenarios clear-on-exit --extra-args="--no-sandbox --disable-gpu"
+      - name: Make the unpacked build's sandbox helper setuid root (for the sandboxed leg)
+        # Electron evaluates service-worker preload scripts in sandboxed renderers only, and
+        # Zenium's chrome.* layer for MV3 background workers (src/preload/extension.ts, registered
+        # as a service-worker preload) is one: a --no-sandbox leg, like every step above, cannot
+        # observe it. Chromium's way into the sandbox where the kernel denies unprivileged user
+        # namespaces (this runner's AppArmor default) is the setuid helper, root-owned and mode
+        # 4755, as electron-builder's installers leave it and the unpacked build does not.
+        if: ${{ !cancelled() }}
+        run: |
+          sudo chown root:root dist/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 dist/linux-unpacked/chrome-sandbox
+          ls -l dist/linux-unpacked/chrome-sandbox
+      - name: MV3 worker preload under the sandbox (Xvfb)
+        # The mv3-worker scenario on a sandboxed launch (--sandbox, no --no-sandbox): the fixture
+        # extension under .github/smoke/fixtures/mv3-worker is installed and its worker must
+        # start with Zenium's layer (chrome.permissions, windows, contextMenus defined).
+        if: ${{ !cancelled() }}
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label mv3-worker-sandboxed
+          --out "$SMOKE_OUT" --scenarios mv3-worker --sandbox --extra-args="--disable-gpu"
+      - name: MV3 worker preload without the sandbox (the negative)
+        # The same scenario under --no-sandbox must find the layer absent: the proof that the
+        # sandboxed leg above is the only one that can check it, and that a --no-sandbox run of
+        # the walkthrough is not a pass for the worker preload.
+        if: ${{ !cancelled() }}
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label mv3-worker-no-sandbox
+          --out "$SMOKE_OUT" --scenarios mv3-worker --extra-args="--no-sandbox --disable-gpu"
       - name: Verdict (log and step summary)
         if: always()
         run: >
-          node .github/smoke/verdict.mjs --out "$SMOKE_OUT" --expect unpacked,clear-on-exit
+          node .github/smoke/verdict.mjs --out "$SMOKE_OUT"
+          --expect unpacked,clear-on-exit,mv3-worker-sandboxed,mv3-worker-no-sandbox
           --title linux-x64
       - name: Sign-in fidelity smoke test
         # After the boot smoke and its verdict, so a failure here never hides the boot results.

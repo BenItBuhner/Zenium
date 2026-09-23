@@ -30,10 +30,11 @@
  * workflow's artifact). Exit code 0 when every check passes, 1 otherwise.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { removeTree } from './remove-tree.mjs'
 
 const argv = process.argv.slice(2)
 const option = (name) => {
@@ -132,6 +133,11 @@ let appLog = ''
 app.stdout.on('data', (d) => (appLog += d))
 app.stderr.on('data', (d) => (appLog += d))
 app.on('exit', (code) => log(`zenium exited with ${code}`))
+/** Whether the browser process is gone (a code or a signal set once it exited). */
+const exited = () => app.exitCode !== null || app.signalCode !== null
+/** Resolves when the browser process exits, or after `ms`; at once when it is gone already. */
+const waitForExit = (ms) =>
+  exited() ? Promise.resolve() : Promise.race([new Promise((r) => app.once('exit', r)), sleep(ms)])
 
 const agentFile = join(config, 'Zenium', 'zen', 'agent.json')
 let token = ''
@@ -457,11 +463,25 @@ try {
   console.error(appLog)
   lines.push(`smoke test failed: ${error?.stack ?? error}`)
 } finally {
+  // The browser process first – SIGTERM, five seconds, then SIGKILL, and its exit is waited for
+  // either way – then the profile. Chromium's helpers (the network service, the GPU process)
+  // flush into `Partitions/zen-default` for a moment after the browser process is gone, which is
+  // what a plain rmSync met on #392's run (ENOTEMPTY, every check passed): removeTree repeats
+  // the pass until the tree is gone. A profile that stays after five seconds of that is logged
+  // and left in the temp dir; the checks decide the exit code.
   app.kill('SIGTERM')
-  await Promise.race([new Promise((r) => app.once('exit', r)), sleep(5000)])
-  app.kill('SIGKILL')
+  await waitForExit(5000)
+  if (!exited()) {
+    app.kill('SIGKILL')
+    await waitForExit(2000)
+  }
   site.close()
-  rmSync(config, { recursive: true, force: true })
+  try {
+    const pass = await removeTree(config)
+    if (pass > 1) log(`profile removed on pass ${pass} (a helper was still writing into it)`)
+  } catch (error) {
+    log(`teardown: the profile ${config} could not be removed: ${error?.message ?? error}`)
+  }
 }
 const summary = `${passes.length} passed, ${failures.length} failed`
 console.log(`\n${summary}`)
