@@ -27,6 +27,12 @@ name: Android fonts / languages UI demo
 # minutes. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
 # file only picks the driver and the demo it runs.
 on:
+  # TEMPORARY: one push-triggered run on #350's merge candidate – run 9, the protocol's final
+  # run with the ± rows' 400 ms quiet window and the row-scoped blur flush (removed in the next
+  # commit, dispatch-only again).
+  push:
+    branches:
+      - cursor/services-fonts-languages-ui-24d1
   workflow_dispatch:
     inputs:
       theme:
