@@ -193,31 +193,77 @@ class BlinkTraceTest {
         assertFalse(scene.describe(), scene.describe().contains("compiling"))
     }
 
+    /** An `X` slice with its thread time (`tdur`), as Chrome writes one when thread times are on. */
+    private fun cpu(tid: Int, ts: Long, name: String, dur: Long, tdur: Long): String =
+        """{"pid":1,"tid":$tid,"ts":$ts,"ph":"X","cat":"cc","name":"$name","dur":$dur,"tdur":$tdur,"tts":$ts,"args":"__stripped__"}"""
+
     @Test
-    fun `the longest task's time on the CPU is its tdur - the gap to its wall time is the thread off the CPU, named in describe and the JSON, absent without thread times`() {
-        val cpu = { tid: Int, ts: Long, name: String, dur: Long, tdur: Long ->
-            """{"pid":1,"tid":$tid,"ts":$ts,"ph":"X","cat":"cc","name":"$name","dur":$dur,"tdur":$tdur,"tts":$ts,"args":"__stripped__"}"""
-        }
+    fun `a long task is counted by the thread's own clock where the trace has one (RULING 5) - a 92 ms slice with 27 ms of tdur is a long task by wall alone, reported and not counted, the CPU's longest is the largest tdur, and without thread times the wall count is the count`() {
         val text = "[" + listOf(
             event(7, 1_000, "X", BlinkTrace.FRAME, 8_000),
-            cpu(7, 20_000, "RunTask", 92_000, 27_000), // the long task: 92 ms of wall time, 27 on the CPU
-            cpu(7, 20_100, "FunctionCall", 76_000, 24_000),
-            cpu(7, 200_000, "RunTask", 30_000, 30_000) // not the longest
+            cpu(7, 20_000, "RunTask", 92_000, 27_000), // 92 ms of wall time, 27 on the CPU: the thread was off the CPU for 65
+            cpu(7, 20_100, "FunctionCall", 76_000, 24_000), // nested in it: not a top-level slice
+            cpu(7, 200_000, "RunTask", 30_000, 30_000) // the CPU's longest, not the wall's
         ).joinToString(",") + "]"
         val reading = BlinkTrace.parse(text)
-        assertEquals(1, reading.longTasks)
+        assertEquals(0, reading.longTasks)
+        assertEquals(1, reading.longTasksWall)
         assertEquals(92.0, reading.longestTaskMs, 1e-9)
-        assertEquals(27.0, reading.longestTaskCpuMs!!, 1e-9)
-        assertTrue(reading.describe(), reading.describe().contains("long tasks 1 (longest 92 ms, 27 on the CPU)"))
-        assertTrue(reading.toJson(), reading.toJson().contains("\"longestTaskMs\":92,\"longestTaskCpuMs\":27,"))
-        // The captured scene ran its long task on the CPU throughout: 79.99 of its 80 ms.
+        assertEquals(30.0, reading.longestTaskCpuMs!!, 1e-9)
+        assertTrue(reading.describe(), reading.describe().contains("long tasks 0 by CPU (1 by wall; longest 92 ms by wall, 30 by CPU), busy"))
+        assertTrue(reading.toJson(), reading.toJson().contains("\"longTasks\":0,\"longTasksWall\":1,\"longestTaskMs\":92,\"longestTaskCpuMs\":30,"))
+        // The captured scene ran its long task on the CPU throughout: 79.99 of its 80 ms, counted both ways.
+        assertEquals(1, scene.longTasks)
+        assertEquals(1, scene.longTasksWall)
         assertEquals(79.993, scene.longestTaskCpuMs!!, 1e-9)
-        // Without thread times in the trace: nothing claimed, the key absent.
+        // Without thread times in the trace: the wall count is the count, the same number twice, the CPU key absent.
         val bare = BlinkTrace.parse("[" + listOf(event(7, 1_000, "X", BlinkTrace.FRAME, 8_000), event(7, 20_000, "X", "RunTask", 92_000)).joinToString(",") + "]")
         assertEquals(1, bare.longTasks)
+        assertEquals(1, bare.longTasksWall)
         assertNull(bare.longestTaskCpuMs)
+        assertTrue(bare.toJson(), bare.toJson().contains("\"longTasks\":1,\"longTasksWall\":1,\"longestTaskMs\":92,\"perFrame\""))
         assertFalse(bare.toJson(), bare.toJson().contains("longestTaskCpuMs"))
         assertTrue(bare.describe(), bare.describe().contains("long tasks 1 (longest 92 ms), busy"))
+    }
+
+    @Test
+    fun `the tdur read over a sequence - a fat task counts by CPU and by wall, a descheduled one by wall alone, a slice without a tdur among slices with one by its wall time, and the CPU's longest is the largest tdur`() {
+        val text = "[" + listOf(
+            event(7, 1_000, "X", BlinkTrace.FRAME, 8_000),
+            cpu(7, 20_000, "RunTask", 60_000, 55_000), // fat: over 50 on both clocks
+            cpu(7, 100_000, "RunTask", 120_000, 20_000), // the wall's longest, 20 ms on the CPU: by wall alone
+            cpu(7, 300_000, "RunTask", 40_000, 40_000), // neither
+            event(7, 400_000, "X", "RunTask", 70_000), // no thread time on this slice: its wall time counts
+            cpu(7, 500_000, "RunTask", 45_000, 12_000)
+        ).joinToString(",") + "]"
+        val reading = BlinkTrace.parse(text)
+        assertEquals(2, reading.longTasks)
+        assertEquals(3, reading.longTasksWall)
+        assertEquals(120.0, reading.longestTaskMs, 1e-9)
+        assertEquals(55.0, reading.longestTaskCpuMs!!, 1e-9)
+        assertTrue(reading.describe(), reading.describe().contains("long tasks 2 by CPU (3 by wall; longest 120 ms by wall, 55 by CPU)"))
+        assertTrue(reading.toJson(), reading.toJson().contains("\"longTasks\":2,\"longTasksWall\":3,\"longestTaskMs\":120,\"longestTaskCpuMs\":55,"))
+        // The window cuts both counts alike: the first two tasks alone.
+        val windowed = BlinkTrace.parse(text, Window(0, 250_000))
+        assertEquals(1, windowed.longTasks)
+        assertEquals(2, windowed.longTasksWall)
+        assertEquals(55.0, windowed.longestTaskCpuMs!!, 1e-9)
+        // #350's run 9 (35832769758), re-read under the rule: five tasks of 55–167 ms of wall time,
+        // every one at 4.6–31 ms of tdur – 0 long tasks by CPU, 5 by wall, the CPU's longest 31.
+        val run9 = "[" + listOf(
+            event(7, 1_000, "X", BlinkTrace.FRAME, 8_000),
+            cpu(7, 100_000, "RunTask", 60_500, 31_100),
+            cpu(7, 300_000, "RunTask", 65_000, 14_800),
+            cpu(7, 500_000, "RunTask", 106_000, 7_500),
+            cpu(7, 700_000, "RunTask", 167_000, 10_900),
+            cpu(7, 900_000, "RunTask", 57_000, 4_800)
+        ).joinToString(",") + "]"
+        val sequence = BlinkTrace.parse(run9)
+        assertEquals(0, sequence.longTasks)
+        assertEquals(5, sequence.longTasksWall)
+        assertEquals(167.0, sequence.longestTaskMs, 1e-9)
+        assertEquals(31.1, sequence.longestTaskCpuMs!!, 1e-9)
+        assertTrue(sequence.describe(), sequence.describe().contains("long tasks 0 by CPU (5 by wall; longest 167 ms by wall, 31 by CPU)"))
     }
 
     @Test
@@ -344,7 +390,7 @@ class BlinkTraceTest {
             "{\"found\":true,\"thread\":\"4242:4242\",\"frames\":20,\"mainThreadMs\":{\"mean\":8.34,\"max\":30,\"p95\":18}," +
                 "\"busyMs\":252.8,\"busyPerFrameMs\":12.64,\"scriptMs\":71,\"workMs\":{\"script\":71,\"styleRecalc\":10,\"layout\":16.5,\"paint\":2.5,\"compile\":0}," +
                 "\"layoutCount\":11,\"paintCount\":5,\"styleRecalcCount\":20," +
-                "\"layerChurn\":15,\"longTasks\":1,\"longestTaskMs\":80,\"longestTaskCpuMs\":79.99,\"perFrame\":{\"layout\":0.55,\"paint\":0.25,\"styleRecalc\":1,\"layerChurn\":0.75}," +
+                "\"layerChurn\":15,\"longTasks\":1,\"longTasksWall\":1,\"longestTaskMs\":80,\"longestTaskCpuMs\":79.99,\"perFrame\":{\"layout\":0.55,\"paint\":0.25,\"styleRecalc\":1,\"layerChurn\":0.75}," +
                 "\"events\":116,\"threads\":6,\"windowMs\":1000,\"whole\":false}",
             json
         )
@@ -359,7 +405,7 @@ class BlinkTraceTest {
         assertEquals(
             "trace: 20 main-thread frames in 1000 ms; main-thread ms/frame mean 8.3 max 30.0 p95 18.0; " +
                 "per frame: layouts 0.55 (11), paints 0.25 (5), style recalcs 1.00 (20), layer updates 0.8 (15); " +
-                "long tasks 1 (longest 80 ms, 80 on the CPU), busy 253 ms: script 71, style 10, layout 17, paint 3 ms",
+                "long tasks 1 by CPU (1 by wall; longest 80 ms by wall, 80 by CPU), busy 253 ms: script 71, style 10, layout 17, paint 3 ms",
             scene.describe()
         )
         assertTrue(whole.describe(), whole.describe().startsWith("trace: 21 main-thread frames in 1200 ms (whole trace); "))

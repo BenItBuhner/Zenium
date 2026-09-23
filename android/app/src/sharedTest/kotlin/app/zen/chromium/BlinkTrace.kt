@@ -42,9 +42,12 @@ import kotlin.math.max
  *    where invalidated – in each commit; it rises with the layer count and with the frames that
  *    commit at all (a compositor-driven animation commits nothing). Reported, not budgeted;
  *  - LONG TASKS: top-level slices (nothing on the thread encloses them) longer than
- *    [LONG_TASK_US]: the 50 ms of the Long Tasks API; [Reading.busyMs] is the top-level slices'
- *    total, the thread's busy time in the window, and [Reading.scriptMs] the `FunctionCall` and
- *    `EvaluateScript` slices' total.
+ *    [LONG_TASK_US]: the 50 ms of the Long Tasks API, measured on the thread's own clock (`tdur`)
+ *    where the trace carries thread times and by wall time (`dur`) where it does not (RULING 5 of
+ *    `internal/android-parity/perf-program.md`; the wall count is reported beside it as
+ *    [Reading.longTasksWall]); [Reading.busyMs] is the top-level slices' total, the thread's busy
+ *    time in the window, and [Reading.scriptMs] the `FunctionCall` and `EvaluateScript` slices'
+ *    total.
  *
  * The [Window] cuts the trace to the scene (the block's `System.nanoTime()` bounds, in µs: the
  * same clock as `ts`); an event belongs to the window its `ts` falls in. When the window holds no
@@ -153,15 +156,24 @@ object BlinkTrace {
         val styleRecalcCount: Int,
         /** `UpdateLayer` slices: layers visited by the commits. */
         val layerChurn: Int,
-        /** Top-level slices longer than [LONG_TASK_US]. */
+        /**
+         * The counted long tasks: top-level slices longer than [LONG_TASK_US] on the thread's OWN
+         * clock (`tdur`) wherever the trace carries thread times, by wall time (`dur`) for a slice
+         * without – RULING 5 in `internal/android-parity/perf-program.md` (the harness floor's own
+         * words are "main-thread work", and the wall–CPU gap is the thread off the CPU: waiting, or
+         * descheduled by the emulator's software GPU, which takes the cores at the first touch –
+         * not the chrome's work). `JankBudget` reads this one; [longTasksWall] is reported beside it.
+         */
         val longTasks: Int,
-        /** The longest top-level slice, ms. */
+        /** Top-level slices longer than [LONG_TASK_US] by wall time – the count as it was before RULING 5, reported; the same number as [longTasks] without thread times. */
+        val longTasksWall: Int = longTasks,
+        /** The longest top-level slice by wall time, ms. */
         val longestTaskMs: Double,
         /**
-         * The longest top-level slice's time ON THE CPU (`tdur`, the thread's own clock), ms; null
-         * when the trace has no thread times. Its gap to [longestTaskMs] is the time the thread
-         * was off the CPU inside the task – waiting, or descheduled (the emulator's software GPU
-         * takes the cores at the first touch): not the chrome's work, and not in a profile.
+         * The longest top-level slice's time ON THE CPU, ms: the largest `tdur` among the top-level
+         * slices – a fat task is seen here even when the count is 0 – null when the trace has no
+         * thread times. A gap to [longestTaskMs] is the wall–CPU gap above, on the device's own
+         * run a finding (blocking on the main thread is the product's: a lock, a sync IPC).
          */
         val longestTaskCpuMs: Double? = null,
         /** Events read on the thread in the window (slices, pairs and instants). */
@@ -213,6 +225,7 @@ object BlinkTrace {
             sb.append(",\"styleRecalcCount\":").append(styleRecalcCount)
             sb.append(",\"layerChurn\":").append(layerChurn)
             sb.append(",\"longTasks\":").append(longTasks)
+            sb.append(",\"longTasksWall\":").append(longTasksWall)
             sb.append(",\"longestTaskMs\":").append(FrameStats.number(longestTaskMs, 2))
             if (longestTaskCpuMs != null) sb.append(",\"longestTaskCpuMs\":").append(FrameStats.number(longestTaskCpuMs, 2))
             sb.append(",\"perFrame\":{\"layout\":").append(FrameStats.number(perFrame(layoutCount), 3))
@@ -250,9 +263,15 @@ object BlinkTrace {
                 .append(", paints ").append(f2(perFrame(paintCount))).append(" (").append(paintCount).append(")")
                 .append(", style recalcs ").append(f2(perFrame(styleRecalcCount))).append(" (").append(styleRecalcCount).append(")")
                 .append(", layer updates ").append(f1(perFrame(layerChurn))).append(" (").append(layerChurn).append(")")
-            sb.append("; long tasks ").append(longTasks).append(" (longest ").append(f0(longestTaskMs)).append(" ms")
-            if (longestTaskCpuMs != null && longTasks > 0) sb.append(", ").append(f0(longestTaskCpuMs)).append(" on the CPU")
-            sb.append(")").append(", busy ").append(f0(busyMs)).append(" ms: script ").append(f0(scriptMs))
+            // With thread times the count is by CPU (RULING 5) and the wall count is reported beside it;
+            // without, the one count there is.
+            if (longestTaskCpuMs != null) {
+                sb.append("; long tasks ").append(longTasks).append(" by CPU (").append(longTasksWall).append(" by wall; longest ")
+                    .append(f0(longestTaskMs)).append(" ms by wall, ").append(f0(longestTaskCpuMs)).append(" by CPU)")
+            } else {
+                sb.append("; long tasks ").append(longTasks).append(" (longest ").append(f0(longestTaskMs)).append(" ms)")
+            }
+            sb.append(", busy ").append(f0(busyMs)).append(" ms: script ").append(f0(scriptMs))
             if (compileMs >= 0.5) sb.append(" (compiling ").append(f0(compileMs)).append(")")
             sb.append(", style ").append(f0(styleRecalcMs)).append(", layout ").append(f0(layoutMs))
                 .append(", paint ").append(f0(paintMs)).append(" ms")
@@ -415,17 +434,20 @@ object BlinkTrace {
         var end = -Double.MAX_VALUE
         var busyUs = 0.0
         var longTasks = 0
+        var longTasksWall = 0
         var longestUs = 0.0
         var longestCpuUs: Double? = null
         for (slice in sorted) {
             if (slice.ts < end) continue
             end = slice.ts + slice.dur
             busyUs += slice.dur
-            if (slice.dur > LONG_TASK_US) longTasks++
-            if (slice.dur > longestUs) {
-                longestUs = slice.dur
-                longestCpuUs = slice.cpu
-            }
+            // RULING 5: the counted long task is by the thread's own clock where the slice carries
+            // it (`tdur`), by wall time where it does not; the wall count is kept beside it.
+            if ((slice.cpu ?: slice.dur) > LONG_TASK_US) longTasks++
+            if (slice.dur > LONG_TASK_US) longTasksWall++
+            if (slice.dur > longestUs) longestUs = slice.dur
+            val cpu = slice.cpu
+            if (cpu != null && cpu > (longestCpuUs ?: Double.NEGATIVE_INFINITY)) longestCpuUs = cpu
         }
         val frames = if (t.frameMs.isNotEmpty()) t.frameMs.size else t.frameInstants
         return Pass(
@@ -445,6 +467,7 @@ object BlinkTrace {
                 styleRecalcCount = t.styleRecalc,
                 layerChurn = t.layerUpdates,
                 longTasks = longTasks,
+                longTasksWall = longTasksWall,
                 longestTaskMs = longestUs / 1e3,
                 longestTaskCpuMs = longestCpuUs?.let { it / 1e3 },
                 events = t.events,
