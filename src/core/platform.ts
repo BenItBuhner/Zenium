@@ -1080,6 +1080,14 @@ export interface MenuItemTemplate {
    * danger ink (v2 §9.1, as the phone's sheets do), a native host draws it as any other.
    */
   danger?: boolean
+  /**
+   * An item whose action mounts a field of the chrome's own (Rename Group…, Rename Tab…): a
+   * renderer-drawn menu's pick leaves the keyboard in the chrome for it instead of handing the
+   * focus back to the page as every other pick does – the host's focus move would otherwise land
+   * on the page while the field is mounting and blur it away (the tablet's rename, nightly
+   * `tablet-groups` §6). A native menu host has no such hand-back and ignores it.
+   */
+  keepsKeyboard?: boolean
 }
 
 export type MenuSource =
