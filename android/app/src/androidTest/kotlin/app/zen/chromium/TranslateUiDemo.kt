@@ -180,53 +180,55 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         shot("10-es-target-basque")
 
         // --- Settings > Languages: the Settings tab's `languages` category (#134, §10.2) ----------
-        // The menu's Settings row under a finger: the Settings tab's landing, with its Languages
-        // row, is what it brings up.
+        // The menu's Settings row under a finger: the Settings tab's landing is what it brings up,
+        // proven by the chrome document's `data-section` (the tree's Languages row second: on the
+        // emulator's software GPU the WebView's tree lists a Settings page seconds after it is on
+        // screen, and the nightly's run had every Settings touch "not taking" by the tree alone).
         results.put(
             "settingsRow",
-            pickMenuRow("Settings", "the Settings tab is up on its landing (its Languages row)") { findByLabel("Languages") != null }
+            pickMenuRow("Settings", "the Settings tab is up on its landing") { settingsSectionIs(SETTINGS_LANDING, treeSign = "Languages") }
         )
         SystemClock.sleep(2_500)
-        // The landing's category rows carry their label and nothing else. A Settings-page row,
-        // not a sheet's: a finger once it is revealed, the tree's click standing in when it never
-        // shows bounds to touch.
-        val section = { findByLabel("Languages you read") != null }
-        reveal("Languages")
-        val opened = touchTapLabelExpecting("Languages", "the Languages section is up (its Languages you read heading)", timeoutMs = 8_000, took = section) ||
+        // The landing's Languages category under a finger where the document has it, the section
+        // proven by its `data-section` (its Languages you read heading the tree's word for it);
+        // the tree's click standing in when no finger could go in.
+        val section = { settingsSectionIs(LANGUAGES_SECTION, treeSign = "Languages you read") }
+        val opened = touchSettingsRowExpecting("Languages", "the Languages section is up (its Languages you read heading)", timeoutMs = 8_000, took = section) ||
             section() ||
-            standIn("Languages") { clickByLabel("Languages") && waitFor("Languages you read", 8_000) != null }
+            standIn("Languages") { clickSettingsRow("Languages") && awaitTook(section, 8_000) }
         results.put("settingsLanguages", JSONObject().put("opened", opened).put("section", section()))
         Log.i(tag, "settings > languages: ${results.getJSONObject("settingsLanguages")}")
         SystemClock.sleep(1_200)
         shot("11-settings-languages")
-        val models = reveal("Translation models")
+        val models = revealSettingsRow("Translation models")
         results.put("settingsModels", models != null)
         SystemClock.sleep(1_200)
         shot("12-settings-models")
 
         // --- the picker sheets the action rows open (§9.13): a language to add, a model to get ---
-        // The action rows are Settings-page rows (a finger once revealed; the tree's click when
-        // they never show bounds). The sheets they open take the rule's fingers: Basque in the
-        // language list must join the languages read – the core's preferences, then the page's
-        // row – and Afrikaans to English in the model list must set its download going – the
-        // core's downloading list, then the page's row saying so.
-        val addSheet = { findByLabel("Add a language you read") != null }
-        reveal("Add a language")
-        val addOpened = touchTapLabelExpecting("Add a language", "the Add a language you read sheet is up", timeoutMs = 8_000, took = addSheet) ||
+        // The action rows are Settings-page rows (a finger where the document has them; the
+        // tree's click when they never show bounds). The sheets they open take the rule's
+        // fingers: Basque in the language list must join the languages read – the core's
+        // preferences, then the page's row – and Afrikaans to English in the model list must set
+        // its download going – the core's downloading list, then the page's row saying so. A
+        // sheet is up by the document (`[data-sheet-layer] [role=dialog]` named by its title,
+        // [sheetPresented]), the tree's node for the title second.
+        val addSheet = { sheetPresented("Add a language you read") || findByLabel("Add a language you read") != null }
+        val addOpened = touchSettingsRowExpecting("Add a language", "the Add a language you read sheet is up", timeoutMs = 8_000, took = addSheet) ||
             addSheet() ||
-            standIn("Add a language") { clickByLabel("Add a language") && waitFor("Add a language you read", 8_000) != null }
+            standIn("Add a language") { clickSettingsRow("Add a language") && awaitTook(addSheet, 8_000) }
         SystemClock.sleep(1_200)
         shot("13-settings-add-language")
         val readsBasque = { "eu" in preferred() }
-        val basqueRead = touchTapLabelExpecting(
+        val basqueRead = touchSettingsRowExpecting(
             "Basque",
             "Basque is among the languages read (the core's preferences)",
             timeoutMs = 8_000,
             took = readsBasque
         )
-        if (!basqueRead && !readsBasque()) standIn("Basque") { clickByLabel("Basque") && awaitTook(readsBasque, 5_000) }
-        val addClosed = waitForGone("Add a language you read", 5_000)
-        val basqueRow = waitFor("Basque", 8_000) != null
+        if (!basqueRead && !readsBasque()) standIn("Basque") { (clickSettingsRow("Basque") || clickByLabel("Basque")) && awaitTook(readsBasque, 5_000) }
+        val addClosed = awaitSheetGone("Add a language you read", 5_000) && waitForGone("Add a language you read", 3_000)
+        val basqueRow = awaitSettingsRow("Basque", 8_000) || waitFor("Basque", 3_000) != null
         results.put(
             "addLanguageSheet",
             JSONObject()
@@ -240,29 +242,28 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         SystemClock.sleep(1_000)
         shot("14-settings-language-added")
 
-        // The row reads its label and description as one text: matched by the label's prefix.
-        val modelSheet = { findNode { it.startsWith("Afrikaans to English") } != null }
-        revealPrefix("Download a model")
-        val downloadOpened = touchTapLabelExpecting(
+        // The Download a model row (its label and description run together in the tree: matched
+        // by the label's prefix there); its sheet lists the registry's pairs as rows, Afrikaans
+        // to English leading.
+        val modelSheet = { sheetPresented("Download a model") || settingsRowListed("Afrikaans to English") || findNode { it.startsWith("Afrikaans to English") } != null }
+        val downloadOpened = touchSettingsRowExpecting(
             "Download a model",
             "the Download a model sheet is up (Afrikaans to English leads it)",
             timeoutMs = 8_000,
-            prefix = true,
             took = modelSheet
-        ) || modelSheet() || standIn("Download a model") { clickByPrefix("Download a model") && waitForPrefix("Afrikaans to English", 10_000) }
+        ) || modelSheet() || standIn("Download a model") { (clickSettingsRow("Download a model") || clickByPrefix("Download a model")) && awaitTook(modelSheet, 10_000) }
         SystemClock.sleep(1_200)
         shot("15-settings-download-model")
         val afEnListed = { modelListed("af", "en") }
-        val downloadStarted = touchTapLabelExpecting(
+        val downloadStarted = touchSettingsRowExpecting(
             "Afrikaans to English",
             "the Afrikaans to English model is on its way (the core's downloading list)",
             timeoutMs = 8_000,
-            prefix = true,
             took = afEnListed
         )
-        if (!downloadStarted && !afEnListed()) standIn("Afrikaans to English") { clickByPrefix("Afrikaans to English") && awaitTook(afEnListed, 5_000) }
-        val downloadClosed = waitForGone("Download a model", 5_000)
-        val arrivingRow = waitForPrefix("Afrikaans to English", 8_000)
+        if (!downloadStarted && !afEnListed()) standIn("Afrikaans to English") { (clickSettingsRow("Afrikaans to English") || clickByPrefix("Afrikaans to English")) && awaitTook(afEnListed, 5_000) }
+        val downloadClosed = awaitSheetGone("Download a model", 5_000)
+        val arrivingRow = awaitSettingsRow("Afrikaans to English", 8_000) || waitForPrefix("Afrikaans to English", 3_000)
         results.put(
             "downloadModelSheet",
             JSONObject()

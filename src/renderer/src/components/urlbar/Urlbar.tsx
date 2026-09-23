@@ -1395,8 +1395,15 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           className="zen-omnibox-input-row flex shrink-0 items-center"
           data-drop-into={dropInto || undefined}
         >
-          {/* The engine's glyph replaces the default's in keyword mode (omnibox-08). */}
-          <span className="zen-omnibox-engine" title={`Search engine: ${engine.name}`}>
+          {/* The engine's glyph replaces the default's in keyword mode (omnibox-08). The letter
+            is a mark for the engine, not a word: an image named for it (a11y-02), as the phone
+            field's tile is (EngineFieldGlyph). */}
+          <span
+            className="zen-omnibox-engine"
+            role="img"
+            aria-label={`Search engine: ${engine.name}`}
+            title={`Search engine: ${engine.name}`}
+          >
             {engine.glyph}
           </span>
           {chipLabel &&
