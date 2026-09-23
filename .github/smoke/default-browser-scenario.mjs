@@ -27,9 +27,11 @@
 //                              Accessibility permission: recorded as not automatable) – the OS's
 //                              half, recorded; after a click, LaunchServices reporting http held
 //                              (the OS's yes, recorded – an ad-hoc-signed bundle may be refused)
-//                              makes the app claim https and resolve the request true
-//                              (macClaimHttps) – the app's follow-through, asserted; a second scan
-//                              tells whether the https claim put another dialog up
+//                              makes the app see to https (macClaimHttps: looked at, claimed when
+//                              the yes did not already cover it – macOS 26 sets both schemes on
+//                              the one yes) and resolve the request true – the app's
+//                              follow-through, asserted; a second scan tells whether a claim put
+//                              another dialog up
 //   handlers-after             LSHandlers again, and whether http and https are now held –
 //                              recorded (held only when the click above went through)
 import path from 'node:path'
@@ -310,16 +312,21 @@ export function dialogOnScreen(reading) {
 /**
  * The verdict on the app's follow-through once the dialog was answered "Use": LaunchServices
  * reporting http held – the OS's part, recorded when it does not come (an ad-hoc-signed bundle
- * may be refused) – is what makes the app claim https (macClaimHttps: granted without a second
- * dialog) and resolve the request true. Nothing to judge without a click, or without http held.
- * One line per miss.
+ * may be refused) – is what makes the app see to https (macClaimHttps: looked at, and claimed
+ * when the yes did not already cover it – macOS 26 sets both schemes on the one yes) and
+ * resolve the request true. Nothing to judge without a click, or without http held. One line
+ * per miss.
  */
 export function followThroughProblems({ clicked, held, calls, request }) {
   if (!clicked || held?.http !== true) return []
   const problems = []
-  const sets = (calls ?? []).filter((c) => c.method === 'setAsDefaultProtocolClient')
-  if (!sets.some((c) => c.args?.[0] === 'https')) {
-    problems.push('http is held after the yes but the app never claimed https (macClaimHttps)')
+  const https = (c) => c.args?.[0] === 'https'
+  const looked = (calls ?? []).some((c) => c.method === 'isDefaultProtocolClient' && https(c))
+  const claimed = (calls ?? []).some((c) => c.method === 'setAsDefaultProtocolClient' && https(c))
+  if (!looked && !claimed) {
+    problems.push('http is held after the yes but the app never looked at https (macClaimHttps)')
+  } else if (held.https !== true && !claimed) {
+    problems.push('https is not held after the yes and the app did not claim it (macClaimHttps)')
   }
   if (!request?.settled) {
     problems.push('the request has not resolved although the app holds http')
@@ -676,18 +683,21 @@ export async function scenarioDefaultBrowser(h) {
               const calls = await lsCalls()
               const request = await s.chrome.evaluate(READ_REQUEST)
               const https = calls.some(
-                (c) => c.method === 'setAsDefaultProtocolClient' && c.args?.[0] === 'https'
+                (c) =>
+                  (c.method === 'isDefaultProtocolClient' ||
+                    c.method === 'setAsDefaultProtocolClient') &&
+                  c.args?.[0] === 'https'
               )
               return https && request?.settled ? true : null
             },
             15000,
-            'https claimed and the request resolved',
+            'https seen to and the request resolved',
             500
           ).catch(() => undefined)
           held = await heldNow()
         }
-        // The https claim is meant to go through without another dialog: the screen again, and
-        // any dialog that is up pressed too, for the record.
+        // The https claim (when one was due) is meant to go through without another dialog: the
+        // screen again, and any dialog that is up pressed too, for the record.
         await delay(1500)
         const second = lookForDialog(true)
         afterYes = {

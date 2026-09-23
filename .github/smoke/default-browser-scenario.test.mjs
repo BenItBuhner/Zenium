@@ -433,7 +433,7 @@ describe('followThroughProblems', () => {
     ).toEqual([])
   })
 
-  it('accepts the https claim and the request resolved true once http is held', () => {
+  it('accepts https claimed, or found held with http (macOS 26’s one yes), and the request resolved true', () => {
     expect(
       followThroughProblems({
         clicked: true,
@@ -442,9 +442,24 @@ describe('followThroughProblems', () => {
         request: settled
       })
     ).toEqual([])
+    // The run 2 record on macos-arm64: the yes covered https, so the app had nothing to claim.
+    expect(
+      followThroughProblems({
+        clicked: true,
+        held: { http: true, https: true },
+        calls: [
+          is('http', false),
+          set('http'),
+          is('http', false),
+          is('http', true),
+          is('https', true)
+        ],
+        request: settled
+      })
+    ).toEqual([])
   })
 
-  it('names a missing https claim and a request that did not resolve true', () => {
+  it('names an app that never looked at https, one that left https unclaimed, and a request that did not resolve true', () => {
     expect(
       followThroughProblems({
         clicked: true,
@@ -453,14 +468,31 @@ describe('followThroughProblems', () => {
         request: { settled: false }
       })
     ).toEqual([
-      'http is held after the yes but the app never claimed https (macClaimHttps)',
+      'http is held after the yes but the app never looked at https (macClaimHttps)',
       'the request has not resolved although the app holds http'
     ])
     expect(
       followThroughProblems({
         clicked: true,
+        held: { http: true, https: false },
+        calls: [set('http'), is('http', true), is('https', false)],
+        request: settled
+      })
+    ).toEqual(['https is not held after the yes and the app did not claim it (macClaimHttps)'])
+    // Claimed but the OS has not granted it yet: the app did its part.
+    expect(
+      followThroughProblems({
+        clicked: true,
+        held: { http: true, https: false },
+        calls: [set('http'), is('http', true), is('https', false), set('https')],
+        request: settled
+      })
+    ).toEqual([])
+    expect(
+      followThroughProblems({
+        clicked: true,
         held: { http: true, https: true },
-        calls: [set('http'), set('https')],
+        calls: [set('http'), is('https', true)],
         request: { settled: true, result: null }
       })
     ).toEqual(['the request resolved null although the app holds http'])

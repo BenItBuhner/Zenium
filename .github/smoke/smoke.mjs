@@ -129,9 +129,10 @@
 //                to change your default web browser?" dialog answers; the dialog is on the
 //                screenshot and, where System Events may (the GitHub runners allow UI
 //                scripting), found among every process's windows and answered "Use", after
-//                which the app has to claim https and resolve the request true once
-//                LaunchServices reports http held; LaunchServices' LSHandlers are read before
-//                and after for the record (macOS jobs)
+//                which the app has to see to https (held with http on macOS 26, claimed
+//                otherwise) and resolve the request true once LaunchServices reports http
+//                held; LaunchServices' LSHandlers are read before and after for the record
+//                (macOS jobs)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
 // restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash

@@ -97,9 +97,10 @@ takes the screen, scans every process's windows through System Events for the di
 windows excepted) and presses "Use" when found (UI scripting needs the Accessibility
 permission: the GitHub runners grant it, a fresh Mac says `not automatable`). After a click,
 LaunchServices reporting `http` held is the OS's yes (recorded – an ad-hoc-signed bundle may be
-refused); given the yes the app must claim `https` (`macClaimHttps`) and resolve the request
-`true` (gates), and a second scan records whether the `https` claim put another dialog up (it
-is meant not to). `mac-facts.sh` prints the same `LSHandlers` before and after the run and,
+refused); given the yes the app must see to `https` (`macClaimHttps`: look at it, and claim it
+unless the yes already covered it – macOS 26 sets both schemes on the one yes) and resolve the
+request `true` (gates), and a second scan records whether a claim put another dialog up (it is
+meant not to). `mac-facts.sh` prints the same `LSHandlers` before and after the run and,
 after it, LaunchServices' own record of the bundle (`lsregister -dump`: what the dialog names
 the app from) and the unified log's LaunchServices lines.
 
