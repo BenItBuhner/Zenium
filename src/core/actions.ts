@@ -1,4 +1,5 @@
 import type { ShortcutAction } from '../shared/types'
+import { screenshotFileName } from '../shared/capture'
 import { pathToFileUrl } from '../shared/launchArgs'
 import { BLANK_URL } from '../shared/url'
 import type { Browser } from './browser'
@@ -466,8 +467,8 @@ export class Actions {
       else this.browser.toast('Could not capture the page', 'error', win)
       return
     }
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const path = await view.screenshot(`Screenshot ${stamp}.png`, options)
+    // The one screenshot name rule (`shared/capture.ts`): the capture UI's Save names its files the same way.
+    const path = await view.screenshot(screenshotFileName(this.browser.capture.now()), options)
     if (path) {
       this.browser.downloads.addCompleted(path, 'image/png', {
         containerId: tab?.containerId,
