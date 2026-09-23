@@ -360,7 +360,7 @@ describe('the folder header menu (tabs-13)', () => {
     expect(h.browser.state.model.folders[empty.id]).toBeUndefined()
   })
 
-  it('Close Folder (N Tabs) keeps the folder SAVED with its pages, folded; its menu then leads with Open Folder (N Tabs) and offers nothing to unpack or close', () => {
+  it('Close Folder (N Tabs) keeps the folder SAVED with its pages, folded; its menu then leads with Open Folder (N Tabs) and offers nothing to unpack, close or add to', () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const folder = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
@@ -379,9 +379,20 @@ describe('the folder header menu (tabs-13)', () => {
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
     const shown = labels(h.shown())
     expect(shown[0]).toBe('Open Folder (2 Tabs)')
-    expect(shown).toEqual(
-      expect.arrayContaining(['Edit Folder…', 'Rename Folder…', 'Expand Folder', 'Delete Folder'])
-    )
+    // The whole menu of a saved folder: New Tab in Folder is left out – on a saved folder the
+    // tab it made would forget the kept pages (the model's `folderOpened` rule) under a
+    // plain-ink label – as are Unpack and Close, which have no tabs to act on.
+    expect(shown).toEqual([
+      'Open Folder (2 Tabs)',
+      'Edit Folder…',
+      'Rename Folder…',
+      'Expand Folder',
+      '-',
+      'Make Live Folder…',
+      '-',
+      'Delete Folder'
+    ])
+    expect(shown).not.toContain('New Tab in Folder')
     expect(shown).not.toContain('Unpack Folder')
     expect(shown.some((l) => l.startsWith('Close Folder'))).toBe(false)
     // Open Folder brings the pages back as the folder's tabs, the folder unfolded and live again.

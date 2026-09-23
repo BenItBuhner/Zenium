@@ -12,8 +12,9 @@ import { FOLDER_COLOR_ORDER } from '@shared/defaults'
  * The group editor bubble's actions and swatch row on a saved group (TAB-16's desktop half;
  * components/sidebar/GroupEditorBubble.tsx): an open folder's rows are New tab, Unpack, Close
  * (Chrome's Close group – the folder stays saved with its pages, so the plain ink) and Delete in
- * the danger ink; a saved folder's lead with Open folder and its page count in place of Unpack
- * and Close; Delete goes through the "Delete <folder>?" prompt when the folder holds anything
+ * the danger ink; a saved folder's are Open folder with its page count and Delete alone – New
+ * tab in folder would forget the pages it kept (the model's `folderOpened` rule), so the row
+ * waits for Open; Delete goes through the "Delete <folder>?" prompt when the folder holds anything
  * and deletes an empty folder outright. The colour row is §9.14's swatch form: the nine colours
  * in Chrome's order as a radio group of 28 px round targets with 20 px discs at an 8 px gap,
  * the picked one ringed.
@@ -163,10 +164,11 @@ describe('the bubble’s actions', () => {
     expect(uiStore.get().groupEditor).toBeNull()
   })
 
-  it('for a saved folder: Open folder with its page count leads, no Unpack or Close; Open brings the pages back', async () => {
+  it('for a saved folder: Open folder with its page count and Delete alone – no New tab (it would forget the pages), no Unpack or Close; Open brings the pages back', async () => {
     const el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }))
     const rows = actions(el)
-    expect(rows.map((r) => r.dataset.action)).toEqual(['open', 'new-tab', 'delete'])
+    expect(rows.map((r) => r.dataset.action)).toEqual(['open', 'delete'])
+    expect(el.textContent).not.toContain('New tab in folder')
     const open = rows[0]!
     expect(open.querySelector('.zen-v2-label')!.textContent).toBe('Open folder')
     expect(open.querySelector('.zen-group-editor-count')!.textContent).toBe('3 pages')

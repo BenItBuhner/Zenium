@@ -68,8 +68,8 @@ export function GroupEditorLayer(): JSX.Element | null {
  * folder with its tab count (Chrome's Close group – the tabs close and the folder stays SAVED
  * with their pages, TAB-16, so the plain ink) and Delete folder in the danger ink, which asks
  * first when the folder holds anything (`requestFolderDelete`); a saved folder – its tabs
- * closed, its pages kept – leads with Open folder and its page count instead of Unpack and
- * Close. It renders through
+ * closed, its pages kept – has Open folder with its page count and Delete folder alone (New
+ * tab in folder would forget its pages, so it waits for Open). It renders through
  * the chrome layer (`ChromePortal`) over a picture of the page (`holdFloatingChrome`) and the
  * layer's light dismiss puts it away: a press anywhere else closes it on `pointerdown` and
  * reaches nothing beneath – the header's own press closes it and does not fold the folder – and
@@ -205,7 +205,10 @@ function GroupEditorBubble({
   if (!ready) return null
   // A SAVED folder (TAB-16's desktop half): its tabs closed, its pages kept. Its actions are
   // Open folder – the pages come back as its tabs – and Delete folder; an open folder's are
-  // Unpack, Close (the tabs close, the folder stays saved with their pages) and Delete.
+  // New tab, Unpack, Close (the tabs close, the folder stays saved with their pages) and
+  // Delete. New tab in folder is the open folder's alone: on a saved one the first tab it
+  // holds again forgets its pages (the model's `folderOpened` rule), a loss no plain-ink row
+  // may carry (§5, §9.1) – Open folder brings them back first.
   const saved = count === 0 && Boolean(folder.savedTabs?.length)
   const pages = folder.savedTabs?.length ?? 0
   const tabsLabel = `${count} ${count === 1 ? 'tab' : 'tabs'}`
@@ -283,15 +286,17 @@ function GroupEditorBubble({
                 <span className="zen-v2-description zen-group-editor-count">{pagesLabel}</span>
               </button>
             )}
-            <button
-              type="button"
-              className="zen-v2-row zen-group-editor-action"
-              data-action="new-tab"
-              onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
-            >
-              <Plus className={V2_GLYPH} aria-hidden />
-              <span className="zen-v2-label truncate">New tab in folder</span>
-            </button>
+            {!saved && (
+              <button
+                type="button"
+                className="zen-v2-row zen-group-editor-action"
+                data-action="new-tab"
+                onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
+              >
+                <Plus className={V2_GLYPH} aria-hidden />
+                <span className="zen-v2-label truncate">New tab in folder</span>
+              </button>
+            )}
             {count > 0 && (
               <>
                 <button

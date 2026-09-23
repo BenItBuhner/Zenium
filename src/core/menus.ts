@@ -1989,7 +1989,10 @@ export class Menus {
     // desktop half of the shared groups): its menu leads with Open Folder while it is saved,
     // Close Folder keeps it saved with its pages, and Delete Folder – which forgets them, or
     // closes its tabs with it – asks first through the chrome's prompt when there is anything
-    // to lose (`folder.confirmDelete`). Zen's word is Folder; the touch hosts say Group.
+    // to lose (`folder.confirmDelete`). New Tab in Folder is an open folder's alone: on a saved
+    // one the first tab it holds again forgets the pages it kept (the model's `folderOpened`
+    // rule), a loss no plain-ink verb may carry (§5, §9.1); Open Folder brings them back first.
+    // Zen's word is Folder; the touch hosts say Group.
     const saved = isSavedFolder(state.model, folder)
     const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
     const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
@@ -2013,10 +2016,14 @@ export class Menus {
           label: 'Rename Folder…',
           click: () => this.browser.emit('folder.startRename', { folderId }, win)
         },
-        {
-          label: 'New Tab in Folder',
-          click: () => this.browser.newTabInFolder(folderId, win)
-        },
+        ...((saved
+          ? []
+          : [
+              {
+                label: 'New Tab in Folder',
+                click: () => this.browser.newTabInFolder(folderId, win)
+              }
+            ]) as Template),
         {
           label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
           click: () => this.browser.updateFolder(folderId, { collapsed: !folder.collapsed })
