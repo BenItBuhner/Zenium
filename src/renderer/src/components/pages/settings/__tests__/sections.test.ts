@@ -2380,13 +2380,14 @@ describe('what a row does', () => {
     picker.onChange(forum.id)
     expect(c.patches).toEqual([{ searchEngineId: forum.id }])
 
-    // The added engines: the default says so, a visited one names its site; Make default and Remove.
+    // The added engines: the default says so, a visited one names its site, every row carries
+    // its shortcut (Chrome's Shortcut column, settings-42); Make default and Remove.
     const mineRow = row(search, 'search-engine:custom:mine')
     if (mineRow.kind !== 'item') throw new Error('not an item')
-    expect(mineRow.description).toBe('Default search engine')
+    expect(mineRow.description).toBe('Default search engine · @mine')
     const forumRow = row(search, 'search-engine:discovered:forum.example')
     if (forumRow.kind !== 'item') throw new Error('not an item')
-    expect(forumRow.description).toBe('Recently visited · forum.example')
+    expect(forumRow.description).toBe('Recently visited · @forum · forum.example')
     const makeDefault = row(search, 'search-engine:custom:mine:default')
     if (makeDefault.kind !== 'action') throw new Error('not an action')
     expect(makeDefault.disabled).toBe(true)

@@ -10625,6 +10625,17 @@
   list-style: none;
 }
 /*
+ * Rows that stand outside any group (§10.3 as the lead amended it for #316: History's "Show
+ * hidden devices" after the last device's group while other devices are listed): the group
+ * beat's 20 above them, the separation a heading would have brought, so the row does not read
+ * as the last group's tab; the label stays at the headings' text edge through the row's own 16.
+ * The beat's one statement is the heading's (`v2Tokens.test.ts`); this is a consumer's modifier
+ * for a place with no heading, not a copy of the heading's numbers.
+ */
+.zen-page-rows-loose {
+  margin-top: 20px;
+}
+/*
  * A two-line row (§9.2, §9.21) on the shared primitive: the 16 favicon at the row's 16 on the
  * first text line (the (line − box) / 2 offset, §9.2), the label 15/20 over the host 13/20
  * deemphasised at 44, the time 13 at 69 % and the ⋮ centred on the row's height (§9.18). The

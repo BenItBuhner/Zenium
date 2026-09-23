@@ -3195,8 +3195,24 @@ export interface PageDialogResponse {
 export interface WindowPrompt {
   id: string
   kind: 'close-tabs' | 'quit'
-  /** How many tabs close. */
+  /**
+   * How many tabs close, for the warning about them ("You are about to quit with N tabs open");
+   * 0 when that warning is not part of the question – a single tab, or the setting off – and the
+   * downloads alone are asked about.
+   */
   count: number
+  /**
+   * The downloads in progress the answer ends (downloads-35): every one when Zenium quits – the
+   * quit itself, or the last window closing where that quits – the private ones when the last
+   * private window closes. Null when none is running. One prompt carries both questions.
+   */
+  downloads: WindowPromptDownloads | null
+}
+
+/** The downloads a window prompt asks about, and what ends them. */
+export interface WindowPromptDownloads {
+  count: number
+  end: 'quit' | 'private-window'
 }
 
 /** The last run ended without a clean shutdown; the chrome offers to bring its pages back. */
@@ -4152,6 +4168,22 @@ export interface Commands {
   'history.foldedDevices': { args: void; result: string[] }
   /** Fold or unfold one device's group; every window hears `history.foldedDevicesChanged`. */
   'history.foldDevice': { args: { deviceId: string; folded: boolean }; result: void }
+  /**
+   * The other devices the History page hides for the session (Hide Device in a device
+   * heading's menu; Chrome's "Hide for now"), by device id – held as the folds are, so every
+   * window's page agrees, and gone at quit. A hidden device's tabs are listed nowhere until the
+   * device is shown again (the "Show hidden devices" row, `history.showHiddenDevices`).
+   */
+  'history.hiddenDevices': { args: void; result: string[] }
+  /** Hide or show one device's group; every window hears `history.hiddenDevicesChanged`. */
+  'history.hideDevice': { args: { deviceId: string; hidden: boolean }; result: void }
+  /** The "Show hidden devices" row: every hidden device is listed again. */
+  'history.showHiddenDevices': { args: void; result: void }
+  /**
+   * The menu of a device's heading on the History page (a right-click or the menu key on its
+   * line; the lead's #326 ruling): Open All in Tabs and Hide Device.
+   */
+  'history.deviceMenu': { args: { deviceId: string } & MenuAnchor; result: void }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
   /**
@@ -4236,8 +4268,28 @@ export interface Commands {
   }
   /** Move nodes (in the given order) so that the first lands at `index` of `parentId`. */
   'bookmark.move': { args: { ids: string[]; parentId: string; index?: number }; result: void }
-  /** Remove bookmarks and folders (folders with all their contents). */
-  'bookmark.remove': { args: { ids: string[] }; result: void }
+  /**
+   * Remove bookmarks and folders (folders with all their contents). Undoable: the window hears
+   * `bookmark.deleted` with the edit's token for its toast (bookmarks-31) – unless `quiet`, for
+   * a caller whose own undo already spoke (the phone panels' deferred deletes: `removeWithUndo`
+   * waits out its toast before the command runs, so the core's word would be a second one).
+   * The delete stays undoable (the manager's Ctrl+Z) either way.
+   */
+  'bookmark.remove': { args: { ids: string[]; quiet?: boolean }; result: void }
+  /**
+   * Take back the newest delete, move or rename (the manager's Ctrl+Z), or the one edit `token`
+   * names (a delete's toast). What came back or moved, under its current ids, with the token of
+   * the edit taken back; null for nothing. Every window hears `bookmark.undone`.
+   */
+  'bookmark.undo': {
+    args: { token?: number }
+    result: {
+      kind: 'remove' | 'move' | 'update'
+      token: number
+      ids: string[]
+      parentId: string | null
+    } | null
+  }
   /**
    * Open a bookmark (records `dateLastUsed`); `background` with `newTab` is a tab behind the
    * current one (a middle or Ctrl click on a manager row, §10.1), as `urlbar.submit` has it.
@@ -5188,6 +5240,16 @@ export interface Events {
   'bookmark.star': { tabId: string; nodeId: string; created: boolean }
   /** The bookmark manager should edit a node, or create one (`id: null`) inside `parentId`. */
   'bookmark.edit': { id: string | null; parentId: string; type: BookmarkNodeType }
+  /**
+   * The user deleted bookmarks or folders in this window (bookmarks-31): `count` top-level
+   * nodes of `kind`; `bookmark.undo` with the `token` brings them back (the toast's Undo).
+   */
+  'bookmark.deleted': { token: number; count: number; kind: 'bookmark' | 'folder' | 'mixed' }
+  /**
+   * An edit was taken back (`bookmark.undo`, from any window): the token of the edit and its
+   * kind. A delete's toast still offering that token goes down – its delete is undone already.
+   */
+  'bookmark.undone': { token: number; kind: 'remove' | 'move' | 'update' }
   /** Open the "Bookmark all tabs" dialog for these tabs. */
   'bookmark.allTabs': { tabIds: string[]; defaultTitle: string }
   'space.edit': { spaceId: string }
@@ -5208,6 +5270,8 @@ export interface Events {
   'history.select': { visitId: string }
   /** The History page's folded device groups changed (`history.foldDevice`): the ids now folded. */
   'history.foldedDevicesChanged': string[]
+  /** The History page's hidden devices changed (`history.hideDevice`, `history.showHiddenDevices`): the ids now hidden. */
+  'history.hiddenDevicesChanged': string[]
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –

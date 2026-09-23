@@ -2364,15 +2364,23 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
       heading: 'Added search engines',
       description:
         'Engines you added, and engines from sites you visited that offer one. Sites in private tabs are never listed.',
+      // The row's second line carries the engine's shortcut (Chrome's Shortcut column) beside
+      // its standing – the default, or a visited site's – and the host it searches.
       rows: own.map((e) =>
         item(
           `search-engine:${e.id}`,
           e.name,
-          e.id === s.searchEngineId
-            ? 'Default search engine'
-            : e.source === 'discovered'
-              ? `Recently visited · ${engineHost(e) ?? e.searchUrl}`
-              : (engineHost(e) ?? e.searchUrl),
+          [
+            e.id === s.searchEngineId
+              ? 'Default search engine'
+              : e.source === 'discovered'
+                ? 'Recently visited'
+                : null,
+            e.keyword,
+            e.id === s.searchEngineId ? null : (engineHost(e) ?? e.searchUrl)
+          ]
+            .filter((part): part is string => Boolean(part))
+            .join(' · '),
           [
             {
               kind: 'action',
