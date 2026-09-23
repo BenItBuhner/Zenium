@@ -31,6 +31,11 @@ import {
   type BarScrollPhase
 } from '@renderer/lib/barHide'
 import {
+  dispatchHistoryNavEvent,
+  type HistoryNavEventPayload,
+  type HistoryNavEventPhase
+} from '@renderer/lib/historyNav'
+import {
   dispatchPullEvent,
   setPullHost,
   type PullEventPayload,
@@ -76,6 +81,12 @@ export interface HostGlobal {
    * finger's travel, then `release` or `cancel` (see `PullGestureClassifier.kt`).
    */
   pullEvent(tabId: string, phase: string, json: string | null): void
+  /**
+   * An edge drag that navigates a tab's history as the host recognises it in 3-button navigation
+   * mode: `start` with the edge, then `move` with the finger's travel, then `release` or
+   * `cancel` (see `HistoryNavClassifier.kt`, `lib/historyNav.ts`).
+   */
+  historyNavEvent(tabId: string, phase: string, json: string | null): void
   /**
    * The active page's scroll as the host reports it for the bar that hides on scroll: `start`
    * (a finger down), `move` (the scroll since the last report), `end` (the finger lifted) or
@@ -420,6 +431,12 @@ function installHostGlobal(
       dispatchBackEvent(phase as BackPhase, parse<BackEventPayload | null>(json)),
     pullEvent: (tabId, phase, json) =>
       dispatchPullEvent(tabId, phase as PullEventPhase, parse<PullEventPayload | null>(json)),
+    historyNavEvent: (tabId, phase, json) =>
+      dispatchHistoryNavEvent(
+        tabId,
+        phase as HistoryNavEventPhase,
+        parse<HistoryNavEventPayload | null>(json)
+      ),
     barScroll: (tabId, phase, json) =>
       dispatchBarScroll(tabId, phase as BarScrollPhase, parse<BarScrollPayload | null>(json)),
     barShow: () => showBar(),

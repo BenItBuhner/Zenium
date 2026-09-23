@@ -385,6 +385,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
+    override fun historyNavEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.historyNavEvent(tabId, phase, payload)
+    /**
+     * Read off the window's `systemGestures` insets as they arrive ([MainActivity.applyInsets]):
+     * a left inset says the system takes the edges for its back gesture (Chrome's
+     * `UiUtils.isGestureNavigationMode`); none says the three buttons are up.
+     */
+    override var threeButtonNavigation = false
+        private set
+
+    /** The window's insets changed: `systemGestureLeft` is the `systemGestures` inset on the left, device px. */
+    fun navigationModeFromInsets(systemGestureLeft: Int) {
+        threeButtonNavigation = systemGestureLeft == 0
+    }
     override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
     override fun barScroll(tabId: String, phase: String, payload: JSONObject?) = chrome.barScroll(tabId, phase, payload)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))

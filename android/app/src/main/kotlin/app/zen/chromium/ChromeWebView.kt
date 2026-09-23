@@ -244,6 +244,15 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     }
 
     /**
+     * A tab's edge drag that navigates its history moved on (GN-04): `start` (`{ edge }`), `move`
+     * (`{ travel, time }`, CSS px), `release` or `cancel`; the chrome's `lib/historyNav.ts` draws
+     * the arrow bubble on it and goes back or forward on the release.
+     */
+    fun historyNavEvent(tabId: String, phase: String, payload: JSONObject?) {
+        js("window.__zenHost&&__zenHost.historyNavEvent(${JSONObject.quote(tabId)},${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
+    }
+
+    /**
      * A tab's page scrolled under the bar that hides on scroll: `start` (a finger down), `move`
      * (the scroll since the last report, CSS px, one report per frame), `end` (the finger lifted)
      * or `show` (the page pushed against its top); the chrome's `lib/barHide.ts` moves the bar and

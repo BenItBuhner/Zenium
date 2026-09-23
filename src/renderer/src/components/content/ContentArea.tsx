@@ -43,6 +43,7 @@ import { DefaultBrowserBanner } from './DefaultBrowserBanner'
 import { EmptyPane } from './EmptyPane'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
+import { HistoryNavBubble } from './HistoryNavBubble'
 import { LoadProgress } from './LoadProgress'
 import { PullIndicator } from './PullIndicator'
 import { ReadAloudPanel } from './ReadAloudPanel'
@@ -240,6 +241,8 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
           {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
             {state.capabilities.pullToRefresh && <PullIndicator />}
+            {/* Idle it draws nothing; only a touch host in 3-button navigation mode ever starts it (GN-04). */}
+            <HistoryNavBubble />
             {!tab && !ui.urlbar.open && ui.overlay === 'none' && !staged && <EmptyState />}
             {tab && pageTab && <InternalPageHost state={state} tab={tab} hidden={staged} />}
             {newTabPage && (

@@ -31,7 +31,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The phone sheet chassis (components/sheet/BottomSheet.tsx): surface, header, grabber, rows
   // and separators shared by every phone sheet (v2 §6, §9.16, §9.25) – the shell pass.
   ['.zen-sheet {', '/*\n   * Bookmarks, built to the v2 draft'],
-  // The pull-to-refresh disc (components/content/PullIndicator.tsx).
+  // The pull-to-refresh disc (components/content/PullIndicator.tsx) and the history navigation
+  // bubble after it (components/content/HistoryNavBubble.tsx, GN-04).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
   // The phone's resting pill (components/phone/PhoneShell.tsx, pillChips.tsx; §9.29, the shell
   // pass): its fill and pressed fill on the window family's control roles, its quiet chips (the

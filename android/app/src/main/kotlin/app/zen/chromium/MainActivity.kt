@@ -201,6 +201,9 @@ class MainActivity : BrowserActivity() {
     private fun applyInsets(windowInsets: WindowInsetsCompat) {
         val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
         val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+        // The system's navigation mode rides the same insets: a gesture-mode window has a
+        // `systemGestures` inset down each side, a three-button one has none (GN-04).
+        host.navigationModeFromInsets(windowInsets.getInsets(WindowInsetsCompat.Type.systemGestures()).left)
         val d = resources.displayMetrics.density
         insets = json(
             "top" to bars.top / d,

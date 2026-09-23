@@ -111,6 +111,11 @@ class TabWebView(
     private var barShiftPx = 0f
     private var barClipPx = 0
     private val pull = PullToRefreshGesture(this, { event -> barHide.forward(event) { super.onTouchEvent(it) } }) { event -> onPull(event) }
+    /**
+     * The edge drag that goes back or forward in 3-button navigation mode (GN-04), ahead of the
+     * pull in the touch chain: what it does not take flows on to the pull and the WebView.
+     */
+    private val historyNav = HistoryNavGesture(this, { event -> pull.onTouchEvent(event) }) { event -> onHistoryNav(event) }
     /** Strips at the top and bottom edges that chrome messages cover (see `ContentCover`). */
     val cover = ContentCover({ resources.displayMetrics.density }) { invalidateOutline() }
     /** The in-page predictive back in flight on this view, if any (see `PredictiveBack.kt`). */
@@ -473,10 +478,38 @@ class TabWebView(
         host.pullEvent(tabId, phase, payload)
     }
 
+    // --- overscroll history navigation (GN-04) ------------------------------------------------------
+
+    /**
+     * Whether a drag in from `edge` may become a history navigation right now: only with the
+     * system's three navigation buttons (in gesture mode the edges are the system's), with no
+     * other transition moving the page, and with an entry to go to that way – behind for the
+     * left edge (the one [goBack] lands on, [backIndex]), ahead for the right.
+     */
+    fun historyNavEligible(edge: HistoryNavClassifier.Edge): Boolean {
+        if (!host.threeButtonNavigation || backTransition != null) return false
+        return when (edge) {
+            HistoryNavClassifier.Edge.LEFT -> canGoBack() && backIndex() >= 0
+            HistoryNavClassifier.Edge.RIGHT -> canGoForward()
+        }
+    }
+
+    private fun onHistoryNav(event: HistoryNavClassifier.Nav) {
+        val (phase, payload) = when (event) {
+            is HistoryNavClassifier.Nav.Start -> "start" to json("edge" to if (event.edge == HistoryNavClassifier.Edge.LEFT) "left" else "right")
+            is HistoryNavClassifier.Nav.Move -> "move" to json("travel" to event.travel.toDouble(), "time" to event.time)
+            is HistoryNavClassifier.Nav.Release -> "release" to json("time" to event.time)
+            is HistoryNavClassifier.Nav.Cancel -> "cancel" to json("time" to event.time)
+        }
+        if (event !is HistoryNavClassifier.Nav.Move) Log.d(PULL_TAG, "history $phase on $tabId (${url ?: "no url"})")
+        host.historyNavEvent(tabId, phase, payload)
+    }
+
     override fun onOverScrolled(scrollX: Int, scrollY: Int, clampedX: Boolean, clampedY: Boolean) {
         super.onOverScrolled(scrollX, scrollY, clampedX, clampedY)
         barHide.onOverScrolled(scrollY, clampedY)
         pull.onOverScrolled(scrollY, clampedY)
+        historyNav.onOverScrolled(scrollX, clampedX, (computeHorizontalScrollRange() - computeHorizontalScrollExtent()).coerceAtLeast(0))
     }
 
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
@@ -786,10 +819,11 @@ class TabWebView(
         lastTouchX = event.x
         lastTouchY = event.y
         if (event.actionMasked == MotionEvent.ACTION_UP) reportActivation()
-        // The bar that hides on scroll hears every touch; the pull decides what of it the WebView
-        // sees (see PullToRefreshGesture), and the bar shifts that by what it has taken.
+        // The bar that hides on scroll hears every touch; the edge drag that navigates history
+        // (see HistoryNavGesture) and then the pull decide what of it the WebView sees (see
+        // PullToRefreshGesture), and the bar shifts that by what it has taken.
         barHide.onTouch(event)
-        return pull.onTouchEvent(event)
+        return historyNav.onTouchEvent(event)
     }
 
     /**
