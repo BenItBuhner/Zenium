@@ -27,9 +27,6 @@ on:
         options:
           - '34'
           - '35'
-  push:
-    branches:
-      - cursor/android-relaunch-race-e201
 
 permissions:
   contents: read
@@ -41,8 +38,8 @@ concurrency:
 jobs:
   record:
     name: Relaunch race demo
-    # The `[relaunch-run]` gate for a PR's temporary push trigger (the run budget is one run and
-    # one retry): under one, only a head commit that says so records.
+    # The `[relaunch-run]` gate stays for a PR's temporary push trigger (the run budget is one
+    # run and one retry): under one, only a head commit that says so records.
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[relaunch-run]')
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
