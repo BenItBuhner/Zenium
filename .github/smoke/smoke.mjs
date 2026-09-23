@@ -42,13 +42,18 @@
 //                failed: that profile is not past onboarding; scenario-deps.mjs)
 //   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
 //                the accessibility tree of the resting window, the open app menu, the open URL
-//                bar and a hosted Settings dialog against the aria snapshots checked in under
-//                .github/smoke/aria/ with axe-core's verdict on each (no serious or critical
-//                violation; .github/smoke/aria/axe-known.json names the tolerated ones on
-//                surfaces the chrome does not own), Ctrl+F (the field takes the keyboard,
-//                Escape closes the bar and hands it back to
-//                the page), Ctrl+plus/minus/0 with the zoom bubble, F11, Ctrl+N, Ctrl+Shift+N,
-//                Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu, the page context menu, a
+//                bar, a hosted Settings dialog and the Web capture overlay against the aria
+//                snapshots checked in under .github/smoke/aria/ with axe-core's verdict on each
+//                (no serious or critical violation; .github/smoke/aria/axe-known.json names the
+//                tolerated ones on surfaces the chrome does not own), Ctrl+F (the field takes
+//                the keyboard, Escape closes the bar and hands it back to the page),
+//                Ctrl+plus/minus/0 with the zoom bubble, Ctrl+Shift+S's Web capture overlay
+//                over the page's picture (its toolbar, the chrome inert, the view hidden) and
+//                Escape taking it down whole, F11, Ctrl+N, Ctrl+Shift+N,
+//                Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu with its Layout card
+//                flipping the rows into the horizontal strip, a tab put in a new folder from
+//                its row's menu, the folder closed into a SAVED group with its page listed and
+//                opened again, the page context menu, a
 //                second instance handing its URL over, Ctrl+Shift+W's "Close N tabs?" cancelled,
 //                Ctrl+W, a pop-up opened by a real click on a button inside a cross-origin iframe
 //                (a local fixture: the frame's gesture reaches the pop-up blocker, the pop-up is
@@ -174,6 +179,10 @@ const ACCEL = IS_MAC ? 'Meta' : 'Control'
 const QUIT_COMBO = IS_MAC ? 'Meta+q' : 'Control+Shift+q'
 const PRIVATE_WINDOW_COMBO = `${ACCEL}+Shift+n`
 const FULLSCREEN_COMBO = IS_MAC ? 'Control+Meta+f' : 'F11'
+// Web capture (`capture.start`, the Chrome preset's Ctrl+Shift+S; Edge's chord) and the desktop's
+// overlay for it, a modal dialog over the content frame (components/capture/CaptureOverlay.tsx).
+const CAPTURE_COMBO = `${ACCEL}+Shift+s`
+const CAPTURE_OVERLAY = '[role="dialog"][aria-label="Web capture"]'
 
 const opts = parseArgs(process.argv.slice(2))
 if (!opts.exe || !opts.label || !opts.out) {
@@ -2346,6 +2355,60 @@ async function closeExtraWindows(s) {
 }
 
 /**
+ * The next native menu `trigger` opens, with the item labelled `label` picked: the main-process
+ * hook (`autoPickMenuItem`) closes the popup and runs the item's click, as a user's choice would,
+ * since nobody is there to click on a native menu under Xvfb. Resolves with the menu's labels
+ * and the pick; throws, with the labels the menu had, when no item bore the label.
+ */
+async function pickFromNextMenu(s, label, trigger) {
+  const before = await s.app.evaluate(() => globalThis.__smoke.menus.length)
+  await s.app.evaluate((_electron, l) => {
+    globalThis.__smoke.autoPickMenuItem = l
+  }, label)
+  try {
+    await trigger()
+    const entry = await waitFor(
+      () =>
+        s.app.evaluate((_electron, n) => {
+          const m = globalThis.__smoke.menus
+          if (m.length <= n) return null
+          const e = m[m.length - 1]
+          if (!e.picked && !e.pickError) return null
+          const labels = []
+          const walk = (items) => {
+            for (const i of items || []) {
+              if (i.label) labels.push(i.label)
+              if (i.submenu) walk(i.submenu)
+            }
+          }
+          walk(e.items)
+          return { picked: e.picked ?? null, pickError: e.pickError ?? null, labels }
+        }, before),
+      10000,
+      `a menu with "${label}" picked`
+    )
+    if (entry.pickError) {
+      throw new Error(`${entry.pickError}; the menu read: ${entry.labels.join(' | ')}`)
+    }
+    return entry
+  } finally {
+    await s.app
+      .evaluate(() => {
+        globalThis.__smoke.autoPickMenuItem = null
+      })
+      .catch(() => undefined)
+  }
+}
+
+/** The sidebar row of the tab titled `title`. */
+function sidebarRow(s, title) {
+  return s.chrome
+    .locator('[data-testid="tab"]')
+    .filter({ has: s.chrome.locator('[data-testid="tab-title"]', { hasText: title }) })
+    .first()
+}
+
+/**
  * The private window's new tab page has the "Block third-party cookies" switch (the private-scoped
  * setting of #218): the row is there once the page has its state, and a real click on the switch
  * flips `privacy.thirdPartyCookiesPrivate` – off writes `allow`, on writes `block` – while the
@@ -2857,12 +2920,13 @@ async function scenarioWalkthrough() {
     })
 
     await s.step('accessibility', async () => {
-      // The chrome's accessibility tree and axe's verdict in four states (ci-13; the roles of
+      // The chrome's accessibility tree and axe's verdict in five states (ci-13; the roles of
       // a11y-02): what a screen reader gets of the window at rest – the sidebar's landmarks, the
       // toolbar, the tablists with the two fixture tabs, the active one selected – of the app
-      // menu, of the URL bar over the active tab, and of a hosted dialog with the chrome inert
-      // around it. Each snapshot is compared with its baseline under .github/smoke/aria/
-      // (`AriaAudit`); every state also runs axe over the whole document.
+      // menu, of the URL bar over the active tab, of a hosted dialog with the chrome inert
+      // around it, and of the Web capture overlay over the page. Each snapshot is compared with
+      // its baseline under .github/smoke/aria/ (`AriaAudit`); every state also runs axe over the
+      // whole document.
       await s.reset()
       const audit = new AriaAudit(s, { origin: bootSite.origin })
       const rowsBefore = await s.sidebarTabCount()
@@ -2870,6 +2934,7 @@ async function scenarioWalkthrough() {
       const menu = s.chrome.locator('.zen-v2-menu[role="menu"]').first()
       const page = s.chrome.locator('[data-testid="settings-page"]').first()
       const form = s.chrome.locator('[data-dialog="form:add-search-engine"]').first()
+      const capture = s.chrome.locator(CAPTURE_OVERLAY).first()
       try {
         await audit.state('resting-window', s.chrome.locator('[data-testid="chrome-root"]'))
 
@@ -2926,17 +2991,35 @@ async function scenarioWalkthrough() {
           8000,
           `the Settings row gone (${rowsBefore} rows before)`
         )
+
+        // The Web capture overlay over the active tab (the Chrome preset's Ctrl+Shift+S): the
+        // modal dialog with its toolbar – the hint, Visible area, Full page, Cancel – as it
+        // stands over the page's picture; Escape takes it down (the web-capture step is the
+        // surface's behaviour, this its tree).
+        await s.press(CAPTURE_COMBO)
+        await capture.waitFor({ state: 'visible', timeout: 8000 })
+        await capture
+          .locator('[data-capture-toolbar]')
+          .first()
+          .waitFor({ state: 'visible', timeout: 5000 })
+        await audit.state('web-capture', capture)
+        await s.press('Escape')
+        await capture.waitFor({ state: 'hidden', timeout: 8000 })
       } catch (e) {
         // The failure keeps what was read up to it (a state's verdict is its own detail).
         if (e && typeof e === 'object' && !e.detail) e.detail = audit.summary()
         throw e
       } finally {
         // Whatever failed, the window is left as the step found it, so the steps after start
-        // from the same window: the dialog cancelled, the menu or bar closed, the Settings tab
-        // gone (a reset closes no tab).
+        // from the same window: the dialog cancelled, the overlay down, the menu or bar closed,
+        // the Settings tab gone (a reset closes no tab).
         if (await form.isVisible().catch(() => false)) {
           await s.press('Escape')
           await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
+        }
+        if (await capture.isVisible().catch(() => false)) {
+          await s.press('Escape')
+          await capture.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
         }
         await s.reset().catch(() => undefined)
         if (await page.isVisible().catch(() => false)) {
@@ -3034,6 +3117,94 @@ async function scenarioWalkthrough() {
       // Left alone the bubble goes on its own (1.5 s; up to 5 s once its buttons were used).
       await bubble.first().waitFor({ state: 'hidden', timeout: 8000 })
       return { z0, z1, z2, z3, z4, bubbleGone: true }
+    })
+
+    // Web capture (Edge's; the desktop's overlay of components/capture/CaptureOverlay.tsx over
+    // services' engine): the Chrome preset's Ctrl+Shift+S puts the overlay over the active tab –
+    // the page's picture standing in for the live view, which the chrome hides under it, the
+    // toolbar with the hint that the page's geometry is known and the two whole-page captures
+    // beside Cancel, a field for the marquee's drag, the keyboard on the overlay and the window
+    // chrome inert around it (§9.5, §9.22) – and Escape takes it down whole (capture-16: no half
+    // state): the overlay gone, the chrome free, the view shown again. The paint itself is the
+    // engine's (shared/capture.ts, its own tests); this is the surface's way in and out.
+    await s.step('web-capture', async () => {
+      await s.reset()
+      const tab = (await s.tabs()).find((t) => t.url.startsWith(page.url))
+      if (!tab) throw new Error('the fixture tab is missing')
+      const overlay = s.chrome.locator(CAPTURE_OVERLAY).first()
+      const inertChrome = s.chrome.locator('[data-surface="window"][inert]')
+      /** Whether the window shows the fixture tab's view (null: no such view in the window). */
+      const viewShown = async () => {
+        const facts = await s.keyboardFacts()
+        const view = (facts?.views ?? []).find((v) => v.wc === tab.id)
+        return view ? view.visible : null
+      }
+      if ((await viewShown()) !== true) {
+        throw new Error("the fixture tab's view is not shown before the capture")
+      }
+      if (await overlay.count()) throw new Error('the capture overlay is up before the chord')
+      if (await inertChrome.count()) throw new Error('window chrome inert before the chord')
+      await s.press(CAPTURE_COMBO)
+      await overlay.waitFor({ state: 'visible', timeout: 8000 })
+      const phase = await overlay.getAttribute('data-capture')
+      if (phase !== 'selecting') {
+        throw new Error(`the overlay opened in phase "${phase}", expected "selecting"`)
+      }
+      const toolbar = overlay.locator('[data-capture-toolbar]').first()
+      await toolbar.waitFor({ state: 'visible', timeout: 5000 })
+      const hint = ((await toolbar.locator('[data-capture-hint]').textContent()) ?? '').trim()
+      if (hint !== 'Drag to select an area') {
+        throw new Error(`the toolbar's hint reads "${hint}" (the page's geometry unknown?)`)
+      }
+      const controls = {}
+      for (const name of ['visible', 'full', 'cancel']) {
+        const control = toolbar.locator(`[data-capture-${name}]`).first()
+        if (!(await control.isVisible()))
+          throw new Error(`the toolbar's ${name} control is missing`)
+        if ((await control.getAttribute('aria-disabled')) === 'true') {
+          throw new Error(`the toolbar's ${name} control is disabled on a page with geometry`)
+        }
+        controls[name] = (
+          (await control.textContent()) ??
+          (await control.getAttribute('aria-label')) ??
+          ''
+        ).trim()
+      }
+      if (!(await overlay.locator('[data-capture-field]').count())) {
+        throw new Error('no field for the marquee: the overlay takes no drag')
+      }
+      // The keyboard is the overlay's (§9.22: focus lands on its container), the window chrome
+      // around it inert, the page behind its picture.
+      const focused = await s.chrome.evaluate(() => {
+        const el = document.activeElement
+        return el && el !== document.body
+          ? { role: el.getAttribute('role'), label: el.getAttribute('aria-label') }
+          : null
+      })
+      if (focused?.label !== 'Web capture') {
+        throw new Error(`the focus is on ${JSON.stringify(focused)}, not the overlay`)
+      }
+      const inert = await inertChrome.count()
+      if (inert === 0) throw new Error('the window chrome is not inert under the overlay')
+      await waitFor(
+        async () => ((await viewShown()) === false ? true : null),
+        5000,
+        "the page's view hidden behind its picture"
+      )
+      await s.shot('03c-web-capture')
+      await s.press('Escape')
+      await overlay.waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () => ((await inertChrome.count()) === 0 ? true : null),
+        5000,
+        'the window chrome free of its inert'
+      )
+      await waitFor(
+        async () => ((await viewShown()) === true ? true : null),
+        8000,
+        "the page's view shown again"
+      )
+      return { phase, hint, controls, inertRoots: inert, keyboard: await s.keyboardOwner() }
     })
 
     // A page that never answers (BUG-009): the fixture takes the request and writes nothing, so
@@ -3677,6 +3848,188 @@ async function scenarioWalkthrough() {
         `the Settings row gone (${rowsBefore} rows before)`
       )
       return { before, captions, stripRows, checked }
+    })
+
+    // A tab group's saved form (TAB-16's desktop half, tabs-15): a folder whose tabs were closed
+    // as one keeps their pages and stays in the sidebar as a SAVED group – the folder's row with
+    // "saved" in its description, its pages listed under the unfolded header – and its Open
+    // brings them back as its tabs. Driven the way a user does it, through the native menus the
+    // hook picks from: the second fixture tab's row menu puts the tab in a new folder (the group
+    // editor bubble opens on the new folder and Escape closes it), the folder's own menu closes
+    // the folder (the tab goes, the folder stays saved with the page), a press on the header
+    // unfolds the kept page and a press on the page opens the folder again (the tab is back in
+    // it); Unpack Folder then leaves the tab loose and the first fixture tab is made active
+    // again, so the steps after find the sidebar with the rows it had.
+    await s.step('saved-group', async () => {
+      await s.reset()
+      const second = bootSite.second
+      const rowsBefore = await s.sidebarTabCount()
+      const activeBefore = await s.activeTabId()
+      const headers = s.chrome.locator('[data-tab-folder]')
+      if (await headers.count()) {
+        throw new Error(`${await headers.count()} folder(s) in the sidebar before the step`)
+      }
+      const row = sidebarRow(s, second.title)
+      await row.waitFor({ state: 'visible', timeout: 5000 })
+      const tabIdBefore = await row.getAttribute('data-tab-id')
+      /** The folder as the app state has it: its live members and the pages it keeps. */
+      const folderState = (folderId) =>
+        s.chrome.evaluate(async (id) => {
+          const state = await window.zen.invoke('app.getState')
+          const folder = state.folders?.[id]
+          if (!folder) return null
+          const members = Object.values(state.tabs)
+            .filter((t) => t.folderId === id)
+            .map((t) => ({ id: t.id, url: t.url }))
+          const space = state.spaces.find((sp) => sp.id === state.activeSpaceId)
+          return {
+            name: folder.name,
+            collapsed: folder.collapsed,
+            savedTabs: (folder.savedTabs ?? []).map((p) => ({ url: p.url, title: p.title })),
+            members,
+            activeTabId: space?.activeTabId ?? null
+          }
+        }, folderId)
+
+      // 1. The row's menu: Add Tab to New Folder (the space has no folder yet, so the item is
+      // the plain one; with folders it is Move to Folder › New Folder…).
+      const added = await pickFromNextMenu(s, 'Add Tab to New Folder', () =>
+        row.click({ button: 'right', timeout: 5000 })
+      )
+      const header = headers.first()
+      await header.waitFor({ state: 'visible', timeout: 8000 })
+      const folderId = await header.getAttribute('data-tab-folder')
+      const editor = s.chrome.locator(`[data-group-editor="${folderId}"]`).first()
+      await editor.waitFor({ state: 'visible', timeout: 5000 })
+      await s.press('Escape')
+      await editor.waitFor({ state: 'hidden', timeout: 5000 })
+      const shell = s.chrome.locator('.zen-group-fold').filter({ has: header }).first()
+      // The tab's row stands under the header, in the folder's own tablist.
+      await waitFor(
+        async () =>
+          (await shell.locator(`[data-tab-id="${tabIdBefore}"]`).count()) === 1 ? true : null,
+        5000,
+        "the tab's row under the folder's header"
+      )
+      const open = await folderState(folderId)
+      if (!open || open.members.length !== 1 || open.members[0].id !== tabIdBefore) {
+        throw new Error(`the new folder does not hold the tab: ${JSON.stringify(open)}`)
+      }
+      const openDescription = await header.getAttribute('aria-description')
+      if (openDescription !== 'Folder, 1 tab') {
+        throw new Error(`the open folder's description reads "${openDescription}"`)
+      }
+      if (await header.getAttribute('data-saved')) {
+        throw new Error('the folder reads as saved while its tab is open')
+      }
+
+      // 2. The folder's menu: Close Folder (1 Tab) – the tab closes, the folder stays SAVED
+      // with the page, folded (Chrome's saved-group chip).
+      await pickFromNextMenu(s, 'Close Folder (1 Tab)', () =>
+        header.click({ button: 'right', timeout: 5000 })
+      )
+      await waitFor(
+        async () => ((await header.getAttribute('data-saved')) !== null ? true : null),
+        8000,
+        'the folder header marked saved'
+      )
+      await waitFor(
+        async () => ((await s.sidebarTabCount()) === rowsBefore - 1 ? true : null),
+        8000,
+        `the closed tab's row gone (${rowsBefore} rows before)`
+      )
+      const saved = await folderState(folderId)
+      if (
+        !saved ||
+        saved.members.length !== 0 ||
+        saved.savedTabs.length !== 1 ||
+        saved.savedTabs[0].url !== second.url ||
+        !saved.collapsed
+      ) {
+        throw new Error(`the closed folder is not saved with the page: ${JSON.stringify(saved)}`)
+      }
+      const savedDescription = await header.getAttribute('aria-description')
+      if (savedDescription !== 'Folder, saved, 1 tab') {
+        throw new Error(`the saved folder's description reads "${savedDescription}"`)
+      }
+      const kind = await shell.getAttribute('data-group-kind')
+      if (kind !== 'saved') throw new Error(`the folder's row kind is "${kind}", expected "saved"`)
+      if ((await s.tabs()).some((t) => t.url.startsWith(second.url))) {
+        throw new Error("the folder's tab is still open after Close Folder")
+      }
+      await s.shot('08d-saved-group')
+
+      // 3. The header unfolds the kept page; the page opens the folder: the tab is back in it,
+      // active, the folder open again.
+      await header.click({ timeout: 5000 })
+      const pages = s.chrome.locator(`[data-saved-pages="${folderId}"] [data-saved-page]`)
+      await pages.first().waitFor({ state: 'visible', timeout: 5000 })
+      const pageTitle = (
+        (await pages.first().locator('[data-testid="saved-page-title"]').textContent()) ?? ''
+      ).trim()
+      if ((await pages.count()) !== 1 || pageTitle !== second.title) {
+        throw new Error(`the saved pages read ${await pages.count()} row(s), "${pageTitle}"`)
+      }
+      await s.shot('08e-saved-group-pages')
+      await pages.first().click({ timeout: 5000 })
+      const back = await s.waitForTab(second.url, 15000)
+      await waitFor(
+        async () => ((await header.getAttribute('data-saved')) === null ? true : null),
+        8000,
+        'the folder header open again'
+      )
+      await waitFor(
+        async () => ((await s.sidebarTabCount()) === rowsBefore ? true : null),
+        8000,
+        `the page's row back (${rowsBefore} rows before)`
+      )
+      const reopened = await folderState(folderId)
+      if (
+        !reopened ||
+        reopened.members.length !== 1 ||
+        reopened.members[0].url !== second.url ||
+        reopened.savedTabs.length !== 0 ||
+        reopened.activeTabId !== reopened.members[0].id
+      ) {
+        throw new Error(
+          `Open did not bring the page back as the folder's active tab: ${JSON.stringify(reopened)}`
+        )
+      }
+      if ((await shell.locator(`[data-tab-id="${reopened.members[0].id}"]`).count()) !== 1) {
+        throw new Error("the reopened tab's row is not under the folder's header")
+      }
+
+      // 4. Unpack Folder: the folder goes, the tab stays loose; the first fixture tab active
+      // again, as the step found it.
+      await pickFromNextMenu(s, 'Unpack Folder', () =>
+        header.click({ button: 'right', timeout: 5000 })
+      )
+      await headers.first().waitFor({ state: 'hidden', timeout: 8000 })
+      if ((await s.sidebarTabCount()) !== rowsBefore) {
+        throw new Error(`${await s.sidebarTabCount()} rows after Unpack, ${rowsBefore} before`)
+      }
+      if (!(await s.tabs()).some((t) => t.url.startsWith(second.url))) {
+        throw new Error('the unpacked tab is gone')
+      }
+      await sidebarRow(s, page.title).click({ timeout: 5000 })
+      await waitFor(
+        async () => {
+          const active = await s.activeTabId()
+          return active && active !== reopened.members[0].id ? active : null
+        },
+        8000,
+        'the first fixture tab active again'
+      )
+      return {
+        menu: added.labels,
+        folderId,
+        tabBefore: tabIdBefore,
+        tabAfter: back.id,
+        saved,
+        reopened,
+        activeBefore,
+        activeAfter: await s.activeTabId()
+      }
     })
 
     await s.step('context-menu', async () => {
