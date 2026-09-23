@@ -26,8 +26,6 @@ name: Android fullscreen video demo
 # file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-fullscreen-motion-3740]
 
 permissions:
   contents: read
