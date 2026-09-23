@@ -33,7 +33,7 @@ const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
 const { TOOLBAR_STROKE } = await import('../v2/controls')
 const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
-const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { closeSiteInfo, openSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 const { DEFAULT_PAGE_CONTROLS } = await import('@shared/pageControls')
 
@@ -193,7 +193,7 @@ function expectChip(el: HTMLElement, label: string): void {
 beforeEach(() => {
   uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null, blockedPopupsPanel: null })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
-  siteInfoStore.set({ tabId: null, anchor: null })
+  siteInfoStore.set({ tabId: null, anchor: null, level: 'overview', openedBy: null })
   invoke.mockClear()
 })
 
@@ -291,11 +291,21 @@ describe('desktop pill (NavRow)', () => {
     expect(chip('Reader View').hasAttribute('aria-haspopup')).toBe(false)
     expect(chip('Reader View').getAttribute('aria-pressed')).toBe('false')
 
-    act(() => uiStore.set({ siteInfoOpen: true }))
+    // The site information reads open on the chip that opened it (§9.20; `openedBy`), not on
+    // every chip that could have.
+    act(() => {
+      uiStore.set({ siteInfoOpen: true })
+      siteInfoStore.set({ tabId: 't1', openedBy: 'site' })
+    })
     expect(chip('Site information').getAttribute('aria-expanded')).toBe('true')
     expect(chip('Boost this site').getAttribute('aria-expanded')).toBe('false')
+    act(() => siteInfoStore.set({ openedBy: null }))
+    expect(chip('Site information').getAttribute('aria-expanded')).toBe('false')
 
-    act(() => uiStore.set({ siteInfoOpen: false, overlay: 'boosts' }))
+    act(() => {
+      uiStore.set({ siteInfoOpen: false, overlay: 'boosts' })
+      siteInfoStore.set({ tabId: null })
+    })
     expect(chip('Site information').getAttribute('aria-expanded')).toBe('false')
     expect(chip('Boost this site').getAttribute('aria-expanded')).toBe('true')
 
@@ -385,9 +395,10 @@ describe('desktop pill (NavRow)', () => {
     expect(one.getAttribute('aria-expanded')).toBe('false')
   })
 
-  // omnibox-38: the pill's word on the page's live capture and on the permissions the user
-  // blocked on the site, both leading to the site information's Permissions level.
-  describe('the in-use chip and the blocked-permission icons (omnibox-38)', () => {
+  // omnibox-38 (design language v2 §9.29): the pill's word on the page's live capture and on
+  // the permissions the user blocked on the site is the site-information slot's glyph – one
+  // state at a time, never a second chip – leading to the site information's Permissions level.
+  describe('the site-information slot’s state glyph (omnibox-38)', () => {
     const using = (capture: Tab['capture']): Tab => tab(page.url, { readerable: true, capture })
     /** The state with the site's stored decisions. */
     const withRules = (t: Tab, rules: UIState['permissionRules']): UIState => ({
@@ -402,47 +413,76 @@ describe('desktop pill (NavRow)', () => {
       permission,
       decision: 'deny'
     })
+    /** The state with the blocking engine on: the shield is in the pill beside the slot. */
+    const withShield = (s: UIState): UIState =>
+      ({
+        ...s,
+        capabilities: { ...s.capabilities, requestBlocking: true },
+        settings: { ...s.settings, blocking: { level: 'standard' } },
+        blocking: { enabled: true, siteExceptions: [] }
+      }) as unknown as UIState
+    const slotOf = (el: HTMLElement): HTMLElement =>
+      el.querySelector<HTMLElement>('[data-site-chip]')!
+    const chipLabels = (el: HTMLElement): (string | null)[] =>
+      labels(Array.from(el.querySelectorAll<HTMLElement>('[data-pill-chip]')))
+    /** The token the slot's ink comes from: the class the chip carries, once, with no opacity over it. */
+    const inkOf = (chip: HTMLElement): string[] =>
+      chip.className.split(/\s+/).filter((c) => /^text-\[var\(--v2-/.test(c))
+    /** A rest opacity on the chip (a `focus-visible:` lift is the chassis's and no rest state). */
+    const restOpacity = (chip: HTMLElement): string[] =>
+      chip.className.split(/\s+/).filter((c) => /^opacity-/.test(c))
 
-    it('shows the in-use chip while the page captures, named and drawn for what it holds', () => {
+    it('swaps the glyph for the camera / microphone / screen the page is using, at full ink, named for what it holds', () => {
       const call = using({ camera: true, microphone: true, display: false })
       const el = render(<NavRow state={state(call)} tab={call} compact={false} />)
-      const chip = el.querySelector<HTMLElement>('[data-capture-chip]')!
-      expectChip(chip, 'This page is using your camera and microphone')
-      expect(chip.getAttribute('data-capture-chip')).toBe('camera')
-      // The chrome tooltip (a11y-26, §9.31) carries the name; never a native title.
-      expect(chip.getAttribute('data-tooltip')).toBe(
+      const slot = slotOf(el)
+      expectChip(slot, 'Site information · This page is using your camera and microphone')
+      expect(slot.getAttribute('data-slot-state')).toBe('capture')
+      expect(slot.getAttribute('data-slot-glyph')).toBe('camera')
+      expect(slot.querySelector('svg.lucide-camera')).not.toBeNull()
+      expect(slot.querySelector('svg.lucide-lock')).toBeNull()
+      // The chrome tooltip (a11y-26) carries the state's name; never a native title.
+      expect(slot.getAttribute('data-tooltip')).toBe(
         'This page is using your camera and microphone'
       )
-      expect(chip.hasAttribute('title')).toBe(false)
-      expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
-      expect(chip.getAttribute('aria-expanded')).toBe('false')
-      // The shield's chassis (§9.3's 28 px icon button in the window family), its glyph at the
-      // row's stroke.
-      expect(chip.classList.contains('zen-v2-blocked-chip')).toBe(true)
-      expect(chip.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
-      // In the tab order right after the site icon, before the tools.
-      const pill = el.querySelector<HTMLElement>('[role="group"]')!
-      expect(labels(focusable(pill).slice(1, 3))).toEqual([
-        'Site information',
-        'This page is using your camera and microphone'
-      ])
+      expect(slot.hasAttribute('title')).toBe(false)
+      expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(slot.getAttribute('aria-expanded')).toBe('false')
+      // §9.19's 16 glyph in the 24 box, at the row's stroke.
+      expect(slot.classList.contains('h-6')).toBe(true)
+      expect(slot.querySelector('svg')?.classList.contains('h-4')).toBe(true)
+      expect(slot.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
+      // A live state is full ink, and no coloured mark (the tab row's dot says recording).
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+      expect(restOpacity(slot)).toEqual([])
+      expect(slot.className).not.toContain('--v2-danger')
 
       const mic = using({ camera: false, microphone: true, display: false })
       act(() => root!.render(<NavRow state={state(mic)} tab={mic} compact={false} />))
-      expect(chip.getAttribute('data-capture-chip')).toBe('microphone')
-      expect(chip.getAttribute('aria-label')).toBe('This page is using your microphone')
+      expect(slot.getAttribute('data-slot-glyph')).toBe('microphone')
+      expect(slot.getAttribute('aria-label')).toBe(
+        'Site information · This page is using your microphone'
+      )
+      expect(slot.querySelector('svg.lucide-mic')).not.toBeNull()
 
       const share = using({ camera: false, microphone: false, display: true })
       act(() => root!.render(<NavRow state={state(share)} tab={share} compact={false} />))
-      expect(chip.getAttribute('data-capture-chip')).toBe('display')
-      expect(chip.getAttribute('aria-label')).toBe('This page is sharing your screen')
+      expect(slot.getAttribute('data-slot-glyph')).toBe('display')
+      expect(slot.getAttribute('aria-label')).toBe(
+        'Site information · This page is sharing your screen'
+      )
+      expect(slot.querySelector('svg.lucide-screen-share')).not.toBeNull()
 
-      // Nothing captured: no chip.
+      // Nothing captured: the connection's glyph, the plain name, the tooltip on the connection.
       act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
-      expect(el.querySelector('[data-capture-chip]')).toBeNull()
+      expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      expect(slot.hasAttribute('data-slot-glyph')).toBe(false)
+      expect(slot.getAttribute('aria-label')).toBe('Site information')
+      expect(slot.getAttribute('data-tooltip')).toBe('Connection is secure · Site information')
+      expect(slot.querySelector('svg.lucide-lock')).not.toBeNull()
     })
 
-    it('shows a crossed-out icon at rest for each permission the user blocked on the site', () => {
+    it('draws the first blocked permission’s crossed-out glyph at rest, at the slot’s 69 % ink, the name listing every one', () => {
       const rules = [
         deny('notifications'),
         deny('camera'),
@@ -450,61 +490,170 @@ describe('desktop pill (NavRow)', () => {
         { origin: 'https://example.com', permission: 'microphone', decision: 'allow' as const }
       ]
       const el = render(<NavRow state={withRules(page, rules)} tab={page} compact={false} />)
-      const icons = Array.from(el.querySelectorAll<HTMLElement>('[data-blocked-permission]'))
-      // The pill's order, whatever the rules': camera, microphone, location, notifications.
-      expect(icons.map((i) => i.getAttribute('data-blocked-permission'))).toEqual([
-        'camera',
-        'notifications'
-      ])
-      expect(labels(icons)).toEqual(['Camera blocked', 'Notifications blocked'])
-      for (const icon of icons) {
-        expectChip(icon, icon.getAttribute('aria-label')!)
-        expect(icon.getAttribute('data-tooltip')).toBe(icon.getAttribute('aria-label'))
-        expect(icon.hasAttribute('title')).toBe(false)
-        expect(icon.getAttribute('aria-haspopup')).toBe('dialog')
-        expect(icon.classList.contains('zen-v2-blocked-chip')).toBe(true)
-        expect(icon.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
-      }
-      // An allow is no icon, nor is a block on another site.
-      expect(el.querySelector('[data-blocked-permission="microphone"]')).toBeNull()
-      expect(el.querySelector('[data-blocked-permission="geolocation"]')).toBeNull()
-      // The block lifted: the icon goes.
+      const slot = slotOf(el)
+      // The pill's order, whatever the rules': the camera's glyph leads; an allow and another
+      // site's block are no state.
+      expectChip(slot, 'Site information · Camera and notifications blocked')
+      expect(slot.getAttribute('data-slot-state')).toBe('blocked')
+      expect(slot.getAttribute('data-slot-glyph')).toBe('camera-off')
+      expect(slot.querySelector('svg.lucide-camera-off')).not.toBeNull()
+      expect(slot.getAttribute('data-tooltip')).toBe('Camera and notifications blocked')
+      expect(slot.hasAttribute('title')).toBe(false)
+      expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(slot.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
+      // A standing decision rests at the deemphasised ink, the token's own alpha once.
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      expect(restOpacity(slot)).toEqual([])
+      // No second chip for it anywhere in the pill.
+      expect(el.querySelectorAll('[data-blocked-permission], [data-capture-chip]').length).toBe(0)
+      // The block lifted: the glyph and the name follow.
       act(() =>
         root!.render(
-          <NavRow state={withRules(page, [deny('camera')])} tab={page} compact={false} />
+          <NavRow state={withRules(page, [deny('notifications')])} tab={page} compact={false} />
         )
       )
-      expect(labels(Array.from(el.querySelectorAll('[data-blocked-permission]')))).toEqual([
-        'Camera blocked'
-      ])
+      expect(slot.getAttribute('data-slot-glyph')).toBe('notifications-off')
+      expect(slot.getAttribute('aria-label')).toBe('Site information · Notifications blocked')
+      expect(slot.querySelector('svg.lucide-bell-off')).not.toBeNull()
+      act(() => root!.render(<NavRow state={withRules(page, [])} tab={page} compact={false} />))
+      expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      expect(slot.getAttribute('aria-label')).toBe('Site information')
     })
 
-    it('opens the site information on its Permissions level from either chip, and hands the keyboard back to it', async () => {
+    it('shows one state at a time: a certificate error over a capture, a capture over a block', () => {
       const call = using({ camera: true, microphone: false, display: false })
       const el = render(
         <NavRow state={withRules(call, [deny('microphone')])} tab={call} compact={false} />
       )
-      const inUse = el.querySelector<HTMLElement>('[data-capture-chip]')!
-      await openFromChip(inUse)
+      const slot = slotOf(el)
+      // Live beats standing: the camera, not the crossed-out microphone.
+      expect(slot.getAttribute('data-slot-glyph')).toBe('camera')
+      expect(slot.getAttribute('aria-label')).toBe(
+        'Site information · This page is using your camera'
+      )
+      // The identity in question beats both: the danger glyph in the danger ink, the state's
+      // name gone with the state.
+      const broken = tab(page.url, {
+        readerable: true,
+        capture: { camera: true, microphone: false, display: false },
+        certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+      })
+      act(() =>
+        root!.render(
+          <NavRow state={withRules(broken, [deny('microphone')])} tab={broken} compact={false} />
+        )
+      )
+      expect(slot.getAttribute('data-indicator')).toBe('certificate-error')
+      expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      expect(slot.getAttribute('aria-label')).toBe('Site information')
+      expect(slot.querySelector('svg.lucide-triangle-alert')).not.toBeNull()
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+      expect(restOpacity(slot)).toEqual([])
+      // The "Not secure" label is the label's own and stays beside it.
+      expect(el.querySelector('.zen-pill-label')?.textContent).toBe('Not secure')
+    })
+
+    it('adds nothing to the pill: the same chips, in the same order, with a state as at rest', () => {
+      const rest = render(<NavRow state={withShield(state(page))} tab={page} compact={false} />)
+      const atRest = chipLabels(rest)
+      expect(atRest[0]).toBe('Site information')
+      const call = using({ camera: true, microphone: true, display: false })
+      act(() =>
+        root!.render(
+          <NavRow
+            state={withShield(withRules(call, [deny('geolocation')]))}
+            tab={call}
+            compact={false}
+          />
+        )
+      )
+      const withState = chipLabels(rest)
+      expect(withState.length).toBe(atRest.length)
+      expect(withState.slice(1)).toEqual(atRest.slice(1))
+      expect(withState[0]).toBe('Site information · This page is using your camera and microphone')
+      // The slot keeps its 24 box (§9.19): the address's room at the 240 sidebar is what it was.
+      const slot = slotOf(rest)
+      expect(slot.classList.contains('w-6')).toBe(true)
+      expect(slot.classList.contains('-ml-1')).toBe(true)
+      expect(rest.querySelectorAll('.zen-v2-blocked-chip').length).toBe(1)
+    })
+
+    it('opens the site information on its Permissions level from a state, the overview from the connection, and hands the keyboard back', async () => {
+      const call = using({ camera: true, microphone: false, display: false })
+      const el = render(
+        <NavRow state={withRules(call, [deny('microphone')])} tab={call} compact={false} />
+      )
+      const slot = slotOf(el)
+      await openFromChip(slot)
       expect(siteInfoStore.get().tabId).toBe('t1')
       expect(siteInfoStore.get().level).toBe('permissions')
+      expect(siteInfoStore.get().openedBy).toBe('site')
       expect(uiStore.get().urlbar.open).toBe(false)
-      expect(inUse.getAttribute('aria-expanded')).toBe('true')
+      expect(slot.getAttribute('aria-expanded')).toBe('true')
       await dismiss()
-      expect(document.activeElement).toBe(inUse)
+      expect(document.activeElement).toBe(slot)
       expect(siteInfoStore.get().level).toBe('overview')
+      expect(siteInfoStore.get().openedBy).toBeNull()
+      expect(slot.getAttribute('aria-expanded')).toBe('false')
 
-      const blocked = el.querySelector<HTMLElement>('[data-blocked-permission="microphone"]')!
-      await openFromChip(blocked)
+      // A block alone leads to Permissions as well.
+      act(() =>
+        root!.render(
+          <NavRow state={withRules(page, [deny('microphone')])} tab={page} compact={false} />
+        )
+      )
+      await openFromChip(slot)
       expect(siteInfoStore.get().level).toBe('permissions')
-      expect(blocked.getAttribute('aria-expanded')).toBe('true')
       await dismiss()
-      expect(document.activeElement).toBe(blocked)
+      expect(document.activeElement).toBe(slot)
 
-      // The site icon still opens the overview.
-      const site = el.querySelector<HTMLElement>('[aria-label="Site information"]')!
-      await openFromChip(site)
+      // The connection's glyph still opens the overview.
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      expect(slot.getAttribute('aria-label')).toBe('Site information')
+      await openFromChip(slot)
       expect(siteInfoStore.get().level).toBe('overview')
+      await dismiss()
+    })
+
+    it('has one pressed anchor: the chip that opened the popover, and no other', async () => {
+      const el = render(<NavRow state={withShield(state(page))} tab={page} compact={false} />)
+      const slot = slotOf(el)
+      const shield = el.querySelector<HTMLElement>('.zen-v2-blocked-chip')!
+      expect(shield.getAttribute('aria-expanded')).toBe('false')
+      expect(slot.getAttribute('aria-expanded')).toBe('false')
+      // The pressed fill is the window control's (`--v2-control-fill-hover` at full ink), on
+      // the opener alone – the class itself, not its `hover:` variant, which every chip carries.
+      const hasPressedFill = (chip: HTMLElement): boolean =>
+        chip.className.split(/\s+/).includes('bg-[var(--v2-control-fill-hover)]')
+
+      await openFromChip(slot)
+      expect(siteInfoStore.get().openedBy).toBe('site')
+      expect(slot.getAttribute('aria-expanded')).toBe('true')
+      expect(shield.getAttribute('aria-expanded')).toBe('false')
+      expect(hasPressedFill(slot)).toBe(true)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+      expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(1)
+      await dismiss()
+      expect(hasPressedFill(slot)).toBe(false)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(0)
+
+      await openFromChip(shield)
+      expect(siteInfoStore.get().openedBy).toBe('shield')
+      expect(shield.getAttribute('aria-expanded')).toBe('true')
+      expect(slot.getAttribute('aria-expanded')).toBe('false')
+      expect(hasPressedFill(slot)).toBe(false)
+      expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(1)
+      await dismiss()
+      expect(document.activeElement).toBe(shield)
+
+      // Opened with no chip (the app menu's Page info): nothing in the pill reads pressed.
+      await act(async () => {
+        await openSiteInfo(page)
+        await vi.waitFor(() => expect(uiStore.get().siteInfoOpen).toBe(true))
+      })
+      expect(siteInfoStore.get().openedBy).toBeNull()
+      expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(0)
       await dismiss()
     })
   })
