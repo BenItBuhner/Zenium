@@ -42,7 +42,7 @@ import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { siteChipName, siteSlotState, type SiteSlotState } from '@renderer/lib/siteChips'
-import { openSiteInfo } from '@renderer/lib/siteInfo'
+import { openSiteInfo, siteInfoAnchoredOn, siteInfoStore } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
 import {
@@ -177,8 +177,10 @@ export function NavRow({
   const row = useRef<HTMLDivElement>(null)
   const rowWidth = useElementWidth(row)
   const downloadsUiState = downloadsUi.use()
-  // What the chips have open, for their `aria-expanded`.
-  const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
+  // What the chips have open, for their `aria-expanded`. The site information's anchor is the
+  // one chip that opened it (§9.20; `siteInfoStore.openedBy`): the slot here, or the shield –
+  // never both for one popover.
+  const siteAnchored = siteInfoStore.use((s) => siteInfoAnchoredOn(s, 'site'))
   const boostsOpen = uiStore.use((s) => s.overlay === 'boosts')
   const blockedOpen = uiStore.use(
     (s) => s.blockedPopupsPanel !== null && s.blockedPopupsPanel.tabId === tab?.id
@@ -523,7 +525,7 @@ export function NavRow({
                 label={siteChipName(slot)}
                 title={slot ? slot.label : indicator.title}
                 popup="dialog"
-                expanded={siteInfoOpen}
+                expanded={siteAnchored}
                 data-site-chip=""
                 data-indicator={indicator.state}
                 data-slot-state={slot?.kind ?? 'connection'}
@@ -531,7 +533,9 @@ export function NavRow({
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] hover:opacity-100',
                   indicator.state === 'certificate-error' && 'text-[var(--v2-danger)] opacity-100',
-                  extension && 'opacity-100'
+                  extension && 'opacity-100',
+                  // The anchor keeps the window control's pressed fill while its popover is up.
+                  siteAnchored && 'bg-[var(--v2-control-fill-hover)] opacity-100'
                 )}
                 onActivate={(e) => {
                   const chip = e.currentTarget
@@ -542,7 +546,7 @@ export function NavRow({
                     tab,
                     { x: r.left, y: r.top, width: r.width, height: r.height },
                     chip,
-                    { level: slot ? 'permissions' : 'overview' }
+                    { level: slot ? 'permissions' : 'overview', by: 'site' }
                   )
                 }}
               >
