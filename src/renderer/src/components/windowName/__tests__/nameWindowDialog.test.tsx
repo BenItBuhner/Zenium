@@ -166,10 +166,11 @@ describe('the Name window prompt', () => {
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
   })
 
-  it('starts empty for a window without a name', async () => {
+  it('starts empty for a window without a name – no placeholder, as Chrome’s field; the aria-label names it', async () => {
     await open(null)
     expect(field().value).toBe('')
-    expect(field().placeholder).toBe('Window name')
+    expect(field().hasAttribute('placeholder')).toBe(false)
+    expect(field().getAttribute('aria-label')).toBe('Window name')
   })
 
   it('Enter saves the trimmed name through window.setName and closes, the page taking the keyboard back', async () => {

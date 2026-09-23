@@ -21,9 +21,11 @@ import { wrapTab } from '../bookmarks/popover'
  * intrinsic widths. The answer is the core's `window.setName`; the title bar and tab search
  * follow from there.
  *
- * Built on the frame-dialog host with the same rules as W4-1's `ConfirmDialog` (container
- * focus, Enter as the default, one hop back to the page) – a candidate to move onto that export
- * once it lands.
+ * Built on the frame-dialog host with W4-1's `ConfirmDialog`'s rules for the keyboard (Enter as
+ * the default, one hop back to the page) less its container focus: a form focuses its first
+ * field, the value selected, as this one does. The field carries no placeholder – Chrome's is
+ * empty, and the label as a placeholder said nothing the `aria-label` does not. A candidate to
+ * move onto that export once it grows a field slot.
  */
 export function NameWindowDialog({ state }: { state: UIState }): JSX.Element | null {
   const open = uiStore.use((s) => s.nameWindowOpen)
@@ -86,7 +88,6 @@ function NameWindowView({ current }: { current: string | null }): JSX.Element {
           maxLength={WINDOW_NAME_MAX}
           spellCheck={false}
           autoComplete="off"
-          placeholder="Window name"
         />
         {/* The chassis's dialog footer: both buttons 96 wide at the least, the 8 between them. */}
         <div className="zen-bm-footer justify-end">
