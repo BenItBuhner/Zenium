@@ -591,28 +591,33 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      *
      * What stood, at 60 Hz on the preview host (the driver PR's local runs, on main's product
      * code before the fix): no cut, and not the cards' leave either. The frame shrinks on the gentle spring
-     * (293 -> 0 px over ~430 ms in the search scene, 285 -> 0 in the close's; its rest and unmount
-     * ~490 ms after the key, ~575 after the tap) with its cards' exits fading over it (~365 ms
-     * after the key, ~350 after the tap) – but its shell, put out of the flow as `position:
-     * absolute` at its `offsetTop`, is placed against the pane outside the scroller, so the box
-     * lands a `scrollTop` lower than the card stood (121 px there) and the tracker glides it down
-     * as it shrinks; and the tracker holds only the cells drawn under that lower box, so the row
-     * just below the group glides at once, under the shrinking frame, and the rows after it wait
-     * for the rest and glide then – two waves, the second starting ~445 ms after the first in the
-     * search scene and ~460 in the close's, everything still ~900 ms after the key, ~1 s after
-     * the tap. [leaveBox] reads the mechanism on the device: the grid's `scrollTop` against the
-     * shell's top before the input and one frame into the shrink.
+     * (293 -> 0 px over ~330-350 ms in the search scene, 285 -> 0 in the close's) with its cards'
+     * exits fading over it (~365 ms after the key, ~350 after the tap) – but its shell, put out
+     * of the flow as `position: absolute` at its `offsetTop`, is placed against the pane outside
+     * the scroller, so the box lands a `scrollTop` lower than the card stood (121 px there) and
+     * the tracker glides it down as it shrinks; and the tracker holds only the cells drawn under
+     * that lower box, so the row just below the group glides at once, under the shrinking frame,
+     * and the rows after it wait for the frame's rest and glide then (another ~420 ms) – two
+     * waves. Two baselines of it: before the fold's-tail fix (#351, `SpringAnimation.settle()`
+     * ending a dissolve on the frame its height reaches the floor) the frame's rest and unmount
+     * came ~490 ms after the key and ~575 after the tap, ~95 ms AFTER its cards' exits had
+     * finished, everything still ~925 ms after the key and ~1 s after the tap; with it (main
+     * since) they come a frame after the last visible height – ~375 / ~445 ms, a frame before
+     * the exits' end – and everything is still ~810 / ~880 ms: the same shape, ~115 ms shorter.
+     * [leaveBox] reads the mechanism on the device: the grid's `scrollTop` against the shell's
+     * top before the input and one frame into the shrink.
      *
-     * What stands with the fix (the same host, the same driver, two records each): the leave.
-     * The group's cell leaves the grid on the commit its cards are gone (~26 ms after the key,
-     * ~120 after the tap; no height is written) and the group's one exit – the frame with its
-     * cards drawn in it – fades where the card stood on the exit spring (23 frames, ~350 ms,
-     * 1 -> 0, from the commit's frame or the next) while every cell below glides up from that
-     * same commit (`releaseLagMs` 0, ~305 px in the search scene, ~297 in the close's, one
-     * spring, ~390-480 ms) – one wave, at rest ~450 ms after the key and ~600 after the tap, in
-     * place of ~925 and ~1000. The same for the last card swiped off (the frame leaves with its
-     * slot empty, `flown`): ~390 ms from the close, in place of ~880. [leaveNumbers] names the
-     * shape `leave`, and its `frameGhost*` fields read that exit.
+     * What stands with the fix (the same host, the same driver, two records each, against both
+     * baselines alike): the leave. The group's cell leaves the grid on the commit its cards are
+     * gone (~26 ms after the key, ~120 after the tap; no height is written) and the group's one
+     * exit – the frame with its cards drawn in it – fades where the card stood on the exit spring
+     * (23 frames, ~350 ms, 1 -> 0, from the commit's frame or the next) while every cell below
+     * glides up from that same commit (`releaseLagMs` 0, ~305 px in the search scene, ~297 in
+     * the close's, one spring, ~390-480 ms) – one wave, at rest ~450 ms after the key and ~600
+     * after the tap, in place of ~810 and ~880 (~925 and ~1000 before #351). The same for the
+     * last card swiped off (the frame leaves with its slot empty, `flown`): ~390 ms from the
+     * close, in place of ~760 (~880 before #351). [leaveNumbers] names the shape `leave`, and its
+     * `frameGhost*` fields read that exit.
      *
      * Each scene's line reads the frame against its cards' exits off the probe's timeline
      * ([leaveNumbers]). Afterwards the group's tabs are closed if any remain and the folder is
