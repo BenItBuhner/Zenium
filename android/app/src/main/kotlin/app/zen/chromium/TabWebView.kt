@@ -693,6 +693,20 @@ class TabWebView(
         postToPage(formsConfig())
     }
 
+    /**
+     * A hardware keyboard's Tab entering this page from the chrome ([FocusHandoff], A11Y-09): the
+     * view takes the keyboard, and out of touch mode WebView's own `requestFocus` has Blink land
+     * the document's initial focus on its first tabbable as a keyboard focus – the landing that
+     * matches `:focus-visible`, which a script's `focus()` after a touch would not (see
+     * [Host.onFocusLanding]) – then the page script confirms the first tabbable or moves to the
+     * last for a Shift+Tab (`focus` in `pageScript.ts`, `@shared/focusEdge`); in touch mode, where
+     * Blink places nothing, the script's landing is the whole of it. `edge` is `first` or `last`.
+     */
+    fun focusEdge(edge: String) {
+        requestFocus()
+        postToPage(json("type" to "focus", "edge" to edge).toString())
+    }
+
     /** Deliver a browser → page message (JSON text) over the reply proxy (or the legacy bridge). */
     fun postToPage(payload: String) {
         val proxy = replyProxy

@@ -160,7 +160,7 @@ function HostedMenulistSheet({ label, value, options, onPick, onClose }: PopupPr
         row carries `aria-checked`, which draws the glyph inside the radio; an option's second
         line (a model's size) is a §9.2 description under its label.
       */}
-      <div ref={rows} className="zen-v2 flex flex-col pb-1" role="radiogroup" aria-label={label}>
+      <div ref={rows} className="zen-v2 flex flex-col pb-2" role="radiogroup" aria-label={label}>
         {options.map((option) => (
           <button
             key={option.value}
