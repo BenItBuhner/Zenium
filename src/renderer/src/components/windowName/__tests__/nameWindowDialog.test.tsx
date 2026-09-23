@@ -8,8 +8,9 @@ import type { UIState } from '@shared/types'
  * Chrome's Name window prompt (shortcuts-menus-121, -149, context-menus-108;
  * components/windowName/NameWindowDialog.tsx): More Tools › Name Window… and the tab strip's row
  * reach the chrome as `windowName.open`, which `openNameWindow` answers with a §9.23 dialog at
- * §9.20's 320 on the frame's dialog host, its one field holding the window's current name,
- * focused and selected. Enter is Save – `window.setName` with the trimmed name, null for an
+ * §9.20's 400 (`POPOVER_WIDTH.form`, a form's width) on the frame's dialog host, its one field
+ * holding the window's current name, focused and selected, its footer the chassis's Cancel ·
+ * Save at 96 | 8 | 96. Enter is Save – `window.setName` with the trimmed name, null for an
  * emptied field – and Escape, Cancel and the scrim close it with nothing sent; every way out
  * hands the keyboard back to the page.
  */
@@ -123,13 +124,15 @@ afterEach(() => {
 })
 
 describe('the Name window prompt', () => {
-  it('is the §9.23 composition at 320 on the frame’s host: the title, one line on where the name shows, the field with the current name selected, Cancel then Save as the primary', async () => {
+  it('is the §9.23 composition at §9.20’s 400 on the frame’s host: the title, the sentence on where the name shows, the field with the current name selected, Cancel then Save as the primary at the chassis’s 96s', async () => {
     await open('Research')
     const d = dialog()!
     expect(d).not.toBeNull()
     expect(d.getAttribute('role')).toBe('dialog')
     expect(d.getAttribute('aria-modal')).toBe('true')
-    expect(d.style.width).toBe('320px')
+    // A form takes the `form` width (400): the description wraps to two lines at 368 where 288
+    // ran it to three, and the dialog stands 196 tall (the #396 review's A2, the lead's ruling 2).
+    expect(d.style.width).toBe('400px')
     expect(d.classList.contains('zen-bm-dialog')).toBe(true)
     const title = d.querySelector('.zen-bm-title')!
     expect(title.textContent).toBe('Name window')
@@ -152,6 +155,13 @@ describe('the Name window prompt', () => {
     expect(save.textContent).toBe('Save')
     expect(save.dataset.variant).toBe('primary')
     expect(save.type).toBe('submit')
+    // The footer is the chassis's 96 | 8 | 96 (`.zen-bm-footer`'s 8 gap; each button 96 at the
+    // least), not the buttons' intrinsic widths.
+    for (const button of [cancel, save]) {
+      expect(button.classList.contains('zen-button')).toBe(true)
+      expect(button.classList.contains('min-w-[96px]')).toBe(true)
+    }
+    expect(cancel.parentElement!.classList.contains('zen-bm-footer')).toBe(true)
     // The chrome took the keyboard for the field.
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
   })

@@ -10,11 +10,16 @@ import { wrapTab } from '../bookmarks/popover'
 
 /**
  * Chrome's Name window prompt (More tools › Name window…, the tab strip's row;
- * shortcuts-menus-121, -149, context-menus-108): a §9.23 dialog at §9.20's 320 on TabDialogs'
- * `FrameDialogHost`, over the page's picture, while `uiStore.nameWindowOpen` is set. One field
- * holding the window's current name, focused and selected so typing replaces it; Enter saves
- * (an emptied field clears the name, as Chrome's does), Escape and the scrim cancel, Tab wraps.
- * The answer is the core's `window.setName`; the title bar and tab search follow from there.
+ * shortcuts-menus-121, -149, context-menus-108): a §9.23 dialog at §9.20's 400 – the `form`
+ * width, a form's and a wrapping description's (at 288 the sentence under the title ran to three
+ * lines; at 368 it is two, and the dialog 196 tall); #392's 320 is for a prompt over another
+ * dialog, which this is not – on TabDialogs' `FrameDialogHost`, over the page's picture, while
+ * `uiStore.nameWindowOpen` is set. One field holding the window's current name, focused and
+ * selected so typing replaces it; Enter saves (an emptied field clears the name, as Chrome's
+ * does), Escape and the scrim cancel, Tab wraps. The footer is the chassis's Cancel · Save at
+ * 96 | 8 | 96 (§9.11's dialog footer, the settings dialogs' rule), not `.zen-bm-footer`'s
+ * intrinsic widths. The answer is the core's `window.setName`; the title bar and tab search
+ * follow from there.
  *
  * Built on the frame-dialog host with the same rules as W4-1's `ConfirmDialog` (container
  * focus, Enter as the default, one hop back to the page) – a candidate to move onto that export
@@ -53,7 +58,7 @@ function NameWindowView({ current }: { current: string | null }): JSX.Element {
       aria-describedby="zen-name-window-desc"
       data-name-window-dialog
       className="zen-animate-pop zen-bm-dialog flex max-w-[calc(100%-24px)] flex-col"
-      style={{ width: POPOVER_WIDTH.list }}
+      style={{ width: POPOVER_WIDTH.form }}
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => wrapTab(e, dialogRef.current)}
     >
@@ -83,11 +88,12 @@ function NameWindowView({ current }: { current: string | null }): JSX.Element {
           autoComplete="off"
           placeholder="Window name"
         />
+        {/* The chassis's dialog footer: both buttons 96 wide at the least, the 8 between them. */}
         <div className="zen-bm-footer justify-end">
-          <button type="button" className="zen-button" onClick={closeNameWindow}>
+          <button type="button" className="zen-button min-w-[96px]" onClick={closeNameWindow}>
             Cancel
           </button>
-          <button type="submit" className="zen-button" data-variant="primary">
+          <button type="submit" className="zen-button min-w-[96px]" data-variant="primary">
             Save
           </button>
         </div>
