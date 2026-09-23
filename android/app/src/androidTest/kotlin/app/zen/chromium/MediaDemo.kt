@@ -1,20 +1,30 @@
 package app.zen.chromium
 
+import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
+import android.app.Notification
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.KeyEvent
+import androidx.core.content.ContextCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
  * Records the media engine on the phone, Chrome Android's behaviour being the bar:
  *
+ *  0. the quiet notification ask (NOT-03): a page asking with no finger behind it gets the
+ *     bell-off glyph in the pill's slot, not a sheet; the bell's tap opens the sheet with the
+ *     quiet copy; Allow grants the site and, the first time, meets Android 13's one
+ *     POST_NOTIFICATIONS prompt for the whole app (revoked after the install for the run);
  *  1. a page playing a track with Media Session metadata -> the media notification (a foreground
  *     `mediaPlayback` service, audio focus), the system's media player in the shade worked with
  *     real fingers (Pause, Seek forward, Next track – the page's own handler –, Play), the
@@ -25,7 +35,12 @@ import org.junit.runner.RunWith
  *     fullscreen and Home – and the window closed with its X pausing the video;
  *  3. the Notification API: the page asks, the in-chrome prompt is answered with a finger, the
  *     notification lands under a channel of the site's own (the "Sites" group), and a finger on
- *     the card in the shade brings the tab up and reaches the page as `click`;
+ *     the card in the shade brings the tab up and reaches the page as `click`; then a page
+ *     using the microphone (NOT-13): the grant arms "<site> is using your microphone" on a
+ *     camera / microphone foreground service, the card stands while the app is behind, its
+ *     tap comes back to the tab, the page's Stop takes it down; and the Updates channel
+ *     (NOT-17): "Update available" whose tap opens Settings › Updates, "Update ready" in the
+ *     same card;
  *  4. private browsing: a private tab on its own profile (the normal profile's cookie is not
  *     there), the window secured while it shows (Chrome's FLAG_SECURE: the stills of that part
  *     are black by design), the "Close all private tabs" card in the shade under a finger, and
@@ -50,13 +65,131 @@ class MediaDemo : MediaDemoBase("services-android-media-android") {
     fun record() = recordWithServer()
 
     override fun demo() {
+        quietAskStep()
         audioStep()
         lockScreenStep()
         videoStep()
         notificationStep()
+        captureStep()
+        updatesStep()
         privateStep()
         closeStep()
         note("\ndone")
+    }
+
+    // --- 0. the quiet notification ask (NOT-03) ------------------------------------------------
+
+    /**
+     * A page's request with no finger behind it (the page asks at load) is Chrome's quiet ask:
+     * no sheet, the bell-off glyph in the pill's slot; the bell's tap opens the §9.23 sheet with
+     * the quiet copy; Allow grants the site and, the first time on Android 13+, brings the
+     * system's POST_NOTIFICATIONS prompt – once for the whole app, which is why this runs first
+     * with the permission revoked after the install (DEMO_REVOKE): the loud ask of step 4, on
+     * another origin, meets no second prompt, and every card after this has its permission. The
+     * site is the server on `localhost`, another origin than the loud scene's `127.0.0.1`, so
+     * each meets the core undecided.
+     */
+    private fun quietAskStep() {
+        note("\n0. the quiet notification ask (NOT-03): no gesture -> the bell in the pill, its tap -> the sheet, Allow -> the system's one prompt")
+        frontApp()
+        note("  POST_NOTIFICATIONS held before the first grant: ${notificationsPermitted()}; asked before: ${notificationsAsked()}")
+        coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"$QUIET_ORIGIN/notify?quiet=1"}""")
+        waitTitle(TAB, 20_000) { it.startsWith("NT|") && it.contains("asked:") }
+        val quiet = poll(10_000) { prompt()?.optBoolean("quiet") == true }
+        note("  page: ${describeTab(TAB)}; the core's prompt: ${prompt()} (quiet: $quiet)")
+        if (!quiet) touchFault("the page's gestureless request did not become a quiet prompt (page: ${title()})")
+        val sheetUp = waitFor("Keep blocking", 2_000) != null
+        note("  a sheet up for it unasked: $sheetUp (a quiet ask shows none until the bell is tapped)")
+        if (sheetUp) touchFault("the quiet ask opened a sheet without a tap on the bell")
+        SystemClock.sleep(1_000)
+        val bell = readBell()
+        note("  the bell in the pill: $bell")
+        if (bell.length() == 0) touchFault("the pill shows no bell-off glyph for the quiet ask")
+        shot("00a-quiet-bell")
+        beat()
+        setScheme("dark")
+        note("  the bell in the dark scheme: ${readBell()}")
+        shot("00b-quiet-bell-dark")
+        beat()
+        // A finger on the bell: the sheet with the quiet copy, the bell reading expanded.
+        val opened = touchTapLabelExpecting(NOTIFICATIONS_BLOCKED, "the quiet prompt's sheet opens", timeoutMs = 8_000) { readQuietSheet().length() > 0 }
+        if (opened) {
+            SystemClock.sleep(1_500)
+            note("  the sheet: ${readQuietSheet()}; the bell: ${readBell()}")
+            shot("00c-quiet-sheet-dark")
+            beat()
+            setScheme("light")
+            shot("00d-quiet-sheet")
+            beat()
+            // Allow with a finger: the quiet prompt is answered (gone from the queue) and the site allowed.
+            touchTapLabelExpecting("Allow", "the quiet prompt is answered", timeoutMs = 10_000) { prompt() == null }
+        } else {
+            setScheme("light")
+        }
+        // The first grant on Android 13+: the system's prompt for the app, once.
+        val system = awaitSystemWindow(8_000)
+        note("  Android 13's prompt after the first grant: ${if (system) "up (${ui.rootInActiveWindow?.packageName})" else "none (permission held: ${notificationsPermitted()}, asked before: ${notificationsAsked()})"}")
+        if (system) {
+            SystemClock.sleep(1_500)
+            shot("00e-android-13-prompt")
+            beat()
+            if (!touchInWindows("Allow", "the app may post", timeoutMs = 10_000, matches = { it.equals("Allow", ignoreCase = true) }) { notificationsPermitted() }) {
+                note("  the system prompt's Allow did not take; granting through the shell so the cards after this have their permission")
+                shell("pm grant ${app.packageName} android.permission.POST_NOTIFICATIONS")
+            }
+        } else if (!notificationsPermitted()) {
+            note("  no system prompt and no permission: granting through the shell so the cards after this have their permission")
+            shell("pm grant ${app.packageName} android.permission.POST_NOTIFICATIONS")
+        }
+        val granted = poll(10_000) { field("permission") == "granted" }
+        SystemClock.sleep(1_000)
+        note("  page: permission=${field("permission")} (granted within the wait: $granted); POST_NOTIFICATIONS held: ${notificationsPermitted()}; the app's one ask spent: ${notificationsAsked()}")
+        note("  rules for notifications: ${coreInvoke("permissions.listForPermission", """{"permission":"notifications"}""")}")
+        note("  the bell after the answer: ${readBell()} (none: the question is answered)")
+        if (readBell().length() != 0) touchFault("the bell stayed in the pill after the quiet prompt was answered")
+        if (ui.rootInActiveWindow?.packageName?.toString() != app.packageName) closeShade()
+        ensureForeground()
+        shot("00f-quiet-allowed")
+        beat()
+        // Back to the seeded page for step 1.
+        coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/audio"}""")
+        waitTitle(TAB, 20_000) { it.startsWith("MD|kind:audio") }
+        SystemClock.sleep(1_000)
+    }
+
+    private fun notificationsPermitted(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    /** The install's memory of the app's one notification ask (`Permissions.ensureNotificationsAllowed`). */
+    private fun notificationsAsked(): Boolean =
+        app.getSharedPreferences(Permissions.PREFS, Context.MODE_PRIVATE).getBoolean(Permissions.KEY_NOTIFICATIONS_ASKED, false)
+
+    private fun setScheme(scheme: String) {
+        coreInvoke("settings.update", """{"colorScheme":"$scheme"}""")
+        // The theme blends over 240 ms (v2 §11.6); the emulator's software GPU takes its time.
+        SystemClock.sleep(2_500)
+    }
+
+    /** The pill's bell-off chip (NOT-03) as the chrome draws it: its size, name, popup semantics and ink; empty when none. */
+    private fun readBell(): JSONObject {
+        val raw = chromeJsString(
+            "(function(){var c=document.querySelector('.zen-phone-pill:not(.zen-pill-ghost) [data-quiet-bell]');" +
+                "if(!c)return '';var r=c.getBoundingClientRect();" +
+                "return JSON.stringify({w:Math.round(r.width),h:Math.round(r.height),label:c.getAttribute('aria-label')||''," +
+                "popup:c.getAttribute('aria-haspopup')||'',expanded:c.getAttribute('aria-expanded')||'',opacity:getComputedStyle(c).opacity})})()"
+        ) ?: ""
+        return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+    }
+
+    /** The quiet prompt's sheet: its permission, title and the words on it; empty when none is up. */
+    private fun readQuietSheet(): JSONObject {
+        val raw = chromeJsString(
+            "(function(){var s=document.querySelector('[data-testid=\"permission-prompt\"][data-quiet=\"true\"]');if(!s)return '';" +
+                "var h=s.querySelector('h1,h2,h3');var buttons=[].map.call(s.querySelectorAll('button'),function(b){return (b.getAttribute('aria-label')||b.textContent||'').trim()}).filter(Boolean);" +
+                "return JSON.stringify({permission:s.getAttribute('data-permission')||'',title:h?h.textContent.trim():'',text:(s.textContent||'').replace(/\\s+/g,' ').trim().slice(0,220),buttons:buttons})})()"
+        ) ?: ""
+        return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
     }
 
     // --- 1. background audio and the media notification -----------------------------------------
@@ -358,6 +491,167 @@ class MediaDemo : MediaDemoBase("services-android-media-android") {
         SystemClock.sleep(1_500)
     }
 
+    // --- 4b. a page using the microphone (NOT-13) -----------------------------------------------
+
+    /**
+     * "<site> is using your microphone": the grant arms the card (a camera / microphone foreground
+     * service, the capture kept alive behind other apps), the page's report confirms it, the card
+     * stands in the shade while the app is behind, its tap comes back to the tab, and the page's
+     * Stop takes it down with the service. The emulator has no camera (`-camera-* none`), so the
+     * microphone alone; its audio backend records silence, which is a capture all the same.
+     */
+    private fun captureStep() {
+        note("\n4b. a page using the microphone (NOT-13): the grant arms the card, the page confirms it, the tap comes back, the stop takes it down")
+        frontApp()
+        coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/capture"}""")
+        waitTitle(TAB, 20_000) { it.startsWith("CP|") }
+        SystemClock.sleep(1_000)
+        note("  page: ${describeTab(TAB)}; card before the ask: ${describe(activeNotification(CaptureService.NOTIFICATION_ID))}")
+        shot("23a-capture-page")
+        beat()
+        tapPageButton("mic", "Use microphone", "the core shows the microphone prompt", 15_000) { prompt() != null }
+        note("  prompt: ${prompt()}")
+        if (prompt() != null) {
+            waitFor("Allow", 8_000)
+            SystemClock.sleep(1_200)
+            shot("23b-capture-prompt")
+            beat()
+            touchTapLabelExpecting("Allow", "the site may use the microphone", timeoutMs = 15_000) { prompt() == null }
+        }
+        val sbn = awaitNotification(CaptureService.NOTIFICATION_ID, 15_000)
+        val captured = poll(15_000) { field("capture") == "audio" || field("error") != "none" }
+        note("  page: capture=${field("capture")} error=${field("error")} (settled within the wait: $captured)")
+        note("  capture card: ${describe(sbn)}; service in the foreground: ${CaptureService.inForeground} type=${CaptureService.foregroundType}; ledger: ${host.capture.cards()}")
+        if (sbn == null) touchFault("no capture card came up for the microphone grant")
+        if (field("capture") != "audio") note("  the page holds no track (${field("error")}): the card rests on the grant and leaves at the confirm window's end")
+        val channel = sbn?.notification?.channelId?.let { notificationManager.getNotificationChannel(it) }
+        note("  channel: id=${channel?.id} name=\"${channel?.name}\" importance=${channel?.importance} description=\"${channel?.description}\"")
+        val cardTitle = sbn?.notification?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+            ?: CaptureLedger.card(TAB, "${server.origin}/capture", CaptureUse.MICROPHONE, private = false).title
+        if (sbn != null && openShade { it.startsWith(cardTitle) }) {
+            SystemClock.sleep(1_500)
+            shot("23c-capture-shade")
+            beat()
+            closeShade()
+            shell("cmd uimode night yes")
+            SystemClock.sleep(2_500)
+            if (openShade { it.startsWith(cardTitle) }) {
+                SystemClock.sleep(1_500)
+                shot("23d-capture-shade-dark")
+                beat()
+            }
+            closeShade()
+            shell("cmd uimode night no")
+            SystemClock.sleep(2_500)
+            // Home: the capture goes on behind the launcher on the service; the card's tap brings the tab back.
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+            val away = poll(6_000) { ui.rootInActiveWindow?.packageName?.toString() != app.packageName }
+            SystemClock.sleep(2_000)
+            note("  Home (away: $away): page capture=${field("capture")}; card: ${describe(activeNotification(CaptureService.NOTIFICATION_ID))}; service in the foreground: ${CaptureService.inForeground}")
+            if (openShade { it.startsWith(cardTitle) }) {
+                SystemClock.sleep(1_000)
+                touchInWindows(cardTitle, "the app comes back on the capturing tab", timeoutMs = 12_000, matches = { it.startsWith(cardTitle) }) {
+                    ui.rootInActiveWindow?.packageName?.toString() == app.packageName && activeCoreTab()?.optString("id") == TAB
+                }
+                SystemClock.sleep(1_500)
+                note("  after the tap: front=${ui.rootInActiveWindow?.packageName}; active tab ${activeCoreTab()?.optString("id")}; card: ${describe(activeNotification(CaptureService.NOTIFICATION_ID))}")
+            }
+        }
+        if (ui.rootInActiveWindow?.packageName?.toString() != app.packageName) closeShade()
+        frontApp()
+        shot("23e-capture-back")
+        beat()
+        // Stop: the tracks end, the page reports it, the card and the service go.
+        if (field("capture") == "audio") {
+            tapPageButton("stop", "Stop", "the page lets the microphone go", 10_000) { field("capture") == "none" }
+        }
+        val gone = poll(20_000) { activeNotification(CaptureService.NOTIFICATION_ID) == null }
+        SystemClock.sleep(1_000)
+        note("  after the stop: card gone=$gone; service in the foreground: ${CaptureService.inForeground}; ledger: ${host.capture.cards()}; page capture=${field("capture")}")
+        if (!gone) touchFault("the capture card stayed up after the page let the microphone go")
+        shot("23f-capture-ended")
+        beat()
+    }
+
+    // --- 4c. the Updates channel (NOT-17) --------------------------------------------------------
+
+    /**
+     * "Update available" and "Update ready – relaunch to update", one card updated in place on the
+     * low Updates channel, the tap opening Settings › Updates. The cards are posted here through
+     * the host's `UpdateNotifications` for the notices the core sends over `update.notify` at its
+     * phase edges (vitest pins those); the demo device has no update feed to take them from.
+     */
+    private fun updatesStep() {
+        note("\n4c. the Updates channel (NOT-17): 'Update available', its tap -> Settings > Updates, 'Update ready' in the same card")
+        frontApp()
+        postUpdateNotice("""{"kind":"available","version":"9.9.9"}""")
+        val available = awaitNotification(UpdateNotifications.NOTIFICATION_ID, 10_000)
+        note("  update available: ${describe(available)}")
+        if (available == null) touchFault("no Update available card came up for the host's notice")
+        val channel = available?.notification?.channelId?.let { notificationManager.getNotificationChannel(it) }
+        note("  channel: id=${channel?.id} name=\"${channel?.name}\" importance=${channel?.importance} description=\"${channel?.description}\"")
+        if (available != null && openShade { it.startsWith(UpdateNotifications.TITLE_AVAILABLE) }) {
+            SystemClock.sleep(1_500)
+            shot("23g-update-available-shade")
+            beat()
+            closeShade()
+            shell("cmd uimode night yes")
+            SystemClock.sleep(2_500)
+            if (openShade { it.startsWith(UpdateNotifications.TITLE_AVAILABLE) }) {
+                SystemClock.sleep(1_500)
+                shot("23h-update-available-shade-dark")
+                beat()
+            }
+            closeShade()
+            shell("cmd uimode night no")
+            SystemClock.sleep(2_500)
+            if (openShade { it.startsWith(UpdateNotifications.TITLE_AVAILABLE) }) {
+                SystemClock.sleep(1_000)
+                touchInWindows(UpdateNotifications.TITLE_AVAILABLE, "Settings > Updates opens", timeoutMs = 12_000, matches = { it.startsWith(UpdateNotifications.TITLE_AVAILABLE) }) {
+                    ui.rootInActiveWindow?.packageName?.toString() == app.packageName && settingsSection() == "updates"
+                }
+                SystemClock.sleep(1_500)
+                note("  after the tap: settings section=${settingsSection()}; card left: ${describe(activeNotification(UpdateNotifications.NOTIFICATION_ID))} (swiped or tapped, the card goes; the page keeps the state)")
+                shot("23i-update-settings")
+                beat()
+            }
+        }
+        if (ui.rootInActiveWindow?.packageName?.toString() != app.packageName) closeShade()
+        ensureForeground()
+        postUpdateNotice("""{"kind":"ready","version":"9.9.9"}""")
+        val ready = awaitNotification(UpdateNotifications.NOTIFICATION_ID, 10_000) {
+            it.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() == UpdateNotifications.TITLE_READY
+        }
+        note("  update ready: ${describe(ready)} (the same id: one card, updated in place)")
+        if (ready == null) touchFault("no Update ready card came up for the host's notice")
+        if (ready != null && openShade { it.startsWith(UpdateNotifications.TITLE_READY) }) {
+            SystemClock.sleep(1_500)
+            shot("23j-update-ready-shade")
+            beat()
+            closeShade()
+        }
+        postUpdateNotice("null")
+        val withdrawn = poll(5_000) { activeNotification(UpdateNotifications.NOTIFICATION_ID) == null }
+        note("  notice withdrawn (installed, or the check found nothing): card gone=$withdrawn")
+        // The deep link's Settings tab goes; the demo tab is on screen again for step 5.
+        val tabs = coreState().getJSONObject("tabs")
+        for (id in tabs.keys().asSequence().toList()) {
+            if (id != TAB && tabs.getJSONObject(id).optString("url").startsWith("zenium://settings")) {
+                coreInvoke("tab.close", """{"tabId":"$id","force":true}""")
+            }
+        }
+        coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
+        ensureForeground()
+        SystemClock.sleep(1_500)
+    }
+
+    /** The host's `update.notify` as the core sends it: a notice (`{ kind, version }`) or null for none. */
+    private fun postUpdateNotice(notice: String) {
+        instrumentation.runOnMainSync {
+            host.updateNotifications.notify(if (notice == "null") null else JSONObject(notice))
+        }
+    }
+
     // --- 5. private browsing --------------------------------------------------------------------
 
     private fun privateStep() {
@@ -443,5 +737,12 @@ class MediaDemo : MediaDemoBase("services-android-media-android") {
         SystemClock.sleep(2_000)
         shot("29-after-tab-close")
         beat()
+    }
+
+    private companion object {
+        /** The demo server by another name: an origin of its own for the quiet ask, undecided when step 4's `127.0.0.1` is too. */
+        const val QUIET_ORIGIN = "http://localhost:$PORT"
+        /** The bell chip's accessible name (`pillChips.tsx` NOTIFICATIONS_BLOCKED_LABEL): a harness contract. */
+        const val NOTIFICATIONS_BLOCKED = "Notifications blocked"
     }
 }

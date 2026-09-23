@@ -7,7 +7,10 @@ name: Android media demo
 # window's X pausing the video), the Notification API (the in-chrome prompt answered with a
 # finger, the site's own channel, a finger on the card bringing the tab up), private browsing
 # (its own profile, the secured window, the "Close all private tabs" card under a finger, the
-# wipe) and the session ending with its tab, on a hardware-accelerated Android emulator; uploads
+# wipe), the notifications of Zenium's own (the quiet ask's bell in the pill and Android 13's one
+# POST_NOTIFICATIONS prompt – revoked after the install for the engine driver, DEMO_REVOKE, so the
+# system's prompt shows for real –, "<site> is using your microphone" on its foreground service,
+# the Updates channel) and the session ending with its tab, on a hardware-accelerated Android emulator; uploads
 # the video, the screenshots and the driver's notes. Dispatch-only, like the other demos: it
 # takes about fifteen minutes and says nothing about a change being correct. Same caveats as the
 # gesture demo about frame rate and the software GPU (the renderer is the shared workflow's
@@ -57,6 +60,7 @@ jobs:
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
         DEMO_VIDEO=${{ inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
+        DEMO_REVOKE=${{ inputs.driver == 'ui' && '' || 'android.permission.POST_NOTIFICATIONS' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       # The `AndroidDesktop_x64` snapshot ships com.android.webview with x86_64 native code (the
       # plain `Android` snapshot is armeabi-v7a only and cannot be dlopen'ed on an x86_64 emulator).
@@ -92,6 +96,7 @@ jobs:
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
         DEMO_VIDEO=${{ inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
+        DEMO_REVOKE=${{ inputs.driver == 'ui' && '' || 'android.permission.POST_NOTIFICATIONS' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64

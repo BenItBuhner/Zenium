@@ -39,7 +39,7 @@ import kotlin.math.sin
 
 /**
  * What the media demos share – the engine's ([MediaDemo]) and the in-app controls' ([MediaUiDemo]):
- * the loopback [DemoServer] with the demo page at four paths and the generated fixtures (the
+ * the loopback [DemoServer] with the demo page at five paths and the generated fixtures (the
  * two-minute track, the artwork, the WebM clip from the assets), the page read through its title
  * (`MD|kind:audio|state:playing|t:12|last:nexttrack`, which the driver takes from the core's
  * state), real fingers on a page's button, on a node in any window (the shade, the lock screen,
@@ -63,6 +63,7 @@ abstract class MediaDemoBase(private val shotPrefix: String) : DemoHarness("medi
                 "/audio" to page,
                 "/video" to page,
                 "/notify" to page,
+                "/capture" to page,
                 "/private" to page,
                 "/tone.wav" to ("audio/wav" to tone()),
                 "/clip.webm" to ("video/webm" to readAssetBytes("media-demo-clip.webm")),

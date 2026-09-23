@@ -24,9 +24,10 @@
 <pre id="state"></pre>
 <script>
 (function () {
-  // Serves as four pages by path: /audio (a track with Media Session metadata), /video (a clip for
-  // picture-in-picture), /notify (the Notification API) and /private (a cookie and a storage key,
-  // to see what a private profile keeps). Everything the page sees goes into its title as
+  // Serves as five pages by path: /audio (a track with Media Session metadata), /video (a clip for
+  // picture-in-picture), /notify (the Notification API), /capture (the microphone through
+  // getUserMedia) and /private (a cookie and a storage key, to see what a private profile
+  // keeps). Everything the page sees goes into its title as
   // `PREFIX|key:value|key:value`, which the demo driver reads from the browser core's state.
   var path = location.pathname.replace(/\/+$/, '') || '/audio';
   var params = new URLSearchParams(location.search);
@@ -197,6 +198,53 @@
       if (Notification.permission === 'granted') notify();
     });
     if (params.get('notify') === '1' && Notification.permission === 'granted') notify();
+    // ?quiet=1: the ask at load, with no finger behind it – the request Chrome answers with its
+    // quiet UI (NOT-03: the bell in Zenium's pill instead of a sheet). The page notes when it ran.
+    if (params.get('quiet') === '1' && 'Notification' in window && Notification.permission === 'default') {
+      state.asked = 'load';
+      render();
+      Notification.requestPermission().then(function (p) {
+        state.permission = p;
+        state.asked = 'answered';
+        render();
+      });
+    }
+  } else if (path === '/capture') {
+    prefix = 'CP';
+    $('heading').textContent = 'Microphone';
+    $('lead').textContent = 'The page asks for the microphone the way any site does (getUserMedia) and holds it until told to stop: while it does, Zenium keeps a notification up that says so, and the capture survives the app going to the back.';
+    state.capture = 'none';
+    state.error = 'none';
+    var stream = null;
+    render();
+    var use = button('mic', 'Use microphone');
+    use.addEventListener('click', function () {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { state.error = 'unsupported'; render(); return; }
+      state.capture = 'asking';
+      render();
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+        stream = s;
+        state.capture = 'audio';
+        state.error = 'none';
+        render();
+        s.getTracks().forEach(function (t) {
+          t.addEventListener('ended', function () {
+            if (s.getTracks().every(function (x) { return x.readyState === 'ended'; })) { state.capture = 'none'; render(); }
+          });
+        });
+      }).catch(function (e) {
+        state.capture = 'none';
+        state.error = e && e.name ? e.name : 'error';
+        render();
+      });
+    });
+    var stop = button('stop', 'Stop', true);
+    stop.addEventListener('click', function () {
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      stream = null;
+      state.capture = 'none';
+      render();
+    });
   } else if (path === '/private') {
     prefix = 'PV';
     $('heading').textContent = 'Private tab';
