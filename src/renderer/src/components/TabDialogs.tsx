@@ -35,6 +35,7 @@ import { PrintPreviewDialog } from './print/PrintPreviewDialog'
 import { MediaLayer } from './phone/MediaSheet'
 import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
 import { ShareLayer } from './share/SharePopover'
+import { FolderDeleteDialog } from './sidebar/FolderDeleteDialog'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
 import { ReaderPreferencesPanel } from './reader/ReaderPreferencesPanel'
@@ -64,8 +65,8 @@ const TAB_ICONS = [
  * a page's `getDisplayMedia` waits on, the page's own dialogs
  * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes or
  * Zenium quits, the new tab page's add / edit shortcut dialog, the extension install and
- * permission prompts, the site-information popover's "Clear site data?" confirmation, the Clear
- * browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
+ * permission prompts, the site-information popover's "Clear site data?" confirmation, the
+ * sidebar's "Delete <folder>?" prompt, the Clear browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
  * password", `LeakWarnings`), the autofill prompts (save / update a login,
  * save an address or a card, choose a passkey account), the address and card editors of
  * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from
@@ -91,6 +92,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
   const siteData = uiStore.use((s) => s.siteDataConfirm)
+  const folderDelete = uiStore.use((s) => s.folderDeleteConfirm)
   const phone = useViewport().formFactor === 'phone'
   const popups = uiStore.use((s) => s.blockedPopupsPanel)
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
@@ -115,6 +117,9 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
           state={state}
           request={siteData}
         />
+      )}
+      {folderDelete && (
+        <FolderDeleteDialog key={folderDelete.folderId} state={state} request={folderDelete} />
       )}
       {popups && <BlockedPopupsPanel state={state} panel={popups} />}
       <SecurityPrompts state={state} />

@@ -97,6 +97,7 @@ export function chromeReference(platform: Platform): ReferenceBinding[] {
       ref('ArrowLeft', META, 'Back', ['nav.back']),
       ref(']', META, 'Forward', ['nav.forward']),
       ref('ArrowRight', META, 'Forward', ['nav.forward']),
+      ref('.', META, 'Stop loading', ['nav.stop']),
       ref('h', META_SHIFT, 'Open the home page', ['nav.home']),
       ref('f', META_ALT, 'Search the web', ['urlbar.search']),
       ref('e', META, 'Use selection for find', ['find.useSelection']),

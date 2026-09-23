@@ -56,6 +56,36 @@ export interface GroupRows {
 }
 
 /**
+ * What one group is a row as, `members` being the tabs its surface lists as the group's (the
+ * regular ones on a regular surface, `regularMembers`; every live one in a private window,
+ * private mode itself): OPEN with its members and their count, SAVED with the pages it kept
+ * once they all closed, EMPTY with neither. The Groups pane's rows and the sidebar's folder
+ * rows – the tablet's and the desktop's, where a saved folder stays in the strip as a saved
+ * group (TAB-16's desktop half) – read a group through this one builder, so the surfaces never
+ * disagree on what a group is.
+ */
+export function groupRowOf(folder: Folder, members: readonly Tab[]): GroupRow {
+  if (members.length > 0) {
+    const newest = members.reduce((t, tab) => Math.max(t, tab.lastActiveAt), 0)
+    return {
+      folder,
+      kind: 'open',
+      count: members.length,
+      lastUsedAt: folder.lastUsedAt ?? (newest > 0 ? newest : null)
+    }
+  }
+  if (folder.savedTabs?.length) {
+    return {
+      folder,
+      kind: 'saved',
+      count: folder.savedTabs.length,
+      lastUsedAt: folder.lastUsedAt ?? null
+    }
+  }
+  return { folder, kind: 'empty', count: 0, lastUsedAt: folder.lastUsedAt ?? null }
+}
+
+/**
  * The pane's rows for `groups` (the space's folders, in the grid's order), `liveOf` naming a
  * group's live members, the private ones included: those count for nothing here, and a private
  * group (`isPrivateGroup`) takes no row.
@@ -68,25 +98,9 @@ export function groupRows(
   const saved: GroupRow[] = []
   for (const folder of groups) {
     const live = liveOf(folder.id)
-    const members = regularMembers(live)
-    if (members.length > 0) {
-      const newest = members.reduce((t, tab) => Math.max(t, tab.lastActiveAt), 0)
-      open.push({
-        folder,
-        kind: 'open',
-        count: members.length,
-        lastUsedAt: folder.lastUsedAt ?? (newest > 0 ? newest : null)
-      })
-    } else if (folder.savedTabs?.length) {
-      saved.push({
-        folder,
-        kind: 'saved',
-        count: folder.savedTabs.length,
-        lastUsedAt: folder.lastUsedAt ?? null
-      })
-    } else if (!isPrivateGroup(folder, live)) {
-      open.push({ folder, kind: 'empty', count: 0, lastUsedAt: folder.lastUsedAt ?? null })
-    }
+    const row = groupRowOf(folder, regularMembers(live))
+    if (row.kind === 'saved') saved.push(row)
+    else if (row.kind === 'open' || !isPrivateGroup(folder, live)) open.push(row)
   }
   saved.sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))
   return { open, saved }

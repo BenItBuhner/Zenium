@@ -769,11 +769,14 @@ const DEFS: Def[] = [
     chrome: { key: 'Home', mods: ALT, perPlatform: { darwin: { key: 'h', mods: META_SHIFT } } }
   },
   {
+    // ⌘. is Chrome's, Safari's and Firefox's Stop on macOS. Windows and Linux stay unbound:
+    // Escape is Stop there, and Escape is owned by the chrome's Escape stack and by the page
+    // handler, not by this table.
     id: 'key_stop',
     action: 'nav.stop',
     group: 'navigation',
     label: 'Stop',
-    ...both(UNBOUND)
+    ...both({ perPlatform: { darwin: { key: '.', mods: META } } })
   },
   {
     // Chrome's and Firefox's F6: the keyboard rotates through the chrome's panes (tab strip,
