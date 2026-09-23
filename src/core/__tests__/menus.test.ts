@@ -441,10 +441,11 @@ const DESKTOP_APP_MENU = [
   'Zoom > Reset Zoom',
   'Zoom > -',
   'Zoom > Fullscreen',
-  'Print…',
+  'Reader View',
+  '-',
   'Save Page As…',
   'Web Capture…',
-  'Reader View',
+  'Print…',
   '-',
   'Settings',
   'More Tools',
@@ -470,7 +471,10 @@ const DESKTOP_APP_MENU = [
   'Quit'
 ]
 
-/** The desktop menu's top level alone: Firefox's count, at most four separators (§6). */
+/**
+ * The desktop menu's top level alone: Firefox's count, and §6's four separators – the tabs, the
+ * library, the page's actions, Save and Share, the app's (shortcuts-menus-120).
+ */
 const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
 
 const DESKTOP_ONLY = [
@@ -500,30 +504,87 @@ describe('the app menu', () => {
     expect(top.slice(top.lastIndexOf('-') + 1)).toEqual(['Settings', 'More Tools', 'Help', 'Quit'])
   })
 
-  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {
+  it('stands on an 800 px window: about eighteen top-level rows and four separators, five with the Now Playing… row (§6)', () => {
     const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
     // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen, plus
-    // Edge's Web Capture… row in the page group (the desktop's overlay alone) and Chrome's
-    // Delete Browsing Data… row in the library group.
+    // Edge's Web Capture… row in the Save and Share group (the desktop's overlay alone) and
+    // Chrome's Delete Browsing Data… row in the library group.
     const bare = harness(DESKTOP)
     appMenu(bare)
     expect(rows(bare)).toEqual(DESKTOP_APP_MENU_TOP.filter((l) => l !== '-'))
     expect(rows(bare)).toHaveLength(20)
-    expect(separators(bare.shown())).toBe(3)
+    expect(separators(bare.shown())).toBe(4)
     // A build with a translate host carries Translate Page… (the Linux build: 21), one with a
     // speech engine Listen to This Page too: 22, "about eighteen", every row Title Case (§9.1).
     const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
     appMenu(full)
     expect(rows(full)).toHaveLength(22)
-    expect(separators(full.shown())).toBe(3)
+    expect(separators(full.shown())).toBe(4)
     for (const row of rows(full)) expect(row).toMatch(/^[A-Z]/)
-    // With the media hub folded the Now Playing… row and its separator lead: four at most.
+    // With the media hub folded the Now Playing… row and its separator lead: five, one over
+    // §6's ceiling for as long as the button is folded (the PR body puts the count to the lead).
     full.browser.state.media = [
       { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
     ]
     appMenuFolded(full)
     expect(rows(full)).toHaveLength(23)
-    expect(separators(full.shown())).toBe(4)
+    expect(separators(full.shown())).toBe(5)
+  })
+
+  it('groups Chrome’s Save and Share between the page’s actions and the app’s, one separator each side: the saves, then the shares (shortcuts-menus-120)', () => {
+    // A host that shares and pins shortcuts, with a page up and the install surface mounted,
+    // syncing with another device: every row of the group stands – Save Page As…, Create
+    // Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – and no Cast row.
+    const h = pageHarness({ ...DESKTOP, share: true, pinShortcuts: true }, { shortcuts: true })
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+    vi.spyOn(h.browser.sync, 'status').mockReturnValue({
+      ...h.browser.sync.status(),
+      enabled: true,
+      devices: [
+        { id: 'phone', name: 'Pixel 9', lastSeen: 2 },
+        { id: 'laptop', name: 'Work laptop', lastSeen: 1 }
+      ]
+    })
+    appMenu(h)
+    const top = topLabels(h.shown())
+    const from = top.indexOf('Save Page As…')
+    expect(top[from - 1]).toBe('-')
+    expect(top.slice(from, top.indexOf('Settings'))).toEqual([
+      'Save Page As…',
+      'Create Shortcut…',
+      'Web Capture…',
+      'Print…',
+      'Share…',
+      'Send to Your Devices',
+      '-'
+    ])
+    expect(top).not.toContain('Cast…')
+    // The page's actions close with the reader's row under their own separator.
+    expect(top[from - 2]).toBe('Reader View')
+    expect(separators(h.shown())).toBe(4)
+    // The saves run the same actions as the keys, and the rows carry their chords.
+    expect(item(h.shown(), 'Save Page As…').action).toBe('page.savePage')
+    expect(item(h.shown(), 'Web Capture…').action).toBe('capture.start')
+    expect(item(h.shown(), 'Print…')).toMatchObject({
+      action: 'page.printPreview',
+      accelerator: 'Ctrl+P'
+    })
+    // Create Shortcut… is the install row, the way into the chrome's install dialog.
+    h.sent.length = 0
+    item(h.shown(), 'Create Shortcut…').click?.()
+    expect(h.sent).toContain('webapp.install')
+    // The bare desktop keeps the group less the rows its host cannot act on.
+    const bare = harness(DESKTOP)
+    appMenu(bare)
+    const bareTop = topLabels(bare.shown())
+    const bareFrom = bareTop.indexOf('Save Page As…')
+    expect(bareTop.slice(bareFrom - 1, bareFrom + 4)).toEqual([
+      '-',
+      'Save Page As…',
+      'Web Capture…',
+      'Print…',
+      '-'
+    ])
   })
 
   it('carries Chrome’s Delete Browsing Data… row at the top level, closing the library group with its chord, and runs the dialog’s request from it', () => {
@@ -600,8 +661,9 @@ describe('the app menu', () => {
     expect(history.at(-1)!.click).toBeUndefined()
     // With a tab closed the block is Chrome's: the header, the entries, Restore All, Clear List
     // – and every one of the flat menu's thirty-two rows is somewhere in the tree, the top level
-    // still about Firefox's count (twenty rows here plus Web Capture… and Delete Browsing
-    // Data…, three separators).
+    // still about Firefox's count (twenty rows here plus Web Capture…, Delete Browsing Data…
+    // and, with the install surface up, Create Shortcut… in Save and Share; four separators
+    // with the group's).
     const closed = h.browser.tabs.createTab(
       { url: 'https://closed.example/', active: false },
       h.win
@@ -610,8 +672,8 @@ describe('the app menu', () => {
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
     for (const label of before) expect(everywhere, label).toContain(label)
-    expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(22)
-    expect(separators(h.shown())).toBe(3)
+    expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(23)
+    expect(separators(h.shown())).toBe(4)
     expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
       'Show Full History',
       '-',
@@ -1068,19 +1130,50 @@ describe('the app menu', () => {
     // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
-    expect(appMenu(h)).not.toContain('More Tools > Create Shortcut…')
+    expect(allItems((appMenu(h), h.shown())).map((i) => i.label)).not.toContain('Create Shortcut…')
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
-    // Under More Tools, where Chrome's More tools carried "Create shortcut…" – not a top-level
-    // row, so the menu keeps Firefox's count (§6).
-    expect(appMenu(h)).toContain('More Tools > Create Shortcut…')
-    expect(appMenu(h)).not.toContain('Create Shortcut…')
-    expect(appMenu(h).indexOf('More Tools > Create Shortcut…')).toBe(
-      appMenu(h).indexOf('More Tools') + 1
-    )
-    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    // In the Save and Share group, where Chrome's Save and share carries "Create shortcut…"
+    // (shortcuts-menus-120): the row after Save Page As…, and not in More Tools.
+    expect(appMenu(h)).toContain('Create Shortcut…')
     expect(appMenu(h)).not.toContain('More Tools > Create Shortcut…')
+    expect(appMenu(h).indexOf('Create Shortcut…')).toBe(appMenu(h).indexOf('Save Page As…') + 1)
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    expect(appMenu(h)).not.toContain('Create Shortcut…')
     // A window that never registered any surface has none.
     expect(h.win.surfaces.size).toBe(0)
+  })
+
+  it('keeps an installed app’s Open in <app> with the window actions in More Tools, not in Save and Share', () => {
+    const h = harness(
+      { ...DESKTOP, pinShortcuts: true },
+      {
+        shortcuts: true,
+        files: {
+          'webapps.json': JSON.stringify({
+            version: 1,
+            pinned: [
+              {
+                id: 'notes',
+                name: 'Notes',
+                startUrl: 'https://notes.example/',
+                scope: 'https://notes.example/',
+                pinnedAt: 1,
+                icon: null,
+                bounds: null
+              }
+            ],
+            engagement: {}
+          })
+        }
+      }
+    )
+    h.browser.tabs.createTab({ url: 'https://notes.example/today', active: true }, h.win)
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+    const menu = appMenu(h)
+    expect(menu).toContain('More Tools > Open in Notes')
+    expect(menu.indexOf('More Tools > Open in Notes')).toBe(menu.indexOf('More Tools') + 1)
+    expect(menu).not.toContain('Open in Notes')
+    expect(menu).not.toContain('Create Shortcut…')
   })
 
   describe("a web app's standalone window", () => {
@@ -3496,12 +3589,13 @@ describe('Send to your devices (ID-27)', () => {
     const menu = appMenu(h)
     expect(menu).toContain('Send to Work laptop')
     // On the desktop the app menu has no Share… (no share target): the item sits where Share…
-    // does on the hosts that have it – the page group's order is find, zoom, print, save, web
-    // capture, share, translate, reader (#299; Edge's Web capture between the save and the
-    // share) – so after Web Capture… and before Reader View.
-    expect(menu.indexOf('Send to Work laptop')).toBe(menu.indexOf('Web Capture…') + 1)
+    // does on the hosts that have it – the Save and Share group's order is save, shortcut, web
+    // capture, print, share, send (shortcuts-menus-120; Edge's Web capture between the save and
+    // the print) – so after Print…, closing the group under its separator.
+    expect(menu.indexOf('Send to Work laptop')).toBe(menu.indexOf('Print…') + 1)
     expect(menu.indexOf('Web Capture…')).toBe(menu.indexOf('Save Page As…') + 1)
-    expect(menu.indexOf('Send to Work laptop')).toBeLessThan(menu.indexOf('Reader View'))
+    expect(menu[menu.indexOf('Send to Work laptop') + 1]).toBe('-')
+    expect(menu.indexOf('Send to Work laptop')).toBeGreaterThan(menu.indexOf('Reader View'))
   })
 
   it('with several devices is "Send to Your Devices", the devices most recently seen first, each row sending to its device', () => {

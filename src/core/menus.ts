@@ -2782,26 +2782,43 @@ export class Menus {
    * "Open <app>" and goes to the app's start URL instead (PWA-11). The install item is offered
    * only where the window's chrome has an install surface up to take it (`ChromeSurface`: the
    * phone's sheet; the desktop's dialog is UI work to come, and its menu item comes with it).
+   * The phone's flat list takes the pair as one row; the sidebar layouts split it, the install
+   * row a save (`installItems`, Chrome's Save and share carries Create shortcut…) and Open in
+   * <app> a window action (`openAppItems`, in More Tools).
    */
   private homeScreenItems(active: Tab | undefined, win: ZenWindow): Template {
+    return [...this.openAppItems(active, win), ...this.installItems(active, win)]
+  }
+
+  /**
+   * "Open in <app>" inside an installed app's scope: the desktop launches the app's own window
+   * (Chrome), the phone goes to the app's start URL in this tab.
+   */
+  private openAppItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser
     if (!active || !webApps.canPin(active, win)) return []
-    const surface = webApps.surface
     const pinned = webApps.pinnedFor(active.url)
-    if (pinned) {
-      // Desktop: "Open in <app>" launches the app's own window (Chrome); the phone goes to the
-      // app's start URL in this tab.
-      return [
-        {
-          label: openAppMenuLabel(surface, pinned.name),
-          click: () => webApps.launch(pinned.id, win)
-        }
-      ]
-    }
+    if (!pinned) return []
+    return [
+      {
+        label: openAppMenuLabel(webApps.surface, pinned.name),
+        click: () => webApps.launch(pinned.id, win)
+      }
+    ]
+  }
+
+  /**
+   * The install row – Create Shortcut…, Install <app>…, or the phone's Add to Home Screen – for
+   * a page no installed app owns, while the window's chrome has the install surface up.
+   */
+  private installItems(active: Tab | undefined, win: ZenWindow): Template {
+    const { webApps } = this.browser
+    if (!active || !webApps.canPin(active, win)) return []
+    if (webApps.pinnedFor(active.url)) return []
     if (!surfaceMounted(win, 'install')) return []
     return [
       {
-        label: installMenuLabel(surface, active.webApp),
+        label: installMenuLabel(webApps.surface, active.webApp),
         click: () => webApps.openInstall(active.id, win)
       }
     ]
@@ -2811,17 +2828,20 @@ export class Menus {
    * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One set of items for
    * every layout, in two orders. The sidebar layouts (desktop and tablet) take Firefox's groups
    * (design language v2 §6 "Menus"): the tabs and windows; the library – bookmarks, history,
-   * downloads, passwords, add-ons; the page's actions; the app's – Settings, More Tools, Help,
+   * downloads, passwords, add-ons; the page's actions; Chrome's Save and share – Save Page As…,
+   * Create Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – as a group of its
+   * own between the page's and the app's (shortcuts-menus-120; Chrome folds it into a submenu,
+   * Firefox keeps save and print in the flat list); the app's – Settings, More Tools, Help,
    * Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
-   * eighteen rows and three separators (a fourth under the "Now Playing…" row while the media
-   * hub's button has folded), so the menu stands on an 800 px window without scrolling (§6: a
-   * menu is exempt from §9.20's 60% cap and takes the room to the window's bottom margin). What
-   * Firefox's count leaves out is not lost but moves into a submenu: History carries the
-   * recently closed list as Chrome's does, Zoom the fullscreen toggle as Firefox's zoom row
-   * does, More Tools the install row with Zenium's space and window actions, the captures, the
-   * developer tools and the resources (Chrome's More tools carried "Create shortcut…" and
-   * holds its window and task-manager rows the same way), Help the menu bar's Help entries and
-   * the About row. The phone layout – which has no
+   * eighteen rows and four separators (§6's ceiling; a fifth under the "Now Playing…" row while
+   * the media hub's button has folded, which the PR body names), so the menu stands on an 800 px
+   * window without scrolling (§6: a menu is exempt from §9.20's 60% cap and takes the room to the
+   * window's bottom margin). What Firefox's count leaves out is not lost but moves into a
+   * submenu: History carries the recently closed list as Chrome's does, Zoom the fullscreen
+   * toggle as Firefox's zoom row does, More Tools Zenium's space and window actions with an
+   * installed app's Open in <app>, the captures, the developer tools and the resources (Chrome's
+   * More tools holds its window and task-manager rows the same way), Help the menu bar's Help
+   * entries and the About row. The phone layout – which has no
    * sidebar, window frame or keyboard to speak of – keeps Chrome's phone menu (TB-08): the icon
    * row first, then the tabs, library, page and app groups in one flat list, without the items
    * that only act on a window (Chrome's phone menu has none of them either). An item the host
@@ -3067,6 +3087,10 @@ export class Menus {
     // phone, a submenu on the sidebar layouts.
     const sendToDevices = this.sendToDevicesItems(active, win)
     const homeScreen = this.homeScreenItems(active, win)
+    // The sidebar layouts split the phone's pair: the install row is a save, Open in <app> a
+    // window action.
+    const createShortcut = sidebar(...this.installItems(active, win))
+    const openInApp = sidebar(...this.openAppItems(active, win))
     const print = when(caps.print, {
       label: 'Print…',
       action: 'page.printPreview',
@@ -3243,36 +3267,41 @@ export class Menus {
         ...addons,
         ...deleteBrowsingData,
         separator,
-        // The page's actions, in the brief's order: find, zoom, print, save, share and
-        // translate, then the reader's; the long tail is the app group's More Tools. Web
-        // capture sits between the save and the share, where Edge's menu keeps it.
+        // The page's actions: find, zoom, translate, then the reader's and the per-site
+        // controls; the long tail is the app group's More Tools.
         findInPage,
         ...zoomSheet,
         ...zoom,
-        ...print,
-        savePageAs,
-        ...webCapture,
-        ...share,
-        ...sendToDevices,
         ...translate,
         readerView,
         ...textPreferences,
         ...listen,
         ...pageControls,
         separator,
+        // Chrome's Save and share as a group of its own (shortcuts-menus-120), one separator
+        // each side: the saves first – Save Page As…, the install row (Create Shortcut…, or
+        // Install <app>…), Web Capture… between the save and the print where Edge's menu keeps
+        // it, Print… – then the shares, Share… and Send to Your Devices. No Cast row: Zenium
+        // has no cast target.
+        savePageAs,
+        ...createShortcut,
+        ...webCapture,
+        ...print,
+        ...share,
+        ...sendToDevices,
+        separator,
         // The app's, in Firefox's order and §6's: settings, tools, help, quit.
         settings,
         {
           label: 'More Tools',
-          // Firefox's "More tools" row of its app group; Chrome's More tools, which carried
-          // "Create shortcut…" first and carries its window rows (Name window…), Task manager
-          // and Developer tools the same way, gives the submenu its contents: the install row
-          // (Create Shortcut…, or Open in <app>), Zenium's space and window actions, the
+          // Firefox's "More tools" row of its app group; Chrome's More tools, which carries its
+          // window rows (Name window…), Task manager and Developer tools, gives the submenu its
+          // contents: an installed app's Open in <app>, Zenium's space and window actions, the
           // window's layout toggles, the captures, then the developer's and the resources.
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
           submenu: tidySeparators([
-            ...homeScreen,
+            ...openInApp,
             separator,
             ...newSpace,
             ...newBlankWindow,
