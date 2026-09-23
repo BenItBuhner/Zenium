@@ -4,10 +4,8 @@ import type { BookmarkNodeType, UIState } from '@shared/types'
 import { inputToUrl } from '@shared/url'
 import { isBookmarkRoot } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
-import { useViewport } from '@renderer/lib/formFactor'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { closeBookmarkChrome } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { V2Button, V2Field, V2FormField, V2TitleBlock } from '../extensions/v2'
 import { FolderField } from './FolderField'
 import { useScrolled, wrapTab } from './popover'
@@ -37,7 +35,8 @@ export interface EditRequest {
  * a title block in sentence case and no X, the Name and URL fields (§9.12) and the folder
  * menulist (§9.13), then the §9.11 footer: Cancel, Save as the one primary, disabled while the
  * URL is not one (§9.30). Escape, the scrim and the footer close it; the name field takes focus
- * and Tab wraps (§9.22).
+ * and Tab wraps (§9.22). A phone never mounts it: every edit there is the editor sheet
+ * (`BookmarkEditSheet`, TabDialogs).
  */
 export function EditBookmarkDialog({
   state,
@@ -51,7 +50,6 @@ export function EditBookmarkDialog({
   const tree = useBookmarkTree(state)
   const node = edit.id ? tree.get(edit.id) : null
   const folder = edit.type === 'folder'
-  const phone = useViewport().formFactor === 'phone'
   const [name, setName] = useState(node?.title ?? (folder ? 'New folder' : (prefill?.title ?? '')))
   const [url, setUrl] = useState(node?.url ?? prefill?.url ?? '')
   const [folderId, setFolderId] = useState(node?.parentId ?? edit.parentId)
@@ -107,13 +105,8 @@ export function EditBookmarkDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby={TITLE_ID}
-      className={cn(
-        'zen-v2 zen-animate-pop flex max-h-[calc(100%-24px)] flex-col',
-        phone
-          ? 'zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto self-end justify-self-stretch'
-          : 'zen-v2-dialog'
-      )}
-      style={phone ? undefined : { width: POPOVER_WIDTH.form }}
+      className="zen-v2 zen-v2-dialog zen-animate-pop flex max-h-[calc(100%-24px)] flex-col"
+      style={{ width: POPOVER_WIDTH.form }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.preventDefault()
