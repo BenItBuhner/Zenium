@@ -219,6 +219,21 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         js("window.__zenHost&&__zenHost.hostEvent(${JSONObject.quote(name)},${JSONObject.quote(encodeResult(payload))})")
     }
 
+    /**
+     * [hostEvent] for a payload that is JSON text already, quoted into the script in one pass.
+     * The extension bridge's `ext.message` events carry a frame's message as it wrote it, up to
+     * hundreds of KB; through [hostEvent] such a payload was copied three more times (the
+     * `toString`, `JSONObject.quote`'s builder and its string) before the script was built and
+     * copied once again – the allocation that outran WebView 156's collector under a flood
+     * (`ext/BridgeForward.kt`).
+     */
+    fun hostEventJson(name: String, json: CharSequence) {
+        val script = StringBuilder(json.length + (json.length shr 3) + 96)
+        script.append("window.__zenHost&&__zenHost.hostEvent(").append(JSONObject.quote(name)).append(",\"")
+        script.appendJsQuoted(json)
+        js(script.append("\")").toString())
+    }
+
     /** Forward a physical key; the promise-free path relies on Kotlin having matched it already. */
     fun onKey(tabId: String?, input: JSONObject) {
         val tab = if (tabId == null) "null" else JSONObject.quote(tabId)
