@@ -365,6 +365,7 @@ function FindResults({
     >
       {elsewhere.length > 0 && (
         <section
+          role="group"
           className="zen-settings-group zen-settings-other-categories"
           aria-label="Other categories"
         >

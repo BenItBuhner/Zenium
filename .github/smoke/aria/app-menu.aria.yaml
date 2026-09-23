@@ -9,15 +9,14 @@
   - menuitem "Downloads"
   - menuitem "Passwords"
   - menuitem "Add-ons and Themes"
+  - menuitem "Delete Browsing Data…"
   - separator
   - menuitem "Find in Page…"
   - menuitem "Zoom (100%)"
-  - menuitem "Print…"
-  - menuitem "Save Page As…"
-  - menuitem "Web Capture…"
   - menuitem "Translate Page…"
   - menuitem "Reader View" [disabled]
   - menuitem "Listen to This Page" [disabled]
+  - menuitem "Save and Share"
   - separator
   - menuitem "Settings"
   - menuitem "More Tools"

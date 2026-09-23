@@ -236,7 +236,11 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     expect(count.className).toContain('text-[var(--v2-control-text-deemphasized)]')
     expect(count.className).toContain('tabular-nums')
     expect(count.className).not.toContain('--zen-muted')
-    const chevron = header.querySelector('svg.lucide-chevron-down')!
+    // One glyph, open or folded: the › turned 90° on the fold's progress by the stylesheet
+    // (`.zen-group-row-chevron`, §9.36 as amended), never a ⌄ swapped in at the commit.
+    const chevron = header.querySelector('svg.lucide-chevron-right.zen-group-row-chevron')!
+    expect(chevron).not.toBeNull()
+    expect(header.querySelector('svg.lucide-chevron-down')).toBeNull()
     expect(chevron.getAttribute('class')).toContain('text-[var(--v2-control-text-deemphasized)]')
     expect(chevron.getAttribute('class')).not.toContain('opacity-60')
     // The colour is the group's (TAB-16's desktop half): the 10 dot in the glyph slot, in place

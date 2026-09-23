@@ -20,8 +20,10 @@ import {
   dissolveSplitGroup,
   essentialsForSpace,
   folderOpened,
+  folderTabs,
   getSpace,
   insertTabIntoSpace,
+  isSavedFolder,
   loadProgressAfter,
   MAX_SPLIT_TABS,
   moveTab,
@@ -1364,7 +1366,10 @@ export class TabManager {
       }
       insertTabIntoSpace(m, space, tab, index)
     }
-    // Made in a group: the group is open (a saved one no longer), and used now (TAB-16). A
+    // Made in a group: the group is open, and used now (TAB-16). The user's joins into a SAVED
+    // group bring its pages back first (`restoreSavedFolder`: New Tab in Folder, a move or a
+    // drop into it) and reach here with the group open; a tab made in one by any other path – a
+    // live folder's refresh repopulating it – takes it as open, the pages it kept let go. A
     // private tab is no member of it for the regular profile: it leaves the group as it was.
     if (!this.isPrivate(tab)) folderOpened(m, tab.folderId, tab.createdAt)
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
@@ -2399,18 +2404,81 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /**
+   * A tab joins a folder – a drop on its header, the tab menu's Move to Folder, an extension's
+   * `tabs.group` – or leaves one (`null`). A regular tab joining a SAVED group opens it first:
+   * the pages it kept come back as its tabs, as Open Folder brings them, and the tab takes its
+   * place behind them (open-then-add: the join loses nothing the group kept); joining an open
+   * group it keeps its slot. Either way the group is unfolded and used now. A private tab is no
+   * member of the group for the regular profile and leaves it as it was.
+   */
   moveToFolder(tabId: string, folderId: string | null): void {
     const tab = this.tab(tabId)
     if (!tab || tab.essential || tab.pinned) return
     if (folderId && !this.model.folders[folderId]) return
     const previous = tab.folderId
+    const joining = folderId !== null && folderId !== previous && !this.isPrivate(tab)
+    const restored = joining ? this.restoreSavedFolder(folderId, this.windowFor(tabId)) : []
     tab.folderId = folderId
     if (previous && previous !== folderId) this.browser.liveFolders.onTabLeftFolder(tabId, previous)
-    // A regular tab joining opens the group (a saved one's pages go, stale) and marks it used; a
-    // private tab is no member of it for the regular profile and leaves it as it was.
-    if (folderId && folderId !== previous && !this.isPrivate(tab))
+    if (joining) {
+      const last = restored[restored.length - 1]
+      const space = last ? getSpace(this.model, tab.spaceId) : undefined
+      if (last && space && space.id === last.spaceId) {
+        // Behind the pages that came back: the slot after the last of them, in the space's
+        // regular run without the joiner (the move lifts it out before it lands).
+        const others = regularTabs(this.model, space).filter((t) => t.id !== tabId)
+        moveTab(
+          this.model,
+          tab,
+          { spaceId: space.id, section: 'regular', index: others.indexOf(last) + 1 },
+          this.settings.essentialsMax
+        )
+      }
       folderOpened(this.model, folderId, Date.now())
+    }
     this.browser.state.commit()
+  }
+
+  /**
+   * A SAVED group's pages back as its tabs (TAB-16): in the order they were kept, at the end of
+   * the space's regular tabs – the first there, each next behind the one before – unloaded, none
+   * made active (Open Folder activates the first; a join adds its tab behind them), the group
+   * unfolded and used now. The pages are let go before the first is made, so its own join finds
+   * nothing left to bring back. Returns the tabs in order: none for a group that is not saved
+   * (open, empty, gone) or whose space is.
+   */
+  restoreSavedFolder(folderId: string, win: ZenWindow = this.browser.focusedWindow()): Tab[] {
+    const m = this.model
+    const folder = m.folders[folderId]
+    if (!folder || !isSavedFolder(m, folder)) return []
+    const space = getSpace(m, folder.spaceId)
+    if (!space) return []
+    const pages = folder.savedTabs ?? []
+    folder.savedTabs = null
+    const restored: Tab[] = []
+    for (const page of pages) {
+      const last = restored[restored.length - 1]
+      const tab = this.createTab(
+        {
+          url: page.url,
+          spaceId: space.id,
+          active: false,
+          load: false,
+          index: last ? undefined : Number.MAX_SAFE_INTEGER,
+          afterTabId: last?.id,
+          containerId: space.containerId,
+          folderId
+        },
+        win
+      )
+      // The row and the card read as the page did until it loads again.
+      tab.title = page.title || tab.title
+      tab.favicon = page.favicon ?? null
+      restored.push(tab)
+    }
+    folderOpened(m, folderId, Date.now())
+    return restored
   }
 
   // ---------------------------------------------------------------------------
@@ -2838,6 +2906,92 @@ export class TabManager {
     }
     this.activateTab(tabId, win)
     this.showNeighbour(source, leaving, tabId)
+    this.closeIfEmptied(source)
+    this.browser.state.commit()
+    return win
+  }
+
+  /**
+   * The folder menu's "Move Folder to New Window" (context-menus-107; Chrome's "Move group to
+   * new window"): the folder's tabs go to a window of their own beside this one, the folder
+   * with them – its name, colour and fold. Which kind of window is the tab's rule
+   * (`moveTabToNewWindow`): a folder of a private window gets another private window; under
+   * "sync only pinned tabs" a folder of unpinned members gets a synced window that owns them,
+   * the folder staying in its space; every other folder – its tabs shared across synced windows
+   * – gets a blank window, the one kind that can hold them alone, and follows them into its
+   * space (the window's own, so the folder is that window's until it closes). A SAVED folder
+   * opens first – its pages back as its tabs – and goes whole; a member's split view is left
+   * behind (a split lives in one space of one window). Every window showing a member moves on
+   * past the folder (Firefox's rule over the folder as one: the next tab beyond it, else the one
+   * before it); the new window shows the member the source was showing, else the first. Returns
+   * the new window, or null with nothing to move (an empty folder, none) or no windows on this
+   * host.
+   */
+  moveFolderToNewWindow(
+    folderId: string,
+    source: ZenWindow = this.browser.focusedWindow()
+  ): ZenWindow | null {
+    const m = this.model
+    const folder = m.folders[folderId]
+    if (!folder) return null
+    if (!this.browser.state.capabilities.windows) {
+      this.browser.toast('Multiple windows are not available on this device.', 'info', source)
+      return null
+    }
+    this.restoreSavedFolder(folderId, source)
+    const members = folderTabs(m, folderId)
+    const from = getSpace(m, folder.spaceId)
+    if (members.length === 0 || !from) return null
+    const member = (tabId: string | null): tabId is string =>
+      tabId !== null && members.some((t) => t.id === tabId)
+    const outside = (t: Tab): boolean => t.folderId !== folderId
+    const showing = this.browser
+      .allWindows()
+      .map((w) => ({ w, selected: w.selectedTabIn(from) }))
+      .filter((s): s is { w: ZenWindow; selected: string } => member(s.selected))
+      .map(({ w, selected }) => {
+        const ordered = orderedTabsForSpace(
+          m,
+          from,
+          this.settings.containerSpecificEssentials,
+          w.id
+        )
+        const at = ordered.findIndex((t) => t.id === selected)
+        const next =
+          ordered.slice(at + 1).find(outside) ??
+          ordered.slice(0, Math.max(0, at)).reverse().find(outside) ??
+          null
+        return { w, selected, next: next?.id ?? null }
+      })
+    const shown = showing.find((s) => s.w === source)?.selected ?? members[0].id
+    const ownsAlone =
+      !from.windowId && this.settings.windowSync === 'pinned' && members.every((t) => !t.pinned)
+    const kind: WindowKind = source.isPrivate ? 'private' : ownsAlone ? 'synced' : 'unsynced'
+    const win = this.browser.createWindow({ kind, from: source, bounds: null, empty: true })
+    for (const tab of members) removeTabFromSplit(m, tab.id)
+    if (win.localSpace) {
+      const space = win.localSpace
+      for (const tab of members) {
+        // The model's move (not the manager's): the folder is not left, it comes along.
+        moveTab(
+          m,
+          tab,
+          {
+            spaceId: space.id,
+            section: tab.pinned ? 'pinned' : 'regular',
+            index: Number.MAX_SAFE_INTEGER
+          },
+          this.settings.essentialsMax
+        )
+        tab.folderId = folderId
+      }
+      folder.spaceId = space.id
+    } else {
+      for (const tab of members) tab.windowId = win.id
+      win.activeSpaceId = from.id
+    }
+    this.activateTab(shown, win)
+    for (const s of showing) this.showNeighbour(s.w, { space: from, next: s.next }, s.selected)
     this.closeIfEmptied(source)
     this.browser.state.commit()
     return win
@@ -3400,6 +3554,13 @@ export class TabManager {
         removeTabFromLists(m, id)
         delete m.tabs[id]
       }
+      // A folder in the window's own space – moved here with its tabs (`moveFolderToNewWindow`)
+      // – is no window's once this one closes: it goes with the space, its saved pages with it.
+      for (const folder of Object.values(m.folders))
+        if (folder.spaceId === win.localSpace.id) {
+          this.browser.liveFolders.onFolderDeleted(folder.id)
+          delete m.folders[folder.id]
+        }
       delete m.localSpaces[win.localSpace.id]
     } else if (!quitting) {
       for (const tab of Object.values(m.tabs)) {

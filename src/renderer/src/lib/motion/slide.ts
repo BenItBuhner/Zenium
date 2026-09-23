@@ -213,6 +213,25 @@ export class SlideMotion {
     this.committed = true
   }
 
+  /**
+   * Re-record where the items are laid out right now, without motion: the baseline the next
+   * `flip` measures against. For a motion that moves the layout under the items between commits
+   * (a group's fold, `useGroupFold`: the rows below the block follow its extent on the spring,
+   * no commit between the fold's and its rest) – called on each of its frames, so the commit
+   * after it finds the rows where they are, rather than springing them from where the layout
+   * stood at the last commit (the rows below a group jumping the group's height as it folds
+   * again). Items the list has not placed yet are left to `flip`, which enters them.
+   */
+  record(): void {
+    const scroll = this.scrollOffset()
+    for (const [id, el] of this.elements) {
+      if (!this.layout.has(id)) continue
+      const offset = this.offsets.get(id) ?? 0
+      const r = el.getBoundingClientRect()
+      this.layout.set(id, (this.axis === 'x' ? r.left : r.top) - offset + scroll)
+    }
+  }
+
   /** Where the item rests once its motion is over (its in-flight translation removed). */
   restingRect(id: string): DOMRect | null {
     const el = this.elements.get(id)

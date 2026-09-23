@@ -31,12 +31,14 @@ import {
   closeMenu,
   closeUrlbar,
   openBookmarkChrome,
+  openClearBrowsingData,
   openExtensionsSheet,
   openFindBar,
   onboardingUp,
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   openInstallSheet,
+  openNameWindow,
   openOverlay,
   openPrintPreview,
   openReaderPreferences,
@@ -169,6 +171,17 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openImportSurface(currentActiveTabId())
       }),
+      // Ctrl+Shift+Delete and the app menu's Delete Browsing Data… row: the dialog the History
+      // page's button opens, over whatever is up.
+      onEvent('clearBrowsingData.open', () => {
+        closeUrlbar()
+        void openClearBrowsingData(currentActiveTabId())
+      }),
+      // More Tools › Name Window… and the tab strip's row: Chrome's prompt over the page.
+      onEvent('windowName.open', () => {
+        closeUrlbar()
+        void openNameWindow(currentActiveTabId())
+      }),
       // Edge's Web capture (Ctrl+Shift+S in the Chrome preset, the ⋯ menu's row, the palette):
       // the desktop's overlay over the page's picture (`components/capture/CaptureOverlay.tsx`).
       onEvent('capture.start', ({ tabId }) => {
@@ -234,7 +247,8 @@ export function useMainEvents(): void {
       // and the page (lib/panes.ts).
       onEvent('focus.pane', (request) => void focusPane(request)),
       // A page's view took the keyboard: the chrome's stale focused control is let go – but the
-      // open URL bar keeps its field and takes the keyboard back (lib/panes.ts).
+      // open URL bar keeps its field and takes the keyboard back, as does a field marked
+      // `KEEPS_KEYBOARD_ATTR` (lib/panes.ts).
       onEvent('focus.page', ({ tabId }) => void pageTookKeyboard(tabId)),
       onEvent('zoom.changed', ({ tabId, factor }) => {
         // Chrome's bubble, for the page on screen. The host with the page-controls sheet

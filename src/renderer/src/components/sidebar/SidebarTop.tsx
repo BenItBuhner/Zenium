@@ -349,7 +349,9 @@ export function NavRow({
       <button
         type="button"
         className="zen-toolbar-button"
-        title={tab?.loading ? 'Stop (Esc)' : hint('Reload', state, 'nav.reload')}
+        // The name carries the chord, as the tooltip does (a11y-26; the ⋯ below says why).
+        aria-label={tab?.loading ? 'Stop (Esc)' : hint('Reload', state, 'nav.reload')}
+        data-tooltip={tab?.loading ? 'Stop (Esc)' : hint('Reload', state, 'nav.reload')}
         disabled={!tab}
         data-zen-menu="reload"
         data-zen-menu-tab={tab?.id}
@@ -385,12 +387,13 @@ export function NavRow({
             'zen-squircle zen-pill group/pill relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--v2-control-fill)] px-2 text-left',
             !readOnly && 'hover:bg-[var(--v2-control-fill-hover)]'
           )}
-          // The tooltip carries the whole address – the user-facing `zenium://` form for an
-          // internal page (§10.1: `zen://` never shows), the address behind a title, and for an
-          // error or Reader View page the page it stands in for (`fullUrl`), never the `zen://`
-          // document. An empty tab offers the search prompt, as the field does. A masked private
-          // tab offers its placeholder, and no menu: every item of the pill's would tell of the page.
-          title={
+          // The tooltip (lib/tooltip.ts; the chips inside carry their own) carries the whole
+          // address – the user-facing `zenium://` form for an internal page (§10.1: `zen://`
+          // never shows), the address behind a title, and for an error or Reader View page the
+          // page it stands in for (`fullUrl`), never the `zen://` document. An empty tab offers
+          // the search prompt, as the field does. A masked private tab offers its placeholder,
+          // and no menu: every item of the pill's would tell of the page.
+          data-tooltip={
             masked
               ? PRIVATE_TAB_PLACEHOLDER
               : (tab && fullUrl(tab.url)) || 'Search or enter address'
@@ -706,18 +709,19 @@ export function NavRow({
         button has folded (design language v2 §9.29: at the 240 sidebar the hub folds into the
         menu's "Now Playing…" row, and the dot on the menu button is Firefox's badge saying so;
         with the button up, the button wears the dot and ⋯ says nothing twice). The name says it
-        for the tree, keeping the chord the title shows.
+        for the tree, keeping the chord the tooltip shows (a11y-26: the chrome tooltip of
+        lib/tooltip.ts, on hover and on keyboard focus, in place of a native `title`).
       */}
       <button
         ref={menuButton}
         type="button"
         data-zen-app-menu-button
         className="zen-toolbar-button relative"
-        title={hint('Menu', state, 'menu.app')}
+        data-tooltip={hint('Menu', state, 'menu.app')}
         aria-label={
           mediaFolded && mediaPlaying(state)
             ? `${hint('Menu', state, 'menu.app')}, media playing`
-            : undefined
+            : hint('Menu', state, 'menu.app')
         }
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}
@@ -820,7 +824,8 @@ function IndicatorGlyph({ state, scheme }: { state: IndicatorState; scheme: stri
 
 /**
  * Back or forward: a click navigates one step; press-and-hold (about 400 ms, released) or a
- * right click lists the tab's back/forward stack instead, like Firefox's buttons.
+ * right click lists the tab's back/forward stack instead, like Firefox's buttons. `title` is
+ * the button's name and its tooltip's text, chord included (a11y-26).
  */
 function NavigationButton({
   tab,
@@ -840,7 +845,8 @@ function NavigationButton({
     <button
       type="button"
       className="zen-toolbar-button"
-      title={title}
+      aria-label={title}
+      data-tooltip={title}
       disabled={!enabled}
       {...press.handlers}
       onClick={() => {

@@ -1647,7 +1647,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                   </div>
                 )}
                 <div
-                  className="grid gap-3"
+                  // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
+                  // takes the shell out of the flow at its `offsetTop`, which is read against
+                  // the nearest positioned ancestor and ignores the scroller's scroll – against
+                  // this grid, which scrolls with the cells, the shell stands where the card
+                  // stood; against the pane outside the scroller it landed `scrollTop` px too
+                  // low, and the tracker held only the cells drawn under that lower box (#355's
+                  // finding, seed 49).
+                  className="relative grid gap-3"
                   style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
                 >
                   {pinned.map(card)}
