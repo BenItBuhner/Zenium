@@ -40,7 +40,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { buildSection } = await import('../sections')
 const { findRow } = await import('../model')
 const { DialogStack } = await import('../dialogs')
-const { HIDDEN_AT_THIS_WIDTH } = await import('../CustomizeToolbarForm')
+const { DOWNLOADS_UNCHECKED, HIDDEN_AT_THIS_WIDTH } = await import('../CustomizeToolbarForm')
 
 type Ctx = Parameters<typeof buildSection>[1]
 type Row = NonNullable<ReturnType<typeof findRow>>
@@ -352,6 +352,39 @@ describe('the Customize toolbar dialog (the lead’s spec, §10.5)', () => {
     expect(patches.at(-1)).toEqual({ toolbarPins: {} })
     act(() => box(h, 'downloads').click())
     expect(patches.at(-1)).toEqual({ downloads: { alwaysShowButton: true } })
+  })
+
+  it('every row keeps its lines across its two states, so a toggle never moves the rows under the pointer (§9.2)', () => {
+    const lines = (h: HTMLElement): Record<string, string | null> =>
+      Object.fromEntries(
+        controlRows(h).map((r) => [
+          r.dataset.row!.split(':')[1],
+          r.querySelector('.zen-settings-description')?.textContent ?? null
+        ])
+      )
+    // The default bar: Downloads unchecked, the others checked.
+    const rest = openDialog(state())
+    const atRest = lines(rest.h)
+    expect(atRest).toEqual({
+      forward: null,
+      reader: 'Shows on pages with an article.',
+      translate: null,
+      star: null,
+      media: 'Shows while media plays.',
+      downloads: DOWNLOADS_UNCHECKED
+    })
+    act(() => root?.unmount())
+    host?.remove()
+    // Every box the other way: the same lines, row for row.
+    const flipped = openDialog(
+      state({
+        toolbarPins: { forward: false, reader: false, translate: false, star: false, media: false },
+        downloads: { ...DEFAULT_SETTINGS.downloads, alwaysShowButton: true }
+      })
+    )
+    expect(lines(flipped.h)).toEqual(atRest)
+    // The Downloads line is one sentence, true in both states, in the list's convention.
+    expect(DOWNLOADS_UNCHECKED).toMatch(/\.$/)
   })
 
   it('a pinned control the width tier hid says "Hidden at this width" and stays checked and live; a folded one says nothing of the width', () => {

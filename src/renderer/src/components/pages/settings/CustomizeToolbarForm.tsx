@@ -21,13 +21,17 @@ import { RowText } from './rows'
  * A control the window's width has tiered away (§9.29, `toolbarTiering`) stays checked and
  * says "Hidden at this width" as its 13/69 % description, never disabled; a control the page
  * has to earn (an article's Reader View, media playing, a download running) says when it
- * shows. The footer is Done alone, a hugging 32 secondary – nothing to cancel, nothing was
- * held back. No reorder: the bar keeps the order the rows show. "Pin" and "unpin" are Chrome's
- * words for the box's two states and are not drawn.
+ * shows. A row's description is the same in both of its states, so a toggle never moves the
+ * rows under the pointer (§9.2: a row keeps its height). The footer is Done alone, a hugging
+ * 32 secondary – nothing to cancel, nothing was held back. No reorder: the bar keeps the order
+ * the rows show. "Pin" and "unpin" are Chrome's words for the box's two states and are not
+ * drawn.
  *
  * The downloads button's pin is the existing `downloads.alwaysShowButton` (Chrome's "Always
  * show downloads button", also Settings › Downloads' switch): one field, bound here as its
- * Downloads row. The rest write `Settings.toolbarPins` (`shared/toolbarPins.ts`).
+ * Downloads row. Unchecked, the button is not folded into the menu as the others are – it
+ * still comes with the session's first download (`downloadButtonVisible`), which is what the
+ * row's line says. The rest write `Settings.toolbarPins` (`shared/toolbarPins.ts`).
  */
 export function CustomizeToolbarForm({
   state,
@@ -77,7 +81,7 @@ export function CustomizeToolbarForm({
             label="Downloads"
             glyph={<Download />}
             checked={downloads.alwaysShowButton}
-            description={downloads.alwaysShowButton ? undefined : 'Shows once a download starts.'}
+            description={DOWNLOADS_UNCHECKED}
             onChange={(checked) => set({ downloads: { alwaysShowButton: checked } })}
           />
         </section>
@@ -93,6 +97,13 @@ export function CustomizeToolbarForm({
 
 /** The lead's description for a pinned control the width tier has folded (§9.29). */
 export const HIDDEN_AT_THIS_WIDTH = 'Hidden at this width'
+
+/**
+ * The Downloads row's line in both states: unchecked, the button is not in the menu as the
+ * other folded controls are – it comes with the first download (Chrome's rule) – and the line
+ * says so whether the box is checked or not, so the row keeps its 52 across a toggle.
+ */
+export const DOWNLOADS_UNCHECKED = 'Unchecked, shows once a download starts.'
 
 /**
  * One control's row: the chassis's desktop check row (`rows.tsx`'s `CheckRow` – the 16 box
