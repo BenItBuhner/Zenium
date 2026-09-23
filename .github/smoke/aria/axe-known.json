@@ -1,0 +1,4 @@
+{
+  "about": "axe-core violations the walkthrough's accessibility step (.github/smoke/smoke.mjs, `AriaAudit`) tolerates: serious or critical findings on surfaces the desktop chrome does not own (services, extensions), never the chrome's own. An entry names the axe rule and a regular expression over the offending node's selector, optionally the states it applies to (resting-window, app-menu, urlbar, hosted-dialog) and the program whose surface it is in `note`. Milder findings (moderate, minor) are reported in the step's detail and never gate. This list is normally empty.",
+  "entries": []
+}
