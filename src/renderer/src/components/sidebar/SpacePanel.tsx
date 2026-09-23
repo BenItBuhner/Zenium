@@ -687,9 +687,11 @@ function FolderRow({
  * A page a saved folder keeps (TAB-16's desktop half), listed under the unfolded header as a
  * row of the folder: §5's 32 row, indented as the folder's tabs are, with the page's favicon at
  * 16 and its title in the deemphasised 69% (the sleeping row's fade: a page, not a live tab – no
- * close, no audio, no drag). A press, Enter or Space opens the folder, which brings every page
- * back as its tabs (`folder.open`); the row is a strip item in the tab order (`saved:<id>:<n>`,
- * lib/tabStrip.ts) and its context menu is the folder's.
+ * close, no audio, no drag). The live row's trailing slot – the 24 px its close control takes –
+ * stays reserved and empty, so the title's edge holds as the folder closes and opens again and
+ * a name truncates the same way in both rows. A press, Enter or Space opens the folder, which
+ * brings every page back as its tabs (`folder.open`); the row is a strip item in the tab order
+ * (`saved:<id>:<n>`, lib/tabStrip.ts) and its context menu is the folder's.
  */
 function SavedPageRow({
   folder,
@@ -741,9 +743,12 @@ function SavedPageRow({
     >
       <Favicon tab={source} />
       {!compact && (
-        <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="saved-page-title">
-          {title}
-        </span>
+        <>
+          <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="saved-page-title">
+            {title}
+          </span>
+          <span className="h-6 w-6 shrink-0" data-testid="saved-page-slot" aria-hidden />
+        </>
       )}
     </div>
   )

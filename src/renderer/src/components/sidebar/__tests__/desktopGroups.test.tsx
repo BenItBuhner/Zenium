@@ -221,6 +221,15 @@ describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () 
       expect(r.querySelector('.zen-tab-close')).toBeNull()
       expect(r.querySelector('.zen-tab-audio')).toBeNull()
       expect(r.hasAttribute('data-tab-id')).toBe(false)
+      // The live row's trailing slot – its close control's 24 – reserved and empty, last in the
+      // row, so the title's edge holds as the folder closes and opens (no control in it).
+      const slot = r.querySelector<HTMLElement>('[data-testid="saved-page-slot"]')!
+      expect(slot).not.toBeNull()
+      expect(r.lastElementChild).toBe(slot)
+      expect(slot.className.split(' ')).toEqual(expect.arrayContaining(['h-6', 'w-6', 'shrink-0']))
+      expect(slot.getAttribute('aria-hidden')).toBe('true')
+      expect(slot.children).toHaveLength(0)
+      expect(r.querySelectorAll('button, [role="button"]')).toHaveLength(0)
     }
     // The title, or the host where the page had none; trimmed.
     expect(rows.map((r) => r.getAttribute('aria-label'))).toEqual([
