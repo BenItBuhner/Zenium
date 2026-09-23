@@ -11,6 +11,7 @@ import {
   translateLanguageChoices
 } from '@renderer/lib/languageCatalogue'
 import { familiesOf } from '@renderer/lib/localFonts'
+import { REGISTRY_SNAPSHOT } from '@core/translate/registryData'
 import { languageName } from '@shared/languageNames'
 import { LanguagePickList } from '../LanguagePickList'
 import { moveLanguage } from '../languages'
@@ -182,6 +183,21 @@ describe('the language catalogue', () => {
     expect(translateLanguageChoices(['zz'])).toEqual([
       { value: 'zz', label: languageName('zz'), description: undefined }
     ])
+  })
+
+  it('every language the model registry speaks is in the table, the two Chinese script tags with their own names (#350 lead ruling 7)', () => {
+    const spoken = new Set<string>()
+    for (const model of REGISTRY_SNAPSHOT) {
+      spoken.add(model.f)
+      spoken.add(model.o)
+    }
+    expect(spoken.size).toBeGreaterThan(40)
+    const table = new Set(LANGUAGE_CATALOGUE)
+    for (const tag of spoken) expect(table.has(tag), tag).toBe(true)
+    const chinese = translateLanguageChoices(['zh-Hans', 'zh-Hant'])
+    expect(chinese.map((c) => c.description)).toEqual(['简体中文', '繁體中文'])
+    for (const choice of chinese) expect(choice.label, choice.value).not.toBe(choice.value)
+    expect(catalogueLanguageName('zh-hant')).toBe(catalogueLanguageName('zh-Hant'))
   })
 
   it('filters by every term against the name, the own name and the tag, accents and case aside', () => {

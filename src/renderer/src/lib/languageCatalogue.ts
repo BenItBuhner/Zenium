@@ -12,8 +12,11 @@ import { languageName } from '@shared/languageNames'
  * never what the runtime's ICU happens to hold – a WebView without a locale's data would write
  * some rows in the UI's language and others in their own), in CLDR's standard form for the
  * language's own locale; a language whose own name is its English name (English, Afrikaans,
- * Hausa) carries none, and its row draws one line. Nothing here is a string to translate: an
- * English UI reads the runtime's name and the fallback alike.
+ * Hausa) carries none, and its row draws one line. The translation registry's two script tags
+ * (`zh-Hans`, `zh-Hant`, `core/translate/detect.ts`) are here as well, so the translate lists
+ * and the reader's target picker name every language the models reach from the table too.
+ * Nothing here is a string to translate: an English UI reads the runtime's name and the
+ * fallback alike.
  */
 const CATALOGUE: readonly (readonly [tag: string, english: string, own?: string])[] = [
   ['af', 'Afrikaans'],
@@ -175,6 +178,8 @@ const CATALOGUE: readonly (readonly [tag: string, english: string, own?: string]
   ['yo', 'Yoruba', 'Èdè Yorùbá'],
   ['zh', 'Chinese', '中文'],
   ['zh-CN', 'Chinese (China)', '中文（中国）'],
+  ['zh-Hans', 'Chinese (Simplified)', '简体中文'],
+  ['zh-Hant', 'Chinese (Traditional)', '繁體中文'],
   ['zh-HK', 'Chinese (Hong Kong SAR China)', '中文（中國香港特別行政區）'],
   ['zh-TW', 'Chinese (Taiwan)', '中文（台灣）'],
   ['zu', 'Zulu', 'isiZulu']
