@@ -2862,11 +2862,13 @@ async function scenarioWalkthrough() {
 
     // A page that never answers (BUG-009): the fixture takes the request and writes nothing, so
     // the navigation hangs before its document commits and the row spins until the user stops
-    // it. Both shapes of the hang, each stopped its own way: a new tab's first navigation (no
-    // document yet, the keyboard in the chrome) stopped with Escape in the chrome, then that
-    // tab, on a committed page, leaving for the same address, stopped with the toolbar's Stop
-    // button. What the fixture holds and what the app's own state says of the tab are read,
-    // never a clock: the load hangs until it is stopped.
+    // it. Both shapes of the hang, each stopped its own way: a new tab's first navigation
+    // stopped with Escape at the chrome – `press` goes through the window's chrome page, the
+    // path a user's Escape takes while the keyboard is in the chrome (a tab whose view has no
+    // document yet, the URL bar just closed), which the page handler in core/keys.ts never sees –
+    // then that tab, on a committed page, leaving for the same address, stopped with the
+    // toolbar's Stop button. What the fixture holds and what the app's own state says of the tab
+    // are read, never a clock: the load hangs until it is stopped.
     await s.step('stop-hanging-load', async () => {
       await s.reset()
       const hang = bootSite.hanging
@@ -2902,9 +2904,9 @@ async function scenarioWalkthrough() {
           `${what}: tab ${id} stopped`
         )
 
-      // Shape 1: a new tab, its first navigation hanging. The bar's Enter closes it; with no
-      // document to hand the keyboard to, the chrome keeps it (window.ts focusContent), and its
-      // Escape stack ends in Stop (hooks/useGlobalKeys.ts).
+      // Shape 1: a new tab, its first navigation hanging. The bar's Enter closes it; the chrome's
+      // Escape stack ends in Stop (hooks/useGlobalKeys.ts). The keyboard's owner at the press is
+      // recorded: the new tab's own view, when it had a document to give the keyboard to.
       await s.press(`${ACCEL}+t`)
       await s.urlbarInput().waitFor({ state: 'visible', timeout: 8000 })
       let held = bootSite.held()
