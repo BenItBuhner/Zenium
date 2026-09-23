@@ -279,9 +279,12 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                  * page only while the pointer is over it, with the split targets (split-12,
                  * BUG-011): a plain reorder in the strip leaves the page looking as it was.
                  * The tablet's core menus are popovers too (v2 §9.36, `TabletMenu`): no dim
-                 * under them either.
+                 * under them either. Web capture draws the frame's §9.5 scrim itself, with
+                 * the marquee cut out of it (`CaptureOverlay`): no dim under it, or the
+                 * cut-out would show the page dimmed.
                  */}
                 {!phone &&
+                  !ui.capture &&
                   !panelAloneOverContent(ui) &&
                   !extensionChromeAloneOverContent(ui) &&
                   !(tablet && menuAloneOverContent(ui)) && (
