@@ -16,12 +16,15 @@ import { PhoneSheet } from './PhoneSheet'
  * host and when it was last used – with a trailing 44 close (§9.3; a sideways swipe closes too),
  * the tab going to the recently closed list. A tap brings the tab back – at the start of its
  * space and to the front, page intact, as Chrome's `unarchiveAndRestoreTabs` does – once the
- * sheet is gone. The footer holds the two whole-list actions as §9.11 peers: Restore all (Chrome
- * keeps it in the dialog's overflow) and Close all in the danger ink, which asks first on a
- * §9.23 prompt sheet stacked over this one (§9.24) with Chrome's own words, no icon – it is a
- * confirmation of the user's own command. Empty (the last row closed here; a Never set while
- * the sheet was up brings every tab back), the §9.17 sentence. The list is read again whenever
- * the core says the archive changed, so a row never names a tab that is back already.
+ * sheet is gone. The footer holds the two whole-list actions as §9.11 peers, both plain
+ * secondaries: Restore all (Chrome keeps it in the dialog's overflow) and Close all, which asks
+ * first on a §9.23 prompt sheet stacked over this one (§9.24) with Chrome's own words, no icon –
+ * it is a confirmation of the user's own command. No danger ink anywhere here (§6, §10.5: the
+ * danger ink is for a verb that destroys the user's data; closing inactive tabs keeps their pages
+ * in History, as the prompt itself says – the #384 design gate's ruling). Empty (the last row
+ * closed here; a Never set while the sheet was up brings every tab back), the §9.17 sentence.
+ * The list is read again whenever the core says the archive changed, so a row never names a tab
+ * that is back already.
  */
 export function InactiveTabsSheet({
   initial,
@@ -72,12 +75,7 @@ export function InactiveTabsSheet({
               >
                 Restore all
               </button>
-              <button
-                type="button"
-                className="zen-v2-button"
-                data-danger
-                onClick={() => setAsking(true)}
-              >
+              <button type="button" className="zen-v2-button" onClick={() => setAsking(true)}>
                 Close all
               </button>
             </>
@@ -161,8 +159,9 @@ function ArchivedTabRow({
 /**
  * Close all's question (§9.23): a prompt sheet over the list – the title block with Chrome's
  * words and no icon (a confirmation of the user's own command carries none), the §9.11 footer
- * with Close all in the danger ink trailing. Escape, the scrim, the back gesture and Cancel keep
- * the tabs.
+ * with Cancel first and Close all as the primary trailing: a recoverable command is one the app
+ * may recommend (§6 withholds the recommendation only where the loss is real, and History keeps
+ * these pages). Escape, the scrim, the back gesture and Cancel keep the tabs.
  */
 function CloseInactiveTabsSheet({
   count,
@@ -195,7 +194,7 @@ function CloseInactiveTabsSheet({
           <button
             type="button"
             className="zen-v2-button"
-            data-danger
+            data-primary
             onClick={() => sheet.current?.dismiss(onConfirm)}
           >
             Close all

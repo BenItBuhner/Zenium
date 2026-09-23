@@ -24,7 +24,7 @@ import java.io.File
  *  2. the archive pass at +22 days through the drivers' clock (`inactiveTabs.runPasses {now}`,
  *     never a wait): five idle tabs leave the grid, the entry reads "Inactive tabs, 5";
  *  3. the entry under a finger: the Inactive tabs sheet, its §10.3 rows and its footer
- *     (Restore all | Close all, §9.11 peers, the destructive one trailing);
+ *     (Restore all | Close all, §9.11 peers; their tones a finding for the gate, not a claim);
  *  4. one row's Close under a finger: the row leaves for Recently closed;
  *  5. a row under a finger: the tab back to the start of the grid and to the front, the
  *     overview leaving onto it, the restore motion frame by frame;
@@ -140,7 +140,8 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
                 "the sheet '$LIST_TITLE' presented $up (at rest $rested); ${rows.size} rows: ${rows.map { it.substringBefore(',') }}",
                 up && rows.size == 5 && rows.any { it.startsWith("Hacker News,") }
             )
-            expect("the footer's peers (a * marks data-danger): $footer", footer == listOf("Restore all", "Close all*"))
+            expect("the footer's peers (§9.11): $footer", footer == listOf("Restore all", "Close all"))
+            finding("  the footer's tones (the gate's reading, not a claim): ${footerTones()}")
             expect("the entry says it is expanded: aria-expanded '${attr(ENTRY, "aria-expanded")}'", attr(ENTRY, "aria-expanded") == "true")
             finding("  a row's name: '${rows.firstOrNull()}'; the row's Close: '${attr("$SHEET .zen-list-trailing button", "aria-label")}'")
         }
@@ -226,7 +227,8 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
                 "the prompt's title carries no glyph (§9.23) ${promptHasNoIcon()}; its words: '${promptDescription()}'",
                 promptHasNoIcon() && promptDescription() == PROMPT_WORDS
             )
-            expect("the prompt's peers: ${footerButtons()}", footerButtons() == listOf("Cancel", "Close all*"))
+            expect("the prompt's buttons, Cancel before the verb: ${footerButtons()}", footerButtons() == listOf("Cancel", "Close all"))
+            finding("  the prompt's tones (the gate's reading, not a claim): ${footerTones()}")
             val cancelled = touchDomExpecting("Cancel", footerButton("Cancel"), "the prompt leaves and the list stays") {
                 sheetCount() == 1 && sheetPresented(LIST_TITLE)
             }
@@ -345,7 +347,8 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
             still("close-all-prompt-light")
             val tabsBefore = coreState().getJSONObject("tabs").length()
             val closedBefore = recentlyClosedTitles().size
-            val confirmed = asked && touchDomExpecting("Close all", dangerButton(), "both sheets leave and the archive empties") {
+            // The prompt is the top sheet now, so its footer's Close all is the confirm.
+            val confirmed = asked && touchDomExpecting("Close all", footerButton("Close all"), "both sheets leave and the archive empties") {
                 archivedCount() == 0 && sheetCount() == 0
             }
             SystemClock.sleep(1_500)
@@ -541,11 +544,23 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
     private fun rowLabels(): List<String> =
         jsList("Array.prototype.map.call(document.querySelectorAll('$SHEET .zen-phone-row .zen-list-main'),function(e){return e.getAttribute('aria-label')||''})")
 
-    /** The top sheet's footer buttons by their words, a `*` after a destructive one (`data-danger`). */
+    /** The top sheet's footer buttons by their words, in order. */
     private fun footerButtons(): List<String> =
         jsList(
             "Array.prototype.map.call((function(){var t=$TOP_SHEET;return t?t.querySelectorAll('.zen-sheet-footer .zen-v2-button'):[]})()," +
-                "function(b){return b.textContent.trim()+(b.hasAttribute('data-danger')?'*':'')})"
+                "function(b){return b.textContent.trim()})"
+        )
+
+    /**
+     * The top sheet's footer buttons with their tone – the accent-filled primary (`data-primary`),
+     * the danger ink (`data-danger`) or the plain secondary (§6). Recorded as a finding for the
+     * design gate's reading, never claimed: the tone is the gate's call (the #384 gate put Close
+     * all in plain ink on the list and made the prompt's Close all its primary).
+     */
+    private fun footerTones(): List<String> =
+        jsList(
+            "Array.prototype.map.call((function(){var t=$TOP_SHEET;return t?t.querySelectorAll('.zen-sheet-footer .zen-v2-button'):[]})()," +
+                "function(b){return b.textContent.trim()+': '+(b.hasAttribute('data-primary')?'primary':b.hasAttribute('data-danger')?'danger':'plain')})"
         )
 
     private fun emptySentence(): String = textOf("$SHEET .zen-phone-empty p")
@@ -576,10 +591,6 @@ class InactiveTabsDemo : DemoHarness("overview-demo-state.json", "inactive-tabs"
     private fun footerButton(text: String): String =
         "(function(){var t=$TOP_SHEET;if(!t)return null;var bs=t.querySelectorAll('.zen-sheet-footer .zen-v2-button');" +
             "for(var i=0;i<bs.length;i++){if(bs[i].textContent.trim()===${JSONObject.quote(text)})return bs[i]}return null})()"
-
-    /** The top sheet's destructive footer button. */
-    private fun dangerButton(): String =
-        "(function(){var t=$TOP_SHEET;return t?t.querySelector('.zen-sheet-footer .zen-v2-button[data-danger]'):null})()"
 
     // --- touches aimed by the chrome's DOM -------------------------------------------------------
 

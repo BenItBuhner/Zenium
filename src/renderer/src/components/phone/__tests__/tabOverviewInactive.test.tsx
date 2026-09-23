@@ -293,6 +293,9 @@ const buttonsByText = (text: string): HTMLElement[] =>
   [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs button')].filter(
     (b) => b.textContent?.trim() === text
   )
+/** A v2 button's tone: the accent-filled primary, the danger ink, or the plain secondary (§6). */
+const tone = (b: HTMLElement): 'primary' | 'danger' | 'plain' =>
+  b.hasAttribute('data-primary') ? 'primary' : b.hasAttribute('data-danger') ? 'danger' : 'plain'
 /** The titles of the sheets up on the frame's dialog host, lowest first. */
 const dialogTitles = (): string[] =>
   [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs h2')].map(
@@ -402,12 +405,13 @@ describe('the Inactive tabs sheet', () => {
     expect(rows()[0].querySelector('.zen-list-trailing button')?.getAttribute('aria-label')).toBe(
       'Close X marks'
     )
+    // Both plain secondaries (§9.11): nothing here destroys the user's data – a closed inactive
+    // tab's page stays in History – so neither carries the danger ink (§6, §10.5) nor is
+    // recommended over the other.
     const footer = document.querySelector<HTMLElement>('.zen-frame-dialogs .zen-sheet-footer')!
     const actions = [...footer.querySelectorAll<HTMLElement>('button')]
-    expect(actions.map((b) => [b.textContent?.trim(), b.hasAttribute('data-danger')])).toEqual([
-      ['Restore all', false],
-      ['Close all', true]
-    ])
+    expect(actions.map((b) => b.textContent?.trim())).toEqual(['Restore all', 'Close all'])
+    expect(actions.map((b) => tone(b))).toEqual(['plain', 'plain'])
   })
 
   it('a tap restores the tab – the sheet leaves first – and the overview leaves on the tab that comes back', async () => {
@@ -478,9 +482,18 @@ describe('the Inactive tabs sheet', () => {
     const sheets = [...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-sheet')]
     expect(sheets).toHaveLength(2)
     expect(sheets.map((s) => s.hasAttribute('data-recessed'))).toEqual([true, false])
+    // The prompt's footer: Cancel first, the verb last as the primary – a recoverable command
+    // the app may recommend (§6 withholds the recommendation only where the loss is real);
+    // no danger ink, since History keeps the pages.
+    const promptFooter = [
+      ...document.querySelectorAll<HTMLElement>('.zen-frame-dialogs .zen-sheet-footer')
+    ].at(-1)!
+    const promptActions = [...promptFooter.querySelectorAll<HTMLElement>('button')]
+    expect(promptActions.map((b) => b.textContent?.trim())).toEqual(['Cancel', 'Close all'])
+    expect(promptActions.map((b) => tone(b))).toEqual(['plain', 'primary'])
     const confirm = buttonsByText('Close all').filter((b) => !b.closest('[inert]'))
     expect(confirm).toHaveLength(1)
-    expect(confirm[0].hasAttribute('data-danger')).toBe(true)
+    expect(confirm[0]).toBe(promptActions[1])
     act(() => buttonsByText('Cancel')[0].click())
     await land()
     expect(of('inactiveTabs.closeAll')).toEqual([])
