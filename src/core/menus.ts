@@ -11,6 +11,7 @@ import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
+import { DEVTOOLS_DOCK_ROWS } from '../shared/devtoolsDock'
 import {
   BLANK_URL,
   NEW_TAB_URL,
@@ -457,10 +458,14 @@ export class Menus {
     this.popup(joinGroups([open, manage]), win, 'page', anchor)
   }
 
-  /** Chrome's "Inspect": the inspector opens on the node under the click, not the document. */
+  /**
+   * Chrome's "Inspect": the inspector opens on the node under the click, not the document, at
+   * the remembered dock (§9.29).
+   */
   private inspectElement(view: TabView, params: PageContextParams): void {
-    if (view.inspectElementAt) view.inspectElementAt(params.x, params.y)
-    else view.openDevTools('inspect')
+    const dock = this.browser.state.settings.devtoolsDock
+    if (view.inspectElementAt) view.inspectElementAt(params.x, params.y, dock)
+    else view.openDevTools('inspect', dock)
   }
 
   /** The link's open targets and its copy / save items, as two groups. */
@@ -3232,6 +3237,19 @@ export class Menus {
       enabled: Boolean(active),
       click: () => active && tabs.toggleDevtools(active.id)
     })
+    // Where the toolbox stands (design language v2 §9.29: Chrome's and Zen's dock side – bottom
+    // or right, the last choice remembered, left and undocked on offer): the frontend's four as
+    // radio rows under Developer Tools, the current one checked. A choice made inside the toolbox
+    // is remembered too and checks its row here, so the group never stands all unchecked.
+    const devtoolsDock = when(
+      caps.devtools,
+      ...DEVTOOLS_DOCK_ROWS.map(({ dock, label }): MenuItemTemplate => ({
+        label,
+        type: 'radio',
+        checked: state.settings.devtoolsDock === dock,
+        click: () => tabs.setDevtoolsDock(dock, win)
+      }))
+    )
     const about: MenuItemTemplate = { label: `About Zenium ${state.version}`, enabled: false }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
     // phone. Hosts with windows of their own (the desktop, at any layout) quit.
@@ -3368,10 +3386,13 @@ export class Menus {
           // Firefox's "More tools" row of its app group; Chrome's More tools, which carries its
           // window rows (Name window…), Task manager and Developer tools, gives the submenu its
           // contents: an installed app's Open in <app>, Zenium's space and window actions with
-          // Chrome's Name Window…, the window's layout toggles, the captures, then the
-          // developer's and the resources.
+          // Chrome's Name Window…, the window's layout toggles, the tablet's captures, then the
+          // resources and the developer's – the toolbox row and its dock rows (§9.29).
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
+          // The two captures are the tablet's: on the desktop they fold into Save and Share's
+          // Web Capture… (the #396 review's ruling 3), whose overlay takes the visible area and
+          // the full page both; the page context menu keeps its own capture rows on every host.
           submenu: tidySeparators([
             ...openInApp,
             separator,
@@ -3384,11 +3405,11 @@ export class Menus {
             ...changeTheme,
             ...when(caps.pageControls, fullscreen),
             separator,
-            screenshot,
-            captureFullPage,
+            ...when(win.formFactor !== 'desktop', screenshot, captureFullPage),
             separator,
             ...resources,
-            ...devtools
+            ...devtools,
+            ...devtoolsDock
           ])
         },
         {
