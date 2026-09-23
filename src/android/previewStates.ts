@@ -992,7 +992,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       if (then.length === 0) afterFrames(2, finish)
       else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
     })
-    run('bookmark.allTabs', {})
+    void run('bookmark.allTabs', undefined)
   } else if (target.kind === 'sheet') {
     // The Extensions sheet lists what the seed put in the state, so the seed goes first; the
     // sheet mounts on the next render and slides in, and the steps wait for it to settle. The
