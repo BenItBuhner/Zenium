@@ -804,11 +804,19 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         check("the lock has not given way before the device is turned", !host.fullscreenUnlocked)
         val matchedAt = SystemClock.uptimeMillis()
         instrumentation.runOnMainSync { host.onDeviceAngle(90) }
-        val unlocked = poll(5_000) { requested() == ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR }
+        // The lock's giving way (FULL_SENSOR) is a moment: the emulator's sensor holds the device
+        // upright, so the sensor's word turns the screen back at once and the exit gives the
+        // orientation back (UNSPECIFIED) – on a quick emulator inside one poll step. The way back
+        // coming on its own says the same thing: under SENSOR_LANDSCAPE the screen could not turn.
+        var sensorSeen = false
+        val gaveWay = poll(5_000) {
+            if (requested() == ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR) sensorSeen = true
+            sensorSeen || host.fullscreenTab == null
+        }
         val unlockedAt = SystemClock.uptimeMillis() - matchedAt
-        note("  the device turned to landscape (onDeviceAngle 90): the lock gave way to the sensor (FULL_SENSOR) $unlockedAt ms on: $unlocked; unlocked=${host.fullscreenUnlocked}")
-        check("the lock gives way to the sensor once the device is turned to match (Chrome's lock-to-any)", unlocked && host.fullscreenUnlocked)
-        check("the lock gives way about a second on (${RotateToFullscreen.UNLOCK_DELAY_MS} ms), not at once", unlockedAt >= RotateToFullscreen.UNLOCK_DELAY_MS - CLOCK_TOLERANCE_MS)
+        note("  the device turned to landscape (onDeviceAngle 90): the lock gave way to the sensor $unlockedAt ms on: $gaveWay (FULL_SENSOR seen: $sensorSeen; the way back taken on its own: ${host.fullscreenTab == null}); unlocked=${host.fullscreenUnlocked}")
+        check("the lock gives way to the sensor once the device is turned to match (Chrome's lock-to-any)", gaveWay)
+        check("the lock gives way about a second on (${RotateToFullscreen.UNLOCK_DELAY_MS} ms), not at once", gaveWay && unlockedAt >= RotateToFullscreen.UNLOCK_DELAY_MS - CLOCK_TOLERANCE_MS)
         // The emulator's sensor holds the device upright: with the sensor's word taken the
         // screen turns back on its own; where it does not, the turn is driven.
         var left = poll(6_000) { host.fullscreenTab == null }
