@@ -2,6 +2,7 @@ import http from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   BOOT_PAGES,
+  DOWNLOAD_FIXTURE,
   FIND_MATCHES,
   FIND_WORD,
   HANGING_PATH,
@@ -137,6 +138,29 @@ describe('startBootFixture', () => {
     expect((await get(fixture, '/favicon.ico')).status).toBe(204)
     expect((await get(fixture, '/')).status).toBe(404)
     expect((await get(fixture, '/other.html')).status).toBe(404)
+  })
+
+  it('sends the attachment as a download – a type no page renders, uncached, the size it says – and the page linking to it', async () => {
+    const { page, file } = DOWNLOAD_FIXTURE
+    expect(fixture.download).toEqual({
+      page: { ...page, url: `${fixture.origin}${page.path}` },
+      file: { ...file, url: `${fixture.origin}${file.path}` }
+    })
+    const res = await get(fixture, file.path)
+    expect(res.status).toBe(200)
+    expect(res.headers['content-type']).toBe('application/octet-stream')
+    expect(res.headers['content-disposition']).toBe(`attachment; filename="${file.filename}"`)
+    expect(res.headers['content-length']).toBe(String(file.size))
+    expect(res.headers['cache-control']).toBe('no-store')
+    expect(res.body.length).toBe(file.size)
+    const linked = await get(fixture, page.path)
+    expect(linked.status).toBe(200)
+    expect(linked.headers['content-type']).toBe('text/html; charset=utf-8')
+    expect(linked.body).toContain(`<title>${page.title}</title>`)
+    expect(linked.body).toContain(`<a id="${page.linkId}" href="${file.path}">`)
+    // Neither is a boot page: the boot family's page table stays the three.
+    expect(Object.values(BOOT_PAGES).map((p) => p.path)).not.toContain(page.path)
+    expect(Object.keys(bootPages(fixture.origin))).not.toContain(page.path)
   })
 
   it('logs each request with its path', () => {
