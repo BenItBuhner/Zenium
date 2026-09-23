@@ -23,7 +23,7 @@ import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 import { openSettings } from '@renderer/lib/pages'
 import { remoteTabsStore, remoteTabsWanted, useRemoteTabs } from '@renderer/lib/remoteTabs'
 import { createStore } from '@renderer/lib/store'
-import { SYNC_COPY } from '@renderer/lib/syncSetup'
+import { SYNC_COPY, syncScopeRowId } from '@renderer/lib/syncSetup'
 import { openClearBrowsingData } from '@renderer/lib/ui'
 import { relativeTime } from '@renderer/lib/utils'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
@@ -830,7 +830,10 @@ function RecentlyClosed({
  * Only while a setting stands between the user and the list does one group headed "Tabs from
  * other devices" stand there: its §9.17 line where its rows would be and the way out as
  * §10.4's action row to Settings › Sync (the chevron, since it leaves the page) – sync off,
- * "Turn on sync"; sync on with Open tabs off in What you sync, "Choose what to sync". With
+ * "Turn on sync", the section from its top; sync on with Open tabs off in What you sync,
+ * "Choose what to sync", the section with the Open tabs switch's group on screen (`?row=
+ * sync-scope:openTabs`, the door the phone's row takes; `SettingsPage` scrolls the row's group
+ * to the top before the paint, as Privacy's `?site=` brings a site's group up). With
  * sync on, the scope on and nothing published the group steps aside as Recently closed does
  * when it is empty (§10.1 as the lead amended it): a sentence with no way out would be a
  * permanent two lines of nothing for every single-device user, and §9.17's "reads 0" is for a
@@ -874,6 +877,8 @@ function RemoteTabs({
   if (sync.enabled && remoteTabsWanted(sync)) return null
   const line = sync.enabled ? REMOTE_COPY.scopeOff : REMOTE_COPY.syncOff
   const action = sync.enabled ? REMOTE_COPY.chooseScope : SYNC_COPY.turnOn
+  // Scope off: the Open tabs switch is the row's subject; sync off: the section's top is.
+  const landing = sync.enabled ? { row: syncScopeRowId('openTabs') } : undefined
   return (
     <PageGroup
       heading={REMOTE_COPY.heading}
@@ -891,7 +896,7 @@ function RemoteTabs({
             className="zen-page-row-text"
             data-row-focus=""
             data-testid="history-remote-tabs-settings"
-            onClick={() => openSettings('sync')}
+            onClick={() => openSettings('sync', landing)}
           >
             <span className="zen-page-row-label">{action}</span>
           </button>
