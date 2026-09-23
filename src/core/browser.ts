@@ -877,6 +877,24 @@ export class Browser {
     return true
   }
 
+  /**
+   * Close every private window (the private window's app menu and the macOS Window menu,
+   * profiles-25), which ends the private session with the last of them. Each closes as the
+   * user's own close would – its tab-count warning, its downloads, its pages' `beforeunload` –
+   * the other windows first and the asking one last, so what was asked from stays in view
+   * until the rest have gone; a refusal along the way keeps the rest open. Resolves true once
+   * every one closed.
+   */
+  async closePrivateWindows(from?: ZenWindow): Promise<boolean> {
+    const targets = this.allWindows().filter((w) => w.isPrivate)
+    const ordered = [...targets.filter((w) => w !== from), ...targets.filter((w) => w === from)]
+    for (const win of ordered) {
+      if (!win.alive || win.isClosing) continue
+      if (!(await this.requestWindowClose(win))) return false
+    }
+    return true
+  }
+
   private async confirmWindowClose(win: ZenWindow): Promise<boolean> {
     const count = this.tabs.closingTabCount(win)
     const warnTabs = this.state.settings.warnOnCloseWindow && count > 1
