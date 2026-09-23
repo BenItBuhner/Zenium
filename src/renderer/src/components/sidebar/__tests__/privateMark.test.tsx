@@ -7,11 +7,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { PRIVATE_CONTAINER_ID, type Tab, type UIState } from '@shared/types'
 
 /*
- * The private window's mark (profiles-25; design language v2 §9.19): Firefox's mask indicator
- * in the slot Chrome's incognito glyph takes from the profile avatar – between the extensions
- * and the ⋯ menu button of the toolbar row – drawn only in a private window, in every layout
- * the row is drawn in. An indicator, not a button: a toolbar button's box and glyph, no stop in
- * the tab order, its name as its tooltip.
+ * The private window's toolbar row draws no mark of its own (profiles-25; design language v2
+ * §9.19 as amended at #408's review): the window's one indicator is the sidebar's – the
+ * labelled "Private Browsing" header row when expanded, the rail's mask when collapsed, the
+ * strip's mask in the horizontal layout – and Zenium owes no avatar slot (no account, no
+ * avatar), so nothing stands between the extensions and the ⋯ button to say it again. The one
+ * mask the row may carry is the pill's, in the site-information slot: the TAB's private state,
+ * keyed by W4-7 on the tab and not on the window.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -23,13 +25,6 @@ const { browserStore } = await import('@renderer/lib/ui')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
-
-/** The text of the first `selector {` rule in the stylesheet. */
-function rule(selector: string): string {
-  const at = css.indexOf(`${selector} {`)
-  expect(at, selector).toBeGreaterThanOrEqual(0)
-  return css.slice(at, css.indexOf('}', at))
-}
 
 function tab(containerId = 'default'): Tab {
   return {
@@ -117,59 +112,46 @@ afterEach(() => {
   browserStore.set({ state: null })
 })
 
-const mark = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>('[data-zen-private-mark]')
+const masks = (el: HTMLElement): HTMLElement[] =>
+  Array.from(el.querySelectorAll<HTMLElement>('svg.lucide-venetian-mask'))
 
-describe('the private window’s mark in the toolbar row', () => {
-  it('is drawn in a private window, just before the menu button, as an indicator and not a button', () => {
+describe('the private window’s toolbar row', () => {
+  it('draws no mark of its own: the one mask in the row is the pill’s, the tab’s, in the site-information slot', () => {
     const page = tab(PRIVATE_CONTAINER_ID)
     const el = render(<NavRow state={state(page, 'private')} tab={page} compact={false} />)
-    const m = mark(el)
-    expect(m).not.toBeNull()
-    expect(m!.tagName).toBe('SPAN')
-    expect(m!.getAttribute('role')).toBe('img')
-    expect(m!.getAttribute('aria-label')).toBe('Private browsing')
-    // §9.31's chrome tooltip (#400): the text rides `data-tooltip`, never a native `title`.
-    expect(m!.getAttribute('data-tooltip')).toBe('Private browsing')
-    expect(m!.hasAttribute('title')).toBe(false)
-    expect(m!.tabIndex).toBeLessThan(0)
-    expect(m!.classList.contains('zen-toolbar-mark')).toBe(true)
-    // The mask at the toolbar glyph's size and stroke (§9.3).
-    const glyph = m!.querySelector('svg.lucide-venetian-mask')
-    expect(glyph).not.toBeNull()
-    expect(glyph!.getAttribute('class')).toContain('h-4 w-4')
-    expect(glyph!.getAttribute('stroke-width')).toBe('1.5')
-    // The avatar's slot: the last thing before ⋯.
-    expect(m!.nextElementSibling?.hasAttribute('data-zen-app-menu-button')).toBe(true)
-    // One of a kind in the row.
-    expect(el.querySelectorAll('[data-zen-private-mark]')).toHaveLength(1)
+    expect(el.querySelector('[data-zen-private-mark]')).toBeNull()
+    expect(el.querySelector('.zen-toolbar-mark')).toBeNull()
+    expect(el.querySelector('[role="img"][aria-label="Private browsing"]')).toBeNull()
+    const drawn = masks(el)
+    expect(drawn).toHaveLength(1)
+    expect(drawn[0]!.closest('[role="group"][aria-label="Address"]')).not.toBeNull()
+    expect(drawn[0]!.hasAttribute('data-private-mark')).toBe(true)
+    // No indicator stands before ⋯: what precedes it is the row's own (here the pill's box).
+    const menu = el.querySelector('[data-zen-app-menu-button]')
+    expect(menu).not.toBeNull()
+    expect(menu!.previousElementSibling?.matches('[role="img"], .zen-toolbar-mark')).toBe(false)
   })
 
-  it('is drawn in the compact column too, where no sidebar header names the window', () => {
+  it('draws none in the compact column either, where the rail’s own mask names the window', () => {
     const page = tab(PRIVATE_CONTAINER_ID)
     const el = render(<NavRow state={state(page, 'private')} tab={page} compact />)
-    expect(mark(el)).not.toBeNull()
-    expect(mark(el)!.nextElementSibling?.hasAttribute('data-zen-app-menu-button')).toBe(true)
+    expect(masks(el)).toHaveLength(0)
+    expect(el.querySelector('[data-zen-private-mark]')).toBeNull()
   })
 
-  it('is not drawn in a regular window – not even for a private tab shown in one (the pill’s mask marks that)', () => {
-    expect(
-      mark(render(<NavRow state={state(tab(), 'normal')} tab={tab()} compact={false} />))
-    ).toBeNull()
+  it('keeps the pill’s mask on the tab, not the window: a private tab in a regular window has it, a regular tab does not', () => {
     const secret = tab(PRIVATE_CONTAINER_ID)
+    expect(
+      masks(render(<NavRow state={state(secret, 'normal')} tab={secret} compact={false} />))
+    ).toHaveLength(1)
     act(() => root?.unmount())
     host?.remove()
     expect(
-      mark(render(<NavRow state={state(secret, 'normal')} tab={secret} compact={false} />))
-    ).toBeNull()
+      masks(render(<NavRow state={state(tab(), 'normal')} tab={tab()} compact={false} />))
+    ).toHaveLength(0)
   })
 
-  it('holds a toolbar button’s box in the window’s ink, with no hover fill of its own', () => {
-    const box = rule('.zen-toolbar-mark')
-    expect(box).toContain('width: 28px')
-    expect(box).toContain('height: 28px')
-    expect(box).toContain('color: var(--zen-fg)')
-    expect(rule('.zen-toolbar-mark > svg')).toContain('opacity: 0.85')
-    expect(css).not.toContain('.zen-toolbar-mark:hover')
+  it('has no toolbar-mark rule left in the stylesheet', () => {
+    expect(css).not.toContain('.zen-toolbar-mark')
   })
 })

@@ -1193,26 +1193,6 @@
   .zen-toolbar-button:disabled {
     opacity: 0.4;
   }
-  /*
-   * A toolbar indicator (design language v2 §9.19; profiles-25): the toolbar button's box and
-   * glyph – 28 around a 16 at stroke 1.5, the glyph at the resting 85 % of the window's ink – with
-   * no hover fill, no press and no focus ring, because it says something about the window (the
-   * private window's mask, in the slot Chrome's incognito glyph takes from the avatar) and does
-   * nothing when touched. The glyph is the window family's, never the private accent: the accent
-   * is the frame's and the pill's underline's (§9.19), and the mark sits among the row's buttons.
-   */
-  .zen-toolbar-mark {
-    display: inline-flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    color: var(--zen-fg);
-  }
-  .zen-toolbar-mark > svg {
-    opacity: 0.85;
-  }
 
   /*
    * A web app's standalone window (`app/AppTitleBar.tsx`, MW-23): its one row of chrome is the

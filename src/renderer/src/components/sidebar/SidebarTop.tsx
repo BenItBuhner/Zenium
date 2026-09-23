@@ -216,15 +216,10 @@ export function NavRow({
   // no pill to keep, so there the button stays whenever there is media.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
-  // The private window's mark holds a button's box in the row (below), so it counts here too.
-  const privateMark = isPrivateWindow(state)
   const hubUp =
     mediaHubVisible(state) &&
     (compact ||
-      mediaHubButtonFits(
-        rowWidth,
-        FIXED_BUTTONS - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0) + (privateMark ? 1 : 0)
-      ))
+      mediaHubButtonFits(rowWidth, FIXED_BUTTONS - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
@@ -705,34 +700,10 @@ export function NavRow({
         state={state}
         rowWidth={compact ? null : rowWidth}
         // The media and downloads buttons join the fixed set while they are in the row – the
-        // hub's only while the tier has it up, not while it has folded into the menu – and so
-        // does the private window's mark, which holds a button's box.
-        fixedButtons={
-          FIXED_BUTTONS + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0) + (privateMark ? 1 : 0)
-        }
+        // hub's only while the tier has it up, not while it has folded into the menu.
+        fixedButtons={FIXED_BUTTONS + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
         compact={compact}
       />
-      {/*
-        The private window's mark (profiles-25, design language v2 §9.19): Firefox's mask
-        indicator in the slot Chrome's incognito glyph takes from the profile avatar – between
-        the extensions and the menu – so the window reads private in every layout, the compact
-        column and the strip's toolbar included, where the sidebar's "Private Browsing" header is
-        not drawn. An indicator, not a button: the toolbar glyph's box and ink with no hover, no
-        press and no stop in the tab order; its tooltip (§9.31's chrome tooltip, `data-tooltip`)
-        is its name. Only a private window's – a private tab in a regular window (the tablet) is
-        the pill's mask to mark (§9.19).
-      */}
-      {privateMark && (
-        <span
-          className="zen-toolbar-mark"
-          role="img"
-          aria-label="Private browsing"
-          data-tooltip="Private browsing"
-          data-zen-private-mark
-        >
-          <VenetianMask className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
-        </span>
-      )}
       {/*
         The "⋯" carries the media hub's accent dot while something plays and the hub's toolbar
         button has folded (design language v2 §9.29: at the 240 sidebar the hub folds into the
