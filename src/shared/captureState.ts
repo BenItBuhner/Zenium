@@ -60,6 +60,37 @@ export function tabAlertFor(reports: Iterable<Omit<CaptureStateReport, 'id'>>): 
   return best
 }
 
+/**
+ * What the tab is capturing, kind by kind (omnibox-38): the URL pill's in-use chip names the
+ * camera, the microphone or the screen where the `alert` above only ranks them. Picture-in-
+ * picture is no capture and is not here.
+ */
+export interface TabCapture {
+  camera: boolean
+  microphone: boolean
+  /** A `getDisplayMedia` stream is live somewhere in the tab. */
+  display: boolean
+}
+
+/** The kinds live in any of the tab's frames, or null while none is. */
+export function tabCaptureFor(
+  reports: Iterable<Omit<CaptureStateReport, 'id'>>
+): TabCapture | null {
+  const capture: TabCapture = { camera: false, microphone: false, display: false }
+  for (const report of reports) {
+    if (report.camera) capture.camera = true
+    if (report.microphone) capture.microphone = true
+    if (report.display) capture.display = true
+  }
+  return capture.camera || capture.microphone || capture.display ? capture : null
+}
+
+/** Two readings of the tab's capture say the same, null included. */
+export function sameCapture(a: TabCapture | null | undefined, b: TabCapture | null): boolean {
+  if (!a || !b) return (a ?? null) === b
+  return a.camera === b.camera && a.microphone === b.microphone && a.display === b.display
+}
+
 /** A report worth keeping: some kind is live. One with nothing live retires its frame's entry. */
 export function reportIsLive(report: Omit<CaptureStateReport, 'id'>): boolean {
   return report.camera || report.microphone || report.display || report.pip

@@ -691,6 +691,7 @@ export class BrowserState {
       tab.audible = false
       // Live capture is a session's own: a restored page holds no camera until it asks again.
       tab.alert = null
+      tab.capture = null
       tab.errorCode = null
       // A chrome page tab restored inside a section has the landing beneath it (PageService).
       if (isChromePageUrl(tab.url)) tab.canGoBack = parseInternalPageUrl(tab.url)?.section != null
@@ -1029,6 +1030,7 @@ export class BrowserState {
           progress: 0,
           audible: false,
           alert: null,
+          capture: null,
           errorCode: null,
           // A certificate proceeded past is a decision of the session, not of the tab.
           certificateError: null,

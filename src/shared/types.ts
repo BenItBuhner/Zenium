@@ -43,7 +43,7 @@ import type {
   ReadAloudVoicesResult
 } from './readAloud'
 import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
-import type { TabAlert } from './captureState'
+import type { TabAlert, TabCapture } from './captureState'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 import type { ShareFile, ShareFileInfo } from './share'
 import type { PageCaptureRequest, PageCaptureResult, PageViewport } from './capture'
@@ -448,6 +448,12 @@ export interface Tab {
    * own (not persisted, cleared on load). Absent on records older than the field.
    */
   alert?: TabAlert | null
+  /**
+   * The kinds behind a `recording` / `capturing` alert (omnibox-38): which of the camera, the
+   * microphone and the screen the page holds, for the URL pill's in-use chip, whose glyph and
+   * name say which. Folded with `alert` from the same reports; null while nothing is captured.
+   */
+  capture?: TabCapture | null
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**
