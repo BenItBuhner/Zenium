@@ -538,18 +538,21 @@ export function NewContainerForm({
 
 /**
  * One §9.14 radio option: a 20 px circle, the label to its right, the whole row the target. A
- * `leading` glyph (an engine's favicon) sits between the circle and the label.
+ * `leading` glyph (an engine's favicon) sits between the circle and the label. `font` – a CSS
+ * `font-family` value – draws the label in that face (a font picker's row is its own sample).
  */
 export function RadioOption({
   label,
   description,
   leading,
+  font,
   checked,
   onSelect
 }: {
   label: string
   description?: string
   leading?: ReactNode
+  font?: string
   checked: boolean
   onSelect: () => void
 }): JSX.Element {
@@ -558,7 +561,11 @@ export function RadioOption({
       type="button"
       role="radio"
       aria-checked={checked}
-      className="zen-settings-row zen-settings-radio-row zen-v2-row"
+      className={cn(
+        'zen-settings-row zen-settings-radio-row zen-v2-row',
+        font && 'zen-settings-font-option'
+      )}
+      style={font ? ({ '--zen-settings-option-font': font } as CSSProperties) : undefined}
       onClick={onSelect}
     >
       <span className="zen-v2-radio" aria-hidden="true" />

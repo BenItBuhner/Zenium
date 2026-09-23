@@ -9341,6 +9341,22 @@
   line-height: var(--v2-line-small);
   text-overflow: ellipsis;
 }
+/*
+ * A font picker's specimen (`MenulistOption.font`, the Settings tab's family rows): "Aa" in
+ * the option's own face at the row's size and ink, trailing the label, which stays in the
+ * chrome's type – a symbol face drawn in itself would write its name as dingbats. Every row of
+ * such a list keeps the check's 16 slot (`-mark`), so the specimens line up on the current row
+ * as on the others.
+ */
+.zen-v2-menulist-option-specimen {
+  flex-shrink: 0;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-v2-menulist-option-mark {
+  width: var(--v2-icon);
+  flex-shrink: 0;
+}
 
 /* The page: the landing stays mounted beneath a drill-in, which slides over it (§10.2). */
 .zen-settings-page {
@@ -9967,11 +9983,13 @@
  * on the page's tokens (§9.29). The sample under it is body text scaled whole, its 15/20 line
  * box with it (§4: a fixed line-height, here the body's times the sample's factor).
  */
-.zen-settings-zoom-stepper {
+.zen-settings-zoom-stepper,
+.zen-settings-slider-stepper {
   margin-top: 8px;
   gap: 8px;
 }
-.zen-settings-zoom-stepper .zen-zoom-slider [role='slider'] {
+.zen-settings-zoom-stepper .zen-zoom-slider [role='slider'],
+.zen-settings-slider-stepper .zen-zoom-slider [role='slider'] {
   border-color: var(--v2-page);
 }
 .zen-settings-zoom-preview {
@@ -10443,10 +10461,14 @@
 }
 /*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
- * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text.
- * On a phone the block is the row's text – label and value on the first line, the slider on
- * the control line under it; on the desktop the slider trails the text at 160 with the value
- * at its end, the row grown around the control as any control row.
+ * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text in
+ * `tabular-nums`. On a phone the block is the row's text – the label with the value on its
+ * line, the description, then the Default zoom block's stepper form (`.zen-settings-slider-
+ * stepper`, the rules above with `.zen-settings-zoom-stepper`): the §9.3 44 px − and + step
+ * buttons at the row's ends, the track between them, no labels under its ends. On the desktop
+ * a level on a page is §10.5's menulist of its stops (the fonts rows), so the trailing form –
+ * the slider at 160 with the value at its end, the row grown around it as any control row –
+ * stands only for the Resources budgets until that group moves.
  */
 .zen-settings-slider-row {
   cursor: default;
@@ -10481,6 +10503,113 @@
 }
 .zen-settings-slider [role='slider'] {
   border-color: var(--v2-page);
+}
+/*
+ * A row's ⋯ (`ItemRow.menu`, `RowMenuButton` in rows.tsx) is the shared icon button, at its
+ * own size and in the row's ink as `V2IconButton` draws it (§9.3: a row's icon buttons in the
+ * row's ink; §9.29 deemphasises supplementary text only, never a control's glyph), in the
+ * trailing slot with its box ending at the row's gutter as a control row's button and the
+ * reader stepper's buttons do; the row is `data-control` on one line (36 / 52, §9.21) and
+ * holds the button inside its two lines otherwise. The static row keeps no fill; the button
+ * carries its own. No rule of its own here: the class is the tests' hook.
+ */
+/*
+ * Customize fonts (`settings/fonts.tsx`, CT-25): the preview is a static content row (§10.3:
+ * a 13/69 % label over content the row shows whole, growing with its text) in the page's
+ * gutter, on the row's own pad; the two sample lines are drawn in the page fonts themselves –
+ * the standard family at the chosen size, then the fixed-width family at Chrome's ratio – so
+ * the row shows what a page will get; their `font-family` and `font-size` ride in from the row
+ * through its variables. The face and size are what the row is for, so they are not the
+ * chrome's type; the ink, the label and the 69 % note are.
+ */
+.zen-settings-fonts-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--v2-row-pad) 16px;
+  color: var(--v2-text);
+}
+.zen-settings-fonts-preview > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--zen-settings-preview-family);
+  font-size: var(--zen-settings-preview-size);
+  line-height: 1.4;
+}
+.zen-settings-fonts-preview > p[data-face='fixed'] {
+  font-family: var(--zen-settings-preview-fixed-family);
+  font-size: var(--zen-settings-preview-fixed-size);
+}
+.zen-settings-fonts-preview > .zen-settings-description {
+  display: block;
+}
+/*
+ * The phone's font picker (`FontPickList`, fontBlocks.tsx, on `RadioOption`'s `font`): §9.13's
+ * radio rows in a sheet, each label in its own face at the row's body size (the face is the
+ * choice, and the phone's options are the platform's word aliases, every one a face that
+ * writes its own name), the current one marked; the desktop's menulist popover, listing the
+ * computer's families, keeps the names in the chrome's type and shows each face as an "Aa"
+ * specimen instead (`MenulistOption.font`, `.zen-v2-menulist-option-specimen`).
+ */
+.zen-settings-font-option .zen-settings-label {
+  font-family: var(--zen-settings-option-font, inherit);
+}
+/*
+ * A picker sheet or dialog with a filter (`LanguagePickList.tsx`; §10.3: a field
+ * pinned under a header): the field in the 16 gutter, 8 under the header, stuck to the top of
+ * the scrolling body on the panel's own surface so the rows scroll under it; the rows follow
+ * edge to edge. No match, or nothing left to add, is §9.17's sheet form on `.zen-settings-empty`'s
+ * type and ink: one sentence centred inside a 32 gutter, its line 48 under the pinned field,
+ * 24 above the body's end; top-anchored, never centred in the free height.
+ */
+.zen-settings-pick-filter {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0 16px 8px;
+  background: var(--v2-panel);
+}
+.zen-settings-pick-filter > .zen-v2-field {
+  width: 100%;
+}
+.zen-settings-pick-empty {
+  padding: 48px 32px 24px;
+  text-align: center;
+}
+/*
+ * Settings › Languages › Add language, the phone's find-and-pick page (`AddLanguagePage.tsx`,
+ * §10.2): the page fills the drill-in pane's body and owns the scrolling – the §9.12 field in
+ * the 16 gutter, 8 under the pane's bar, pinned; the languages scrolling under it in a list of
+ * the page's own – so the field keeps its place and §9.7's hairline, once the list has
+ * scrolled, is drawn under the field (`data-scrolled`, as the pane's bar draws its own), not
+ * the bar. The pane's body pads 24 under its content for a list that ends; a page that scrolls
+ * itself gives that back and pads its own list, so the rows run to the pane's edge.
+ */
+.zen-settings-scroll:has(> .zen-settings-add-language) {
+  padding-bottom: 0;
+}
+.zen-settings-add-language {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.zen-settings-add-language-filter {
+  flex-shrink: 0;
+  padding: 0 16px 8px;
+  transition: box-shadow 120ms var(--zen-ease);
+}
+.zen-settings-add-language[data-scrolled] > .zen-settings-add-language-filter {
+  box-shadow: 0 1px 0 var(--v2-border);
+}
+.zen-settings-add-language-filter > .zen-v2-field {
+  width: 100%;
+}
+.zen-settings-add-language-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 24px;
 }
 /*
  * Resources › Live usage (`blocks.tsx`'s `ResourceMeter`): label and numbers on one line, the
@@ -12468,8 +12597,9 @@
   border: 2px solid var(--v2-panel);
   background: var(--v2-accent);
 }
+:root[data-form-factor='phone'] .zen-settings-zoom-stepper .zen-zoom-slider [role='slider']::before,
 :root[data-form-factor='phone']
-  .zen-settings-zoom-stepper
+  .zen-settings-slider-stepper
   .zen-zoom-slider
   [role='slider']::before {
   border-color: var(--v2-page);

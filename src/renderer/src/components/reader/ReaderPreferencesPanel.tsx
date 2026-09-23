@@ -1,7 +1,9 @@
-import type { JSX } from 'react'
-import { useCallback, useEffect, useRef } from 'react'
-import { ALargeSmall, AudioLines, Minus, Plus } from 'lucide-react'
+import type { JSX, ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ALargeSmall, AudioLines, Languages, Minus, Plus } from 'lucide-react'
 import type { UIState } from '@shared/types'
+import { languageName } from '@shared/languageNames'
+import type { ReaderTranslateState, TranslateUIState } from '@shared/translate'
 import { READER_URL_PREFIX } from '@shared/url'
 import {
   READER_FONTS,
@@ -19,10 +21,18 @@ import {
   type ReaderLineFocus,
   type ReaderPreferences
 } from '@shared/reader'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
-import { viewportStore } from '@renderer/lib/formFactor'
+import { useViewport, viewportStore } from '@renderer/lib/formFactor'
+import { catalogueLanguageName, translateLanguageChoices } from '@renderer/lib/languageCatalogue'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
+import {
+  readerTranslateError,
+  readerTranslateProgress,
+  readerTranslateTarget,
+  readerTranslateWorking
+} from '@renderer/lib/readerTranslate'
 import {
   closeReaderPreferences,
   readerPreferencesChanged,
@@ -31,6 +41,8 @@ import {
 } from '@renderer/lib/ui'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { V2IconButton } from '../extensions/v2'
+import { V2MenulistSheet } from '../extensions/V2Menulist'
+import { MenulistPopover } from '../menus/MenulistPopover'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import {
   ChoiceRow,
@@ -75,7 +87,14 @@ export function ReaderPreferencesPanel({
   const tab = state.tabs[panel.tabId]
   const reader = Boolean(tab && tab.url.startsWith(READER_URL_PREFIX))
   const prefs = state.settings.reader
-  // The page has taken the change (the state came back with it): its picture is taken again.
+  // Translate (CT-36) is a row here where the host runs the engine; the article's translation
+  // is the tab's entry in the translate slice, none until it is asked for.
+  const translate =
+    state.capabilities.translate && state.translate.available ? state.translate : null
+  const translation = translate?.reader?.[panel.tabId] ?? null
+  // The page has taken the change (the state came back with it): its picture is taken again –
+  // on a translation's turns too (its text swapped in, the original shown again), not on every
+  // batch it finishes, which would take a picture per batch for nothing the still can show.
   const key = [
     prefs.fontSize,
     prefs.font,
@@ -83,7 +102,10 @@ export function ReaderPreferencesPanel({
     prefs.width,
     prefs.spacing,
     prefs.lineFocus,
-    prefs.syllables
+    prefs.syllables,
+    translation?.status ?? '',
+    translation?.target ?? '',
+    translation?.showOriginal ?? ''
   ].join('|')
   const first = useRef(true)
   useEffect(() => {
@@ -106,7 +128,14 @@ export function ReaderPreferencesPanel({
         run('readAloud.start', { tabId: panel.tabId, from: 'reader' })
       }
     : null
-  const content = <Rows prefs={prefs} onChange={change} onListen={listen} />
+  const content = (
+    <Rows
+      prefs={prefs}
+      onChange={change}
+      onListen={listen}
+      translate={translate && { tabId: panel.tabId, translate, translation }}
+    />
+  )
   return phone ? (
     <ReaderPreferencesSheet closing={closing}>{content}</ReaderPreferencesSheet>
   ) : (
@@ -117,36 +146,48 @@ export function ReaderPreferencesPanel({
 }
 
 /**
- * The rows, one composition on both platforms (§9.13's control panel): Listen to this article
- * first – an action row with the read-aloud glyph, on hosts with a speech engine – then the
- * text: the size as a stepper row – A− and A+ as the shared icon buttons (§9.3) with the size
- * in px between them, the ends disabled at .4 (§9.30) – and a menulist row each for the font,
- * the colour theme, the column width and the spacing (§9.13, a sheet of radio rows under a
- * finger); then the extras: line focus as a switch row (§10.4) with the band size a dependent
- * menulist row – laid out at .4 while the focus is off – and syllables as a switch row.
+ * The rows, one composition on both platforms (§9.13's control panel): the panel's actions on
+ * the article first, one group at its head – Listen to this article, an action row with the
+ * read-aloud glyph, on hosts with a speech engine, and Translate (CT-36, `TranslateRow`) on
+ * hosts with the translation engine, each a 44 action row with its 20 glyph (§10.4's mixing
+ * rule holds within the group: the action rows carry glyphs together, the setting rows below
+ * none) – then a hairline and the text: the size as a stepper row – A− and A+ as the shared
+ * icon buttons (§9.3) with the size in px between them, the ends disabled at .4 (§9.30) – and
+ * a menulist row each for the font, the colour theme, the column width and the spacing (§9.13,
+ * a sheet of radio rows under a finger); then the extras: line focus as a switch row (§10.4)
+ * with the band size a dependent menulist row – laid out at .4 while the focus is off – and
+ * syllables as a switch row. #265's rule for the phone sheet holds with the one head row: the
+ * peek shows the live type rows whole above the fold (the 44 head rows and the hairline before
+ * Text spacing's bottom edge stay inside the 412 × 915 phone's peek), the set-once aids after
+ * the hairline. Exported for the order's test.
  */
-function Rows({
+export function Rows({
   prefs,
   onChange,
-  onListen
+  onListen,
+  translate
 }: {
   prefs: ReaderPreferences
   onChange: (patch: Partial<ReaderPreferences>) => void
   onListen: (() => void) | null
+  translate: TranslateRowProps | null
 }): JSX.Element {
   const smallest = READER_FONT_SIZES[0]
   const largest = READER_FONT_SIZES[READER_FONT_SIZES.length - 1]
   const focusOn = prefs.lineFocus !== 0
   return (
     <div className="flex flex-col" data-reader-prefs-rows="">
-      {onListen && (
+      {(onListen || translate) && (
         <>
-          <ListRow
-            label="Listen to this article"
-            leading={<AudioLines className={GLYPH} aria-hidden />}
-            onClick={onListen}
-            data-reader-pref="listen"
-          />
+          {onListen && (
+            <ListRow
+              label="Listen to this article"
+              leading={<AudioLines className={GLYPH} aria-hidden />}
+              onClick={onListen}
+              data-reader-pref="listen"
+            />
+          )}
+          {translate && <TranslateRow {...translate} />}
           <Separator />
         </>
       )}
@@ -232,6 +273,113 @@ function Rows({
         data-reader-pref="syllables"
       />
     </div>
+  )
+}
+
+interface TranslateRowProps {
+  tabId: string
+  translate: TranslateUIState
+  /** The tab's reader translation, null until one is asked for. */
+  translation: ReaderTranslateState | null
+}
+
+/** The picker's title and accessible name: what the pick chooses. */
+const TARGET_LABEL = 'Translate into'
+
+/** A language's name for the row: the runtime's, the catalogue's English where it has none – never the tag. */
+const name = (code: string): string => catalogueLanguageName(code) ?? languageName(code)
+
+/**
+ * Translate (CT-36; Chrome's translate bubble folded into the reader's one panel – §9.13's
+ * control panel draws its controls, so the article's translation is one row here rather than a
+ * bar of its own, never a menulist-plus-action pair): Listen's sibling at the panel's head, a
+ * 44 action row with the translate glyph. A press opens the target picker – the languages the
+ * models reach as the chassis's menulist picker, a sheet of radio rows under a finger (opened
+ * expanded and scrolled to the checked row when they exceed its peek, §9.13) and the popover
+ * flush under the row on a mouse – with the remembered target checked and in view: the last
+ * one picked here, else the translation's own, else the first preferred language a model
+ * reaches (`readerTranslateTarget`; the article's own language, as the page translate detected
+ * it, is never proposed). The pick translates: the core is asked to translate the reader
+ * article in place into it (`translate.reader`), and the row is §9.30's busy row while the
+ * core works – full opacity, the spinner trailing, its second line the progress (the language
+ * being told, the model arriving with its bytes, the blocks done of the article's), a press
+ * doing nothing. A failure keeps the row pressable with the reason as its second line in the
+ * danger ink (§9.33: the ink on the line that reports it); the press opens the picker again,
+ * the failed target checked, so the pick is the retry. Translated, the row becomes "Show
+ * original", a switch row (§10.4, no glyph: a setting row) whose on state shows the article as
+ * written with the translation kept (`translate.readerShowOriginal`), "Translated into
+ * <language>" as its description. The panel's picture of the page follows each turn of the
+ * translation, so the article is seen as it now reads.
+ */
+export function TranslateRow({ tabId, translate, translation }: TranslateRowProps): JSX.Element {
+  const viewport = useViewport()
+  const [chosen, setChosen] = useState<string | null>(null)
+  // The picker is open from this anchor (the row's box; the phone's sheet needs none, but
+  // takes the same mark).
+  const [anchor, setAnchor] = useState<Anchor | null>(null)
+  const options = translateLanguageChoices(translate.languages)
+  // The page translate's detection stands in for the article's language until the reader's own
+  // translation names it: the default target skips it (the core's `defaultTarget` rule).
+  const pageSource = translate.tabs[tabId]?.source ?? null
+  const target = readerTranslateTarget(translation, chosen, translate, pageSource)
+  const working = readerTranslateWorking(translation)
+  const pick = (code: string): void => {
+    setAnchor(null)
+    setChosen(code)
+    run('translate.reader', { tabId, target: code })
+  }
+  if (translation?.status === 'translated') {
+    return (
+      <SwitchRow
+        label="Show original"
+        description={translation.target ? `Translated into ${name(translation.target)}` : undefined}
+        checked={translation.showOriginal}
+        onChange={(original) => run('translate.readerShowOriginal', { tabId, original })}
+        data-reader-pref="showOriginal"
+      />
+    )
+  }
+  let description: ReactNode
+  if (translation && working) description = readerTranslateProgress(translation)
+  else if (translation?.status === 'error') {
+    description = (
+      <span className="zen-settings-danger">{readerTranslateError(translation.error)}</span>
+    )
+  }
+  return (
+    <>
+      <ListRow
+        label="Translate"
+        description={description}
+        leading={<Languages className={GLYPH} aria-hidden />}
+        busy={working}
+        disabled={target === null}
+        aria-haspopup={viewport.coarse ? 'dialog' : 'listbox'}
+        aria-expanded={anchor !== null}
+        onClick={(e) => setAnchor(anchorOf(e.currentTarget))}
+        data-reader-pref="translate"
+      />
+      {anchor &&
+        (viewport.coarse ? (
+          <V2MenulistSheet
+            label={TARGET_LABEL}
+            value={target ?? ''}
+            options={options}
+            onPick={pick}
+            onClose={() => setAnchor(null)}
+          />
+        ) : (
+          <MenulistPopover
+            anchor={anchor}
+            label={TARGET_LABEL}
+            value={target}
+            options={options}
+            onPick={pick}
+            onClose={() => setAnchor(null)}
+            overPage
+          />
+        ))}
+    </>
   )
 }
 

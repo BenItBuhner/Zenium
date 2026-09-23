@@ -141,8 +141,12 @@ export function isTextField(el: Element): el is HTMLElement {
   return el instanceof HTMLElement && el.isContentEditable
 }
 
-/** The option a picker or menu opens on: checked, selected or current (a checkbox is a setting, not an option). */
-const CHECKED =
+/**
+ * The option a picker or menu opens on: checked, selected or current (a checkbox is a setting,
+ * not an option). The chassis focuses it as the sheet opens, and scrolls an `'overflow'` picker
+ * to it (`BottomSheet`, §9.13).
+ */
+export const CHECKED =
   '[aria-checked="true"], [aria-selected="true"], [aria-current]:not([aria-current="false"]), input[type="radio"]:checked'
 
 /**
