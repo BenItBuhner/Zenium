@@ -12,9 +12,11 @@ import { BLANK_URL } from '@shared/url'
  * The new tab page's shortcuts reordered by hold-and-drag (NTP-06, v2 §11.4): a hold lifts a
  * pinned tile (scale 1.02), the finger carries it 1:1, the draft order follows the slot its
  * centre is nearest and the other tiles glide on the grid's FLIP set; the drop writes
- * `newtab.reorderShortcuts` and the tile glides home; a hold that lifts without moving is the
- * tile's menu; a most visited tile is not a slot; the touch lost puts the order back; under
- * reduced motion the drop is at its slot at once, arriving on the 120 ms fade.
+ * `newtab.reorderShortcuts` and the tile glides home, the one in the hand (its cell's data-held)
+ * to the end of the glide, a hold meanwhile refused; a hold that lifts without moving is the
+ * tile's menu; a most visited tile is not a slot; the touch lost puts the order back, and so
+ * does the tile itself leaving the DOM under the finger; under reduced motion the drop is at
+ * its slot at once, arriving on the 120 ms fade.
  */
 
 let ranked: Array<{ url: string; title: string; favicon: string | null }> = []
@@ -301,15 +303,21 @@ describe('reordering the shortcuts by hold-and-drag', () => {
     later(200)
     pointer('pointerup', a, third.x, third.y)
     expect(commands('newtab.reorderShortcuts')).toEqual([{ ids: ['s-b', 's-c', 's-a', 's-d'] }])
-    expect(cellOf('A').dataset.held).toBeUndefined()
-    expect(cellOf('A').dataset.cell).toBe(url('a'))
+    // Still the tile in the hand while it glides: over its neighbours (its cell's data-held, the
+    // z-index) and out of the FLIP set, to the end of the glide rather than the drop.
+    expect(cellOf('A').dataset.held).toBe('true')
+    expect(cellOf('A').dataset.cell).toBeUndefined()
     frame()
     const home = translateX(a)
     expect(home).toBeGreaterThan(-12)
     expect(home).toBeLessThan(0)
+    expect(cellOf('A').dataset.held).toBe('true')
     settle()
     expect(a.style.transform).toBe('')
     expect(cellOf('B').style.transform).toBe('')
+    // Landed: the hand is empty and the cell is one of the set again.
+    expect(cellOf('A').dataset.held).toBeUndefined()
+    expect(cellOf('A').dataset.cell).toBe(url('a'))
     // The draft is drawn until the core's list has it, and stays when it does.
     expect(order()).toEqual(['B', 'C', 'A', 'D'])
     await render([PINS[1], PINS[2], PINS[0], PINS[3]])
@@ -344,6 +352,42 @@ describe('reordering the shortcuts by hold-and-drag', () => {
     expect(commands('newtab.reorderShortcuts')).toEqual([{ ids: ['s-b', 's-c', 's-a', 's-d'] }])
   })
 
+  it('a hold or a drag while the dropped tile glides is refused, and its end does not take the mark from the tile still landing', async () => {
+    await render()
+    const start = pickUp('A')
+    const a = tile('A')
+    pointer('pointermove', a, start.x + 12, start.y)
+    const third = slotCentre(2)
+    pointer('pointermove', a, third.x, third.y)
+    later(200)
+    pointer('pointerup', a, third.x, third.y)
+    frame()
+    expect(cellOf('A').dataset.held).toBe('true')
+    // Another tile held while the glide runs: not lifted, and its move is no drag – the order
+    // stands where the drop left it.
+    const at = pickUp('B')
+    const b = tile('B')
+    expect(b.style.transform).toBe('')
+    expect(cellOf('B').dataset.held).toBeUndefined()
+    pointer('pointermove', b, at.x + 40, at.y)
+    expect(order()).toEqual(['B', 'C', 'A', 'D'])
+    expect(b.style.transform).toBe('')
+    // The refused hold's end leaves the landing tile the one in the hand…
+    expect(cellOf('A').dataset.held).toBe('true')
+    pointer('pointerup', b, at.x + 40, at.y)
+    expect(cellOf('A').dataset.held).toBe('true')
+    // …until it has landed.
+    settle()
+    expect(a.style.transform).toBe('')
+    expect(cellOf('A').dataset.held).toBeUndefined()
+    expect(cellOf('A').dataset.cell).toBe(url('a'))
+    expect(commands('newtab.reorderShortcuts')).toEqual([{ ids: ['s-b', 's-c', 's-a', 's-d'] }])
+    // The hand free again, the next hold lifts.
+    const again = pickUp('B')
+    expect(tile('B').style.transform).toBe(`scale(${TILE_LIFT_SCALE})`)
+    pointer('pointerup', tile('B'), again.x, again.y)
+  })
+
   it('the touch taken away mid-drag puts the order back and writes nothing', async () => {
     await render()
     const start = pickUp('A')
@@ -358,6 +402,40 @@ describe('reordering the shortcuts by hold-and-drag', () => {
     settle()
     expect(a.style.transform).toBe('')
     expect(cellOf('A').dataset.held).toBeUndefined()
+  })
+
+  it('the dragged tile taken out of the DOM under the finger (its pin removed meanwhile) ends the drag: nothing written, the hand empty, the next hold lifts', async () => {
+    await render()
+    const start = pickUp('A')
+    const a = tile('A')
+    pointer('pointermove', a, start.x + 12, start.y)
+    const third = slotCentre(2)
+    pointer('pointermove', a, third.x, third.y)
+    expect(order()).toEqual(['B', 'C', 'A', 'D'])
+    // The list comes back without A while the finger still holds it: its tile unmounts, and
+    // with it the touch's listeners – no release will come.
+    await render([PINS[1], PINS[2], PINS[3]])
+    expect(order()).toEqual(['B', 'C', 'D'])
+    expect(a.isConnected).toBe(false)
+    expect(a.style.transform).toBe('')
+    expect(cells().every((li) => li.dataset.held === undefined)).toBe(true)
+    expect(cells().every((li) => li.dataset.cell !== undefined)).toBe(true)
+    expect(commands('newtab.reorderShortcuts')).toEqual([])
+    // The session is over: a new hold lifts, its drag reorders and its drop writes.
+    const at = pickUp('D')
+    const d = tile('D')
+    expect(d.style.transform).toBe(`scale(${TILE_LIFT_SCALE})`)
+    expect(cellOf('D').dataset.held).toBe('true')
+    pointer('pointermove', d, at.x - 12, at.y)
+    const first = slotCentre(0)
+    pointer('pointermove', d, first.x, first.y)
+    expect(order()).toEqual(['D', 'B', 'C'])
+    later(200)
+    pointer('pointerup', d, first.x, first.y)
+    expect(commands('newtab.reorderShortcuts')).toEqual([{ ids: ['s-d', 's-b', 's-c'] }])
+    settle()
+    expect(d.style.transform).toBe('')
+    expect(cellOf('D').dataset.held).toBeUndefined()
   })
 
   it('a most visited tile is not a slot: a hold on it does not lift it, and its menu opens at the lift', async () => {
@@ -409,8 +487,10 @@ describe('reordering the shortcuts by hold-and-drag', () => {
     expect(cellOf('B').style.transform).toBe('')
     pointer('pointerup', a, third.x + 20, third.y)
     expect(commands('newtab.reorderShortcuts')).toEqual([{ ids: ['s-b', 's-c', 's-a', 's-d'] }])
-    // At its slot at once…
+    // At its slot at once, and out of the hand at once (the glide it stays in the hand for is none)…
     expect(a.style.transform).toBe('')
+    expect(cellOf('A').dataset.held).toBeUndefined()
+    expect(cellOf('A').dataset.cell).toBe(url('a'))
     // …arriving on the fade (the spring's rest ran no frames).
     const fade = animate.mock.calls.find(
       (call) =>

@@ -92,7 +92,13 @@ interface Session {
  * the shared device list `newTabDevice` is the store) and is drawn until the list comes back
  * with it, while the tile glides home into its slot on `SPRING_SNAPPY` from the finger's
  * velocity; under reduced motion it is at its slot at once and fades in there over 120 ms (v2
- * §11.3, #311). A drag the touch loses goes back to the order it set out from.
+ * §11.3, #311). The tile is the one in the hand (`held`: its cell's `data-held`, the z-index
+ * that keeps it over its neighbours and the lifted look) from the hold to the end of that
+ * glide, as the overview's card is its ghost until the ghost has landed; a hold or a drag while
+ * the glide runs is refused. A drag the touch loses goes back to the order it set out from, and
+ * so does one whose tile leaves the DOM under the finger (its pin removed meanwhile): the
+ * touch's listeners went with the tile's element, so no release will come, and the session
+ * ends at that commit.
  */
 export function useTileReorder(
   shortcuts: readonly NewTabShortcut[],
@@ -101,6 +107,8 @@ export function useTileReorder(
   /** The pinned order the last drag wrote (its draft, moving as the finger does); null for the list's. */
   const [written, setOrder] = useState<readonly string[] | null>(null)
   const [held, setHeld] = useState<string | null>(null)
+  /** Counts the drops: a drop's commit rides on this when the draft is already the order drawn. */
+  const [, setDrops] = useState(0)
   const grid = useRef<readonly string[]>([])
   /** The lifted tile's button, holding the lift's scale until it is dragged or put down. */
   const lifted = useRef<HTMLElement | null>(null)
@@ -128,6 +136,8 @@ export function useTileReorder(
   useEffect(
     () => () => {
       spring.current?.stop()
+      session.current = null
+      landing.current = null
     },
     []
   )
@@ -158,7 +168,14 @@ export function useTileReorder(
     return best
   }
 
-  /** The released tile glides from the finger into its slot; the transform is gone at the landing. */
+  /** The hand is empty of `url`: its cell's `data-held` goes (unless another tile has been taken up since). */
+  const putDown = (url: string): void => setHeld((h) => (h === url ? null : h))
+
+  /**
+   * The released tile glides from the finger into its slot; the transform is gone at the
+   * landing, and so is the hand's mark – the tile stays over its neighbours to the end of the
+   * glide, not to the drop.
+   */
   const land = (s: Session): void => {
     const slot = s.li.getBoundingClientRect()
     const x = s.box.left + (s.x - s.x0) - slot.left
@@ -181,6 +198,7 @@ export function useTileReorder(
       () => {
         el.style.transform = ''
         if (spring.current === anim) spring.current = null
+        putDown(s.url)
       }
     )
     spring.current = anim
@@ -196,15 +214,33 @@ export function useTileReorder(
     anim.start(travel, v, 0)
   }
 
+  /**
+   * A drag whose tile has left the DOM under the finger (its pin removed by another device or
+   * a hidden host meanwhile, the grid re-keyed): the touch's listeners went with the element,
+   * so the release will never come – the drag is over here, back to the order it set out from.
+   */
+  const lose = (s: Session): void => {
+    session.current = null
+    s.el.style.transform = ''
+    s.el.style.transition = ''
+    putDown(s.url)
+    setOrder(s.base)
+  }
+
   // After a commit that moved the held tile's cell (the draft changed), the tile is drawn where
   // the finger is again before the frame paints; after the commit that dropped it, it lands.
+  // A commit that took the tile itself out of the DOM ends its drag instead, or its landing.
   useLayoutEffect(() => {
     const s = session.current
-    if (s) place(s)
+    if (s) {
+      if (s.el.isConnected) place(s)
+      else lose(s)
+    }
     const l = landing.current
     if (!l) return
     landing.current = null
-    land(l)
+    if (l.el.isConnected) land(l)
+    else putDown(l.url)
   })
 
   const finish = (e: PointerEvent, cancelled: boolean): void => {
@@ -225,11 +261,12 @@ export function useTileReorder(
       ].filter((id) => id !== '')
       void run('newtab.reorderShortcuts', { ids })
     }
-    // The landing waits for the commit these two make (the hand is never empty at a drop, so
-    // there is one); a cancelled drag is drawn back in the order it set out from (the list's
-    // own, when that is what it was, which the derivation above reads as no draft).
+    // The landing waits for the commit the drop makes (the count is sure to change, where the
+    // draft may already be the order drawn); the tile stays the one in the hand until it has
+    // landed. A cancelled drag is drawn back in the order it set out from (the list's own, when
+    // that is what it was, which the derivation above reads as no draft).
     landing.current = s
-    setHeld(null)
+    setDrops((n) => n + 1)
     setOrder(cancelled ? s.base : changed ? draft : null)
   }
 
@@ -251,20 +288,22 @@ export function useTileReorder(
       unhold: () => {
         if (session.current) return
         const el = lifted.current
+        // Nothing lifted: the hold was refused (a glide still running, whose tile the hand's
+        // mark belongs to until it lands), and there is nothing to put down.
+        if (!el) return
         lifted.current = null
-        if (el) {
-          // Eased back down on the lift's own transition, which goes with it.
-          el.style.transform = ''
-          const clear = (): void => {
-            el.style.transition = ''
-            el.removeEventListener('transitionend', clear)
-          }
-          el.addEventListener('transitionend', clear)
+        // Eased back down on the lift's own transition, which goes with it.
+        el.style.transform = ''
+        const clear = (): void => {
+          el.style.transition = ''
+          el.removeEventListener('transitionend', clear)
         }
+        el.addEventListener('transitionend', clear)
         setHeld(null)
       },
       drag: (url, el, e) => {
-        if (session.current || !grid.current.includes(url)) return null
+        // Refused while a dropped tile glides, as the hold is: one tile in the hand at a time.
+        if (session.current || spring.current?.running || !grid.current.includes(url)) return null
         const li = el.parentElement
         if (!li) return null
         // The drag writes the transform per move: nothing may ease it after the finger.
