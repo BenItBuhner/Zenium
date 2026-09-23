@@ -313,7 +313,7 @@ describe('desktop pill (NavRow)', () => {
     const star = el.querySelector<HTMLElement>('[data-bm-star]')!
     expectChip(star, 'Bookmark this tab')
     expect(star.getAttribute('data-filled')).toBe('false')
-    expect(star.title).toBe('Bookmark this tab (Ctrl+D)')
+    expect(star.getAttribute('data-tooltip')).toBe('Bookmark this tab (Ctrl+D)')
 
     act(() =>
       root!.render(
@@ -322,7 +322,7 @@ describe('desktop pill (NavRow)', () => {
     )
     expectChip(star, 'Edit bookmark')
     expect(star.getAttribute('data-filled')).toBe('true')
-    expect(star.title).toBe('Edit bookmark (Ctrl+D)')
+    expect(star.getAttribute('data-tooltip')).toBe('Edit bookmark (Ctrl+D)')
   })
 
   it('stars the page from the chip, and puts its bubble away from the chip again', async () => {
@@ -836,7 +836,7 @@ describe('desktop pill on a tablet’s private tab', () => {
       const el = render(<NavRow state={tablet(privatePage)} tab={privatePage} compact={false} />)
       const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
       expect(pill.textContent).toBe('Private tab')
-      expect(pill.getAttribute('title')).toBe('Private tab')
+      expect(pill.getAttribute('data-tooltip')).toBe('Private tab')
       expect(pill.hasAttribute('data-zen-menu')).toBe(false)
       expect(pill.querySelectorAll('svg.lucide-venetian-mask')).toHaveLength(1)
       expect(pill.querySelector('[data-pill-chip]')).toBeNull()
@@ -908,7 +908,7 @@ describe('desktop pill on an internal page', () => {
     expect(probe.textContent).toBe('zenium://settings/privacy')
     expect(probe.getAttribute('aria-hidden')).toBe('true')
     expect(probe.className).toContain('invisible')
-    expect(pill.getAttribute('title')).toBe('zenium://settings/privacy')
+    expect(pill.getAttribute('data-tooltip')).toBe('zenium://settings/privacy')
   })
 
   it('names the page once the field cannot fit the address; the tooltip keeps the address', () => {
@@ -919,7 +919,7 @@ describe('desktop pill on an internal page', () => {
     expect(focusable(pill)[0].textContent).toBe('Settings')
     expect(field.getAttribute('data-reads')).toBe('title')
     // `zenium://`, never the canonical `zen://` the tab carries (§10.1).
-    expect(pill.getAttribute('title')).toBe('zenium://settings/privacy')
+    expect(pill.getAttribute('data-tooltip')).toBe('zenium://settings/privacy')
     // The star is kept: Chrome keeps it on chrome://settings, the registry says so for Settings.
     // Whether a narrow pill draws it is the width tier's (the test above), not the text's.
     expect(pill.querySelector('[aria-label="Bookmark this tab"]')).not.toBeNull()
@@ -935,7 +935,7 @@ describe('desktop pill on an internal page', () => {
     expect(field.getAttribute('data-reads')).toBe('address')
     // The site in full ink, the path after it dimmed (Chrome's), as ever.
     expect(field.querySelector('.opacity-70')?.textContent).toBe('/some/path')
-    expect(pill.getAttribute('title')).toBe('https://example.com/some/path')
+    expect(pill.getAttribute('data-tooltip')).toBe('https://example.com/some/path')
   })
 
   it('keeps a site’s trimmed address under the floor too – never its title (§9.29); the tooltip the full address', () => {
@@ -949,7 +949,7 @@ describe('desktop pill on an internal page', () => {
     expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
     expect(field.getAttribute('data-reads')).toBe('address')
     expect(field.querySelector('.opacity-70')?.textContent).toBe('/some/path')
-    expect(pill.getAttribute('title')).toBe('https://www.example.com/some/path')
+    expect(pill.getAttribute('data-tooltip')).toBe('https://www.example.com/some/path')
     // The probe still holds the address the field is measured against.
     expect(pill.querySelector('[data-pill-probe]')!.textContent).toBe('example.com/some/path')
   })
@@ -958,7 +958,7 @@ describe('desktop pill on an internal page', () => {
     const empty = tab('zen://newtab')
     const el = render(<NavRow state={state(empty)} tab={empty} compact={false} />)
     const { pill } = pillOf(el)
-    expect(pill.getAttribute('title')).toBe('Search or enter address')
+    expect(pill.getAttribute('data-tooltip')).toBe('Search or enter address')
   })
 })
 

@@ -128,18 +128,18 @@ describe('search engines', () => {
     expect(completeWwwCom('')).toBe('')
   })
 
-  it('marks a field with the engine’s favicon only when the engine is not the vendor’s default (NTP-09)', () => {
-    // The vendor's default is not marked: the slot keeps the letter tile or the magnifier.
-    expect(engineFieldFavicon(google)).toBeNull()
-    // Every shipped engine carries its site's icon in the registry; the others show it.
+  it('marks a field with the engine’s favicon whichever engine it is, the vendor’s default included (v2 §6, NTP-09)', () => {
+    // The vendor's default leads the field too: §6 gives the engine's favicon, not the choice's.
+    expect(engineFieldFavicon(google)).toBe('https://www.google.com/favicon.ico')
+    // Every shipped engine carries its site's icon in the registry, and every one shows it.
     for (const engine of DEFAULT_SEARCH_ENGINES) {
       expect(engine.favicon).toMatch(/^https:\/\/.+\/favicon\.ico$/)
-      if (engine !== google) expect(engineFieldFavicon(engine)).toBe(engine.favicon)
+      expect(engineFieldFavicon(engine)).toBe(engine.favicon)
     }
     // A user's engine whose site offered no icon shows none: the slot falls back.
-    expect(engineFieldFavicon({ id: 'custom-1', favicon: null })).toBeNull()
-    expect(engineFieldFavicon({ id: 'custom-2' })).toBeNull()
-    expect(engineFieldFavicon({ id: 'custom-3', favicon: 'https://s.example/i.png' })).toBe(
+    expect(engineFieldFavicon({ favicon: null })).toBeNull()
+    expect(engineFieldFavicon({})).toBeNull()
+    expect(engineFieldFavicon({ favicon: 'https://s.example/i.png' })).toBe(
       'https://s.example/i.png'
     )
   })

@@ -154,7 +154,9 @@ describe('MediaHubButton', () => {
     render(<MediaHubButton state={stateWith([track({ playing: false })])} />)
     const button = q('[data-zen-media-hub-button]')!
     expect(button.getAttribute('aria-label')).toBe('Media controls')
-    expect(button.getAttribute('title')).toBe('Control your music, videos and more')
+    expect(button.getAttribute('data-tooltip')).toBe('Control your music, videos and more')
+    expect(button.getAttribute('aria-description')).toBe('Control your music, videos and more')
+    expect(button.hasAttribute('title')).toBe(false)
     expect(button.getAttribute('aria-expanded')).toBe('false')
     expect(button.querySelector('.zen-mhub-dot')).toBeNull()
 
@@ -555,10 +557,11 @@ describe('the hub from the app menu (§9.29)', () => {
         DeliverableResizeObserver.instances.some((o) => o.targets.has(q('[data-zen-nav-row]')!))
       ).toBe(true)
       // The button up (every width until the tier folds it): the button's disc, ⋯ bare, its
-      // name the title's.
+      // name the tooltip's (a11y-26: the chord rides in the name, no native `title`).
       expect(dots()).toEqual(['hub'])
-      expect(menu.getAttribute('aria-label')).toBeNull()
-      expect(menu.getAttribute('title')).toMatch(/^Menu \(.+\)$/)
+      expect(menu.getAttribute('data-tooltip')).toMatch(/^Menu \(.+\)$/)
+      expect(menu.getAttribute('aria-label')).toBe(menu.getAttribute('data-tooltip'))
+      expect(menu.hasAttribute('title')).toBe(false)
       sidebarDraggedTo(302)
       expect(dots()).toEqual(['hub'])
       // The sidebar dragged under 302: the tier folds the button in the row's observer pass,
@@ -566,7 +569,9 @@ describe('the hub from the app menu (§9.29)', () => {
       sidebarDraggedTo(301)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
       expect(dots()).toEqual(['menu'])
-      expect(menu.getAttribute('aria-label')).toBe(`${menu.getAttribute('title')}, media playing`)
+      expect(menu.getAttribute('aria-label')).toBe(
+        `${menu.getAttribute('data-tooltip')}, media playing`
+      )
       // 270, where the star returns without the button, is still the folded side.
       sidebarDraggedTo(270)
       expect(dots()).toEqual(['menu'])
@@ -576,7 +581,7 @@ describe('the hub from the app menu (§9.29)', () => {
       sidebarDraggedTo(302)
       expect(q('[data-zen-media-hub-button]')).not.toBeNull()
       expect(dots()).toEqual(['hub'])
-      expect(menu.getAttribute('aria-label')).toBeNull()
+      expect(menu.getAttribute('aria-label')).toBe(menu.getAttribute('data-tooltip'))
     })
     // The dot is the accent of the window the buttons sit on, not the page family's.
     expect(css).toMatch(/\.zen-mhub-dot \{[^}]*background: var\(--zen-accent\);/)
@@ -635,7 +640,9 @@ describe('the hub from the app menu (§9.29)', () => {
       expect(q('[data-zen-media-hub-button]')).toBeNull()
       expect(mediaHubFolded()).toBe(true)
       expect(menu.querySelector('.zen-mhub-dot')).not.toBeNull()
-      expect(menu.getAttribute('aria-label')).toBe(`${menu.getAttribute('title')}, media playing`)
+      expect(menu.getAttribute('aria-label')).toBe(
+        `${menu.getAttribute('data-tooltip')}, media playing`
+      )
       vi.mocked(run).mockClear()
       click(menu)
       expect(vi.mocked(run).mock.calls.at(-1)).toEqual([
@@ -665,7 +672,7 @@ describe('the hub from the app menu (§9.29)', () => {
       expect(hubButton.querySelector('.zen-mhub-dot')).not.toBeNull()
       const wideMenu = q<HTMLButtonElement>('[data-zen-app-menu-button]')!
       expect(wideMenu.querySelector('.zen-mhub-dot')).toBeNull()
-      expect(wideMenu.getAttribute('aria-label')).toBeNull()
+      expect(wideMenu.getAttribute('aria-label')).toBe(wideMenu.getAttribute('data-tooltip'))
       // The compact column has no pill to keep: the button stays whatever the width.
       widths.row = 56
       render(<NavRow key="rail" state={state} tab={music} compact />)

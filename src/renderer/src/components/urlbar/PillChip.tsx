@@ -33,7 +33,12 @@ type ChipSemantics =
 
 export type PillChipProps = ChipButtonProps &
   ChipSemantics & {
-    /** The chip's accessible name (`aria-label`); a `title` is the desktop tooltip on top of it. */
+    /**
+     * The chip's accessible name (`aria-label`). A `title` is the chrome tooltip's text on top
+     * of it (`data-tooltip`, lib/tooltip.ts – a11y-26: shown on hover and on keyboard focus,
+     * never the native one), and, where it says more than the name (the site icon's "Connection
+     * is secure", the star's chord), the chip's `aria-description` for a reader on any host.
+     */
     label: string
     /**
      * The chip's own action, for a click as well as Enter and Space. When given, the pill does
@@ -59,6 +64,7 @@ export type PillChipProps = ChipButtonProps &
  */
 export function PillChip({
   label,
+  title,
   popup,
   expanded,
   pressed,
@@ -80,7 +86,9 @@ export function PillChip({
       type="button"
       tabIndex={0}
       data-pill-chip=""
+      data-tooltip={title}
       aria-label={label}
+      aria-description={title && title !== label ? title : undefined}
       aria-haspopup={popup}
       aria-expanded={popup ? Boolean(expanded) : undefined}
       aria-pressed={pressed}

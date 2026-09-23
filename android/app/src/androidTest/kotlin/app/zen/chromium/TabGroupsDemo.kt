@@ -91,7 +91,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         check("the header counts one group", awaitJs("(document.querySelector('$COUNT')||{}).textContent==='1 group'"), "count '${textOf(COUNT)}'")
         check("Research is listed under Open with two tabs", awaitJs(rowUnder("open", "Research", "2 tabs")), "rows ${textsOf("$GROUPS_PANE .zen-list-title")} / ${textsOf("$GROUPS_PANE .zen-list-subtitle")}")
         check("no Saved section yet", !inDom(SAVED_SECTION))
-        val glyph = glyphColour() + (if (inDom("$GROUPS_PANE .zen-overview-group-glyph[data-saved]")) " ring" else " dot")
+        val glyph = glyphColour() + (if (inDom("$GROUPS_PANE .zen-group-row-glyph[data-saved]")) " ring" else " dot")
         check("the row's glyph is a dot of the group's colour (the ${chromeScheme()} set)", glyph.endsWith(" dot") && glyph.startsWith(blueRgb()), "glyph '$glyph', expected ${blueRgb()}")
         check("the row is 64 tall (a two-line row)", domRect(ROW)?.let { abs(it.height() - 64) <= 1 } == true, "row ${domRect(ROW)}")
         SystemClock.sleep(800)
@@ -240,7 +240,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
             awaitCore { savedUrls(it) == listOf(ALPHA_URL, LINKED_URL, BETA_URL) },
             "saved ${savedUrls().map { it.removePrefix(ORIGIN) }}"
         )
-        check("the row moves under Saved with the ring glyph and three tabs", awaitJs(rowUnder("saved", "Reading", "3 tabs"), true, 6_000) && inDom("$SAVED_SECTION .zen-overview-group-glyph[data-saved]"), "saved rows ${textsOf("$SAVED_SECTION .zen-list-title")}")
+        check("the row moves under Saved with the ring glyph and three tabs", awaitJs(rowUnder("saved", "Reading", "3 tabs"), true, 6_000) && inDom("$SAVED_SECTION .zen-group-row-glyph[data-saved]"), "saved rows ${textsOf("$SAVED_SECTION .zen-list-title")}")
         check("no Open section is left", !inDom(OPEN_SECTION), "open ${textsOf("$OPEN_SECTION .zen-list-title")}")
         check("the header still counts one group", textOf(COUNT) == "1 group", "count '${textOf(COUNT)}'")
         SystemClock.sleep(800)
@@ -427,7 +427,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
      * background takes, so it compares to `blueRgb()` / `greenRgb()`.
      */
     private fun glyphColour(): String =
-        jsText("(function(){var g=document.querySelector('$GROUPS_PANE .zen-overview-group-glyph');if(!g)return '';var c=getComputedStyle(g).getPropertyValue('--zen-group-rgb').trim();return c?'rgb('+c.split(/\\s+/).join(', ')+')':''})()")
+        jsText("(function(){var g=document.querySelector('$GROUPS_PANE .zen-group-row-glyph');if(!g)return '';var c=getComputedStyle(g).getPropertyValue('--zen-group-rgb').trim();return c?'rgb('+c.split(/\\s+/).join(', ')+')':''})()")
 
     private fun card(tabId: String) = ".zen-overview-grid [data-tab-id=\"$tabId\"]"
 

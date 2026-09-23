@@ -662,10 +662,17 @@ function FormSheet({
   )
 }
 
-/** The form's element, given the sheet's own dismiss as its `close`. */
+/**
+ * The form's element, given the sheet's own dismiss as its `close`. The dismiss takes an
+ * optional `then` to run once the sheet has landed; the form's `close` takes nothing, so it is
+ * wrapped rather than handed over as it is – a form that binds `close` straight to a button
+ * (`onClick={close}`) would otherwise pass the click's event as `then`, and the sheet's landing
+ * would throw calling it, before the chrome heard the sheet was gone (#145: Clear browsing
+ * data's Cancel left the chrome inert with the sheet still mounted).
+ */
 function FormBody({ render }: { render: (close: () => void) => ReactNode }): JSX.Element {
   const dismiss = useSheetDismiss()
-  return <>{render(dismiss)}</>
+  return <>{render(() => dismiss())}</>
 }
 
 /**

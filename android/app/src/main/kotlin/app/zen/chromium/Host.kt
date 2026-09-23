@@ -219,6 +219,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * `private.lock` event): armed as the window leaves the screen ([onStop]), in memory only.
      */
     val privateLock = PrivateLock()
+    /**
+     * The opaque veil over the chrome from the lock's arming until the chrome's first masked
+     * frame is on the display (`private.masked`), so the window's first frame back never shows
+     * the chrome's stale one with the departure's private titles on it ([raiseVeil], [lowerVeil]).
+     */
+    val lockVeil = LockVeil()
     /** Links that leave the web: held here while the core (and the user) decide. */
     override val externalProtocols = ExternalProtocols(this)
     /**
@@ -337,6 +343,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The chrome's `--zen-scrim` token (ARGB): the space-tinted dim under its sheets. */
     override var themeScrim = parseColor(DEFAULT_SCRIM)
         private set
+    /** The colour `chrome.setTheme` last painted on the root (ARGB): the window's tone, the lock veil's ink ([LockVeil]). */
+    private var themeBackground = parseColor("#f2f1f5")
     /** Settings → Look and Feel → Pull to refresh, mirrored by the chrome (on until it says otherwise). */
     override var pullToRefresh = true
         private set
@@ -1052,6 +1060,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // device PIN, pattern or password); a pass lifts the lock, a cancel or an error leaves
             // it (the prompt carried its own message). Answers the lock as it stands after.
             "private.unlock" -> unlockPrivateTabs(args.str("reason")) { reply(json("locked" to privateLock.locked)) }
+            // The chrome's masked tree is committed: the veil over it falls with the frame that
+            // carries the mask ([LockVeil]).
+            "private.masked" -> { onPrivateMasked(); reply(null) }
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
@@ -1323,6 +1334,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // and later the system's prompt never stops us, so a stop then is a departure with the
         // prompt open (Home, a call, the screen off) and the system takes the prompt down as the
         // task leaves; a pass means the user was there (PrivateLock, onPromptAnswered).
+        // The window away draws no frame: a veil's frame wait and its deadline are the next start's.
+        lockVeil.windowStopped()
+        main.removeCallbacks(veilDeadline)
         if (privateLock.onLeave(reauth.available(), prompting = reauth.prompting)) onPrivateLockArmed()
     }
 
@@ -1334,7 +1348,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * The lock went on: the private page views on screen go now, so the app's first frame back
      * shows the chrome's cover and never the page ahead of the chrome's own report of it hidden;
-     * the guard follows and the chrome hears.
+     * the veil goes over the chrome itself while a private surface is in view, so that first
+     * frame back does not show the chrome's stale one either ([LockVeil]); the guard follows and
+     * the chrome hears.
      */
     private fun onPrivateLockArmed() {
         // A private page's element fullscreen leaves with the lock: its layer sits above `root`
@@ -1346,6 +1362,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             tabs.setVisible(tab.tabId, false)
             privateLock.hide(tab.tabId)
         }
+        // Ahead of the announcement: the chrome's masked report finds the veil it answers for.
+        if (lockVeil.arm(privateSurface)) raiseVeil()
         refreshGuard()
         announcePrivateLock()
     }
@@ -1353,12 +1371,85 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * The lock came off – the screen lock passed, the last private tab closed, the switch turned
      * off: the views this host hid on its own come back (the core's next layout brings back the
-     * ones it asked hidden itself), the guard follows and the chrome hears.
+     * ones it asked hidden itself), the veil falls (what is under is the chrome as it may be
+     * seen), the guard follows and the chrome hears.
      */
     private fun onPrivateLockReleased() {
         for (tabId in privateLock.takeHidden()) tabs.setVisible(tabId, true)
+        lowerVeil("released")
         refreshGuard()
         announcePrivateLock()
+    }
+
+    // --- The lock veil (LockVeil): the opaque view over the chrome from arming to the first masked frame ---
+
+    private var veilView: View? = null
+    /** The view the veil is drawn with once one has been raised – in `root` while raised, parentless after; the harness's veil watch reads it (`Primitives5Demo`). */
+    val lockVeilView: View? get() = veilView
+    private val veilDeadline = Runnable {
+        if (!lockVeil.raised) return@Runnable
+        Log.w(TAG, "private lock veil: no masked frame within ${LockVeil.DEADLINE_MS} ms of the window's start")
+        lowerVeil("deadline")
+    }
+
+    /**
+     * The veil goes up: an opaque view over everything in `root` – the chrome and the page views –
+     * in the window's tone (the colour the chrome last painted on the root, the private theme's
+     * near-black while a private surface is up). Its touches reach nothing, as its frames show
+     * nothing. It stands over its siblings by height ([LockVeil.Z_PX]), not by order: `root`
+     * draws and dispatches touches by Z first, and a page view [TabHost] appends or fronts while
+     * the veil is up stands at 0. With the window on screen the deadline runs from now; away,
+     * from the next start.
+     */
+    private fun raiseVeil() {
+        val view = veilView ?: View(activity).also {
+            it.isClickable = true
+            it.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            // The height orders it; no outline, so it casts no shadow for it.
+            it.elevation = LockVeil.Z_PX
+            it.outlineProvider = null
+            veilView = it
+        }
+        view.setBackgroundColor(themeBackground)
+        if (view.parent == null) root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // Last among the siblings at 0 too, for a reader of the order (the harness's veil watch).
+        view.bringToFront()
+        Log.d(TAG, "private lock veil raised")
+        if (lockVeil.windowVisible) main.postDelayed(veilDeadline, LockVeil.DEADLINE_MS)
+    }
+
+    /**
+     * The veil falls (`why`: the masked frame, the release, the deadline); nothing when none is up.
+     * The view in `root` is what "up" means here: [LockVeil.frameDrawn] has lowered the state
+     * already when the masked frame's callback lands, so the state's `lower()` is not asked
+     * whether the veil was up – the first run's veil stuck on exactly that (`Primitives5Demo`).
+     */
+    private fun lowerVeil(why: String) {
+        lockVeil.lower()
+        val view = veilView?.takeIf { it.parent != null } ?: return
+        main.removeCallbacks(veilDeadline)
+        root.removeView(view)
+        Log.d(TAG, "private lock veil lowered: $why")
+    }
+
+    /** `private.masked`: the chrome's masked tree is committed; with the window on screen its frame is waited for now. */
+    private fun onPrivateMasked() {
+        if (lockVeil.masked()) awaitMaskedFrame()
+    }
+
+    /**
+     * The chrome's next draw after its visual-state callback reflects the masked tree the renderer
+     * reported; as for a page view coming back ([reportDrawn]), the second frame callback from
+     * there is the first to run with that frame submitted, and the veil falls on it. A callback
+     * from a wait the window's stop voided is not this wait's ([LockVeil.frameDrawn]).
+     */
+    private fun awaitMaskedFrame() {
+        val serial = lockVeil.waitSerial
+        chrome.postVisualStateCallback(serial, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                afterFrames(2) { if (lockVeil.frameDrawn(serial)) lowerVeil("masked frame") }
+            }
+        })
     }
 
     /** The cover's Unlock, `reason` the prompt's subtitle (the chrome's words, as `reauth.verify`). `done` runs once, after the prompt closed and the lock updated. */
@@ -1534,8 +1625,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         themeAccent = if (accent.isNotEmpty()) parseColor(accent) else ContextCompat.getColor(activity, if (dark) R.color.v2_accent_dark else R.color.v2_accent_light)
         themeOnAccent = if (onAccent.isNotEmpty()) parseColor(onAccent) else ContextCompat.getColor(activity, if (dark) R.color.v2_on_accent_dark else R.color.v2_on_accent_light)
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
+        themeBackground = color
         root.setBackgroundColor(color)
         activity.window.decorView.setBackgroundColor(color)
+        // A veil up while the tone changes stays the window's tone.
+        veilView?.takeIf { lockVeil.raised }?.setBackgroundColor(color)
         val controller = WindowInsetsControllerCompat(activity.window, root)
         controller.isAppearanceLightStatusBars = !dark
         controller.isAppearanceLightNavigationBars = !dark
@@ -1736,6 +1830,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // comes off rather than cover the private tabs for good; the switch follows the device.
         val screenLock = reauth.available()
         if (privateLock.onReturn(screenLock)) onPrivateLockReleased() else announcePrivateLock()
+        // A veil still up waits for the chrome's masked frame from here – a report that came
+        // while the window was away is answered now, the announcement above brings a fresh one –
+        // and its deadline runs from the window's start ([LockVeil]).
+        if (lockVeil.windowStarted()) awaitMaskedFrame()
+        if (lockVeil.raised) main.postDelayed(veilDeadline, LockVeil.DEADLINE_MS)
         chrome.hostEvent("resume", null)
         repaint()
     }
