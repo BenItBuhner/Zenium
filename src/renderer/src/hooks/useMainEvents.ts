@@ -247,7 +247,8 @@ export function useMainEvents(): void {
       // and the page (lib/panes.ts).
       onEvent('focus.pane', (request) => void focusPane(request)),
       // A page's view took the keyboard: the chrome's stale focused control is let go – but the
-      // open URL bar keeps its field and takes the keyboard back (lib/panes.ts).
+      // open URL bar keeps its field and takes the keyboard back, as does a field marked
+      // `KEEPS_KEYBOARD_ATTR` (lib/panes.ts).
       onEvent('focus.page', ({ tabId }) => void pageTookKeyboard(tabId)),
       onEvent('zoom.changed', ({ tabId, factor }) => {
         // Chrome's bubble, for the page on screen. The host with the page-controls sheet

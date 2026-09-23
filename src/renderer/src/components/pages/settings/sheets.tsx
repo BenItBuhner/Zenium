@@ -1,5 +1,5 @@
 import type { JSX, ReactNode, RefObject } from 'react'
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { cn } from '@renderer/lib/utils'
 import { PhoneSheet, type SheetFocus, type SheetTitle } from '../../phone/PhoneSheet'
@@ -45,7 +45,8 @@ import {
  * fades out as the upper comes in – one scrim, the top sheet's, above the page and the lower
  * sheet alike – and when the upper leaves, focus returns to the row of the lower sheet that
  * opened it. Nothing here does any of that itself; what is the Settings tab's is the body: its
- * rows, its forms and the two contexts they reach the sheet through.
+ * rows, its forms and the two contexts they reach the sheet through – and, for a confirmation,
+ * the desktop prompt primitive's default key on the held container (`ConfirmSheet`).
  */
 
 /** Every open sheet, lowest first; each resolves its row in `groups`. */
@@ -107,7 +108,7 @@ function RowSheet({
     case 'field':
       return <FieldSheet row={row as FieldRow} under={under} close={close} />
     case 'confirm':
-      return <ConfirmSheet row={row as ActionRow} under={under} close={close} />
+      return <ConfirmRowSheet row={row as ActionRow} under={under} close={close} />
     case 'form':
       return <FormSheet row={row as ActionRow} under={under} close={close} />
     case 'item':
@@ -157,11 +158,18 @@ interface SheetProps {
   contentKey?: string
   /**
    * What takes the focus as the sheet opens (§9.22); omitted, the chassis's own order – the
-   * checked option, else the first row or button. A title-and-notice sheet (a confirmation)
-   * passes `dialog`: the sheet itself, named by its title and described by its paragraph, since
-   * landing on Cancel would announce the way out first.
+   * checked option, else the first row or button. A confirmation passes `dialog`: the sheet
+   * itself, named by its title and described by its paragraph – the prompt primitive's held
+   * container, no verb preselected (`ConfirmSheet`).
    */
   focus?: SheetFocus
+  /**
+   * The sheet is a confirmation (§9.23): the desktop prompt primitive's default key
+   * (components/dialogs/ConfirmDialog.tsx, §9.22 as amended on #392) on the held container –
+   * Enter from it activates the verb on a prompt that is not `destructive`, and is inert on
+   * one that is, since a destructive prompt has no default. A focused button keeps its own Enter.
+   */
+  defaultAction?: SheetDefaultAction
   /** The title element's id, for a field the header labels (§9.12's one-field sheet). */
   titleId?: string
   /**
@@ -200,6 +208,7 @@ export function SettingsSheet({
   children,
   contentKey,
   focus,
+  defaultAction,
   titleId,
   body,
   openExpanded,
@@ -208,6 +217,8 @@ export function SettingsSheet({
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
   const dismiss = (after?: () => void): void => sheet.current?.dismiss(after)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useDefaultAction(bodyRef, defaultAction, under)
   // A body that changes height once the sheet is up (a form shows more rows, a field appears)
   // asks for its detents again through `useSheetRelayout`: the chassis measures on a new key.
   const [relayouts, setRelayouts] = useState(0)
@@ -253,7 +264,7 @@ export function SettingsSheet({
         ) : undefined
       }
     >
-      <div className="zen-settings-sheet-body">
+      <div ref={bodyRef} className="zen-settings-sheet-body">
         <SheetDismissContext.Provider value={dismiss}>
           <SheetRelayoutContext.Provider value={relayout}>
             <SheetFooterContext.Provider value={footerSlot}>{children}</SheetFooterContext.Provider>
@@ -286,6 +297,60 @@ function watchFooter(element: HTMLElement, relayout: () => void): () => void {
   }
   const frame = requestAnimationFrame(relayout)
   return () => cancelAnimationFrame(frame)
+}
+
+/** A confirmation sheet's verb, for the keyboard: whether the prompt is destructive, and the verb's action. */
+export interface SheetDefaultAction {
+  destructive: boolean
+  onConfirm(): void
+}
+
+/** The control an Enter belongs to rather than to the prompt: a button answers its own Enter. */
+const OWN_ENTER = 'button, a[href], [role="button"], select, textarea'
+
+/**
+ * The prompt primitive's default key (components/dialogs/ConfirmDialog.tsx; §9.22 as amended by
+ * the design lead on #392) on the sheet's held container, in the primitive's own shape: an Enter
+ * with no modifier, not a held key's repeat and not one composing text, from anything but a
+ * control that answers its own Enter (`OWN_ENTER`), is the prompt's – consumed, so nothing
+ * beneath answers it – and activates the verb on a prompt whose verb is the primary; a
+ * DESTRUCTIVE prompt has no default (§6 draws it with no primary because the app recommends
+ * neither answer, and a default key is a recommendation as much as a fill), so the key is inert.
+ * Tab and Escape are the chassis's (`BottomSheet`'s wrap, `PhoneSheet`'s Escape). The listener
+ * is a native one on the sheet's dialog root – the chassis's element, found up from the body –
+ * because a focus held on the root stands above the body where the Settings tab's own markup
+ * begins. A sheet under another leaves the key alone. The primitive exports its container's
+ * keyboard as no hook or headless piece yet; until the desktop does, this is the phone's one
+ * copy of the rule, kept word for word to the primitive's.
+ */
+function useDefaultAction(
+  body: RefObject<HTMLElement | null>,
+  action: SheetDefaultAction | undefined,
+  under: boolean
+): void {
+  const latest = useRef({ action, under })
+  useLayoutEffect(() => {
+    latest.current = { action, under }
+  })
+  const wanted = action !== undefined
+  useEffect(() => {
+    if (!wanted) return
+    const root = body.current?.closest<HTMLElement>('[role="dialog"]')
+    if (!root) return
+    const onKey = (e: KeyboardEvent): void => {
+      const { action, under } = latest.current
+      if (!action || under) return
+      if (e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+      if (e.repeat || e.isComposing) return
+      if (e.target instanceof Element && e.target.closest(OWN_ENTER)) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (action.destructive) return
+      action.onConfirm()
+    }
+    root.addEventListener('keydown', onKey)
+    return () => root.removeEventListener('keydown', onKey)
+  }, [body, wanted])
 }
 
 // ---------------------------------------------------------------------------
@@ -462,16 +527,8 @@ function FieldSheet({
   )
 }
 
-/**
- * A prompt (§9.23): the question as a title block over its one paragraph (the confirmation's
- * own, else the row's description), the destructive action trailing (§9.11). A
- * title-and-notice sheet holds the focus on its container as it opens (§9.22: named by its
- * title, described by its paragraph, as `SiteDataPrompt` does); landing on Cancel, the first
- * button, is the failure the section names – the way out read first. A confirmation with no
- * paragraph anywhere would open on the 48 header (§9.23: the block is for a sheet that carries a
- * description), so every one in the model brings its own.
- */
-function ConfirmSheet({
+/** A row's confirmation (`ActionRow.confirm`): the question, its paragraph (the confirmation's own, else the row's) and the row's verb. */
+function ConfirmRowSheet({
   row,
   under,
   close
@@ -480,23 +537,94 @@ function ConfirmSheet({
   under: boolean
   close(): void
 }): JSX.Element {
-  const sheet = useRef<BottomSheetHandle>(null)
   const confirm = row.confirm!
   return (
-    <SettingsSheet
+    <ConfirmSheet
       name={`settings-confirm:${row.id}`}
       title={confirm.title}
       description={confirm.description ?? row.description}
+      action={confirm.action}
+      destructive={row.destructive}
+      under={under}
+      onClose={close}
+      onConfirm={() => row.onPress?.()}
+    />
+  )
+}
+
+/**
+ * The confirmation sheet (§9.23, §10.4): the desktop prompt primitive (`ConfirmDialog`,
+ * components/dialogs) in the sheet's form – its words, `name`, `title`, `description`,
+ * `action`, `destructive`, `onConfirm`, and its focus shape on the phone's chassis. The sheet
+ * stays a sheet: the peek detent (a prompt stands as tall as its content, §9.20), the register
+ * name for the back surface, `under`, the §9.23 title block over the one paragraph and
+ * `SheetActions`' split footer (§9.11: the danger verb with no primary for a destructive
+ * prompt, the accent primary otherwise) – nothing of the desktop's visuals comes over. A
+ * confirmation with no paragraph would open on the 48 header (§9.23: the block is for a sheet
+ * that carries a description), so every one in the model brings its own.
+ *
+ * The keyboard is the primitive's (§9.22 as amended on #392): the container holds the focus as
+ * the sheet opens (`focus="dialog"`: `tabIndex -1`, the chassis draws no ring on it, no verb
+ * preselected); Tab enters the sheet's own order and reaches Cancel, then the verb – the verb
+ * never first – and Shift+Tab reaches the verb (the chassis's wrap, which on a sheet also holds
+ * the grabber first in the order, as it does on every sheet); Enter from the held container
+ * activates the verb as the default on a prompt that is not destructive and is inert on one
+ * that is (`defaultAction`); Escape, the scrim and the back gesture are Cancel. The verb runs
+ * once the sheet has gone (`dismiss(after)`: the row acts, or opens what it opens, over a page
+ * with no sheet on it), and the focus goes back to the row that opened the sheet (§9.24, the
+ * chassis's return). The same rules as the desktop's, so the two hosts land on one shape; the
+ * lead's two: a confirmation over a sheet does not grow for its content – the sheet's width is
+ * the sheet's, and its body is the block and the two buttons whatever it is asked – and a
+ * destructive prompt has no default.
+ */
+export function ConfirmSheet({
+  name,
+  title,
+  description,
+  action,
+  destructive = false,
+  under,
+  onClose,
+  onConfirm
+}: {
+  /** The sheet's register name (`settings-confirm:<row>`): the back surface's and the harness's. */
+  name: string
+  /** The question, 17/600. */
+  title: string
+  /** The one paragraph (§9.23), under the title. */
+  description?: string
+  /** The verb's label: Clear, Delete, Remove, Reset. Cancel is always Cancel. */
+  action: string
+  /** The verb destroys something: the danger ink and no primary (§6), and no default key. */
+  destructive?: boolean
+  /** Another sheet stands over this one (§9.24): Escape and Enter are that sheet's. */
+  under: boolean
+  /** The sheet has left the screen. */
+  onClose(): void
+  /**
+   * The verb: its button, and – on a prompt that is not `destructive` – Enter from the held
+   * container; runs once the sheet has gone.
+   */
+  onConfirm(): void
+}): JSX.Element {
+  const sheet = useRef<BottomSheetHandle>(null)
+  const confirm = (): void => sheet.current?.dismiss(onConfirm)
+  return (
+    <SettingsSheet
+      name={name}
+      title={title}
+      description={description}
       under={under}
       focus="dialog"
-      onClose={close}
+      defaultAction={{ destructive, onConfirm: confirm }}
+      onClose={onClose}
       sheetRef={sheet}
     >
       <SheetActions
-        action={confirm.action}
-        destructive={row.destructive}
+        action={action}
+        destructive={destructive}
         onCancel={() => sheet.current?.dismiss()}
-        onAction={() => sheet.current?.dismiss(() => row.onPress?.())}
+        onAction={confirm}
       />
     </SettingsSheet>
   )
@@ -534,10 +662,17 @@ function FormSheet({
   )
 }
 
-/** The form's element, given the sheet's own dismiss as its `close`. */
+/**
+ * The form's element, given the sheet's own dismiss as its `close`. The dismiss takes an
+ * optional `then` to run once the sheet has landed; the form's `close` takes nothing, so it is
+ * wrapped rather than handed over as it is – a form that binds `close` straight to a button
+ * (`onClick={close}`) would otherwise pass the click's event as `then`, and the sheet's landing
+ * would throw calling it, before the chrome heard the sheet was gone (#145: Clear browsing
+ * data's Cancel left the chrome inert with the sheet still mounted).
+ */
 function FormBody({ render }: { render: (close: () => void) => ReactNode }): JSX.Element {
   const dismiss = useSheetDismiss()
-  return <>{render(dismiss)}</>
+  return <>{render(() => dismiss())}</>
 }
 
 /**

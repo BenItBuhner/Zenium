@@ -13,6 +13,7 @@ import { useEscape } from '@renderer/hooks/useEscape'
 import { returnFocusTo, wrapTab } from '@renderer/lib/popover'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
+import { ConfirmDialog } from '../../dialogs/ConfirmDialog'
 import { V2TitleBlock } from '../../extensions/v2'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
 import type {
@@ -38,25 +39,26 @@ import {
  * The dialogs a desktop Settings row opens (v2 §9.5, §9.22–9.24, §10.5): the same six requests
  * the phone's sheets answer (`sheets.tsx`) – a value row's picker where a row has no room for
  * its menulist (a search result's), a field row's one-field form, a destructive action's
- * confirmation, an action's small form, an item's rows and a detail row's second level – as
- * the shared `.zen-v2-dialog` at
- * the form width, centred over the content frame by the frame's dialog host (lib/portals.tsx),
- * which draws the §9.5 scrim, makes the chrome inert and takes the pointer. The stack is the
- * page's (`useSheetStack`, at most two deep, §9.24): a dialog under another is `inert` and
+ * confirmation, an action's small form, an item's rows and a detail row's second level. Five
+ * are the shared `.zen-v2-dialog` at the form width (`SettingsDialog`), centred over the content
+ * frame by the frame's dialog host (lib/portals.tsx), which draws the §9.5 scrim, makes the
+ * chrome inert and takes the pointer; the confirmation is the program's one prompt primitive
+ * (`ConfirmDialog`, components/dialogs: the §9.23 notice at §9.20's 320, whose keyboard and
+ * width are its own), which the page's rows and `SiteDataPrompt` consume alike. The stack is
+ * the page's (`useSheetStack`, at most two deep, §9.24): a dialog under another is `inert` and
  * leaves Escape to the one on top – the popup stack's rule (`useEscape`: the most recently
  * opened answers), which a menulist's popover or a prompt a form opens over its dialog joins
  * too; each resolves its row again on every render, so it always shows the row's current value
- * and closes by itself when its row is gone. A dialog a form renders inside a dialog (the
- * site-data viewer's Clear all prompt) covers its host the same way: `SheetCoveredContext`.
+ * and closes by itself when its row is gone. A prompt a form renders inside a dialog (the
+ * site-data viewer's Clear all) covers its host the same way: `SheetCoveredContext`.
  *
  * Keyboard (§9.22): focus moves into a dialog as it opens – the checked option of a picker, the
- * field of a form, the first row of an item's rows, and for a prompt the container itself (a
- * title-and-notice panel holds the focus; landing on Cancel, the way out, is the failure §9.22
- * names) – Tab wraps inside it, from the container too, Escape and the scrim close it, and when
- * it leaves the focus returns to the control that opened it: the page's row, or the lower
- * dialog's control for one that opened over a dialog (§9.24) – one hop down the stack at a
- * time, and a return the lower dialog's `inert` still refuses waits for that `inert` to go.
- * Titles are the rows' own and sentence case (§9.1).
+ * field of a form, the first row of an item's rows; a prompt's is the primitive's: its container
+ * – Tab wraps inside it, from the container too, Escape and the scrim close it, and when it
+ * leaves the focus returns to the control that opened it: the page's row, or the lower dialog's
+ * control for one that opened over a dialog (§9.24) – one hop down the stack at a time, and a
+ * return the lower dialog's `inert` still refuses waits for that `inert` to go. Titles are the
+ * rows' own and sentence case (§9.1).
  */
 
 /** Every open dialog, lowest first; each resolves its row in `groups`. */
@@ -118,7 +120,9 @@ function RowDialog({
     case 'field':
       return <FieldDialog row={row as FieldRow} under={under} close={close} />
     case 'confirm':
-      return <ConfirmDialog row={row as ActionRow} under={under} close={close} />
+      // A prompt opens nothing (§9.24), so it is never `under`: the stack's `under` is the
+      // lower dialog's to wear.
+      return <ConfirmRowDialog row={row as ActionRow} close={close} />
     case 'form':
       return <FormDialog row={row as ActionRow} under={under} close={close} />
     case 'item':
@@ -162,16 +166,10 @@ interface DialogProps {
   children: ReactNode
   /**
    * Where the focus goes as the dialog opens: the element this finds in the dialog, else the
-   * first tabbable control. A title-and-notice dialog (a confirmation) returns the root it is
-   * given: §9.22 focuses the container, never Cancel.
+   * first tabbable control, else the root itself (a dialog with nothing tabbable holds the
+   * focus on its container, as the prompt primitive does).
    */
   initial?(root: HTMLElement): HTMLElement | null
-  /**
-   * §9.20's width: `form` (400) for rows with trailing controls, forms and descriptions that
-   * wrap; `notice` (320) for a confirmation – a title block and its two footer buttons and
-   * nothing else – so a prompt over a 400 dialog reads as a prompt and not a band across it.
-   */
-  width?: 'form' | 'notice'
   /**
    * `list` when the body is a list of rows: the dialog stands at most 80% of the frame and the
    * list scrolls under the title block, and a footer the body claims takes §9.20's list-body
@@ -186,15 +184,16 @@ const TABBABLE =
 
 /**
  * One v2 dialog in the frame's dialog host: the shared `.zen-v2-dialog` (the neutral panel,
- * radius 12, a hairline, the sheet shadow) at §9.20's form width – or its notice width for a
- * confirmation – a §9.23 title block with the hairline once the body has scrolled, the body
- * scrolling between the title and whatever footer its content draws (§9.11: the buttons hug
- * the end) – in the body for a form's own actions, or in the dialog's footer slot under the
- * body for actions a form puts there through `SheetFooter`, drawn only while claimed (§9.20's
- * list-body footer form when the body is a list). Escape (on top of the popup stack only) and
- * the scrim close it; the focus moves in as it opens and back out to its opener as it leaves.
- * The title labels the dialog and its description describes it (`aria-describedby`), so a
- * confirmation that focuses its container is announced whole.
+ * radius 12, a hairline, the sheet shadow) at §9.20's form width (a confirmation is not one of
+ * these: it is the `ConfirmDialog` primitive at the notice width), a §9.23 title block with the
+ * hairline once the body has scrolled, the body scrolling between the title and whatever footer
+ * its content draws (§9.11: the buttons hug the end) – in the body for a form's own actions, or
+ * in the dialog's footer slot under the body for actions a form puts there through
+ * `SheetFooter`, drawn only while claimed (§9.20's list-body footer form when the body is a
+ * list). Escape (on top of the popup stack only) and the scrim close it; the focus moves in as
+ * it opens and back out to its opener as it leaves. The title labels the dialog and its
+ * description describes it (`aria-describedby`), so a dialog that holds its container is
+ * announced whole.
  */
 export function SettingsDialog(props: DialogProps): JSX.Element {
   return (
@@ -213,7 +212,6 @@ function HostedDialog({
   onClose,
   children,
   initial,
-  width = 'form',
   body,
   className
 }: DialogProps): JSX.Element {
@@ -225,8 +223,9 @@ function HostedDialog({
   // Escape is the top popup's (§9.24): the stack `useEscape` keeps, so a dialog under another,
   // under a menulist's popover or under a prompt a form opened over it waits for its turn.
   useEscape(onClose)
-  // A dialog rendered inside this one's body (a form's prompt) covers it while it stands, as the
-  // page's stack covers a dialog under another; this dialog tells its own host the same.
+  // A dialog rendered inside this one's body – a form's prompt (`SiteDataPrompt`, through
+  // `useCoversSheet`), a dialog nested in a dialog – covers it while it stands, as the page's
+  // stack covers a dialog under another; this dialog tells its own host the same.
   const [covered, setCovered] = useState(false)
   const coverHost = useContext(SheetCoveredContext)
   useEffect(() => {
@@ -242,11 +241,13 @@ function HostedDialog({
   // The sheet's dismiss as the forms and rows inside know it (`useSheetDismiss`): the dialog has
   // no motion to wait for, so `after` – an action that opens a surface of its own once the
   // dialog is gone (`ActionRow.closesSheet`, a form's Cancel), a prompt's confirmed action –
-  // runs at once.
+  // runs at once. Only a function runs: a caller that bound the dismiss straight to a button
+  // hands it the click's event, and the phone sheet's landing threw calling one (#145); the two
+  // hosts take the same guard.
   const dismiss = useCallback<SheetDismiss>(
     (after) => {
       onClose()
-      after?.()
+      if (typeof after === 'function') after()
     },
     [onClose]
   )
@@ -261,9 +262,10 @@ function HostedDialog({
     const root = ref.current
     if (!root) return
     // The opener is whatever held the focus as this dialog came: a row of the page, or – for a
-    // prompt over an item dialog – the item dialog's control, so the return goes one hop down
-    // the stack (the prompt to that control, the item dialog in its turn to its row), never
-    // past the lower dialog to the page.
+    // detail dialog over an item dialog – the item dialog's row, so the return goes one hop down
+    // the stack (this dialog to that row, the item dialog in its turn to its own), never past
+    // the lower dialog to the page. A prompt over a dialog returns the same way, by the
+    // primitive's own hop (`ConfirmDialog`).
     const active = document.activeElement
     const opener = active instanceof HTMLElement && !root.contains(active) ? active : null
     const target = initialRef.current?.(root) ?? root.querySelector<HTMLElement>(TABBABLE) ?? root
@@ -272,9 +274,8 @@ function HostedDialog({
       const now = document.activeElement
       const lost = !now || now === document.body || now.closest('.zen-frame-dialogs') !== null
       // The stack drops the lower dialog's `inert` in the commit that removes this one, so the
-      // control takes the focus at once; a control still under an `inert` as this runs (an
-      // opener in the dialog this one covered – a form's Clear all under its prompt – whose host
-      // drops the cover on its next render) takes it as that `inert` goes (`returnFocusTo`).
+      // control takes the focus at once; a control still under an `inert` as this runs (a cover
+      // its host drops on its next render) takes it as that `inert` goes (`returnFocusTo`).
       if (lost && opener?.isConnected) returnFocusTo(opener)
     }
   }, [])
@@ -291,12 +292,12 @@ function HostedDialog({
       inert={under || covered || undefined}
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-settings-dialog zen-animate-pop', className)}
-      style={{ width: width === 'notice' ? POPOVER_WIDTH.list : POPOVER_WIDTH.form }}
+      style={{ width: POPOVER_WIDTH.form }}
       // The shared wrap (§9.22, lib/popover): Tab at the last control goes to the first,
       // Shift+Tab at the first to the last – and from the container itself, which holds the
-      // focus in a prompt (and in any dialog with nothing tabbable), Tab enters at the first
-      // control and Shift+Tab at the last, never leaving for whatever stands before the host in
-      // the document.
+      // focus in a form whose first control is a field (and in any dialog with nothing
+      // tabbable), Tab enters at the first control and Shift+Tab at the last, never leaving for
+      // whatever stands before the host in the document.
       onKeyDown={(e) => {
         if (ref.current) wrapTab(ref.current, e.nativeEvent)
       }}
@@ -483,47 +484,51 @@ function FieldDialog({
 }
 
 /**
- * A prompt (§9.23) at §9.20's notice width: the question as the title block over its line, the
- * destructive action trailing (§9.11) and nothing else – 320, never the width of the dialog it
- * covers, so a Remove prompt over an item's 400 dialog reads as a prompt and not a band across
- * it (§9.5; the #324 lead check). A title-and-notice panel, so the container itself holds the
- * focus as the dialog opens (§9.22: the title is announced, then the description; `initial`
- * returns the root, as `SiteDataPrompt` does for its own prompts) and the verb – the primary or
- * destructive action – is reached by Tab (Cancel, then it; Shift+Tab reaches it first); Cancel
- * pre-focused, the way out announced first, is the failure §9.22 names.
+ * A row's confirmation (§9.23) on the program's prompt primitive (`ConfirmDialog`, W4-1): the
+ * question as the title block over its one line (the confirmation's own, else the row's
+ * description), Cancel and the verb – the danger verb with no primary for a destructive row,
+ * the accent primary otherwise – and nothing else, at §9.20's 320 whatever it covers (§9.5: a
+ * Remove prompt over an item's 400 dialog reads as a prompt, not a band across it; the #324
+ * lead check). The keyboard is the primitive's (§9.22 as amended on #392): the container holds
+ * the focus as the prompt opens, Tab enters at Cancel and Shift+Tab at the verb, Enter from the
+ * container is the verb on a prompt that is not destructive and inert on one that is, Escape
+ * and the scrim are Cancel. The way back (§9.5, one hop) is the row's own control – found by
+ * its `data-row` as the prompt leaves, so a row re-rendered under the prompt is still found, and
+ * a row the verb removed (with its item dialog, whose own return then governs) is not; never
+ * Cancel. The `data-dialog` handle the stack's drives and smoke read (`confirm:<row>`) rides on
+ * the root beside the primitive's `data-confirm`.
  */
-function ConfirmDialog({
-  row,
-  under,
-  close
-}: {
-  row: ActionRow
-  under: boolean
-  close(): void
-}): JSX.Element {
+function ConfirmRowDialog({ row, close }: { row: ActionRow; close(): void }): JSX.Element {
   const confirm = row.confirm!
   return (
-    <SettingsDialog
-      name={`confirm:${row.id}`}
+    <ConfirmDialog
+      name={row.id}
       title={confirm.title}
       description={confirm.description ?? row.description}
-      under={under}
-      onClose={close}
-      width="notice"
-      initial={(root) => root}
-      className="zen-settings-dialog-prompt"
-    >
-      <SheetActions
-        action={confirm.action}
-        destructive={row.destructive}
-        onCancel={close}
-        onAction={() => {
-          close()
-          row.onPress?.()
-        }}
-      />
-    </SettingsDialog>
+      action={confirm.action}
+      destructive={row.destructive}
+      onCancel={close}
+      onConfirm={() => {
+        close()
+        row.onPress?.()
+      }}
+      returnFocus={() => rowControl(row.id)}
+      data={{ 'data-dialog': `confirm:${row.id}` }}
+    />
   )
+}
+
+/**
+ * The control of the row `id` names (`data-row`, rows.tsx), wherever it stands – the page or an
+ * item dialog: the `[data-row]` element itself when it is the control (a pressable row is one
+ * button), else the control inside it – a control row's `data-row` sits on its static `div`
+ * (`ControlRow`) and the 32 px button trails in it. The `div` itself is no place for the focus
+ * (a `.focus()` on it is a no-op and the way back would fall to `body`).
+ */
+function rowControl(id: string): HTMLElement | null {
+  const row = document.querySelector<HTMLElement>(`[data-row="${id.replace(/["\\]/g, '\\$&')}"]`)
+  if (!row) return null
+  return row.matches(TABBABLE) ? row : row.querySelector<HTMLElement>(TABBABLE)
 }
 
 /**

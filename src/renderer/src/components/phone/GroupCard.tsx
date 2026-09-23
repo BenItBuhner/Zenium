@@ -195,6 +195,13 @@ export function GroupCard({
       // Out of the grid's flow, where it stood: the card its last member became takes its cell
       // and glides there once, the cells below wait for the height as they would for any group,
       // and the card shrinks away under the loose card (which is positioned, and paints over it).
+      // `offsetTop` is a layout distance – no transform in it, no scroll either – read against
+      // the nearest positioned ancestor, and `top` places the shell against the same box: the
+      // grid the shell is a child of is positioned for it (`TabOverview`), so the box stands
+      // where the card stood and scrolls with the cells. Against an ancestor outside the
+      // scroller the shell would land `scrollTop` px too low, and the tracker would hold only
+      // the cells drawn under that lower box: the row beneath the group gliding at once, the
+      // rows further down after the settle – two waves (#355's finding, seed 49).
       const { offsetLeft, offsetTop, offsetWidth } = shell
       shell.style.position = 'absolute'
       shell.style.left = `${offsetLeft}px`

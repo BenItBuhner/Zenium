@@ -4467,6 +4467,34 @@
     color: var(--v2-text-deemphasized);
   }
   /*
+   * The chrome tooltip (components/Tooltip.tsx, lib/tooltip.ts; v2 draft §9.31, a11y-26): the
+   * platform's plain tooltip as a page surface in the chrome layer – `--v2-panel` under the 1 px
+   * `--v2-border` hairline and nothing else (no shadow, no arrow), the control radius
+   * (`--v2-radius-control`: 4 on the desktop, a plain round corner – §2 keeps the squircle for
+   * radius 8 and up, so no `corner-shape` here) – its text 13/400 on a 20 line (§4: 13 → 20,
+   * `--v2-line-small`) in `--v2-text`, padding 4 8, so a one-line tooltip stands 30 tall. It
+   * sizes to its text up to a list popover's 320 and wraps past that (a long address on the
+   * pill), and takes no pointer. Placed by `placeTooltip`; it appears with the panels' pop, a
+   * 120 ms fade under reduced motion (`zen-animate-pop`, §11.3).
+   */
+  .zen-tooltip {
+    position: fixed;
+    z-index: 80;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: 320px;
+    padding: 4px 8px;
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    color: var(--v2-text);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-weight: 400;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+  }
+  /*
    * The tab search popover (components/tabsearch/TabSearchPopover.tsx; tabs-17): the shared
    * `.zen-bm-popover` chrome and title block, the shared `.zen-v2-field` under the title, the
    * shared `.zen-v2-row` for every tab. Only what those do not say lives here: the section
@@ -10893,14 +10921,16 @@
 }
 /*
  * §9.11's desktop footer: in a dialog the actions hug their labels and right-align at the 8
- * gap, primary last – a prompt's Cancel | Delete, a form's Cancel | Create or Add a site alike –
- * and hug no narrower than the button's own 96 at the 32 control height (§9.20: a notice's two
- * buttons are 96 + 8 + 96 inside its 288, a form's the same at the end of its 366). The equal
- * split and its `min-width: 0` (`.zen-settings-sheet-actions > *` above) are the phone sheet's:
- * a dialog is never the phone's – a phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`)
- * – so the pose is the surface's, not a pointer query's, and the phone's rule is not touched.
- * The busy state keeps the button's width: the label stays in the flow unpainted under the
- * spinner (§9.30, extensions.css).
+ * gap, primary last – a form's Cancel | Create or Add a site – and hug no narrower than the
+ * button's own 96 at the 32 control height (§9.20: a form's two buttons are 96 + 8 + 96 at the
+ * end of its 366). A confirmation's Cancel | Delete is not drawn here any more: a Settings
+ * prompt is the program's prompt primitive (`.zen-confirm-dialog-footer` above, the same hug
+ * inside the notice's 288). The equal split and its `min-width: 0`
+ * (`.zen-settings-sheet-actions > *` above) are the phone sheet's: a dialog is never the
+ * phone's – a phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`) – so the pose is the
+ * surface's, not a pointer query's, and the phone's rule is not touched. The busy state keeps
+ * the button's width: the label stays in the flow unpainted under the spinner (§9.30,
+ * extensions.css).
  */
 .zen-settings-dialog .zen-settings-sheet-actions {
   justify-content: flex-end;
