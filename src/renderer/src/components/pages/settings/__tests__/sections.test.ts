@@ -2232,6 +2232,44 @@ describe('the section model', () => {
     expect(tablet.checked).toBe(true)
   })
 
+  it('makes Look and Feel’s Expand on hover the Collapsed sidebar layout’s dependent row (tabs-03, §10.4): live there, at .4 with the way back under the other three', () => {
+    const hover = (layout: ToolbarLayout, stored = true): { row: Row; patches: unknown[] } => {
+      const c = context(state({}, { toolbarLayout: layout, sidebarExpandOnHover: stored }), true)
+      const look = buildSection(PAGE.sections[0], { ...c.ctx, formFactor: 'desktop' })
+      return { row: row(look, 'sidebar-expand-on-hover'), patches: c.patches }
+    }
+    // The row follows Expanded sidebar under the layout card, and only the desktop has it: the
+    // layout it depends on never reaches the phone or the tablet.
+    const look = buildSection(PAGE.sections[0], context(state(), true).ctx)
+    const ids = look.groups[0].rows.map((r) => r.id)
+    expect(ids.indexOf('sidebar-expand-on-hover')).toBe(ids.indexOf('sidebar-expanded') + 1)
+    expect(hover('collapsed').row.layouts).toEqual(['desktop'])
+    // Under Collapsed sidebar the switch is live, checked as stored, and writes the setting.
+    const live = hover('collapsed')
+    if (live.row.kind !== 'switch') throw new Error('not a switch')
+    expect(live.row.disabled ?? false).toBe(false)
+    expect(live.row.checked).toBe(true)
+    expect(live.row.description).toBe(
+      'Rest the pointer on the sidebar to show it in full until the pointer leaves.'
+    )
+    live.row.onChange(false)
+    expect(live.patches).toEqual([{ sidebarExpandOnHover: false }])
+    const off = hover('collapsed', false)
+    if (off.row.kind !== 'switch') throw new Error('not a switch')
+    expect(off.row.checked).toBe(false)
+    // Under the other three layouts nothing flies out: the row lies at .4 (`aria-disabled`),
+    // unchecked whatever the profile stored, and its description names the layout that uses it.
+    for (const layout of ['single', 'multiple', 'horizontal'] as const) {
+      const r = hover(layout).row
+      if (r.kind !== 'switch') throw new Error('not a switch')
+      expect(r.disabled, layout).toBe(true)
+      expect(r.checked, layout).toBe(false)
+      expect(r.description, layout).toBe('Only in the Collapsed sidebar layout.')
+    }
+    // The default ships off: the rail stays a rail until the row is turned on.
+    expect(DEFAULT_SETTINGS.sidebarExpandOnHover).toBe(false)
+  })
+
   it('keeps a shell’s controls to its layout: the phone bar’s rows never reach the desktop page or its search (BUG-055)', () => {
     const host = state({
       platform: 'linux',

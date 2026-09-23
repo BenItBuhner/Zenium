@@ -450,9 +450,11 @@ export interface Tab {
   muted: boolean
   /**
    * The tab's alert indicator above audio (tabs-43, Chrome's priority): the page uses the camera
-   * or microphone (`recording`), shares a screen, window or tab (`capturing`), or plays
-   * picture-in-picture (`pip`). Folded from every frame's `capture-state` report; a session's
-   * own (not persisted, cleared on load). Absent on records older than the field.
+   * or microphone (`recording`), shares a screen, window or tab (`capturing`), holds a device
+   * session – a connected Bluetooth device (`bluetooth`), a USB device (`usb`), a HID device
+   * (`hid`), a serial port (`serial`) – plays picture-in-picture (`pip`), or presents to a VR
+   * headset (`vr`). Folded from every frame's `capture-state` report; a session's own (not
+   * persisted, cleared on load). Absent on records older than the field.
    */
   alert?: TabAlert | null
   /**
