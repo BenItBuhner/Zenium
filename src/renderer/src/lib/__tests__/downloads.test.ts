@@ -61,7 +61,7 @@ describe('downloads chrome state', () => {
       highlightId: null,
       sessionHadDownload: false
     })
-    uiStore.set({ overlay: 'none', downloadsOpen: false })
+    uiStore.set({ overlay: 'none', capture: null, downloadsOpen: false })
     browserStore.set({ state: state([]) })
   })
   afterEach(() => {
@@ -170,6 +170,40 @@ describe('downloads chrome state', () => {
     await flush()
     expect(downloadsUi.get().open).toBe(false)
     expect(downloadsUi.get().unseen).toEqual(['a'])
+  })
+
+  it('nor over the web capture, whose Save is what finished: the badge counts it instead', async () => {
+    const viewport = {
+      scrollX: 0,
+      scrollY: 0,
+      width: 1200,
+      height: 800,
+      zoom: 1,
+      devicePixelRatio: 1,
+      documentWidth: 1200,
+      documentHeight: 800
+    }
+    uiStore.set({ capture: { tabId: 't1', viewport, seq: 1 } })
+    const done = item({ id: 'shot' })
+    handleDownloadChange(change('done', done), state([done]))
+    await flush()
+    expect(downloadsUi.get().open).toBe(false)
+    expect(uiStore.get().downloadsOpen).toBe(false)
+    expect(downloadsUi.get().unseen).toEqual(['shot'])
+    // A flagged file's warning waits too.
+    handleDownloadDanger('shot', state([done]))
+    await flush()
+    expect(downloadsUi.get().open).toBe(false)
+    // Once the capture leaves, the next completion opens the notice with everything unseen.
+    uiStore.set({ capture: null })
+    const later = item({ id: 'later' })
+    handleDownloadChange(change('done', later), state([done, later]))
+    await flush()
+    expect(downloadsUi.get()).toMatchObject({
+      open: true,
+      autoClose: true,
+      partial: ['shot', 'later']
+    })
   })
 
   it('a removed record leaves the badge', () => {
