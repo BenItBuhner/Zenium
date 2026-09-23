@@ -1,0 +1,64 @@
+name: Android primitives pass 5 demo
+
+# Records primitives pass 5's six seeds on the phone (wave 5, W5-3; `Primitives5Demo`) and uploads
+# the video, screenshots and findings: seed 43 (the new tab page's resting field leads with the
+# engine's favicon at 20), seed 44 (the six-glyph icon row settled; an action the bar carries is
+# not repeated in the row), seeds 45 and 46 (one group glyph everywhere on `groupColorVars`' pair;
+# the count an aside), seed 48 (the frame host's phone dialogs as §9.16 sheets: Bookmark All Tabs
+# and its folder picker) and seed 47 (the opaque veil from the private lock's arming until the
+# first masked frame, sampled every 8 ms across Home and back). A claim that does not hold fails
+# the run (android-primitives-5-findings.txt in the artifact).
+#
+# The engine, as the private lock demo: seed 47 needs a private surface, private tabs run on a
+# WebView profile of their own (WebViewFeature.MULTI_PROFILE), and the API 34 images' WebView 113
+# does not have it, so the demo runs on an AOSP image with a Chromium snapshot SystemWebView.apk
+# swapped in (android-webview-swap.sh), under swiftshader_indirect. The driver sets a device PIN
+# for the run (`locksettings set-pin 1234`, cleared at the end): the lock arms only with a screen
+# lock to pass later. Dispatch-only, like the other demos: it takes about a quarter of an hour and
+# says nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file picks the driver and the engine.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-primitives-pass-5-a6ba
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-primitives-5-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: primitives pass 5 demo (Chromium snapshot WebView on an AOSP image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.Primitives5Demo
+        DEMO_DIR=primitives-5-demo
+        DEMO_OUT=artifacts/android-primitives-5-demo
+        DEMO_VIDEO=android-primitives-5-demo.mp4
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-primitives-5-demo
+      artifact-path: artifacts/android-primitives-5-demo/
+      timeout-minutes: 60

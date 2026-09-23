@@ -1339,6 +1339,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     // --- The lock veil (LockVeil): the opaque view over the chrome from arming to the first masked frame ---
 
     private var veilView: View? = null
+    /** The view the veil is drawn with once one has been raised – in `root` while raised, parentless after; the harness's veil watch reads it (`Primitives5Demo`). */
+    val lockVeilView: View? get() = veilView
     private val veilDeadline = Runnable {
         if (!lockVeil.raised) return@Runnable
         Log.w(TAG, "private lock veil: no masked frame within ${LockVeil.DEADLINE_MS} ms of the window's start")
