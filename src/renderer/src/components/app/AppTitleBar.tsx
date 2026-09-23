@@ -53,8 +53,9 @@ export function AppTitleBar({
   }, [])
   return (
     // A window surface (design language v2 §9.29), as the toolbar row is; the bar the in-chrome
-    // app menu hangs from (§9.20: flush under it, end-aligned with its "⋯").
-    <div
+    // app menu hangs from (§9.20: flush under it, end-aligned with its "⋯"). A `header`: the
+    // app window's banner landmark (a11y-02), as the browser window's toolbar is.
+    <header
       className="zen-app-titlebar zen-drag"
       data-surface="window"
       data-bar=""
@@ -83,7 +84,7 @@ export function AppTitleBar({
         <MoreHorizontal className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </button>
       <WindowControls />
-    </div>
+    </header>
   )
 }
 

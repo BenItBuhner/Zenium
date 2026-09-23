@@ -96,8 +96,9 @@ class TouchHold implements TabTouch {
     if (!this.enabled || e.pointerType === 'mouse' || e.button !== 0) return false
     // A second finger while one holds or drags: not a touch of its own, and not the row's.
     if (this.hold || this.drag) return true
-    // The row's buttons (close, mute, wake) keep their taps.
-    if ((e.target as HTMLElement).closest('button')) return false
+    // The row's controls (close, mute, wake – `RowControl`, buttons by role) keep their taps.
+    const control = (e.target as HTMLElement).closest('button, [role="button"]')
+    if (control && control !== e.currentTarget && e.currentTarget.contains(control)) return false
     this.swallow = false
     const el = e.currentTarget
     const h: Hold = { id: e.pointerId, x: e.clientX, y: e.clientY, el, timer: null }
