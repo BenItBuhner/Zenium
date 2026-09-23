@@ -555,6 +555,17 @@ export class AndroidExtensions implements ExtensionHost {
     this.browser.state.commitVolatile()
   }
 
+  /**
+   * A line the Android runtime (`ext/Extensions.kt`, the `ext.console` host event) puts on an
+   * extension's console: a bridge message refused under the flood guard, and the like. One of
+   * an extension no longer installed is dropped (it went while the line was on its way).
+   */
+  consoleLine(id: string, report: ExtensionErrorReport): void {
+    if (!this.record(id)) return
+    this.report(id, report)
+    this.browser.state.commitVolatile()
+  }
+
   /** Reads an installed version's manifest and icon from disk; the list re-renders once they are in. */
   private async readDetails(record: ExtensionRecord): Promise<void> {
     if (this.details.has(record.id) || this.reading.has(record.id)) return

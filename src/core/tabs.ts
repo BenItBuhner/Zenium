@@ -140,6 +140,13 @@ export class TabManager {
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
   /**
+   * Tabs whose crash page `onCrashed` has asked the view for and that has not committed yet. A
+   * load already in flight when the renderer went (a restored list's current entry, Android)
+   * may commit first: that commit is not the page the user is about to see, so it does not
+   * clear the crash mark. The next commit of any kind consumes the entry.
+   */
+  private readonly crashPagePending = new Set<string>()
+  /**
    * Tabs whose close, while active, returns to the opener (tabs-30): a tab opened by another
    * (`Tab.openerTabId`) joins this set, and leaves it the moment the user switches away from it,
    * so closing it comes back to its opener only when they never left it – Chrome's rule. A
@@ -681,7 +688,10 @@ export class TabManager {
           t.waiting = false
           t.progress = 1
         })
-        view()?.loadURL(
+        const crashed = view()
+        if (!crashed) return
+        this.crashPagePending.add(tabId)
+        crashed.loadURL(
           crashPageUrl(code, target, {
             variant,
             repeat: details?.repeat === true,
@@ -882,16 +892,24 @@ export class TabManager {
   private onNavigated(tabId: string, view: TabView, url: string, inPage = false): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    if (!url.startsWith(ERROR_URL_PREFIX)) {
-      tab.errorCode = null
+    // The crash page committing is the crash mark, whatever committed between the renderer's
+    // end and it (a restored entry's load that got there first cleared the mark: the sad tab
+    // – the crashed favicon, Show tabs – reads from the mark, so it is set again here). A
+    // commit that lands while the crash page is still on its way leaves the mark alone.
+    const crashPagePending = this.crashPagePending.delete(tabId)
+    if (isCrashPageUrl(url)) {
+      tab.errorCode = CRASH_ERROR_CODE
+    } else if (!url.startsWith(ERROR_URL_PREFIX)) {
+      if (!crashPagePending) tab.errorCode = null
       this.httpsUpgraded.delete(tabId)
     }
     tab.certificateError = this.certificateErrorOf(tab, url)
     this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
     // The crash page's own title is the site; the sad tab keeps the crashed page's (Chrome's
-    // strip does), so the row reads as the page it was until the next load.
-    if (!this.isSadTab(tab)) tab.title = view.getTitle() || this.titleFor(url)
+    // strip does), so the row reads as the page it was until the next load – through a commit
+    // the crash page is about to supersede as well.
+    if (!this.isSadTab(tab) && !crashPagePending) tab.title = view.getTitle() || this.titleFor(url)
     tab.canGoBack = view.canGoBack()
     tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
@@ -1178,6 +1196,7 @@ export class TabManager {
     this.browser.protection.safeBrowsing.forgetTab(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.pendingTransition.delete(tabId)
+    this.crashPagePending.delete(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
@@ -1445,6 +1464,7 @@ export class TabManager {
     this.owners.delete(tabId)
     this.httpsUpgraded.delete(tabId)
     this.pendingTransition.delete(tabId)
+    this.crashPagePending.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
@@ -3461,6 +3481,11 @@ function safeParam(url: string, name: string): string | null {
   } catch {
     return null
   }
+}
+
+/** Whether `url` is the crash page (`zen://error?code=-1`, `crashPageUrl`), whichever variant. */
+function isCrashPageUrl(url: string): boolean {
+  return url.startsWith(ERROR_URL_PREFIX) && safeParam(url, 'code') === String(CRASH_ERROR_CODE)
 }
 
 function domainOf(url: string): string {
