@@ -675,19 +675,20 @@ function disarmClock(id: number): number | null {
  * Show a toast. On the cards one toast is live at a time: a new one sends the current one off
  * (the two pass each other), except that the same message again just restarts its clock, so a
  * key held down does not stack a column of identical toasts. The plain desktop column takes
- * every toast as it always did.
+ * every toast as it always did. Returns the toast's id (the live one's when its clock was
+ * restarted), for a caller that will dismiss it early.
  */
 export function pushToast(
   message: string,
   kind: ToastKind = 'info',
   opts: ToastOptions = {}
-): void {
+): number {
   const duration = opts.duration ?? (opts.action ? TOAST_ACTION_DURATION : TOAST_DURATION)
   if (onCards()) {
     const live = uiStore.get().toasts.find((t) => !t.leaving)
     if (live && live.message === message && live.kind === kind && !opts.action && !live.action) {
       armClock(live.id, duration, () => dismissToast(live.id))
-      return
+      return live.id
     }
     if (live) dismissToast(live.id)
     // The slot is one card's: a screenshot's preview gives way to the toast as a toast would.
@@ -698,6 +699,7 @@ export function pushToast(
   const toast: Toast = { id, message, kind, duration, action: opts.action, icon: opts.icon }
   uiStore.set((s) => ({ toasts: [...s.toasts, toast] }))
   armClock(id, duration, () => dismissToast(id))
+  return id
 }
 
 /**

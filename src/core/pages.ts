@@ -78,6 +78,13 @@ export class PageService {
    * its own, so the core holds the set and tells every window when it moves. Gone at quit.
    */
   private readonly foldedDevices = new Set<string>()
+  /**
+   * The devices the History page hides for the session (Hide Device in a heading's menu –
+   * Chrome's "Hide for now" on chrome://history/syncedTabs, back on the next start), held as the
+   * folds are and for the same reason. No setting and nothing of the sync model's: a device
+   * hidden here is not a device unpaired.
+   */
+  private readonly hiddenDevices = new Set<string>()
 
   constructor(
     private readonly browser: Browser,
@@ -433,6 +440,34 @@ export class PageService {
     else this.foldedDevices.delete(deviceId)
     const ids = this.foldedDeviceIds()
     for (const w of this.browser.allWindows()) w.send('history.foldedDevicesChanged', ids)
+  }
+
+  /** The devices the History page hides, in the order they were hidden. */
+  hiddenDeviceIds(): string[] {
+    return [...this.hiddenDevices]
+  }
+
+  /**
+   * Hide or show one device's group on the History page. Every window's chrome hears the new
+   * set, as with a fold; nothing is sent for no change.
+   */
+  hideDevice(deviceId: string, hidden: boolean): void {
+    if (hidden === this.hiddenDevices.has(deviceId)) return
+    if (hidden) this.hiddenDevices.add(deviceId)
+    else this.hiddenDevices.delete(deviceId)
+    this.hiddenDevicesChanged()
+  }
+
+  /** The "Show hidden devices" row: every hidden device is listed again. */
+  showHiddenDevices(): void {
+    if (this.hiddenDevices.size === 0) return
+    this.hiddenDevices.clear()
+    this.hiddenDevicesChanged()
+  }
+
+  private hiddenDevicesChanged(): void {
+    const ids = this.hiddenDeviceIds()
+    for (const w of this.browser.allWindows()) w.send('history.hiddenDevicesChanged', ids)
   }
 
   /**

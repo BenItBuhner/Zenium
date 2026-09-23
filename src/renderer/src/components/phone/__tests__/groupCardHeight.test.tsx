@@ -20,6 +20,7 @@ Object.assign(window, { zen: { invoke: vi.fn(async () => null), on: () => () => 
 const { GroupCard, GROUP_PAD } = await import('../GroupCard')
 const { GROUP_HEADER } = await import('../groupCardHeader')
 const { layoutAnimations } = await import('@renderer/lib/motion/flip')
+const { SPRING_GENTLE, isAtRest, stepSpring } = await import('@renderer/lib/motion/spring')
 
 const GROUP = 'g'
 const KEY = `group:${GROUP}`
@@ -93,6 +94,7 @@ interface Inputs {
   columns: number
   forming?: boolean
   dissolving?: boolean
+  onDissolved?: (folder: Folder) => void
 }
 
 /**
@@ -100,7 +102,7 @@ interface Inputs {
  * list, the card renderer and the menu callback all new on every render – what a render of the
  * grid for its own reasons (a phase change, a lift, a selection) hands the card.
  */
-function Grid({ collapsed, tabs, columns, forming, dissolving }: Inputs): JSX.Element {
+function Grid({ collapsed, tabs, columns, forming, dissolving, onDissolved }: Inputs): JSX.Element {
   return createElement(GroupCard, {
     folder: folderOf(collapsed),
     tabs: [...tabs],
@@ -110,7 +112,7 @@ function Grid({ collapsed, tabs, columns, forming, dissolving }: Inputs): JSX.El
     forming,
     dissolving,
     held: dissolving ? 1 : undefined,
-    onDissolved: () => undefined
+    onDissolved: onDissolved ?? (() => undefined)
   })
 }
 
@@ -285,6 +287,88 @@ describe("the group card's height effect", () => {
     for (let i = 0; i < 3; i++) render({ collapsed: false, tabs: three, columns: 3 })
     expect(bodyReads).toBe(2)
     expect(layoutAnimations.start).toHaveBeenCalledTimes(3)
+  })
+
+  it('a fold rests the frame its height reaches the header, an unfold at its thresholds: the spring’s way to rest beneath the header draws nothing, and the cells below set off there (PERF-5, #349)', () => {
+    /** Frames of the spring alone, `from` → `to` at the test’s 16 ms, to its rest thresholds. */
+    const springFrames = (from: number, to: number): number => {
+      let state = { x: from, v: 0 }
+      let n = 0
+      while (!isAtRest(state, to) && n < 600) {
+        state = stepSpring(state, to, 16 / 1000, SPRING_GENTLE)
+        n++
+      }
+      return n
+    }
+    /** Frames until the tracker is told the height is over; the heights written on the way. */
+    const foldFrames = (): { frames: number; heights: number[] } => {
+      const heights: number[] = []
+      let frames = 0
+      while (layoutAnimations.has(KEY) && frames < 600) {
+        act(() => frame())
+        frames++
+        if (layoutAnimations.has(KEY)) heights.push(parseFloat(shell().style.height))
+      }
+      return { frames, heights }
+    }
+    bodyHeight = bodyOf(2)
+    render({ collapsed: false, tabs: three, columns: 2 })
+    const open = GROUP_HEADER + bodyOf(2)
+    // After the mount: StrictMode’s mount, cleanup and mount again `end` once on the way.
+    vi.spyOn(layoutAnimations, 'end')
+
+    // Folding: every frame before the rest writes a height above the header – the card is still
+    // visibly closing – and the frame that reaches the header is the rest: `end` tells the
+    // tracker in that very frame, the inline height and the clip go, nothing is written at the
+    // header and held there.
+    render({ collapsed: true, tabs: three, columns: 2 })
+    expect(shell().style.height).toBe(`${open}px`)
+    const fold = foldFrames()
+    expect(fold.heights.length).toBeGreaterThan(5)
+    expect(fold.heights.every((h) => h > GROUP_HEADER)).toBe(true)
+    expect(layoutAnimations.end).toHaveBeenCalledTimes(1)
+    expect(shell().style.height).toBe('')
+    expect(shell().dataset.clip).toBeUndefined()
+    // The spring on its own would run on beneath the header to its thresholds – the hair of
+    // overshoot and back – for several frames more (~100 ms at 60 Hz), the tail the cells below
+    // used to wait out.
+    expect(springFrames(open, GROUP_HEADER) - fold.frames).toBeGreaterThanOrEqual(5)
+
+    // Unfolding: nothing above the height to stop at, so the rest is the spring’s own (the
+    // overshoot past the whole is drawn, as §7 has it), the same frames as the spring alone.
+    render({ collapsed: false, tabs: three, columns: 2 })
+    expect(shell().style.height).toBe(`${GROUP_HEADER}px`)
+    const unfold = foldFrames()
+    expect(unfold.heights.some((h) => h > open)).toBe(true)
+    expect(unfold.frames).toBe(springFrames(GROUP_HEADER, open))
+    expect(layoutAnimations.end).toHaveBeenCalledTimes(2)
+    expect(shell().style.height).toBe('')
+  })
+
+  it('under reduced motion a fold and a dissolve rest once each: the jump to the floor is the rest, and the owner hears of it once (v2 §11.3)', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (q: string) => ({ matches: q === '(prefers-reduced-motion: reduce)' }) as MediaQueryList
+    )
+    bodyHeight = bodyOf(2)
+    render({ collapsed: false, tabs: three, columns: 2 })
+    vi.spyOn(layoutAnimations, 'end')
+
+    // The fold: the height jumps to the header in the commit, and the card is at rest there –
+    // the settle at the floor is no second rest on top of the jump's own.
+    render({ collapsed: true, tabs: three, columns: 2 })
+    expect(layoutAnimations.has(KEY)).toBe(false)
+    expect(layoutAnimations.end).toHaveBeenCalledTimes(1)
+    expect(shell().style.height).toBe('')
+    expect(shell().dataset.clip).toBeUndefined()
+
+    // The dissolve: gone in the commit, and the owner told once.
+    const onDissolved = vi.fn()
+    render({ collapsed: true, tabs: [], columns: 2, dissolving: true, onDissolved })
+    expect(layoutAnimations.end).toHaveBeenCalledTimes(2)
+    expect(onDissolved).toHaveBeenCalledTimes(1)
+    const gone = host!.querySelector<HTMLElement>('.zen-group')!
+    expect(gone.style.display).toBe('none')
+    expect(gone.hasAttribute('data-cell')).toBe(false)
   })
 
   it('a change mid-flight retargets the spring in the one commit that carries it, and renders after it leave it be', () => {

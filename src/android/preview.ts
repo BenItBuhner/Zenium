@@ -455,10 +455,10 @@ export function createPreviewBridge(): NativeBridge {
   // device (the pause is a stop; play speaks the sentence again). `stop` silences the run. The
   // script (`?readAloud=<status>`, or a preview state's PREVIEW_READ_ALOUD_EVENT) bends the
   // engine towards a state a still needs: `loading` never lists its voices (the core waits on
-  // them, the player's busy state), `error` lists none (the core's `no-voice`), `ended` ends
-  // every utterance at once (the core walks to the text's end). A script change is a voices
-  // change to the core (`speech.voicesChanged`), so the list it cached from the last state is
-  // dropped and the next start asks the engine again.
+  // them, the player's busy state), `error` lists none (the core's `no-voice` once its grace for
+  // a late list has run out), `ended` ends every utterance at once (the core walks to the text's
+  // end). A script change is a voices change to the core (`speech.voicesChanged`), so the list
+  // it cached from the last state is dropped and the next start asks the engine again.
   let readAloudScript = params.get('readAloud') ?? 'playing'
   const voicesChanged = (): void => hostGlobal().hostEvent('speech.voicesChanged', 'null')
   window.addEventListener(PREVIEW_READ_ALOUD_EVENT, (e) => {
@@ -469,12 +469,11 @@ export function createPreviewBridge(): NativeBridge {
   const speech = {
     voices: (): Promise<ReadAloudVoice[]> => {
       if (readAloudScript === 'loading') return new Promise<ReadAloudVoice[]>(() => undefined)
-      if (readAloudScript === 'error') {
-        // The core gives a voiceless host a grace period for its list to arrive (a real engine
-        // still binding); an engine that says its voices changed and lists none again ends it.
-        window.setTimeout(voicesChanged, 60)
-        return Promise.resolve([])
-      }
+      // `error`: an engine with no voice at all. The core waits its grace for a late list (a
+      // real engine still binding) and lands on `no-voice`; the stand-in says nothing more – a
+      // `voicesChanged` after the failure would restart the session on its own (the core's
+      // late-voices retry), and an empty one inside the grace only makes the core ask again.
+      if (readAloudScript === 'error') return Promise.resolve([])
       return Promise.resolve(PREVIEW_VOICES)
     },
     speak: (utteranceId: string, text: string, rate: number, queue: 'flush' | 'add'): void => {
