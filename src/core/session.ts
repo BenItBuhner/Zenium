@@ -312,30 +312,57 @@ export class SessionService {
   /**
    * Bring back one entry: a tab to its place and to the front – or, `background` (a middle or
    * Ctrl click on the History page's Recently closed row, §10.1), to its place alone, the tab
-   * that was active staying so; a window entry is a whole window and comes back as one.
+   * that was active staying so; a window entry is a whole window and comes back as one. Returns
+   * the tab brought back (a window's active one), or null for an entry that is not there.
    */
   restoreClosed(
     id: string,
     win: ZenWindow = this.browser.focusedWindow(),
     background = false
-  ): void {
+  ): Tab | null {
     const state = this.browser.state
     const entry = state.recentlyClosed.find((e) => e.id === id)
-    if (!entry) return
+    if (!entry) return null
     state.recentlyClosed = state.recentlyClosed.filter((e) => e.id !== id)
+    let restored: Tab | null
     if (entry.kind === 'tab') {
-      const tab = this.restoreTab(entry, win)
-      if (!background) this.browser.tabs.activateTab(tab.id, win)
+      restored = this.restoreTab(entry, win)
+      if (!background) this.showRestored(restored, win)
     } else {
-      this.restoreWindow(entry, win)
+      restored = this.restoreWindow(entry, win)
     }
     this.changed()
+    return restored
   }
 
-  /** Bring back every entry, oldest first so positions line up with how they were closed. */
+  /**
+   * Bring back every entry, the newest first – the closes run backwards, so a tab whose index
+   * was counted with an earlier-closed neighbour already gone finds that neighbour back in place
+   * before it – and end on the newest one, as one Ctrl+Shift+T would have.
+   */
   restoreAll(win: ZenWindow = this.browser.focusedWindow()): void {
-    const entries = [...this.browser.state.recentlyClosed].reverse()
-    for (const entry of entries) this.restoreClosed(entry.id, win)
+    let front: Tab | null = null
+    for (const entry of [...this.browser.state.recentlyClosed]) {
+      const tab = this.restoreClosed(entry.id, win, true)
+      front ??= tab
+    }
+    if (front) this.showRestored(front, win)
+  }
+
+  /**
+   * A restored tab to the front in the window that holds it: the window it was closed from when
+   * that is still open – Chrome puts a tab back into its own window and brings the window
+   * forward – else `win`, where the user asked.
+   */
+  private showRestored(tab: Tab, win: ZenWindow): void {
+    const home = this.windowOf(tab.windowId) ?? win
+    this.browser.tabs.activateTab(tab.id, home)
+    if (home !== win) home.host.focus()
+  }
+
+  private windowOf(windowId: string | null): ZenWindow | null {
+    if (!windowId) return null
+    return this.browser.allWindows().find((w) => w.id === windowId && w.alive) ?? null
   }
 
   clearRecentlyClosed(): void {
@@ -353,12 +380,14 @@ export class SessionService {
 
   /**
    * Put a closed tab back: into its space (or the window's own space for blank windows), at
-   * its old position, in its folder when that still exists. Its back/forward stack is replayed
-   * once the page loads.
+   * its old position, in its folder when that still exists – in the window it was closed from
+   * when that is still open, else in `win`. Its back/forward stack is replayed once the page
+   * loads.
    */
-  private restoreTab(closed: ClosedTabEntry, win: ZenWindow): Tab {
+  private restoreTab(closed: ClosedTabEntry, from: ZenWindow): Tab {
     const { tabs } = this.browser
     const m = this.browser.state.model
+    const win = this.windowOf(closed.windowId) ?? from
     let space = (closed.spaceId ? getSpace(m, closed.spaceId) : undefined) ?? win.activeSpace()
     if (win.localSpace) space = win.localSpace
     const tab = createTabRecord({
@@ -404,15 +433,18 @@ export class SessionService {
     return hostState === undefined ? navigation : { ...navigation, hostState }
   }
 
-  /** A closed window comes back as a window of the same kind holding the same tabs. */
-  private restoreWindow(closed: ClosedWindowEntry, from: ZenWindow): void {
+  /**
+   * A closed window comes back as a window of the same kind holding the same tabs, its active
+   * tab selected; returns that tab.
+   */
+  private restoreWindow(closed: ClosedWindowEntry, from: ZenWindow): Tab | null {
     const { browser } = this
     if (!browser.state.capabilities.windows) {
       // One window only (Android): the tabs come back into the current one.
       let last: Tab | null = null
       for (const t of closed.tabs) last = this.restoreTab(t, from)
       if (last) browser.tabs.activateTab(last.id, from)
-      return
+      return last
     }
     const kind: WindowKind = closed.windowKind === 'unsynced' ? 'unsynced' : 'synced'
     const win = browser.createWindow({ kind, from, bounds: closed.bounds, empty: true })
@@ -420,8 +452,10 @@ export class SessionService {
     for (const t of closed.tabs) restored.set(t.tab.id, this.restoreTab(t, win))
     const active =
       (closed.activeTabId ? restored.get(closed.activeTabId) : undefined) ??
-      [...restored.values()][0]
+      [...restored.values()][0] ??
+      null
     if (active) browser.tabs.activateTab(active.id, win)
     browser.state.commit()
+    return active
   }
 }

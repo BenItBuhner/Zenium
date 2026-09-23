@@ -123,7 +123,7 @@ interface Fixture {
   viewOf(tabId: string): FakeView
 }
 
-function fixture(io: StoreIO = memoryIo()): Fixture {
+function fixture(io: StoreIO = memoryIo(), os: PlatformOs = 'linux'): Fixture {
   const views: FakeView[] = []
   const closes = new Map<string, number>()
   const f: Fixture = {
@@ -141,7 +141,7 @@ function fixture(io: StoreIO = memoryIo()): Fixture {
   }
   const capabilities = stub<HostCapabilities>({ windows: true, updates: false, agents: false })
   const platform: Platform = {
-    info: { os: 'linux' as PlatformOs, version: '0.0.0' },
+    info: { os, version: '0.0.0' },
     capabilities,
     io,
     windows: {
@@ -344,6 +344,69 @@ describe('page dialogs', () => {
 })
 
 describe('closing tabs with beforeunload', () => {
+  it('lists a tab in closingTabIds from the close until its page has answered, whichever way', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const stays = f.browser.tabs.createTab({ url: 'https://example.com/stay', active: true }, win)
+    const goes = f.browser.tabs.createTab({ url: 'https://example.com/go', active: true }, win)
+    const listed = (): string[] => f.browser.state.snapshot(win).closingTabIds
+    expect(listed()).toEqual([])
+
+    // The page holds its answer: the tab is listed for as long as the question is up.
+    let answer: ((leave: boolean) => void) | null = null
+    f.viewOf(stays.id).view.confirmUnload = () =>
+      new Promise<boolean>((resolve) => {
+        answer = resolve
+      })
+    f.browser.handleCommand(win, 'tab.close', { tabId: stays.id })
+    await tick()
+    expect(listed()).toEqual([stays.id])
+    // Stay: the tab is kept and no longer listed.
+    answer!(false)
+    await tick()
+    await tick()
+    expect(listed()).toEqual([])
+    expect(f.browser.tabs.tab(stays.id)).toBeDefined()
+
+    // Leave: the tab closes, and is not listed once it has.
+    f.viewOf(goes.id).unload = 'leave'
+    f.browser.handleCommand(win, 'tab.close', { tabId: goes.id })
+    await tick()
+    await tick()
+    expect(f.browser.tabs.tab(goes.id)).toBeUndefined()
+    expect(listed()).toEqual([])
+  })
+
+  it('tab.closeMany asks each page in turn, keeps only the one that says stay, and ends on the tab named', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const keep = f.browser.tabs.createTab({ url: 'https://example.com/keep', active: true }, win)
+    const a = f.browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    const b = f.browser.tabs.createTab({ url: 'https://example.com/b', active: true }, win)
+    const c = f.browser.tabs.createTab({ url: 'https://example.com/c', active: true }, win)
+    f.viewOf(b.id).unload = 'stay'
+    f.viewOf(c.id).unload = 'leave'
+
+    f.browser.handleCommand(win, 'tab.closeMany', {
+      tabIds: [a.id, b.id, 'tab_missing', c.id],
+      activate: keep.id
+    })
+    await tick()
+    await tick()
+    await tick()
+
+    expect(f.browser.tabs.tab(a.id)).toBeUndefined()
+    expect(f.browser.tabs.tab(b.id)).toBeDefined()
+    expect(f.browser.tabs.tab(c.id)).toBeUndefined()
+    // Every page was asked, one after the other, the missing tab skipped.
+    expect(f.views.filter((v) => v.unloadChecks === 1).map((v) => v.tabId)).toEqual([
+      a.id,
+      b.id,
+      c.id
+    ])
+    expect(f.browser.tabs.activeTabFor(win)?.id).toBe(keep.id)
+  })
+
   it('closes a tab whose page does not object, and keeps one whose page says stay', async () => {
     const f = fixture()
     const win = firstWindow(f)
@@ -518,7 +581,7 @@ describe('quitting', () => {
 
     const quitting = f.browser.requestQuit(win)
     await tick()
-    expect(win.prompt).toMatchObject({ kind: 'quit', count: 3 })
+    expect(win.prompt).toMatchObject({ kind: 'quit', count: 3, downloads: null })
     f.browser.windowPrompts.respond(win.prompt!.id, true)
     await expect(quitting).resolves.toBe(true)
     expect(f.browser.quitting).toBe(true)
@@ -604,6 +667,216 @@ describe('quitting', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('downloads in progress (downloads-35)', () => {
+  /** A transfer running in the engine, regular or private. */
+  function download(f: Fixture, name: string, isPrivate = false): string {
+    return f.browser.downloads.begin({
+      url: `https://cdn.example.com/${name}`,
+      filename: name,
+      totalBytes: 1000,
+      mimeType: 'application/octet-stream',
+      savePath: `/dl/${name}.zeniumdownload`,
+      sourceTabId: null,
+      private: isPrivate
+    }).id
+  }
+
+  it('a quit asks about the running downloads in the same prompt as the tabs, and parks them once agreed', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    for (const url of ['https://a.test/', 'https://b.test/', 'https://c.test/'])
+      f.browser.tabs.createTab({ url, active: true }, win)
+    const one = download(f, 'one.zip')
+    const two = download(f, 'two.zip')
+    // A finished download is not in progress.
+    f.browser.downloads.finish(download(f, 'done.zip'), 'cancelled')
+
+    const quitting = f.browser.requestQuit(win)
+    await tick()
+    expect(win.prompt).toMatchObject({
+      kind: 'quit',
+      count: 3,
+      downloads: { count: 2, end: 'quit' }
+    })
+    f.browser.windowPrompts.respond(win.prompt!.id, true)
+    await expect(quitting).resolves.toBe(true)
+    expect(f.quits).toBe(1)
+    // The quit's shutdown ends the transfers: interrupted by the shutdown, Resume next launch.
+    expect(f.browser.downloads.item(one)).toMatchObject({ state: 'interrupted' })
+    expect(f.browser.downloads.item(two)).toMatchObject({ state: 'interrupted' })
+  })
+
+  it('asks about a download alone when the tabs warning does not apply, and Cancel keeps everything running', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, win)
+    const id = download(f, 'one.zip')
+
+    const quitting = f.browser.requestQuit(win)
+    await tick()
+    // No tabs warning for a single tab: the prompt's count is 0, the downloads are the question.
+    expect(win.prompt).toMatchObject({
+      kind: 'quit',
+      count: 0,
+      downloads: { count: 1, end: 'quit' }
+    })
+    f.browser.windowPrompts.respond(win.prompt!.id, false)
+    await expect(quitting).resolves.toBe(false)
+    expect(f.quits).toBe(0)
+    expect(f.browser.quitting).toBe(false)
+    expect(f.browser.downloads.item(id)).toMatchObject({ state: 'progressing' })
+
+    // The setting off silences the tabs warning, never the download question.
+    f.browser.state.settings.warnOnCloseWindow = false
+    f.browser.tabs.createTab({ url: 'https://b.test/', active: true }, win)
+    const again = f.browser.requestQuit(win)
+    await tick()
+    expect(win.prompt).toMatchObject({
+      kind: 'quit',
+      count: 0,
+      downloads: { count: 1, end: 'quit' }
+    })
+    f.browser.windowPrompts.respond(win.prompt!.id, false)
+    await expect(again).resolves.toBe(false)
+  })
+
+  it('no download running: the quit asks nothing it did not ask before', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, win)
+    await expect(f.browser.requestQuit(win)).resolves.toBe(true)
+    expect(win.prompt).toBeNull()
+    expect(f.quits).toBe(1)
+  })
+
+  it('closing the last window asks, since that quits; not while another window stays open', async () => {
+    const f = fixture()
+    // The tabs warning off: the download question is the one asked here.
+    f.browser.state.settings.warnOnCloseWindow = false
+    const first = firstWindow(f)
+    f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, first)
+    download(f, 'one.zip')
+    const second = f.browser.openWindow('unsynced', first)
+    if (!second) throw new Error('no second window')
+    f.browser.tabs.createTab({ url: 'https://b.test/', active: true }, second)
+
+    // The download goes on in the window that stays: no question.
+    await expect(f.browser.requestWindowClose(second)).resolves.toBe(true)
+    expect(second.prompt).toBeNull()
+    f.browser.onWindowClosing(second)
+    f.browser.onWindowClosed(second)
+
+    const closing = f.browser.requestWindowClose(first)
+    await tick()
+    expect(first.prompt).toMatchObject({
+      kind: 'close-tabs',
+      count: 0,
+      downloads: { count: 1, end: 'quit' }
+    })
+    f.browser.windowPrompts.respond(first.prompt!.id, false)
+    await expect(closing).resolves.toBe(false)
+    expect(f.closes.get(first.id)).toBeUndefined()
+  })
+
+  it('on macOS the last window closes without a question: the app stays and the download with it', async () => {
+    const f = fixture(memoryIo(), 'darwin')
+    const win = firstWindow(f)
+    f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, win)
+    download(f, 'one.zip')
+    await expect(f.browser.requestWindowClose(win)).resolves.toBe(true)
+    expect(win.prompt).toBeNull()
+  })
+
+  it('the last private window asks about the private downloads alone, whose session ends with it', async () => {
+    const f = fixture()
+    f.browser.state.settings.warnOnCloseWindow = false
+    const first = firstWindow(f)
+    f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, first)
+    const secret = f.browser.openWindow('private', first)
+    if (!secret) throw new Error('no private window')
+    f.browser.tabs.createTab({ url: 'https://p.test/', active: true }, secret)
+    download(f, 'regular.zip')
+    download(f, 'secret.zip', true)
+    download(f, 'secret-two.zip', true)
+
+    const closing = f.browser.requestWindowClose(secret)
+    await tick()
+    // The regular download goes on in the window that stays; the two private ones are asked about.
+    expect(secret.prompt).toMatchObject({
+      kind: 'close-tabs',
+      count: 0,
+      downloads: { count: 2, end: 'private-window' }
+    })
+    f.browser.windowPrompts.respond(secret.prompt!.id, true)
+    await expect(closing).resolves.toBe(true)
+    expect(f.closes.get(secret.id)).toBe(1)
+
+    // A second private window keeps the session: its close asks nothing.
+    const other = f.browser.openWindow('private', first)
+    if (!other) throw new Error('no other private window')
+    f.browser.tabs.createTab({ url: 'https://q.test/', active: true }, other)
+    await expect(f.browser.requestWindowClose(other)).resolves.toBe(true)
+    expect(other.prompt).toBeNull()
+  })
+
+  it('the private window’s count is the private downloads alone; the quit’s is every download (#357 B2)', async () => {
+    const f = fixture()
+    f.browser.state.settings.warnOnCloseWindow = false
+    const first = firstWindow(f)
+    f.browser.tabs.createTab({ url: 'https://a.test/', active: true }, first)
+    const secret = f.browser.openWindow('private', first)
+    if (!secret) throw new Error('no private window')
+    f.browser.tabs.createTab({ url: 'https://p.test/', active: true }, secret)
+    const regular = download(f, 'regular.zip')
+    const hidden = download(f, 'secret.zip', true)
+
+    // The last private window closing: one download ends with it, the regular one goes on.
+    const closing = f.browser.requestWindowClose(secret)
+    await tick()
+    expect(secret.prompt).toMatchObject({
+      kind: 'close-tabs',
+      count: 0,
+      downloads: { count: 1, end: 'private-window' }
+    })
+    f.browser.windowPrompts.respond(secret.prompt!.id, false)
+    await expect(closing).resolves.toBe(false)
+    expect(f.closes.get(secret.id)).toBeUndefined()
+    expect(f.browser.downloads.item(regular)).toMatchObject({ state: 'progressing' })
+    expect(f.browser.downloads.item(hidden)).toMatchObject({ state: 'progressing' })
+
+    // Quitting ends both: the count is every download, from whichever window asks.
+    const quitting = f.browser.requestQuit(first)
+    await tick()
+    expect(first.prompt).toMatchObject({
+      kind: 'quit',
+      count: 0,
+      downloads: { count: 2, end: 'quit' }
+    })
+    f.browser.windowPrompts.respond(first.prompt!.id, false)
+    await expect(quitting).resolves.toBe(false)
+    expect(f.quits).toBe(0)
+  })
+
+  it('the tabs warning and the download question make one prompt', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    for (const url of ['https://a.test/', 'https://b.test/'])
+      f.browser.tabs.createTab({ url, active: true }, win)
+    download(f, 'one.zip')
+    const closing = f.browser.requestWindowClose(win)
+    await tick()
+    expect(win.prompt).toMatchObject({
+      kind: 'close-tabs',
+      count: 2,
+      downloads: { count: 1, end: 'quit' }
+    })
+    f.browser.windowPrompts.respond(win.prompt!.id, false)
+    await expect(closing).resolves.toBe(false)
+    // One question was asked and answered: nothing else is up.
+    expect(win.prompt).toBeNull()
   })
 })
 

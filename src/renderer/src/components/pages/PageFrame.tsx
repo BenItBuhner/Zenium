@@ -1,4 +1,4 @@
-import type { JSX, KeyboardEvent, ReactNode, RefObject, UIEvent } from 'react'
+import type { JSX, KeyboardEvent, MouseEvent, ReactNode, RefObject, UIEvent } from 'react'
 import { useCallback, useState } from 'react'
 import { Search, X } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
@@ -169,7 +169,9 @@ export function PageSearchField({
  * grow the heading's 20 line), then its rows. The section is named by its heading: `heading` is
  * its text, rendered as the `h2` carrying `headingId`; a group whose heading line is its own
  * element (the bookmarks manager's breadcrumb, whose last segment is the `h2`) hands it in as
- * `headingElement` instead.
+ * `headingElement` instead. A heading line with a menu of its own (History's device groups) takes
+ * it through `onHeadingContextMenu`: a right-click anywhere on the line, or the menu key while the
+ * focus is in it (Chromium raises `contextmenu` at the focused element – the line's control).
  */
 export function PageGroup({
   heading,
@@ -178,6 +180,7 @@ export function PageGroup({
   control,
   headingId,
   className,
+  onHeadingContextMenu,
   children,
   ...data
 }: {
@@ -187,11 +190,12 @@ export function PageGroup({
   control?: ReactNode
   headingId?: string
   className?: string
+  onHeadingContextMenu?: (e: MouseEvent<HTMLDivElement>) => void
   children: ReactNode
 } & Record<`data-${string}`, string | number | boolean | undefined>): JSX.Element {
   return (
     <section className={cn('zen-page-group', className)} aria-labelledby={headingId} {...data}>
-      <div className="zen-v2-heading zen-page-heading">
+      <div className="zen-v2-heading zen-page-heading" onContextMenu={onHeadingContextMenu}>
         {headingElement ?? (
           <h2 id={headingId} className="zen-page-heading-text">
             {heading}
