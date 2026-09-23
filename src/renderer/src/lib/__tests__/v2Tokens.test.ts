@@ -46,6 +46,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
+  // The confirmation prompt (components/dialogs/ConfirmDialog.tsx; §9.23, §9.22): the notice's
+  // body and footer on the card padding, unlayered beside the button so its check row can reach
+  // past the gutter of the unlayered row primitive. Inside the button's span, so it is cut first.
+  ['.zen-confirm-dialog {', "/*\n * The first run's own controls keep the ring"],
   // The v2 button, shared by every v2 surface (the Settings tab's row buttons and dialogs,
   // components/pages/settings/*; the first run, overlays/PhoneOnboarding.tsx; the
   // default-browser prompts, defaultbrowser/*), with the first run's unlayered override beside it;
@@ -211,8 +215,6 @@ const V2_FILES: ReadonlyArray<string> = [
   // the save / update prompts, the pickers, the passkey and passphrase dialogs, the editors and
   // Settings > Autofill with its managers.
   'assets/autofill.css',
-  // The window prompts' checkbox accent (§9.5 modals, #129).
-  'components/dialogs/WindowPromptDialog.tsx',
   // The page dialogs' message (alert, confirm, prompt): 13 px on the small line (§4, §9.2).
   'components/dialogs/PageDialog.tsx',
   // The extension details page's error line in the danger ink (#68).
