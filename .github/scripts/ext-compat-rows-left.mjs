@@ -1,15 +1,20 @@
-// The rows a compat sweep left ungraded when its emulator went away, for the second boot the
-// sweep trigger makes (tmp-ext-android-13-sweep.yml, `remaining-*` jobs). Reads the results.json
-// the sweep script pulled after every row (argv[2]; absent when the driver never wrote one) and
-// prints GitHub step outputs:
-//   boot=true|false  – whether a second boot is due: the emulator died (DIED=true) and rows are left
+// The rows a compat sweep left ungraded when its emulator went away or its driver did not finish,
+// for the second boot the sweep trigger makes (the round's tmp-ext-android-*-sweep.yml,
+// `remaining-*` jobs). Reads the results.json the sweep script pulled after every row (argv[2];
+// absent when the driver never wrote one) and prints GitHub step outputs:
+//   boot=true|false  – whether a second boot is due: rows are left, and the emulator died
+//                      (DIED=true) or the driver's job failed (FAILED=true: the app process died
+//                      under a row – a Java OOM at an extension's configure – or the driver ran
+//                      out of time; round 13 lost its last four rows to the first)
 //   ids=a,b,c        – the rows left, in the sweep's order: `order` minus the rows with a grade;
 //                      every id of ALL_IDS when there is no results.json
 //   last=a           – the row in flight at the death (the first left), to run after the others
-// Environment: DIED (the shared workflow's emulator-died output), ALL_IDS (the sweep's ids).
+// Environment: DIED (the shared workflow's emulator-died output), FAILED (the sweep job's result
+// is failure), ALL_IDS (the sweep's ids).
 import { existsSync, readFileSync } from 'node:fs'
 
 const died = process.env.DIED === 'true'
+const failed = process.env.FAILED === 'true'
 const all = (process.env.ALL_IDS ?? '')
   .split(',')
   .map((id) => id.trim())
@@ -33,9 +38,9 @@ if (file && existsSync(file)) {
   last = left[0] ?? ''
 }
 
-const boot = died && left.length > 0
+const boot = (died || failed) && left.length > 0
 console.error(
-  `emulator died: ${died}; graded ${graded}; left ${left.length}${last ? ` (in flight at the death: ${last})` : ''}; second boot: ${boot}`
+  `emulator died: ${died}; driver failed: ${failed}; graded ${graded}; left ${left.length}${last ? ` (in flight at the death: ${last})` : ''}; second boot: ${boot}`
 )
 console.log(`boot=${boot}`)
 console.log(`ids=${left.join(',')}`)
