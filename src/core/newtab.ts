@@ -12,6 +12,7 @@ import type {
   WindowOpenTicket
 } from './platform'
 import type {
+  DevtoolsDock,
   NewTabDeviceState,
   NewTabPageAction,
   NewTabPageShortcut,
@@ -133,6 +134,9 @@ export class ForwardingEvents implements TabViewEvents {
   }
   onDevtoolsClosed(): void {
     this.target?.onDevtoolsClosed()
+  }
+  onDevtoolsDockChanged(dock: DevtoolsDock): void {
+    this.target?.onDevtoolsDockChanged?.(dock)
   }
   onFoundInPage(result: FindResultInfo): void {
     this.target?.onFoundInPage(result)
