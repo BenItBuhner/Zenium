@@ -11,11 +11,34 @@ import { createStore } from '@renderer/lib/store'
  * that unmounts the card, and drops it if the card is back before it has run. The New Tab card
  * leaves the same way when a query stands (§9.34: it is not a match), as the pane's `new-tab`
  * departure, which hides no tab.
+ *
+ * A group leaves whole – one `group` exit, its cards drawn inside it – when its every card goes
+ * at once: closed (its last card's X or swipe, Close Group, a close that takes every member),
+ * dropped by the query (`filtered`), or the last card the query left it closed (the group stays
+ * open with the cards the query hides; its card has nothing left to show). Its cell leaves the
+ * grid on the commit its cards are gone, the exit fading where the card stood while the cells
+ * below glide up, as a card's leave (v2 §11.4: a container with nothing to hold departs as a
+ * card does, never a cut); the group's folder stays – saved on a close, open under a query – so
+ * that exit too is the grid's to release. A `flown` group's last card was swiped off the grid
+ * and is out of sight already: the frame leaves as it stands, its slot empty, the count as it
+ * read.
  */
 export type Departure =
   | { key: string; kind: 'tab'; tab: Tab; rect: Rect; filtered?: true }
-  | { key: string; kind: 'group'; folder: Folder; tabs: Tab[]; rect: Rect; columns: number }
+  | GroupDeparture
   | { key: string; kind: 'new-tab'; isPrivate: boolean; rect: Rect }
+
+/** A group's exit, its cards drawn inside it. */
+export interface GroupDeparture {
+  key: string
+  kind: 'group'
+  folder: Folder
+  tabs: Tab[]
+  rect: Rect
+  columns: number
+  filtered?: true
+  flown?: true
+}
 
 interface DepartState {
   items: Departure[]
