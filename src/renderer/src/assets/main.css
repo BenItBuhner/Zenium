@@ -561,6 +561,46 @@
   gap: 8px;
 }
 /*
+ * The picker's list (`PickerDialog`: the body's slot carrying the consumer's rows – the device
+ * chooser's) runs edge to edge as the check row does (§9.25: the row's own 16 is the prompt's
+ * one gutter), with the body's specificity for the same reason. Carrying a list the prompt
+ * stands at most 80% of the frame's height (`data-body="list"`, the settings dialog's list rule
+ * below: a dialog 16 from the frame's top and bottom reads as a page) and the LIST scrolls under
+ * the title block, the footer in reach: the body may shrink (`min-height: 0` against a flex
+ * item's content floor) and the slot scrolls, contained; a notice, a field prompt and the footer
+ * keep standing as tall as their content. Rows inside are the consumer's (§9.25's row rules).
+ */
+.zen-confirm-dialog-body > .zen-confirm-dialog-slot {
+  width: calc(100% + 2 * var(--v2-card-padding));
+  min-height: 0;
+  margin: 0 calc(-1 * var(--v2-card-padding));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.zen-confirm-dialog[data-body='list'] {
+  max-height: 80%;
+}
+.zen-confirm-dialog[data-body='list'] > .zen-confirm-dialog-body {
+  min-height: 0;
+}
+/*
+ * The verb before it is an answer (§9.30: a picker's Connect until a pick): `aria-disabled`,
+ * not `disabled`, so it keeps its place in the tab order – and so the primitive's `:disabled`
+ * rules do not reach it. One ink: .4 on the whole control, no hover or press fill and no press
+ * scale – the fill named again at rest, since the shared hover and press rules (extensions.css,
+ * `.zen-v2-button:active` above) stand at the same specificity and these rules come later; the
+ * primary keeps its accent under the .4, as §9.30's "whole control" has it. The ring stays: a
+ * reachable control shows where the focus is.
+ */
+.zen-confirm-dialog-footer > .zen-v2-button[aria-disabled='true'] {
+  opacity: 0.4;
+  background: var(--v2-fill);
+  transform: none;
+}
+.zen-confirm-dialog-footer > .zen-v2-button[data-primary][aria-disabled='true'] {
+  background: var(--v2-accent);
+}
+/*
  * The first run's own controls keep the ring under the coarse-pointer suppressor further down,
  * as every v2 control does (§9.6), in the window's accent; inside the row, since rows run edge to
  * edge.

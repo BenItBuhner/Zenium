@@ -1,19 +1,24 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
-import { returnFocusTo, wrapTab } from '@renderer/lib/popover'
+import { returnFocusTo } from '@renderer/lib/popover'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { V2TitleBlock } from '../extensions/v2'
+import { useConfirmKeyboard } from './confirmKeyboard'
 
 /**
  * Where the keyboard goes as a prompt leaves (§9.5, §9.22): the control that had it as the
- * prompt opened (the default, `undefined`), an element or a function read at the leave (a
- * consumer that decides by the answer – a keyboard's Cancel to the row it came from, a Delete
- * whose row goes with it to nothing), or `false` for no return of the prompt's own (a consumer
- * that hands the keyboard to the page itself).
+ * prompt opened (the OPENER – the default, `undefined`), an element, or `false` for no return
+ * of the prompt's own (a consumer that hands the keyboard to the page itself); or a function
+ * read at the leave, for a consumer that decides by the answer – a keyboard's Cancel to the row
+ * it came from, a Delete whose row goes with it. What the function yields reads the same way:
+ * an element is the target, `false` is nowhere, and `null` or `undefined` – a row control looked
+ * up after its row was removed (#401's `rowControl`) – FALLS BACK TO THE OPENER (one hop down,
+ * unless the opener is gone too), never to nowhere: a getter that means nowhere says `false`.
  */
-export type ConfirmReturnFocus = HTMLElement | (() => HTMLElement | null | undefined) | false
+export type ConfirmReturnFocus =
+  HTMLElement | (() => HTMLElement | null | undefined | false) | false
 
 export interface ConfirmDialogProps {
   /** The prompt's name on its root, `data-confirm="<name>"`: a test's and a drive's handle. */
@@ -41,6 +46,15 @@ export interface ConfirmDialogProps {
    * press on it nor Enter confirms again.
    */
   busy?: boolean
+  /**
+   * The verb is not yet an answer (§9.30): a picker's Connect until a device is picked. One
+   * ink – .4 on the whole control, no hover or press fill – as `aria-disabled`, not `disabled`:
+   * the verb stays in the tab order, so Tab from Cancel still finds it and a reader hears why,
+   * and the wrap does not shift as a pick enables it. A press on it does nothing, and Enter from
+   * the held container is inert while it stands – consumed, as §9.22 has it, answering nothing.
+   * Busy is not disabled (§9.30): a working verb keeps its ink; the two do not combine.
+   */
+  disabled?: boolean
   /** The body's one element, when the prompt has one: a check row under the description (§9.23). */
   checkbox?: { label: string; checked: boolean; onChange: (next: boolean) => void }
   /** Cancel: the button, Escape and a press on the scrim. */
@@ -63,7 +77,8 @@ export interface ConfirmDialogProps {
  * the prompt has one, a check row as the body's only element, then the §9.11 footer: Cancel and
  * the verb, 96 | 8 | 96 hugging the right at 16, the verb in the danger ink when the answer
  * destroys something and the accent primary otherwise. Nothing else: a prompt with more is a
- * form dialog. The width is §9.20's, by content and by place: the 320 notice for a title block
+ * form dialog (the one-field prompt is `PromptDialog` and the list picker `PickerDialog`, below,
+ * on the same panel). The width is §9.20's, by content and by place: the 320 notice for a title block
  * and its two buttons; 400 when the prompt carries the check row ("takes 400 only when it
  * carries a row or a field (a credential row, a checkbox)" – at 320 the quit prompt's two
  * sentences ran to three lines and its checkbox label wrapped, measured); and the notice again,
@@ -71,7 +86,9 @@ export interface ConfirmDialogProps {
  * the unreadable stack of §9"; §9.5: "never the 400 of the dialog it covers"). The place is read
  * once, as the prompt mounts, before its first paint.
  *
- * The keyboard (§9.22 as amended by the design lead on #392): the CONTAINER holds the focus as
+ * The keyboard (§9.22 as amended by the design lead on #392; `useConfirmKeyboard` in
+ * `confirmKeyboard.ts` beside this file, the one implementation of it, for any held
+ * container): the CONTAINER holds the focus as
  * the prompt opens – its root is `tabIndex -1`, the container the keyboard is sent to and cannot
  * reach by Tab, so the chassis draws no ring on it
  * (`[role='alertdialog'][tabindex='-1']:focus-visible` in main.css) and no verb is preselected.
@@ -106,8 +123,103 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
   )
 }
 
-/** The control an Enter belongs to rather than to the prompt: a button answers its own Enter. */
-const OWN_ENTER = 'button, a[href], [role="button"], select, textarea'
+/** A prompt's one field (§9.12): its name, its value, and whether the value is selected on open. */
+export interface PromptField {
+  /**
+   * The field's name, its `aria-label` – a one-field prompt whose title names what is asked
+   * draws no visible label (§9.12: the title is the label), and never a placeholder standing in
+   * for one (the #396 ruling: a placeholder is example text; Chrome's field here is empty).
+   */
+  label: string
+  value: string
+  onChange: (next: string) => void
+  maxLength?: number
+  /** Select the value as the prompt opens, so typing replaces it (a rename, a window's name). */
+  autoSelect?: boolean
+}
+
+export type PromptDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructive'> & {
+  /** The body's one element: the field, `.zen-v2-field` at the body's full width under the description. */
+  field: PromptField
+}
+
+/**
+ * The one-field prompt (§9.23's composition with §9.12's field): the confirmation primitive
+ * above with a text field for its body's one element – "Name window", a rename – and nothing
+ * else; a prompt that needs a second field, a menulist or a validation message is a form dialog
+ * (`pages/settings`' `SettingsDialog`, the bookmarks' `EditBookmarkDialog`). A thin export
+ * composed on the same panel rather than a `field` prop on `ConfirmDialog`: the confirmation's
+ * public surface stays what §9.23 names (title, description, at most a check row, two buttons),
+ * `destructive` and the check row do not combine with a field (a value asked for has a primary,
+ * and a field with a row is a form), and each consumer reads as what it is. The one panel keeps
+ * the chassis, the width rule, the keyboard and the return in one place.
+ *
+ * The width is §9.20's `form` 400 – "takes 400 only when it carries a row or a field" – and the
+ * 320 notice again when it opens over another dialog in the slot ("place beats content").
+ *
+ * The focus lands IN THE FIELD as the prompt opens (selected when `autoSelect`): a prompt
+ * carrying a field is a form, and a form focuses its first field – §9.22's container-focus
+ * rule, which the confirmation above keeps, is for title-and-notice prompts, whose only
+ * controls are the way out. Enter in the field is the verb (the primitive's default key: a text
+ * input is not an `OWN_ENTER` control, so the field's Enter submits as a form's does); Tab wraps
+ * field → Cancel → verb; Escape and the scrim are Cancel, one hop. The footer is the
+ * confirmation's: Cancel | verb at 96 | 8 | 96 (§9.11), the verb the accent primary.
+ */
+export function PromptDialog(props: PromptDialogProps): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <ConfirmPanel {...props} />
+    </FrameDialogPortal>
+  )
+}
+
+export type PickerDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructive'> & {
+  /**
+   * The body's one element: the consumer's list – the rows to choose from, its own markup – in
+   * the body's slot (`.zen-confirm-dialog-slot`) under the description, at the prompt's full
+   * width: edge to edge, as the check row runs (§9.25: the row's own 16 is the prompt's one
+   * gutter, so a row's text stands where the title's does), and scrolling under the title block
+   * when the prompt stands at its 80% cap (§9.20). The list's roving focus – arrows, one row
+   * tabbable at a time – is the consumer's.
+   */
+  body: ReactNode
+  /** The verb until a pick: `aria-disabled` at §9.30's .4, inert to Enter and to a press. */
+  disabled?: boolean
+}
+
+/**
+ * The picker (§9.23's prompt with a list for its body): the confirmation primitive above with
+ * the consumer's list as the body's one element and a verb that waits for a pick – the device
+ * chooser's Connect over its WebUSB, HID, serial or Bluetooth rows (services'
+ * `DeviceChooserDialog` is built on it; no consumer stands in this file). A thin export composed
+ * on the same panel, as `PromptDialog` is: the confirmation's public surface stays what §9.23
+ * names, `destructive` and the check row do not combine with a list (a pick has a primary, and
+ * a list with a row is a form), and the one panel keeps the chassis, the width rule, the
+ * keyboard and the return in one place.
+ *
+ * It is a `dialog`, not an `alertdialog`: a choice is asked, not a notice confirmed. The width
+ * is §9.20's `form` 400 – "takes 400 only when it carries a row or a field", and a list is rows
+ * – and the 320 notice again when it opens over another dialog in the slot ("place beats
+ * content"); carrying a list it stands at most 80% of the frame's height (`data-body="list"`),
+ * the list scrolling under the title block with the footer in reach (§9.20's list rule).
+ *
+ * The CONTAINER holds the focus as it opens (§9.22): a picker is a choice, not a form – no row
+ * is preselected by the keyboard and no verb is – so the first Tab enters the list at the row
+ * the consumer made tabbable, Shift+Tab lands on the verb, and between them the keys wrap at
+ * the ends; a step within the list is the consumer's roving focus. Enter is the prompt's
+ * throughout (§9.22): from the container or from a row – a row is not an `OWN_ENTER` control –
+ * it is the verb once a pick has enabled it, as Chrome's chooser connects the highlighted device
+ * on Return, and inert while `disabled` (consumed, answering nothing); so a row picks on click,
+ * Space or the arrows, never on Enter. Escape and the scrim are Cancel, one hop; the return is
+ * the primitive's.
+ */
+export function PickerDialog(props: PickerDialogProps): JSX.Element {
+  return (
+    <FrameDialogPortal>
+      <ConfirmPanel {...props} />
+    </FrameDialogPortal>
+  )
+}
 
 function ConfirmPanel({
   name,
@@ -117,29 +229,34 @@ function ConfirmPanel({
   action,
   destructive = false,
   busy = false,
+  disabled = false,
   checkbox,
+  field,
+  body,
   onCancel,
   onConfirm,
   returnFocus,
   data,
   className
-}: ConfirmDialogProps): JSX.Element {
+}: ConfirmDialogProps & { field?: PromptField; body?: ReactNode }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  const fieldRef = useRef<HTMLInputElement>(null)
   const id = useId()
   const titleId = `${id}title`
   const descriptionId = `${id}description`
-  const latest = useRef({ onConfirm, busy, returnFocus })
+  const latest = useRef({ onConfirm, busy, disabled, returnFocus, autoSelect: field?.autoSelect })
   useLayoutEffect(() => {
-    latest.current = { onConfirm, busy, returnFocus }
+    latest.current = { onConfirm, busy, disabled, returnFocus, autoSelect: field?.autoSelect }
   })
   useEscape(onCancel)
   useFrameDialog({ onScrimPress: onCancel })
 
-  // The width (§9.20), before the first paint: 400 for a prompt carrying the check row, the 320
-  // notice otherwise – and the notice whatever it carries when it covers another dialog in the
-  // slot (a panel on its way out is not one). Read as the prompt mounts; the row's presence is
-  // the one prop that can move it.
-  const hasRow = checkbox !== undefined
+  // The width (§9.20), before the first paint: 400 for a prompt carrying the check row, the
+  // field or the list, the 320 notice otherwise – and the notice whatever it carries when it
+  // covers another dialog in the slot (a panel on its way out is not one). Read as the prompt
+  // mounts; the row's presence is the one prop that can move it.
+  const hasBody = body !== undefined
+  const hasRow = checkbox !== undefined || field !== undefined || hasBody
   useLayoutEffect(() => {
     const root = ref.current
     if (!root) return
@@ -158,17 +275,21 @@ function ConfirmPanel({
       active instanceof HTMLElement && active !== document.body && !root.contains(active)
         ? active
         : null
-    root.focus({ preventScroll: true })
+    // The container holds the focus (§9.22) – a notice's, and a picker's too: a choice is not a
+    // form, so no row and no verb is preselected and the first Tab enters the list – unless the
+    // prompt carries a field: a form focuses its first field, selected when asked, so typing
+    // replaces the value.
+    const input = fieldRef.current
+    if (input) {
+      input.focus({ preventScroll: true })
+      if (latest.current.autoSelect) input.select()
+    } else root.focus({ preventScroll: true })
     return () => {
       const wanted = latest.current.returnFocus
-      const target =
-        wanted === false
-          ? null
-          : wanted === undefined
-            ? opener
-            : typeof wanted === 'function'
-              ? wanted()
-              : wanted
+      // A getter's element is the target and its `false` is nowhere, as a plain value's; its
+      // null – the row it names gone – is the opener, as `undefined` is.
+      const named = typeof wanted === 'function' ? wanted() : wanted
+      const target = named === false ? null : (named ?? opener)
       if (!target?.isConnected) return
       // Only a focus the prompt's leave loses is given back: one still on the prompt (kept in
       // the slot on its way out), fallen to `body`, or under an `inert`; one the user or a
@@ -183,41 +304,33 @@ function ConfirmPanel({
     }
   }, [])
 
+  // The verb, from its button or from the container's Enter: nothing while it is at work
+  // (`busy`) or not yet an answer (`disabled`) – the key is consumed either way, inert.
   const confirm = (): void => {
-    if (latest.current.busy) return
+    if (latest.current.busy || latest.current.disabled) return
     latest.current.onConfirm()
   }
+  // The keyboard (§9.22 as amended): Tab wrapping at the ends; Enter from the held container or
+  // its check row as the verb – or, on a destructive prompt, swallowed and answering nothing.
+  useConfirmKeyboard(ref, { destructive, confirm })
   return (
     <div
       {...data}
       ref={ref}
-      role="alertdialog"
+      // A confirmation is an alertdialog; a prompt asking for a value or a choice – the field,
+      // the list – is a dialog.
+      role={field || hasBody ? 'dialog' : 'alertdialog'}
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       data-confirm={name}
       data-destructive={destructive || undefined}
+      // A list body takes §9.20's 80% cap and scrolls under the title block (main.css).
+      data-body={hasBody ? 'list' : undefined}
       data-surface="page"
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-confirm-dialog zen-animate-pop', className)}
       onMouseDown={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        const root = ref.current
-        if (!root) return
-        if (e.key === 'Tab') {
-          wrapTab(root, e.nativeEvent)
-          return
-        }
-        if (e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
-        if (e.repeat || e.nativeEvent.isComposing) return
-        if (e.target instanceof Element && e.target.closest(OWN_ENTER)) return
-        e.preventDefault()
-        e.stopPropagation()
-        // No default on a destructive prompt (§9.22 as amended): the key is the prompt's to
-        // swallow – it reaches nothing beneath – and confirms nothing.
-        if (destructive) return
-        confirm()
-      }}
     >
       <V2TitleBlock
         id={titleId}
@@ -227,6 +340,20 @@ function ConfirmPanel({
         descriptionId={descriptionId}
       />
       <div className="zen-confirm-dialog-body">
+        {field && (
+          <input
+            ref={fieldRef}
+            type="text"
+            className="zen-v2-field"
+            aria-label={field.label}
+            value={field.value}
+            onChange={(e) => field.onChange(e.target.value)}
+            maxLength={field.maxLength}
+            spellCheck={false}
+            autoComplete="off"
+          />
+        )}
+        {hasBody && <div className="zen-confirm-dialog-slot">{body}</div>}
         {checkbox && (
           <label className="zen-v2-row zen-v2-check-row zen-confirm-dialog-check">
             <span className="zen-v2-row-body">
@@ -253,6 +380,7 @@ function ConfirmPanel({
             data-primary={destructive ? undefined : ''}
             data-danger={destructive ? '' : undefined}
             aria-busy={busy || undefined}
+            aria-disabled={disabled || undefined}
             onClick={confirm}
           >
             {busy ? (
