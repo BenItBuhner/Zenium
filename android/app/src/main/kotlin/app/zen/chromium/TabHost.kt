@@ -261,6 +261,18 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         views[tabId]?.bringToFront()
     }
 
+    /**
+     * Where `tabId`'s view stands on screen right now – laid out, with the slide a pull or a
+     * hiding bar has it on – in the container's device px; null for a view not showing or not
+     * laid out yet. What the fullscreen layer's reveal starts from ([FullscreenReveal]).
+     */
+    fun frameOf(tabId: String): Rect? {
+        val view = views[tabId] ?: return null
+        if (view.visibility != View.VISIBLE || view.width == 0 || view.height == 0) return null
+        val dy = view.translationY.toInt()
+        return Rect(view.left, view.top + dy, view.right, view.bottom + dy)
+    }
+
     // --- picture-in-picture ----------------------------------------------------------------------
 
     /**

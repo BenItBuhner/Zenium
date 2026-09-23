@@ -7,6 +7,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -241,6 +242,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * (MED-01, v2 §11.5). [MainActivity] carries its word on every `insets`.
      */
     val landing = FullscreenLanding()
+    /** The fullscreen layer's way up over the chrome: its clip grows from the page's frame as the chrome's bar leaves (MOT-32). */
+    private val reveal = FullscreenReveal(fullscreenLayer)
     override var immersive = false
         private set
     /**
@@ -963,10 +966,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     override fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback) {
         if (fullscreenTab != null) exitFullscreen(fullscreenTab!!)
+        // Where the page stood inline, before the core lays its view over the window: the
+        // layer's reveal starts there (MOT-32), and the view draws nothing of its own meanwhile
+        // ([TabWebView.onDraw]) – the reveal uncovers the chrome under it, whose bar is leaving.
+        val inline = tabs.frameOf(tab.tabId)
         fullscreenTab = tab
         fullscreenCallback = callback
+        tab.invalidate()
         fullscreenLayer.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         fullscreenLayer.visibility = View.VISIBLE
+        reveal.begin(inline, Rect(0, 0, root.width, root.height))
         // The window the exit comes back to: the bars as they stand before they hide.
         landing.onEnter(activity.landingWindow())
         setSystemBarsHidden(true)
@@ -987,11 +996,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // The orientation goes back to the system's as the layer goes, so the chrome that returns
         // is laid out for the screen the system settles on.
         releaseFullscreenOrientation()
+        reveal.end()
         fullscreenLayer.removeAllViews()
         fullscreenLayer.visibility = View.GONE
         fullscreenCallback?.onCustomViewHidden()
         fullscreenCallback = null
         fullscreenTab = null
+        // The page draws in its own view again ([TabWebView.onDraw]).
+        tab.invalidate()
         // The size was this fullscreen's. A navigation, a renderer crash or a close ends fullscreen
         // without the page's `active: false`; a size kept past that would turn the tab's next
         // fullscreen before its own report and hold a destroyed view.

@@ -6,12 +6,14 @@ import { securityIndicator } from '@shared/siteInfo'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
+import { useFullscreenAwayBinding } from '@renderer/hooks/useFullscreenAwayBinding'
 import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
 import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import { useConnectivityMessages } from '@renderer/lib/connectivityMessages'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
+import { bringChromeBack, settleChromeAway, slideChromeAway } from '@renderer/lib/fullscreenMotion'
 import {
   fakeboxAway,
   fakeboxHoldsChrome,
@@ -34,6 +36,7 @@ import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
+import { holdChromeInert } from '@renderer/lib/portals'
 import { privateLockStore, privateTabLocked, unlockPrivateTabs } from '@renderer/lib/privateLock'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
@@ -227,10 +230,21 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     })
   }, [edge, htmlFullscreen, onboarding, stripUp, borderless])
   useEffect(() => () => setBarHideContext({ present: false }), [])
-  // Back from a page's fullscreen (MED-01) the chrome – bar, pill and frame – fades in over
-  // 120 ms, opacity alone, once the page's view has landed (`lib/fullscreenLanding.ts`).
+  // A page's fullscreen (MOT-32): the chrome stays mounted, with its state, under the host's
+  // fullscreen layer – inert, so nothing under the layer takes a touch, a focus or a TalkBack
+  // stop (§9.22's hold) – and the bar slides off its edge as the system bars go
+  // (lib/fullscreenMotion.ts; the host reveals the layer over it at the same pace). Back from
+  // the fullscreen (MED-01) the chrome – bar, pill and frame – fades in over 120 ms, opacity
+  // alone, once the page's view has landed (`lib/fullscreenLanding.ts`), the bar sliding back
+  // onto its edge with the fade; a shell that leaves puts the bar home for the next.
+  useEffect(() => {
+    if (!htmlFullscreen) return
+    slideChromeAway()
+    return holdChromeInert()
+  }, [htmlFullscreen])
+  useEffect(() => () => settleChromeAway(false), [])
   const windowRef = useRef<HTMLDivElement | null>(null)
-  useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId)
+  useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId, bringChromeBack)
   // The message layer sits on the frame's edges and recedes with it (main.css reads
   // `--zen-recede` on it).
   const messageFrameRef = useRef<HTMLDivElement>(null)
@@ -249,8 +263,6 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       dock.phase === 'idle' &&
       state.defaultBrowser.prompt !== 'sheet'
   )
-
-  if (htmlFullscreen) return <div className="h-full w-full bg-black" />
 
   // The pill is off its slot and Settings still name the edge it left: the bar there fades out
   // as a preview of the bar at the other edge fades in. Once the new edge is committed the bar
@@ -272,6 +284,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       className="zen-window relative flex h-full w-full flex-col overflow-clip"
       data-dark={isDark}
       data-private={privateSurface || undefined}
+      // A page's element is fullscreen over this chrome (MOT-32): mounted, inert, its bar away.
+      data-page-fullscreen={htmlFullscreen || undefined}
       style={{
         paddingTop: 0,
         paddingBottom: 0,
@@ -445,20 +459,24 @@ export function PhoneBar({
     <GroupStrip presence={strip} edge={edge} overviewOpen={overviewOpen} inert={inert} />
   ) : null
   // The bar that hides on scroll writes its progress on this element per frame (lib/barHide.ts);
-  // the preview of the bar at the other edge, drawn during a carry, does not hide.
+  // the preview of the bar at the other edge, drawn during a carry, does not hide. The bar's
+  // way off its edge around a page's fullscreen is written here the same way
+  // (lib/fullscreenMotion.ts, MOT-32); main.css sums the two in the one transform.
   const bindHide = useBarHideBinding(!inert)
+  const bindAway = useFullscreenAwayBinding(!inert)
   // The pill's focus motion writes its value here per frame too (lib/omniboxFocus.ts): the
   // buttons and the pill under this element read it, so the frame recalculates the bar alone.
   const bindFocus = useOmniboxFocusBinding()
-  // One ref for the three: the recede's registration reads the element off `barRef` in its
-  // layout effect, the two bindings take the element as it mounts and unmounts.
+  // One ref for the four: the recede's registration reads the element off `barRef` in its
+  // layout effect, the three bindings take the element as it mounts and unmounts.
   const setBar = useCallback(
     (el: HTMLElement | null) => {
       barRef.current = el
       bindHide(el)
+      bindAway(el)
       bindFocus(el)
     },
-    [bindHide, bindFocus]
+    [bindHide, bindAway, bindFocus]
   )
 
   return (

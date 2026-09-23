@@ -577,6 +577,19 @@ class TabWebView(
     }
 
     /**
+     * While this page's element is fullscreen the engine draws the page in the view it handed
+     * the fullscreen layer, and here – the view the core lays over the whole window meanwhile –
+     * nothing but the page's background colour (WebView's `NullAwViewMethods`). That flat colour
+     * would cover the chrome the layer's reveal uncovers as the chrome's bar slides off (MOT-32,
+     * [FullscreenReveal]), so nothing is drawn instead; the host invalidates the view at the
+     * fullscreen's two ends, and the page's picture is back with the exit.
+     */
+    override fun onDraw(canvas: Canvas) {
+        if (host.fullscreenTab === this) return
+        super.onDraw(canvas)
+    }
+
+    /**
      * A message from the page script in one of the tab's frames. The script runs in every frame,
      * but the main document alone speaks for the tab, save for a frame's own fullscreen
      * ([PageMessageRoute.heardFrom]): an embed's video goes fullscreen from its frame's document,
