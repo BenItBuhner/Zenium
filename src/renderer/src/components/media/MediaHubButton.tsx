@@ -42,8 +42,10 @@ export function MediaHubButton({ state }: { state: UIState }): JSX.Element | nul
       // (`holdExpanded`: this button, or the "⋯" it has folded into) and gives back to the rest
       // value written here, so one writer says what the anchor has open.
       className="zen-toolbar-button relative"
-      title="Control your music, videos and more"
+      // Chrome's line for the button, as the chrome tooltip (a11y-26) and the reader's description.
+      data-tooltip="Control your music, videos and more"
       aria-label={label}
+      aria-description="Control your music, videos and more"
       aria-expanded={false}
       aria-haspopup="dialog"
       onClick={() => toggleMediaHub({ fromKeyboard: openedFromKeyboard() })}
