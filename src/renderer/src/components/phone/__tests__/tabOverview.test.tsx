@@ -138,7 +138,7 @@ const AREA = { x: 0, y: 0, width: 220, height: 600 }
  * loose cards below, the New Tab card last.
  */
 const GRID = 'grid'
-/** The pane's slot (the strip and the grid or the explainer), under the header and the segment. */
+/** The pane's slot (the strip and the grid or the empty note), under the header and the segment. */
 const SLOT = 'slot'
 const DEFAULT_LAYOUT: Array<[string, DOMRect]> = [
   [GRID, new DOMRect(0, 0, 220, 600)],
@@ -2266,9 +2266,9 @@ describe('the private pane', () => {
 
   /*
    * The last private tab closing returns the overview to the Tabs pane, picked or followed
-   * (Chrome's switcher); the explainer is still a pick away with none open.
+   * (Chrome's switcher); the empty note is still a pick away with none open.
    */
-  it('returns to the Tabs pane when the last private tab closes with the Private pane picked; Private picked again is the explainer', () => {
+  it('returns to the Tabs pane when the last private tab closes with the Private pane picked; Private picked again is the empty note', () => {
     const state = mixed()
     render(state)
     act(() => segment('private').click())
@@ -2301,7 +2301,7 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
     expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
 
-    // Private picked with none open: the explainer, as before.
+    // Private picked with none open: the empty note, as before.
     act(() => segment('private').click())
     expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
     expect(selected('private')).toBe(true)
@@ -2322,7 +2322,7 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
   })
 
-  it('opening the overview on an empty private session with Private picked shows the explainer, not the Tabs pane', () => {
+  it('opening the overview on an empty private session with Private picked shows the empty note, not the Tabs pane', () => {
     // No transition from some to none: the pick holds (a pick made before the overview came up).
     act(() => privateTabsStore.set({ pane: 'private' }))
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))

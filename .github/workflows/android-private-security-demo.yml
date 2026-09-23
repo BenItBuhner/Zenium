@@ -6,13 +6,14 @@ name: Android private security demo
 # over a plain http page served on the device's own network address (never the network) and the
 # site-information sheet it opens, whose Connection level explains what "not secure" means and
 # what not to enter; the certificate error's triangle, best effort over the network; the empty
-# Private pane's explainer (Chrome's words on a message card); the private new tab page's Block
-# third-party cookies switch under a finger and the engine's answer per WebView (the private
-# views alone move; a tracker's cookie stays out of the private jar); the session's card (secret,
-# ongoing, the low channel, the count); the dark grid of two private cards; the lock cover from
-# the first frame of the pane's own entry with the lock on (a frame watch over the way in); and
-# the card's press closing every private tab through the core's close-all. A check that fails in
-# the driver fails the run (private-security-findings.txt in the artifact).
+# Private pane (§9.17's one sentence, No private tabs, with New private tab 16 beneath, never a
+# card); the private new tab page's Block third-party cookies switch under a finger and the
+# engine's answer per WebView (the private views alone move; a tracker's cookie stays out of the
+# private jar); the session's card (secret, ongoing, the low channel, the count); the dark grid of
+# two private cards; the lock cover from the first frame of the pane's own entry with the lock on
+# (a frame watch over the way in); and the card's press closing every private tab through the
+# core's close-all – the overview returning to the Tabs pane. A check that fails in the driver
+# fails the run (private-security-findings.txt in the artifact).
 #
 # The engine: private tabs run on a WebView profile of their own, which needs
 # WebViewFeature.MULTI_PROFILE – absent from the API 34 images' WebView 113 – so the demo runs on

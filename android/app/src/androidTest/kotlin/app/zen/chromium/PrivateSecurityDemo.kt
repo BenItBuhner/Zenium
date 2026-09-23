@@ -31,15 +31,16 @@ import java.util.concurrent.TimeUnit
  * is neither moved nor widened) – and the site-information sheet it opens, whose title block
  * says the same word and whose Connection level explains what "not secure" means and what not
  * to enter (a certificate error's triangle and its sheet as well, when the network lets the
- * expired-certificate page load); the Private pane with nothing in it, Chrome's words about what
- * private does and does not do on a §9.33 message card; the private new tab page's Block
- * third-party cookies switch under a finger, then the engine's answer read per WebView – the
- * private views' switch alone moves, a regular tab's WebView is never asked – and a tracker's
- * cookie kept out of the private jar while the default jar has it; the session's card (its
- * secret visibility, the low channel, the count) and the dark grid of two private cards; the
- * lock cover from the first frame of the pane's own entry (the segment tapped with the lock on,
- * a frame watch in the chrome's document over the whole way in); and the card's press closing
- * every private tab through the core's close-all, the card and the lock going with them.
+ * expired-certificate page load); the Private pane with nothing in it – §9.17's one sentence, "No
+ * private tabs", with New private tab as its one follow-up, never a card (§9.34); the private new
+ * tab page's Block third-party cookies switch under a finger, then the engine's answer read per
+ * WebView – the private views' switch alone moves, a regular tab's WebView is never asked – and
+ * a tracker's cookie kept out of the private jar while the default jar has it; the session's
+ * card (its secret visibility, the low channel, the count) and the dark grid of two private
+ * cards; the lock cover from the first frame of the pane's own entry (the segment tapped with
+ * the lock on, a frame watch in the chrome's document over the whole way in); and the card's
+ * press closing every private tab through the core's close-all, the card and the lock going with
+ * them and the overview returning to the Tabs pane.
  *
  * The http page is served on the device's own network address (`DemoServer.siteAddress`), which
  * Chromium's rules call insecure where the loopback is as trustworthy as https; nothing of the
@@ -305,23 +306,26 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             closeSheets()
         }
 
-        // 4. TAB-03: the Private pane with nothing in it – Chrome's words on the message card.
-        scene("4. The empty Private pane's explainer (TAB-03)") {
+        // 4. TAB-03: the Private pane with nothing in it – §9.17's one sentence on the phone
+        //    panels' note, its one follow-up 16 beneath, never a card (§9.34).
+        scene("4. The empty Private pane (TAB-03)") {
             expect("set-up: no private tab is open", !anyPrivateTab())
             expect("the overview opens from the regular tab", openOverview())
             expect("the overview opens on the Tabs pane", awaitPane("tabs"))
             tapSegment("private")
             expect("a finger on Private shows the Private pane", awaitPane("private"))
             SystemClock.sleep(1_500)
-            val card = readExplainer()
-            finding("  explainer: $card")
-            expect("the explainer stands on a page-surface message card", card.optBoolean("card"))
-            expect("the card's title is the pane's fact, No private tabs", card.optString("title") == EMPTY_TITLE)
-            expect("the card's detail is Chrome's words on what private does and does not do", card.optString("detail") == PRIVATE_EXPLAINER_DETAIL)
-            expect("the card is capped at 560 and centred in the pane", card.optDouble("width", 0.0) <= 560.5 && card.optDouble("offCentre", 99.0) <= 2.0)
-            expect("the detail runs to its length, nothing cut", !card.optBoolean("cut", true))
-            expect("the pane's one button is New private tab", card.optString("button") == "New private tab")
-            expect("the title and the button are in the accessibility tree", findByLabel(EMPTY_TITLE) != null && findByLabel("New private tab") != null)
+            val empty = readEmpty()
+            finding("  empty pane: $empty")
+            expect("the pane is §9.17's sentence on the phone panels' note, never a card", empty.optBoolean("note") && !empty.optBoolean("card", true))
+            expect("the sentence is the pane's fact, No private tabs", empty.optString("sentence") == EMPTY_TITLE)
+            expect("the sentence stands alone – no title, glyph or description beside it", empty.optInt("paragraphs") == 1 && empty.optInt("headings", 99) == 0 && empty.optInt("glyphs", 99) == 0)
+            expect("the sentence is set at §9.17's 15/400", empty.optString("font").startsWith("15px/400/"))
+            expect("the sentence is centred in the pane's 32 gutter", empty.optDouble("offCentre", 99.0) <= 2.0 && nearly(empty.optDouble("gutter", 0.0), 32.0))
+            expect("the sentence's first line stands 48 under the segment, as the Groups pane's", nearly(empty.optDouble("underSegment", -1.0), 48.0, 1.5))
+            expect("the pane's one follow-up is New private tab, a secondary button", empty.optInt("buttons") == 1 && empty.optString("button") == "New private tab" && !empty.optBoolean("primary", true) && empty.optBoolean("secondary"))
+            expect("the follow-up stands 16 below the sentence, 40 tall", nearly(empty.optDouble("gap", -1.0), 16.0) && nearly(empty.optDouble("buttonHeight", -1.0), 40.0))
+            expect("the sentence and the follow-up are in the accessibility tree", findByLabel(EMPTY_TITLE) != null && findByLabel("New private tab") != null)
             shot("11-pane-empty-light")
             setScheme("dark")
             shot("12-pane-empty-dark")
@@ -683,17 +687,29 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
 
     // --- the overview, through the chrome's DOM --------------------------------------------------
 
-    /** The empty Private pane's explainer: the card, its texts, its width and centring in the pane, the button under it. */
-    private fun readExplainer(): JSONObject {
+    /**
+     * The empty Private pane as §9.17 has it: the phone panels' note (`.zen-phone-empty`, the
+     * pane's own child) with its one sentence – its type, its centring in the note's gutter, its
+     * first line's distance under the segment – and the pane's one button, its kind and its
+     * distance below the sentence. Whether a card still stands in the pane is read as well.
+     */
+    private fun readEmpty(): JSONObject {
         val raw = jsString(
-            "(function(){var pane=document.querySelector('.zen-overview-pane [data-testid=\"overview-private-empty\"]');" +
-                "var c=pane&&pane.querySelector('.zen-private-explainer[data-surface=\"page\"]');if(!c)return '';" +
-                "var t=c.querySelector('.zen-private-explainer-title');var d=c.querySelector('.zen-private-explainer-detail');" +
-                "var b=pane.querySelector('[data-testid=\"overview-private-empty-new\"]');" +
-                "var pr=pane.getBoundingClientRect();var cr=c.getBoundingClientRect();" +
-                "return JSON.stringify({card:true,title:t?t.textContent.trim():'',detail:d?d.textContent.trim():''," +
-                "width:Math.round(cr.width*10)/10,offCentre:Math.round(Math.abs((cr.left-pr.left)-(pr.right-cr.right))*10)/10," +
-                "cut:d?d.scrollHeight>d.clientHeight+1:true,button:b?b.textContent.trim():''})})()"
+            "(function(){var pane=document.querySelector('.zen-overview-pane [data-testid=\"overview-private-empty\"]');if(!pane)return '';" +
+                "var n=pane.querySelector(':scope > .zen-phone-empty');var p=n&&n.querySelector(':scope > p');" +
+                "var bs=pane.querySelectorAll('button');var b=bs[0];" +
+                "var seg=document.querySelector('.zen-overview .zen-v2-segment[role=\"tablist\"]');" +
+                "var pr=pane.getBoundingClientRect();var tr=p?p.getBoundingClientRect():null;var br=b?b.getBoundingClientRect():null;var sr=seg?seg.getBoundingClientRect():null;" +
+                "var cs=n?getComputedStyle(n):null;var ps=p?getComputedStyle(p):null;" +
+                "return JSON.stringify({note:!!n,card:!!pane.querySelector('.zen-private-explainer,[data-surface=\"page\"]')," +
+                "sentence:p?p.textContent.trim():'',paragraphs:n?n.querySelectorAll('p').length:0," +
+                "headings:pane.querySelectorAll('h1,h2,h3').length,glyphs:pane.querySelectorAll('svg').length," +
+                "font:ps?ps.fontSize+'/'+ps.fontWeight+'/'+ps.lineHeight:''," +
+                "offCentre:tr?Math.round(Math.abs((tr.left-pr.left)-(pr.right-tr.right))*10)/10:99,gutter:cs?parseFloat(cs.paddingLeft):0," +
+                "underSegment:tr&&sr?Math.round((tr.top-sr.bottom)*10)/10:-1," +
+                "buttons:bs.length,button:b?b.textContent.trim():'',primary:b?b.hasAttribute('data-primary'):false," +
+                "secondary:b?b.classList.contains('zen-phone-empty-action')&&b.classList.contains('zen-v2-button'):false," +
+                "gap:tr&&br?Math.round((br.top-tr.bottom)*10)/10:-1,buttonHeight:br?Math.round(br.height*10)/10:-1})})()"
         )
         return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
     }
@@ -756,7 +772,7 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
     }
 
     /**
-     * The pane the live overview shows: the `data-pane` of its grid, its empty explainer or its
+     * The pane the live overview shows: the `data-pane` of its grid, its empty note or its
      * cover in the live slot. The still a leaving pane is kept as (`pane-still`, ahead of the live
      * slot in the document while the switch plays) and the segment tabs are not read; the selected
      * segment is the fallback with nothing live.
@@ -1192,8 +1208,6 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         const val PRIVATE_TITLE = "You're browsing privately"
         const val EMPTY_TITLE = "No private tabs"
         const val NOT_SECURE_DETAIL = "Anyone on the way can read what you send to this site. Don't enter passwords or card details here."
-        const val PRIVATE_EXPLAINER_DETAIL =
-            "Zenium won't save your browsing history, cookies, site data or what you enter in forms. Websites you visit, your employer or school and your internet service provider can still see your activity."
 
         // The chrome's hooks.
         const val COOKIES_ROW = "[data-testid=\"private-ntp-cookies\"]"

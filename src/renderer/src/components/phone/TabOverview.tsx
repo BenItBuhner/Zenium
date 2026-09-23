@@ -247,7 +247,7 @@ interface ShownGroups {
  * ones whose tabs have closed but whose pages the group kept, to be opened again; and, on a host
  * with private tabs, the private ones – the private session is one across the spaces, so that
  * pane lists every private tab, as loose cards on the private theme's backdrop (the window
- * surfaces blend to it while the pane is up, §9.29), with an explainer when there are none. A
+ * surfaces blend to it while the pane is up, §9.29), with §9.17's sentence when there are none. A
  * private card never shows in the regular pane, nor a regular one in the private pane
  * (`tabsOnPane`); the overview opens on the pane of the tab in view.
  *
@@ -318,7 +318,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 
   // The last private tab closing ends the session, and the overview returns to the Tabs pane
   // whether the Private pane was picked or followed (Chrome's switcher does the same); the
-  // empty explainer stays a pick away, for whoever picks Private with none open.
+  // empty pane's sentence stays a pick away, for whoever picks Private with none open.
   const privateCount = hasPrivate ? privateTabsOf(state).length : 0
   const privateCountBefore = useRef(privateCount)
   useEffect(() => {
@@ -1525,7 +1525,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
           <PaneSlot
             // Each pane is a slot's worth of its own – the space strip, the grid, the groups'
-            // rows or the empty explainer – coming up fresh on a 120 ms fade in while the still
+            // rows or the empty pane's note – coming up fresh on a 120 ms fade in while the still
             // of the pane before fades out over the same slot (v2 §11.4); the cells start fresh
             // with it.
             pane={pane}
