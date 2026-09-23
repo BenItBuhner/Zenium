@@ -57,7 +57,7 @@ import {
   securityVerdict,
   type SecurityTone
 } from '@renderer/lib/securityVerdict'
-import { focusableIn } from '@renderer/lib/popover'
+import { HELD, focusableIn, returnFocusTo } from '@renderer/lib/popover'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   SITE_DATA_TEXT,
@@ -78,7 +78,7 @@ import {
 } from '@renderer/lib/siteInfo'
 import { browserStore, overlayAvailable, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { answerEnter, holdFocus, releaseFocus } from '../dialogs/confirmFocus'
+import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
 import { V2MenulistSheet } from '../extensions/V2Menulist'
 import { pillChipRows, type PillChipModel, type PillChipRow } from '../phone/pillChips'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -408,6 +408,47 @@ function useLevels(): Levels {
   return { motion, state: current, level, onFrame }
 }
 
+/**
+ * The focus as a level is entered (§9.22, §10.4): `at` takes it – a confirmation's own held
+ * container (`tabIndex -1`, the element the keyboard is sent to and cannot reach by Tab, so the
+ * chassis draws no ring on it and no verb is preselected), a plain level's first row, or the
+ * sheet's root when the level offers no control. Returns the opener – whatever held the focus as
+ * the level came, a row of the level beneath – and not `body`, for `releaseFocus` at the leave.
+ * The prompt primitive's own hold and return (`dialogs/ConfirmDialog.tsx`) are its panel's mount
+ * and unmount; a level stays mounted through its slide in both directions, so the same two steps
+ * are taken here at the push and the pop, on the same predicate, and the keyboard rule itself is
+ * the primitive's hook (`useConfirmKeyboard`) – nothing of the contract lives twice.
+ */
+function holdFocus(pane: HTMLElement, at: HTMLElement): HTMLElement | null {
+  const active = document.activeElement
+  const opener =
+    active instanceof HTMLElement && active !== document.body && !pane.contains(active)
+      ? active
+      : null
+  at.focus({ preventScroll: true })
+  return opener
+}
+
+/**
+ * The return as a level leaves (§9.5, one hop down): `target` gets the keyboard back through
+ * `returnFocusTo`, which waits for an `inert` to lift and never lets the focus fall to `body`.
+ * Only a focus the leave loses is given back – one still in the pane leaving, fallen to `body`,
+ * parked on a held container (`HELD`: at no control), or under an `inert` or `[data-leaving]`
+ * subtree; one the user has already placed elsewhere is left alone, and a target gone from the
+ * document gets nothing.
+ */
+function releaseFocus(pane: HTMLElement, target: HTMLElement | null): void {
+  if (!target?.isConnected) return
+  const now = document.activeElement
+  const lost =
+    !now ||
+    now === document.body ||
+    pane.contains(now) ||
+    now.matches(HELD) ||
+    now.closest('[inert], [data-leaving]') !== null
+  if (lost) returnFocusTo(target)
+}
+
 const LEVEL_IDS: readonly LevelId[] = [
   'main',
   'connection',
@@ -466,18 +507,19 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   useLayoutEffect(paint)
   useEffect(() => levels.onFrame(paint), [levels, paint])
 
-  // The keyboard through the levels (§9.22, §10.4), on the confirm primitive's machinery
-  // (`dialogs/confirmFocus`, the #401 rulings). Entering a level takes the focus off the row
-  // that opened it – left there, it would sit in the pane leaving, hidden from assistive
-  // technology and then from view – and remembers the row as the level's opener. A confirmation
-  // level holds its container, as the prompt does: `role="alertdialog"`, `tabIndex -1`, no ring,
-  // no verb preselected. A detail level lands on its first row, as the desktop popover's levels
-  // and the chassis's opening focus do (`sheetInitialFocus`), or parks on the sheet's own held
-  // container when it has none to offer. Leaving a level by Cancel, Escape, the back control or
-  // the back gesture is one hop back: the keyboard returns to the opener (`releaseFocus`: only a
-  // focus the leave loses is moved). A confirmation answered by its verb parks on the sheet
-  // instead – the row it was asked from may go with what it removed. Every route that pops a
-  // level runs through `leave`.
+  // The keyboard through the levels (§9.22, §10.4; the #392 / #401 rulings). Entering a level
+  // takes the focus off the row that opened it – left there, it would sit in the pane leaving,
+  // hidden from assistive technology and then from view – and remembers the row as the level's
+  // opener (`holdFocus`). A confirmation level holds its container, as the prompt does:
+  // `role="alertdialog"`, `tabIndex -1`, no ring, no verb preselected; its Enter and Tab are the
+  // primitive's own hook (`ConfirmPane`). A plain detail level lands on its first row – §10.4's
+  // pushed-level sentence, the lead's ruling on W5-17: a list sheet's rows land on the first
+  // row, the desktop `Level`'s parity – or parks on the sheet's own held container when it has
+  // none to offer (Connection), which takes no ring. Leaving a level by Cancel, Escape, the back
+  // control or the back gesture is one hop back: the keyboard returns to the opener
+  // (`releaseFocus`: only a focus the leave loses is moved). A confirmation answered by its verb
+  // parks on the sheet instead – the row it was asked from may go with what it removed. Every
+  // route that pops a level runs through `leave`.
   const openers = useRef(new Map<LevelId, HTMLElement | null>())
   const answered = useRef(false)
   const sheetRoot = useCallback(
@@ -1088,15 +1130,18 @@ interface ConfirmWords {
  * "Clear cookies?" and "Clear site data?" as levels of the sheet (§10.4, the design lead's
  * ruling on W5-17): one level in from the row that asks, a title block with the question and
  * what it does over the two actions splitting the footer (§9.11), no header (§9.23). The pane
- * wears the §9.23 confirmation's keyboard contract exactly, on the primitive's own machinery
- * (`dialogs/confirmFocus`, `ConfirmDialog`): it is a dialog of its own – `role="alertdialog"`,
- * named by its question, `tabIndex -1` and ringless – that holds the focus as the level is
- * entered (`PhoneSheet`'s `enter`); Tab enters at Cancel and then the danger verb, Shift+Tab at
- * the verb, the sheet's grabber after them (the chassis's `wrapTab` on a held container inside
- * the sheet); Enter from the held container is inert – destructive, so no default (§9.22 as
- * amended) – and a focused button answers its own; Escape, the back control's absence
- * notwithstanding, and the back gesture are one hop back to the row that asked, which takes
- * the keyboard again (`leave`). The verb pops the level and then does the deed.
+ * wears the §9.23 confirmation's keyboard contract exactly, on the primitive's own hook
+ * (`dialogs/confirmKeyboard.ts` `useConfirmKeyboard`, the one implementation `ConfirmDialog`
+ * and the desktop popover's confirm levels hold their containers with): it is a dialog of its
+ * own – `role="alertdialog"`, named by its question, `tabIndex -1` and ringless – that holds
+ * the focus as the level is entered (`PhoneSheet`'s `enter`); Tab enters at Cancel and then the
+ * danger verb, Shift+Tab at the verb, the sheet's grabber after them (the chassis's `wrapTab`
+ * at the window on a held container inside the sheet, so the hook's own wrap is off); Enter
+ * from the held container is inert – destructive, so no default (§9.22 as amended) – and a
+ * focused button answers its own; Escape, the back control's absence notwithstanding, and the
+ * back gesture are one hop back to the row that asked, which takes the keyboard again
+ * (`leave`). The verb pops the level and then does the deed. The pane is in the document for
+ * the life of the sheet (`hidden` while away), so the hook binds to it once, at the mount.
  */
 function ConfirmPane({
   ref,
@@ -1116,9 +1161,21 @@ function ConfirmPane({
   const uid = useId()
   const titleId = `${uid}title`
   const descriptionId = `${uid}description`
+  const pane = useRef<HTMLElement | null>(null)
+  useConfirmKeyboard(pane, { destructive: true, confirm: onConfirm, tab: false })
+  // One callback for the life of the pane (the registry's is stable): the hook's ref and the
+  // sheet's pane registry both see the element.
+  const attach = useCallback(
+    (el: HTMLElement | null): void => {
+      pane.current = el
+      if (typeof ref === 'function') ref(el)
+      else if (ref) ref.current = el
+    },
+    [ref]
+  )
   return (
     <section
-      ref={ref}
+      ref={attach}
       className="zen-sheet-pane"
       data-level={id}
       data-confirm={id}
@@ -1128,11 +1185,6 @@ function ConfirmPane({
       aria-describedby={descriptionId}
       tabIndex={-1}
       hidden={hidden}
-      onKeyDown={(e) => {
-        // Tab is the sheet's (`wrapTab` on the chassis, entering this held container at Cancel);
-        // Enter from the container is the confirmation's to swallow – destructive, no default.
-        if (answerEnter(e.nativeEvent, true, onConfirm)) e.stopPropagation()
-      }}
     >
       <div className="zen-sheet-title-block">
         <h2 id={titleId}>
