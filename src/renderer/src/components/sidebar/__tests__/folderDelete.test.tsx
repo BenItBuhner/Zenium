@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -9,9 +11,11 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
  * "Delete <folder>?" (TAB-16's desktop half; components/sidebar/FolderDeleteDialog.tsx and
  * lib/folderDelete.ts): the desktop's folder menu and the group editor bubble both ask through
  * `requestFolderDelete` – an empty folder goes at once, one holding tabs or saved pages only
- * through the §9.23 prompt at §9.20's 320 on the frame's dialog host, Cancel focused (§9.22),
- * Escape and the scrim as Cancel, the danger verb running `folder.delete` without unpacking; a
- * Cancel from the keyboard hands the keyboard back to the folder's header (§9.5).
+ * through the §9.23 prompt at §9.20's 320 on the frame's dialog host, the dialog itself holding
+ * the focus as it opens (§9.22 as the #340 verdict reads it: no verb preselected, no ring; Tab
+ * enters at Cancel, Shift+Tab at Delete, the keys wrap at the ends), Escape and the scrim as
+ * Cancel, the danger verb running `folder.delete` without unpacking; a Cancel from the keyboard
+ * hands the keyboard back to the folder's header (§9.5).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -110,6 +114,19 @@ const click = (el: Element | null): void => {
     el!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   })
 }
+/** A Tab press on `from`; the event comes back, `defaultPrevented` when the dialog moved the focus itself. */
+function pressTab(from: Element, shift = false): KeyboardEvent {
+  const e = new KeyboardEvent('keydown', {
+    key: 'Tab',
+    shiftKey: shift,
+    bubbles: true,
+    cancelable: true
+  })
+  act(() => {
+    from.dispatchEvent(e)
+  })
+  return e
+}
 
 beforeEach(() => {
   run.mockClear()
@@ -196,7 +213,7 @@ describe('requestFolderDelete', () => {
 })
 
 describe('the "Delete <folder>?" prompt', () => {
-  it('is the §9.23 composition at 320 on the frame’s host: the question with the trash glyph, one line on what goes, Cancel focused then Delete in the danger ink', async () => {
+  it('is the §9.23 composition at 320 on the frame’s host: the question with the trash glyph, one line on what goes, Cancel then Delete in the danger ink, the dialog itself focused', async () => {
     browserStore.set({
       state: state([tab('home', null), tab('a', 'g'), tab('b', 'g')], [folder()])
     })
@@ -224,7 +241,51 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(del.dataset.variant).toBe('danger')
     expect(del.dataset.action).toBe('delete')
     expect(d.querySelector('[data-primary]')).toBeNull()
+    // The container holds the focus, not Cancel (§9.22 as the #340 verdict reads it).
+    expect(d.tabIndex).toBe(-1)
+    expect(document.activeElement).toBe(d)
+    expect(document.activeElement).not.toBe(cancel)
+  })
+
+  it('draws no ring on itself: the chassis’s no-ring rule for a container that focuses itself by design covers an alertdialog at tabindex −1', () => {
+    const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\s+/g, ' ')
+    expect(css).toContain(
+      ":root [role='dialog'][tabindex='-1']:focus-visible, :root [role='alertdialog'][tabindex='-1']:focus-visible { outline: none; }"
+    )
+    // And nothing of the prompt's own chrome draws one over it.
+    expect(css).not.toMatch(/\.zen-bm-dialog[^{,]*:focus/)
+  })
+
+  it('Tab from the container enters at Cancel, Shift+Tab at Delete, and the keys wrap at the ends (lib/popover.ts wrapTab)', async () => {
+    browserStore.set({ state: state([tab('home', null), tab('a', 'g')], [folder()]) })
+    render(<Dialogs />)
+    requestFolderDelete('g', true)
+    await settle()
+    const d = dialog()!
+    const [cancel, del] = buttons(d)
+    expect(document.activeElement).toBe(d)
+    // From the container, Tab enters at the first control: the dialog's own move.
+    expect(pressTab(d).defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(cancel)
+    // A step within the dialog is the browser's (Cancel to Delete): the key is left to it.
+    expect(pressTab(cancel!).defaultPrevented).toBe(false)
+    act(() => del!.focus())
+    // At the last control Tab wraps to the first; Shift+Tab at the first wraps to the last.
+    expect(pressTab(del!).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(cancel)
+    expect(pressTab(cancel!, true).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(del)
+    // From the container again: Shift+Tab enters at the end – Delete – and never leaves the
+    // dialog for the header row that stands before the host in the document.
+    act(() => d.focus())
+    expect(document.activeElement).toBe(d)
+    expect(pressTab(d, true).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(del)
+    // Nothing was deleted by the walk.
+    expect(run).not.toHaveBeenCalledWith('folder.delete', expect.anything())
+    expect(uiStore.get().folderDeleteConfirm).toEqual({ folderId: 'g', keyboard: true })
   })
 
   it('says of a saved folder that its pages are forgotten', async () => {
