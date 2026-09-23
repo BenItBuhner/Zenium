@@ -118,17 +118,19 @@ describe('bookmark.remove and bookmark.undo, as the windows hear them', () => {
     expect(f.browser.bookmarks.get(a.id)).toBeNull()
 
     // Ctrl+Z in the other window's manager: the newest edit, this delete, goes back – and both
-    // windows hear its token, so the first window's toast can go down.
+    // windows hear its token, so the first window's toast can go down. The answer names the
+    // node under its own id (services' `restore`, #370): the manager selects the row it knew.
     const undone = f.browser.handleCommand(other, 'bookmark.undo', {})
-    expect(undone).toMatchObject({ kind: 'remove', token: 1, parentId: BOOKMARKS_BAR_ID })
+    expect(undone).toEqual({ kind: 'remove', token: 1, ids: [a.id], parentId: BOOKMARKS_BAR_ID })
     expect(heard(f.sent, 'bookmark.undone')).toEqual([
       [f.win.id, { token: 1, kind: 'remove' }],
       [other.id, { token: 1, kind: 'remove' }]
     ])
-    expect(f.browser.bookmarks.tree.children(BOOKMARKS_BAR_ID).map((n) => n.title)).toEqual([
-      'A',
-      'B'
+    expect(f.browser.bookmarks.tree.children(BOOKMARKS_BAR_ID).map((n) => n.id)).toEqual([
+      a.id,
+      b.id
     ])
+    expect(f.browser.bookmarks.get(a.id)).toEqual(a)
 
     // The toast's Undo for a delete already undone: nothing happens, nothing is said.
     expect(f.browser.handleCommand(f.win, 'bookmark.undo', { token: 1 })).toBeNull()
@@ -169,7 +171,8 @@ describe('bookmark.remove and bookmark.undo, as the windows hear them', () => {
     // The delete is on the stack all the same: the manager's Ctrl+Z brings it back, and says so.
     expect(f.browser.handleCommand(f.win, 'bookmark.undo', {})).toMatchObject({
       kind: 'remove',
-      token: 1
+      token: 1,
+      ids: [a.id]
     })
     expect(f.browser.bookmarks.tree.children(BOOKMARKS_BAR_ID).map((n) => n.title)).toEqual(['A'])
     expect(heard(f.sent, 'bookmark.undone')).toEqual([[f.win.id, { token: 1, kind: 'remove' }]])
