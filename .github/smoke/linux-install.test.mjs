@@ -9,6 +9,7 @@ import {
   mimeinfoHandlers,
   parseArgs,
   parseDesktopEntry,
+  parseDpkgInstallLog,
   pngSize,
   readLinuxDesktopId,
   splitList,
@@ -257,6 +258,71 @@ describe('dpkgStatus and isRemovedStatus', () => {
     expect(isRemovedStatus('installed')).toBe(false)
     expect(isRemovedStatus('half-installed')).toBe(false)
     expect(isRemovedStatus('unpacked')).toBe(false)
+  })
+})
+
+describe('parseDpkgInstallLog', () => {
+  // What ubuntu-latest (24.04) printed for the deb: two Depends the image does not carry, dpkg
+  // leaving the package unconfigured, apt-get install -f pulling the libraries in (libsecret's
+  // -common with them) and configuring the package.
+  const runnerLog = [
+    'Selecting previously unselected package zenium.',
+    '(Reading database ... 202879 files and directories currently installed.)',
+    'Preparing to unpack .../dist/zenium_0.4.12_amd64.deb ...',
+    'Unpacking zenium (0.4.12) ...',
+    'dpkg: dependency problems prevent configuration of zenium:',
+    ' zenium depends on libnotify4; however:',
+    '  Package libnotify4 is not installed.',
+    ' zenium depends on libsecret-1-0; however:',
+    '  Package libsecret-1-0 is not installed.',
+    '',
+    'dpkg: error processing package zenium (--install):',
+    ' dependency problems - leaving unconfigured',
+    'Processing triggers for desktop-file-utils (0.27-2build1) ...',
+    'Errors were encountered while processing:',
+    ' zenium',
+    'Selecting previously unselected package libnotify4:amd64.',
+    '(Reading database ... 203025 files and directories currently installed.)',
+    'Preparing to unpack .../libnotify4_0.8.3-1build2_amd64.deb ...',
+    'Unpacking libnotify4:amd64 (0.8.3-1build2) ...',
+    'Selecting previously unselected package libsecret-common.',
+    'Selecting previously unselected package libsecret-1-0:amd64.',
+    'Setting up libnotify4:amd64 (0.8.3-1build2) ...',
+    'Setting up zenium (0.4.12) ...',
+    'update-alternatives: using /opt/Zenium/zenium to provide /usr/bin/zenium (zenium) in auto mode'
+  ].join('\n')
+
+  it('names the unmet Depends and what apt-get install -f pulled in, the package itself excepted', () => {
+    expect(parseDpkgInstallLog(runnerLog)).toEqual({
+      unmet: ['libnotify4', 'libsecret-1-0'],
+      pulledIn: ['libnotify4:amd64', 'libsecret-common', 'libsecret-1-0:amd64']
+    })
+  })
+
+  it('is empty for an install dpkg configured outright', () => {
+    const clean = [
+      'Selecting previously unselected package zenium.',
+      'Unpacking zenium (0.4.12) ...',
+      'Setting up zenium (0.4.12) ...',
+      'Processing triggers for desktop-file-utils (0.27-2build1) ...'
+    ].join('\n')
+    expect(parseDpkgInstallLog(clean)).toEqual({ unmet: [], pulledIn: [] })
+    expect(parseDpkgInstallLog('')).toEqual({ unmet: [], pulledIn: [] })
+    expect(parseDpkgInstallLog(null)).toEqual({ unmet: [], pulledIn: [] })
+  })
+
+  it("only reads the named package's Depends and lists each one once", () => {
+    const twice = [
+      ' zenium depends on libnotify4; however:',
+      ' other depends on libfoo; however:',
+      ' zenium depends on libnotify4; however:',
+      'Selecting previously unselected package zenium:amd64.'
+    ].join('\n')
+    expect(parseDpkgInstallLog(twice)).toEqual({ unmet: ['libnotify4'], pulledIn: [] })
+    expect(parseDpkgInstallLog(twice, 'other')).toEqual({
+      unmet: ['libfoo'],
+      pulledIn: ['zenium:amd64']
+    })
   })
 })
 

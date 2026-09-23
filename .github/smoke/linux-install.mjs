@@ -12,15 +12,20 @@
 //       --appimage-extract-and-run: the type-2 runtime reads only the first argument, and
 //       Playwright puts --inspect=0 and --remote-debugging-port=0 in front of everything.
 //   node linux-install.mjs deb-installed --out <dir> [--label deb] [--desktop-id zenium.desktop]
-//                                        [--dpkg-exit <n>]
-//       After `sudo dpkg -i`: the package is installed, every file dpkg lists exists,
+//                                        [--dpkg-exit <n>] [--dpkg-log <file>]
+//       After `sudo dpkg -i` (and, where the runner image lacked one of the package's Depends,
+//       `sudo apt-get install -f`, which completes the configuration from the declared Depends
+//       alone: ubuntu-latest carries neither libnotify4 nor libsecret-1-0): the package is
+//       installed, every file dpkg lists exists,
 //       /opt/Zenium/zenium is executable, /usr/bin/zenium resolves to it (update-alternatives),
 //       the desktop entry is the LINUX_DESKTOP_ID of src/main/platform/defaultBrowser.ts with
 //       Exec, MimeType (x-scheme-handler/http and https), Actions and Icon in order, the hicolor
 //       icon is a 512x512 PNG and mimeinfo.cache names the entry for both schemes. Writes
 //       <out>/<label>-install.json; its `exe` is the path the smoke has to boot, written whether
 //       or not the install went well (the harness turns a missing executable into an "install"
-//       failure).
+//       failure). --dpkg-exit and --dpkg-log record how the install went: the exit status of
+//       `dpkg -i`, the Depends it found unmet and the packages `apt-get install -f` pulled in
+//       (facts, not failures: a missing library on the runner image is not the package's doing).
 //   node linux-install.mjs deb-removed --out <dir> [--label deb] [--timeout-ms 30000]
 //       After `sudo dpkg -r zenium`: polls until every path the install put down is gone (the
 //       binary directory, the desktop entry, the icon, both /usr/bin links, the alternatives
@@ -184,6 +189,28 @@ export function dpkgStatus(stdout, exitCode) {
   const word = String(stdout ?? '').trim()
   if (exitCode !== 0 || !word) return 'unknown'
   return word
+}
+
+/**
+ * What the `dpkg -i` log (with `apt-get install -f`'s output appended when it ran) says about the
+ * package's Depends on this system: the ones dpkg found unmet (" zenium depends on libnotify4;
+ * however:") and the packages apt then pulled in ("Selecting previously unselected package
+ * libnotify4:amd64."), the package itself excepted. Both empty when dpkg configured it outright.
+ */
+export function parseDpkgInstallLog(text, packageName = PACKAGE) {
+  const unmet = []
+  const pulledIn = []
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const dep = line.match(/^\s*(\S+) depends on ([^;]+); however:\s*$/)
+    if (dep && dep[1] === packageName) {
+      const name = dep[2].trim()
+      if (!unmet.includes(name)) unmet.push(name)
+      continue
+    }
+    const selected = line.match(/^Selecting previously unselected package (\S+)\.\s*$/)
+    if (selected && selected[1].replace(/:.*$/, '') !== packageName) pulledIn.push(selected[1])
+  }
+  return { unmet, pulledIn }
 }
 
 /** Is `status` (see dpkgStatus) one under which no file of the package remains? */
@@ -400,6 +427,8 @@ export async function debInstalledFacts(opts) {
     // The path the smoke boots, whether or not it is there: the harness names the miss.
     exe: INSTALLED_EXE,
     dpkgExit: opts['dpkg-exit'] !== undefined ? Number(opts['dpkg-exit']) : null,
+    // The Depends the runner image lacked and what apt-get install -f pulled in for them.
+    depends: parseDpkgInstallLog(opts['dpkg-log'] ? readText(String(opts['dpkg-log'])) : ''),
     problems: []
   }
   const out = path.join(outDir, `${label}-install.json`)
@@ -575,7 +604,7 @@ async function main() {
   if (!handler || !opts.out) {
     console.error(
       'usage: node linux-install.mjs appimage --file <Zenium.AppImage> --out <dir> [--label appimage]\n' +
-        '       node linux-install.mjs deb-installed --out <dir> [--label deb] [--desktop-id zenium.desktop] [--dpkg-exit <n>]\n' +
+        '       node linux-install.mjs deb-installed --out <dir> [--label deb] [--desktop-id zenium.desktop] [--dpkg-exit <n>] [--dpkg-log <file>]\n' +
         '       node linux-install.mjs deb-removed --out <dir> [--label deb] [--timeout-ms 30000]'
     )
     process.exit(2)

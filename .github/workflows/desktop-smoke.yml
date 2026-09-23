@@ -254,19 +254,23 @@ jobs:
         # The desktop entry (/usr/share/applications/zenium.desktop: LINUX_DESKTOP_ID in
         # src/main/platform/defaultBrowser.ts; Exec, MimeType with x-scheme-handler/http and
         # https, Actions, Icon), the hicolor icon, /usr/bin/zenium through update-alternatives,
-        # mimeinfo.cache. A dpkg -i that stops on an unmet Depends of the runner image is
-        # completed with apt-get install -f and recorded in deb-install.json (dpkgExit).
+        # mimeinfo.cache. The runner image is no desktop: ubuntu-latest carries neither libnotify4
+        # nor libsecret-1-0, so dpkg -i unpacks and stops ("dependency problems - leaving
+        # unconfigured", exit 1) and apt-get install -f completes the configuration from the
+        # package's own Depends (the apt-get update above makes the lists current). Expected,
+        # so no annotation; deb-install.json records dpkgExit, the Depends dpkg found unmet and
+        # the packages apt pulled in.
         run: |
           set +e
           sudo dpkg -i "${{ steps.dist.outputs.deb }}" 2>&1 | tee "$SMOKE_OUT/deb-dpkg-i.log"
           dpkg_exit=${PIPESTATUS[0]}
           set -e
           if [[ $dpkg_exit -ne 0 ]]; then
-            echo "::warning::dpkg -i exited $dpkg_exit (unmet Depends on the runner image?); completing with apt-get install -f"
+            echo "dpkg -i exited $dpkg_exit: completing the package's Depends with apt-get install -f"
             sudo apt-get install -f -y -qq 2>&1 | tee -a "$SMOKE_OUT/deb-dpkg-i.log"
           fi
           set +e
-          node "$SMOKE/linux-install.mjs" deb-installed --out "$SMOKE_OUT" --label deb --dpkg-exit "$dpkg_exit"
+          node "$SMOKE/linux-install.mjs" deb-installed --out "$SMOKE_OUT" --label deb --dpkg-exit "$dpkg_exit" --dpkg-log "$SMOKE_OUT/deb-dpkg-i.log"
           facts_exit=$?
           set -e
           # The path the installed build must have, whether or not it is there: the smoke names the miss.
