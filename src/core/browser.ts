@@ -2919,6 +2919,11 @@ export class Browser {
         this.menus.showHistoryDayMenu(dayKey, count, win),
       'history.foldedDevices': () => this.pages.foldedDeviceIds(),
       'history.foldDevice': ({ deviceId, folded }) => this.pages.foldDevice(deviceId, folded),
+      'history.hiddenDevices': () => this.pages.hiddenDeviceIds(),
+      'history.hideDevice': ({ deviceId, hidden }) => this.pages.hideDevice(deviceId, hidden),
+      'history.showHiddenDevices': () => this.pages.showHiddenDevices(),
+      'history.deviceMenu': ({ deviceId, ...anchor }, win) =>
+        this.menus.showHistoryDeviceMenu(deviceId, win, anchor),
 
       'session.recentlyClosed': () => this.session.summaries(),
       'session.restoreClosed': ({ id, background }, win) =>

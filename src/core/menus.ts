@@ -34,6 +34,7 @@ import {
   type Settings,
   type Shortcut,
   type ShortcutAction,
+  type SyncRemoteTab,
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
@@ -2562,6 +2563,55 @@ export class Menus {
       win,
       'history'
     )
+  }
+
+  /**
+   * The menu of a device's heading in the History page's "Tabs from other devices" (ID-28; the
+   * lead's #326 ruling: a device's actions are its heading's context menu on desktop – a
+   * right-click or the menu key on the line, as Firefox's Synced Tabs keep theirs – and the
+   * phone's sheet). Two items, Chrome's synced-device card's: Open All Tabs opens every tab the
+   * device lists here, and Hide Device takes the group off the page for the session (the core
+   * holds the set, `PageService.hideDevice`; the page's "Show hidden devices" row brings them
+   * back). A device the engine no longer lists – its list moved since the page drew it – has no
+   * tabs to open; its Hide Device still stands, since its heading does.
+   */
+  showHistoryDeviceMenu(deviceId: string, win: ZenWindow, anchor?: MenuAnchor): void {
+    const device = this.browser.sync.tabsFromDevices().find((d) => d.deviceId === deviceId)
+    const tabs = device?.tabs ?? []
+    this.popup(
+      [
+        {
+          label: 'Open All Tabs',
+          enabled: tabs.length > 0,
+          click: () => this.openRemoteTabs(tabs, win)
+        },
+        { label: 'Hide Device', click: () => this.browser.pages.hideDevice(deviceId, true) }
+      ],
+      win,
+      'history',
+      anchor
+    )
+  }
+
+  /**
+   * Open All Tabs: each tab the device lists opens in this window as a new tab, the first in
+   * front and the rest behind it in the group's order (newest activity first) – Firefox's
+   * "Open All in Tabs". A tab this window already holds under the tab's own id (the Open tabs
+   * scope carries the records too, ID-10) is not opened a second time: it is the one brought to
+   * the front when it is first, as the row's click has it.
+   */
+  private openRemoteTabs(remote: readonly SyncRemoteTab[], win: ZenWindow): void {
+    const { tabs } = this.browser
+    let front = true
+    for (const tab of remote) {
+      const held = tabs.tab(tab.tabId)
+      if (held && tabVisibleIn(held, win.id)) {
+        if (front) tabs.activateTab(held.id, win, { userSwitch: true })
+      } else {
+        tabs.createTab({ url: tab.url, active: front }, win)
+      }
+      front = false
+    }
   }
 
   /** Menu of a day heading on the history page. */

@@ -4145,6 +4145,22 @@ export interface Commands {
   'history.foldedDevices': { args: void; result: string[] }
   /** Fold or unfold one device's group; every window hears `history.foldedDevicesChanged`. */
   'history.foldDevice': { args: { deviceId: string; folded: boolean }; result: void }
+  /**
+   * The other devices the History page hides for the session (Hide Device in a device
+   * heading's menu; Chrome's "Hide for now"), by device id – held as the folds are, so every
+   * window's page agrees, and gone at quit. A hidden device's tabs are listed nowhere until the
+   * device is shown again (the "Show hidden devices" row, `history.showHiddenDevices`).
+   */
+  'history.hiddenDevices': { args: void; result: string[] }
+  /** Hide or show one device's group; every window hears `history.hiddenDevicesChanged`. */
+  'history.hideDevice': { args: { deviceId: string; hidden: boolean }; result: void }
+  /** The "Show hidden devices" row: every hidden device is listed again. */
+  'history.showHiddenDevices': { args: void; result: void }
+  /**
+   * The menu of a device's heading on the History page (a right-click or the menu key on its
+   * line; the lead's #326 ruling): Open All Tabs and Hide Device.
+   */
+  'history.deviceMenu': { args: { deviceId: string } & MenuAnchor; result: void }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
   /**
@@ -5183,6 +5199,8 @@ export interface Events {
   'history.select': { visitId: string }
   /** The History page's folded device groups changed (`history.foldDevice`): the ids now folded. */
   'history.foldedDevicesChanged': string[]
+  /** The History page's hidden devices changed (`history.hideDevice`, `history.showHiddenDevices`): the ids now hidden. */
+  'history.hiddenDevicesChanged': string[]
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –

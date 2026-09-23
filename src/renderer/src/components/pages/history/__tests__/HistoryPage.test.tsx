@@ -166,11 +166,14 @@ let closed: ClosedEntrySummary[] = CLOSED
 let devices: SyncDeviceTabs[] = []
 /** The core's folded devices (`history.foldedDevices`), as the session holds them. */
 let folded: string[] = []
+/** The core's hidden devices (`history.hiddenDevices`), as the session holds them. */
+let hidden: string[] = []
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) => {
   if (name === 'history.grouped') return groups
   if (name === 'session.recentlyClosed') return closed
   if (name === 'sync.tabsFromDevices') return devices
   if (name === 'history.foldedDevices') return folded
+  if (name === 'history.hiddenDevices') return hidden
   return null
 })
 /** The core's events the page listens for, fired by name. */
@@ -321,11 +324,12 @@ function rowClick(el: HTMLElement, id: string, init: MouseEventInit = {}): void 
   )!.dispatchEvent(new MouseEvent('click', { bubbles: true, ...init }))
 }
 
-/** The page's session store of folded devices, one per chrome document: a fresh one per test. */
-function freshFoldStore(): void {
+/** The page's session stores of folded and hidden devices, one per chrome document: fresh ones per test. */
+function freshDeviceStores(): void {
   const stores = (globalThis as { __zenStores?: Record<string, { set: (p: object) => void }> })
     .__zenStores
   stores?.historyCollapsedDevices?.set({ ids: new Set(), asked: false })
+  stores?.historyHiddenDevices?.set({ ids: new Set(), asked: false })
 }
 
 beforeEach(() => {
@@ -335,7 +339,8 @@ beforeEach(() => {
   closed = CLOSED
   devices = []
   folded = []
-  freshFoldStore()
+  hidden = []
+  freshDeviceStores()
 })
 
 afterEach(() => {
@@ -947,6 +952,131 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     // Mounted again in the same chrome, it does not ask twice.
     await remount(tab(), state(sync(true)))
     expect(calls('history.foldedDevices')).toHaveLength(1)
+  })
+
+  it('a device heading’s right-click and menu key hang the device menu at the anchor; the rows keep the page’s menu (history-21)', async () => {
+    devices = DEVICES
+    const el = await mountPage(tab(), state(sync(true)))
+    const card = el.querySelector<HTMLElement>('[data-device-id="phone"]')!
+    const heading = card.querySelector<HTMLElement>('.zen-page-heading')!
+    // A right-click on the heading's line – its name here – opens at the pointer.
+    await act(async () =>
+      heading
+        .querySelector('h2')!
+        .dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, button: 2, clientX: 140, clientY: 90 })
+        )
+    )
+    expect(calls('history.deviceMenu').at(-1)).toEqual({ deviceId: 'phone', x: 140, y: 90 })
+    // The menu key while the focus is in the line (Chromium raises the event at the focused
+    // element, the twisty, with no button): keyboard mode, the first item selected.
+    const twisty = card.querySelector<HTMLButtonElement>('.zen-page-heading-twisty')!
+    twisty.focus()
+    await act(async () =>
+      twisty.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, button: 0, clientX: 700, clientY: 96 })
+      )
+    )
+    expect(calls('history.deviceMenu').at(-1)).toEqual({
+      deviceId: 'phone',
+      x: 700,
+      y: 96,
+      keyboard: true
+    })
+    // The twisty is the disclosure still: no popup of its own is declared, so no pressed fill.
+    expect(twisty.hasAttribute('aria-haspopup')).toBe(false)
+    expect(twisty.getAttribute('aria-expanded')).toBe('true')
+    // A row's right-click is the row's menu, not the device's.
+    await act(async () =>
+      card
+        .querySelector('[data-remote-tab="phone:p1"]')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+    )
+    expect(calls('history.deviceMenu')).toHaveLength(2)
+    expect(calls('history.contextMenu').at(-1)).toMatchObject({ visitId: null })
+  })
+
+  it('a hidden device leaves the list for the session; "Show hidden devices" follows the last device and brings it back', async () => {
+    devices = DEVICES
+    let el = await mountPage(tab(), state(sync(true)))
+    const ids = (): Array<string | null> =>
+      [...el.querySelectorAll('[data-testid="history-remote-device"]')].map((c) =>
+        c.getAttribute('data-device-id')
+      )
+    expect(ids()).toEqual(['phone', 'work'])
+    expect(el.querySelector('[data-testid="history-hidden-devices"]')).toBeNull()
+    // The menu's Hide Device ran in the core: its word reaches the page.
+    await act(async () => emit('history.hiddenDevicesChanged', ['phone']))
+    expect(ids()).toEqual(['work'])
+    // The way back is the row after the last device's group – no umbrella heading over it.
+    const rows = el.querySelector<HTMLElement>('[data-testid="history-hidden-devices"]')!
+    expect(rows.previousElementSibling!.getAttribute('data-device-id')).toBe('work')
+    expect(rows.closest('.zen-page-group')).toBeNull()
+    const show = rows.querySelector<HTMLButtonElement>(
+      '[data-testid="history-devices-show-hidden"]'
+    )!
+    expect(text(show)).toBe('Show hidden devices')
+    expect(show.hasAttribute('data-row-focus')).toBe(true)
+    // A search does not reach a hidden device: the phone's ragù is not found.
+    await rerender(tab('zen://history?q=cooked'), state(sync(true)))
+    await flush()
+    expect(el.querySelector('[data-remote-tab]')).toBeNull()
+    expect(el.querySelector('[data-testid="history-hidden-devices"]')).toBeNull()
+    await rerender(tab('zen://history'), state(sync(true)))
+    await flush()
+    // Mounted again (the tab closed and reopened), the device is hidden still.
+    el = await remount(tab(), state(sync(true)))
+    expect(ids()).toEqual(['work'])
+    // The row: shown here at once, and the core told.
+    await act(async () =>
+      el.querySelector<HTMLButtonElement>('[data-testid="history-devices-show-hidden"]')!.click()
+    )
+    expect(ids()).toEqual(['phone', 'work'])
+    expect(calls('history.showHiddenDevices')).toHaveLength(1)
+    expect(el.querySelector('[data-testid="history-hidden-devices"]')).toBeNull()
+  })
+
+  it('with every device hidden the umbrella group keeps the page’s place with its sentence and the row (§10.1 as amended for #316)', async () => {
+    devices = DEVICES
+    hidden = ['phone', 'work']
+    const el = await mountPage(tab(), state(sync(true)))
+    expect(calls('history.hiddenDevices')).toHaveLength(1)
+    expect(el.querySelector('[data-testid="history-remote-device"]')).toBeNull()
+    const group = el.querySelector<HTMLElement>('[data-testid="history-remote-tabs"]')!
+    expect(group.getAttribute('data-state')).toBe('hidden')
+    expect(text(group.querySelector('h2'))).toBe('Tabs from other devices')
+    expect(text(group.querySelector('[data-testid="history-remote-tabs-empty"]'))).toBe(
+      "You've hidden every device"
+    )
+    const show = group.querySelector<HTMLButtonElement>(
+      '[data-testid="history-devices-show-hidden"]'
+    )!
+    expect(text(show)).toBe('Show hidden devices')
+    // The row stays on the page: no chevron.
+    expect(show.parentElement!.querySelector('.zen-page-row-chevron')).toBeNull()
+    expect(headings(el).slice(0, 3)).toEqual([
+      'Recently closed',
+      'Tabs from other devices',
+      'Today'
+    ])
+    // A search shows matches, not the state: the group steps aside with the rest.
+    await rerender(tab('zen://history?q=example'), state(sync(true)))
+    await flush()
+    expect(el.querySelector('[data-testid="history-remote-tabs"]')).toBeNull()
+    await rerender(tab('zen://history'), state(sync(true)))
+    await flush()
+    // The group came back with the search's end; its row shows every device again.
+    await act(async () =>
+      el.querySelector<HTMLButtonElement>('[data-testid="history-devices-show-hidden"]')!.click()
+    )
+    expect(el.querySelector('[data-testid="history-remote-tabs"]')).toBeNull()
+    expect(el.querySelectorAll('[data-testid="history-remote-device"]')).toHaveLength(2)
+    // A hidden id no device lists any more counts for nothing: sync on with nothing published
+    // steps aside as before.
+    devices = []
+    await act(async () => emit('history.hiddenDevicesChanged', ['old-phone']))
+    await rerender(tab(), state(sync(true)))
+    expect(el.querySelector('[data-testid="history-remote-tabs"]')).toBeNull()
   })
 
   it('the search filters the devices’ rows too – a device left with nothing steps aside – and a match answers the search when history has none', async () => {

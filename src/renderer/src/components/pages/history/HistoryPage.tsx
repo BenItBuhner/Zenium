@@ -20,9 +20,10 @@ import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
+import { hiddenDeviceCount, OTHER_DEVICES_COPY } from '@renderer/lib/otherDevices'
 import { openSettings } from '@renderer/lib/pages'
 import { remoteTabsStore, remoteTabsWanted, useRemoteTabs } from '@renderer/lib/remoteTabs'
-import { createStore } from '@renderer/lib/store'
+import { createStore, type Store } from '@renderer/lib/store'
 import { SYNC_COPY, syncScopeRowId } from '@renderer/lib/syncSetup'
 import { openClearBrowsingData } from '@renderer/lib/ui'
 import { relativeTime } from '@renderer/lib/utils'
@@ -47,43 +48,70 @@ function matchesTerms(title: string, url: string, terms: readonly string[]): boo
 }
 
 /**
- * The other devices whose groups are folded (their id), kept for the session: a History tab
- * closed and opened again, or a second window's, finds them folded still; a restart unfolds
- * them all (Chrome's synced-device cards start open too). The set is the core's
- * (`history.foldedDevices`) – each window's chrome is a renderer of its own, so a store here
- * alone would be the window's – mirrored into this document the first time a device group
- * mounts (`asked`) and kept current for the document's life by `history.foldedDevicesChanged`
- * (`startBrowserSync`'s pattern: the listener outlives the page, so a fold made in another
- * window while this one shows no History tab is here when the tab comes back); a toggle lands
- * here first so the chevron turns on the click.
+ * A set of other devices (their ids) the page keeps for the session – the folded groups, and
+ * the devices hidden through a heading's menu: a History tab closed and opened again, or a
+ * second window's, finds them folded or hidden still; a restart unfolds and shows them all
+ * (Chrome's synced-device cards start open too, its "Hide for now" lasts the run). Each set is
+ * the core's (`history.foldedDevices`, `history.hiddenDevices`) – each window's chrome is a
+ * renderer of its own, so a store here alone would be the window's – mirrored into this
+ * document the first time a device group mounts (`asked`) and kept current for the document's
+ * life by its changed event (`startBrowserSync`'s pattern: the listener outlives the page, so a
+ * fold made in another window while this one shows no History tab is here when the tab comes
+ * back); a change made on the page lands here first so the chevron turns on the click.
  */
-const collapsedDevices = createStore<{ ids: ReadonlySet<string>; asked: boolean }>(
-  { ids: new Set(), asked: false },
-  'historyCollapsedDevices'
-)
-
-/** The folded devices, mirrored from the core. */
-function useCollapsedDevices(): ReadonlySet<string> {
-  useEffect(() => {
-    if (collapsedDevices.get().asked) return
-    collapsedDevices.set({ asked: true })
-    onEvent('history.foldedDevicesChanged', (ids) => collapsedDevices.set({ ids: new Set(ids) }))
-    void cmd('history.foldedDevices', undefined).then((ids) =>
-      collapsedDevices.set({ ids: new Set(ids) })
-    )
-  }, [])
-  return collapsedDevices.use((s) => s.ids)
+interface SessionDeviceSet {
+  store: Store<{ ids: ReadonlySet<string>; asked: boolean }>
+  /** The set, mirrored from the core: the hook a device group reads it through. */
+  useIds: () => ReadonlySet<string>
 }
+
+function sessionDeviceSet(
+  key: string,
+  query: 'history.foldedDevices' | 'history.hiddenDevices',
+  changed: 'history.foldedDevicesChanged' | 'history.hiddenDevicesChanged'
+): SessionDeviceSet {
+  const store = createStore<{ ids: ReadonlySet<string>; asked: boolean }>(
+    { ids: new Set(), asked: false },
+    key
+  )
+  const useIds = (): ReadonlySet<string> => {
+    useEffect(() => {
+      if (store.get().asked) return
+      store.set({ asked: true })
+      onEvent(changed, (ids) => store.set({ ids: new Set(ids) }))
+      void cmd(query, undefined).then((ids) => store.set({ ids: new Set(ids) }))
+    }, [])
+    return store.use((s) => s.ids)
+  }
+  return { store, useIds }
+}
+
+const collapsedDevices = sessionDeviceSet(
+  'historyCollapsedDevices',
+  'history.foldedDevices',
+  'history.foldedDevicesChanged'
+)
+const hiddenDevices = sessionDeviceSet(
+  'historyHiddenDevices',
+  'history.hiddenDevices',
+  'history.hiddenDevicesChanged'
+)
 
 /** Fold or unfold a device's group: here at once, and the core's for the session. */
 function foldDevice(deviceId: string, folded: boolean): void {
-  collapsedDevices.set((s) => {
+  collapsedDevices.store.set((s) => {
     const ids = new Set(s.ids)
     if (folded) ids.add(deviceId)
     else ids.delete(deviceId)
     return { ids }
   })
   run('history.foldDevice', { deviceId, folded })
+}
+
+/** The "Show hidden devices" row: every hidden device listed again, here at once and in the core. */
+function showHiddenDevices(): void {
+  hiddenDevices.store.set({ ids: new Set() })
+  run('history.showHiddenDevices', undefined)
 }
 
 /** The page's sentences for the other devices' tabs (ID-28), beside Settings › Sync's `SYNC_COPY`. */
@@ -125,7 +153,9 @@ interface Picked {
  * sync on and nothing published no group at all, as Recently closed when empty. A remote tab's
  * row opens the page in a new tab (a middle or Ctrl click behind this one), or brings the tab to
  * the front when this device already holds it; its menu is the history menu less the visit's
- * items (`RemoteTabs`).
+ * items (`RemoteTabs`). A device's heading line has a menu of its own – Open All Tabs, Hide
+ * Device (the lead's #326 ruling; a hidden device stays hidden for the session and comes back
+ * through the "Show hidden devices" row, the phone's #316 answer).
  *
  * The search (§9.12) filters as History's did (every term in the title or URL) – the other
  * devices' rows too, a device with no match stepping aside with Recently closed; the tab's URL
@@ -238,14 +268,19 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
     else run('urlbar.submit', { input: remote.url, newTab: true, tabId: tab.id, background })
   }
   const terms = useMemo(() => searchTerms(text), [text])
+  // The devices the user hid (a heading's Hide Device) are listed nowhere – a search does not
+  // reach them either – until "Show hidden devices" brings them back.
+  const hidden = hiddenDevices.useIds()
+  const hiddenCount = hiddenDeviceCount(devices, hidden)
   // The devices with a tab to show for this search, newest activity first (the core lists them
   // so; a search keeps the order and drops the devices left with nothing).
   const remote = useMemo(
     () =>
       devices
+        .filter((d) => !hidden.has(d.deviceId))
         .map((d) => ({ ...d, tabs: d.tabs.filter((t) => matchesTerms(t.title, t.url, terms)) }))
         .filter((d) => d.tabs.length > 0),
-    [devices, terms]
+    [devices, hidden, terms]
   )
   /** The visits' ids in the order the page shows them. */
   const shownIds = (): string[] =>
@@ -384,6 +419,7 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
           <RemoteTabs
             sync={state.sync}
             devices={remote}
+            hiddenCount={hiddenCount}
             searching={Boolean(text)}
             terms={terms}
             selecting={selecting}
@@ -838,25 +874,45 @@ function RecentlyClosed({
  * when it is empty (§10.1 as the lead amended it): a sentence with no way out would be a
  * permanent two lines of nothing for every single-device user, and §9.17's "reads 0" is for a
  * count on a group that is otherwise there, not for a group whose only content is its absence.
- * While anything is searched the empty group steps aside too – a search shows matches, not the
- * state of a setting.
+ * A state the user makes keeps the group with a way back (the lead's #316 addendum to §10.1,
+ * the phone's `remoteTabsSection`): every device hidden through its heading's menu is the
+ * umbrella group over "You've hidden every device" with "Show hidden devices" as its row; with
+ * some hidden and the rest listed, that row alone follows the last device's group, as the
+ * phone's follows its last device. While anything is searched the empty group steps aside too,
+ * and the row with it – a search shows matches, not the state of a setting.
  */
 function RemoteTabs({
   sync,
   devices,
+  hiddenCount,
   searching,
   terms,
   selecting,
   onOpen
 }: {
   sync: SyncStatus
-  /** The devices with a tab to show (the search applied), newest activity first. */
+  /** The devices with a tab to show (the search applied, the hidden left out), newest activity first. */
   devices: SyncDeviceTabs[]
+  /** How many devices with tabs the user hid. */
+  hiddenCount: number
   searching: boolean
   terms: string[]
   selecting: boolean
   onOpen: (tab: SyncRemoteTab, background: boolean) => void
 }): JSX.Element | null {
+  const showHidden = (
+    <li className="zen-v2-row zen-page-row">
+      <button
+        type="button"
+        className="zen-page-row-text"
+        data-row-focus=""
+        data-testid="history-devices-show-hidden"
+        onClick={showHiddenDevices}
+      >
+        <span className="zen-page-row-label">{OTHER_DEVICES_COPY.showHidden}</span>
+      </button>
+    </li>
+  )
   if (devices.length > 0) {
     return (
       <>
@@ -869,10 +925,32 @@ function RemoteTabs({
             onOpen={onOpen}
           />
         ))}
+        {hiddenCount > 0 && !searching && (
+          <ul className="zen-page-rows" data-testid="history-hidden-devices">
+            {showHidden}
+          </ul>
+        )}
       </>
     )
   }
   if (searching) return null
+  if (hiddenCount > 0) {
+    return (
+      <PageGroup
+        heading={REMOTE_COPY.heading}
+        headingId="zen-history-remote-tabs"
+        data-testid="history-remote-tabs"
+        data-state="hidden"
+      >
+        <p className="zen-page-group-empty" role="status" data-testid="history-remote-tabs-empty">
+          {OTHER_DEVICES_COPY.allHidden}
+        </p>
+        <ul className="zen-page-rows" data-testid="history-hidden-devices">
+          {showHidden}
+        </ul>
+      </PageGroup>
+    )
+  }
   // Sync on, Open tabs in the scope, nothing published: the group steps aside.
   if (sync.enabled && remoteTabsWanted(sync)) return null
   const line = sync.enabled ? REMOTE_COPY.scopeOff : REMOTE_COPY.syncOff
@@ -915,7 +993,11 @@ function RemoteTabs({
  * would read as an empty one. The chevron points at the rows – right while they are folded
  * away, turned down while they show, as the bookmarks tree's twisty. Folded, the rows leave
  * the DOM (the arrows walk what is shown, §9.22) and the group keeps its heading line; the
- * fold is the session's (`collapsedDevices`).
+ * fold is the session's (`collapsedDevices`). The device's actions – Open All Tabs, Hide
+ * Device – are the heading line's native context menu (the lead's #326 ruling: a right-click
+ * on the line or the menu key with the focus in it, as Firefox's Synced Tabs; the heading's
+ * one trailing slot holds the disclosure alone, and the disclosure stays one – `aria-expanded`
+ * for the rows, no `aria-haspopup`, so it takes no pressed fill, §9.20).
  */
 function DeviceGroup({
   device,
@@ -928,9 +1010,14 @@ function DeviceGroup({
   selecting: boolean
   onOpen: (tab: SyncRemoteTab, background: boolean) => void
 }): JSX.Element {
-  const collapsed = useCollapsedDevices().has(device.deviceId)
+  const collapsed = collapsedDevices.useIds().has(device.deviceId)
   const toggle = (): void => foldDevice(device.deviceId, !collapsed)
   const safeId = device.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const menu = (e: MouseEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    run('history.deviceMenu', { deviceId: device.deviceId, ...contextMenuAnchor(e) })
+  }
   return (
     <PageGroup
       heading={device.deviceName}
@@ -939,6 +1026,7 @@ function DeviceGroup({
       data-testid="history-remote-device"
       data-device-id={device.deviceId}
       data-collapsed={collapsed || undefined}
+      onHeadingContextMenu={menu}
       control={
         <button
           type="button"

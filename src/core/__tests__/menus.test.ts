@@ -5,7 +5,9 @@ import type {
   MediaState,
   Platform as PlatformOs,
   Settings,
-  SharePayload
+  SharePayload,
+  SyncDeviceTabs,
+  SyncRemoteTab
 } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
@@ -2855,6 +2857,97 @@ describe('the history row menu', () => {
     const before = Object.keys(h.browser.state.model.tabs).length
     h.shown().find((item) => item.label === 'Open in New Tab')!.click!()
     expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The History page's device heading menu (history-21; the lead's #326 ruling)
+// ---------------------------------------------------------------------------
+
+describe('the history device heading menu', () => {
+  /** A remote tab as the engine lists one. */
+  const remote = (tabId: string, url: string): SyncRemoteTab => ({
+    tabId,
+    url,
+    title: url,
+    favicon: null,
+    lastActive: 1,
+    windowId: null
+  })
+  /** The phone's list, newest activity first, as `sync.tabsFromDevices` answers. */
+  const phone = (tabs: SyncRemoteTab[]): SyncDeviceTabs => ({
+    deviceId: 'phone',
+    deviceName: 'Pixel 9',
+    updatedAt: 1,
+    tabs
+  })
+  const openTabs = (h: Harness): string[] =>
+    Object.values(h.browser.state.model.tabs).map((t) => t.url)
+  const activeUrl = (h: Harness): string | undefined => h.browser.tabs.activeTabFor(h.win)?.url
+
+  it('offers Open All Tabs and Hide Device, at the anchor the heading asked with', () => {
+    const h = harness(DESKTOP)
+    vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([
+      phone([remote('p1', 'https://a.test/'), remote('p2', 'https://b.test/')])
+    ])
+    h.browser.handleCommand(h.win, 'history.deviceMenu', {
+      deviceId: 'phone',
+      x: 120,
+      y: 80,
+      keyboard: true
+    })
+    expect(labels(h.shown())).toEqual(['Open All Tabs', 'Hide Device'])
+    expect(h.shown()[0]!.enabled).toBe(true)
+    expect(h.where()).toMatchObject({ source: 'history', x: 120, y: 80, keyboard: true })
+  })
+
+  it('Open All Tabs opens every listed tab here in the group’s order, the first in front, the rest behind', () => {
+    const h = harness(DESKTOP)
+    vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([
+      phone([
+        remote('p1', 'https://a.test/'),
+        remote('p2', 'https://b.test/'),
+        remote('p3', 'https://c.test/')
+      ])
+    ])
+    const before = openTabs(h)
+    h.browser.handleCommand(h.win, 'history.deviceMenu', { deviceId: 'phone' })
+    h.shown().find((item) => item.label === 'Open All Tabs')!.click!()
+    const opened = openTabs(h).filter((url) => !before.includes(url))
+    expect(opened).toEqual(['https://a.test/', 'https://b.test/', 'https://c.test/'])
+    expect(activeUrl(h)).toBe('https://a.test/')
+  })
+
+  it('a tab this window already holds under the tab’s own id is not opened twice; first, it comes to the front', () => {
+    const h = harness(DESKTOP)
+    // The Open tabs scope carried the phone's tab here already, as an unloaded tab of its own id.
+    const held = h.browser.tabs.createTab(
+      { id: 'p1', url: 'https://a.test/', active: false },
+      h.win
+    )
+    const other = h.browser.tabs.createTab({ url: 'https://elsewhere.test/', active: true }, h.win)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(other.id)
+    vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([
+      phone([remote('p1', 'https://a.test/'), remote('p2', 'https://b.test/')])
+    ])
+    const before = openTabs(h)
+    h.browser.handleCommand(h.win, 'history.deviceMenu', { deviceId: 'phone' })
+    h.shown().find((item) => item.label === 'Open All Tabs')!.click!()
+    const opened = openTabs(h).filter((url) => !before.includes(url))
+    expect(opened).toEqual(['https://b.test/'])
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(held.id)
+  })
+
+  it('Hide Device hides the device for the session, and a device the engine no longer lists still hides', () => {
+    const h = harness(DESKTOP)
+    vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([])
+    h.browser.handleCommand(h.win, 'history.deviceMenu', { deviceId: 'gone' })
+    expect(labels(h.shown())).toEqual(['Open All Tabs', 'Hide Device'])
+    expect(h.shown()[0]!.enabled).toBe(false)
+    h.sent.length = 0
+    h.shown().find((item) => item.label === 'Hide Device')!.click!()
+    expect(h.browser.handleCommand(h.win, 'history.hiddenDevices', undefined)).toEqual(['gone'])
+    expect(h.sent).toContain('history.hiddenDevicesChanged')
   })
 })
 
