@@ -74,9 +74,10 @@ interface Layout {
  * favicon, the title, the one trailing slot. Pinned tabs are 32 × 32 favicon-only ahead of the
  * space's tabs; the regular tabs share one width – 240 at the most, shrinking evenly to the
  * 120 floor as they come and holding there, past which the region scrolls (24 px edge fades, no
- * arrows, the active tab brought into view on activation) and an All tabs button opens tab
- * search at the trailing end; the + is a 28 toolbar button 4 after the last tab; a drag spring
- * of at least 24 keeps it off the window controls, which sit inline at the trailing end
+ * arrows, the active tab brought into view on activation); the + is a 28 toolbar button 4 after
+ * the last tab, an All tabs button (tab search) 4 after the + while the strip overflows, and a
+ * drag spring of at least 24 keeps them off the window controls, which sit inline at the
+ * trailing end – Firefox's order: tabs, +, All tabs, the caption, the controls
  * (Linux's three §9.3 boxes inset 8; Windows' caption buttons drawn over the band, the strip
  * keeping their footprint clear; the macOS lights leading, the strip inset 84 – and 8 at its
  * start elsewhere, the window's gutter). After a close the widths hold while the pointer stays
@@ -434,30 +435,34 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
               button
             />
           </div>
+          {/* The All tabs button follows the + at 4 (Firefox's order, §9.37 / §9.3): with the
+              tabs, not on the caption buttons' pitch, where a ⌄ would read as a fourth window
+              control. The spring after it is what keeps the pair off the controls. */}
+          {layout.overflow && (
+            <div ref={allTabsEl} className="zen-no-drag flex shrink-0 items-end pb-[2px] pl-1">
+              <button
+                type="button"
+                className="zen-toolbar-button shrink-0"
+                title="All tabs"
+                aria-label="All tabs"
+                aria-haspopup="dialog"
+                aria-expanded={searchUp}
+                data-strip-all-tabs
+                onClick={() => toggleTabSearch('strip')}
+              >
+                <ChevronDown className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+              </button>
+            </div>
+          )}
         </nav>
-        {/* The drag spring: at least 24 of caption between the + and the window controls. */}
+        {/* The drag spring: at least 24 of caption between the tabs' end (the +, or the All tabs
+            button while the strip overflows) and the window controls. */}
         <div
           ref={springEl}
           className="zen-drag"
           style={{ flex: `1 0 ${STRIP_DRAG_SPRING}px` }}
           data-strip-spring
         />
-        {layout.overflow && (
-          <div ref={allTabsEl} className="zen-no-drag flex shrink-0 items-end pb-[2px] pr-1">
-            <button
-              type="button"
-              className="zen-toolbar-button shrink-0"
-              title="All tabs"
-              aria-label="All tabs"
-              aria-haspopup="dialog"
-              aria-expanded={searchUp}
-              data-strip-all-tabs
-              onClick={() => toggleTabSearch('strip')}
-            >
-              <ChevronDown className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
-            </button>
-          </div>
-        )}
         <div
           className={cn('zen-no-drag flex shrink-0 items-end gap-1 pb-[2px]')}
           style={{ paddingRight: overlay.width > 0 ? overlay.width : 8 }}
