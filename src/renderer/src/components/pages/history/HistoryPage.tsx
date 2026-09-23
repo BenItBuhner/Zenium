@@ -14,8 +14,9 @@ import type {
 } from '@shared/types'
 import { presentedUrl } from '@shared/url'
 import { dayKeyOf } from '@shared/dayKey'
+import { matchesAllTerms, queryTerms } from '@shared/wordMatch'
 import { cmd, onEvent, run } from '@renderer/lib/api'
-import { dayLabel } from '@renderer/lib/historyGroups'
+import { dayLabel, daysBetween } from '@renderer/lib/historyGroups'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
@@ -34,18 +35,6 @@ import { usePageSearch } from '../usePageSearch'
 /** Visits fetched per page; "Show more" adds another page. */
 const PAGE_SIZE = 300
 const EMPTY: ReadonlySet<string> = new Set()
-
-/** The search's terms, as the core's history search reads them: every term in the title or URL. */
-function searchTerms(text: string): string[] {
-  return text.toLowerCase().split(/\s+/).filter(Boolean)
-}
-
-/** Whether a page named by `title` and `url` matches every term, as `searchVisits` reads a visit. */
-function matchesTerms(title: string, url: string, terms: readonly string[]): boolean {
-  if (terms.length === 0) return true
-  const hay = `${title} ${url}`.toLowerCase()
-  return terms.every((t) => hay.includes(t))
-}
 
 /**
  * A set of other devices (their ids) the page keeps for the session – the folded groups, and
@@ -157,8 +146,11 @@ interface Picked {
  * Device (the lead's #326 ruling; a hidden device stays hidden for the session and comes back
  * through the "Show hidden devices" row, the phone's #316 answer).
  *
- * The search (§9.12) filters as History's did (every term in the title or URL) – the other
- * devices' rows too, a device with no match stepping aside with Recently closed; the tab's URL
+ * The search (§9.12) reads as Chrome's history search does (history-03, `wordMatch.ts`): every
+ * term at the start of a word in the title or the address, case-folded, never inside a word –
+ * the other devices' rows too, a device with no match stepping aside with Recently closed. Its
+ * matches are one flat list under "Results for …", newest first, the day on every row before
+ * its time ("Yesterday · 9:41 AM"), where the day headings would split them; the tab's URL
  * follows it as `zen://history?q=<text>` without a history entry, so the address says what the
  * page shows and a restored tab comes back searching, and a query the URL brings – Chrome's
  * "More from this site", the omnibox's `@history <text>`, back and forward – fills the field.
@@ -267,18 +259,22 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
     if (!background && remote.tabId in state.tabs) run('tab.activate', { tabId: remote.tabId })
     else run('urlbar.submit', { input: remote.url, newTab: true, tabId: tab.id, background })
   }
-  const terms = useMemo(() => searchTerms(text), [text])
+  // The search's terms as the core's history search reads them (history-03, `wordMatch.ts`):
+  // every term at the start of a word in the title or the address, the way Chrome's history
+  // search finds pages – "docs" finds "Team docs" and "example.com/my-docs", never "Googledocs".
+  const terms = useMemo(() => queryTerms(text), [text])
   // The devices the user hid (a heading's Hide Device) are listed nowhere – a search does not
   // reach them either – until "Show hidden devices" brings them back.
   const hidden = hiddenDevices.useIds()
   const hiddenCount = hiddenDeviceCount(devices, hidden)
   // The devices with a tab to show for this search, newest activity first (the core lists them
-  // so; a search keeps the order and drops the devices left with nothing).
+  // so; a search keeps the order and drops the devices left with nothing), read by the same
+  // word-start rule as the visits.
   const remote = useMemo(
     () =>
       devices
         .filter((d) => !hidden.has(d.deviceId))
-        .map((d) => ({ ...d, tabs: d.tabs.filter((t) => matchesTerms(t.title, t.url, terms)) }))
+        .map((d) => ({ ...d, tabs: d.tabs.filter((t) => matchesAllTerms(t.title, t.url, terms)) }))
         .filter((d) => d.tabs.length > 0),
     [devices, hidden, terms]
   )
@@ -514,6 +510,50 @@ function VisitList({
       </PageEmpty>
     )
   }
+  const more = hasMore && (
+    <div className="zen-page-more">
+      <button
+        type="button"
+        className="zen-v2-button"
+        onClick={() => setLimit((n) => n + PAGE_SIZE)}
+      >
+        Show more
+      </button>
+    </div>
+  )
+  if (text) {
+    // While a query is active the matches are one flat list, newest first, each row dated
+    // inline (history-03; Chrome's search view drops its date headers and puts the short date
+    // on every row): the day groups would split a dozen matches under a dozen headings.
+    const visits = groups.flatMap((g) => g.visits)
+    return (
+      <>
+        <PageGroup
+          heading={`Results for “${text}”`}
+          headingId="zen-history-results"
+          aside={hasMore ? `${visitCount}+` : visitCount}
+          data-testid="history-results"
+        >
+          <ul className="zen-page-rows">
+            {visits.map((visit) => (
+              <VisitRow
+                key={visit.id}
+                visit={visit}
+                terms={terms}
+                day={shortDay(visit.visitTime, loaded.now)}
+                selected={selected.has(visit.id)}
+                selecting={selecting}
+                onToggle={onToggle}
+                onExtend={onExtend}
+                onOpen={onOpen}
+              />
+            ))}
+          </ul>
+        </PageGroup>
+        {more}
+      </>
+    )
+  }
   return (
     <>
       {groups.map((group) => (
@@ -529,19 +569,30 @@ function VisitList({
           onOpen={onOpen}
         />
       ))}
-      {hasMore && (
-        <div className="zen-page-more">
-          <button
-            type="button"
-            className="zen-v2-button"
-            onClick={() => setLimit((n) => n + PAGE_SIZE)}
-          >
-            Show more
-          </button>
-        </div>
-      )}
+      {more}
     </>
   )
+}
+
+// The date a result row carries inline, in the headings' vocabulary (`historyGroups.ts`) cut
+// to the row's trailing slot: "Today", "Yesterday", the weekday for the rest of the week, then
+// the short date – "11 Sept" – with the year once it is not this year's.
+const weekdayFormat = new Intl.DateTimeFormat(undefined, { weekday: 'long' })
+const dateFormat = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' })
+const datedFormat = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric'
+})
+
+function shortDay(visitTime: number, now: number): string {
+  const key = dayKeyOf(visitTime)
+  const today = dayKeyOf(now)
+  const age = daysBetween(key, today)
+  if (age === 0) return 'Today'
+  if (age === 1) return 'Yesterday'
+  if (age > 1 && age < 7) return weekdayFormat.format(visitTime)
+  return (key.slice(0, 4) === today.slice(0, 4) ? dateFormat : datedFormat).format(visitTime)
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +664,7 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute:
 function VisitRow({
   visit,
   terms,
+  day,
   selected,
   selecting,
   onToggle,
@@ -621,12 +673,15 @@ function VisitRow({
 }: Omit<Selection, 'selected'> & {
   visit: HistoryVisit
   terms: string[]
+  /** The row's day, drawn before its time (a search result outside the day groups); none under a day heading. */
+  day?: string
   selected: boolean
   onOpen: (url: string, newTab: boolean) => void
 }): JSX.Element {
   const extensions = useExtensionList()
   const host = presentedHost(visit.url, extensions) || presentedUrl(visit.url)
   const title = visit.title || host
+  const time = timeFormat.format(visit.visitTime)
   const menu = (e: MouseEvent): void => {
     e.preventDefault()
     e.stopPropagation()
@@ -682,9 +737,9 @@ function VisitRow({
       <time
         className="zen-page-row-time"
         dateTime={new Date(visit.visitTime).toISOString()}
-        aria-label={`Visited at ${timeFormat.format(visit.visitTime)}`}
+        aria-label={day ? `Visited ${day}, ${time}` : `Visited at ${time}`}
       >
-        {timeFormat.format(visit.visitTime)}
+        {day ? `${day} · ${time}` : time}
       </time>
       <button
         type="button"

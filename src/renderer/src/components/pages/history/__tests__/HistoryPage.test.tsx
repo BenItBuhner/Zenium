@@ -648,6 +648,85 @@ describe('the History page tab (§10.1)', () => {
     expect(calls('page.navigate')).toEqual([])
   })
 
+  it('while searching, the matches are one flat list under “Results for …”, newest first, the day on every row before its time (history-03)', async () => {
+    const el = await mountPage(tab('zen://history?q=example'))
+    // Chrome's search view drops its date headers: no day groups while a query is active.
+    expect(el.querySelectorAll('[data-day]')).toHaveLength(0)
+    const results = el.querySelector('[data-testid="history-results"]')!
+    expect(text(results.querySelector('h2'))).toBe('Results for “example”')
+    expect(results.getAttribute('aria-labelledby')).toBe(results.querySelector('h2')!.id)
+    expect(text(results.querySelector('.zen-page-heading-aside'))).toBe('5')
+    const rows = [...results.querySelectorAll('li.zen-v2-row.zen-page-row')]
+    expect(rows.map((r) => r.getAttribute('data-visit-id'))).toEqual(['v1', 'v2', 'v3', 'v4', 'v5'])
+    // The rows keep the day groups' shape – favicon, two lines, the trailing time, the ⋮ – and
+    // the time slot gains the day in the headings' words, cut to the slot: "Today", "Yesterday",
+    // the weekday, then the short date (the year once it is not this year's).
+    const clock = (ms: number): string =>
+      new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(ms)
+    const weekday = WEEKDAY_NAMES[new Date(NOW - 3 * DAY).getDay()]!
+    const dated = new Intl.DateTimeFormat(undefined, {
+      day: 'numeric',
+      month: 'short',
+      year: DATED.slice(0, 4) === TODAY.slice(0, 4) ? undefined : 'numeric'
+    }).format(NOW - 10 * DAY)
+    expect(rows.map((r) => text(r.querySelector('time.zen-page-row-time')))).toEqual([
+      `Today · ${clock(NOW - 60_000)}`,
+      `Today · ${clock(NOW - 120_000)}`,
+      `Yesterday · ${clock(NOW - DAY)}`,
+      `${weekday} · ${clock(NOW - 3 * DAY)}`,
+      `${dated} · ${clock(NOW - 10 * DAY)}`
+    ])
+    expect(rows[2]!.querySelector('time')!.getAttribute('aria-label')).toBe(
+      `Visited Yesterday, ${clock(NOW - DAY)}`
+    )
+    expect(text(rows[0]!.querySelector('.zen-page-row-label'))).toBe('Example docs')
+    expect(rows[0]!.querySelectorAll('mark').length).toBeGreaterThan(0)
+    expect(rows[0]!.querySelector('button[aria-haspopup="menu"]')).not.toBeNull()
+    // A result row is a visit row: it opens, and Shift-click enters the mode across the list.
+    rowClick(el, 'v3')
+    expect(calls('urlbar.submit').at(-1)).toEqual({
+      input: 'https://zen-browser.app/',
+      newTab: false,
+      tabId: 'history',
+      background: false
+    })
+    await act(async () => rowClick(el, 'v2', { shiftKey: true }))
+    await act(async () => rowClick(el, 'v4', { shiftKey: true }))
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('3 selected')
+    expect(results.querySelectorAll('input.zen-page-row-check')).toHaveLength(5)
+    // The search's end (the URL back to the plain page) brings the day groups back.
+    await rerender(tab('zen://history'))
+    expect(el.querySelector('[data-testid="history-results"]')).toBeNull()
+    expect(el.querySelectorAll('[data-day]')).toHaveLength(4)
+    expect(text(el.querySelector('[data-visit-id="v3"] time'))).toBe(clock(NOW - DAY))
+  })
+
+  it('a full page of results counts “300+” and offers Show more', async () => {
+    groups = [
+      {
+        dayKey: TODAY,
+        visits: Array.from({ length: 300 }, (_, i) => ({
+          id: `m${i}`,
+          url: `https://example.com/${i}`,
+          title: `Example ${i}`,
+          favicon: null,
+          visitTime: NOW - i * 1000,
+          transition: 'link' as const
+        }))
+      }
+    ]
+    const el = await mountPage(tab('zen://history?q=example'))
+    const results = el.querySelector('[data-testid="history-results"]')!
+    expect(text(results.querySelector('.zen-page-heading-aside'))).toBe('300+')
+    expect(results.querySelectorAll('[data-visit-id]')).toHaveLength(300)
+    const more = [...el.querySelectorAll<HTMLButtonElement>('.zen-page-more button')].find(
+      (b) => text(b) === 'Show more'
+    )!
+    await act(async () => more.click())
+    await flush()
+    expect(calls('history.grouped').at(-1)).toEqual({ query: { text: 'example', limit: 600 } })
+  })
+
   it('says so when there is nothing, and when nothing matches', async () => {
     groups = []
     closed = []
@@ -1101,6 +1180,25 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     expect(
       [...el.querySelectorAll('[data-remote-tab]')].map((r) => r.getAttribute('data-remote-tab'))
     ).toEqual(['work:held-1'])
+    // The devices' rows read by the visits' rule (history-03): a term at the start of a word
+    // ("cooked" after the hyphen), never inside one ("ooked"); case-folded ("RAGÙ" finds "ragù");
+    // every term must land on the one page – title or address.
+    await rerender(tab('zen://history?q=ooked'), state(sync(true)))
+    await flush()
+    expect(el.querySelector('[data-remote-tab]')).toBeNull()
+    expect(text(el.querySelector('[data-testid="history-empty"]'))).toBe(
+      'No history matches “ooked”'
+    )
+    await rerender(tab('zen://history?q=RAGÙ zenium'), state(sync(true)))
+    await flush()
+    expect(
+      [...el.querySelectorAll('[data-remote-tab]')].map((r) => r.getAttribute('data-remote-tab'))
+    ).toEqual([])
+    await rerender(tab('zen://history?q=RAGÙ recipes'), state(sync(true)))
+    await flush()
+    expect(
+      [...el.querySelectorAll('[data-remote-tab]')].map((r) => r.getAttribute('data-remote-tab'))
+    ).toEqual(['phone:p2'])
     // Nothing anywhere: History's own line, and no empty device group beside it.
     await rerender(tab('zen://history?q=nowhere'), state(sync(true)))
     await flush()
