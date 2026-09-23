@@ -341,6 +341,9 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Select Previous Tab', action: 'tab.prev', enabled: Boolean(active) },
       { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) },
       { type: 'separator' },
+      // Chrome's Window › Name Window…, in a group of its own as Chrome's menu has it.
+      { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
+      { type: 'separator' },
       { label: 'Next Space', action: 'space.next', enabled: Boolean(win) && !local },
       { label: 'Previous Space', action: 'space.prev', enabled: Boolean(win) && !local },
       { label: 'New Space…', action: 'space.new', enabled: !local },

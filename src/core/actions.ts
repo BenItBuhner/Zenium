@@ -357,6 +357,11 @@ export class Actions {
       case 'window.minimize':
         win.host.minimize()
         return
+      // Chrome's Name window…: the prompt is the chrome's (`windowName/NameWindowDialog`); the
+      // core asks for it and takes the answer as `window.setName`.
+      case 'window.name':
+        this.browser.emit('windowName.open', undefined, win)
+        return
       case 'menu.app':
         // The renderer opens the menu from its button so Escape leaves the keyboard there.
         this.browser.emit('menu.app', undefined, win)

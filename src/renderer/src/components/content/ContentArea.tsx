@@ -426,6 +426,7 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.pageDialogOpen ||
     ui.windowPromptOpen ||
     ui.clearBrowsingDataOpen ||
+    ui.nameWindowOpen ||
     ui.autofillPrompt !== null
   )
 }

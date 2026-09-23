@@ -157,6 +157,8 @@ export interface PersistedWindow {
   /** Per-space selected tab. */
   selection: Record<string, string>
   compact: boolean
+  /** The name the user gave the window (`ZenWindow.name`); absent in profiles written before it. */
+  name?: string | null
 }
 
 /**

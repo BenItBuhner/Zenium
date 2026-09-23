@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { formatWindowTitle, TITLE_UPDATE_INTERVAL_MS, TitleThrottle } from '../windowTitle'
+import {
+  formatWindowTitle,
+  normalizeWindowName,
+  TITLE_UPDATE_INTERVAL_MS,
+  TitleThrottle,
+  WINDOW_NAME_MAX
+} from '../windowTitle'
 
 describe('formatWindowTitle', () => {
   it('suffixes the active tab title with the product name', () => {
@@ -20,6 +26,31 @@ describe('formatWindowTitle', () => {
 
   it('trims whitespace around the tab title', () => {
     expect(formatWindowTitle('  Docs \n', false)).toBe('Docs - Zenium')
+  })
+
+  it('reads a named window as "<name> — Zenium" whatever its active tab (Name Window…), still marked private', () => {
+    expect(formatWindowTitle('Example Domain', false, null, 'Work')).toBe('Work — Zenium')
+    expect(formatWindowTitle(null, false, null, 'Work')).toBe('Work — Zenium')
+    expect(formatWindowTitle('Example Domain', true, null, 'Work')).toBe('Work — Zenium (Private)')
+    expect(formatWindowTitle('Example Domain', false, null, '  Research  ')).toBe(
+      'Research — Zenium'
+    )
+    // A cleared or blank name falls back to the tab's title.
+    expect(formatWindowTitle('Example Domain', false, null, null)).toBe('Example Domain - Zenium')
+    expect(formatWindowTitle('Example Domain', false, null, '   ')).toBe('Example Domain - Zenium')
+    // A web app's window is the app's: a window name does not reach its title.
+    expect(formatWindowTitle('Inbox', false, 'Mail', 'Work')).toBe('Inbox')
+  })
+})
+
+describe('normalizeWindowName', () => {
+  it('trims, clears an empty name and cuts one that runs past the limit', () => {
+    expect(normalizeWindowName('  Work  ')).toBe('Work')
+    expect(normalizeWindowName('')).toBeNull()
+    expect(normalizeWindowName('   ')).toBeNull()
+    expect(normalizeWindowName(null)).toBeNull()
+    expect(normalizeWindowName(undefined)).toBeNull()
+    expect(normalizeWindowName('a'.repeat(WINDOW_NAME_MAX + 40))).toBe('a'.repeat(WINDOW_NAME_MAX))
   })
 })
 

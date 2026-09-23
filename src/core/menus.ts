@@ -1846,13 +1846,24 @@ export class Menus {
 
   /**
    * The tab strip's menu (tabs-35): the New Tab row's and the empty space below the rows share
-   * it. Chrome's strip trio first – New tab, Reopen closed tab, Bookmark all tabs… – then
-   * Zenium's own: the space's folders and spaces, Clear Unpinned Tabs.
+   * it. Chrome's strip rows first – New tab, Reopen closed tab, Bookmark all tabs…, and on the
+   * desktop Name window… (context-menus-108) – then Zenium's own: the space's folders and
+   * spaces, Clear Unpinned Tabs.
    */
   showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const space = win.activeSpace()
     const local = Boolean(win.localSpace)
+    const nameWindow: MenuItemTemplate[] =
+      win.formFactor === 'desktop'
+        ? [
+            {
+              label: 'Name Window…',
+              action: 'window.name',
+              click: () => this.browser.emit('windowName.open', undefined, win)
+            }
+          ]
+        : []
     this.popup(
       [
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
@@ -1875,6 +1886,7 @@ export class Menus {
           action: 'bookmark.allTabs',
           click: () => this.browser.bookmarkTabs(win)
         },
+        ...nameWindow,
         { type: 'separator' },
         ...(local
           ? []
@@ -2030,10 +2042,13 @@ export class Menus {
     if (win) this.browser.tabs.switchSpace(spaceId, win)
   }
 
-  /** How a window is named in "Move Tab to Another Window" and tab search: its active tab, like Chrome's submenu. */
+  /**
+   * How a window is named in "Move Tab to Another Window" and tab search: the name the user
+   * gave it (Name Window…), else its active tab, like Chrome's submenu.
+   */
   windowLabel(win: ZenWindow): string {
-    const title = this.browser.tabs.activeTitleFor(win)?.trim()
-    const label = title ? (title.length > 60 ? `${title.slice(0, 57)}…` : title) : 'Empty window'
+    const title = win.name ?? this.browser.tabs.activeTitleFor(win)?.trim()
+    const label = title ? clipLabel(title, 60) : 'Empty window'
     return win.isPrivate ? `${label} (Private)` : label
   }
 
@@ -2922,6 +2937,13 @@ export class Menus {
       action: 'window.newUnsynced',
       click: () => this.browser.openWindow('unsynced', win)
     })
+    // Chrome's More tools › Name window… (shortcuts-menus-121): the desktop's, whose OS title
+    // bar and window switcher read the name; a tablet's one window has neither.
+    const nameWindow = desktop({
+      label: 'Name Window…',
+      action: 'window.name',
+      click: () => this.browser.emit('windowName.open', undefined, win)
+    })
     const newPrivateWindow = when(caps.windows, {
       label: 'New Private Window',
       action: 'window.newPrivate',
@@ -3296,8 +3318,9 @@ export class Menus {
           label: 'More Tools',
           // Firefox's "More tools" row of its app group; Chrome's More tools, which carries its
           // window rows (Name window…), Task manager and Developer tools, gives the submenu its
-          // contents: an installed app's Open in <app>, Zenium's space and window actions, the
-          // window's layout toggles, the captures, then the developer's and the resources.
+          // contents: an installed app's Open in <app>, Zenium's space and window actions with
+          // Chrome's Name Window…, the window's layout toggles, the captures, then the
+          // developer's and the resources.
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
           submenu: tidySeparators([
@@ -3305,6 +3328,7 @@ export class Menus {
             separator,
             ...newSpace,
             ...newBlankWindow,
+            ...nameWindow,
             separator,
             ...compactMode,
             splitView,

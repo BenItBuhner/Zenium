@@ -38,6 +38,7 @@ import {
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   openInstallSheet,
+  openNameWindow,
   openOverlay,
   openPrintPreview,
   openReaderPreferences,
@@ -175,6 +176,11 @@ export function useMainEvents(): void {
       onEvent('clearBrowsingData.open', () => {
         closeUrlbar()
         void openClearBrowsingData(currentActiveTabId())
+      }),
+      // More Tools › Name Window… and the tab strip's row: Chrome's prompt over the page.
+      onEvent('windowName.open', () => {
+        closeUrlbar()
+        void openNameWindow(currentActiveTabId())
       }),
       // Edge's Web capture (Ctrl+Shift+S in the Chrome preset, the ⋯ menu's row, the palette):
       // the desktop's overlay over the page's picture (`components/capture/CaptureOverlay.tsx`).

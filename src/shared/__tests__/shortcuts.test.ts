@@ -217,6 +217,24 @@ describe('Delete browsing data', () => {
   })
 })
 
+describe('Name Window…', () => {
+  it('is in the table under Window & Tab Management, unbound in both presets on every platform, as in Chrome', () => {
+    for (const platform of PLATFORMS) {
+      for (const preset of ['zen', 'chrome'] as const) {
+        const row = defaultShortcuts(platform, preset).find((s) => s.id === 'key_nameWindow')
+        expect(row).toMatchObject({
+          action: 'window.name',
+          group: 'windowAndTabManagement',
+          label: 'Name Window…',
+          binding: null
+        })
+        expect(row?.hidden).toBeUndefined()
+        expect(extras('key_nameWindow', platform, preset)).toEqual([])
+      }
+    }
+  })
+})
+
 describe('the Chrome preset', () => {
   const chrome = (id: string, platform: Platform = 'linux'): KeyBinding | null =>
     key(id, platform, 'chrome')

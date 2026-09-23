@@ -451,6 +451,7 @@ const DESKTOP_APP_MENU = [
   'More Tools',
   'More Tools > New Space…',
   'More Tools > New Blank Window',
+  'More Tools > Name Window…',
   'More Tools > -',
   'More Tools > Compact Mode',
   'More Tools > Split View',
@@ -483,6 +484,7 @@ const DESKTOP_ONLY = [
   'Help > Keyboard Shortcuts',
   'More Tools > Compact Mode',
   'More Tools > Split View',
+  'More Tools > Name Window…',
   'Zoom > Fullscreen',
   'Quit'
 ]
@@ -603,6 +605,27 @@ describe('the app menu', () => {
     expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Delete Browsing Data…')
   })
 
+  it('carries Chrome’s Name Window… in More Tools with the window rows and asks the chrome for the prompt (shortcuts-menus-121)', () => {
+    const h = harness(DESKTOP)
+    const menu = appMenu(h)
+    expect(menu.indexOf('More Tools > Name Window…')).toBe(
+      menu.indexOf('More Tools > New Blank Window') + 1
+    )
+    expect(menu[menu.indexOf('More Tools > Name Window…') + 1]).toBe('More Tools > -')
+    const row = deepItem(h.shown(), 'Name Window…')
+    expect(row.action).toBe('window.name')
+    // Unbound in both presets, as in Chrome: no chord after the label.
+    expect(row.accelerator).toBeUndefined()
+    h.sent.length = 0
+    row.click?.()
+    expect(h.sent).toEqual(['windowName.open'])
+    // The desktop's alone: a tablet's one window has no title bar to name, the phone none.
+    expect(appMenu(harness(DESKTOP, 'tablet'))).not.toContain('More Tools > Name Window…')
+    const phone = harness(ANDROID, 'phone')
+    appMenu(phone)
+    expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Name Window…')
+  })
+
   it('loses nothing the flat menu could do: every one of its thirty-two rows, on a host with every capability, is a row or a submenu row now', () => {
     /**
      * The flat menu of main at a8cca556 as the Linux build drew it on a web page with a
@@ -690,10 +713,12 @@ describe('the app menu', () => {
     // Compact Mode is the desktop's hover-revealed sidebar (the tablet's rail is the toolbar's
     // toggle) and the tablet has no bookmarks bar; everything else of the desktop's list is the
     // tablet's too, its host permitting. Both rows live in submenus now (§6 "Menus"). Web
-    // capture's overlay is the desktop chrome's, so its row is too.
+    // capture's overlay is the desktop chrome's, so its row is too; Name Window… names an OS
+    // title bar the tablet's one window does not have.
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
+        label !== 'More Tools > Name Window…' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Web Capture…'
     )
@@ -969,6 +994,7 @@ describe('the app menu', () => {
       'Compact Mode',
       'Split View',
       'Fullscreen',
+      'Name Window…',
       'Quit',
       // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it.
       'More Tools',
@@ -3815,7 +3841,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     })
   })
 
-  it("the strip's menu is Chrome's trio first, then Zenium's own", () => {
+  it("the strip's menu is Chrome's rows first – Name Window… among them on the desktop (context-menus-108) – then Zenium's own", () => {
     const h = pageHarness()
     h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
     expect(topLabels(h.shown())).toEqual([
@@ -3823,6 +3849,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'New Tab in Container',
       'Reopen Closed Tab',
       'Bookmark All Tabs…',
+      'Name Window…',
       '-',
       'New Folder',
       'New Live Folder…',
@@ -3832,6 +3859,14 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     ])
     expect(item(h, 'Reopen Closed Tab').action).toBe('tab.reopenClosed')
     expect(item(h, 'Bookmark All Tabs…').action).toBe('bookmark.allTabs')
+    expect(item(h, 'Name Window…').action).toBe('window.name')
+    h.sent.length = 0
+    item(h, 'Name Window…').click!()
+    expect(h.sent).toEqual(['windowName.open'])
+    // A tablet's one window has no title bar to name: the row is the desktop's.
+    const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
+    tablet.browser.handleCommand(tablet.win, 'newtab.contextMenu', {})
+    expect(topLabels(tablet.shown())).not.toContain('Name Window…')
   })
 
   it('greys Reopen Closed Tab while nothing was closed and brings the newest closed tab back', () => {

@@ -608,6 +608,15 @@ const DEFS: Def[] = [
     chrome: { key: 'm', mods: META, platforms: MAC }
   },
   {
+    // Chrome's More tools › Name window… has no chord in either browser: the row is in the
+    // table so Settings can bind one and the palette lists it.
+    id: 'key_nameWindow',
+    action: 'window.name',
+    group: 'windowAndTabManagement',
+    label: 'Name Window…',
+    ...both(UNBOUND)
+  },
+  {
     // Chrome quits on Ctrl+Shift+Q (Linux) and Cmd+Q; Zen keeps Firefox's Ctrl+Q.
     id: 'key_quitApplication',
     action: 'app.quit',

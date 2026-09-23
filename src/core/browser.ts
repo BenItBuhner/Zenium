@@ -207,6 +207,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'translate.selection',
   'import.open',
   'clearBrowsingData.open',
+  'windowName.open',
   'capture.start'
 ])
 
@@ -711,7 +712,8 @@ export class Browser {
       localSpace,
       cascadeFrom: opts.bounds ? undefined : from,
       opener: from,
-      app
+      app,
+      name: opts.persisted?.name ?? null
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -3138,6 +3140,7 @@ export class Browser {
       'window.newPrivate': (_a, win) => void this.openWindow('private', win),
       'window.openUrl': ({ url, kind }, win) => this.openUrlInWindow(url, kind, win),
       'window.moveTabsToSpace': ({ spaceId }, win) => tabs.moveLocalTabsToSpace(win, spaceId),
+      'window.setName': ({ name }, win) => win.setName(name),
 
       'page.screenshot': ({ tabId, fullPage }, win) =>
         this.actions.run(fullPage ? 'page.captureFullPage' : 'page.screenshot', {

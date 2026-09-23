@@ -20,7 +20,7 @@ import type {
 import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
-import { formatWindowTitle } from '../shared/windowTitle'
+import { formatWindowTitle, normalizeWindowName } from '../shared/windowTitle'
 import {
   CHROME_MENU_TARGETS,
   type ChromeContextParams,
@@ -60,6 +60,8 @@ export interface WindowInit {
   opener?: ZenWindow
   /** The web app a standalone window (`chrome` `app`) shows; browser windows leave it out. */
   app?: AppWindowInfo | null
+  /** The name the user gave the window last session (`ZenWindow.name`); none for a new one. */
+  name?: string | null
 }
 
 /**
@@ -78,6 +80,13 @@ export class ZenWindow {
   readonly material: WindowMaterial
   /** The web app of a standalone window (`chrome` `app`): name, icon and scope; else null. */
   app: AppWindowInfo | null
+  /**
+   * The name the user gave the window (Chrome's Name window…): what the OS title bar reads
+   * instead of the active tab's title and what tab search calls the window; null while it has
+   * none. Kept with the session for synced windows (`toPersisted`). A host with a single window
+   * (Android) carries it inert – nothing there sets or shows it.
+   */
+  name: string | null
   host!: WindowHost
   activeSpaceId: string
   /** Per-space selected tab of this window (falls back to the space's last selection). */
@@ -147,6 +156,7 @@ export class ZenWindow {
     this.chrome = init.chrome
     this.material = init.material
     this.app = init.app ?? null
+    this.name = normalizeWindowName(init.name)
     this.activeSpaceId = init.activeSpaceId
     this.localSpace = init.localSpace
     this.compactEnabled = init.compact
@@ -227,8 +237,21 @@ export class ZenWindow {
       focused: alive ? this.host.isFocused() : false,
       htmlFullscreenTabId: this.htmlFullscreenTabId,
       prompt: this.prompt,
-      app: this.app
+      app: this.app,
+      name: this.name
     }
+  }
+
+  /**
+   * Name the window (Chrome's Name window…), or clear the name with null or an empty string.
+   * The title bar follows at once; a synced window keeps the name with the session.
+   */
+  setName(name: string | null): void {
+    const next = normalizeWindowName(name)
+    if (next === this.name) return
+    this.name = next
+    this.updateTitle()
+    this.browser.state.commit()
   }
 
   /** Visible tabs whose live page is attached to another window right now. */
@@ -250,7 +273,8 @@ export class ZenWindow {
       maximized: this.alive ? this.host.isMaximized() : this.initialMaximized,
       activeSpaceId: this.activeSpaceId,
       selection,
-      compact: this.compactEnabled
+      compact: this.compactEnabled,
+      name: this.name
     }
   }
 
@@ -533,11 +557,19 @@ export class ZenWindow {
     if (this.alive) this.host.send(name, payload)
   }
 
-  /** Push the native window title (`<active tab title> - Zenium`) to the host; the host throttles. */
+  /**
+   * Push the native window title (`<active tab title> - Zenium`, or `<name> — Zenium` for a
+   * window the user named) to the host; the host throttles.
+   */
   updateTitle(): void {
     if (!this.alive) return
     this.host.setTitle(
-      formatWindowTitle(this.browser.tabs.activeTitleFor(this), this.isPrivate, this.app?.name)
+      formatWindowTitle(
+        this.browser.tabs.activeTitleFor(this),
+        this.isPrivate,
+        this.app?.name,
+        this.name
+      )
     )
   }
 

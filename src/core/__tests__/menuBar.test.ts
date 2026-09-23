@@ -201,6 +201,34 @@ describe('the macOS menu bar', () => {
     expect(h.win.compactEnabled).toBe(true)
   })
 
+  it('carries Chrome’s Window › Name Window… in a group of its own, asking the front window’s chrome for the prompt and ignored with every window closed (shortcuts-menus-121)', () => {
+    const h = harness()
+    const window = submenu(last(h), 'Window')
+    const labels = window.map((i) => (i.type === 'separator' ? '-' : i.label))
+    const at = labels.indexOf('Name Window…')
+    expect(at).toBeGreaterThan(0)
+    expect(labels.slice(at - 2, at + 3)).toEqual([
+      'Search Tabs…',
+      '-',
+      'Name Window…',
+      '-',
+      'Next Space'
+    ])
+    const row = item(window, 'Name Window…')
+    expect(row.action).toBe('window.name')
+    expect(row.enabled).toBe(true)
+    expect(row.accelerator).toBeUndefined()
+    h.sent.length = 0
+    row.click?.()
+    expect(h.sent.at(-1)).toEqual({ name: 'windowName.open', payload: undefined })
+    // Nothing to name without a window: no window opens for it.
+    h.win.onClosing()
+    h.win.onClosed()
+    expect(h.browser.allWindows()).toHaveLength(0)
+    row.click?.()
+    expect(h.browser.allWindows()).toHaveLength(0)
+  })
+
   it('runs an action from the menu bar with every window closed by opening one first', () => {
     const h = harness()
     const openTab = item(submenu(last(h), 'File'), 'New Tab')

@@ -289,6 +289,14 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'window.newPrivate',
     requires: 'windows'
   },
+  // Chrome's More tools › Name window…: the desktop's, whose title bar reads the name.
+  {
+    id: 'name-window',
+    label: 'Name Window',
+    keywords: ['window', 'name', 'rename', 'title'],
+    action: 'window.name',
+    layouts: DESKTOP_LAYOUT
+  },
   {
     id: 'addons',
     label: 'Add-ons and Themes',

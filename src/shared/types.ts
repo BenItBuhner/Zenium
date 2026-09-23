@@ -1916,6 +1916,11 @@ export type ShortcutAction =
   | 'window.newPrivate'
   | 'window.close'
   | 'window.minimize'
+  /**
+   * Chrome's More tools › Name window…: the chrome opens the prompt that gives the window a
+   * name of the user's (`ZenWindow.name`). Unbound in both presets, as in Chrome.
+   */
+  | 'window.name'
   | 'app.quit'
   /** Open the application menu from the keyboard (Alt+F / F10 on Windows and Linux). */
   | 'menu.app'
@@ -2889,6 +2894,12 @@ export interface WindowState {
   prompt: WindowPrompt | null
   /** The web app a standalone window shows (`chrome` `app`); null for browser windows. */
   app: AppWindowInfo | null
+  /**
+   * The name the user gave the window (Chrome's Name window…), trimmed; null while it has none.
+   * The OS title bar reads `<name> — Zenium` instead of the active tab's title, and tab search
+   * names the window by it. A host with one window (Android) carries the field inert.
+   */
+  name: string | null
 }
 
 /**
@@ -4500,6 +4511,11 @@ export interface Commands {
   'window.openUrl': { args: { url: string; kind: WindowKind }; result: void }
   /** Blank windows: move every local tab back into one of the real spaces. */
   'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
+  /**
+   * The Name window prompt's answer: the window's name (trimmed by the core; empty or null
+   * clears it), kept with the session and read into the OS title bar (`WindowState.name`).
+   */
+  'window.setName': { args: { name: string | null }; result: void }
 
   /**
    * Open an internal page (`shared/internalPages.ts`) in its tab. A page with `reuse: 'window'`
@@ -5173,6 +5189,11 @@ export interface Events {
    * browsing data dialog (`siteControls/ClearBrowsingDataDialog`) over whatever is up.
    */
   'clearBrowsingData.open': void
+  /**
+   * More Tools › Name Window… (or the tab strip's row): the chrome opens the Name window prompt
+   * (`windowName/NameWindowDialog`) over the page, its field holding the current name.
+   */
+  'windowName.open': void
   /** The PDF viewer document in a tab reported where it stands (`shared/pdfViewerProtocol.ts`). */
   'pdf.changed': { tabId: string; report: PdfViewerReport }
   /**
