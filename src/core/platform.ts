@@ -1265,6 +1265,11 @@ export interface ShellHost {
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
   /**
+   * The OS screen for this app's notifications (Android's per-app notification settings, where
+   * each channel is turned on or off); hosts whose notifications the OS does not manage leave it out.
+   */
+  openNotificationSettings?(): void
+  /**
    * The OS screen where encrypted DNS is set for every app (Android's Private DNS); for hosts
    * without a resolver of their own (`capabilities.secureDns` false).
    */

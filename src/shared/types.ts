@@ -3813,6 +3813,11 @@ export interface Commands {
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
   /**
+   * The system's notification settings for this app (Android; Settings › Security ›
+   * Notifications); a toast on hosts without one.
+   */
+  'app.openNotificationSettings': { args: void; result: void }
+  /**
    * Voice search (`capabilities.voiceSearch`): ask for the microphone – the runtime permission
    * prompt may show – and start the device's recogniser in the user's language. The outcome
    * says whether it is listening; `voice.event`s then carry the levels, the transcripts and the

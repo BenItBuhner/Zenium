@@ -4195,6 +4195,26 @@ function securitySection({ state }: SectionContext): RowGroup[] {
       ],
       empty: 'No site permissions remembered yet'
     },
+    // Chrome's Notifications row (SET-26): the phone's system screen for this app's notifications,
+    // where each channel – downloads, sites, updates, private tabs – is turned on or off.
+    {
+      id: 'security-notifications',
+      heading: 'Notifications',
+      description:
+        'Zenium’s own notifications – downloads, sites, updates, private tabs – are turned on and off in the system settings.',
+      layouts: ['phone'],
+      rows: [
+        {
+          kind: 'action',
+          id: 'notification-settings',
+          label: 'Notification settings',
+          description: 'Which of Zenium’s notifications show, and how.',
+          keywords: ['notifications', 'alerts', 'channels', 'system settings', 'sound', 'badge'],
+          leaves: 'external',
+          onPress: () => run('app.openNotificationSettings', undefined)
+        }
+      ]
+    },
     {
       id: 'security-session',
       heading: 'This session',

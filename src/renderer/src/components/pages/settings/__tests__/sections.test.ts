@@ -66,6 +66,7 @@ const {
   findRow,
   groupShows,
   itemMenuItems,
+  onLayout,
   optionGroups,
   rowText,
   searchRows
@@ -3339,7 +3340,11 @@ describe('what a row does', () => {
   it('carries #62’s Security rows: each remembered site answer an item that forgets it, Forget all once there are two, the session’s sign-ins', () => {
     // Ungated, as the desktop pane is; empty until a site has been answered.
     const empty = section('security')
-    expect(empty.groups.map((g) => g.id)).toEqual(['security-permissions', 'security-session'])
+    expect(empty.groups.map((g) => g.id)).toEqual([
+      'security-permissions',
+      'security-notifications',
+      'security-session'
+    ])
     expect(empty.groups[0].rows).toEqual([])
     expect(empty.groups[0].empty).toBe('No site permissions remembered yet')
     expect(empty.groups.every(groupShows)).toBe(true)
@@ -3401,6 +3406,30 @@ describe('what a row does', () => {
     )
     // The Privacy category no longer lists them: they moved here.
     expect(findRow(section('privacy', s).groups, 'permissions-reset')).toBeNull()
+  })
+
+  it('carries SET-26’s Notifications row on the phone: one action leaving for the system’s notification settings', () => {
+    const security = section('security')
+    const group = security.groups.find((g) => g.id === 'security-notifications')
+    expect(group).toMatchObject({ heading: 'Notifications', layouts: ['phone'] })
+    const settings = row(security, 'notification-settings')
+    if (settings.kind !== 'action') throw new Error('not an action')
+    expect(settings).toMatchObject({ label: 'Notification settings', leaves: 'external' })
+    expect(settings.layouts).toBeUndefined()
+    settings.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('app.openNotificationSettings', undefined)
+    // The tablet and the desktop keep their notifications where the OS puts them: no row.
+    for (const layout of ['tablet', 'desktop'] as const) {
+      expect(onLayout(security.groups, layout).map((g) => g.id)).toEqual([
+        'security-permissions',
+        'security-session'
+      ])
+    }
+    expect(onLayout(security.groups, 'phone').map((g) => g.id)).toContain('security-notifications')
+    // The landing's search reaches it by what the row is about.
+    expect(searchRows([security], 'notifications').map((h) => h.row.id)).toContain(
+      'notification-settings'
+    )
   })
 
   it('the request engine’s rows run the blocking commands or patch `blocking`, and follow the master switch', () => {

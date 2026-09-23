@@ -333,7 +333,8 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
       'http authentication',
       'external apps',
       'protocols',
-      'permissions'
+      'permissions',
+      'notifications'
     ]
   },
   {

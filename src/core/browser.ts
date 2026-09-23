@@ -2116,6 +2116,13 @@ export class Browser {
     else this.toast('Link handling is set in the system settings on this device.', 'info', win)
   }
 
+  /** The system's notification settings for this app (Android), where its channels are turned on and off. */
+  openNotificationSettings(win: ZenWindow): void {
+    const { shell } = this.platform
+    if (shell.openNotificationSettings) shell.openNotificationSettings()
+    else this.toast('Notifications are set in the system settings on this device.', 'info', win)
+  }
+
   /** The system's Private DNS screen (Android), where a host without its own secure DNS sends the user. */
   openPrivateDnsSettings(win: ZenWindow): void {
     const { shell } = this.platform
@@ -2718,6 +2725,7 @@ export class Browser {
       'app.quit': () => void this.requestQuit(),
       'app.share': (payload, win) => this.share(payload, win),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
+      'app.openNotificationSettings': (_a, win) => this.openNotificationSettings(win),
       // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
       'voice.start': () => this.startVoiceSearch(),
       'voice.cancel': () => this.platform.voice?.cancel(),

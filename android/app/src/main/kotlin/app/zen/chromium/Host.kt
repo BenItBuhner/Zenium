@@ -936,6 +936,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "screenshot.delete" -> screenshots.delete(args.str("uri"), reply)
             "screenshot.open" -> screenshots.open(args.str("uri"), reply)
             "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
+            "app.openNotificationSettings" -> { openNotificationSettings(); reply(null) }
+            // The link menu's phone and email items (PUI-22): the dialer, the messaging app, the
+            // contacts app's new-contact form, the mail app – the link's URL as the data.
+            "link.call" -> { startFirst(listOf(SystemIntents.call(args.str("url"))), "No phone app on this device"); reply(null) }
+            "link.message" -> { startFirst(listOf(SystemIntents.message(args.str("url"))), "No messaging app on this device"); reply(null) }
+            "link.addContact" -> { startFirst(listOf(SystemIntents.addContact(args.str("url"))), "No contacts app on this device"); reply(null) }
+            "link.email" -> { startFirst(listOf(SystemIntents.email(args.str("url"))), "No email app on this device"); reply(null) }
             "app.openPrivateDnsSettings" -> { openPrivateDnsSettings(); reply(null) }
             "app.openKeyboardSettings" -> { openKeyboardSettings(); reply(null) }
             "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
@@ -1556,6 +1563,32 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // The next screen down is on every device.
             }
         }
+    }
+
+    /**
+     * Android's notification settings for Zenium (Settings › Security › Notifications, SET-26):
+     * the app's channels – downloads, sites, updates, the private-tabs card – each turned on or
+     * off there, as Chrome's Notifications row opens it. The details page is the fallback.
+     */
+    private fun openNotificationSettings() {
+        startFirst(SystemIntents.notificationSettings(activity.packageName), "No notification settings on this device")
+    }
+
+    /**
+     * The first of the plans an app on this device answers to; a toast when none does (a tablet
+     * without a dialer, a device without a contacts app). Pure plans: `SystemIntentsTest`.
+     */
+    private fun startFirst(plans: List<SystemIntents.Plan?>, failure: String) {
+        for (plan in plans) {
+            if (plan == null) continue
+            try {
+                activity.startActivity(plan.toIntent())
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next plan down, or the toast.
+            }
+        }
+        Toast.makeText(activity, failure, Toast.LENGTH_SHORT).show()
     }
 
     /**

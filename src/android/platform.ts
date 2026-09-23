@@ -1328,6 +1328,7 @@ export class AndroidPlatform implements Platform {
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
       openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
+      openNotificationSettings: () => bridge.send('app.openNotificationSettings'),
       openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings'),
       openKeyboardSettings: () => bridge.send('app.openKeyboardSettings')
     }

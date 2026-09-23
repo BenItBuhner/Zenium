@@ -1130,6 +1130,7 @@ export function createPreviewBridge(): NativeBridge {
       ),
     'speech.stop': () => speech.stop(),
     'app.openPrivateDnsSettings': () => console.info('[zen preview] private DNS settings'),
+    'app.openNotificationSettings': () => console.info('[zen preview] notification settings'),
     'qr.start': () => qr.start(),
     'qr.cancel': () => qr.cancel(),
     'qr.layout': () => undefined,
