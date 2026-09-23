@@ -169,7 +169,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         val row = domBox("document.querySelector('[data-testid=\"back-history-entry\"][data-index=\"0\"]')")?.let { touchPoint(it) }
         if (row == null) {
             touchFault("the popup's row for the first stop was not touchable")
-            back()
+            shedPopup()
             return
         }
         Finger().tap(row.x, row.y)
@@ -192,6 +192,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
      */
     private fun backHistoryDragRelease() {
         section("GN-08: the held finger drags through the popup, the row under it lit, and releases on a row")
+        shedPopup()
         val target = backButtonPoint() ?: run {
             touchFault("the bar's Back button was not found")
             return
@@ -204,7 +205,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         if (first == null || second == null) {
             touchFault("the popup's rows for the first and second stops were not both touchable")
             f.up()
-            back()
+            shedPopup()
             return
         }
         // The finger travels from the button over the bar's edge to the row for the first stop ...
@@ -236,6 +237,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
      */
     private fun backHistoryReleaseNoRow() {
         section("GN-08: the held finger releases on no row, and the list waits for a tap")
+        shedPopup()
         val target = backButtonPoint() ?: run {
             touchFault("the bar's Back button was not found")
             return
@@ -248,7 +250,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         if (popup == null || row == null) {
             touchFault("the popup and its row for the second stop were not both found")
             f.up()
-            back()
+            shedPopup()
             return
         }
         // Off the popup onto the page: beside it when the screen leaves 64 dp there, else above it.
@@ -615,6 +617,21 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
 
     private fun popupRows(): Int =
         js("(function(){return String(document.querySelectorAll('[data-testid=\"back-history-entry\"]').length)})()").toIntOrNull() ?: 0
+
+    /**
+     * A popup an earlier scene left up would take the next scene's press as its light dismiss
+     * (the chrome layer closes a popover on a press outside, and that press reaches no hold), and
+     * one scene's failure would read as the next one's: the system Back closes it first, so each
+     * scene's claims are its own. Nothing is pressed when no popup is up (a Back with none would
+     * move the tab).
+     */
+    private fun shedPopup() {
+        if (popupRows() == 0) return
+        finding("  (a popup was still up from an earlier scene: the system Back closed it before this one)")
+        back()
+        awaitTrue(3_000) { popupRows() == 0 }
+        SystemClock.sleep(600)
+    }
 
     /** The popup's row for the history entry at `index`, as a DOM expression. */
     private fun entryRow(index: Int): String =
