@@ -469,7 +469,8 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
 
         // 8. TAB-03 / #250: the lock on, Home and back from a regular tab, then the pane's own
         //    entry – the segment tapped – shows the cover from its first frame, never the cards.
-        scene("8. The lock cover on the pane's own entry (TAB-03, #250)") {
+        //    The covered pane is left standing for scene 9's press.
+        scene("8. The lock cover on the pane's own entry (TAB-03, #250)", keepOverview = true) {
             coreInvoke("private.setLockOnLeave", """{"enabled":true}""")
             expect("set-up: the lock-on-leave switch is on", poll(6_000) { lockOnLeave() && host.privateLock.enabled })
             expect("set-up: the seeded site tab is still open", tabExists(SITE_TAB))
@@ -514,19 +515,24 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         }
 
         // 9. NOT-07 / INC-07: the card's press closes every private tab through the core's
-        //    close-all; the card and the lock go with them, the private surface too.
+        //    close-all; the card and the lock go with them, the private surface too. The overview
+        //    scene 8 left standing on the covered Private pane is the premise: the last private tab
+        //    closing has one rule in the product, the chrome's pane pick (TabOverview: a Private
+        //    pane picked with its count gone to nothing picks Tabs – INC-07's "returns to the Tabs
+        //    pane"); nothing in the chrome, the core or the host dismisses the overview for it. Run
+        //    2's dismissal onto the regular tab was this driver's own: `recover()` pressed back
+        //    after scene 8 (logcat 10:54:40.907, ZenBack's commit to the chrome) 2.3 s before the
+        //    press, and the premise then read the card alone.
         scene("9. The card's press closes every private tab (NOT-07, INC-07)") {
+            expect("set-up: the overview stands on the covered Private pane", overviewOpen() && pane() == "private" && paneCoverUp())
             val card = awaitCard(4_000)
-            expect("the card stands with the overview on the covered Private pane", card != null && cardText(card) == "2 private tabs are open")
+            expect("the card stands for the two private tabs", card != null && cardText(card) == "2 private tabs are open")
             val sent = runCatching { card?.notification?.contentIntent?.send() }.isSuccess && card?.notification?.contentIntent != null
             expect("the card's press is sent (its PendingIntent, as the shade sends it)", sent)
             expect("every private tab closes", awaitNoPrivateTabs(10_000))
             expect("the card comes down with the last private tab", awaitCardGone(8_000))
             expect("the lock is released with the count", awaitUnlocked(6_000) && host.privateLock.openTabs == 0)
-            // The private surface goes with its tabs: the overview either stands on the Tabs pane
-            // or is dismissed onto the regular tab (run 2: dismissed), and no cover stands anywhere.
-            val landed = poll(6_000) { pane() == "tabs" || (!overviewOpen() && !privateActive()) }
-            expect("the overview leaves the private pane – on Tabs, or dismissed onto the regular tab – with no cover", landed && !coverUp())
+            expect("the overview returns to the Tabs pane, no cover left (INC-07)", awaitPane("tabs") && overviewOpen() && poll(3_000) { !coverUp() })
             expect("the chrome blends back off the private theme", poll(6_000) { !host.themeDark })
             finding(
                 "  after the press: private tabs ${privateTabIds()}, card ${describeCard(privateCard())}, lock ${host.privateLock.locked}, " +
@@ -546,7 +552,7 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
 
     // --- scenes ----------------------------------------------------------------------------------
 
-    private fun scene(title: String, block: () -> Unit) {
+    private fun scene(title: String, keepOverview: Boolean = false, block: () -> Unit) {
         finding("\n$title")
         try {
             block()
@@ -554,14 +560,19 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             Log.e(tag, "$title threw", e)
             expect("$title ran through (${e.javaClass.simpleName}: ${e.message})", false)
         }
-        recover()
+        recover(keepOverview)
     }
 
-    /** Whatever a scene left standing goes: the shade, a chrome surface, an overview a thrown scene left open, the light scheme back. */
-    private fun recover() {
+    /**
+     * Whatever a scene left standing goes: the shade, a chrome surface, an overview a scene left
+     * open, the light scheme back. A scene that hands the next one its overview says so with
+     * `keepOverview` (scene 8 leaves the covered Private pane standing for scene 9's press; run 2's
+     * back here, a key the host commits to the chrome, is what dismissed it before the press).
+     */
+    private fun recover(keepOverview: Boolean) {
         if (frontPackage() == SYSTEM_UI) closeShade()
         closeSheets()
-        if (overviewOpen()) {
+        if (!keepOverview && overviewOpen()) {
             back()
             awaitOverviewGone()
         }
