@@ -3918,8 +3918,8 @@ async function scenarioWalkthrough() {
       await s.settle()
       await s.chrome.locator('.zen-settings-nav-item', { hasText: 'Search' }).first().click()
       // An engine to open a dialog on: the "Add search engine" form dialog adds one – its three
-      // fields, the shortcut between the name and the URL (W4-10), the button held until all
-      // three are in.
+      // fields, the shortcut between the name and the URL (W4-10; it may be left empty when
+      // adding, and a typed one is checked), the button held until the name and the URL are in.
       await s.chrome.locator('[data-row="add-search-engine"] button').first().click()
       const form = s.chrome.locator('[data-dialog="form:add-search-engine"]')
       await form.waitFor({ state: 'visible', timeout: 5000 })
