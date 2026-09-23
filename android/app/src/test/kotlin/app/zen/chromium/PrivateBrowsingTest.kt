@@ -67,24 +67,49 @@ class PrivateBrowsingTest {
 
     private fun shortcuts() = read(SHORTCUTS_TEMPLATE, "app/$SHORTCUTS_TEMPLATE")
 
+    /** Each `<shortcut>` block of the template, in rank order. */
+    private fun shortcutBlocks() = shortcuts().split(Regex("<shortcut\\s")).drop(1).map { it.substringBefore("</shortcut>") }
+
+    private fun privateShortcut() =
+        shortcutBlocks().single { """android:shortcutId="${PrivateBrowsing.SHORTCUT_ID}"""" in it }
+
     @Test
     fun theShortcutOpensAPrivateTabInTheBrowserActivityThroughTheTrampoline() {
-        val shortcuts = shortcuts()
-        val shortcut = shortcuts.substringAfter("<shortcut").substringBefore("</shortcut>")
-        assertTrue("""android:shortcutId="${PrivateBrowsing.SHORTCUT_ID}"""" in shortcut)
+        val shortcut = privateShortcut()
         assertTrue("""android:enabled="true"""" in shortcut)
         assertTrue("""android:action="${PrivateBrowsing.ACTION_NEW_TAB}"""" in shortcut)
         // The system stamps a manifest shortcut's intent with FLAG_ACTIVITY_CLEAR_TASK: aimed at
         // MainActivity it would clear the browser's task; the trampoline in its own task relays
-        // the action into the running window instead.
-        assertTrue("""android:targetClass="app.zen.chromium.LauncherIconActivity"""" in shortcut)
-        assertFalse("""android:targetClass="app.zen.chromium.MainActivity"""" in shortcut)
+        // the action into the running window instead – every shortcut's, not only this one's.
+        for (block in shortcutBlocks()) {
+            assertTrue("""android:targetClass="app.zen.chromium.LauncherIconActivity"""" in block)
+            assertFalse("""android:targetClass="app.zen.chromium.MainActivity"""" in block)
+        }
         val manifest = read("src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml")
         val trampoline = manifest.substringAfter("android:name=\".LauncherIconActivity\"").substringBefore("/>")
         assertTrue("""android:taskAffinity=""""" in trampoline)
         assertTrue("""android:noHistory="true"""" in trampoline)
-        // One shortcut: the launcher shows the app's own before any pinned web app.
-        assertEquals(1, Regex("<shortcut\\s").findAll(shortcuts).count())
+        // Four shortcuts, the launcher's row (Chrome's count): New tab, New private tab, Search, Scan
+        // QR code – the app's own before any pinned web app; the private one second, next to New tab.
+        assertEquals(
+            listOf("new-tab", PrivateBrowsing.SHORTCUT_ID, "search", "scan-qr"),
+            shortcutBlocks().map { it.substringAfter("android:shortcutId=\"").substringBefore("\"") }
+        )
+    }
+
+    @Test
+    fun theOtherShortcutsCarryTheirLandingAsTheExtraTheTrampolineForwards() {
+        val landings = shortcutBlocks()
+            .filter { """android:shortcutId="${PrivateBrowsing.SHORTCUT_ID}"""" !in it }
+            .map { block ->
+                assertTrue("""android:action="android.intent.action.MAIN"""" in block)
+                assertTrue("""android:name="${Landing.EXTRA}"""" in block)
+                block.substringAfter("android:value=\"").substringBefore("\"")
+            }
+        assertEquals(listOf(Landing.NEW_TAB, Landing.SEARCH, Landing.SCAN), landings)
+        // The private shortcut says it by its action alone, which the trampoline reads as the landing.
+        assertFalse(Landing.EXTRA in privateShortcut())
+        for (landing in landings) assertEquals(landing, Landing.forwarded("android.intent.action.MAIN", landing))
     }
 
     @Test
@@ -104,9 +129,10 @@ class PrivateBrowsingTest {
      */
     @Test
     fun theShortcutTargetsTheVariantsApplicationIdSpeltOut() {
-        val shortcut = shortcuts().substringAfter("<shortcut").substringBefore("</shortcut>")
-        assertTrue("""android:targetPackage="${'$'}{applicationId}"""" in shortcut)
-        assertFalse("@string" in shortcut.substringAfter("<intent"))
+        for (shortcut in shortcutBlocks()) {
+            assertTrue("""android:targetPackage="${'$'}{applicationId}"""" in shortcut)
+            assertFalse("@string" in shortcut.substringAfter("<intent"))
+        }
         val build = read("build.gradle.kts", "app/build.gradle.kts")
         assertTrue("class WriteShortcuts" in build)
         assertTrue("""file("$SHORTCUTS_TEMPLATE")""" in build)
@@ -137,6 +163,22 @@ class PrivateBrowsingTest {
         assertTrue("<adaptive-icon" in icon)
         assertTrue("@drawable/ic_shortcut_private_foreground" in icon)
         assertTrue("@color/shortcut_private_background" in icon)
+        // The other three: labels in sentence case, each an adaptive icon on the app icon's indigo.
+        for ((stem, short, long) in listOf(
+            Triple("new_tab", "New tab", "New tab in Zenium"),
+            Triple("search", "Search", "Search with Zenium"),
+            Triple("scan", "Scan QR code", "Scan a QR code with Zenium")
+        )) {
+            assertTrue("""@string/shortcut_${stem}_short"""" in shortcuts)
+            assertTrue("""@string/shortcut_${stem}_long"""" in shortcuts)
+            assertTrue("""<string name="shortcut_${stem}_short">$short</string>""" in strings)
+            assertTrue("""<string name="shortcut_${stem}_long">$long</string>""" in strings)
+            assertTrue("""android:icon="@drawable/ic_shortcut_$stem"""" in shortcuts)
+            val other = read("src/main/res/drawable/ic_shortcut_$stem.xml", "app/src/main/res/drawable/ic_shortcut_$stem.xml")
+            assertTrue("<adaptive-icon" in other)
+            assertTrue("@drawable/ic_shortcut_${stem}_foreground" in other)
+            assertTrue("@color/shortcut_background" in other)
+        }
     }
 
     @Test

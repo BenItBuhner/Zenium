@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   The launcher's long-press shortcuts (the `android.app.shortcuts` meta-data on the launcher
-  aliases, see scripts/app-icons/lib.ts). One: a new private tab, as Chrome offers "New Incognito
-  tab" (INC-01). Its intent lands on LauncherIconActivity, the trampoline in a task of its own,
-  which relays the action to MainActivity in the browser's task; the activity asks the chrome for
-  a private tab in the current space (PrivateBrowsing.ACTION_NEW_TAB). Not MainActivity itself:
-  the system stamps a manifest shortcut's intent with FLAG_ACTIVITY_CLEAR_TASK, which would clear
-  the browser's task and start the activity over.
+  aliases, see scripts/app-icons/lib.ts), in rank order from the icon: New tab, New private tab
+  (as Chrome offers "New Incognito tab", INC-01), Search, Scan QR code. Every intent lands on
+  LauncherIconActivity, the trampoline in a task of its own, which relays the state asked for to
+  MainActivity in the browser's task as the landing extra (Landing.kt, WID-07): the three newer
+  shortcuts carry it themselves, the private one its action, which the trampoline reads as the
+  private landing. Not MainActivity itself: the system stamps a manifest shortcut's intent with
+  FLAG_ACTIVITY_CLEAR_TASK, which would clear the browser's task and start the activity over.
 
   A template, not a resource: the build writes it to each variant's generated res/xml with
   ${applicationId} spelt out (build.gradle.kts, WriteShortcuts). The system server parses the
@@ -15,6 +16,21 @@
   and nothing could start it. Debug builds carry the ".debug" suffix, so a literal cannot serve.
 -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new-tab"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_new_tab"
+        android:shortcutShortLabel="@string/shortcut_new_tab_short"
+        android:shortcutLongLabel="@string/shortcut_new_tab_long">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="${applicationId}"
+            android:targetClass="app.zen.chromium.LauncherIconActivity">
+            <extra
+                android:name="app.zen.chromium.extra.LANDING"
+                android:value="newTab" />
+        </intent>
+    </shortcut>
     <shortcut
         android:shortcutId="new-private-tab"
         android:enabled="true"
@@ -25,5 +41,35 @@
             android:action="app.zen.chromium.NEW_PRIVATE_TAB"
             android:targetPackage="${applicationId}"
             android:targetClass="app.zen.chromium.LauncherIconActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="search"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_search"
+        android:shortcutShortLabel="@string/shortcut_search_short"
+        android:shortcutLongLabel="@string/shortcut_search_long">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="${applicationId}"
+            android:targetClass="app.zen.chromium.LauncherIconActivity">
+            <extra
+                android:name="app.zen.chromium.extra.LANDING"
+                android:value="search" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="scan-qr"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_scan"
+        android:shortcutShortLabel="@string/shortcut_scan_short"
+        android:shortcutLongLabel="@string/shortcut_scan_long">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetPackage="${applicationId}"
+            android:targetClass="app.zen.chromium.LauncherIconActivity">
+            <extra
+                android:name="app.zen.chromium.extra.LANDING"
+                android:value="scan" />
+        </intent>
     </shortcut>
 </shortcuts>
