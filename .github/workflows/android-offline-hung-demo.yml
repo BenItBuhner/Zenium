@@ -27,10 +27,6 @@ name: Android offline and hung page demo
 # driver, never when the driver failed.
 on:
   workflow_dispatch:
-  # TEMPORARY (W5-2b, PR #395): the forced-race scene's one run and one retry on this branch;
-  # removed, with the `dark` job's push condition below, before the PR is marked ready.
-  push:
-    branches: [cursor/android-crash-page-show-tabs-9350]
 
 permissions:
   contents: read
@@ -73,8 +69,6 @@ jobs:
 
   dark:
     name: Offline and hung page demo, dark
-    # TEMPORARY (W5-2b): the push-triggered run is the light act alone, as the nightly's is.
-    if: ${{ github.event_name != 'push' }}
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
