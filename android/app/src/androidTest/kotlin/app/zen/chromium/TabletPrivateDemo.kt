@@ -305,13 +305,18 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         // departure (no frames while the window is away), the return, the lock, Unlock and the
         // lift – until scene 8 reads it after the veil has landed.
         lockProbe("start")
-        // The display as the window leaves: the picture the system keeps as the task snapshot and
-        // shows as the starting window on return until the app presents its own first frame – with
-        // the guard off for the recorder (`captureForRecording`), the departure's chrome, titles and
-        // all; a release build has FLAG_SECURE up on the private surface, the system keeps no
-        // snapshot and that starting window is blank (#250, PrivateLockDemo's note). The still of
-        // the locked state waits for the display to have moved on from it: on this emulator's
-        // WebView the first frame back presents seconds after the chrome committed it.
+        // The display as the window leaves – the departure's picture, which the display keeps
+        // showing on the return in two guises before the renderer's first frame back is drawn: first
+        // the OS's task snapshot as the starting window (kept only because `captureForRecording`
+        // holds FLAG_SECURE off for the recorder; a release build keeps none), then, once the app's
+        // own window is up, the chrome WebView's LAST COMPOSITOR FRAME – the departure's titles and
+        // address over the page area the host blanked at arming (a stale frame FLAG_SECURE does not
+        // cover: it removes the snapshot and blanks captures and Recents, not the app's own window on
+        // the display). On this emulator's swiftshader WebView that second span ran 2.4 s; on
+        // hardware it is a few frames. The host owns its cure (#250's class, a follow-up: an opaque
+        // native scrim or the chrome view hidden at arming until the chrome reports its first masked
+        // frame); the renderer's claim (b) is read by the probe, off the DOM. The still of the locked
+        // state waits for the display to have moved on from the departure's picture, whichever guise.
         val departure = ui.takeScreenshot()
         home()
         check("Home puts Zenium in the background", awaitFront(ours = false), "front ${frontPackage()}")
@@ -336,18 +341,20 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         val presented = departure != null && rows != null && awaitDisplayMovedOn(departure, rows, 15_000)
         departure?.recycle()
         finding(
-            "  the display: the app's own first frame back ${if (presented) "was on the screen ${SystemClock.uptimeMillis() - backAt} ms after the return" else "was not seen within 15 s of the return"}" +
-                " – until it, the OS's task-snapshot starting window, the departure's picture, present only because captureForRecording keeps FLAG_SECURE off for the recorder" +
-                " (a release build keeps the guard up on the private surface, the system keeps no snapshot, and that starting window is blank – #250); the recording's return frames before it are the snapshot's, not the chrome's"
+            "  the display: the renderer's first frame back (the rows masked under the veil) ${if (presented) "was on the screen ${SystemClock.uptimeMillis() - backAt} ms after the return" else "was not seen within 15 s of the return"}" +
+                " – until it the display showed the departure's picture: the OS's task snapshot as the starting window (kept only because captureForRecording holds FLAG_SECURE off for the recorder)," +
+                " then the chrome WebView's last compositor frame in the app's own window – the departure's titles and address over the page area the host blanked at arming, a stale frame FLAG_SECURE does not cover;" +
+                " the recording's return frames before it are those two, not the renderer's; the host owns the cure (#250's class, a follow-up)"
         )
-        check("FLAG_SECURE is on the window under the lock (a release build's read): Recents and the return's starting window carry nothing of it", guardNow(), "")
+        check("FLAG_SECURE is on the window under the lock (a release build's read): Recents and the task snapshot carry nothing of it", guardNow(), "")
         SystemClock.sleep(600)
         still("locked")
     }
 
     /**
      * The display's `region` (the private list's rows) has moved on from `from` (the departure's
-     * picture, the task snapshot's) within `timeoutMs`: the app's own first frame back is on the
+     * picture – the task snapshot's and the chrome WebView's stale compositor frame's alike, both
+     * show the departure's rows) within `timeoutMs`: the renderer's first frame back is on the
      * screen. Sampled on a 4 px grid, a change on more than 1% of the samples: the titles turning
      * to "Private tab" behind the mask under the veil changes several per cent of the rows' pixels;
      * nothing else in the list moves.

@@ -109,8 +109,11 @@ export function PrivateLockCover({
     // 64 ms a frame, and on a device drawing a frame every 100 ms or more it lands after the
     // deadline), or the cover beside it (the frame's, the sidebar's veil) landed a frame first:
     // the cover goes with the wait, in the render that brings the page and the titles back, so
-    // neither ever shows under a cover still up. A lift nothing waited on (the pane's) runs its
-    // spring out.
+    // neither ever shows under a cover still up. The wait is the release's, not a surface's:
+    // `lifting` is set when the release finds a private tab in view (`activeTabIsPrivate`), and
+    // every cover up in that render is waited on – the frame's, the sidebar's veil, the overview
+    // pane's alike. A lift nothing waited on (a release with a regular tab in view: the pane's
+    // cover alone) runs its spring out.
     setPhase({ locked, shown, leaving: false, waited: false })
   } else if (phase.shown !== shown) {
     setPhase({ ...phase, shown })

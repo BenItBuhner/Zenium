@@ -464,8 +464,11 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     // Ghost: private tabs alone, nothing saved – a PRIVATE group (`isPrivateGroup`), which the
     // sidebar itself can make on a host that keeps private browsing in tabs (the space holds
     // them among the regular tabs; `regularOf` lists both). Research: one regular member beside
-    // a private one. Trip: two pages saved and a private tab dropped in since.
+    // a private one. Trip: two pages saved and a private tab dropped in since. Vault: Ghost's
+    // case folded – `isPrivateGroup` is read before any fold, so a collapsed private-only group
+    // is no row either (not a folded header with a count).
     const ghost = folder({ id: 'ghost', name: 'Ghost', color: 'red' })
+    const vault = folder({ id: 'vault', name: 'Vault', color: 'orange', collapsed: true })
     const research = folder()
     const trip = folder({
       id: 'trip',
@@ -480,24 +483,29 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
       tab('home'),
       privateTab('g1', { folderId: 'ghost' }),
       privateTab('g2', { folderId: 'ghost' }),
+      privateTab('v1', { folderId: 'vault' }),
+      privateTab('v2', { folderId: 'vault' }),
       tab('alpha', { folderId: 'g' }),
       privateTab('p1', { folderId: 'g' }),
       privateTab('t1', { folderId: 'trip' }),
       tab('gamma')
     ]
-    panel(tabs, [ghost, research, trip])
+    panel(tabs, [ghost, vault, research, trip])
     const panelEl = q<HTMLElement>('[data-tab-list="regular"]')!.parentElement!.parentElement!
-    // No row of Ghost's – no header, no fold – and its name in no text or attribute of the
-    // panel (the rows' labels, the descriptions for TalkBack, the folds' keys).
+    // No row of Ghost's or Vault's – no header, no fold, open or collapsed – and their names in
+    // no text or attribute of the panel (the rows' labels, the descriptions for TalkBack, the
+    // folds' keys).
     expect(q('[data-tab-folder="ghost"]')).toBeNull()
+    expect(q('[data-tab-folder="vault"]')).toBeNull()
     expect(
       [...document.querySelectorAll<HTMLElement>('[data-tab-folder]')].map(
         (el) => el.dataset.tabFolder
       )
     ).toEqual(['g', 'trip'])
-    expect(panelEl.textContent).not.toContain('Ghost')
-    expect(panelEl.innerHTML).not.toContain('Ghost')
-    expect(panelEl.innerHTML).not.toContain('ghost')
+    for (const name of ['Ghost', 'ghost', 'Vault', 'vault']) {
+      expect(panelEl.textContent).not.toContain(name)
+      expect(panelEl.innerHTML).not.toContain(name)
+    }
     // Research counts and holds its regular member alone: the private one is no row of its fold.
     expect(header().getAttribute('aria-description')).toBe('Tab group, 1 tab')
     expect(header().querySelector('[data-testid="group-row-count"]')?.textContent).toBe('1')
@@ -516,7 +524,8 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
       ...document.querySelectorAll<HTMLElement>('[data-tab-list="regular"] > [data-tab-id]')
     ].map((el) => el.dataset.tabId)
     expect(loose).toEqual(['home', 'gamma'])
-    for (const id of ['g1', 'g2', 'p1', 't1']) expect(q(`[data-tab-id="${id}"]`)).toBeNull()
+    for (const id of ['g1', 'g2', 'v1', 'v2', 'p1', 't1'])
+      expect(q(`[data-tab-id="${id}"]`)).toBeNull()
 
     // The desktop's regular spaces hold no private tab, so the predicate touches nothing
     // there; in a PRIVATE window – private mode itself – the window's own groups stand whole,
