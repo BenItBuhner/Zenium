@@ -27,12 +27,13 @@ export function serialiseMenu(
         icon: item.icon ?? null,
         submenu: item.submenu ? serialise(item.submenu) : null,
         // Only an icon-row item carries a glyph, only a bound action a chord, only an empty
-        // state's sentence the note, only a destructive item the danger; every other descriptor
-        // keeps its shape.
+        // state's sentence the note, only a destructive item the danger, only a field-mounting
+        // item the kept keyboard; every other descriptor keeps its shape.
         ...(item.glyph ? { glyph: item.glyph } : {}),
         ...(item.hint ? { hint: item.hint } : {}),
         ...(item.note ? { note: true } : {}),
-        ...(item.danger ? { danger: true } : {})
+        ...(item.danger ? { danger: true } : {}),
+        ...(item.keepsKeyboard ? { keepsKeyboard: true } : {})
       }
     })
   return { items: serialise(items), handlers }

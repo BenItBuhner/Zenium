@@ -19,8 +19,8 @@ import { createStore, type Store } from '@renderer/lib/store'
 import { browserStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
+import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
-import { GroupBadge } from './GroupCard'
 import { useFlip } from './useFlip'
 import type { GroupStripPresence } from './useGroupStrip'
 
@@ -423,7 +423,7 @@ export const GroupStrip = memo(function GroupStrip({
           }
         >
           <span ref={showFaceRef} className="zen-group-chip-face">
-            <GroupBadge folder={group} />
+            <GroupGlyph folder={group} />
           </span>
         </button>
         <div
@@ -511,7 +511,7 @@ function GhostLayer({
     >
       <span className="zen-group-chip zen-group-chip-exit" style={{ left: ghosts.show }}>
         <span className="zen-group-chip-face">
-          <GroupBadge folder={ghosts.group} />
+          <GroupGlyph folder={ghosts.group} />
         </span>
       </span>
       <div

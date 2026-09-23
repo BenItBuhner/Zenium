@@ -39,7 +39,7 @@ import { isEmptyTabUrl } from '@shared/url'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
-import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
+import { DEFAULT_FOLDER_ICON } from '@renderer/lib/groups'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -286,7 +286,8 @@ function apply(browser: Browser, spec: string): void {
       install: null,
       extensionsSheetOpen: false,
       sendTabSheet: null,
-      barEditorOpen: false
+      barEditorOpen: false,
+      bookmarkAllTabs: null
     })
     abortPull()
     cancelVoiceSearch()
@@ -986,6 +987,19 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       if (then.length === 0) afterFrames(2, finish)
       else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
     })
+  } else if (target.kind === 'sheet' && target.sheet === 'bookmark-all-tabs') {
+    // The app menu's "Bookmark All Tabs…", through the core as the item goes: the core answers
+    // with `bookmark.allTabs`, the chrome captures the page and raises the request; the state
+    // is reached once the request is in the store and the sheet has had its frames.
+    seed()
+    const then = target.then ?? []
+    const unsubscribe = uiStore.subscribe(() => {
+      if (!uiStore.get().bookmarkAllTabs) return
+      unsubscribe()
+      if (then.length === 0) afterFrames(2, finish)
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    })
+    void run('bookmark.allTabs', undefined)
   } else if (target.kind === 'sheet') {
     // The Extensions sheet lists what the seed put in the state, so the seed goes first; the
     // sheet mounts on the next render and slides in, and the steps wait for it to settle. The

@@ -1010,7 +1010,7 @@
       },
       "timeout": 1200,
       "estimate": 10,
-      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own). The estimate carries the group fold's four scenes (about a minute of the profile) and the group leave's two with their off-record steps (about another)."
+      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own). The estimate carries the group fold's four scenes (about a minute of the profile) and the group leave's three – the search, the close, the drag-out – with their off-record steps (about another minute and a half)."
     },
     {
       "id": "menu-perf",
@@ -1046,6 +1046,16 @@
       "dir": "private-lock-demo",
       "timeout": 1200,
       "estimate": 7
+    },
+    {
+      "id": "primitives-5",
+      "class": "Primitives5Demo",
+      "shard": "webview",
+      "mirrors": "android-primitives-5-demo.yml",
+      "dir": "primitives-5-demo",
+      "timeout": 1200,
+      "estimate": 8,
+      "note": "Seeds 43-48 on a device. The veil (47) needs a private surface, so the multi-profile WebView: the reason it sits here, not on a phone shard. Sets and clears its own device PIN."
     },
     {
       "id": "media",
@@ -1123,7 +1133,7 @@
       "shard": "tablet",
       "mirrors": "android-tab-groups-demo.yml:tablet",
       "dir": "tablet-groups-demo",
-      "estimate": 2
+      "estimate": 2.5
     },
     {
       "id": "tablet-private",

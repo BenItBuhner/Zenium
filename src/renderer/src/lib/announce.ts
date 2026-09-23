@@ -6,11 +6,12 @@ import { browserStore } from './ui'
 
 /*
  * What a screen reader is told about without the keyboard moving (v2 draft §9.30; parity row
- * a11y-27): the tab that came to the front, a download starting and finishing, the find bar's
- * count, a zoom step, a tab muted or unmuted. All of it goes through the chrome's one
- * `role="status"` region (`components/Announcer.tsx`) – polite, so it waits for what is being
- * read, and atomic, so a message is read whole. The words are composed here, as pure functions
- * of the state, so they can be tested; the region only renders what `announce` was given.
+ * a11y-27): the tab that came to the front, a download starting and finishing, a zoom step, a
+ * tab muted or unmuted. All of it goes through the chrome's one `role="status"` region
+ * (`components/Announcer.tsx`) – polite, so it waits for what is being read, and atomic, so a
+ * message is read whole. The words are composed here, as pure functions of the state, so they
+ * can be tested; the region only renders what `announce` was given. The find bar's count has a
+ * status region of its own in the bar (a11y-35), with `findAnnouncement`'s words as its text.
  */
 
 export interface Announcement {

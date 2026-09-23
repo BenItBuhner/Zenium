@@ -460,4 +460,48 @@ describe('BottomSheet on the recede chassis', () => {
     expect(onDismissed).toHaveBeenCalledTimes(1)
     expect(frames.scheduled).toBe(false)
   })
+
+  /**
+   * The handle's `dismiss` says `then` is a function; a consumer that binds it straight to a
+   * button (`onClick={close}`) hands it the click's event at run time. What a caller can do, the
+   * handle takes: `close` as such a consumer holds it.
+   */
+  const boundToAClick = (ref: { current: BottomSheetHandle | null }): (() => void) => {
+    const close = ref.current!.dismiss as unknown as (then: unknown) => void
+    return () => close(new MouseEvent('click', { bubbles: true }))
+  }
+
+  it('dismiss(mouseEvent) – a consumer binding close straight to onClick – lands without throwing and still runs onDismissed (#145)', async () => {
+    const ref = createRef<BottomSheetHandle>()
+    const onDismissed = vi.fn()
+    render(
+      <BottomSheet ref={ref} onDismissed={onDismissed}>
+        rows
+      </BottomSheet>
+    )
+    await settle()
+    frames.run(60)
+    expect(recedeVar()).toBe('1.0000')
+
+    // Cancel tapped: the sheet slides away and lands – the event is not for calling there.
+    act(boundToAClick(ref))
+    expect(() => {
+      for (let i = 0; i < 60 && frames.scheduled; i++) act(() => frames.run(1))
+    }).not.toThrow()
+    expect(onDismissed).toHaveBeenCalledTimes(1)
+    expect(recedeVar()).toBe('0.0000')
+  })
+
+  it('dismiss(mouseEvent) before the sheet has come up is simply gone too, its landing reported (#145)', () => {
+    const ref = createRef<BottomSheetHandle>()
+    const onDismissed = vi.fn()
+    render(
+      <BottomSheet ref={ref} onDismissed={onDismissed}>
+        rows
+      </BottomSheet>
+    )
+    expect(sheets()[0].style.opacity).toBe('0')
+    expect(() => act(boundToAClick(ref))).not.toThrow()
+    expect(onDismissed).toHaveBeenCalledTimes(1)
+  })
 })

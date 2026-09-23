@@ -9,14 +9,13 @@ import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { groupCardLabel } from '@renderer/lib/overviewLabels'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
 import { departStore } from './departureStore'
 import { groupHeaderHeight } from './groupCardHeader'
 import { liftStore } from './useCardLift'
 import { useLongPress } from './useLongPress'
 
-/** The icon folders get by default; a group made on the phone shows its colour instead. */
-export const DEFAULT_FOLDER_ICON = '📁'
 /** Inset of the member cards inside the group card: its radius is the card radius plus this. */
 export const GROUP_PAD = 6
 
@@ -195,6 +194,13 @@ export function GroupCard({
       // Out of the grid's flow, where it stood: the card its last member became takes its cell
       // and glides there once, the cells below wait for the height as they would for any group,
       // and the card shrinks away under the loose card (which is positioned, and paints over it).
+      // `offsetTop` is a layout distance – no transform in it, no scroll either – read against
+      // the nearest positioned ancestor, and `top` places the shell against the same box: the
+      // grid the shell is a child of is positioned for it (`TabOverview`), so the box stands
+      // where the card stood and scrolls with the cells. Against an ancestor outside the
+      // scroller the shell would land `scrollTop` px too low, and the tracker would hold only
+      // the cells drawn under that lower box: the row beneath the group gliding at once, the
+      // rows further down after the settle – two waves (#355's finding, seed 49).
       const { offsetLeft, offsetTop, offsetWidth } = shell
       shell.style.position = 'absolute'
       shell.style.left = `${offsetLeft}px`
@@ -259,7 +265,7 @@ export function GroupCard({
         }}
         {...press.handlers}
       >
-        <GroupBadge folder={folder} />
+        <GroupGlyph folder={folder} />
         {renaming ? (
           <GroupRename folder={folder} />
         ) : (
@@ -276,7 +282,12 @@ export function GroupCard({
             <Favicon key={tab.id} tab={tab} size={14} />
           ))}
         </span>
-        <span className="text-[12px] tabular-nums text-[var(--zen-muted)]">{count}</span>
+        {/* The count is the aside in both states (§9.36; #360's verdict): the tablet row's 13
+            tabular at 69%, never a badge – a pill on the tinted header would be two fills
+            stacked, and a header carrying the group's dot never carries a badge too (§9.19). */}
+        <span className="zen-group-row-count" data-testid="group-card-count">
+          {count}
+        </span>
         <ChevronDown
           className="h-4 w-4 shrink-0 opacity-60 transition-transform duration-200 motion-reduce:transition-none"
           style={{ transform: collapsed ? 'rotate(-90deg)' : 'none' }}
@@ -295,20 +306,6 @@ export function GroupCard({
         {tabs.map(card)}
       </div>
     </div>
-  )
-}
-
-/** What stands for the group in its header: its own icon, or a dot of its colour. */
-export function GroupBadge({ folder }: { folder: Folder }): JSX.Element {
-  return folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? (
-    // A folder given its own icon on the desktop keeps it; the colour still tints the card. The
-    // icon is a glyph, not text: it holds its 14 in the 16 box at every system font size
-    // (`.zen-group-badge`, A11Y-05 §4), where the WebView would zoom a character out of the box.
-    <span className="zen-group-badge w-4 shrink-0 text-center leading-none" aria-hidden>
-      {folder.icon}
-    </span>
-  ) : (
-    <span className="zen-group-dot h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden />
   )
 }
 
