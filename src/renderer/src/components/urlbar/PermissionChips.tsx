@@ -27,7 +27,8 @@ import { PillChip } from './PillChip'
  * ink and the window fill under the pointer or with its popover up), its 16 px glyph at the
  * row's stroke. The tier (`pillChipTiers.ts`) never hides the in-use chip and drops the blocked
  * icons first; a blocked icon whose popover is up stays put until it closes (§9.20). The name
- * is the tooltip for now (`title`); it moves to the chrome tooltip with the tooltip primitive.
+ * is the chip's chrome tooltip too (`PillChip`'s `title` → `data-tooltip`, lib/tooltip.ts,
+ * a11y-26): on hover and on keyboard focus, never a native title.
  */
 
 const CAPTURE_GLYPHS = { camera: Camera, microphone: Mic, display: ScreenShare } as const

@@ -409,7 +409,9 @@ describe('desktop pill (NavRow)', () => {
       const chip = el.querySelector<HTMLElement>('[data-capture-chip]')!
       expectChip(chip, 'This page is using your camera and microphone')
       expect(chip.getAttribute('data-capture-chip')).toBe('camera')
-      expect(chip.title).toBe('This page is using your camera and microphone')
+      // The chrome tooltip (a11y-26, §9.31) carries the name; never a native title.
+      expect(chip.getAttribute('data-tooltip')).toBe('This page is using your camera and microphone')
+      expect(chip.hasAttribute('title')).toBe(false)
       expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
       expect(chip.getAttribute('aria-expanded')).toBe('false')
       // The shield's chassis (§9.3's 28 px icon button in the window family), its glyph at the
@@ -455,6 +457,8 @@ describe('desktop pill (NavRow)', () => {
       expect(labels(icons)).toEqual(['Camera blocked', 'Notifications blocked'])
       for (const icon of icons) {
         expectChip(icon, icon.getAttribute('aria-label')!)
+        expect(icon.getAttribute('data-tooltip')).toBe(icon.getAttribute('aria-label'))
+        expect(icon.hasAttribute('title')).toBe(false)
         expect(icon.getAttribute('aria-haspopup')).toBe('dialog')
         expect(icon.classList.contains('zen-v2-blocked-chip')).toBe(true)
         expect(icon.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
