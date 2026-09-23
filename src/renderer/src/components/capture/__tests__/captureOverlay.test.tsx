@@ -415,6 +415,53 @@ describe('the result card (capture-21)', () => {
     expect(el.querySelector('[data-capture-result]')).not.toBeNull()
   })
 
+  it('the Save toast is one line (§9.33): the name is cut in the middle to what the line measures, the extension kept, the whole name its title; the action slot is empty', async () => {
+    // The line measured in the toast's font: 7.7 px a character on a 292 px line.
+    const context = { font: '', measureText: (s: string) => ({ width: s.length * 7.7 }) }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      context as unknown as CanvasRenderingContext2D
+    )
+    const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-message-text') ? 292 : 0
+      }
+    })
+    try {
+      vi.mocked(cmd).mockImplementation(async (name: string) =>
+        name === 'capture.save'
+          ? { path: '/home/b/Downloads/Screenshot 2026-09-23 at 14.05.09.png' }
+          : null
+      )
+      const el = await captured()
+      click(el.querySelector('[data-capture-save]'))
+      await settle()
+      const toast = el.querySelector<HTMLElement>('[data-capture-toast]')!
+      const text = toast.querySelector<HTMLElement>('.zen-message-text')!
+      expect(text.textContent).toBe('Saved Screenshot 2026-09…14.05.09.png')
+      expect(text.title).toBe('Saved Screenshot 2026-09-23 at 14.05.09.png')
+      // No action yet: the slot is the message card's `data-action` form, unfilled.
+      expect(toast.hasAttribute('data-action')).toBe(false)
+      expect(toast.querySelector('button')).toBeNull()
+    } finally {
+      if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
+    }
+  })
+
+  it('a short toast ("Copied") carries no title and no cut', async () => {
+    vi.mocked(cmd).mockImplementation(async (name: string) =>
+      name === 'capture.copy' ? true : null
+    )
+    const el = await captured()
+    click(el.querySelector('[data-capture-copy]'))
+    await settle()
+    const text = el.querySelector<HTMLElement>('[data-capture-toast] .zen-message-text')!
+    expect(text.textContent).toBe('Copied')
+    expect(text.hasAttribute('title')).toBe(false)
+  })
+
   it('a save the engine could not make is an error toast', async () => {
     vi.mocked(cmd).mockImplementation(async () => null)
     const el = await captured()

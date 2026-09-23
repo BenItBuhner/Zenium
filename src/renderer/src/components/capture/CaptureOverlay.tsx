@@ -12,6 +12,7 @@ import {
   captureReducer,
   closeCapture,
   fileNameOf,
+  fitName,
   fitPicture,
   labelPlacement,
   marqueeOf,
@@ -97,7 +98,7 @@ function CaptureOverlay({
   const toolbarRef = useRef<HTMLDivElement>(null)
   const labelRef = useRef<HTMLDivElement>(null)
   const [phase, dispatch] = useReducer(captureReducer, SELECTING)
-  const [toast, setToast] = useState<{ id: number; text: string; error: boolean } | null>(null)
+  const [toast, setToast] = useState<Toast | null>(null)
   const [busy, setBusy] = useState<'copy' | 'save' | null>(null)
   const gone = useRef(false)
 
@@ -247,9 +248,9 @@ function CaptureOverlay({
     return () => clearTimeout(timer)
   }, [toast])
   const toastSeq = useRef(0)
-  const say = (text: string, error = false): void => {
+  const say = (text: string, more: Omit<Toast, 'id' | 'text'> = {}): void => {
     if (gone.current) return
-    setToast({ id: ++toastSeq.current, text, error })
+    setToast({ id: ++toastSeq.current, text, ...more })
   }
 
   const toRoot = (e: ReactPointerEvent): Point => {
@@ -280,9 +281,10 @@ function CaptureOverlay({
     setBusy('copy')
     try {
       const ok = await cmd('capture.copy', { dataUrl: result.dataUrl })
-      say(ok ? 'Copied' : 'Couldn’t copy the picture', !ok)
+      if (ok) say('Copied')
+      else say('Couldn’t copy the picture', { error: true })
     } catch {
-      say('Couldn’t copy the picture', true)
+      say('Couldn’t copy the picture', { error: true })
     } finally {
       if (!gone.current) setBusy(null)
     }
@@ -292,10 +294,10 @@ function CaptureOverlay({
     setBusy('save')
     try {
       const saved = await cmd('capture.save', { dataUrl: result.dataUrl, tabId })
-      if (saved) say(`Saved ${fileNameOf(saved.path)}`)
-      else say('Couldn’t save the picture', true)
+      if (saved) say('Saved', { name: fileNameOf(saved.path) })
+      else say('Couldn’t save the picture', { error: true })
     } catch {
-      say('Couldn’t save the picture', true)
+      say('Couldn’t save the picture', { error: true })
     } finally {
       if (!gone.current) setBusy(null)
     }
@@ -426,14 +428,67 @@ function CaptureOverlay({
             className="zen-message zen-message-toast zen-capture-toast"
             data-surface="page"
             data-kind={toast.error ? 'error' : 'info'}
+            data-action={toast.action ? '' : undefined}
             role="status"
             data-capture-toast
           >
-            <span className="zen-message-text">{toast.text}</span>
+            <ToastText text={toast.text} name={toast.name ?? null} />
+            {toast.action && (
+              <button
+                type="button"
+                className="zen-message-button"
+                onClick={toast.action.run}
+                data-capture-toast-action
+              >
+                {toast.action.label}
+              </button>
+            )}
           </div>
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * What a toast says (§9.33): its words, a file's name to fit after them on the one line
+ * (`ToastText`), the error ink, and the slot for one action at its trailing edge – empty for
+ * now; the shared message card's `data-action` form is what fills it.
+ */
+interface Toast {
+  id: number
+  text: string
+  name?: string
+  error?: boolean
+  action?: { label: string; run: () => void }
+}
+
+/**
+ * The toast's words on one line. A file's name after them is cut to what the line has room
+ * for (`fitName`, `middleEllipsis`: the middle to an ellipsis, the extension and the end of
+ * the stem kept – "Saved Screenshot 2026-09…05.21.40.png") by measuring the whole line in the
+ * text's own font on a canvas, before the first paint; the whole name is the span's title.
+ * Where nothing can measure (no canvas), the name stands as it is and the line clips.
+ */
+function ToastText({ text, name }: { text: string; name: string | null }): JSX.Element {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [shown, setShown] = useState(name)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || name === null) return
+    const context = document.createElement('canvas').getContext('2d')
+    if (!context) return
+    const style = getComputedStyle(el)
+    context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+    // One pixel in hand for the difference between the canvas's line and the layout's.
+    const room = el.clientWidth - 1
+    setShown(fitName(name, (cut) => context.measureText(`${text} ${cut}`).width <= room))
+  }, [text, name])
+  const whole = name === null ? text : `${text} ${name}`
+  return (
+    <span ref={ref} className="zen-message-text" title={shown !== name ? whole : undefined}>
+      {name === null ? text : `${text} ${shown}`}
+    </span>
   )
 }
 
