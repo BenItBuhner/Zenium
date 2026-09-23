@@ -38,7 +38,6 @@ import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
 import { DeviceChooserLayer } from './devices/DeviceChooserDialog'
 import { ShareLayer } from './share/SharePopover'
 import { FolderDeleteDialog } from './sidebar/FolderDeleteDialog'
-import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { NameWindowDialog } from './windowName/NameWindowDialog'
 import { ZoomBubble } from './zoom/ZoomBubble'
 import { ReaderPreferencesPanel } from './reader/ReaderPreferencesPanel'
@@ -97,7 +96,6 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
-  const siteData = uiStore.use((s) => s.siteDataConfirm)
   const folderDelete = uiStore.use((s) => s.folderDeleteConfirm)
   const phone = useViewport().formFactor === 'phone'
   const popups = uiStore.use((s) => s.blockedPopupsPanel)
@@ -116,13 +114,6 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       />
       {shortcut && (
         <NewTabShortcutDialog key={shortcut.id ?? 'new'} state={state} request={shortcut} />
-      )}
-      {siteData && (
-        <SiteDataConfirmDialog
-          key={`${siteData.tabId}:${siteData.kind}`}
-          state={state}
-          request={siteData}
-        />
       )}
       {folderDelete && (
         <FolderDeleteDialog key={folderDelete.folderId} state={state} request={folderDelete} />
