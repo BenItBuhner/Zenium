@@ -208,6 +208,14 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'bookmark.toggleBar'
   },
   { id: 'history', label: 'Show History', keywords: ['history', 'recent'], action: 'history.open' },
+  // Chrome's "Delete browsing data" action chip (its Ctrl+Shift+Delete dialog).
+  {
+    id: 'clear-browsing-data',
+    label: 'Delete Browsing Data',
+    keywords: ['delete', 'clear', 'browsing data', 'history', 'cookies', 'cache'],
+    action: 'privacy.clearBrowsingData',
+    layouts: SIDEBAR_LAYOUTS
+  },
   {
     id: 'downloads',
     label: 'Show Downloads',

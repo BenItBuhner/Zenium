@@ -173,6 +173,50 @@ describe('Stop', () => {
   })
 })
 
+describe('Delete browsing data', () => {
+  it('is Ctrl+Shift+Delete in both presets (Cmd+Shift+Delete on macOS): Chrome’s chord and Firefox’s', () => {
+    for (const preset of ['zen', 'chrome'] as const) {
+      for (const platform of ['linux', 'win32'] as Platform[]) {
+        expect(key('key_clearBrowsingData', platform, preset)).toEqual(
+          ctrl('Delete', { shift: true })
+        )
+        expect(
+          matchShortcut(defaultShortcuts(platform, preset), {
+            key: 'Delete',
+            control: true,
+            alt: false,
+            shift: true,
+            meta: false
+          })?.action
+        ).toBe('privacy.clearBrowsingData')
+      }
+      expect(key('key_clearBrowsingData', 'darwin', preset)).toEqual(cmd('Delete', { shift: true }))
+      expect(
+        matchShortcut(defaultShortcuts('darwin', preset), {
+          key: 'Delete',
+          control: false,
+          alt: false,
+          shift: true,
+          meta: true
+        })?.action
+      ).toBe('privacy.clearBrowsingData')
+    }
+  })
+
+  it('is listed under History & Bookmarks with the dialog’s name, and is no collision with Chrome’s row', () => {
+    const row = defaultShortcuts('linux').find((s) => s.id === 'key_clearBrowsingData')
+    expect(row).toMatchObject({ group: 'historyAndBookmarks', label: 'Delete Browsing Data…' })
+    expect(row?.hidden).toBeUndefined()
+    for (const platform of PLATFORMS) {
+      for (const preset of ['zen', 'chrome'] as const) {
+        const found = collisions(defaultShortcuts(platform, preset), chromeReference(platform))
+        expect(found.filter((c) => c.shortcut.id === 'key_clearBrowsingData')).toEqual([])
+      }
+    }
+    expect(toAccelerator(ctrl('Delete', { shift: true }))).toBe('Ctrl+Shift+Delete')
+  })
+})
+
 describe('the Chrome preset', () => {
   const chrome = (id: string, platform: Platform = 'linux'): KeyBinding | null =>
     key(id, platform, 'chrome')

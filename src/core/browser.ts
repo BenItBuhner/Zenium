@@ -206,6 +206,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'webapp.install',
   'translate.selection',
   'import.open',
+  'clearBrowsingData.open',
   'capture.start'
 ])
 

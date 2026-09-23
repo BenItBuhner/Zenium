@@ -2911,6 +2911,14 @@ export class Menus {
       action: 'addons.open',
       click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
     })
+    // Chrome's Delete browsing data (Ctrl+Shift+Delete), a top-level row since Chrome moved it out
+    // of More tools: the library group's last row on the sidebar layouts, the dialog the History
+    // page's button and Settings › Privacy open. The phone's form is the Settings sheet.
+    const deleteBrowsingData = sidebar({
+      label: 'Delete Browsing Data…',
+      action: 'privacy.clearBrowsingData',
+      click: () => this.browser.actions.run('privacy.clearBrowsingData', { sourceTabId: null, win })
+    })
     // The desktop's alone: Zen's compact mode is the hover-revealed sidebar, which a finger
     // cannot reveal; the tablet's sidebar collapses to its rail from the toolbar.
     const compactMode = desktop({
@@ -3161,6 +3169,7 @@ export class Menus {
         downloads,
         ...passwords,
         ...addons,
+        ...deleteBrowsingData,
         separator,
         // The page's actions, in the brief's order: find, zoom, print, save, share and
         // translate, then the reader's; the long tail is the app group's More Tools. Web

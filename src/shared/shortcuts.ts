@@ -1069,6 +1069,14 @@ const DEFS: Def[] = [
     ...both({ key: 'h', mods: ACCEL, perPlatform: { darwin: { key: 'y', mods: META } } })
   },
   {
+    // Chrome's and Firefox's one chord for it (Firefox's `key_sanitize`, "Clear recent history").
+    id: 'key_clearBrowsingData',
+    action: 'privacy.clearBrowsingData',
+    group: 'historyAndBookmarks',
+    label: 'Delete Browsing Data…',
+    ...both({ key: 'Delete', mods: ACCEL_SHIFT })
+  },
+  {
     id: 'key_openDownloads',
     action: 'downloads.open',
     group: 'historyAndBookmarks',

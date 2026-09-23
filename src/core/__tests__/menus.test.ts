@@ -432,6 +432,7 @@ const DESKTOP_APP_MENU = [
   'Downloads',
   'Passwords',
   'Add-ons and Themes',
+  'Delete Browsing Data…',
   '-',
   'Find in Page…',
   'Zoom',
@@ -502,17 +503,18 @@ describe('the app menu', () => {
   it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {
     const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
     // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen, plus
-    // Edge's Web Capture… row in the page group (the desktop's overlay alone).
+    // Edge's Web Capture… row in the page group (the desktop's overlay alone) and Chrome's
+    // Delete Browsing Data… row in the library group.
     const bare = harness(DESKTOP)
     appMenu(bare)
     expect(rows(bare)).toEqual(DESKTOP_APP_MENU_TOP.filter((l) => l !== '-'))
-    expect(rows(bare)).toHaveLength(19)
+    expect(rows(bare)).toHaveLength(20)
     expect(separators(bare.shown())).toBe(3)
-    // A build with a translate host carries Translate Page… (the Linux build: 20), one with a
-    // speech engine Listen to This Page too: 21, "about eighteen", every row Title Case (§9.1).
+    // A build with a translate host carries Translate Page… (the Linux build: 21), one with a
+    // speech engine Listen to This Page too: 22, "about eighteen", every row Title Case (§9.1).
     const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
     appMenu(full)
-    expect(rows(full)).toHaveLength(21)
+    expect(rows(full)).toHaveLength(22)
     expect(separators(full.shown())).toBe(3)
     for (const row of rows(full)) expect(row).toMatch(/^[A-Z]/)
     // With the media hub folded the Now Playing… row and its separator lead: four at most.
@@ -520,8 +522,24 @@ describe('the app menu', () => {
       { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
     ]
     appMenuFolded(full)
-    expect(rows(full)).toHaveLength(22)
+    expect(rows(full)).toHaveLength(23)
     expect(separators(full.shown())).toBe(4)
+  })
+
+  it('carries Chrome’s Delete Browsing Data… row at the top level, closing the library group with its chord, and runs the dialog’s request from it', () => {
+    const h = harness(DESKTOP)
+    const menu = appMenu(h)
+    expect(menu.indexOf('Delete Browsing Data…')).toBe(menu.indexOf('Add-ons and Themes') + 1)
+    expect(menu[menu.indexOf('Delete Browsing Data…') + 1]).toBe('-')
+    const row = item(h.shown(), 'Delete Browsing Data…')
+    expect(row.action).toBe('privacy.clearBrowsingData')
+    expect(row.accelerator).toBe('Ctrl+Shift+Delete')
+    h.sent.length = 0
+    row.click?.()
+    expect(h.sent).toEqual(['clearBrowsingData.open'])
+    // The tablet's menu has the row too; the phone's form is the Settings sheet.
+    expect(appMenu(harness(DESKTOP, 'tablet'))).toContain('Delete Browsing Data…')
+    expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Delete Browsing Data…')
   })
 
   it('loses nothing the flat menu could do: every one of its thirty-two rows, on a host with every capability, is a row or a submenu row now', () => {
@@ -582,7 +600,8 @@ describe('the app menu', () => {
     expect(history.at(-1)!.click).toBeUndefined()
     // With a tab closed the block is Chrome's: the header, the entries, Restore All, Clear List
     // – and every one of the flat menu's thirty-two rows is somewhere in the tree, the top level
-    // still about Firefox's count (twenty rows here plus Web Capture…, three separators).
+    // still about Firefox's count (twenty rows here plus Web Capture… and Delete Browsing
+    // Data…, three separators).
     const closed = h.browser.tabs.createTab(
       { url: 'https://closed.example/', active: false },
       h.win
@@ -591,7 +610,7 @@ describe('the app menu', () => {
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
     for (const label of before) expect(everywhere, label).toContain(label)
-    expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(21)
+    expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(22)
     expect(separators(h.shown())).toBe(3)
     expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
       'Show Full History',

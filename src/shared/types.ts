@@ -1990,6 +1990,11 @@ export type ShortcutAction =
   | 'bookmark.allTabs'
   | 'bookmark.toggleBar'
   | 'history.sidebar'
+  /**
+   * Chrome's Delete browsing data (Ctrl+Shift+Delete, Firefox's Clear Recent History chord): the
+   * chrome opens the dialog (`siteControls/ClearBrowsingDataDialog`) over the page.
+   */
+  | 'privacy.clearBrowsingData'
   | 'downloads.open'
   | 'devtools.toggle'
   | 'devtools.inspector'
@@ -5163,6 +5168,11 @@ export interface Events {
    * chrome opens Settings on its Import category with the import dialog up over it.
    */
   'import.open': void
+  /**
+   * Ctrl+Shift+Delete or the app menu's Delete Browsing Data… row: the chrome opens the Delete
+   * browsing data dialog (`siteControls/ClearBrowsingDataDialog`) over whatever is up.
+   */
+  'clearBrowsingData.open': void
   /** The PDF viewer document in a tab reported where it stands (`shared/pdfViewerProtocol.ts`). */
   'pdf.changed': { tabId: string; report: PdfViewerReport }
   /**

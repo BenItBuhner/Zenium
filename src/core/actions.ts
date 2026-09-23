@@ -306,6 +306,11 @@ export class Actions {
       case 'downloads.open':
         this.browser.pages.open('downloads', undefined, win)
         return
+      // Chrome's Delete browsing data: the dialog is the chrome's (`ClearBrowsingDataDialog`, the
+      // History page's and Settings › Privacy's entry too); the core only asks for it.
+      case 'privacy.clearBrowsingData':
+        this.browser.emit('clearBrowsingData.open', undefined, win)
+        return
       case 'settings.open':
         this.browser.pages.open('settings', undefined, win)
         return
