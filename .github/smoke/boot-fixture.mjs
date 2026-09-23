@@ -33,6 +33,14 @@ export const BOOT_PAGES = {
 export const FIND_WORD = 'loopback'
 export const FIND_MATCHES = 2
 
+/**
+ * The address that never answers: the server takes the request and writes nothing, so a
+ * navigation to it hangs before its document commits – the shape of load Escape, the Stop button
+ * and ⌘. have to end (BUG-009). It is a path, not a page: nothing is ever served under it, and
+ * `close()` ends the held connections.
+ */
+export const HANGING_PATH = '/never-answers.html'
+
 const html = (title, body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head>` +
   `<body style="margin:0;font:18px/1.5 sans-serif;color:#222">` +
@@ -88,14 +96,27 @@ export function isWebPage(url) {
  * Starts the server on 127.0.0.1 (an ephemeral port) and names the pages: `first`, `second`
  * and `handoff`, each `{ path, title, url }`, plus `origin` and `port`. `requests` lists what
  * was fetched (path, Host header, Sec-Fetch-Dest) so a run can show the pages came from here;
- * `close()` stops the server.
+ * `hanging` is the address that never answers ({@link HANGING_PATH}: `{ path, url }`) with
+ * `held()` the number of its requests the server is sitting on; `close()` stops the server, the
+ * held connections included.
  */
 export function startBootFixture() {
   const requests = []
+  const held = []
   let pages = null
   const server = http.createServer((req, res) => {
     const { pathname } = new URL(req.url, 'http://fixture')
     requests.push({ path: pathname, host: req.headers.host, dest: req.headers['sec-fetch-dest'] })
+    if (pathname === HANGING_PATH) {
+      // Accepted and never answered: no status line, no headers, no bytes, until the server
+      // closes or the client gives up (which a stopped navigation does: the socket goes).
+      held.push(res)
+      res.once('close', () => {
+        const at = held.indexOf(res)
+        if (at >= 0) held.splice(at, 1)
+      })
+      return
+    }
     res.setHeader('cache-control', 'no-store')
     if (pathname === '/favicon.ico') {
       res.writeHead(204)
@@ -121,10 +142,13 @@ export function startBootFixture() {
         port,
         origin,
         ...bootPageUrls(origin),
+        hanging: { path: HANGING_PATH, url: `${origin}${HANGING_PATH}` },
+        held: () => held.length,
         requests,
         close: () =>
           new Promise((done) => {
             server.closeAllConnections()
+            held.length = 0
             server.close(() => done())
           })
       })
