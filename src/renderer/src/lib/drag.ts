@@ -672,11 +672,14 @@ function resolve(x: number, y: number, s: Session): DropTarget {
   }
   if (under?.closest('[data-tear-zone]')) return tearOff(s)
   // A tab of the strip pulled down past the band (§9.37: 16 past it) leaves the window – over
-  // the toolbar row, the bookmarks bar, whatever lies there that is no target of its own.
+  // the toolbar row, the bookmarks bar, whatever lies there that is no target of its own. Not
+  // over the rail: that is the window's chrome still, its zones on offer, and a release there
+  // sends the row home like the sidebar's empty space does.
   if (
     s.band &&
     s.band.contains(s.scroller) &&
-    y > s.band.getBoundingClientRect().bottom + STRIP_TEAR_PAST
+    y > s.band.getBoundingClientRect().bottom + STRIP_TEAR_PAST &&
+    !inSidebar(s, x, y)
   )
     return tearOff(s)
   return { kind: 'none' }
