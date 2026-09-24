@@ -6,6 +6,7 @@ import { ElectronPlatform } from './platform'
 import { APP_USER_MODEL_ID } from './platform/notifications'
 import { moveLegacyDirectory } from './platform/legacyPaths'
 import { applyResourceSwitches } from './platform/resources/startup'
+import { sandboxRequest } from './platform/sandbox'
 import { installShellTasks } from './platform/shellTasks'
 import { runStdioShim } from './agent/shim'
 import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
@@ -77,6 +78,15 @@ function main(): void {
 
   // Must run before `ready`.
   registerZenScheme()
+  // Electron's sandboxed renderer client for every renderer, `--no-sandbox` or not: the only one
+  // that runs service-worker preloads, so MV3 extension workers get Zenium's chrome.* layer in a
+  // container or harness that turns the OS sandbox off (`platform/sandbox.ts`). Before `ready`.
+  const sandbox = sandboxRequest({
+    platform: process.platform,
+    uid: typeof process.getuid === 'function' ? process.getuid() : null
+  })
+  if (sandbox.enable) app.enableSandbox()
+  else console.warn('[zen] sandbox:', sandbox.reason)
   // Renderer process limit, V8 heap caps, GPU profile … are Chromium command-line switches and
   // can only be applied before the browser process finishes starting up.
   applyResourceSwitches(app.getPath('userData'))
