@@ -455,6 +455,9 @@ export class Browser {
     this.inactiveTabs = new InactiveTabsService(this)
     this.history.onChange((kind) => {
       for (const w of this.allWindows()) w.send('history.changed', { kind })
+      // The mac History menu lists the pages last visited: a visit, a deletion or a clear
+      // redraws it (a no-op on hosts without a menu bar).
+      this.menus.scheduleApplicationMenu()
     })
     this.newTab = new NewTabService(this)
     this.governor = platform.createGovernor?.(this) ?? new NoopGovernor(this)
@@ -1608,6 +1611,17 @@ export class Browser {
     this.bookmarks.touch(id)
     // Same path as a typed URL so space routing applies; `background` is the new tab behind.
     this.submitUrlbar(node.url, newTab || background, tabId, background, win)
+  }
+
+  /**
+   * A row of the mac History menu's "Recently Visited" block (history-12): the page loads in
+   * `win`'s current tab, as Chrome's rows do, or in a new tab when the window has none. Not a
+   * typed navigation – the omnibox's typed counts are the URL bar's alone.
+   */
+  openRecentlyVisited(url: string, win: ZenWindow): void {
+    const active = this.tabs.activeTabFor(win)
+    if (active) this.tabs.navigate(active.id, url, { transition: 'link' })
+    else this.tabs.createTab({ url, active: true }, win)
   }
 
   /** Open every bookmark below the given nodes in new tabs (the first one becomes active). */
@@ -2766,6 +2780,9 @@ export class Browser {
       'tab.home': ({ tabId }, win) => this.goHome(tabId, win),
       'tab.back': ({ tabId }) => tabs.goBack(tabId),
       'tab.forward': ({ tabId }) => tabs.goForward(tabId),
+      'tab.backInNewTab': ({ tabId }, win) => void tabs.openNavigationStepInNewTab(tabId, -1, win),
+      'tab.forwardInNewTab': ({ tabId }, win) =>
+        void tabs.openNavigationStepInNewTab(tabId, 1, win),
       'tab.reload': ({ tabId, skipCache }) => tabs.reload(tabId, skipCache),
       'tab.stop': ({ tabId }) => tabs.stop(tabId),
       'tab.toggleMute': ({ tabId }) => tabs.toggleMute(tabId),
@@ -2780,9 +2797,6 @@ export class Browser {
       'tab.setIcon': ({ tabId, icon }) => tabs.setIcon(tabId, icon),
       'tab.addRoute': ({ tabId, spaceId }) => this.addRouteForTab(tabId, spaceId),
       'tab.altClick': ({ tabId }, win) => tabs.altClick(tabId, win),
-      'tab.backInNewTab': ({ tabId }, win) => void tabs.openNavigationStepInNewTab(tabId, -1, win),
-      'tab.forwardInNewTab': ({ tabId }, win) =>
-        void tabs.openNavigationStepInNewTab(tabId, 1, win),
       'tab.selectionContextMenu': ({ tabIds, ...anchor }, win) =>
         this.menus.showSelectionContextMenu(tabIds, win, anchor),
       'tab.duplicate': ({ tabId }, win) => void tabs.duplicate(tabId, win),

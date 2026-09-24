@@ -495,6 +495,111 @@ describe('the macOS menu bar', () => {
     })
   })
 
+  describe('the History menu lists Recently Visited (history-12, shortcuts-menus-157)', () => {
+    /** The history's visit notification (throttled) and then the bar's debounce. */
+    const HISTORY_SETTLE_MS = 500 + MENU_BAR_SETTLE_MS
+    const labels = (items: MenuItemTemplate[]): string[] =>
+      items.map((i) => (i.type === 'separator' ? '-' : (i.label ?? '')))
+    const visit = (h: Harness, url: string, title: string, at: number): void =>
+      h.browser.history.visit(url, title, title ? `data:image/png;base64,${title}` : null, { at })
+
+    it('lists the ten pages last visited, newest first, by title, behind a separator and Chrome’s header, between Recently Closed and Tabs from Other Devices; nothing while history is empty', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        expect(labels(submenu(last(h), 'History'))).not.toContain('Recently Visited')
+        const base = Date.now() - 60_000
+        for (let i = 1; i <= 12; i++) visit(h, `https://p${i}.test/`, `Page ${i}`, base + i * 1000)
+        // A page without a title is listed by its address.
+        visit(h, 'https://notitle.test/path', '', base + 500)
+        // A visit is not a model change: the history's own notification redraws the bar.
+        vi.advanceTimersByTime(HISTORY_SETTLE_MS)
+        const menu = submenu(last(h), 'History')
+        expect(labels(menu)).toEqual([
+          'Home',
+          'Back',
+          'Forward',
+          '-',
+          'Reopen Closed Tab',
+          'Recently Closed',
+          '-',
+          'Recently Visited',
+          'Page 12',
+          'Page 11',
+          'Page 10',
+          'Page 9',
+          'Page 8',
+          'Page 7',
+          'Page 6',
+          'Page 5',
+          'Page 4',
+          'Page 3',
+          '-',
+          'Show Full History'
+        ])
+        expect(item(menu, 'Recently Visited').enabled).toBe(false)
+        expect(item(menu, 'Page 12').click).toBeTypeOf('function')
+        // Each row carries its page's favicon (shortcuts-menus-157).
+        expect(item(menu, 'Page 12').icon).toBe('data:image/png;base64,Page 12')
+        // Only the newest ten are listed; older visits, and the untitled one, wait their turn
+        // (a deletion redraws the bar at once).
+        h.browser.history.deleteUrls(
+          Array.from({ length: 10 }, (_, i) => `https://p${i + 3}.test/`)
+        )
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(labels(submenu(last(h), 'History')).slice(7, 11)).toEqual([
+          'Recently Visited',
+          'Page 2',
+          'Page 1',
+          'notitle.test/path'
+        ])
+        // Clearing history takes the block, separator and header with it.
+        h.browser.history.clear()
+        vi.advanceTimersByTime(HISTORY_SETTLE_MS)
+        expect(labels(submenu(last(h), 'History'))).toEqual([
+          'Home',
+          'Back',
+          'Forward',
+          '-',
+          'Reopen Closed Tab',
+          'Recently Closed',
+          '-',
+          'Show Full History'
+        ])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a row loads its page in the front window’s current tab, as Chrome’s does, and in a window opened for it when every window is closed', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        const mine = h.browser.tabs.createTab({ url: 'https://mine.test/', active: true }, h.win)
+        visit(h, 'https://a.test/', 'A', Date.now() - 1000)
+        vi.advanceTimersByTime(HISTORY_SETTLE_MS)
+        const count = Object.keys(h.browser.state.model.tabs).length
+        item(submenu(last(h), 'History'), 'A').click?.()
+        // The same tab, navigated; no tab spent on it.
+        expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(mine.id)
+        expect(h.browser.tabs.tab(mine.id)?.url).toBe('https://a.test/')
+        expect(Object.keys(h.browser.state.model.tabs)).toHaveLength(count)
+        // The bar stands with every window closed: a row opens a window for its page.
+        for (const w of h.browser.allWindows()) {
+          w.onClosing()
+          w.onClosed()
+        }
+        expect(h.browser.allWindows()).toHaveLength(0)
+        item(submenu(last(h), 'History'), 'A').click?.()
+        expect(h.browser.allWindows()).toHaveLength(1)
+        const opened = h.browser.allWindows()[0]!
+        expect(h.browser.tabs.activeTabFor(opened)?.url).toBe('https://a.test/')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
   it('opens Help › Keyboard Shortcuts through the Settings page’s one route: the overlay on this host, at its Shortcuts section', () => {
     const h = harness()
     h.sent.length = 0

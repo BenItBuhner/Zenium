@@ -65,6 +65,9 @@ export { HELP_URL, ISSUES_URL }
 const BOOKMARK_MENU_MAX = 40
 const BOOKMARK_MENU_DEPTH = 3
 
+/** Pages the History menu's Recently Visited block lists (Chrome's `kVisitedCount`). */
+const RECENTLY_VISITED_MAX = 10
+
 /**
  * Actions the menu bar runs with every window closed (macOS keeps the app alive then): they
  * open one first. Everything else needs a window and is ignored without one.
@@ -297,6 +300,7 @@ export function applicationMenu(browser: Browser): Template {
       { type: 'separator' },
       { label: 'Reopen Closed Tab', action: 'tab.reopenClosed' },
       recentlyClosed(browser),
+      ...recentlyVisited(browser),
       ...tabsFromOtherDevices(browser),
       { type: 'separator' },
       { label: 'Show Full History', action: 'history.sidebar' }
@@ -412,7 +416,37 @@ function recentlyClosed(browser: Browser): MenuItemTemplate {
 }
 
 /**
- * Chrome's "Tabs From Other Devices" block of the mac History menu, after Recently Closed and
+ * Chrome's "Recently Visited" block of the mac History menu (history-12, Chrome's
+ * `HistoryMenuBridge` with its `kVisitedCount`): the ten pages last visited, newest first, each
+ * by its title (its address when it has none) with its favicon (shortcuts-menus-157), behind a
+ * separator and Chrome's disabled header,
+ * between Recently Closed and Tabs from Other Devices as Chrome orders them. A row loads its
+ * page in the front window's current tab, as Chrome's does (a window is opened for it when none
+ * is up – the bar stands without one). Nothing while history is empty: the block goes, separator
+ * and header with it. Rebuilt with the history (`Browser` schedules the bar on its changes).
+ */
+function recentlyVisited(browser: Browser): Template {
+  const entries = browser.history.recent(RECENTLY_VISITED_MAX)
+  if (entries.length === 0) return []
+  return [
+    { type: 'separator' },
+    { label: 'Recently Visited', enabled: false },
+    ...entries.map((e): MenuItemTemplate => {
+      // History keeps the address as the title of a page that had none: the row shows it the
+      // way the bar does, scheme and `www.` dropped.
+      const untitled = !e.title || e.title === e.url
+      return {
+        label: clipLabel(untitled ? displayUrl(e.url) || e.url : e.title, 60),
+        icon: e.favicon,
+        click: () =>
+          browser.openRecentlyVisited(e.url, frontWindow(browser) ?? browser.ensureWindow())
+      }
+    })
+  ]
+}
+
+/**
+ * Chrome's "Tabs From Other Devices" block of the mac History menu, after Recently Visited and
  * behind its own separator: the app menu's block (`Menus.tabsFromDevicesItems` – the header,
  * the devices as submenus of their tabs, the hidden devices' way back) with a row opening its
  * tab in the front window through the held-tab rule, or in a window opened for it when none is
