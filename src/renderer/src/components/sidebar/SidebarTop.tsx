@@ -138,7 +138,8 @@ export function NavRow({
   tab,
   compact,
   className,
-  leading
+  leading,
+  trailing
 }: {
   state: UIState
   tab: Tab | null
@@ -146,6 +147,11 @@ export function NavRow({
   className?: string
   /** Controls ahead of Back (the tablet toolbar's sidebar toggle); nothing on the desktop. */
   leading?: ReactNode
+  /**
+   * One control before the menu (the tablet toolbar's tab-count button, Chrome's tablet order);
+   * nothing on the desktop. Counted with the fixed buttons the pill makes room against.
+   */
+  trailing?: ReactNode
 }): JSX.Element {
   // A private tab under #250's lock (INC-05, the phone pill's rule): the pill says nothing of
   // the page – no address, no site icon, no chip, no menu – only that it is a private tab,
@@ -267,8 +273,8 @@ export function NavRow({
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
   // Forward folded by its pin leaves the fixed set (the hub's tier and the extensions' overflow
-  // count the buttons actually in the row).
-  const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1)
+  // count the buttons actually in the row); a trailing control joins it.
+  const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1) + (trailing ? 1 : 0)
   const hubUp =
     mediaPinned &&
     mediaHubVisible(state) &&
@@ -870,6 +876,7 @@ export function NavRow({
         fixedButtons={fixedButtons + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
         compact={compact}
       />
+      {trailing}
       {/*
         The "⋯" carries the media hub's accent dot while something plays and the hub's toolbar
         button has folded (design language v2 §9.29: at the 240 sidebar the hub folds into the

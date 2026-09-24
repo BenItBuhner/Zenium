@@ -41,14 +41,17 @@ function selectOverview(s: StageState): OverviewState {
  * (`App`'s `useStageContinuity`).
  *
  * `edge` is the bar's edge, whose band the overview keeps clear: the phone's bar position, the
- * tablet's toolbar at the top.
+ * tablet's toolbar at the top. `tablet` is the tablet shell's mount of the overview (TABLET-14,
+ * MOT-04): the search field in its header and the slide-up in place of the morph.
  */
 export function PhoneStage({
   state,
-  edge = state.settings.phoneBarPosition
+  edge = state.settings.phoneBarPosition,
+  tablet = false
 }: {
   state: UIState
   edge?: PhoneBarPosition
+  tablet?: boolean
 }): JSX.Element | null {
   // The track's phase alone: its position moves every frame of a swipe and is the track's own
   // business (`TabSwitchStage` follows it from the store without a render up here); the
@@ -62,7 +65,7 @@ export function PhoneStage({
     <div className="absolute inset-0 z-20">
       {tabsPhase !== 'idle' && <TabSwitchStage state={state} area={area} />}
       {overview.phase !== 'closed' && (
-        <TabOverview state={state} overview={overview} area={area} edge={edge} />
+        <TabOverview state={state} overview={overview} area={area} edge={edge} tablet={tablet} />
       )}
     </div>
   )

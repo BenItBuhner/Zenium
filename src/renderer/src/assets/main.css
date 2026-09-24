@@ -1220,12 +1220,14 @@
     transition: background 600ms var(--zen-ease);
   }
   /*
-   * On a phone the window family changes colour by the one blend of the resolved tokens over
-   * 240 ms (design language v2 §11.6, `useTheme`): the window reads the tokens as the blend
-   * writes them, and nothing tweens per element – no transition of its own, which would trail
-   * the blend by 600 ms (and, over a gradient, jump at its midpoint instead).
+   * On a phone – and on a tablet, the blend being the touch chassis's – the window family
+   * changes colour by the one blend of the resolved tokens over 240 ms (design language v2
+   * §11.6, `useTheme`): the window reads the tokens as the blend writes them, and nothing tweens
+   * per element – no transition of its own, which would trail the blend by 600 ms (and, over a
+   * gradient, jump at its midpoint instead).
    */
-  :root[data-form-factor='phone'] .zen-window {
+  :root[data-form-factor='phone'] .zen-window,
+  :root[data-form-factor='tablet'] .zen-window {
     transition: none;
   }
   /* Private windows: Zen tints the chrome purple and marks it with a mask. */
@@ -8628,6 +8630,38 @@
  */
 :root[data-form-factor='tablet'] .zen-sheet {
   max-width: 480px;
+}
+
+/*
+ * The tablet's tab overview (TABLET-14, MOT-04; §9.36 "the overview is the phone's, pulled down
+ * from the toolbar, at the width's columns, the sidebar fading under it"): the phone's grid,
+ * mounted by the tablet shell's stage with `data-tablet`. Its layer is opaque – it slides up
+ * over the page's still on the spring, Chrome's tablet switcher, in place of the phone's morph –
+ * in the window's own tone: `--zen-bg` as `.zen-window` paints it – read as the §11.6 blend
+ * writes it, no transition of its own, as the touch windows' rule above – laid at the window's
+ * size and offset by `TabOverview`'s morph effect so at rest the gradient is the window's,
+ * seamless at the toolbar's edge (a fixed attachment would lay it so, but under a transform it
+ * is read as `scroll`). The window's grain comes with it
+ * (`.zen-texture`, under the layer's own content: the layer is a stacking context, so the
+ * texture's negative index puts it over the backdrop and under the grid).
+ */
+.zen-overview[data-tablet] {
+  background: var(--zen-bg);
+}
+.zen-overview-texture {
+  z-index: -1;
+}
+/*
+ * The tablet header's tab search (TABLET-14): the phone's field (`.zen-overview-search-field`,
+ * 40 tall in `--v2-urlbar` with the panel's shadow) standing in the header row itself, in the
+ * magnifier's place, at a fixed span that gives way before the title does; no gutter padding of
+ * its own – the header's gap places it. Its clear stands only over a query: an empty field in
+ * the header has nothing to close.
+ */
+.zen-overview-search.zen-overview-search-inline {
+  flex: 0 1 360px;
+  min-width: 160px;
+  padding: 0;
 }
 
 /*

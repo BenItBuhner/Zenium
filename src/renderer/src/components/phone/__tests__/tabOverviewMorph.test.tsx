@@ -50,6 +50,7 @@ vi.mock('../TabPreview', () => ({
 
 const { PhoneStage } = await import('../PhoneStage')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
+const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
 const { contentAreaStore } = await import('@renderer/lib/ui')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { placeholderPx } = await import('../tabPlaceholder')
@@ -243,6 +244,9 @@ afterEach(() => {
   host?.remove()
   host = null
   stageStore.set({ overview: { phase: 'closed', progress: 0, heroTabId: null, target: 0 } })
+  // Mounted outside the stage, `dismissOverview()` (which resets the shared overview UI) never
+  // runs between these tests.
+  act(() => resetOverviewUi())
   contentAreaStore.set({ area: null })
   viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' })
   for (const [name, descriptor] of sizes) {

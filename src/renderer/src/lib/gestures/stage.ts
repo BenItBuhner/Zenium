@@ -2,6 +2,7 @@ import type { UIState } from '@shared/types'
 import { run } from '../api'
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '../motion/spring'
 import { pushBackSurface } from '../back'
+import { resetOverviewUi } from '../overviewUi'
 import { resetOverviewPane, sameModeAs } from '../privateTabs'
 import { activeSpace, activeTab, tabOrderOf } from '../selectors'
 import { createStore } from '../store'
@@ -482,7 +483,10 @@ export function dismissOverview(): void {
   if (stageStore.get().overview.phase !== 'closed') stageStore.set({ overview: OVERVIEW_CLOSED })
   overviewShown = false
   // The pane picked with the segment was this overview's; the next one opens on the tab's own.
+  // So were its search, its picks, its sheet and its scroll (`overviewUiStore`, kept outside
+  // the shells so that a shell swap keeps them, TABLET-08): the next one starts afresh.
   resetOverviewPane()
+  resetOverviewUi()
   syncStageActive()
   invalidateSnapshot()
   returnFocusToPage()
