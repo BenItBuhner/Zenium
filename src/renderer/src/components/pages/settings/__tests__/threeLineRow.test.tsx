@@ -536,7 +536,9 @@ describe('a control never leaves its row’s box (the lead’s #391 ruling 4)', 
     // in a control's popover – seats its label on its own line, not on the host's 32.
     const css = stylesheet()
     expect(declarations(css, ['.zen-settings-row'])).toBe('--zen-settings-control-box: initial;')
-    expect(css.indexOf('.zen-settings-row {')).toBeLessThan(css.indexOf('.zen-settings-control-row {'))
+    expect(css.indexOf('.zen-settings-row {')).toBeLessThan(
+      css.indexOf('.zen-settings-control-row {')
+    )
     expect(css.indexOf('.zen-settings-row {')).toBeLessThan(css.indexOf('.zen-settings-menu-row {'))
     laidOut(3)
     const sheet = seatSheet('desktop', true)

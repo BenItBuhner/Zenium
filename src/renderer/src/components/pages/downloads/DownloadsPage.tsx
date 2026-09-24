@@ -15,6 +15,7 @@ import { browserStore } from '@renderer/lib/browserStore'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
 import {
+  clearableCount,
   downloadStatus,
   filterDownloads,
   groupDownloadsByDay,
@@ -25,7 +26,7 @@ import {
 } from '@renderer/lib/downloadsView'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { cn } from '@renderer/lib/utils'
-import { ClearAllConfirm, clearableCount } from '../../downloads/ClearAllConfirm'
+import { ClearAllConfirm } from '../../downloads/ClearAllConfirm'
 import {
   DangerActions,
   DownloadProgressBar,

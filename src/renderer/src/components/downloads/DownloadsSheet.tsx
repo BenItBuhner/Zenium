@@ -33,6 +33,7 @@ import { useBackSurface } from '@renderer/lib/back'
 import { downloadStatus } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import {
+  clearableCount,
   dangerSummary,
   decisionLabels,
   fileGlyphFor,
@@ -47,7 +48,7 @@ import { openSettings } from '@renderer/lib/pages'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { browserStore, closeOverlay } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
-import { ClearAllConfirm, clearableCount } from './ClearAllConfirm'
+import { ClearAllConfirm } from './ClearAllConfirm'
 
 /** The desktop row's file-type glyphs (`fileGlyphFor`), drawn at the phone's 20 px (§9.3). */
 const GLYPHS: Record<FileGlyph, LucideIcon> = {

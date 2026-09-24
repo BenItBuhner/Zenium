@@ -921,7 +921,9 @@ describe('the outline steps by one (axe heading-order; the phone’s pre-existin
     const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/search'))
     const drillIn = el.querySelector<HTMLElement>('.zen-settings-drill-in')!
     expect(drillIn.querySelector('.zen-settings-bar-title')!.tagName).toBe('H1')
-    const headings = [...drillIn.querySelectorAll<HTMLElement>('.zen-settings-group > .zen-settings-heading')]
+    const headings = [
+      ...drillIn.querySelectorAll<HTMLElement>('.zen-settings-group > .zen-settings-heading')
+    ]
     expect(headings.length).toBeGreaterThan(0)
     for (const heading of headings) {
       expect(heading.tagName).toBe('H2')

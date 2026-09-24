@@ -1005,7 +1005,11 @@ describe('RuleEngine extension pages', () => {
     const { engine, asked } = blockEverything()
     for (const url of [chromeSpelling, servedSpelling]) {
       for (const type of ['main_frame', 'sub_frame', 'script', 'image'] as const) {
-        const ctx = req(url, { type, initiator: 'https://news.example', documentUrl: 'https://news.example/' })
+        const ctx = req(url, {
+          type,
+          initiator: 'https://news.example',
+          documentUrl: 'https://news.example/'
+        })
         // The default allow: nothing matched, so nothing is reported as having decided.
         expect(engine.decide(ctx)).toEqual({ action: 'allow' })
         expect(engine.decideLinear(ctx)).toEqual({ action: 'allow' })

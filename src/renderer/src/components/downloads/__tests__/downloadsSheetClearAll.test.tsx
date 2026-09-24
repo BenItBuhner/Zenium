@@ -114,8 +114,9 @@ const downloadsSheet = (): HTMLElement | null =>
   standing().find((d) => text(d.querySelector('.zen-sheet-title')) === 'Downloads') ?? null
 /** The Clear all prompt: the title-block sheet asking the question. */
 const prompt = (): HTMLElement | null =>
-  standing().find((d) => text(d.querySelector('.zen-sheet-title-block h2')) === 'Clear all downloads?') ??
-  null
+  standing().find(
+    (d) => text(d.querySelector('.zen-sheet-title-block h2')) === 'Clear all downloads?'
+  ) ?? null
 const labels = (el: ParentNode): string[] =>
   [...el.querySelectorAll<HTMLButtonElement>('button')].map((b) => text(b)).filter((t) => t !== '')
 const button = (el: ParentNode, label: string): HTMLButtonElement =>
@@ -188,7 +189,9 @@ describe('the Downloads sheet’s Clear all', () => {
     expect(clear.classList.contains('zen-sheet-item')).toBe(true)
     expect(clear.hasAttribute('data-danger')).toBe(true)
     // Past the hairline, after the rows.
-    expect(clear.closest('li')?.previousElementSibling?.classList.contains('zen-sheet-sep')).toBe(true)
+    expect(clear.closest('li')?.previousElementSibling?.classList.contains('zen-sheet-sep')).toBe(
+      true
+    )
 
     await act(async () => {
       clear.focus()
@@ -226,7 +229,9 @@ describe('the Downloads sheet’s Clear all', () => {
     await act(async () => clear.click())
     const p = prompt()!
     await act(async () => {
-      p.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      p.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
     })
     await until(() => prompt() === null)
     expect(downloadsSheet()).toBe(sheet)

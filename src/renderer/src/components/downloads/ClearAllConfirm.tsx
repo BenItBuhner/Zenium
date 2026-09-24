@@ -1,17 +1,8 @@
 import type { JSX } from 'react'
-import type { DownloadItem } from '@shared/types'
-import { isActiveDownload } from '@shared/downloadsShell'
 import { useViewport } from '@renderer/lib/formFactor'
+import { CLEAR_ALL_PROMPT } from '@renderer/lib/downloadsView'
 import { ConfirmDialog } from '../dialogs/ConfirmDialog'
 import { ConfirmSheet } from '../pages/settings/sheets'
-
-/** The prompt's name on its root: `data-confirm` on the desktop, the sheet's register name on the phone. */
-export const CLEAR_ALL_PROMPT = 'downloads:clear-all'
-
-/** How many rows "Clear all" takes off the list: every record that is not a transfer still running. */
-export function clearableCount(items: readonly DownloadItem[]): number {
-  return items.filter((i) => !isActiveDownload(i)).length
-}
 
 /**
  * "Clear all" asks before it empties the list, saying how many rows go and that the files stay

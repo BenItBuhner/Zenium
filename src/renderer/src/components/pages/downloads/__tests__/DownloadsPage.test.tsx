@@ -594,7 +594,9 @@ describe('the Downloads page tab (§10.1)', () => {
     expect(document.activeElement).toBe(clear)
     // Cancel's button keeps the list the same way.
     await act(async () => clear.click())
-    await act(async () => prompt()!.querySelector<HTMLButtonElement>('[data-action="cancel"]')!.click())
+    await act(async () =>
+      prompt()!.querySelector<HTMLButtonElement>('[data-action="cancel"]')!.click()
+    )
     expect(prompt()).toBeNull()
     await endLeave()
     expect(calls('download.removeCompleted')).toEqual([])
@@ -602,7 +604,9 @@ describe('the Downloads page tab (§10.1)', () => {
     await act(async () => clear.click())
     const again = prompt()!
     expect(again.hasAttribute('data-leaving')).toBe(false)
-    await act(async () => again.querySelector<HTMLButtonElement>('[data-action="confirm"]')!.click())
+    await act(async () =>
+      again.querySelector<HTMLButtonElement>('[data-action="confirm"]')!.click()
+    )
     expect(calls('download.removeCompleted')).toEqual([undefined])
     expect(prompt()).toBeNull()
     await endLeave()

@@ -896,7 +896,9 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
           }
         }}
       />
-      {error && <ValidationMessage id={errorId} message={error} className="zen-settings-inline-error" />}
+      {error && (
+        <ValidationMessage id={errorId} message={error} className="zen-settings-inline-error" />
+      )}
     </span>
   )
 }
