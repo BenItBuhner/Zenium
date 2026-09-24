@@ -49,6 +49,19 @@
             <action android:name="android.intent.action.DIAL" />
         </intent>
         <!--
+          The share targets: below Android 14 Zenium draws its own share panel (SH-03, Share.kt's
+          SharePanel) whose apps row comes from PackageManager.queryIntentActivities for a text or
+          an image share. Since API 30 that query sees nothing without these entries.
+        -->
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <!--
           The apps behind the links that leave the web, so the external-protocol sheet can say
           "Open in Gmail?" rather than "another app" (ExternalProtocols.VISIBLE_SCHEMES lists the
           same schemes). Everything else is launched blind and falls back if nothing answers.
