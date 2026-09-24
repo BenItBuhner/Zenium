@@ -23,7 +23,7 @@ app_id=io.github.benitbuhner.zenium.debug
 activity=app.zen.chromium.MainActivity
 runs=${P0_RUNS:-5}
 out=${DEMO_OUT:-artifacts/android-cold-start-pair}
-base_apk=${P0_BASE_APK:?P0_BASE_APK names the base build's APK}
+base_apk=${P0_BASE_APK:?P0_BASE_APK must name the APK of the base build}
 head_apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
 mkdir -p "$out"
 [ -f "$base_apk" ] || { echo "::error::no base APK at $base_apk"; exit 1; }
