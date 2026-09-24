@@ -12361,6 +12361,137 @@
 }
 
 /*
+ * The task manager (components/pages/tasks/TasksPage.tsx, §10.1; Chrome's task manager as a
+ * page tab, shortcuts-menus-121 / -149 / -32): the page frame's rows with a TABLE body. One grid
+ * for the header row and every row – the task column taking what the three figure columns
+ * leave (memory 96, CPU 64, network 88; the row's 12 between them), 380 of the rows' 664 – so
+ * the figures stand under their headers. The header row is a 32 row (`--v2-control`) of 13 at
+ * 69 % in the heading's place: its box 2 under the pinned header so its 20 text line sits at
+ * the heading's 8, each header a plain text button that sorts its column, the active one in
+ * the text ink with the 16 sort chevron beside its label – after the label over the task
+ * column, before it over a figure column so the label stays flush with its figures. The rows
+ * are the shared two-line row (52, §9.2) – the favicon in the lead slot, the title over
+ * "kind · pid" – with the figures as right-aligned asides in tabular figures (§4), so a column
+ * of memory reads down. The selected row is the primitive's `--v2-selected`. The footer's verb
+ * is the page frame's pinned footer, below.
+ */
+.zen-tasks-table {
+  --zen-tasks-columns: minmax(0, 1fr) 96px 64px 88px;
+}
+.zen-tasks-header {
+  display: grid;
+  min-height: var(--v2-control);
+  align-items: center;
+  grid-template-columns: var(--zen-tasks-columns);
+  gap: 12px;
+  margin-top: 2px;
+  padding: 0 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-tasks-col {
+  display: flex;
+  min-width: 0;
+}
+.zen-tasks-col[data-figure] {
+  justify-content: flex-end;
+}
+.zen-tasks-col-button {
+  display: inline-flex;
+  max-width: 100%;
+  height: var(--v2-control);
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border-radius: var(--v2-radius-control);
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  transition: color 120ms var(--zen-ease);
+}
+/* The glyph leads over a figure column: the label keeps the figures' trailing edge. */
+.zen-tasks-col[data-figure] .zen-tasks-col-button {
+  flex-direction: row-reverse;
+}
+.zen-tasks-col[data-active] .zen-tasks-col-button {
+  color: var(--v2-text);
+}
+@media (hover: hover) {
+  .zen-tasks-col-button:hover {
+    color: var(--v2-text);
+  }
+}
+.zen-tasks-col-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zen-tasks-sort-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-row.zen-tasks-row {
+  display: grid;
+  min-height: var(--v2-row-two-line);
+  align-items: center;
+  grid-template-columns: var(--zen-tasks-columns);
+}
+/* The task cell: the row's lead slot and its text button, the row's own 12 between them. */
+.zen-tasks-cell-task {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+}
+.zen-tasks-cell-task > .zen-page-row-text {
+  flex: 1;
+}
+.zen-tasks-figure {
+  min-width: 0;
+  text-align: right;
+}
+/*
+ * A page's pinned footer (PageFrame.tsx `PageColumn footer`; the task manager's End process,
+ * §9.11): outside the scroll at the column's foot on the page tone, its verbs – 32 `zen-v2-button`
+ * secondaries, 8 apart – right-aligned inside the 664 text column so the verb ends where the
+ * field and the rows' controls end (the 728 box less the 16 + 16 either side), 12 above them
+ * and 16 below. Its hairline is the header's mirror (§9.7: none at rest): its own `::before`,
+ * on while rows still stand below the fold (`data-more`).
+ */
+.zen-page-footer {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  padding: 12px 16px 16px;
+  background: var(--v2-page);
+}
+.zen-page-footer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--v2-border);
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-page-footer[data-more]::before {
+  opacity: 1;
+}
+.zen-page-footer-actions {
+  display: flex;
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  flex: 1;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 16px;
+}
+
+/*
  * Find in page, zoom and fullscreen (the `find` cluster) on design language v2: the docked find
  * bar, the zoom bubble and the fullscreen hint. They read the token block and nothing else.
  */
