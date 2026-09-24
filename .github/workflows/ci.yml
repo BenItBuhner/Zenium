@@ -169,26 +169,16 @@ jobs:
         # navigator.webdriver is honest) and checks what a site sees: navigator.webdriver false,
         # Chrome's window.chrome members (Google's sign-in refuses a Chrome without chrome.app),
         # the reduced user agent, client hints and Accept-Language on the document request, FedCM
-        # off, and a window.open pop-up – opened by a real gesture once the page is on screen
-        # (sendInputEvent at the button, xdotool through X as the fallback) – that keeps its
-        # opener and runs the page preload. Its log and, on failure, a screenshot of the display
-        # go to smoke-out/signin, into the artifact below.
-        # DIAG (W5-H, temporary): four boots per run, so a ~50% flake is caught with its trace
-        # in one run; every boot's log is kept, the step fails when any boot did. The flake has
-        # only ever shown on a run's first, cold boot (the page cache empty of the build, the
-        # shader and font caches unwritten), so each boot is made cold again: caches dropped.
-        run: |
-          failed=0
-          for i in 1 2 3 4; do
-            echo "::group::sign-in smoke boot $i"
-            rm -rf ~/.cache/fontconfig ~/.cache/mesa_shader_cache ~/.cache/mesa_shader_cache_db
-            sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' || true
-            xvfb-run -a -s '-screen 0 1600x1000x24' \
-              node .github/scripts/desktop-signin-smoke.mjs dist/linux-unpacked/zenium \
-              --out "$SMOKE_OUT/signin-$i" || failed=1
-            echo "::endgroup::"
-          done
-          exit $failed
+        # off, and a window.open pop-up – opened by the agent's browser_click once the page is on
+        # screen and has painted its first frame (a renderer without a frame yet drops every
+        # press; on this runner the display compositor takes seconds to come up on a cold boot),
+        # with a real X click through xdotool logged as a reference when the click did not
+        # arrive – that keeps its opener and runs the page preload. Its log and, on failure, a
+        # screenshot of the display go to smoke-out/signin, into the artifact below.
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/scripts/desktop-signin-smoke.mjs dist/linux-unpacked/zenium
+          --out "$SMOKE_OUT/signin"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
