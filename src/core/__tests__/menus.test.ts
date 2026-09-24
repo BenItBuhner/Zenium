@@ -48,6 +48,7 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
+import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
 
 /**
@@ -467,12 +468,12 @@ const DESKTOP_APP_MENU = [
   'More Tools > Dock to Left',
   'More Tools > Undock',
   'Help',
+  'Help > About Zenium',
+  "Help > What's New",
+  'Help > -',
   'Help > Zenium Help',
   'Help > Keyboard Shortcuts',
-  'Help > -',
   'Help > Report an Issue…',
-  'Help > -',
-  'Help > About Zenium 1.2.3',
   'Quit'
 ]
 
@@ -854,8 +855,13 @@ describe('the app menu', () => {
     // review's ruling 3): the overlay takes the visible area and the full page both, so
     // nothing the two rows did is lost, and More Tools is two rows and a separator shorter.
     const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
+    // The flat menu's disabled version line is Help's About Zenium row now, which opens the
+    // About page the version is on (shortcuts-menus-152).
+    const renamed: Record<string, string> = { 'About Zenium 1.2.3': 'About Zenium' }
     for (const label of before)
-      expect(everywhere, label).toContain(foldedIntoWebCapture.has(label) ? 'Web Capture…' : label)
+      expect(everywhere, label).toContain(
+        foldedIntoWebCapture.has(label) ? 'Web Capture…' : (renamed[label] ?? label)
+      )
     for (const label of foldedIntoWebCapture) expect(everywhere).not.toContain(label)
     expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
     expect(separators(h.shown())).toBe(3)
@@ -929,7 +935,7 @@ describe('the app menu', () => {
     )
   })
 
-  it("Help carries the menu bar's entries: Zenium Help and Report an Issue… open their pages, About closes it", () => {
+  it("Help is Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About Zenium opens the About page, What's New the release notes, Zenium Help and Report an Issue… their pages", () => {
     const opened: string[] = []
     const h = harness(DESKTOP)
     h.browser.platform.shell.openExternal = (url: string): Promise<void> => {
@@ -937,10 +943,44 @@ describe('the app menu', () => {
       return Promise.resolve()
     }
     appMenu(h)
+    const help = deepItem(h.shown(), 'Help').submenu ?? []
+    expect(topLabels(help)).toEqual([
+      'About Zenium',
+      "What's New",
+      '-',
+      'Zenium Help',
+      'Keyboard Shortcuts',
+      'Report an Issue…'
+    ])
     deepItem(h.shown(), 'Zenium Help').click?.()
     deepItem(h.shown(), 'Report an Issue…').click?.()
     expect(opened).toEqual([HELP_URL, ISSUES_URL])
-    expect(deepItem(h.shown(), 'About Zenium 1.2.3').enabled).toBe(false)
+    // About is a row that acts now – the About page (Settings › About: the version, the
+    // update row, the legal pages), not a disabled version line; the version is the page's.
+    const about = deepItem(h.shown(), 'About Zenium')
+    expect(about.enabled).not.toBe(false)
+    h.sent.length = 0
+    about.click?.()
+    expect(h.sent).toContain('overlay.open')
+    // The phone's flat list keeps its version line, as it was.
+    const phone = harness(ANDROID, 'phone')
+    expect(appMenu(phone)).toContain('About Zenium 1.2.3')
+    expect(appMenu(phone)).not.toContain("What's New")
+  })
+
+  it("What's New opens the running version's release notes: the zen://whats-new page tab where the host has it, else the version's release on GitHub in a tab", () => {
+    // No `whats-new` page in the registry (Android's #424 registers it): the release on GitHub,
+    // in a Zenium tab – the running version's, not the found release's (`openRelease`).
+    const h = pageHarness(DESKTOP)
+    appMenu(h)
+    deepItem(h.shown(), "What's New").click?.()
+    expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(releaseNotesUrl('1.2.3'))
+    expect(releaseNotesUrl('1.2.3')).toBe('https://github.com/BenItBuhner/Zenium/releases/tag/v1.2.3')
+    // A tablet with page tabs takes the same row (the sidebar layouts share the Help submenu).
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    appMenu(tablet)
+    deepItem(tablet.shown(), "What's New").click?.()
+    expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe(releaseNotesUrl('1.2.3'))
   })
 
   describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {

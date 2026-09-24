@@ -370,12 +370,15 @@ export function applicationMenu(browser: Browser): Template {
     ]
   }
 
+  // About Zenium is the application menu's (the host's role, as Chrome's on macOS); the app
+  // menu's Help submenu (`Menus.showAppMenu`) has the same rows with the About page's.
   const help: MenuItemTemplate = {
     label: 'Help',
     role: 'help',
     submenu: [
       { label: 'Zenium Help', click: () => browser.platform.shell.openExternal(HELP_URL) },
       { label: 'Keyboard Shortcuts', click: settings('shortcuts') },
+      { label: "What's New", click: withWindow((w) => browser.updates.openWhatsNew(w), true) },
       { type: 'separator' },
       { label: 'Report an Issue…', click: () => browser.platform.shell.openExternal(ISSUES_URL) }
     ]

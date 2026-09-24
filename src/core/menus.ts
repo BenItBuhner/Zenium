@@ -3235,6 +3235,19 @@ export class Menus {
       label: 'Keyboard Shortcuts',
       click: () => void this.browser.pages.open('settings', 'shortcuts', win)
     }
+    // Chrome's Help › About: the About page (Settings › About – the version, the update row,
+    // the legal pages' rows), where the row was a disabled version line before
+    // (shortcuts-menus-152). The phone's flat list keeps its version line (`about`).
+    const aboutPage: MenuItemTemplate = {
+      label: 'About Zenium',
+      click: () => void this.browser.pages.open('settings', 'about', win)
+    }
+    // Chrome's Help › What's New: the running version's release notes (`UpdateService.openWhatsNew`
+    // – the `zen://whats-new` page tab where the host has it, else the release on GitHub).
+    const whatsNew: MenuItemTemplate = {
+      label: "What's New",
+      click: () => this.browser.updates.openWhatsNew(win)
+    }
     const settings: MenuItemTemplate = {
       label: 'Settings',
       action: 'settings.open',
@@ -3427,20 +3440,24 @@ export class Menus {
         },
         {
           label: 'Help',
-          // The menu bar's Help menu (macOS), with the About row that closed the menu before.
+          // Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About, What's New,
+          // the help centre, Report an Issue… – with Zenium's Keyboard Shortcuts beside its
+          // help row. Two groups behind one hairline: this build (its About page, its release
+          // notes), then the help. The legal pages are About's rows, not Help's (Chrome's Help
+          // has none).
           submenu: [
+            aboutPage,
+            whatsNew,
+            separator,
             {
               label: 'Zenium Help',
               click: () => this.browser.platform.shell.openExternal(HELP_URL)
             },
             keyboardShortcuts,
-            separator,
             {
               label: 'Report an Issue…',
               click: () => this.browser.platform.shell.openExternal(ISSUES_URL)
-            },
-            separator,
-            about
+            }
           ]
         },
         ...quit

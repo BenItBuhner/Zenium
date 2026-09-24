@@ -18,6 +18,7 @@ import {
   type UpdateSignatureState,
   type UpdateStatus
 } from '../shared/updates'
+import { releaseNotesUrl } from '../shared/links'
 import type { Browser } from './browser'
 import type { UpdateHost } from './platform'
 import type { ZenWindow } from './window'
@@ -171,6 +172,17 @@ export class UpdateService {
   openRelease(win?: ZenWindow): void {
     const url = this.current.release?.notesUrl ?? `https://github.com/${UPDATE_REPOSITORY}/releases`
     this.browser.openExternalUrl(url, win)
+  }
+
+  /**
+   * What's New (the Help submenu's row, shortcuts-menus-152; Chrome's Help › What's New): the
+   * running version's release notes – the `zen://whats-new` page tab where the host registers
+   * the page (Android's #424 registers it for every layout with page tabs), else the version's
+   * release on GitHub in a Zenium tab, as `openRelease` opens the found release's.
+   */
+  openWhatsNew(win?: ZenWindow): void {
+    if (this.browser.pages.open('whats-new', undefined, win) !== null) return
+    this.browser.openExternalUrl(releaseNotesUrl(this.current.currentVersion), win)
   }
 
   // ---------------------------------------------------------------------------
