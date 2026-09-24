@@ -1,0 +1,77 @@
+name: Android startup demo
+
+# The device proof of the cold start (OS-26 splash, OS-27 startup speed): the driver
+# (StartupDemo) seeds a session with one fixture tab on a loopback page and walks the browser
+# out so the tab's picture is on disk, then the script performs the starts – cold, with the
+# fixture's paint held back so the restored picture can be seen under the chrome before the
+# page's own paint; hot, where nothing must be shown; and the activity's re-creation over a live
+# process – reading `am start -W`, `reportFullyDrawn`'s line, the splash's own lines and the
+# starting window in `dumpsys window`, with a screen recording of every start read frame by
+# frame for the sequence (splash, restored picture, page; nothing blank between) and stills at
+# the three moments. The claims fail the run under `assert`. Dispatch-only, like the other demos;
+# the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      assert:
+        description: Fail when a claim does not hold
+        type: boolean
+        default: true
+      themes:
+        description: Colour schemes to record, space separated (light, dark)
+        type: string
+        default: light dark
+      api-level:
+        description: System image (34 is the phone shards' image, 35 is Android 15)
+        type: choice
+        default: '34'
+        options:
+          - '34'
+          - '35'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-startup-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Startup demo
+    # The `[startup-run]` gate stays for a PR's temporary push trigger (the run budget is one
+    # run and one retry): under one, only a head commit that says so records.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[startup-run]')
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-startup-demo.sh
+      api-level: ${{ inputs.api-level || '34' }}
+      script-env: |
+        STARTUP_ASSERT=${{ (github.event_name != 'workflow_dispatch' || inputs.assert) && 'true' || 'false' }}
+        STARTUP_THEMES=${{ inputs.themes || 'light dark' }}
+        DEMO_OUT=artifacts/android-startup-demo
+      # The recordings are read frame by frame and tiled (android-startup-frames.mjs) with ffmpeg.
+      setup-script: |
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      timeout-minutes: 45
+      artifact-name: android-startup-demo
+      artifact-path: artifacts/android-startup-demo/
+
+  # One more boot when the emulator itself went away under the driver, never when the driver failed.
+  record-again:
+    name: Startup demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-startup-demo.sh
+      api-level: ${{ inputs.api-level || '34' }}
+      script-env: |
+        STARTUP_ASSERT=${{ (github.event_name != 'workflow_dispatch' || inputs.assert) && 'true' || 'false' }}
+        STARTUP_THEMES=${{ inputs.themes || 'light dark' }}
+        DEMO_OUT=artifacts/android-startup-demo
+      setup-script: |
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      timeout-minutes: 45
+      artifact-name: android-startup-demo-second-boot
+      artifact-path: artifacts/android-startup-demo/
