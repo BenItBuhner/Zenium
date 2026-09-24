@@ -4,12 +4,12 @@ import {
   nativeImage,
   screen,
   shell,
-  webContents,
   type NativeImage
 } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
+import { focusedDocumentOf } from './focusedDocument'
 import { ElectronShortcuts } from './shortcuts'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
@@ -293,9 +293,12 @@ export class ElectronWindow implements WindowHost {
   }
 
   focusedDocument(): 'chrome' | 'other' | 'none' {
-    const focused = webContents.getFocusedWebContents()
-    if (!focused || focused.isDestroyed()) return 'none'
-    return this.alive && focused.id === this.win.webContents.id ? 'chrome' : 'other'
+    if (!this.alive) return 'none'
+    return focusedDocumentOf({
+      focused: this.win.isFocused(),
+      chrome: this.win.webContents,
+      contentView: this.win.contentView
+    })
   }
 
   openChromeDevTools(): void {
