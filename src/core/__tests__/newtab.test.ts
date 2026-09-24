@@ -389,6 +389,27 @@ describe('NewTabService: state for the page', () => {
     expect(f.browser.newTab.stateFor('tab_nope')).toBeNull()
   })
 
+  it("carries the default engine's favicon for the field's leading glyph, following the pick", async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const engines = f.browser.state.searchEngines
+    const picked = engines.find((e) => e.id === f.browser.state.settings.searchEngineId)!
+    expect(picked.favicon).toBeTruthy()
+    expect(f.browser.newTab.stateFor(tab.id)!.engineFavicon).toBe(picked.favicon)
+    const view = f.views.find((v) => v.tabId === tab.id)!
+    await settle()
+    const n = view.pushes.length
+    const other = engines.find((e) => e.id !== picked.id && e.favicon)!
+    f.browser.updateSettings({ searchEngineId: other.id }, win)
+    expect(f.browser.newTab.stateFor(tab.id)!.engineFavicon).toBe(other.favicon)
+    // A settings commit re-pushes the page, so the live field's glyph follows the new default.
+    await settle()
+    expect(view.pushes.length).toBe(n + 1)
+    expect(view.pushes.at(-1)!.engineFavicon).toBe(other.favicon)
+  })
+
   it('a tab that left the page gets no state and its actions are ignored', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()

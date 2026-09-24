@@ -37,6 +37,9 @@ const DRAG_THRESHOLD = 4
 /** Half the grid gap: the caret sits in the middle of the gap before the drop slot. */
 const HALF_GAP = 6
 const UNDO_MS = 8000
+
+/** Engine favicon addresses that loaded on this page: shown from the first frame on a re-push. */
+const loadedFavicons = new Set<string>()
 /**
  * The private window's accent, as the chrome sets it on `.zen-window[data-window-kind='private']`
  * in main.css (`newTabPage.test.ts` pins the two in step): a private page's controls take the
@@ -147,6 +150,8 @@ class NewTabPage {
   private readonly cookiesDescription = byId<HTMLElement>('zen-cookies-desc')
   private readonly greeting = byId<HTMLHeadingElement>('zen-greeting')
   private readonly search = byId<HTMLFormElement>('zen-search')
+  private readonly engineGlyph = byId<HTMLSpanElement>('zen-engine-glyph')
+  private readonly engineFavicon = byId<HTMLImageElement>('zen-engine-favicon')
   private readonly input = byId<HTMLInputElement>('zen-search-input')
   private readonly empty = byId<HTMLParagraphElement>('zen-empty')
   private readonly grid = byId<HTMLDivElement>('zen-grid')
@@ -186,6 +191,7 @@ class NewTabPage {
   private apply(state: NewTabPageState): void {
     this.state = state
     this.applyTheme()
+    this.applyEngineFavicon()
     this.applyGreeting()
     this.applyPrivateCookies()
     // The grid is the user's own under "My shortcuts" (add tile, drag to reorder); under "Most
@@ -203,6 +209,45 @@ class NewTabPage {
     if (command.type !== 'remove-tile') return
     const tile = this.tiles.find((t) => t.id === command.id)
     if (tile) this.remove(tile)
+  }
+
+  /**
+   * The field's leading glyph (v2 §6, the chrome's EngineFieldGlyph in the page's own form): the
+   * default engine's favicon at 16 once it has loaded, the magnifier until then and for good
+   * when the engine has none or its image never comes – the slot is never blank. The favicon
+   * arrives on a 120 ms fade; an address that loaded once on this page shows at once, so a
+   * re-push (a settings commit, a theme change) never flashes the magnifier back.
+   */
+  private applyEngineFavicon(): void {
+    const favicon = this.state?.engineFavicon ?? null
+    const img = this.engineFavicon
+    const magnifier = this.engineGlyph.querySelector('svg')
+    const show = (shown: boolean): void => {
+      img.hidden = !shown
+      if (shown) img.setAttribute('data-shown', '')
+      else img.removeAttribute('data-shown')
+      if (magnifier) magnifier.style.display = shown ? 'none' : ''
+    }
+    if (favicon === null) {
+      img.removeAttribute('src')
+      show(false)
+      return
+    }
+    if (img.getAttribute('src') === favicon) return
+    img.onload = () => {
+      loadedFavicons.add(favicon)
+      img.hidden = false
+      if (magnifier) magnifier.style.display = 'none'
+      // Two frames: the image must paint at opacity 0 before the transition can run.
+      requestAnimationFrame(() => requestAnimationFrame(() => img.setAttribute('data-shown', '')))
+    }
+    img.onerror = () => {
+      img.removeAttribute('src')
+      show(false)
+    }
+    show(false)
+    img.src = favicon
+    if (loadedFavicons.has(favicon)) show(true)
   }
 
   private isDark(): boolean {

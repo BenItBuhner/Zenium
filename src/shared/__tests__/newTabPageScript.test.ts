@@ -25,6 +25,7 @@ function state(overrides: Partial<NewTabPageState> = {}): NewTabPageState {
     topSites: [],
     backgroundImage: null,
     canPickImage: false,
+    engineFavicon: null,
     ...overrides
   }
 }
@@ -183,5 +184,73 @@ describe('zen://newtab: the private page\'s "Block third-party cookies" switch',
     h.push(privateState(null))
     h.toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(cookieActions(h)).toEqual([])
+  })
+})
+
+/**
+ * The field's leading glyph (v2 §6): the default engine's favicon at 16 once loaded, the
+ * magnifier until then and for good without one. happy-dom fires no load events of its own, so
+ * the image's load and error are dispatched by hand.
+ */
+describe("zen://newtab: the field's engine favicon", () => {
+  const glyph = (): HTMLSpanElement =>
+    document.getElementById('zen-engine-glyph') as HTMLSpanElement
+  const img = (): HTMLImageElement =>
+    document.getElementById('zen-engine-favicon') as HTMLImageElement
+  const magnifier = (): SVGSVGElement => glyph().querySelector('svg') as SVGSVGElement
+  const magnifierShown = (): boolean => magnifier().style.display !== 'none'
+
+  it('leads with the magnifier alone while the engine has no favicon', () => {
+    mount(state({ engineFavicon: null }))
+    expect(glyph().parentElement?.id).toBe('zen-search')
+    expect(glyph().firstElementChild).toBe(magnifier())
+    expect(img().hidden).toBe(true)
+    expect(img().hasAttribute('src')).toBe(false)
+    expect(magnifierShown()).toBe(true)
+  })
+
+  it('keeps the magnifier until the favicon loads, then shows the favicon in its place', async () => {
+    mount(state({ engineFavicon: 'https://engine.example/favicon.ico' }))
+    expect(img().getAttribute('src')).toBe('https://engine.example/favicon.ico')
+    expect(img().getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(img().hidden).toBe(true)
+    expect(magnifierShown()).toBe(true)
+    img().dispatchEvent(new Event('load'))
+    expect(img().hidden).toBe(false)
+    expect(magnifierShown()).toBe(false)
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    expect(img().hasAttribute('data-shown')).toBe(true)
+  })
+
+  it('a favicon that never comes leaves the magnifier; a new default engine starts over', () => {
+    const h = mount(state({ engineFavicon: 'https://broken.example/favicon.ico' }))
+    img().dispatchEvent(new Event('error'))
+    expect(img().hidden).toBe(true)
+    expect(img().hasAttribute('src')).toBe(false)
+    expect(magnifierShown()).toBe(true)
+    h.push(state({ engineFavicon: 'https://other.example/favicon.ico' }))
+    expect(img().getAttribute('src')).toBe('https://other.example/favicon.ico')
+    expect(magnifierShown()).toBe(true)
+    img().dispatchEvent(new Event('load'))
+    expect(magnifierShown()).toBe(false)
+    // Back to an engine without one: the magnifier returns and the image is dropped.
+    h.push(state({ engineFavicon: null }))
+    expect(img().hidden).toBe(true)
+    expect(img().hasAttribute('src')).toBe(false)
+    expect(magnifierShown()).toBe(true)
+  })
+
+  it('a re-push of the same favicon changes nothing; one that loaded before shows at once', () => {
+    const h = mount(state({ engineFavicon: 'https://same.example/favicon.ico' }))
+    img().dispatchEvent(new Event('load'))
+    expect(img().hidden).toBe(false)
+    h.push(state({ engineFavicon: 'https://same.example/favicon.ico', greeting: true }))
+    expect(img().hidden).toBe(false)
+    expect(magnifierShown()).toBe(false)
+    // A fresh page for an address this page already loaded: no magnifier frame first.
+    mount(state({ engineFavicon: 'https://same.example/favicon.ico' }))
+    expect(img().hidden).toBe(false)
+    expect(img().hasAttribute('data-shown')).toBe(true)
+    expect(magnifierShown()).toBe(false)
   })
 })

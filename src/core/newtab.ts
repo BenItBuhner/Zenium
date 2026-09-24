@@ -29,6 +29,7 @@ import { privateThirdPartyCookieStatus, type SafeBrowsingHit } from '../shared/p
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
 import { resolveTheme, themeCssVariables } from '../shared/theme'
+import { engineFieldFavicon } from '../shared/search'
 import { newId } from '../shared/ids'
 import {
   MAX_NEW_TAB_SHORTCUTS,
@@ -386,7 +387,11 @@ export class NewTabService {
       shortcuts,
       topSites: shortcutsMode === 'most-visited' && !isPrivate ? this.topSites(shortcuts) : [],
       backgroundImage,
-      canPickImage: Boolean(host?.pick)
+      canPickImage: Boolean(host?.pick),
+      // The field leads with the engine's favicon (v2 §6), the pill's source: the extension's
+      // engine while one holds the default, else the user's pick. A settings commit re-pushes
+      // the page, so a new default engine changes the glyph on a live page.
+      engineFavicon: engineFieldFavicon(this.browser.state.defaultSearchEngine())
     }
     // The same answer `ProtectionService.status()` gives the chrome (`PrivacyStatus`), read from
     // the settings it is computed from: a settings commit re-pushes the page, so a global-mode

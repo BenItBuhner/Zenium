@@ -2287,6 +2287,12 @@ export interface NewTabPageState {
   /** The host can open an image file picker. */
   canPickImage: boolean
   /**
+   * The default search engine's favicon (`engineFieldFavicon` of `defaultSearchEngine()`, the
+   * source the pill's empty tab reads): the field's leading glyph at 16 (design language v2 §6,
+   * §9.29); null for an engine without one, and the field keeps its magnifier.
+   */
+  engineFavicon: string | null
+  /**
    * A private window's page only: the "Block third-party cookies" switch (Chrome's Incognito
    * new-tab toggle), `PrivacyStatus.privateThirdPartyCookies` – `blocked` is its position,
    * `locked` that Settings blocks them in every window, so it is on and disabled. Absent on a
