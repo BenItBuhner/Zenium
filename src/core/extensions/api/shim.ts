@@ -102,10 +102,13 @@ export interface ShimOptions {
    */
   granted?: string[]
   /**
-   * The `this` an API callback or event listener is called with: undefined by default, as
-   * Chrome calls a frame's (`ScriptContext::SafeCallFunction` hands Blink an undefined
-   * receiver); a service worker's global for a worker, where Chrome calls with the context's
-   * global and a strict-mode listener reading `this` finds it (`EngineOptions.receiver`).
+   * The `this` an API callback or event listener is called with. Absent, it follows the host's
+   * kind as Chrome's `ScriptContext::SafeCallFunction` does: a frame's callbacks get an
+   * undefined receiver, a service worker's get the worker's global, where a strict-mode
+   * listener reading `this` finds it (an unbound method such as ZeroOmega's
+   * `_proxyChangeListener`, handed to `proxy.settings.get` and reading its own fields). Set, it
+   * replaces both: a host whose worker runs under a private global names that global here
+   * (`EngineOptions.receiver`).
    */
   receiver?: object
 }
@@ -152,8 +155,14 @@ export function installExtensionApi(
   const g: Any = options?.root ?? globalThis
   /** The real global: the document's `location`, and the `window` other views get. */
   const real: Any = globalThis
-  /** What callbacks and listeners are called with as `this` ([ShimOptions.receiver]). */
-  const receiver: object | undefined = options?.receiver
+  /**
+   * What callbacks and listeners are called with as `this` ([ShimOptions.receiver]): a worker's
+   * own global unless the host names another, nothing in a frame. Resolved here rather than by
+   * the host because the desktop's options cross `executeInMainWorld` serialization and an
+   * object cannot.
+   */
+  const receiver: object | undefined =
+    options?.receiver ?? (host.kind === 'worker' ? (real as object) : undefined)
   /** How long an event pushed before any listener exists waits for one (worker start-up). */
   const PENDING_TTL = 10_000
   const MARK = '__zeniumExtensionApi'
