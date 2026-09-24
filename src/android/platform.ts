@@ -389,6 +389,14 @@ export interface BootInfo {
    * host, which are online for good.
    */
   online?: boolean
+  /**
+   * The state the search widget or a launcher shortcut asked this cold start to open in
+   * (`Landing.kt`'s intent extra, WID-07; `landing.ts`'s words): `MainActivity.handleIntent`
+   * stashed it in the chrome before the core asked for its boot, and `bootAndroid` applies it
+   * right after `browser.start()`, in the boot's own run – the previous tab never painting. Null
+   * in every other start; absent in old hosts and in the preview host.
+   */
+  landing?: string | null
 }
 
 /**

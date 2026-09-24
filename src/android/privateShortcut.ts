@@ -7,7 +7,9 @@ export const PRIVATE_TABS_UNAVAILABLE = 'Private tabs need a newer Android Syste
 
 /**
  * The launcher shortcut's "New private tab" (INC-01): the intent the launcher fires reaches the
- * core here, through `LauncherIconActivity` -> `MainActivity.handleIntent` -> `window.__zenHost`.
+ * core here as the private landing (`LauncherIconActivity` -> `MainActivity.handleIntent` ->
+ * `Landing.of` -> `landing.ts`, the boot answer cold and `window.__zenHost.land` warm; the bare
+ * `NEW_PRIVATE_TAB` action of a pinned copy from before the landing extra reads the same way).
  * The tab is a tab another app sent, so it is created `fromIntent` like a link an app handed
  * over: back at its root returns to the launcher and the tab closes on the way out (#117's
  * `rootBackAction` -> `caller`), instead of closing into the app's other tabs.

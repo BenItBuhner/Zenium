@@ -120,23 +120,33 @@ export function tabTitle(tab: Tab): string {
 }
 
 /**
- * What a tab row's native tooltip says: the full title, which the row clips (BUG-004), then the
- * state the row is in – asleep (with what the page held, when the governor could tell), frozen,
- * driven by an agent.
+ * What an Essentials tile's or a sleeping row's moon's tooltip says (`data-tooltip`, §9.31),
+ * one line: the full title, which the tile and the row clip (BUG-004), then the state the tab
+ * is in – driven by an agent, asleep, frozen – joined by " · " ("Inbox · Sleeping – click to
+ * wake"). A plain tooltip is a name, not a card (the lead's W5-1 ruling 4): what the state held
+ * – the memory a sleeping page gave back – is the hover card's line (`tabStateLines`).
  */
 export function tabTooltip(tab: Tab, agentName: string | null = null): string {
-  return [tabTitle(tab), ...tabStateLines(tab, agentName)].join('\n')
+  return [tabTitle(tab), ...tabStates(tab, agentName)].join(' · ')
 }
 
-/** The state a row is in, one line each: driven by an agent, asleep (and what it held), frozen. */
+/**
+ * The state a row is in for the hover card, one line each: driven by an agent, asleep (and what
+ * the page held, when the governor could tell), frozen.
+ */
 export function tabStateLines(tab: Tab, agentName: string | null = null): string[] {
-  const lines: string[] = []
-  if (agentName) lines.push(`Driven by ${agentName}`)
-  if (tab.discarded) {
-    lines.push('Sleeping – click to wake')
-    if (tab.sleepSavedMb) lines.push(`Memory saved: ${tab.sleepSavedMb} MB`)
-  } else if (tab.frozen) lines.push('Frozen by the resource governor')
+  const lines = tabStates(tab, agentName)
+  if (tab.discarded && tab.sleepSavedMb) lines.push(`Memory saved: ${tab.sleepSavedMb} MB`)
   return lines
+}
+
+/** The states alone – driven by an agent, asleep, frozen – without what a sleeping page held. */
+export function tabStates(tab: Tab, agentName: string | null = null): string[] {
+  const states: string[] = []
+  if (agentName) states.push(`Driven by ${agentName}`)
+  if (tab.discarded) states.push('Sleeping – click to wake')
+  else if (tab.frozen) states.push('Frozen by the resource governor')
+  return states
 }
 
 export function isDarkScheme(state: UIState): boolean {

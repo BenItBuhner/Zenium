@@ -17,9 +17,11 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { Tooltip } = await import('../Tooltip')
-const { TOOLTIP_ATTR, TOOLTIP_DELAY, TOOLTIP_ID, tooltip } = await import('@renderer/lib/tooltip')
+const { TOOLTIP_ATTR, TOOLTIP_DELAY, TOOLTIP_ID, TOOLTIP_NO_COVER_ATTR, tooltip } =
+  await import('@renderer/lib/tooltip')
 const { KEYBOARD_FOCUS_ATTR } = await import('@renderer/lib/panes')
 const { chromeLayer } = await import('@renderer/lib/portals')
+const { contentAreaStore, uiStore } = await import('@renderer/lib/ui')
 
 let root: Root | null = null
 let host: HTMLDivElement
@@ -285,5 +287,96 @@ describe('Tooltip host', () => {
       window.dispatchEvent(new Event('blur'))
     })
     expect(shown()).toBeNull()
+  })
+
+  describe('over the page', () => {
+    // The content area under the window's top band, a control with no pane standing over it
+    // (a split pane's header sits in the gap between the views: ContentArea mounts it only
+    // while the content shows). Boxes are given by hand: the DOM here lays nothing out.
+    const area = { x: 240, y: 80, width: 1352, height: 912 }
+    let gap: HTMLDivElement
+    let layout: HTMLButtonElement
+    let midLayout: HTMLButtonElement
+    let free: HTMLButtonElement
+    const rect = (x: number, y: number, width: number, height: number): DOMRect =>
+      ({
+        x,
+        y,
+        width,
+        height,
+        left: x,
+        top: y,
+        right: x + width,
+        bottom: y + height,
+        toJSON: () => ({})
+      }) as DOMRect
+    beforeEach(() => {
+      contentAreaStore.set({ area })
+      gap = document.createElement('div')
+      gap.setAttribute(TOOLTIP_NO_COVER_ATTR, '')
+      layout = control('Layout: vertical (click to change)')
+      midLayout = control('Un-split this tab (Shift: keep focus in the split)')
+      gap.append(layout, midLayout)
+      free = control('Somewhere over the page')
+      document.body.append(gap, free)
+      // A top pane's header control, a lower pane's, and a pane-less control over the page.
+      vi.spyOn(layout, 'getBoundingClientRect').mockReturnValue(rect(859, 82, 20, 20))
+      vi.spyOn(midLayout, 'getBoundingClientRect').mockReturnValue(rect(859, 500, 20, 20))
+      vi.spyOn(free, 'getBoundingClientRect').mockReturnValue(rect(859, 500, 20, 20))
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.id === TOOLTIP_ID ? 96 : 0
+        }
+      })
+      Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.id === TOOLTIP_ID ? 30 : 0
+        }
+      })
+    })
+    afterEach(() => {
+      contentAreaStore.set({ area: null })
+      uiStore.set({ floatingChrome: 0 })
+      delete (HTMLElement.prototype as { offsetWidth?: number }).offsetWidth
+      delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight
+    })
+
+    it('a pane-less control over the page puts the page under its picture first, and shows once it is', async () => {
+      pointer('pointerover', free, null)
+      tick(TOOLTIP_DELAY)
+      const tip = shown()!
+      expect(tip.getAttribute('data-side')).toBe('below')
+      await settle()
+      expect(uiStore.get().floatingChrome).toBe(1)
+      expect(tip.style.visibility).toBe('visible')
+      pointer('pointerout', free, null)
+      expect(uiStore.get().floatingChrome).toBe(0)
+    })
+
+    it('a top pane’s header control shows above, beside the page, with no hold on the page', async () => {
+      pointer('pointerover', layout, null)
+      tick(TOOLTIP_DELAY)
+      const tip = shown()!
+      expect(tip.getAttribute('data-side')).toBe('above')
+      expect(tip.style.visibility).toBe('visible')
+      expect(tip.style.top).toBe(`${82 - 8 - 30}px`)
+      await settle()
+      expect(uiStore.get().floatingChrome).toBe(0)
+      expect(layout.getAttribute('aria-describedby')).toBe(TOOLTIP_ID)
+    })
+
+    it('a lower pane’s header control, a view on either side, takes no hold and waits hidden', async () => {
+      pointer('pointerover', midLayout, null)
+      tick(TOOLTIP_DELAY)
+      const tip = shown()!
+      expect(tip.getAttribute('data-side')).toBe('below')
+      await settle()
+      expect(uiStore.get().floatingChrome).toBe(0)
+      expect(tip.style.visibility).toBe('hidden')
+      // Its control is still in the DOM: nothing took the page from under it.
+      expect(midLayout.isConnected).toBe(true)
+    })
   })
 })
