@@ -335,7 +335,10 @@ function Host({ host }: { host: string }): JSX.Element {
  * the desktop's export for it (#413): `confirm` is the confirmation itself (`ConfirmDialog`, an
  * `alertdialog`): the title block and Cancel | Pair; `providePin` is the one-field prompt
  * (`PromptDialog`, §9.12: the field takes the keyboard at the open, its name is the title's
- * and its `aria-label`, no placeholder) with the six digits its value – Pair `disabled` at .4
+ * and its `aria-label`, no placeholder) with the six digits its value – typed on a touch host's
+ * digit keyboard (the field's `inputMode: 'numeric'`, `pattern: '[0-9]*'`; `sanitizePin` keeps
+ * the value digits whatever comes in), letter-spaced in `tabular-nums` on the field's own class
+ * (`.zen-device-pairing-field`, the primitive's `className` slot); Pair `disabled` at .4
  * until they are in, and Enter in the field the verb once they are, the primitive's default
  * key; `confirmPin` shows the device's PIN at the title size (§4's 22 on 28), letter-spaced in
  * `tabular-nums`, to compare, as the body of the picker form (`PickerDialog`, the chassis' one
@@ -377,7 +380,10 @@ export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.
           label: 'PIN',
           value: pin,
           onChange: (next) => setPin(sanitizePin(next)),
-          maxLength: PIN_LENGTH
+          maxLength: PIN_LENGTH,
+          inputMode: 'numeric',
+          pattern: '[0-9]*',
+          className: 'zen-device-pairing-field'
         }}
       />
     )
