@@ -31,7 +31,9 @@ import java.util.concurrent.Executor
  * when it has none – and a `ShortcutManagerCompat.requestPinShortcut`, which brings up the
  * system's own pin dialog. The launcher confirms through `ShortcutPinnedReceiver`, which the host
  * turns into the `shortcut.pinned` event (the core toasts and registers the app). Tapping the tile
- * is an ACTION_VIEW of the app's start URL aimed at `MainActivity`, which opens it in a tab.
+ * is an ACTION_VIEW of the app's start URL aimed at `MainActivity`, which opens it in a tab – or,
+ * for an app whose manifest asks for a window of its own (`display` other than `browser`,
+ * PWA-07), at [WebAppLauncherActivity] with the manifest's record ([WebAppRecord]) in the extras.
  */
 class Shortcuts(private val activity: MainActivity, private val io: Executor) {
     private val main = Handler(Looper.getMainLooper())
@@ -67,21 +69,23 @@ class Shortcuts(private val activity: MainActivity, private val io: Executor) {
         val background = ShortcutTile.parseHex(args.strOrNull("background")) ?: DEFAULT_BACKGROUND
         val iconBackground = ShortcutTile.parseHex(args.strOrNull("iconBackground"))
         val canvas = ShortcutTile.canvasPx(activity.resources.displayMetrics.density)
+        // An app with a manifest that opens in a window of its own (PWA-07) keeps what the window
+        // needs of the manifest; a plain page (or a `browser` app) is a tab, as before.
+        val record = WebAppRecord.fromRequest(args, title)
         io.execute {
             val icon = iconUrl?.let { fetchBitmap(it) }
             val tile = runCatching { drawTile(canvas, icon, iconKind, title, background, iconBackground) }
                 .getOrElse { drawTile(canvas, null, null, title, background, null) }
+            if (record != null) WebAppStore.save(activity, record, tile)
             main.post {
-                val ok = runCatching { request(id, url, title, tile) }.getOrDefault(false)
+                val ok = runCatching { request(id, url, title, tile, record) }.getOrDefault(false)
                 reply(ok)
             }
         }
     }
 
-    private fun request(id: String, url: String, title: String, tile: Bitmap): Boolean {
-        val open = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            .setClass(activity, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    private fun request(id: String, url: String, title: String, tile: Bitmap, record: WebAppRecord?): Boolean {
+        val open = launchIntent(activity, url, record)
         val info = ShortcutInfoCompat.Builder(activity, shortcutId(id))
             .setShortLabel(title.take(SHORT_LABEL_MAX))
             .setLongLabel(title)
@@ -199,6 +203,19 @@ class Shortcuts(private val activity: MainActivity, private val io: Executor) {
         fun shortcutId(id: String): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(id.toByteArray())
             return "webapp-" + digest.take(12).joinToString("") { "%02x".format(it) }
+        }
+
+        /**
+         * What the tile starts: an ACTION_VIEW of the app's start URL aimed at `MainActivity` (a
+         * tab) for a plain page, or at [WebAppLauncherActivity] – carrying the record – for an app
+         * that opens in a window of its own. The launcher target is not exported: the system
+         * starts a pinned shortcut under its creator's uid, so the tile reaches it and nothing
+         * else does (Chrome's `SecureWebAppLauncher` rule).
+         */
+        fun launchIntent(context: Context, url: String, record: WebAppRecord?): Intent {
+            val open = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (record == null) return open.setClass(context, MainActivity::class.java)
+            return record.putInto(open.setClass(context, WebAppLauncherActivity::class.java))
         }
 
         private const val SHORT_LABEL_MAX = 25
