@@ -721,17 +721,19 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
      * Watches what `send` starts: a MainActivity created is a cold start (the application's
      * lifecycle callbacks, `onActivityCreated` fires for a creation alone), none within the wait a
      * warm one; the trampoline's creation is noted for the shortcut path. [send] arms the watch
-     * and fires; [awaitMain] hands back the created MainActivity, or null.
+     * and fires; [awaitMain] hands back the created MainActivity, or null – once its `onCreate`
+     * has RUN THROUGH (`onActivityPostCreated`): `onActivityCreated` is dispatched from
+     * `super.onCreate`, before the activity's own body makes its host (run 2's fault).
      */
     private inner class Start(private val fire: () -> Unit) {
         private val created = CopyOnWriteArrayList<Activity>()
         private val trampolines = CopyOnWriteArrayList<Activity>()
         private val callbacks = object : Application.ActivityLifecycleCallbacks {
             override fun onActivityCreated(a: Activity, savedInstanceState: Bundle?) {
-                when (a) {
-                    is MainActivity -> created += a
-                    is LauncherIconActivity -> trampolines += a
-                }
+                if (a is LauncherIconActivity) trampolines += a
+            }
+            override fun onActivityPostCreated(a: Activity, savedInstanceState: Bundle?) {
+                if (a is MainActivity) created += a
             }
             override fun onActivityStarted(a: Activity) {}
             override fun onActivityResumed(a: Activity) {}
