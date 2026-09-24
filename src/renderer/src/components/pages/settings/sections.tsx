@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Check, CreditCard, Fingerprint, MapPin } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
+  AppLinkState,
   BookmarksBarMode,
   ColorScheme,
   ContainerColor,
@@ -112,13 +113,13 @@ import { requestDefaultBrowser } from '@renderer/lib/defaultBrowser'
 import { downloadLocationLabel } from '@renderer/lib/downloadText'
 import { versionLine } from '@renderer/lib/about'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
-import { openPage } from '@renderer/lib/pages'
 import {
   NEW_TAB_LAYOUT_HINT,
   NEW_TAB_PRESET_DESCRIPTIONS,
   NEW_TAB_PRESET_LABELS,
   newTabBackgroundValue
 } from '@renderer/lib/newTabSettings'
+import { openPage } from '@renderer/lib/pages'
 import { setPrivateLockOnLeave } from '@renderer/lib/privateLock'
 import { formatRate } from '@renderer/lib/readAloud'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
@@ -127,6 +128,7 @@ import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords
 import { openOverlay } from '@renderer/lib/ui'
 import { pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
+import { versionReport } from '@renderer/lib/versionReport'
 import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
 import {
@@ -4436,6 +4438,26 @@ function securitySection({ state }: SectionContext): RowGroup[] {
       ],
       empty: 'No site permissions remembered yet'
     },
+    // Chrome's Notifications row (SET-26): the phone's system screen for this app's notifications,
+    // where each channel – downloads, sites, updates, private tabs – is turned on or off.
+    {
+      id: 'security-notifications',
+      heading: 'Notifications',
+      description:
+        'Zenium’s own notifications – downloads, sites, updates, private tabs – are turned on and off in the system settings.',
+      layouts: ['phone'],
+      rows: [
+        {
+          kind: 'action',
+          id: 'notification-settings',
+          label: 'Notification settings',
+          description: 'Which of Zenium’s notifications show, and how.',
+          keywords: ['notifications', 'alerts', 'channels', 'system settings', 'sound', 'badge'],
+          leaves: 'external',
+          onPress: () => run('app.openNotificationSettings', undefined)
+        }
+      ]
+    },
     {
       id: 'security-session',
       heading: 'This session',
@@ -4777,15 +4799,33 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * The Open by default row's second line: the state of the system's switch as the host read it
+ * (a fact of the switch, not a promise of what comes – with no default role most links still go
+ * elsewhere), or the screen's own offer when the host has no reading.
+ */
+function appLinksDescription(state: AppLinkState | undefined): string {
+  switch (state) {
+    case 'allowed':
+      return 'Zenium is set to open web links from other apps.'
+    case 'disallowed':
+      return 'Zenium is set not to open web links from other apps.'
+    default:
+      return 'Choose which links open in Zenium.'
+  }
+}
+
+/**
  * About (settings-73, shortcuts-menus-164; Chrome's chrome://settings/help): the version block
  * – wordmark, version with its channel, engine, copyright – then the update row in one of two
  * states: "Check for updates" (or "Update to <version>") leading to the Updates page, or, once
  * an update is downloaded (`phase: 'ready'`), "Relaunch to update" with the relaunch on the row
  * itself, as Chrome's About turns into a Relaunch button. "Get help" and "Report an issue" go
  * where the app menu's Help submenu goes (`shared/links.ts`); "Open-source licences" opens the
- * `zen://licences` page tab.
+ * `zen://licences` page tab. On a touch layout the version block copies its report on a hold
+ * (SET-54); Android adds the Default browser, Open by default and What's new rows, and the Legal
+ * group's Privacy notice and Terms (SET-55) follow on every layout with page tabs.
  */
-function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
+function aboutSection({ state, navigate, formFactor }: SectionContext): RowGroup[] {
   const engineHost = state.platform === 'android' ? 'Android System WebView' : 'Electron'
   const update = state.updates
   const newer = update.phase === 'available' || update.phase === 'ready' ? update.release : null
@@ -4798,7 +4838,21 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
       keywords: ['version', state.version, 'channel', 'copyright', 'licence', engineHost],
       render: () => (
         <AboutVersionBlock version={state.version} target={update.target} engineHost={engineHost} />
-      )
+      ),
+      // A touch layout copies the version line on a hold (SET-54; Chrome for Android's About);
+      // the desktop's block is text to select.
+      ...(formFactor !== 'desktop'
+        ? {
+            copy: {
+              text: versionReport(
+                state.version,
+                engineHost,
+                typeof navigator === 'undefined' ? '' : navigator.userAgent
+              ),
+              confirmation: 'Version copied'
+            }
+          }
+        : {})
     }
   ]
   if (state.capabilities.updates) {
@@ -4867,6 +4921,33 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
             onPress: () => run('defaultBrowser.request', { source: 'settings' })
           }
     )
+    // Open by default (DEF-06; Chrome's row of the same name): the system's screen for which
+    // links open in Zenium, its state as the host read it – the link-handling switch on Android
+    // 12+ – on the row; the tap leaves for the screen.
+    if (state.capabilities.appLinkSettings) {
+      rows.push({
+        kind: 'action',
+        id: 'open-by-default',
+        label: 'Open by default',
+        description: appLinksDescription(state.defaultBrowser.appLinks),
+        leaves: 'external',
+        keywords: ['open by default', 'links', 'supported links', 'app links'],
+        onPress: () => run('app.openAppLinkSettings', undefined)
+      })
+    }
+  }
+  // What's new (SET-54; Chrome's What's new): the running version's highlights, a chrome page
+  // (`zen://whats-new`) on every layout with page tabs.
+  if (state.capabilities.pageTabs) {
+    rows.push({
+      kind: 'action',
+      id: 'whats-new',
+      label: 'What’s new',
+      description: `The highlights of Zenium ${state.version}.`,
+      leaves: 'chevron',
+      keywords: ["what's new", 'release notes', 'highlights', 'changes'],
+      onPress: () => openPage('whats-new')
+    })
   }
   rows.push(
     {
@@ -4894,5 +4975,34 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
       onPress: () => openPage('licences')
     }
   )
-  return [{ id: 'about', heading: 'About', rows }]
+  const groups: RowGroup[] = [{ id: 'about', heading: 'About', rows }]
+  // Legal (SET-55; Chrome's Legal information): the Privacy notice and the Terms, chrome pages
+  // (`zen://privacy-notice`, `zen://terms`) on every layout with page tabs.
+  if (state.capabilities.pageTabs) {
+    groups.push({
+      id: 'legal',
+      heading: 'Legal',
+      rows: [
+        {
+          kind: 'action',
+          id: 'privacy-notice',
+          label: 'Privacy notice',
+          description: 'What Zenium keeps on this device and what leaves it.',
+          leaves: 'chevron',
+          keywords: ['privacy notice', 'legal', 'data'],
+          onPress: () => openPage('privacy-notice')
+        },
+        {
+          kind: 'action',
+          id: 'terms',
+          label: 'Terms',
+          description: 'The terms Zenium is provided under.',
+          leaves: 'chevron',
+          keywords: ['terms', 'legal', 'licence', 'license'],
+          onPress: () => openPage('terms')
+        }
+      ]
+    })
+  }
+  return groups
 }

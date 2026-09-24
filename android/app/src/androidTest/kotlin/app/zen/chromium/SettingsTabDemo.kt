@@ -1,5 +1,7 @@
 package app.zen.chromium
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
@@ -39,7 +41,15 @@ import java.util.concurrent.TimeUnit
  *     browser's pages, never a document);
  *  8. Find in Settings "site" lists rows across categories;
  *  9. a container's editor sheet and its delete confirmation stack, the lower sheet receding;
- * 10. the pill edits `zenium://settings/look`, the user-facing alias of the page's address.
+ * 10. the pill edits `zenium://settings/look`, the user-facing alias of the page's address;
+ * 11. About: a hold on the version block copies the version report (SET-54), the Open by
+ *     default row reads the host's link-handling state and leaves for the system's screen
+ *     (DEF-06), What's new opens as a page tab of its own and a back returns to About;
+ * 12. Legal: Privacy notice and Terms open as page tabs, each back returning to About (SET-55);
+ * 13. Security's Notification settings row leaves for the system's screen for this app (SET-26);
+ * 14. the link menu on the demo page: its header with the link's text over its address, a tap
+ *     expanding the address, a hold copying it (PUI-18); the `tel:` link's Call, Send Message
+ *     and Add to Contacts, the `mailto:` link's Send Email (PUI-22).
  *
  * The pages come from a loopback server inside this process ([DemoServer]); the profile
  * (`settings-tab-demo-state.json`) holds the demo page (active) and a second tab. Gesture
@@ -67,7 +77,13 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                         "<p id=\"link\"><a href=\"zenium://settings/privacy\" " +
                         "onclick=\"document.getElementById('note').textContent='Link tapped: zenium://settings/privacy'\">" +
                         "Open Privacy and Security in Settings</a></p>" +
-                        "<p id=\"note\" style=\"color:#7a2e2e\"></p>"
+                        "<p id=\"note\" style=\"color:#7a2e2e\"></p>" +
+                        // Three links for the link menu's header and its tel: / mailto: items (step 16):
+                        // a page of this site, a number and an address, each with text of its own so
+                        // the header shows the text over what the link holds.
+                        "<p id=\"links\" style=\"line-height:2.6\">Also here: <a id=\"site\" href=\"$ORIGIN/other.html\">The second page</a>, " +
+                        "<a id=\"call\" href=\"tel:$DEMO_NUMBER\">Call the demo</a> or " +
+                        "<a id=\"mail\" href=\"mailto:$DEMO_EMAIL\">Write to the demo</a>.</p>"
                 ),
                 "/other.html" to DemoServer.page("Second tab", "<p>The tab the demo does not visit.</p>")
             )
@@ -455,7 +471,367 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             SystemClock.sleep(1_500)
         }
 
+        // 13. About: the version block copies its report on a hold; Open by default reads the
+        // host's link state and leaves for the system's screen; What's new is a page tab of its own.
+        step("About: the version copies on a hold, Open by default, What's new") {
+            if (!openSection("About", "about")) return@step
+            SystemClock.sleep(1_200)
+            shot("15-about")
+            // The block carries the hold (rows.tsx, `data-copies`): the finger lands on it where
+            // the chrome draws it, as the sheet steps do.
+            val block = chromePointOf("document.querySelector('[data-row=\"version\"][data-copies]')")
+            if (block == null) {
+                finding("  no version block carries the hold")
+            } else {
+                val before = clipboardText()
+                watchToasts()
+                Finger().apply {
+                    press(block.x, block.y)
+                    up()
+                }
+                val copied = awaitClipboardPrefix("Zenium ", 6_000)
+                val text = clipboardText()
+                // Android 13+ shows the system's clipboard chip in the toast's place
+                // (`copyConfirmation`): the chrome's toast is only looked for before it.
+                val word = when {
+                    Build.VERSION.SDK_INT >= 33 -> "the system's chip stands for the toast"
+                    awaitToastSeen("Version copied", 4_000) -> "toast 'Version copied' seen"
+                    else -> "toast 'Version copied' NOT seen"
+                }
+                SystemClock.sleep(800)
+                shot("16-version-copied")
+                finding("  hold on the version block at ${block.x.toInt()},${block.y.toInt()}: clipboard '$before' -> '$text'; $word ${verdict(copied)}")
+                // The hold's release is swallowed (no row action fires): the section stays up.
+                finding("  section still up after the hold ${verdict(chromeSurfaceUp() && activeUrl() == "$SETTINGS_URL/about")}")
+                // The system's clipboard chip is a window of its own, and while it shows the
+                // accessibility tree read is its (run 35939865448: every label read after the
+                // hold found nothing): the rest of the step works off the chrome's own document,
+                // and the chip is waited out before anything is pressed.
+                finding("  the clipboard chip: ${awaitClipboardChip()}")
+            }
+            // Open by default (DEF-06): the row reads the host's state; its tap leaves for the
+            // system's screen, and the app is brought back for the rest of the recording.
+            val openByText = rowText("open-by-default")
+            val known = openByText.contains("is set to open") || openByText.contains("is set not to open") || openByText.contains("Choose which links")
+            finding("  Open by default row reads '$openByText' ${verdict(openByText.isNotEmpty() && known)}")
+            if (openByText.isNotEmpty() && tapRow("open-by-default")) {
+                val left = awaitLeftApp(8_000)
+                SystemClock.sleep(1_200)
+                shot("17-open-by-default-system")
+                finding("  its tap left for the system's screen (${ui.rootInActiveWindow?.packageName}) ${verdict(left)}")
+                recoverApp()
+                awaitPage("$SETTINGS_URL/about", 8_000)
+                SystemClock.sleep(800)
+            }
+            // What's new: a page tab of its own, opened from the row; a back returns to About.
+            val tabsBefore = tabCount()
+            val aboutId = activeTabId()
+            if (!tapRow("whats-new")) return@step
+            val page = awaitPage(WHATS_NEW_URL, 10_000)
+            SystemClock.sleep(1_500)
+            val body = chromeValue(
+                "(function(){if(document.querySelector('[data-testid=\"whats-new-notes\"]'))return 'notes';" +
+                    "var e=document.querySelector('[data-testid=\"whats-new-empty\"]');return e?'empty: '+e.textContent.trim():'nothing'})()"
+            )
+            shot("18-whats-new")
+            finding(
+                "  active ${page?.optString("id")} ${page?.optString("url")}, opener '${page?.optString("openerTabId")}', tabs ${tabCount()} (were $tabsBefore); the page shows $body " +
+                    verdict(page?.optString("url") == WHATS_NEW_URL && page?.optString("openerTabId") == aboutId && tabCount() == tabsBefore + 1 && body != "nothing")
+            )
+            back()
+            val returned = awaitPage("$SETTINGS_URL/about", 8_000)
+            SystemClock.sleep(1_000)
+            finding("  back: active ${returned?.optString("url")}, tabs ${tabCount()} ${verdict(returned?.optString("url") == "$SETTINGS_URL/about" && tabCount() == tabsBefore)}")
+        }
+
+        // 14. Legal: the Privacy notice and the Terms, each a page tab, each back returning to About.
+        step("Legal: Privacy notice and Terms") {
+            if (activeUrl() != "$SETTINGS_URL/about" && !openSection("About", "about")) return@step
+            val tabsBefore = tabCount()
+            for ((rowId, url, shotName) in listOf(
+                Triple("privacy-notice", PRIVACY_URL, "19-privacy-notice"),
+                Triple("terms", TERMS_URL, "20-terms")
+            )) {
+                val label = if (rowId == "terms") "Terms" else "Privacy notice"
+                if (!tapRow(rowId)) continue
+                val page = awaitPage(url, 10_000)
+                SystemClock.sleep(1_500)
+                val prose = chromeValue("String(document.querySelectorAll('.zen-page-prose p, .zen-page-prose li').length)").toIntOrNull() ?: 0
+                shot(shotName)
+                finding("  $label: active ${page?.optString("url")}, $prose paragraphs and items of prose ${verdict(page?.optString("url") == url && prose > 0)}")
+                back()
+                val returned = awaitPage("$SETTINGS_URL/about", 8_000)
+                SystemClock.sleep(800)
+                finding("  back to About ${verdict(returned?.optString("url") == "$SETTINGS_URL/about" && tabCount() == tabsBefore)}")
+            }
+        }
+
+        // 15. Security's Notification settings row: the system's screen for this app's notifications.
+        step("Security: the Notification settings row") {
+            if (!openSection("Security", "security")) return@step
+            awaitChrome("!!document.querySelector('[data-row=\"notification-settings\"]')", 8_000)
+            val row = rowPoint("notification-settings")
+            SystemClock.sleep(800)
+            shot("21-notification-settings-row")
+            if (row == null) {
+                finding("  no Notification settings row in Security")
+                return@step
+            }
+            finding("  the row reads '${rowText("notification-settings")}'")
+            Finger().tap(row.x, row.y)
+            val left = awaitLeftApp(8_000)
+            SystemClock.sleep(1_200)
+            shot("22-notification-settings-system")
+            finding("  the tap left for the system's screen (${ui.rootInActiveWindow?.packageName}) ${verdict(left)}")
+            recoverApp()
+            awaitPage(SETTINGS_URL, 8_000, anySection = true)
+            SystemClock.sleep(800)
+        }
+
+        // 16. The link menu on the demo page: the header (PUI-18), then the tel: and mailto: items (PUI-22).
+        step("The link menu's header, and the tel: and mailto: items") {
+            if (chromeSurfaceUp()) closeSurfaces()
+            if (!switchTo(demoTab, DEMO_TITLE)) {
+                finding("  could not return to the demo page")
+                return@step
+            }
+            // A page link with text: the text over the address, the site's favicon or the globe.
+            if (holdPageLink("#site") == null) return@step
+            val header = readLinkHeader()
+            SystemClock.sleep(600)
+            shot("23-link-header")
+            finding("  header on the page link: $header ${verdict(header == "The second page | $ORIGIN/other.html")}")
+            val headerPoint = chromePointOf("document.querySelector('.zen-menu-link-header')")
+            if (headerPoint != null) {
+                Finger().tap(headerPoint.x, headerPoint.y)
+                val expanded = awaitChrome("!!document.querySelector('.zen-menu-link-header[aria-expanded=\"true\"]')", 4_000)
+                SystemClock.sleep(600)
+                shot("24-link-header-expanded")
+                finding("  a tap expands the address ${verdict(expanded)}")
+                val before = clipboardText()
+                Finger().apply {
+                    press(headerPoint.x, headerPoint.y)
+                    up()
+                }
+                val copied = awaitClipboard("$ORIGIN/other.html", 6_000)
+                finding("  a hold copies it: clipboard '$before' -> '${clipboardText()}' ${verdict(copied)}")
+                // The menu stands after the hold (the release's click is swallowed).
+                finding("  the menu still up after the hold ${verdict(chromeSurfaceUp())}")
+            }
+            // The copy's chip waited out before the back: while it shows, the emulator's
+            // software GPU is its and the sheet's spring crawls (run 35941798860: 8 s from the
+            // back to `back.update`, and closeSurfaces' second back meanwhile landed on the page's
+            // root – the demo tab left for a new one, nothing for the next holds to match).
+            finding("  the clipboard chip: ${awaitClipboardChip()}")
+            finding("  the menu closed by one back ${verdict(closeMenuSheet())}")
+            SystemClock.sleep(800)
+            // tel: – the number bare under the link's text, and the three items for it.
+            if (holdPageLink("#call") != null) {
+                val telHeader = readLinkHeader()
+                val labels = menuItemLabels()
+                val items = listOf("Call", "Send Message", "Add to Contacts", "Copy Phone Number").map { it to (it in labels) }
+                SystemClock.sleep(600)
+                shot("25-tel-menu")
+                finding(
+                    "  tel: header $telHeader; items ${items.joinToString { "${it.first} ${if (it.second) "yes" else "NO"}" }} " +
+                        verdict(telHeader == "Call the demo | $DEMO_NUMBER" && items.all { it.second })
+                )
+                closeMenuSheet()
+                SystemClock.sleep(800)
+            }
+            // mailto: – the address bare, Send Email.
+            if (holdPageLink("#mail") != null) {
+                val mailHeader = readLinkHeader()
+                val labels = menuItemLabels()
+                val items = listOf("Send Email", "Copy Email Address").map { it to (it in labels) }
+                SystemClock.sleep(600)
+                shot("26-mailto-menu")
+                finding(
+                    "  mailto: header $mailHeader; items ${items.joinToString { "${it.first} ${if (it.second) "yes" else "NO"}" }} " +
+                        verdict(mailHeader == "Write to the demo | $DEMO_EMAIL" && items.all { it.second })
+                )
+                closeMenuSheet()
+            }
+            SystemClock.sleep(800)
+        }
+
         finding("\nend: ${describeActive()}")
+    }
+
+    // --- the small rows' helpers (steps 13 to 16) ------------------------------------------------
+
+    /**
+     * The Settings section `label` over the landing: from wherever the last step left the tab
+     * (a section, a sheet, another tab), by a finger on the landing's row – the core's own open
+     * when the row is not found, so the step still runs. True once the tab shows the section.
+     */
+    private fun openSection(label: String, id: String): Boolean {
+        val url = "$SETTINGS_URL/$id"
+        if (activeUrl() == url) return true
+        if (!activeUrl().startsWith(SETTINGS_URL)) {
+            coreInvoke("page.open", "{\"id\":\"settings\",\"section\":null}")
+            awaitPage(SETTINGS_URL, 10_000, anySection = true)
+            SystemClock.sleep(800)
+        }
+        if (chromeSurfaceUp()) {
+            closeSurfaces()
+            awaitSurface(up = false, timeoutMs = 6_000)
+            SystemClock.sleep(800)
+        }
+        if (!tapText(label)) {
+            Log.w(tag, "no landing row reads $label; opening the section through the core")
+            coreInvoke("page.open", "{\"id\":\"settings\",\"section\":${JSONObject.quote(id)}}")
+        }
+        val there = awaitPage(url, 8_000)?.optString("url") == url
+        awaitSurface(up = true, timeoutMs = 6_000)
+        if (!there) finding("  the tab did not come to $url (${describeActive()})")
+        return there
+    }
+
+    /** A hold on the page's link `selector` until its menu sheet is up; the point held, or null (and a finding). */
+    private fun holdPageLink(selector: String): PointF? {
+        val p = pagePoint(selector) ?: run {
+            finding("  nothing matches $selector on the page")
+            return null
+        }
+        // Two holds before giving up: the first after a sheet has left (run 35939865448's
+        // #call) landed while the page was not yet the pointer's again.
+        repeat(2) { attempt ->
+            Finger().apply {
+                press(p.x, p.y)
+                up()
+            }
+            if (awaitChrome("!!document.querySelector('.zen-menu-link-header')", 6_000)) {
+                if (attempt > 0) finding("  the hold on $selector raised the menu at the second hold")
+                SystemClock.sleep(600)
+                return p
+            }
+            Log.w(tag, "no link menu after hold ${attempt + 1} on $selector at ${p.x.toInt()},${p.y.toInt()}")
+            SystemClock.sleep(1_000)
+        }
+        finding("  the hold on $selector at ${p.x.toInt()},${p.y.toInt()} raised no link menu (two holds)")
+        return null
+    }
+
+    /**
+     * True once the app's own window is the active one again (`rootInActiveWindow`), with how
+     * long it took: the system's clipboard chip (Android 13+) is a window of its own that takes
+     * the focus for a while after a copy, and the accessibility tree read meanwhile is its.
+     */
+    private fun awaitAppWindow(timeoutMs: Long): String {
+        val start = SystemClock.uptimeMillis()
+        val deadline = start + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (ui.rootInActiveWindow?.packageName?.toString() == app.packageName) {
+                return "after ${SystemClock.uptimeMillis() - start} ms PASS"
+            }
+            SystemClock.sleep(250)
+        }
+        return "NOT within $timeoutMs ms (active window ${ui.rootInActiveWindow?.packageName}) FAIL"
+    }
+
+    /**
+     * After a copy on Android 13+: the system's clipboard chip comes up as a window of its own a
+     * moment after the copy, holds the active window for as long as it shows (about six seconds;
+     * every accessibility read meanwhile is its) and, on the emulator's software GPU, starves the
+     * app's frames – a sheet's spring crawls under it. Wait for it to have come (up to 2.5 s) and
+     * gone, so that what follows lands on an app drawing at its own pace; a word on what happened.
+     */
+    private fun awaitClipboardChip(): String {
+        if (Build.VERSION.SDK_INT < 33) return "none below 33"
+        val start = SystemClock.uptimeMillis()
+        while (SystemClock.uptimeMillis() - start < 2_500 && appInFront()) SystemClock.sleep(100)
+        if (appInFront()) return "no window of its own within 2.5 s"
+        val came = SystemClock.uptimeMillis() - start
+        return "took the window after $came ms, the app's back ${awaitAppWindow(15_000)}"
+    }
+
+    /**
+     * One back on the menu sheet, then wait for the sheet to have gone – its spring carried out
+     * (`.zen-sheet` unmounted) and the host told (`back.update`) – before anything else; never a
+     * second back while it is still mounted, which would land on the page beneath. False when it
+     * is still there after the wait.
+     */
+    private fun closeMenuSheet(): Boolean {
+        if (!chromeSurfaceUp() && sheetCount() == 0) return true
+        back()
+        val gone = awaitSheets(0, 20_000)
+        val told = awaitSurface(up = false, timeoutMs = 10_000)
+        SystemClock.sleep(500)
+        return gone && told
+    }
+
+    /** The text of the settings row `id` as the chrome draws it (`data-row`); empty when the page has none. */
+    private fun rowText(id: String): String =
+        chromeValue("(function(){var e=document.querySelector('[data-row=\"$id\"]');return e?e.textContent.trim():null})()")
+
+    /** The middle of the settings row `id` on screen, scrolled into view first; null when the page has none. */
+    private fun rowPoint(id: String): PointF? {
+        val element = "document.querySelector('[data-row=\"$id\"]')"
+        if (chromeValue("String(!!$element)") != "true") return null
+        chromeJs("$element.scrollIntoView({block:'center'})")
+        SystemClock.sleep(500)
+        return chromePointOf(element)
+    }
+
+    /** A finger on the middle of the settings row `id`; false (and a finding) when the page has none. */
+    private fun tapRow(id: String): Boolean {
+        val p = rowPoint(id) ?: run {
+            finding("  no row '$id' on the page")
+            return false
+        }
+        Finger().tap(p.x, p.y)
+        return true
+    }
+
+    /** The labels of the menu sheet's items, in order, as the chrome draws them. */
+    private fun menuItemLabels(): List<String> {
+        val raw = chromeJs(
+            "Array.from(document.querySelectorAll('.zen-v2-menu-item')).map(function(e){return e.textContent.trim()})"
+        )
+        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+        return List(array.length()) { array.optString(it) }
+    }
+
+    /** The link menu's header as "title | address", read from the chrome. */
+    private fun readLinkHeader(): String = chromeValue(
+        "(function(){var h=document.querySelector('.zen-menu-link-header');if(!h)return 'no header';" +
+            "return ((h.querySelector('.zen-menu-link-title')||{}).textContent||'').trim()+' | '+((h.querySelector('.zen-menu-link-url')||{}).textContent||'').trim()})()"
+    )
+
+    /** Poll until another app's window is in front (a system screen the row opened); false when the browser stays. */
+    private fun awaitLeftApp(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (!appInFront()) return true
+            SystemClock.sleep(250)
+        }
+        return !appInFront()
+    }
+
+    /** The clipboard's text as the app (in the foreground, so allowed to read it) sees it. */
+    private fun clipboardText(): String {
+        var text = ""
+        instrumentation.runOnMainSync {
+            val manager = app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            text = runCatching {
+                manager.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(app)?.toString()
+            }.getOrNull().orEmpty()
+        }
+        return text
+    }
+
+    private fun awaitClipboard(text: String, timeoutMs: Long): Boolean = awaitClipboardWhere(timeoutMs) { it == text }
+
+    private fun awaitClipboardPrefix(prefix: String, timeoutMs: Long): Boolean = awaitClipboardWhere(timeoutMs) { it.startsWith(prefix) }
+
+    private fun awaitClipboardWhere(timeoutMs: Long, accept: (String) -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (accept(clipboardText())) return true
+            SystemClock.sleep(250)
+        }
+        return accept(clipboardText())
     }
 
     // --- steps -----------------------------------------------------------------------------------
@@ -779,6 +1155,13 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         private const val DEMO_TITLE = "Settings tab demo"
         /** The address the core stores the page under; the pill and the deep link carry `zenium://`. */
         private const val SETTINGS_URL = "zen://settings"
+        /** The page tabs About and Legal open (SET-54, SET-55), by the addresses the core stores them under. */
+        private const val WHATS_NEW_URL = "zen://whats-new"
+        private const val PRIVACY_URL = "zen://privacy-notice"
+        private const val TERMS_URL = "zen://terms"
+        /** The demo page's `tel:` and `mailto:` links (step 16): what their headers show bare. */
+        private const val DEMO_NUMBER = "+15550100"
+        private const val DEMO_EMAIL = "hello@zenium.example"
         /** The landing's Find in Settings field, in the chrome's DOM. */
         private const val SEARCH_FIELD = ".zen-settings-search-field"
         private const val URLBAR_FIELD = "input[data-testid=\"urlbar-input\"]"
