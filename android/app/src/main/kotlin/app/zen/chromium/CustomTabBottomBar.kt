@@ -12,6 +12,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.util.Log
+import android.view.Choreographer
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -19,6 +20,7 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -111,6 +113,8 @@ class CustomTabBottomBar(
             listener.onBarSettled()
         }
     )
+    /** The reveal's form under reduced motion: the bar's rows fading in where they stand (§11.3). */
+    private val fade = ReducedMotionFade { content.alpha = it }
 
     init {
         setBackgroundColor(scheme.secondaryToolbar)
@@ -230,7 +234,6 @@ class CustomTabBottomBar(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!swipeUpEnabled) return super.onTouchEvent(event)
-        velocity?.addMovement(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 // The intercept saw this down first and grabbed it (a ViewGroup's own touch begins
@@ -239,6 +242,7 @@ class CustomTabBottomBar(
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                velocity?.addMovement(event)
                 if (!dragging && CustomTabBottomBarRules.claimsDrag(event.x - downX, event.y - downY, slop)) dragging = true
                 if (dragging) {
                     val travelUp = travelBase + (downY - event.y)
@@ -252,6 +256,7 @@ class CustomTabBottomBar(
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                velocity?.addMovement(event)
                 settle()
                 return true
             }
@@ -298,7 +303,10 @@ class CustomTabBottomBar(
     /**
      * The bar just grew or shrank by `deltaPx` (a positive delta is growth): its new edge starts
      * where the old one was and springs into place (§11's snappy spring), whatever a finger is
-     * doing to it; [Listener.onBarSettled] follows at the rest. Snaps with animators off.
+     * doing to it; [Listener.onBarSettled] follows at the rest. Under reduced motion (animators
+     * off) the movement goes and the appearance stays, §11.3's way: the bar stands at its new
+     * edge at once – the page takes it at once – and its new rows fade in where they are over
+     * the 120 ms every reduced-motion appearance gets.
      */
     fun revealGrowth(deltaPx: Int) {
         reveal += deltaPx
@@ -306,6 +314,7 @@ class CustomTabBottomBar(
             reveal = 0f
             place()
             listener.onBarSettled()
+            fade.start()
             return
         }
         place()
@@ -317,11 +326,13 @@ class CustomTabBottomBar(
 
     /**
      * A hide or show from the activity takes the bar's place over: the springs stop and their
-     * offsets are dropped (the activity writes `translationY` itself from here).
+     * offsets are dropped (the activity writes `translationY` itself from here); a reduced-motion
+     * fade lands.
      */
     fun stopSettling() {
         spring.stop()
         revealSpring.stop()
+        fade.stop()
         drag = 0f
         reveal = 0f
     }
@@ -398,4 +409,49 @@ private class PlainInflaterContext(base: Context) : ContextWrapper(base) {
 
     override fun getSystemService(name: String): Any? =
         if (name == Context.LAYOUT_INFLATER_SERVICE) inflater else super.getSystemService(name)
+}
+
+/**
+ * §11.3's 120 ms opacity fade – the form every appearance takes under reduced motion – on the
+ * Choreographer, as [Spring] runs: the animator duration scale at zero is what turns reduced
+ * motion on, and it would cut a `ViewPropertyAnimator`'s 120 ms to a single frame, so the one
+ * fade §11.3 keeps has to keep its own time. `onFrame` takes the eased opacity, 0 at the start
+ * and 1 at the end.
+ */
+private class ReducedMotionFade(private val onFrame: (Float) -> Unit) {
+    private val choreographer by lazy { Choreographer.getInstance() }
+    private var startNanos = 0L
+    private var running = false
+    private val frame = object : Choreographer.FrameCallback {
+        override fun doFrame(nanos: Long) {
+            if (!running) return
+            val t = ((nanos - startNanos) / 1_000_000f / FADE_MS).coerceIn(0f, 1f)
+            onFrame(EASE.getInterpolation(t))
+            if (t >= 1f) running = false else choreographer.postFrameCallback(this)
+        }
+    }
+
+    /** From nothing to fully there; a fade already running starts over. */
+    fun start() {
+        startNanos = System.nanoTime()
+        onFrame(0f)
+        if (!running) {
+            running = true
+            choreographer.postFrameCallback(frame)
+        }
+    }
+
+    /** Lands a running fade: what it was bringing in is fully there. */
+    fun stop() {
+        if (!running) return
+        running = false
+        choreographer.removeFrameCallback(frame)
+        onFrame(1f)
+    }
+
+    companion object {
+        /** §11.3: the one duration of a reduced-motion appearance. */
+        const val FADE_MS = 120f
+        private val EASE = PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
+    }
 }
