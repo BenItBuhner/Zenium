@@ -211,7 +211,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                     type="button"
                     tabIndex={-1}
                     className="zen-toolbar-button h-5 w-5 opacity-0 group-hover/sep:opacity-70"
-                    aria-label="Clear unpinned tabs"
+                    aria-label={hint('Clear unpinned tabs', state, 'space.closeUnpinned')}
                     data-tooltip={hint('Clear unpinned tabs', state, 'space.closeUnpinned')}
                     onClick={() => run('space.closeUnpinned', { spaceId: space.id })}
                   >
@@ -481,7 +481,7 @@ export function NewTabButton({
       data-strip-new-tab={button || undefined}
       data-drop-into={dropInto || undefined}
       data-tooltip={isPrivate ? label : hinted}
-      aria-label={button || compact ? label : undefined}
+      aria-label={button ? label : compact ? (isPrivate ? label : hinted) : undefined}
       onClick={() =>
         window.dispatchEvent(
           new CustomEvent('zen-new-tab', {

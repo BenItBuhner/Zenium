@@ -51,7 +51,7 @@ export function GlanceFrame({ state, glance, area, ready }: Props): JSX.Element 
         <button
           type="button"
           className="zen-toolbar-button h-6 w-6"
-          aria-label="Close"
+          aria-label="Close (Esc)"
           data-tooltip="Close (Esc)"
           onClick={() => run('glance.close', undefined)}
         >
@@ -60,7 +60,7 @@ export function GlanceFrame({ state, glance, area, ready }: Props): JSX.Element 
         <button
           type="button"
           className="zen-toolbar-button h-6 w-6"
-          aria-label="Expand into a tab"
+          aria-label={hint('Expand into a tab', state, 'glance.expand')}
           data-tooltip={hint('Expand into a tab', state, 'glance.expand')}
           onClick={() => run('glance.expand', undefined)}
         >
