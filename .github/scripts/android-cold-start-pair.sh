@@ -72,8 +72,40 @@ cold_start() {
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$activity" | tr -d '\r'
 }
 
+# The chrome's first real frame: `reportFullyDrawn()` at the chrome's READY (MainActivity.onChromeReady,
+# OS-27) puts `ActivityTaskManager: Fully drawn <component>: +1s234ms` in logcat, the time from the
+# same start as TotalTime's; TotalTime is the plain window's first frame, under the splash. A build
+# without the mark (main before it) reads `-`. The duration is the platform's own format
+# (`+987ms`, `+1s234ms`, `+1m2s345ms`); milliseconds out.
+fully_drawn_count() {
+  adb logcat -d -s ActivityTaskManager:I 2> /dev/null | tr -d '\r' | grep -c "Fully drawn $app_id/$activity" || true
+}
+duration_ms() {
+  local s=${1#+}
+  [[ $s =~ ^(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?$ ]] || { echo "-"; return; }
+  echo $(( 10#${BASH_REMATCH[2]:-0} * 60000 + 10#${BASH_REMATCH[4]:-0} * 1000 + 10#${BASH_REMATCH[6]:-0} ))
+}
+# Wait up to $1 seconds for a new Fully drawn line past the $2 seen before the start; echo its ms or `-`.
+fully_drawn_wait() {
+  local limit=$1 seen=$2 waited=0 line
+  while [ "$waited" -lt "$limit" ]; do
+    if [ "$(fully_drawn_count)" -gt "$seen" ]; then
+      line=$(adb logcat -d -s ActivityTaskManager:I 2> /dev/null | tr -d '\r' | grep "Fully drawn $app_id/$activity" | tail -n 1)
+      duration_ms "$(printf '%s\n' "$line" | sed -n 's/.*Fully drawn [^:]*: *+\([0-9smh]*\).*/\1/p')"
+      return
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo "-"
+}
+# The splash's hold as the head logs it (`ZenStartup: … splash held N ms, lifted by X`), the last such line; `-` without one.
+splash_held() {
+  adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'splash held [0-9-]* ms, lifted by [a-z]*' | tail -n 1 | sed 's/splash held \([0-9-]*\) ms, lifted by \([a-z]*\)/\1 (\2)/' | grep . || echo "-"
+}
+
 # Measure one build: install, settle on one discarded start, then $runs measured cold starts.
-# Writes `<name>.txt` (every am start answer) and echoes the TotalTime and WaitTime lists.
+# Writes `<name>.txt` (every am start answer) and echoes the TotalTime, Fully drawn and WaitTime lists.
 measure() {
   local name=$1 apk=$2 label=$3
   echo "== $name ($label): $apk"
@@ -85,50 +117,71 @@ measure() {
   totals=()
   waits=()
   states=()
+  drawn=()
+  helds=()
   for i in $(seq 1 "$runs"); do
+    adb logcat -c > /dev/null 2>&1 || true
+    seen=$(fully_drawn_count)
     answer=$(cold_start)
-    printf 'run %s\n%s\n\n' "$i" "$answer" >> "$out/$name-am-start.txt"
+    # The chrome and the core boot on after the first frame: wait for their mark (the boot's
+    # length, and a bound for a build without it), then let the device go quiet, so the next
+    # start is cold from a quiet device rather than from a boot still in flight.
+    fully=$(fully_drawn_wait 15 "$seen")
+    held=$(splash_held)
+    printf 'run %s\n%s\nFullyDrawn: %s\nSplashHeld: %s\n\n' "$i" "$answer" "$fully" "$held" >> "$out/$name-am-start.txt"
     total=$(printf '%s\n' "$answer" | sed -n 's/^TotalTime: *//p' | head -n 1)
     wait_=$(printf '%s\n' "$answer" | sed -n 's/^WaitTime: *//p' | head -n 1)
     state=$(printf '%s\n' "$answer" | sed -n 's/^LaunchState: *//p' | head -n 1)
-    echo "  run $i: TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}"
+    echo "  run $i: TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held"
     totals+=("${total:-0}")
     waits+=("${wait_:-0}")
     states+=("${state:-?}")
-    # The chrome and the core boot on after the first frame: let them, so the next start is cold
-    # from a quiet device rather than from a boot still in flight.
-    sleep 10
+    drawn+=("$fully")
+    helds+=("$held")
+    sleep 6
   done
   adb shell am force-stop "$app_id"
 }
 
+# The median of the numbers among the arguments; `-` when none is a number (a build without the mark).
 median() {
-  printf '%s\n' "$@" | sort -n | awk '{ a[NR] = $1 } END { if (NR % 2) print a[(NR + 1) / 2]; else print (a[NR / 2] + a[NR / 2 + 1]) / 2 }'
+  local nums
+  nums=$(printf '%s\n' "$@" | grep -E '^[0-9]+(\.[0-9]+)?$' || true)
+  [ -n "$nums" ] || { echo "-"; return; }
+  printf '%s\n' "$nums" | sort -n | awk '{ a[NR] = $1 } END { if (NR % 2) print a[(NR + 1) / 2]; else print (a[NR / 2] + a[NR / 2 + 1]) / 2 }'
+}
+
+# after - before, or `-` when either side has no number.
+delta() {
+  case "$1$2" in *-*) echo "-" ;; *) awk -v a="$1" -v b="$2" 'BEGIN { print a - b }' ;; esac
 }
 
 join() { local IFS=' '; echo "$*"; }
 
 measure before "$base_apk" "${P0_BASE_LABEL:-base}"
-before_totals=("${totals[@]}"); before_waits=("${waits[@]}"); before_states=("${states[@]}")
+before_totals=("${totals[@]}"); before_waits=("${waits[@]}"); before_states=("${states[@]}"); before_drawn=("${drawn[@]}"); before_helds=("${helds[@]}")
 measure after "$head_apk" "${P0_HEAD_LABEL:-head}"
-after_totals=("${totals[@]}"); after_waits=("${waits[@]}"); after_states=("${states[@]}")
+after_totals=("${totals[@]}"); after_waits=("${waits[@]}"); after_states=("${states[@]}"); after_drawn=("${drawn[@]}"); after_helds=("${helds[@]}")
 
 before_total=$(median "${before_totals[@]}")
 after_total=$(median "${after_totals[@]}")
 before_wait=$(median "${before_waits[@]}")
 after_wait=$(median "${after_waits[@]}")
+before_fully=$(median "${before_drawn[@]}")
+after_fully=$(median "${after_drawn[@]}")
 
 {
   echo "MainActivity cold start, am start -W after am force-stop, $runs runs each on one emulator boot (medians in ms)"
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
+  echo "TotalTime: the window's first frame (the plain window, under the splash where there is one). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY; - for a build without the mark."
   echo
-  echo "| build | TotalTime median | WaitTime median | TotalTime runs | LaunchState |"
-  echo "| --- | --- | --- | --- | --- |"
-  echo "| before (${P0_BASE_LABEL:-base}) | $before_total | $before_wait | $(join "${before_totals[@]}") | $(join "${before_states[@]}") |"
-  echo "| after (${P0_HEAD_LABEL:-head}) | $after_total | $after_wait | $(join "${after_totals[@]}") | $(join "${after_states[@]}") |"
+  echo "| build | TotalTime median | Fully drawn median | WaitTime median | TotalTime runs | Fully drawn runs | LaunchState | splash held (by) |"
+  echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
+  echo "| before (${P0_BASE_LABEL:-base}) | $before_total | $before_fully | $before_wait | $(join "${before_totals[@]}") | $(join "${before_drawn[@]}") | $(join "${before_states[@]}") | $(join "${before_helds[@]}") |"
+  echo "| after (${P0_HEAD_LABEL:-head}) | $after_total | $after_fully | $after_wait | $(join "${after_totals[@]}") | $(join "${after_drawn[@]}") | $(join "${after_states[@]}") | $(join "${after_helds[@]}") |"
   echo
-  echo "delta (after - before): TotalTime $(awk -v a="$after_total" -v b="$before_total" 'BEGIN { print a - b }') ms, WaitTime $(awk -v a="$after_wait" -v b="$before_wait" 'BEGIN { print a - b }') ms"
+  echo "delta (after - before): TotalTime $(delta "$after_total" "$before_total") ms, Fully drawn $(delta "$after_fully" "$before_fully") ms, WaitTime $(delta "$after_wait" "$before_wait") ms"
 } | tee "$out/cold-start-pair.txt"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   { echo "### MainActivity cold start, before / after"; echo; cat "$out/cold-start-pair.txt"; } >> "$GITHUB_STEP_SUMMARY"
