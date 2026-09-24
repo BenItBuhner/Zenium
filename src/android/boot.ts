@@ -1,5 +1,4 @@
 import type {
-  ColorScheme,
   CommandArgs,
   CommandName,
   CommandResult,
@@ -8,11 +7,9 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
-import { cssColorToHex, resolveTheme, rgbToHex } from '@shared/theme'
 import { Browser } from '@core/browser'
 import type { SelectionToolbarItem } from '@core/menus'
 import type { KeyEventInput } from '@core/platform'
-import { THEME_PAINTED_EVENT, type ThemePaintedDetail } from '@renderer/hooks/useTheme'
 import {
   backStore,
   dispatchBackEvent,
@@ -52,7 +49,7 @@ import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
 import { landFromIntent } from './landing'
-import { schemeForPages } from './pageScheme'
+import { syncNativeTheme } from './nativeTheme'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
 import { AndroidStoreIO, readDocument } from './storeIo'
@@ -163,7 +160,11 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   const browser = new Browser(platform)
   platform.bind(browser)
   platformRef.current = platform
-  syncNativeTheme(bridge, platform, browser)
+  syncNativeTheme({
+    bridge,
+    onState: (listener) => platform.events.on('state', listener),
+    state: () => browser.state.snapshot(platform.window)
+  })
   syncPrivateSurface(bridge)
   syncPrivateLock(bridge, boot, platform)
   syncBackState(bridge)
@@ -229,68 +230,6 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
 }
 
 /**
- * Keep the system bars and the window background in step with the theme the chrome has painted
- * – the active space's, or the private blend's once it has crossed to its dark side (MOT-14:
- * the status bar follows the chrome's own spring, not a guess at it) – so the gradient reaches
- * behind the status bar and its icons stay legible; and hand the chrome's `--zen-scrim` token
- * over, so what the host draws natively (the page behind an in-page back) dims with the same
- * space-tinted scrim as the chrome's own sheets, and `--v2-accent` / `--v2-on-accent`, so a native
- * primary control (the page dialog sheet's OK, PUI-27) is the chrome's own. `useTheme` announces
- * each paint that matters (`zen-theme-painted`); before its first one the space theme is worked
- * out from the state.
- */
-function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Browser): void {
-  let last = ''
-  let frame: number | null = null
-  let painted: ThemePaintedDetail | null = null
-  // The scheme the host has for the pages' night mode (`schemeForPages`).
-  let handed: ColorScheme | null = null
-  const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
-  const fromState = (state: UIState): ThemePaintedDetail => {
-    const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
-    const scheme = state.settings.colorScheme
-    const dark = scheme === 'system' ? systemDark.matches : scheme === 'dark'
-    const resolved = resolveTheme(space?.theme ?? null, dark)
-    return { dark, background: rgbToHex(resolved.averageColor) }
-  }
-  const send = (state: UIState): void => {
-    const { dark, background } = painted ?? fromState(state)
-    // `scheme` lets the host set the app's night mode, so pages' `prefers-color-scheme`
-    // follows Zenium's own Light / Dark choice and not only the system's – handed over as the
-    // chrome's paint crosses to the scheme's side, so the pages flip with the chrome and not
-    // a blend ahead of it (`pageScheme.ts`).
-    handed = schemeForPages(handed, state.settings.colorScheme, dark, systemDark.matches)
-    const scrim = computedTokenColor('--zen-scrim') ?? ''
-    const accent = computedTokenColor('--v2-accent') ?? ''
-    const onAccent = computedTokenColor('--v2-on-accent') ?? ''
-    const key = `${handed}|${dark}|${background}|${scrim}|${accent}|${onAccent}`
-    if (key === last) return
-    last = key
-    bridge.send('chrome.setTheme', { dark, scheme: handed, background, scrim, accent, onAccent })
-  }
-  const apply = (state: UIState): void => {
-    // The token is read back from the document a frame later, once React has written the
-    // theme's variables (`useTheme`); the state event this runs on precedes that render.
-    if (frame !== null) cancelAnimationFrame(frame)
-    frame = requestAnimationFrame(() => {
-      frame = null
-      send(state)
-    })
-  }
-  const current = (): UIState => browser.state.snapshot(platform.window)
-  platform.events.on('state', apply)
-  systemDark.addEventListener('change', () => apply(current()))
-  window.addEventListener(THEME_PAINTED_EVENT, (e) => {
-    painted = (e as CustomEvent<ThemePaintedDetail>).detail
-    // A paint is on the root already (`useTheme` writes the variables before it announces):
-    // the host hears of the crossing in the same frame, and the pages flip with the chrome.
-    if (frame !== null) cancelAnimationFrame(frame)
-    frame = null
-    send(current())
-  })
-}
-
-/**
  * The tabs' capture to the host (NOT-13): the core folds every frame's `capture-state` report
  * into `tab.capture` (`TabManager.refreshAlert`) and commits; the host hears each change once –
  * the kinds, the site, the privacy – and an all-clear for a tab whose capture ended or which
@@ -344,19 +283,6 @@ function syncPrivateLock(bridge: Bridge, boot: BootInfo, platform: AndroidPlatfo
     last = enabled
     bridge.send('private.setLockOnLeave', { enabled })
   })
-}
-
-/** The colour a chrome CSS token currently computes to, as `#rrggbbaa` (null when unreadable). */
-function computedTokenColor(token: string): string | null {
-  const probe = document.createElement('span')
-  probe.style.display = 'none'
-  probe.style.color = `var(${token})`
-  document.documentElement.appendChild(probe)
-  try {
-    return cssColorToHex(getComputedStyle(probe).color)
-  } finally {
-    probe.remove()
-  }
 }
 
 /**
