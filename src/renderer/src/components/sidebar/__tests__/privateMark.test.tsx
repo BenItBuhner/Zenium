@@ -128,6 +128,13 @@ describe('the private window’s toolbar row', () => {
     expect(drawn).toHaveLength(1)
     expect(drawn[0]!.closest('[role="group"][aria-label="Address"]')).not.toBeNull()
     expect(drawn[0]!.hasAttribute('data-private-mark')).toBe(true)
+    // The slot stays the site-information button (§9.19; the lead on #406 §G): the mask is its
+    // glyph, not a bare mark beside it.
+    const slot = drawn[0]!.closest<HTMLElement>('[data-site-chip]')
+    expect(slot).not.toBeNull()
+    expect(slot!.tagName).toBe('BUTTON')
+    expect(slot!.getAttribute('aria-label')).toBe('Site information')
+    expect(el.querySelector('[data-private-slot]')).toBeNull()
     // No indicator stands before ⋯: what precedes it is the row's own (here the pill's box).
     const menu = el.querySelector('[data-zen-app-menu-button]')
     expect(menu).not.toBeNull()
