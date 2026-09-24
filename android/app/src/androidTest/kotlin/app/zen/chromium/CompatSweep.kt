@@ -109,6 +109,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val feasible: Boolean = true,
         /** Account-backed (core graded by [popupLogin]): the page the action click opens is read in the popup stage. */
         val account: Boolean = false,
+        /** A page loaded alone, ahead of the row's install, and held twenty seconds ([preflight]): the row's install-opened page when the emulator went away under the row. */
+        val preflight: String? = null,
+        /** Close the tabs the install opened (the extension's landing page) right after the install stage ([closeInstallTabs]). */
+        val closeInstallTabs: Boolean = false,
         val core: (Row, JSONObject) -> Grade
     )
 
@@ -368,7 +372,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val slug = "${n.toString().padStart(2, '0')}-${row.slug}"
         entry.put("slug", slug)
         memory.mark()
+        // The two guards run where the deaths were (the Google image's WebView); the other lane reads the row as before, the control.
+        val googleImage = results.optString("webView").startsWith("com.google.android.webview")
+        row.preflight?.takeIf { googleImage }?.let { preflight(row, entry, it) }
         val ext = install(row, entry, slug) ?: return
+        if (row.closeInstallTabs && googleImage) closeInstallTabs(row, entry)
         val dir = File(ext.optString("path"))
         val manifest = runCatching { JSONObject(File(dir, "manifest.json").readText().removePrefix("\uFEFF")) }.getOrNull()
         if (manifest == null) {
@@ -388,6 +396,61 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Kotlin engine), against `heapAfterKb` once it is disabled, and the engine's snapshot.
         entry.put("heapEnabledKb", heapKb())
         entry.put("blockingEnabled", runCatching { Blocking.shared(app).stats() }.getOrNull() ?: JSONObject.NULL)
+    }
+
+    /**
+     * The page a row's install opens, loaded ALONE ahead of the install – no extension of the
+     * row's on the device, the browser as it is – held twenty seconds, then closed. A lane whose
+     * emulator went away under one row three times on one image (Cuponomia on the API 34 Google
+     * image, round 13 §7.4: each death 3.5 to 10 s after its install-success landing page started,
+     * the row read on the AOSP image with the same page open) learns whether the page by itself
+     * takes the emulator down or the extension's presence does: the `PREFLIGHT` line is the
+     * driver's last when it does, and `preflight.survived` is in the row's record when it does not.
+     */
+    private fun preflight(row: Row, entry: JSONObject, url: String) {
+        Log.i(TAG, "PREFLIGHT ${row.name}: loading $url alone, no extension of the row installed")
+        val started = SystemClock.uptimeMillis()
+        val report = JSONObject().put("url", url)
+        entry.put("preflight", report)
+        write()
+        val tab = createTab(url)
+        runCatching {
+            val view = waitForView(tab)
+            SystemClock.sleep(20_000)
+            report.put(
+                "page",
+                json(tabEval(view, "JSON.stringify({title:document.title.slice(0,80),readyState:document.readyState,els:document.querySelectorAll('*').length,videos:document.querySelectorAll('video').length,canvases:document.querySelectorAll('canvas').length,frames:window.frames.length,url:location.href.slice(0,120)})"))
+            )
+            report.put("console", JSONArray(consoleOf(view).takeLast(8)))
+        }.onFailure { report.put("error", it.toString().take(120)) }
+        closeTab(tab)
+        showTab(fixtureTab)
+        report.put("ms", SystemClock.uptimeMillis() - started).put("survived", true)
+        Log.i(TAG, "PREFLIGHT ${row.name}: the page alone held ${report.optLong("ms") / 1000} s with the emulator up; closed")
+        write()
+    }
+
+    /**
+     * The tabs the install opened – the extension's landing or onboarding page on the network,
+     * every tab that is neither the fixture's nor an extension page – closed right after the
+     * install stage, their URLs kept in the row's record (`installTabsClosed`). Row-scoped: the
+     * row whose install-opened page the lane's emulator died under (see [preflight]) reads its
+     * remaining stages without it; the install stage's grade is unchanged (the record is enabled
+     * before the page opens).
+     */
+    private fun closeInstallTabs(row: Row, entry: JSONObject) {
+        val closed = JSONArray()
+        for ((id, url) in tabUrls()) {
+            if (id == fixtureTab || url.startsWith(BASE) || url.startsWith(LOCALHOST_BASE) || !url.startsWith("http")) continue
+            closed.put(url.take(140))
+            closeTab(id)
+        }
+        entry.put("installTabsClosed", closed)
+        if (closed.length() > 0) {
+            SystemClock.sleep(600)
+            showTab(fixtureTab)
+            Log.i(TAG, "${row.name}: closed ${closed.length()} tab(s) the install opened: $closed")
+        }
     }
 
     /**
@@ -4843,6 +4906,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `Sec-Fetch-Dest` the embedder never sees cannot be read). [read] waits for the page to have
      * played, seeked and fetched and takes both records; [stop] removes both listeners (the
      * background's registrations are the extension's persisted listeners until then).
+     *
+     * Round 14 (services' three measurements, `engine-ask-webrequest-media-xhr-read.md`):
+     * the engine record keeps the `Origin` header too, so a cross-origin `fetch` / XHR shows
+     * whether the intercept is handed one; the extension-side half is read the moment the engine
+     * has seen the page's four loads and again right after the page's state, ahead of the HEAD
+     * probe, and the worker is kept awake by a `getPlatformInfo` every ten seconds while the probe
+     * runs (round 13's read on 156 came after the worker's idle stop – the clip undecodable, the
+     * wait run to its end, the in-memory log gone with the worker); the wait itself ends on a
+     * clip error. [crossOrigin] then drives `xo-media.html` (a clip, the JSON, a 200,000-byte
+     * `video/mp4` answer from the server's other origin through a media element, `fetch` and
+     * `XMLHttpRequest`, with and without `Access-Control-Expose-Headers`) and, per load, records
+     * the response headers the page could read beside the two sniffers' rules read against them
+     * ([pageVisibleRules]): what a page-script observer of the page's own requests could hand a
+     * response-stage listener.
      */
     private inner class WebRequestProbe(private val row: Row, private val factor: Double) {
         val result = JSONObject()
@@ -4853,15 +4930,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val bg = awakeBackground(row.id, factor)
             result.put("background", if (bg == null) JSONObject().put("error", "no background view") else json(tabEval(bg, WEBREQ_PROBE_START)))
             val listener = WebRequestListener { d ->
-                if (engineSeen.size < 80) {
+                if (engineSeen.size < 160) {
                     val headers = d.requestHeaders ?: emptyMap()
                     fun header(name: String): String? = headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
                     engineSeen.add(
-                        JSONObject().put("url", d.url.takeLast(60)).put("type", d.resourceType.dnrName).put("method", d.method)
+                        JSONObject().put("url", d.url.takeLast(72)).put("type", d.resourceType.dnrName).put("method", d.method)
                             .put("headers", JSONArray(headers.keys.sorted()))
                             .put("accept", header("Accept")?.take(60))
                             .put("range", header("Range"))
                             .put("secFetchDest", header("Sec-Fetch-Dest"))
+                            .put("origin", header("Origin"))
+                            .put("referer", header("Referer")?.take(60))
                     )
                 }
                 null
@@ -4869,19 +4948,90 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             removeEngine = host.blocking.addListener(WebRequestEvent.ON_SEND_HEADERS, listener, ListenerOptions(registrant = "compat-sweep-probe"))
         }
 
-        /** Both records once `view`'s page played, seeked and fetched (or the wait ran out), with the [summary]. */
+        /** The extension-side half now: the background's log, or the reason there is none (the worker stopped, the log with it). */
+        private fun readEvents(): JSONObject {
+            val bg = backgroundView(row.id) ?: return JSONObject().put("error", "no background view at the read (the worker stopped; its in-memory log went with it)")
+            return runCatching { json(tabEval(bg, WEBREQ_PROBE_READ, 8)) }.getOrElse { JSONObject().put("error", "read failed: ${it.toString().take(80)}") }
+        }
+
+        private fun engineSaw(vararg patterns: String): Boolean = patterns.all { p -> engineSeen.toList().any { it.optString("url").contains(p) } }
+
+        /** Both records once `view`'s page played (or its clip errored), seeked and fetched, or the wait ran out, with the [summary]. */
         fun read(view: WebView): JSONObject {
+            var early: JSONObject? = null
             val page = poll(scaled(25_000, factor), 500) {
                 val s = json(tabEval(view, MEDIA_STATE))
-                if (s.optBoolean("playing") && s.optInt("seeked") > 0 && !s.isNull("xhr") && !s.isNull("fetch") && (s.optBoolean("streamMeta") || s.has("streamError"))) s else null
+                // The extension-side half read the moment the engine has seen the four loads: before any long wait can outlast the worker.
+                if (early == null && engineSaw("clip.mp4", "/stream", "data.json?xhr", "data.json?fetch")) early = readEvents().also { result.put("eventsEarly", it) }
+                val clipSettled = (s.optBoolean("playing") && s.optInt("seeked") > 0) || !s.isNull("error")
+                if (clipSettled && !s.isNull("xhr") && !s.isNull("fetch") && (s.optBoolean("streamMeta") || s.has("streamError"))) s else null
             } ?: json(tabEval(view, MEDIA_STATE))
-            SystemClock.sleep(scaled(2_000, factor))
             result.put("page", page)
-            backgroundView(row.id)?.let { result.put("events", json(tabEval(it, WEBREQ_PROBE_READ))) }
+            result.put("events", readEvents())
             result.put("engine", JSONArray(engineSeen.toList()))
+            result.put("pageVisible", JSONArray().apply {
+                put(pageVisibleRules("media.html clip.mp4 (media element)", "video", "$BASE/clip.mp4", null, if (page.isNull("error")) "playing" else "error ${page.optString("error")}"))
+                put(pageVisibleRules("media.html XHR /data.json", "xhr", "$BASE/data.json?xhr=1", page.optJSONObject("xhrHeaders"), page.opt("xhr")?.toString()))
+                put(pageVisibleRules("media.html fetch /data.json", "fetch", "$BASE/data.json?fetch=1", page.optJSONObject("fetchHeaders"), page.opt("fetch")?.toString()))
+            })
+            result.put("crossOrigin", crossOrigin())
             result.put("headProbe", headProbe(listOf("$BASE/clip.mp4", "$BASE/stream?clip=2", "$BASE/data.json?xhr=1")))
             result.put("summary", summary())
             return result
+        }
+
+        /**
+         * `xo-media.html` on the fixture's first origin loading from its second: the page's own
+         * record of every load (`window.__xo`), the engine's record of each request (the header
+         * names the intercept was handed, `Origin` among them or not), the extension's deliveries
+         * for them, and the two rules read against the page-visible headers per load.
+         */
+        private fun crossOrigin(): JSONObject {
+            val out = JSONObject()
+            val before = engineSeen.size
+            val tab = createTab(fixtureUrl("xo-media.html?probe"))
+            val view = runCatching { waitForView(tab) }.getOrElse { closeTab(tab); return out.put("error", "no view for the cross-origin fixture: ${it.toString().take(80)}") }
+            val page = poll(scaled(25_000, factor), 500) {
+                val s = json(tabEval(view, "JSON.stringify(window.__xo||{})"))
+                if (s.optBoolean("done")) s else null
+            } ?: json(tabEval(view, "JSON.stringify(window.__xo||{})"))
+            out.put("page", page)
+            out.put("events", readEvents())
+            out.put("engine", JSONArray(engineSeen.toList().drop(before).filter { it.optString("url").contains("xo=") }))
+            val loads = page.optJSONArray("loads") ?: JSONArray()
+            out.put("pageVisible", JSONArray().apply {
+                for (i in 0 until loads.length()) {
+                    val l = loads.getJSONObject(i)
+                    put(pageVisibleRules(l.optString("name"), l.optString("kind"), l.optString("url"), l.optJSONObject("headers"), if (l.has("error")) "error ${l.optString("error")}" else l.opt("status")?.toString()))
+                }
+            })
+            closeTab(tab)
+            return out
+        }
+
+        /**
+         * The two sniffers' rules (round 13 §4.1, read off their code) against the response
+         * headers a page could read of one load. Chrono Download Manager: `onHeadersReceived`, a
+         * `content-type` matching `^(image|audio|video)`, and it reads `content-length` and
+         * `content-disposition` beside it (or the URL's media extension, which needs no header).
+         * Video Downloader PLUS: `onResponseStarted`, a `video/` or `audio/` `content-type`, else a
+         * `content-length` of 102,400 or more together with a media extension in the URL.
+         */
+        private fun pageVisibleRules(name: String, kind: String, url: String, headers: JSONObject?, status: String?): JSONObject {
+            fun h(key: String): String? = headers?.keys()?.asSequence()?.firstOrNull { it.equals(key, ignoreCase = true) }?.let { headers.optString(it) }
+            val type = h("content-type")
+            val length = h("content-length")?.toLongOrNull()
+            val disposition = h("content-disposition")
+            val mediaExtension = Regex("\\.(mp4|webm|m4a|m4v|mp3|ogg|ogv|mov|m3u8|ts|flac|wav|aac|mkv|avi)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(url)
+            val visible = headers?.keys()?.asSequence()?.map { it.lowercase() }?.sorted()?.toList() ?: emptyList()
+            val chronoType = type != null && Regex("^(image|audio|video)", RegexOption.IGNORE_CASE).containsMatchIn(type)
+            val vdType = type != null && Regex("^(video|audio)/", RegexOption.IGNORE_CASE).containsMatchIn(type)
+            val vdSize = length != null && length >= 102_400 && mediaExtension
+            return JSONObject().put("load", name).put("kind", kind).put("url", url.takeLast(60)).put("status", status)
+                .put("visible", JSONArray(visible))
+                .put("contentType", type).put("contentLength", length).put("contentDisposition", disposition != null)
+                .put("chrono", JSONObject().put("fires", chronoType).put("byUrlExtension", mediaExtension).put("sees", JSONArray(listOfNotNull(type?.let { "content-type" }, length?.let { "content-length" }, disposition?.let { "content-disposition" }))))
+                .put("vdPlus", JSONObject().put("fires", vdType || vdSize).put("branch", when { vdType -> "content-type"; vdSize -> "content-length >= 102,400 + media extension"; else -> null }))
         }
 
         /**
@@ -4933,8 +5083,30 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val responseStage = heard.count { it.optString("ev") in RESPONSE_STAGE_EVENTS }
             val background = result.optJSONObject("background")
             val registered = background?.opt("registered")?.toString() ?: "?"
-            return "$registered events registered; ${parts.joinToString("; ")}; response-stage events heard: $responseStage" +
-                (result.optJSONObject("events")?.optJSONArray("errors")?.takeIf { it.length() > 0 }?.let { "; errors $it" } ?: "")
+            val readState = result.optJSONObject("events")?.optString("error")?.takeIf { it.isNotEmpty() }?.let { "; extension-side read: $it" } ?: ""
+            val early = result.optJSONObject("eventsEarly")?.let { "; early read ${it.optInt("count", -1)} deliveries" } ?: ""
+            return "$registered events registered; ${parts.joinToString("; ")}; response-stage events heard: $responseStage$early$readState" +
+                (result.optJSONObject("events")?.optJSONArray("errors")?.takeIf { it.length() > 0 }?.let { "; errors $it" } ?: "") +
+                crossOriginSummary()
+        }
+
+        /** One line for the cross-origin fixture: `Origin` at the intercept per fetch / XHR, and how many loads the page-visible headers would fire each rule on. */
+        private fun crossOriginSummary(): String {
+            val xo = result.optJSONObject("crossOrigin") ?: return ""
+            xo.optString("error").takeIf { it.isNotEmpty() }?.let { return "; cross-origin: $it" }
+            val engine = xo.optJSONArray("engine") ?: JSONArray()
+            val seen = (0 until engine.length()).map { engine.getJSONObject(it) }
+            fun originOf(pattern: String): String = seen.filter { it.optString("url").contains(pattern) }.let { own ->
+                if (own.isEmpty()) "not seen" else own.map { if (it.isNull("origin")) "absent" else "present" }.distinct().joinToString("/")
+            }
+            val visible = xo.optJSONArray("pageVisible") ?: JSONArray()
+            val rows = (0 until visible.length()).map { visible.getJSONObject(it) }
+            val chrono = rows.count { it.optJSONObject("chrono")?.optBoolean("fires") == true }
+            val vd = rows.count { it.optJSONObject("vdPlus")?.optBoolean("fires") == true }
+            val headerNames = seen.firstOrNull { it.optString("url").contains("xo=fetch") }?.optJSONArray("headers")?.toString() ?: "-"
+            return "; cross-origin at the intercept: Origin ${originOf("xo=fetch")} on fetch, ${originOf("xo=xhr")} on XHR, ${originOf("xo=video")} on the media element; header names on the fetch $headerNames; " +
+                "page-visible headers of ${rows.size} loads fire Chrono's rule on $chrono and Video Downloader PLUS's on $vd" +
+                (if (xo.optJSONObject("page")?.optBoolean("timedOut") == true) " (the fixture timed out before every load settled)" else "")
         }
     }
 
@@ -5847,7 +6019,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("gcalenpjmijncebpfijmoaglllgpjagf", "Tampermonkey BETA", "tampermonkey-beta", core = { row, entry -> userscripts(row, entry, Regex("/ask\\.html")) }),
         Row("icpgjfneehieebagbmdbhnlpiopdcmna", "New Tab Redirect", "new-tab-redirect", core = ::newTabRedirect),
         Row("pjnefijmagpdjfhhkpljicbbpicelgko", "Voice In", "voice-in", core = accountGate("Voice In", Regex("setup\\.html|dictanote", RegexOption.IGNORE_CASE), injects = "[id^='voicein_']", gate = "the microphone permission and a language pick on its setup page (its first click opens it; the emulator has no microphone)")),
-        Row("gidejehfgombmkfflghejpncblgfkagj", "Cuponomia", "cuponomia", core = accountGate("Cuponomia", Regex("cuponomia", RegexOption.IGNORE_CASE), injects = "[id*='cuponomia'], [class*='cuponomia']", gate = "a Brazilian merchant page and a Cuponomia account (its cashback)")),
+        // Round 14: the API 34 Google image's emulator went away under this row three times in round
+        // 13 (§7.4), each time 3.5 to 10 s after its install-success landing page started; the 156
+        // lane read the row with the page open. The page alone first, then the row without it.
+        Row(
+            "gidejehfgombmkfflghejpncblgfkagj", "Cuponomia", "cuponomia",
+            preflight = "https://www.cuponomia.com.br/extensao?calert_install=chrome_success&calert_version=4.36.4&market=chrome-webstore",
+            closeInstallTabs = true,
+            core = accountGate("Cuponomia", Regex("cuponomia", RegexOption.IGNORE_CASE), injects = "[id*='cuponomia'], [class*='cuponomia']", gate = "a Brazilian merchant page and a Cuponomia account (its cashback)")
+        ),
         Row("mhnlakgilnojmhinhkckjpncpbhabphi", "MaxAI", "maxai", core = accountGate("MaxAI", Regex("maxai|accounts\\.google", RegexOption.IGNORE_CASE), injects = "#USE_CHAT_GPT_AI_ROOT, [id*='MAXAI'], [id*='maxai'], [class*='maxai']", gate = "a MaxAI account")),
         Row("gekdekpbfehejjiecgonmgmepbdnaggp", "Total Adblock", "total-adblock", core = gatedAdBlocker("Total Adblock", Regex("sign ?in|log ?in|activat|subscri|trial|account|get started|protect|upgrade", RegexOption.IGNORE_CASE))),
         Row("bhhhlbepdkbapadjdnnojkbgioiodbic", "Solflare Wallet", "solflare-wallet", core = domMarker("Solflare's provider injected into the page world", "wallet.html?solflare", WALLET_STANDARD.replace("__RE__", "/solflare/i").replace("__GLOBALS__", "o.solflare!=='undefined'||o.isSolflare===true"), settleMs = 30_000)),
@@ -7109,17 +7289,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * background (`requestHeaders` asked of the request stage, `responseHeaders` of the
          * response stage, `<all_urls>`): each delivery's event, `type`, URL tail, method, tab,
          * status and whether the headers came, kept on `self.__zenWebReq` until [WEBREQ_PROBE_STOP].
+         * A `chrome.runtime.getPlatformInfo` every ten seconds keeps the worker's idle clock
+         * restarting while the probe runs (bridge traffic is activity to the runtime, as it is to
+         * Chrome; the keepalive a sniffer's own worker would run), cleared by the stop.
          */
         private const val WEBREQ_PROBE_START =
             "(function(){if(self.__zenWebReq)return JSON.stringify({registered:'already'});var E=['onBeforeRequest','onBeforeSendHeaders','onSendHeaders','onHeadersReceived','onResponseStarted','onBeforeRedirect','onCompleted','onErrorOccurred'];" +
                 "var spec={onBeforeSendHeaders:['requestHeaders'],onSendHeaders:['requestHeaders'],onHeadersReceived:['responseHeaders'],onResponseStarted:['responseHeaders'],onBeforeRedirect:['responseHeaders'],onCompleted:['responseHeaders']};var log=[],fns={},errors=[];" +
-                "E.forEach(function(ev){var fn=function(d){if(log.length<200)log.push({ev:ev,type:d.type,url:String(d.url||'').slice(-60),method:d.method,tabId:d.tabId,status:d.statusCode,reqH:d.requestHeaders?d.requestHeaders.length:null,resH:d.responseHeaders?d.responseHeaders.length:null})};fns[ev]=fn;" +
+                "E.forEach(function(ev){var fn=function(d){if(log.length<240)log.push({ev:ev,type:d.type,url:String(d.url||'').slice(-72),method:d.method,tabId:d.tabId,status:d.statusCode,reqH:d.requestHeaders?d.requestHeaders.length:null,resH:d.responseHeaders?d.responseHeaders.length:null})};fns[ev]=fn;" +
                 "try{var e=chrome.webRequest&&chrome.webRequest[ev];if(!e){errors.push(ev+': missing');return}if(spec[ev])e.addListener(fn,{urls:['<all_urls>']},spec[ev]);else e.addListener(fn,{urls:['<all_urls>']})}catch(x){errors.push(ev+': '+(x&&x.message||x))}});" +
-                "self.__zenWebReq={log:log,fns:fns,errors:errors};return JSON.stringify({registered:E.length-errors.length,errors:errors})})()"
+                "var keep=setInterval(function(){try{chrome.runtime.getPlatformInfo(function(){})}catch(e){}},10000);" +
+                "self.__zenWebReq={log:log,fns:fns,errors:errors,keep:keep,startedAt:Date.now()};return JSON.stringify({registered:E.length-errors.length,errors:errors,keepalive:'getPlatformInfo every 10 s'})})()"
         private const val WEBREQ_PROBE_READ =
-            "(function(){var w=self.__zenWebReq;if(!w)return JSON.stringify({error:'no probe (the background restarted?)'});var by={};w.log.forEach(function(e){by[e.ev]=(by[e.ev]||0)+1});return JSON.stringify({count:w.log.length,byEvent:by,events:w.log.slice(0,60),errors:w.errors})})()"
+            "(function(){var w=self.__zenWebReq;if(!w)return JSON.stringify({error:'no probe (the background restarted?)'});var by={};w.log.forEach(function(e){by[e.ev]=(by[e.ev]||0)+1});return JSON.stringify({count:w.log.length,byEvent:by,events:w.log.slice(0,120),errors:w.errors,aliveMs:Date.now()-w.startedAt})})()"
         private const val WEBREQ_PROBE_STOP =
-            "(function(){var w=self.__zenWebReq;if(!w)return 'none';var n=0;Object.keys(w.fns).forEach(function(ev){try{chrome.webRequest[ev].removeListener(w.fns[ev]);n++}catch(e){}});delete self.__zenWebReq;return 'removed '+n})()"
+            "(function(){var w=self.__zenWebReq;if(!w)return 'none';var n=0;Object.keys(w.fns).forEach(function(ev){try{chrome.webRequest[ev].removeListener(w.fns[ev]);n++}catch(e){}});try{clearInterval(w.keep)}catch(e){}delete self.__zenWebReq;return 'removed '+n})()"
         /** `media.html`'s own record of its loads (`window.__media`): the clip playing and seeked, the extension-less clip's metadata, the XHR's and the fetch's status. */
         private const val MEDIA_STATE = "JSON.stringify(window.__media||{})"
         /** The `webRequest` events of the response stage, which WebView shows the embedder nothing of. */

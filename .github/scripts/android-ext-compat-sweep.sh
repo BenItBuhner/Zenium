@@ -176,6 +176,35 @@ note_emulator_death() {
       tail -n 12 "$out/host-monitor.txt" 2> /dev/null || true
       echo "== host kernel log"
       sudo dmesg 2> /dev/null | tail -n 40 || true
+      # The driver's last lines: the row and stage the guest froze under (a PREFLIGHT line names a page loaded alone).
+      echo "== driver, last lines"
+      grep -E 'CompatSweep' "$out/logcat.txt" 2> /dev/null | tail -n 6 | cut -c1-240 || true
+      # What the emulator itself left of its exit: its crash database (the emulator names it at
+      # start, "Storing crashdata in: /tmp/android-runner/emu-crash-<version>.db"), the breakpad
+      # minidumps, and the AVD's hardware config. Round 13's three deaths under one row left
+      # none of these in the artifact, and the cause stopped at "qemu gone, no report".
+      echo "== emulator crash data"
+      for db in /tmp/android-runner/emu-crash-*.db*; do
+        [ -e "$db" ] || continue
+        echo "-- $db ($(stat -c %s "$db") bytes)"
+        cp "$db" "$out/" 2> /dev/null || true
+        if command -v sqlite3 > /dev/null 2>&1 && [ "${db##*.}" = "db" ]; then
+          sqlite3 "$db" '.tables' 2> /dev/null || true
+          for t in $(sqlite3 "$db" '.tables' 2> /dev/null); do
+            echo "-- table $t"
+            sqlite3 -header "$db" "select * from $t order by rowid desc limit 5" 2> /dev/null | cut -c1-400 || true
+          done
+        fi
+      done
+      ls -la "$HOME"/.android/breakpad/ 2> /dev/null || echo "no breakpad directory"
+      for dmp in "$HOME"/.android/breakpad/*.dmp; do [ -e "$dmp" ] && cp "$dmp" "$out/" 2> /dev/null; done
+      echo "== emulator log files"
+      ls -la "$HOME"/.android/avd/*.avd/*.log /tmp/android-runner/*.log 2> /dev/null || echo "none"
+      for log in "$HOME"/.android/avd/*.avd/*.log /tmp/android-runner/*.log; do
+        [ -e "$log" ] || continue
+        echo "-- $log, last lines"
+        tail -n 30 "$log" 2> /dev/null | cut -c1-300 || true
+      done
     } > "$out/emulator-died"
     echo "::warning::the emulator went away under the sweep driver (see emulator-died in the artifact)"
   fi
