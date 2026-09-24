@@ -6,6 +6,7 @@ import { ElectronPlatform } from './platform'
 import { APP_USER_MODEL_ID } from './platform/notifications'
 import { moveLegacyDirectory } from './platform/legacyPaths'
 import { applyResourceSwitches } from './platform/resources/startup'
+import { installWindowsRestart } from './platform/restartRegistration'
 import { installShellTasks } from './platform/shellTasks'
 import { runStdioShim } from './agent/shim'
 import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
@@ -171,7 +172,19 @@ function main(): void {
     // Windows groups taskbar buttons and toast notifications by this id; it must be the one the
     // installer stamps on the shortcuts, in development too (electron-toolkit's helper would
     // substitute the executable's path there, which no toast registration can carry).
-    if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID)
+    if (process.platform === 'win32') {
+      app.setAppUserModelId(APP_USER_MODEL_ID)
+      // A restart or a sign-out ends the session: Windows relaunches Zenium with its session at
+      // the next sign-in (os-49; the RunOnce entry `session-end` writes, gated on the user's
+      // "restart my apps" toggle). Before the first window: the hook listens per window.
+      installWindowsRestart(app, {
+        execPath: process.execPath,
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        userDataDir: switches.userDataDir === null ? null : app.getPath('userData'),
+        systemVersion: process.getSystemVersion()
+      })
+    }
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
     const platform = new ElectronPlatform(app.getPath('userData'), {

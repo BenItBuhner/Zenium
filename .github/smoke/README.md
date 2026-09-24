@@ -85,6 +85,35 @@ anywhere), Chromium's routing of an OS toast activation to the page's `onclick` 
 dispatched click does not exercise), whether Windows hands the foreground to the window
 (`windowFocused` is recorded, not judged), the Settings page's visual entry and Focus Assist.
 
+## Windows restart registration (`restart-registration`)
+
+`restart-scenario.mjs` runs on both Windows legs for os-49 – Windows bringing Zenium back with
+its session after a restart or a sign-out. Electron 44 has no `RegisterApplicationRestart`, so
+`src/main/platform/restartRegistration.ts` uses the alternative Windows offers every app: when a
+window's `session-end` says the session is ending (Electron raises it off `WM_ENDSESSION`; past
+that point the process is ended by Windows), the relaunch command goes under the user's
+`RunOnce` key (`HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce\Zenium[.<hash of the
+profile's path>]`), which Windows runs once at the next sign-in – gated on the user's
+"Automatically save my restartable apps and restart them when I sign back in" toggle
+(`Winlogon\RestartApps`; absent means the OS default: on since Windows 11, off on Windows 10); a
+clean quit takes the entry back. No runner restarts: the scenario emits the events on the running
+app from the main process and reads what Windows would run off the registry (`win-restart.ps1`);
+the toggle is set on for the run and put back as it was, the entry deleted at the end.
+
+| step                      | reads                                                                                                                                                                                                                                          | confirmed by                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `toggle-on`               | `RestartApps` before the run (restored at the end), then set to 1; a leftover entry of an earlier run removed                                                                                                                                  | the OS's registry                       |
+| `session-end-registers`   | `session-end` `{reasons:['shutdown']}` on the main window: this profile's RunOnce value holds `<exe> "--user-data-dir=<profile>" --restore-last-session` (the running executable, the profile the app resolved); the `[zen] restart:` line says so | the app's handler, the OS's registry    |
+| `clean-quit-unregisters`  | `will-quit` on the app: the value gone (the app stays up – the emit is the quit's event alone)                                                                                                                                                | the app's handler, the OS's registry    |
+| `toggle-off-skips`        | `RestartApps` = 0, `session-end` again: no value; the line says the toggle is off                                                                                                                                                              | the app's handler, the OS's registry    |
+| `close-app-skips`         | `RestartApps` = 1, `session-end` `{reasons:['close-app']}` (the Restart Manager closing the app for an installer, which restarts it itself): no value; the line says no sign-in follows                                                     | the app's handler, the OS's registry    |
+| `registration-survives`   | `session-end` `{reasons:['logoff']}` registers again; the process is ended the way Windows ends it after `WM_ENDSESSION` (`taskkill /F`): the value stands – what the next sign-in would run                                                    | the OS's registry                       |
+| `cleanup`                 | the value deleted; the toggle put back                                                                                                                                                                                                         | the OS's registry                       |
+
+What no runner confirms: the sign-in itself (RunOnce processed by the shell at the user's next
+sign-in, the app up with `--restore-last-session`), and that Windows delivers `WM_ENDSESSION`
+to the window in time for the write on a real shutdown (the events are emitted, not received).
+
 ## macOS default browser (`default-browser`)
 
 `default-browser-scenario.mjs` runs last on the macOS legs for os-07. LaunchServices asks the

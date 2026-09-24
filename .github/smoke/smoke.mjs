@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads,notifications,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads,notifications,restart-registration,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -123,6 +123,16 @@
 //                notification's `click`, dispatched in the page under a user gesture, brings
 //                its tab back to the front through the preload's focus IPC and the core's reveal
 //                (Windows jobs; the click's app path runs everywhere)
+//   restart-registration  Windows relaunches Zenium with its session after a restart or a
+//                sign-out (os-49; restart-scenario.mjs): with the user's "restart my apps when I
+//                sign back in" toggle set on, the main window's `session-end` (emitted from the
+//                main process as Electron raises it off WM_ENDSESSION) writes this profile's
+//                RunOnce entry – the executable, `--user-data-dir=<profile>`,
+//                `--restore-last-session` – and the `[zen] restart:` line says so; a `will-quit`
+//                takes it back; the toggle off, and the Restart Manager's `close-app`, write
+//                nothing; a `logoff` end registers again and the entry stands after the process
+//                is ended the way Windows ends it (taskkill); the entry is deleted and the
+//                toggle put back at the end (Windows jobs; no runner restarts)
 //   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
@@ -135,7 +145,8 @@
 //                (macOS jobs)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash
+// restore), Windows notifications and restart-registration too and macOS default-browser too;
+// the walkthrough, the crash
 // pair, clear-on-exit, the two mv3-worker legs, pip and the split pair run on Linux under Xvfb
 // only.
 //
@@ -172,6 +183,7 @@ import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-brow
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
+import { RESTART_SCENARIO, scenarioRestartRegistration } from './restart-scenario.mjs'
 import {
   COOKIE_PATH,
   FIXTURE_COOKIE,
@@ -6056,6 +6068,16 @@ async function main() {
           // The installed build's shortcuts carry the AUMID (the installer's WinShell); the
           // unpacked build has none and rides on the class key it registers for itself.
           expectShortcuts: IS_WIN && opts.label === 'installed',
+          isWin: IS_WIN
+        }),
+      [RESTART_SCENARIO]: () =>
+        scenarioRestartRegistration({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          ps,
           isWin: IS_WIN
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
