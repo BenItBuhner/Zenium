@@ -311,7 +311,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         val selected = openSelectionPanel()
         expect("a selection's share opens the panel ($scheme)", selected != null && panelUp())
         if (selected == null || !panelUp()) return
-        SystemClock.sleep(1_200)
+        awaitPanelRest()
         shot("12-selection-panel-$scheme")
         val title = panelString(TITLE_JS)
         val url = panelString(URL_JS)
@@ -324,9 +324,14 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         if (box != null) {
             val height = box.optDouble("h")
             val lineHeight = box.optDouble("lh")
+            val full = box.optDouble("full")
+            // The clamp is the rule's (`-webkit-line-clamp: 2`) and the box at most two lines; whether
+            // the text needs cutting is the page's and the panel's width – example.com's paragraph
+            // fills two lines exactly on this phone – so the unclamped run is a finding, not a check.
+            if (lineHeight > 0) finding("  unclamped the text runs ${(full / lineHeight).roundToInt()} line(s) of ${lineHeight.roundToInt()} px; the box is ${height.roundToInt()} px")
             expect(
                 "the text is clamped to two lines ($scheme)",
-                box.optString("clamp") == "2" && lineHeight > 0 && height <= 2 * lineHeight + 1 && box.optDouble("sh") > height
+                box.optString("clamp") == "2" && lineHeight > 0 && height <= 2 * lineHeight + 1 && height >= minOf(full, 2 * lineHeight) - 1
             )
         } else {
             expect("the first line's box could be read ($scheme)", false)
@@ -362,7 +367,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         val up = openImagePanel()
         expect("Share Image… opens the panel for the image ($scheme)", up)
         if (!up) return
-        SystemClock.sleep(1_200)
+        awaitPanelRest()
         shot("13-image-panel-$scheme")
         val title = panelString(TITLE_JS)
         val url = panelString(URL_JS)
@@ -573,6 +578,27 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
     }
 
     private fun panelUp(): Boolean = chromeJs("!!document.querySelector('.zen-share-panel')") == "true"
+
+    /**
+     * The panel's sheet at rest: its top the same over two readings 300 ms apart, then a beat for
+     * the frame. The sheet is mounted off screen and springs up from there – on the software GPU
+     * well over a second – so a still taken on the mount catches it rising, its chips below the
+     * fold (run 5's selection and image stills). At most `timeoutMs`; the still is taken regardless.
+     */
+    private fun awaitPanelRest(timeoutMs: Long = 6_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last = chromeJs(PANEL_TOP_JS)
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(300)
+            val top = chromeJs(PANEL_TOP_JS)
+            if (top == last && top != "null") {
+                SystemClock.sleep(400)
+                return true
+            }
+            last = top
+        }
+        return false
+    }
 
     /** A string a script evaluates to in the chrome, "" when it did not answer. */
     private fun panelString(code: String): String =
@@ -1097,7 +1123,13 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         /** The first line's box, for the two-line clamp of a selection's text: the clamp, its height, its line height, its content's height. */
         private const val TITLE_LINES_JS =
             "(function(){var t=document.querySelector('.zen-share-panel .zen-menu-link-title');if(!t)return '';var cs=getComputedStyle(t);" +
-                "return JSON.stringify({clamp:cs.getPropertyValue('-webkit-line-clamp'),h:t.getBoundingClientRect().height,lh:parseFloat(cs.lineHeight),sh:t.scrollHeight})})()"
+                "var w=t.getBoundingClientRect().width;var c=t.cloneNode(true);" +
+                "c.style.cssText='position:absolute;visibility:hidden;display:block;-webkit-line-clamp:unset;width:'+w+'px';" +
+                "t.parentNode.appendChild(c);var full=c.getBoundingClientRect().height;c.remove();" +
+                "return JSON.stringify({clamp:cs.getPropertyValue('-webkit-line-clamp'),h:t.getBoundingClientRect().height,lh:parseFloat(cs.lineHeight),full:full})})()"
+        /** The panel sheet's top on the chrome's viewport, rounded – null without a panel or while it is still below the viewport (mounted, not yet risen): the same twice over means the spring has settled. */
+        private const val PANEL_TOP_JS =
+            "(function(){var s=document.querySelector('.zen-share-panel');if(!s)return null;var t=s.getBoundingClientRect().top;return t<innerHeight?Math.round(t):null})()"
         /** Whether the preview draws a favicon slot (a page's does; a selection's does not). */
         private const val FAVICON_JS = "!!document.querySelector('.zen-share-panel .zen-menu-link-favicon')"
         /** Whether the preview draws the shared picture itself (an image's). */
