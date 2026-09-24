@@ -218,8 +218,8 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
      * Beside [relay], on purpose: the same fetcher, the same cookie word (the jar attached on a
      * first-party relay with cookies when the request carries none; every `Cookie` stripped when
      * `withCookies` is false), the same jar store of the response's `Set-Cookie`. But the
-     * request's headers go through as they are – `Range` and the conditionals included, a media
-     * element takes a `206` and a `304` – minus the connection's own
+     * request's headers go through as they are – `Range` and the conditionals included; a media
+     * element takes a `206`, and a `304` goes the `3xx` way below – minus the connection's own
      * ([DROPPED_MEDIA_REQUEST_HEADERS]), with `Accept-Encoding: identity` in place of the one
      * dropped so the body arrives as the bytes the headers describe on every platform
      * `HttpURLConnection`; no rule edits (the request stage's allow carries none); no second
@@ -290,7 +290,7 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
         val reason = fetched.reason.ifEmpty { reasonOf(fetched.status) }
         val body = fetched.body
         if (body == null) {
-            // Nothing to stream (a `304`, a `416` without a body): the response is complete as it stands.
+            // Nothing to stream (a `204`, a `416` without a body): the response is complete as it stands.
             report(RelayedResponse.Stage.COMPLETE, null)
             return Answer(fetched.status, reason, mime, charset, served, ByteArrayInputStream(ByteArray(0)))
         }
