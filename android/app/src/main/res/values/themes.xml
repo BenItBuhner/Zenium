@@ -11,6 +11,25 @@
         <item name="colorSecondary">#6264DC</item>
     </style>
 
+    <!-- The cold start's splash (OS-26, MainActivity): the launcher's mark on the brand colour –
+         the default icon's background (ic_launcher_colors.xml, generated with the icons) – held
+         over the window until the chrome's first real frame (StartupSplash), then the browser
+         theme below it. The bars are transparent with light icons over the indigo; the tone the
+         chrome asks for meanwhile is applied as the splash lifts. API 33+ draws the icon for a
+         plain start too (an `am start` without --splashscreen-show-icon: the harness's and the
+         pair tool's), where the default would be the solid colour alone. -->
+    <style name="Theme.Zen.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_bg_indigo</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Zen</item>
+        <item name="android:windowSplashScreenBehavior" tools:targetApi="tiramisu">icon_preferred</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
+    </style>
+
     <!-- A custom tab: the browser theme, arriving from the bottom and leaving the same way
          (Chrome's default; a caller's own start and exit animations take precedence). -->
     <style name="Theme.Zen.CustomTab">

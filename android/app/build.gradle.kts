@@ -272,6 +272,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
+    // The cold start's splash (OS-26, StartupSplash.kt): the platform's starting window on API 31+
+    // and the library's drawing of the same theme attributes below it; the exit is the app's.
+    implementation("androidx.core:core-splashscreen:1.2.0")
     // 1.13 adds WebStorageCompat.deleteBrowsingDataForSite (the site-information sheet's "clear all site data");
     // 1.17 adds JS_INJECTION_IN_FRAME_AND_WORLD (isolated worlds for the extension layer, Chromium 146+ WebView)
     // and names the origin-matched request headers Profile.addCustomHeader (GPC / DNT on every request, privacy/Privacy.kt).

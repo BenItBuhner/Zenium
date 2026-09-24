@@ -954,6 +954,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
+            // The chrome's first real frame (boot.ts `ChromeReady`): the splash lifts and the launch's mark is set (OS-26, OS-27).
+            "chrome.ready" -> { activity.onChromeReady(); reply(null) }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
             "chrome.setPullToRefresh" -> {
                 pullToRefresh = args.bool("enabled", true)
@@ -1745,9 +1747,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         activity.window.decorView.setBackgroundColor(color)
         // A veil up while the tone changes stays the window's tone.
         veilView?.takeIf { lockVeil.raised }?.setBackgroundColor(color)
-        val controller = WindowInsetsControllerCompat(activity.window, root)
-        controller.isAppearanceLightStatusBars = !dark
-        controller.isAppearanceLightNavigationBars = !dark
+        // Through the activity: while the cold start's splash is up the bars wear its tone, and
+        // the chrome's is applied as it lifts (StartupSplash).
+        activity.setSystemBarsLight(!dark)
         // Pages see Zenium's colour scheme, not only the system's: the app's night mode drives
         // `prefers-color-scheme` and the algorithmic darkening in every page WebView (the manifest
         // handles `uiMode` in place, so nothing reloads). The chrome hands `scheme` over as its
