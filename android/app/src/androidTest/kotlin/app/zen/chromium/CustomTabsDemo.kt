@@ -42,6 +42,7 @@ import org.junit.runner.RunWith
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 /**
  * Drives Zenium as a Custom Tabs provider so the `android-customtabs-demo` workflow can record it:
@@ -202,7 +203,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         openCustomTab()
         assertTrue("the caller's bottom toolbar is up with its buttons", waitFor(BOTTOM_SHARE_LABEL, 8_000) != null)
         val restingBar = barRect()
-        Log.i(tag, "bottom toolbar (RemoteViews) at $restingBar, page ends at ${pageBottom()}")
+        Log.i(tag, "bottom toolbar (RemoteViews) at $restingBar = ${barDp()} dp, page ends at ${pageBottom()}")
+        assertBarDp("the caller's RemoteViews bar stands at the 56 dp its layout declares", CALLER_BAR_DP)
         assertTrue("the page's viewport ends above the bottom toolbar", pageEndsAboveBar())
         shot("12-bottom-toolbar-light")
         beat()
@@ -251,6 +253,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         showCaller(customTabIntent(dark = true, depth = true))
         openCustomTab()
         assertTrue("the dark tab's bottom toolbar is up with its buttons", waitFor(ITEM_COMMENTS_LABEL, 8_000) != null)
+        Log.i(tag, "bottom toolbar (toolbar items) at ${barRect()} = ${barDp()} dp, page ends at ${pageBottom()}")
+        assertBarDp("the toolbar items' row stands at its 56 dp", CustomTabBottomBarRules.BUTTON_ROW_DP.toFloat())
         assertTrue("the dark page's viewport ends above the bottom toolbar", pageEndsAboveBar())
         shot("18-bottom-toolbar-dark")
         beat()
@@ -293,7 +297,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         // The caller's toasts (the button's, then the swipe's; 3.5 s each, queued) sit over the
         // bar's buttons for a while: the still waits them out.
         SystemClock.sleep(4_000)
-        Log.i(tag, "secondary toolbar: bar $before -> ${barHeight()} px, page ends at ${pageBottom()}, bar at ${barRect()}")
+        Log.i(tag, "secondary toolbar: bar $before -> ${barHeight()} px = ${barDp()} dp, page ends at ${pageBottom()}, bar at ${barRect()}")
+        assertBarDp("the secondary toolbar stands at the 104 dp its layout declares (56 + 48)", SECONDARY_BAR_DP)
         assertTrue("the page's viewport ends above the taller bar", pageEndsAboveBar())
         shot(name)
         beat()
@@ -432,6 +437,18 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         var h = 0
         instrumentation.runOnMainSync { h = bar.barHeight }
         return h
+    }
+
+    /** The bar's own height in dp (its laid-out pixels over the display's density). */
+    private fun barDp(): Float = barHeight() / density
+
+    /**
+     * The bar's height as a claim: within a pixel of `expectedDp` (the density rounds a dp to
+     * whole pixels once; the layouts here declare whole dp heights).
+     */
+    private fun assertBarDp(claim: String, expectedDp: Float) {
+        val actualDp = barDp()
+        assertTrue("$claim: measured $actualDp dp (${barHeight()} px at density $density)", abs(actualDp - expectedDp) * density <= 1f)
     }
 
     /** How far the bar stands from its place (positive: slid down, hidden with the top toolbar). */
@@ -877,6 +894,10 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         /** The dark tab's toolbar items: ids other than 0, which is the top bar's action button. */
         private const val ITEM_SHARE_ID = 11
         private const val ITEM_COMMENTS_ID = 12
+        /** The height cct_demo_bottom_bar.xml declares for its root; the provider keeps it. */
+        private const val CALLER_BAR_DP = 56f
+        /** cct_demo_secondary_bar.xml: the 56 dp button row over the 48 dp related-story row. */
+        private const val SECONDARY_BAR_DP = 104f
 
         private const val READ_LABEL = "Read the story"
         private const val SAVE_LABEL = "Save for later"
