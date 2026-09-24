@@ -206,4 +206,129 @@ class BareWindowBracketTest {
         assertArrayEquals(bytes, File(dir, "sw.js").readBytes())
         assertEquals("var a = window", File(dir, "lib/a.js").readText())
     }
+
+    // --- sample 2: the fuller shape ---------------------------------------------------------------
+
+    private val full = BareWindowBracket.Shape.FULL
+
+    @Test
+    fun builderJoinsToOneLineOfStatements() {
+        val b = BareWindowBracket.BUILDER
+        assertTrue(b.startsWith("(function(W){var S=W.self;var RF=W.Function;"))
+        assertTrue(b.endsWith("return K})"))
+        assertFalse("one line: a prefix must not move the script's line numbers", b.contains('\n'))
+        assertFalse("no line comment can survive the join", b.contains("//"))
+        assertFalse("no Kotlin template slipped through", b.contains('$'))
+        assertTrue(b.contains("var G=new Proxy(T,{"))
+        assertTrue("self is an own property a scuttler cannot redefine", b.contains("Reflect.defineProperty(T,'self',{value:G,writable:false,enumerable:true,configurable:false});"))
+        assertTrue("the page's self and globalThis are repointed to G", b.contains("Object.defineProperty(W,'self',{value:G,writable:true,") && b.contains("Object.defineProperty(W,'globalThis',{value:G,writable:true,enumerable:false,configurable:true});"))
+        assertTrue("a strict body keeps its own this", b.contains("STRICT.test(body)?'function anonymous('+params+'\\n){'+body+'\\n}':"))
+        assertTrue("the with proxy answers for the five names", b.contains("var NAMES={window:1,document:1,self:1,globalThis:1,Function:1};"))
+        assertTrue("the shape is built once per page", b.contains("Object.defineProperty(W,'__zenBW',{value:K,"))
+    }
+
+    @Test
+    fun fullClassicPrefixCarriesTheBuilderAndTheWiderProbe() {
+        val text = "var a = typeof window + typeof document; // tail"
+        val out = BareWindowBracket.bracketClassic(text, "sw.js", shape = full)
+        val prefix = out.substring(0, out.length - text.length - BareWindowBracket.CLASSIC_SUFFIX.length)
+        assertTrue(prefix.startsWith(BareWindowBracket.MARKER + "with((function(){var W=(function(){return this})();return (W.__zenBW||(" + BareWindowBracket.BUILDER + ")(W)).P})()){"))
+        assertFalse("the prefix stays on the first line", prefix.contains('\n'))
+        assertTrue(prefix.contains("try{self.__zenBareWindow={mode:'with',file:'sw.js',strict:false,typeofWindow:typeof window,inSelf:('window' in self),inGlobalThis:('window' in globalThis),selfWindow:typeof self.window,"))
+        assertTrue(prefix.contains("typeofDocument:typeof document,inSelfDocument:('document' in self),selfDocument:typeof self.document,selfIsGlobalThis:self===globalThis,selfIsShape:self===__zenBW.G,"))
+        assertTrue(prefix.contains("functionThis:(function(){try{return Function('return this')()===self}catch(e){return String(e)}})(),topThis:(this===undefined?'undefined':(this===self?'self':'window')),at:Date.now()}}"))
+        assertTrue(out.endsWith(text + "\n}\n"))
+        assertEquals(text.count { it == '\n' } + 2, out.count { it == '\n' })
+        assertFalse("sample 1's one-name proxy is not in this shape", prefix.contains("has:function(t,k){return k==='window'}"))
+    }
+
+    @Test
+    fun fullModulePrefixImportsTheShapeFirstAndShadowsWhatItIsTold() {
+        val text = "export const b = typeof window + typeof document\n"
+        val out = BareWindowBracket.bracketModule(text, "lib/sw.js", shape = full)
+        assertTrue(out.startsWith(BareWindowBracket.MARKER + "import{F as __zenBWF}from\"../__zen-bare-window.js\";var window;var document;var Function=__zenBWF;try{self.__zenBareWindow={mode:'module',file:'lib/sw.js',strict:false,"))
+        assertTrue(out.endsWith(text))
+        assertEquals(text.count { it == '\n' }, out.count { it == '\n' })
+        val partial = BareWindowBracket.bracketModule(text, "sw.js", main = false, shape = full, shadows = listOf("document"))
+        assertTrue(partial.startsWith(BareWindowBracket.MARKER + "import{F as __zenBWF}from\"./__zen-bare-window.js\";var document;try{self.__zenBareWindowFiles="))
+        val none = BareWindowBracket.bracketModule(text, "sw.js", shape = full, shadows = emptyList())
+        assertTrue("a graph that installs every name still gets the shape file and the probe", none.startsWith(BareWindowBracket.MARKER + "import{F as __zenBWF}from\"./__zen-bare-window.js\";try{"))
+    }
+
+    @Test
+    fun shapeImportClimbsToThePackageRoot() {
+        assertEquals("./__zen-bare-window.js", BareWindowBracket.shapeImport("sw.js"))
+        assertEquals("./__zen-bare-window.js", BareWindowBracket.shapeImport("/sw.js"))
+        assertEquals("../__zen-bare-window.js", BareWindowBracket.shapeImport("lib/sw.js"))
+        assertEquals("../../__zen-bare-window.js", BareWindowBracket.shapeImport("a/b/c.js"))
+        assertTrue(BareWindowBracket.SHAPE_FILE_TEXT.startsWith(BareWindowBracket.MARKER + "const W=document.defaultView;const K=W.__zenBW||(" + BareWindowBracket.BUILDER + ")(W);export const G=K.G,F=K.F,P=K.P;\n"))
+    }
+
+    @Test
+    fun scanCountsTheFiveNamesAndTheDeclarations() {
+        val scan = BareWindowBracket.scanText("const document = self.document;\nlet w = window.a + globalThis.b;\nexport function Function() {}\nvar x = new Function('return this')")
+        assertEquals("document, self, window, globalThis, Function twice; member reads are not bare", 6, scan.bareFull)
+        assertEquals(1, scan.bareReads)
+        assertEquals(setOf("document", "Function"), scan.declares)
+        assertFalse(scan.declaresWindow)
+        assertEquals(setOf("window"), BareWindowBracket.scanText("var window = {}\n  const document = 1").declares)
+        assertEquals(listOf("window", "document", "Function"), BareWindowBracket.MODULE_VARS)
+    }
+
+    @Test
+    fun fullPlanShadowsWhatTheGraphNeitherDeclaresNorInstalls() {
+        val dir = tmp.newFolder("full")
+        File(dir, "sw.js").writeText("import './a.js';\nimport './lib/b.js';\nimport './c.js';\nconsole.log(typeof self)")
+        File(dir, "a.js").writeText("const document = { title: 1 };\nexport const a = typeof window + typeof Function")
+        File(dir, "lib").mkdirs()
+        File(dir, "lib/b.js").writeText("export const b = globalThis.x")
+        File(dir, "c.js").writeText("export const c = 1")
+        // The runtime's word: this graph installs `window` on the global itself (ZeroOmega's shape).
+        val plan = BareWindowBracket.plan(dir, "sw.js", module = true, shape = full, installs = setOf("window"))
+        assertEquals(listOf("sw.js", "a.js", "lib/b.js", "c.js"), plan.map { it.file })
+        val byFile = plan.associateBy { it.file }
+        assertTrue(plan.all { it.shape == full && it.mode == BareWindowBracket.Mode.MODULE })
+        assertTrue(byFile.getValue("sw.js").apply)
+        assertEquals("no var window for an installed name", listOf("document", "Function"), byFile.getValue("sw.js").shadows)
+        assertTrue(byFile.getValue("a.js").apply)
+        assertEquals(setOf("document"), byFile.getValue("a.js").declares)
+        assertEquals("no var for a declared name either", listOf("Function"), byFile.getValue("a.js").shadows)
+        assertTrue("a bare globalThis read is one of the five", byFile.getValue("lib/b.js").apply)
+        assertEquals(listOf("document", "Function"), byFile.getValue("lib/b.js").shadows)
+        assertFalse("no bare read of the five names, no prologue", byFile.getValue("c.js").apply)
+        val classic = BareWindowBracket.plan(dir, "sw.js", module = false, shape = full).single()
+        assertTrue("a classic file has no module vars", classic.shadows.isEmpty())
+        assertTrue(classic.apply)
+    }
+
+    @Test
+    fun fullApplyWritesTheShapeFileAndRestoreRemovesIt() {
+        val dir = tmp.newFolder("fa")
+        val backup = tmp.newFolder("fa-backup")
+        val main = "import './a.js';\nexport const w = typeof window"
+        File(dir, "sw.js").writeText(main)
+        File(dir, "a.js").writeText("export const a = typeof document")
+        val plan = BareWindowBracket.plan(dir, "sw.js", module = true, shape = full)
+        val outcomes = BareWindowBracket.apply(dir, plan, backup).associate { it.first.file to it.second }
+        val shape = File(dir, BareWindowBracket.SHAPE_FILE)
+        assertTrue(outcomes.getValue("sw.js").startsWith("rewritten: "))
+        assertTrue(outcomes.getValue("sw.js").endsWith("; ${BareWindowBracket.SHAPE_FILE} written: ${shape.length()} bytes"))
+        assertTrue(outcomes.getValue("a.js").startsWith("rewritten: "))
+        assertFalse(outcomes.getValue("a.js").contains(BareWindowBracket.SHAPE_FILE))
+        assertEquals(BareWindowBracket.SHAPE_FILE_TEXT, shape.readText())
+        assertTrue(File(dir, "sw.js").readText().startsWith(BareWindowBracket.MARKER + "import{F as __zenBWF}from\"./__zen-bare-window.js\";var window;var document;var Function=__zenBWF;"))
+        assertEquals("a second apply leaves a prologued module alone", "already bracketed", BareWindowBracket.apply(dir, BareWindowBracket.plan(dir, "sw.js", module = true, shape = full), backup).first().second)
+        val (restored, failed) = BareWindowBracket.restore(dir, backup)
+        assertEquals(setOf("${BareWindowBracket.SHAPE_FILE} (removed)", "sw.js", "a.js"), restored.toSet())
+        assertTrue(failed.isEmpty())
+        assertFalse(shape.exists())
+        assertEquals(main, File(dir, "sw.js").readText())
+        assertEquals("export const a = typeof document", File(dir, "a.js").readText())
+        // A classic worker under the fuller shape: the with bracket alone, no shape file.
+        val classicDir = tmp.newFolder("fc")
+        File(classicDir, "sw.js").writeText("x(document)")
+        BareWindowBracket.apply(classicDir, BareWindowBracket.plan(classicDir, "sw.js", module = false, shape = full), tmp.newFolder("fc-backup"))
+        assertFalse(File(classicDir, BareWindowBracket.SHAPE_FILE).exists())
+        assertTrue(File(classicDir, "sw.js").readText().startsWith(BareWindowBracket.MARKER + "with((function(){var W="))
+    }
 }
