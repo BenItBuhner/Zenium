@@ -503,14 +503,18 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 finding("  hold on the version block at ${block.x.toInt()},${block.y.toInt()}: clipboard '$before' -> '$text'; $word ${verdict(copied)}")
                 // The hold's release is swallowed (no row action fires): the section stays up.
                 finding("  section still up after the hold ${verdict(chromeSurfaceUp() && activeUrl() == "$SETTINGS_URL/about")}")
+                // The system's clipboard chip is a window of its own, and while it shows the
+                // accessibility tree read is its (run 35939865448: every label read after the
+                // hold found nothing): the rest of the step works off the chrome's own document,
+                // and the app's window is waited for before anything is pressed.
+                finding("  the app's window active again ${awaitAppWindow(15_000)}")
             }
             // Open by default (DEF-06): the row reads the host's state; its tap leaves for the
             // system's screen, and the app is brought back for the rest of the recording.
-            val openBy = findNode { it.startsWith("Open by default") }
-            val openByText = openBy?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+            val openByText = rowText("open-by-default")
             val known = openByText.contains("can open in Zenium") || openByText.contains("not to open") || openByText.contains("Choose which links")
-            finding("  Open by default row reads '$openByText' ${verdict(openBy != null && known)}")
-            if (openBy != null && tapText("Open by default")) {
+            finding("  Open by default row reads '$openByText' ${verdict(openByText.isNotEmpty() && known)}")
+            if (openByText.isNotEmpty() && tapRow("open-by-default")) {
                 val left = awaitLeftApp(8_000)
                 SystemClock.sleep(1_200)
                 shot("17-open-by-default-system")
@@ -522,7 +526,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             // What's new: a page tab of its own, opened from the row; a back returns to About.
             val tabsBefore = tabCount()
             val aboutId = activeTabId()
-            if (!tapText("What’s new")) return@step
+            if (!tapRow("whats-new")) return@step
             val page = awaitPage(WHATS_NEW_URL, 10_000)
             SystemClock.sleep(1_500)
             val body = chromeValue(
@@ -544,11 +548,12 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         step("Legal: Privacy notice and Terms") {
             if (activeUrl() != "$SETTINGS_URL/about" && !openSection("About", "about")) return@step
             val tabsBefore = tabCount()
-            for ((label, url, shotName) in listOf(
-                Triple("Privacy notice", PRIVACY_URL, "19-privacy-notice"),
-                Triple("Terms", TERMS_URL, "20-terms")
+            for ((rowId, url, shotName) in listOf(
+                Triple("privacy-notice", PRIVACY_URL, "19-privacy-notice"),
+                Triple("terms", TERMS_URL, "20-terms")
             )) {
-                if (!tapText(label)) continue
+                val label = if (rowId == "terms") "Terms" else "Privacy notice"
+                if (!tapRow(rowId)) continue
                 val page = awaitPage(url, 10_000)
                 SystemClock.sleep(1_500)
                 val prose = chromeValue("String(document.querySelectorAll('.zen-page-prose p, .zen-page-prose li').length)").toIntOrNull() ?: 0
@@ -564,14 +569,16 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
         // 15. Security's Notification settings row: the system's screen for this app's notifications.
         step("Security: the Notification settings row") {
             if (!openSection("Security", "security")) return@step
-            val row = waitForText("Notification settings", 8_000)
+            awaitChrome("!!document.querySelector('[data-row=\"notification-settings\"]')", 8_000)
+            val row = rowPoint("notification-settings")
             SystemClock.sleep(800)
             shot("21-notification-settings-row")
             if (row == null) {
                 finding("  no Notification settings row in Security")
                 return@step
             }
-            Finger().tap(row.exactCenterX(), row.exactCenterY())
+            finding("  the row reads '${rowText("notification-settings")}'")
+            Finger().tap(row.x, row.y)
             val left = awaitLeftApp(8_000)
             SystemClock.sleep(1_200)
             shot("22-notification-settings-system")
@@ -611,12 +618,17 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 // The menu stands after the hold (the release's click is swallowed).
                 finding("  the menu still up after the hold ${verdict(chromeSurfaceUp())}")
             }
+            // The sheet gone for good (its spring carried out) and the app's window active
+            // again after the copy's chip, before the next hold lands on the page.
             closeSurfaces()
+            awaitSheets(0, 4_000)
+            finding("  the app's window active again ${awaitAppWindow(15_000)}")
             SystemClock.sleep(800)
             // tel: – the number bare under the link's text, and the three items for it.
             if (holdPageLink("#call") != null) {
                 val telHeader = readLinkHeader()
-                val items = listOf("Call", "Send Message", "Add to Contacts", "Copy Phone Number").map { it to (waitForText(it, 4_000, exact = true) != null) }
+                val labels = menuItemLabels()
+                val items = listOf("Call", "Send Message", "Add to Contacts", "Copy Phone Number").map { it to (it in labels) }
                 SystemClock.sleep(600)
                 shot("25-tel-menu")
                 finding(
@@ -624,12 +636,14 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                         verdict(telHeader == "Call the demo | $DEMO_NUMBER" && items.all { it.second })
                 )
                 closeSurfaces()
+                awaitSheets(0, 4_000)
                 SystemClock.sleep(800)
             }
             // mailto: – the address bare, Send Email.
             if (holdPageLink("#mail") != null) {
                 val mailHeader = readLinkHeader()
-                val items = listOf("Send Email", "Copy Email Address").map { it to (waitForText(it, 4_000, exact = true) != null) }
+                val labels = menuItemLabels()
+                val items = listOf("Send Email", "Copy Email Address").map { it to (it in labels) }
                 SystemClock.sleep(600)
                 shot("26-mailto-menu")
                 finding(
@@ -680,16 +694,72 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             finding("  nothing matches $selector on the page")
             return null
         }
-        Finger().apply {
-            press(p.x, p.y)
-            up()
+        // Two holds before giving up: the first after a sheet has left (run 35939865448's
+        // #call) landed while the page was not yet the pointer's again.
+        repeat(2) { attempt ->
+            Finger().apply {
+                press(p.x, p.y)
+                up()
+            }
+            if (awaitChrome("!!document.querySelector('.zen-menu-link-header')", 6_000)) {
+                if (attempt > 0) finding("  the hold on $selector raised the menu at the second hold")
+                SystemClock.sleep(600)
+                return p
+            }
+            Log.w(tag, "no link menu after hold ${attempt + 1} on $selector at ${p.x.toInt()},${p.y.toInt()}")
+            SystemClock.sleep(1_000)
         }
-        if (!awaitChrome("!!document.querySelector('.zen-menu-link-header')", 8_000)) {
-            finding("  the hold on $selector at ${p.x.toInt()},${p.y.toInt()} raised no link menu")
-            return null
+        finding("  the hold on $selector at ${p.x.toInt()},${p.y.toInt()} raised no link menu (two holds)")
+        return null
+    }
+
+    /**
+     * True once the app's own window is the active one again (`rootInActiveWindow`), with how
+     * long it took: the system's clipboard chip (Android 13+) is a window of its own that takes
+     * the focus for a while after a copy, and the accessibility tree read meanwhile is its.
+     */
+    private fun awaitAppWindow(timeoutMs: Long): String {
+        val start = SystemClock.uptimeMillis()
+        val deadline = start + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (ui.rootInActiveWindow?.packageName?.toString() == app.packageName) {
+                return "after ${SystemClock.uptimeMillis() - start} ms PASS"
+            }
+            SystemClock.sleep(250)
         }
-        SystemClock.sleep(600)
-        return p
+        return "NOT within $timeoutMs ms (active window ${ui.rootInActiveWindow?.packageName}) FAIL"
+    }
+
+    /** The text of the settings row `id` as the chrome draws it (`data-row`); empty when the page has none. */
+    private fun rowText(id: String): String =
+        chromeValue("(function(){var e=document.querySelector('[data-row=\"$id\"]');return e?e.textContent.trim():null})()")
+
+    /** The middle of the settings row `id` on screen, scrolled into view first; null when the page has none. */
+    private fun rowPoint(id: String): PointF? {
+        val element = "document.querySelector('[data-row=\"$id\"]')"
+        if (chromeValue("String(!!$element)") != "true") return null
+        chromeJs("$element.scrollIntoView({block:'center'})")
+        SystemClock.sleep(500)
+        return chromePointOf(element)
+    }
+
+    /** A finger on the middle of the settings row `id`; false (and a finding) when the page has none. */
+    private fun tapRow(id: String): Boolean {
+        val p = rowPoint(id) ?: run {
+            finding("  no row '$id' on the page")
+            return false
+        }
+        Finger().tap(p.x, p.y)
+        return true
+    }
+
+    /** The labels of the menu sheet's items, in order, as the chrome draws them. */
+    private fun menuItemLabels(): List<String> {
+        val raw = chromeJs(
+            "Array.from(document.querySelectorAll('.zen-v2-menu-item')).map(function(e){return e.textContent.trim()})"
+        )
+        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+        return List(array.length()) { array.optString(it) }
     }
 
     /** The link menu's header as "title | address", read from the chrome. */
