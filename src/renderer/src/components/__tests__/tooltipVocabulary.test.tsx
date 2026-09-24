@@ -255,9 +255,13 @@ describe('the desktop chrome, rendered: one tooltip vocabulary (§9.31, a11y-26)
     expect(texts).toContain('This tab is connected to a Bluetooth device')
     expect(texts).toContain('https://docs.example/')
     expect(texts).toContain('Live folder – updates automatically')
-    // A tile's and a sleeping row's tooltip is the title over its state, one line each.
+    // A tile's and a sleeping row's tooltip is the title and its state on the one line (the
+    // lead's W5-1 ruling 4); what the sleeping page held is the hover card's line, not the
+    // tooltip's.
     expect(texts).toContain('E1')
-    expect(texts).toContain('L4\nSleeping – click to wake\nMemory saved: 12 MB')
+    expect(texts).toContain('L4 · Sleeping – click to wake')
+    expect(texts.some((t) => t.includes('\n'))).toBe(false)
+    expect(texts.some((t) => t.includes('Memory saved'))).toBe(false)
     // The sleeping moon is named for what it does, its tooltip saying more.
     const moon = all('[data-tab-id="l4"] .zen-tab-sleeping')[0]!
     expect(moon.getAttribute('aria-label')).toBe('Sleeping – click to wake')
