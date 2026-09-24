@@ -123,7 +123,7 @@ export function articlePage(origin) {
   const paragraphs = [
     `This page is the harness's own article, served at <code>${origin}</code> on the ${ARTICLE_FIXTURE.marker}, so that the desktop smoke can enter Reader View on a document it controls end to end. Nothing on it is fetched from the internet, and its words change only when the fixture does.`,
     'Reader View strips a page down to the article it carries: the heading, the byline when there is one, and the body text, set in the reading preferences the user keeps. For that the browser first asks whether the page looks like an article at all, and this page is written to be an easy yes.',
-    'The check behind that question is Readability\'s isProbablyReaderable: it walks the paragraphs, keeps those with at least one hundred and forty characters of text, and adds the square root of the surplus of each to a running score. A page passes once the score is over twenty.',
+    "The check behind that question is Readability's isProbablyReaderable: it walks the paragraphs, keeps those with at least one hundred and forty characters of text, and adds the square root of the surplus of each to a running score. A page passes once the score is over twenty.",
     'Five paragraphs of this length clear the bar comfortably, which is the point: the leg is about the toggle and its accessible state, not about the edge of the detector. A shorter page would put the detector on trial instead, and a failure there would say nothing about the chip.',
     'When the leg is done it leaves Reader View again, and the tab shows this page as it was, so the bookmarks leg that follows has an ordinary web page to star, to open from the bar and to remove.'
   ]

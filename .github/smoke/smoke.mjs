@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads,notifications,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,downloads,notifications,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -110,6 +110,22 @@
 //                shows the same group, tabs and ratio without "Restore pages?"; Unsplit View
 //                (Ctrl+Alt+U) dissolves it, the active tab's view has the whole area, all three
 //                tabs stay (Linux job; two launches: split and split-restore)
+//   features     the feature legs (ci-04), one launch of a profile past onboarding with search
+//                suggestions off and the bookmarks bar always on, a step each: the omnibox –
+//                "second page" typed over the first page brings up a history row for the
+//                fixture's second page (closed before, so it is history and no open tab), the
+//                arrow key selects it, Enter navigates the tab to it in place, no engine asked;
+//                three Settings `?row=` landings (zenium://settings/look?row=split-edge-zones,
+//                tabs?row=pinned-close, search?row=add-search-engine) – the row's group at the
+//                column's top under its scroll padding, the row within the column, the page
+//                carrying data-landing; Reader View on the fixture's article – the tab read as
+//                readerable, Ctrl+Alt+R puts it on zen://reader for the article with the pill's
+//                Reader View chip aria-pressed=true and the article's words in the reader
+//                document, again brings the article back with the chip unpressed; the bookmarks
+//                bar – Ctrl+D's star bubble ("Bookmark added"), the Folder menulist files the
+//                bookmark to the Bookmarks bar and its chip appears named for the page, a click
+//                on the chip from the second page's tab opens the article in that tab, "Delete"
+//                from the chip's native menu takes chip and bookmark away (Linux job)
 //   notifications  a page's Web Notification on the OS (os-27/os-28/os-30; notifications-
 //                scenario.mjs): a profile past onboarding whose permissions.json allows
 //                notifications for the fixture origin reads `Notification.permission ===
@@ -136,7 +152,7 @@
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
 // restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash
-// pair, clear-on-exit, the two mv3-worker legs, pip and the split pair run on Linux under Xvfb
+// pair, clear-on-exit, the two mv3-worker legs, pip, the split pair and features run on Linux under Xvfb
 // only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
@@ -5916,6 +5932,465 @@ async function scenarioSplit() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// features: the feature e2e legs (parity row ci-04)
+// ---------------------------------------------------------------------------------------------
+
+// The reader chip in the address pill (SidebarTop.tsx through PillChip.tsx): a toggle button
+// whose `aria-pressed` is the Reader View state. Unlit it is a tool the pill folds away at a
+// narrow width; lit, on the reader tab, it is never hidden.
+const READER_CHIP = 'button[data-pill-chip][aria-label="Reader View"]'
+// The Chrome preset's Toggle Reader View (shared/shortcuts.ts key_toggleReaderMode).
+const READER_COMBO = `${ACCEL}+Alt+r`
+// The star bubble Accel+D opens (StarDialog.tsx) and its Folder menulist (FolderField.tsx; the
+// popup is the shared MenulistPopover, a listbox named Folder).
+const STAR_DIALOG = '[role="dialog"][aria-labelledby="zen-bm-star-title"]'
+const STAR_FOLDER = '#zen-bm-star-folder'
+const FOLDER_LIST = '[role="listbox"][aria-label="Folder"]'
+// The bookmarks bar (BookmarksBar.tsx) and a page's chip on it.
+const BOOKMARKS_BAR = '[role="toolbar"][aria-label="Bookmarks bar"]'
+const BAR_CHIP = 'button.zen-bm-chip[data-bm-chip="url"]'
+// The omnibox's rows (Urlbar.tsx): the row carries the kind, its body is the option.
+const OMNIBOX_ROW = 'li.zen-omnibox-row'
+const OMNIBOX_SELECTED = '.zen-omnibox [role="option"][aria-selected="true"]'
+// The `?row=` landings the leg asks of Settings: one row in each of three sections
+// (sections.tsx: Look's Split view group, Tabs' Pinned tabs group, Search's Add search engine).
+const SETTINGS_LANDINGS = [
+  { section: 'look', row: 'split-edge-zones' },
+  { section: 'tabs', row: 'pinned-close' },
+  { section: 'search', row: 'add-search-engine' }
+]
+// How far under the column's top (past its scroll padding) a landed group may sit, in px: the
+// column's own rounding, and the group's outline.
+const LANDING_SLACK = 8
+
+/**
+ * The tabs (with the reader detector's word on each), the active tab, the bookmarks and the
+ * bar's mode as the chrome's state has them.
+ */
+function featureState(s) {
+  return s.chrome.evaluate(async () => {
+    const st = await window.zen.invoke('app.getState')
+    const space = st.spaces.find((sp) => sp.id === st.activeSpaceId)
+    return {
+      activeTabId: space ? space.activeTabId : null,
+      tabs: Object.values(st.tabs).map((t) => ({
+        id: t.id,
+        url: t.url,
+        title: t.title,
+        readerable: Boolean(t.readerable)
+      })),
+      bookmarks: (st.bookmarks || []).map((b) => ({
+        id: b.id,
+        parentId: b.parentId ?? null,
+        type: b.type,
+        title: b.title,
+        url: b.url ?? null
+      })),
+      bookmarksBar: st.settings ? st.settings.bookmarksBar : null
+    }
+  })
+}
+
+/** The active tab as the chrome's state has it (null: none). */
+async function activeFeatureTab(s) {
+  const st = await featureState(s)
+  return st.tabs.find((t) => t.id === st.activeTabId) ?? null
+}
+
+/**
+ * Where the Settings page put row `row` (SettingsPage.tsx: the row's group scrolled to the
+ * column's top under its scroll padding, the page carrying `data-landing` while a row is
+ * asked): the page's layout, the landing flag and the end pad, and the column's, the group's
+ * and the row's boxes. `error` when the page or the row is not there.
+ */
+function settingsLanding(s, row) {
+  return s.chrome.evaluate((row) => {
+    const page = document.querySelector('.zen-settings-page')
+    if (!page) return { error: 'no Settings page in the chrome' }
+    const facts = {
+      layout: page.dataset.layout ?? null,
+      landing: page.hasAttribute('data-landing'),
+      pad: page.style.getPropertyValue('--zen-settings-landing-pad') || null
+    }
+    const el = page.querySelector(`[data-row="${row}"]`)
+    if (!el) return { ...facts, error: `no row ${row} on the page` }
+    const group = el.closest('[data-group]')
+    const column = group ? group.closest('.zen-settings-scroll, .zen-settings-content') : null
+    if (!group || !column) return { ...facts, error: `row ${row} is in no group or no column` }
+    const c = column.getBoundingClientRect()
+    const g = group.getBoundingClientRect()
+    const r = el.getBoundingClientRect()
+    return {
+      ...facts,
+      group: group.getAttribute('data-group'),
+      inset: parseFloat(getComputedStyle(column).scrollPaddingTop) || 0,
+      columnTop: c.top,
+      columnBottom: c.bottom,
+      groupTop: g.top,
+      rowTop: r.top,
+      rowBottom: r.bottom,
+      scrollTop: column.scrollTop,
+      scrollHeight: column.scrollHeight,
+      clientHeight: column.clientHeight
+    }
+  }, row)
+}
+
+/** The URL bar brought up over the active tab (Accel+L) with its field holding the keyboard. */
+async function openUrlbarOverActiveTab(s) {
+  await s.press(`${ACCEL}+l`)
+  const input = s.urlbarInput()
+  await input.waitFor({ state: 'visible', timeout: 8000 })
+  await waitFor(
+    async () => (await s.keyboardOwner()) === URLBAR_FIELD_OWNER || null,
+    5000,
+    'the keyboard in the URL bar'
+  )
+  return input
+}
+
+/**
+ * The feature legs (ci-04), each a step of its own on one launch of a profile past onboarding
+ * with search suggestions off (the omnibox asks no engine for anything, so nothing leaves the
+ * loopback) and the bookmarks bar always shown (so the chip the bookmarks leg files has a bar
+ * over a web page to appear on): the omnibox's rows and Enter, three Settings `?row=` landings,
+ * Reader View on and off on the fixture's article with the chip's `aria-pressed`, and a
+ * bookmark's life on the bar – added with Accel+D, filed to the bar, opened from another tab,
+ * deleted from its own menu. The state read is the chrome's (`app.getState`), the views' the
+ * main process's; screenshots go with each leg.
+ */
+async function scenarioFeatures() {
+  const userData = freshProfile('profile-features', {
+    onboardingDone: true,
+    settings: { searchSuggestions: false, bookmarksBar: 'always' }
+  })
+  const pages = { first: bootSite.first, second: bootSite.second }
+  const article = bootSite.article
+  return runScenario('features', userData, {}, async (s, out) => {
+    out.fixture = {
+      origin: bootSite.origin,
+      pages: { first: pages.first.url, second: pages.second.url, article: article.url }
+    }
+    await s.step('omnibox-suggestions', async () => {
+      // Two pages into two tabs, the second closed again: it is history and no open tab (an
+      // open tab's row would switch to it rather than navigate). Accel+L over the first page,
+      // "second page" typed: a history row for the second page comes up among the rows; the
+      // arrow key selects it and Enter navigates the first tab to it in place.
+      await openUrlInNewTab(s, pages.first.url)
+      await openUrlInNewTab(s, pages.second.url)
+      await s.press(`${ACCEL}+w`)
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === 1 || null,
+        10000,
+        'one sidebar row after Accel+W'
+      )
+      await waitFor(
+        async () => {
+          const t = await activeFeatureTab(s)
+          return t && t.url === pages.first.url ? t : null
+        },
+        5000,
+        'the first page active again'
+      )
+      const input = await openUrlbarOverActiveTab(s)
+      await input.fill('')
+      await input.pressSequentially('second page', { delay: 40 })
+      const rows = s.chrome.locator(OMNIBOX_ROW)
+      const readRows = () =>
+        rows.evaluateAll((els) =>
+          els.map((el) => `${el.dataset.kind}: ${(el.textContent ?? '').trim().slice(0, 80)}`)
+        )
+      const historyRow = s.chrome
+        .locator(`${OMNIBOX_ROW}[data-kind="history"]`, { hasText: pages.second.title })
+        .first()
+      await historyRow.waitFor({ state: 'visible', timeout: 10000 }).catch(async (e) => {
+        throw new Error(
+          `no history row for "${pages.second.title}" under "second page"; the rows read ${JSON.stringify(
+            await readRows()
+          )} (${e.message.split('\n')[0]})`
+        )
+      })
+      const seen = await readRows()
+      await s.shot('01-omnibox-rows')
+      // ArrowDown moves the selection a row at a time until the history row is the selected
+      // option (the field's own key; the keyboard is in the field).
+      const selected = s.chrome.locator(OMNIBOX_SELECTED).first()
+      let picked = null
+      for (let i = 0; i <= seen.length; i++) {
+        const text = (await selected.count()) ? ((await selected.textContent()) ?? '') : ''
+        if (text.includes(pages.second.title)) {
+          picked = text.trim()
+          break
+        }
+        await s.chrome.keyboard.press('ArrowDown')
+        await s.settle()
+      }
+      if (!picked) {
+        throw new Error(
+          `the history row never took the selection through ${seen.length + 1} ArrowDowns; the rows: ${JSON.stringify(seen)}`
+        )
+      }
+      await s.press('Enter')
+      const view = await s.waitForTab(pages.second.url, 30000)
+      await input.waitFor({ state: 'hidden', timeout: 8000 })
+      const active = await activeFeatureTab(s)
+      if (!active || active.url !== pages.second.url) {
+        throw new Error(`the active tab after Enter is ${JSON.stringify(active)}`)
+      }
+      const sidebarTabs = await s.sidebarTabCount()
+      if (sidebarTabs !== 1) {
+        throw new Error(`${sidebarTabs} sidebar rows: Enter opened a tab instead of navigating`)
+      }
+      return { typed: 'second page', rows: seen, picked, landed: view.url, sidebarTabs }
+    })
+    let shotIndex = 2
+    for (const landing of SETTINGS_LANDINGS) {
+      await s.step(`settings-row-landing-${landing.section}`, async () => {
+        // `zenium://settings/<section>?row=<id>` typed over the active tab: Settings opens (in
+        // its own tab from a web page; the Settings tab moves for the next ones) with the row's
+        // group scrolled to the column's top under its scroll padding, the row within the
+        // column, and the page carrying `data-landing` – the deep link's landing.
+        const url = `zenium://settings/${landing.section}?row=${landing.row}`
+        const prefix = `zen://settings/${landing.section}`
+        const tabsBefore = (await featureState(s)).tabs.length
+        await openUrlbarOverActiveTab(s)
+        await s.submitUrl(url)
+        const tab = await waitFor(
+          async () => {
+            const t = await activeFeatureTab(s)
+            return t && t.url.startsWith(prefix) && /[?&]row=/.test(t.url) ? t : null
+          },
+          10000,
+          `the active tab on ${prefix}?row=${landing.row}`
+        )
+        const read = await waitFor(
+          async () => {
+            const r = await settingsLanding(s, landing.row)
+            return r.error || !r.landing ? null : r
+          },
+          10000,
+          `the Settings page landed on row ${landing.row}`
+        ).catch(async (e) => {
+          throw new Error(`${e.message}: ${JSON.stringify(await settingsLanding(s, landing.row))}`)
+        })
+        await s.settle()
+        await s.shot(`0${shotIndex++}-settings-${landing.section}`)
+        const ceiling = read.columnTop + read.inset + LANDING_SLACK
+        if (read.groupTop < read.columnTop - 1 || read.groupTop > ceiling) {
+          throw new Error(
+            `the row's group sits at ${read.groupTop.toFixed(1)}; the column's top is ${read.columnTop.toFixed(1)} plus ${read.inset} of scroll padding: the landing did not bring the group to the top (${JSON.stringify(read)})`
+          )
+        }
+        if (read.rowTop < read.columnTop - 1 || read.rowBottom > read.columnBottom + 1) {
+          throw new Error(`the row is not within the column: ${JSON.stringify(read)}`)
+        }
+        return {
+          url,
+          tab: tab.url,
+          tabsOpened: (await featureState(s)).tabs.length - tabsBefore,
+          ...read
+        }
+      })
+    }
+    await s.step('reader-toggle', async () => {
+      // The fixture's article into a tab of its own: the detector reads it as an article. The
+      // Chrome preset's Toggle Reader View puts the tab on zen://reader for it (the chip pressed,
+      // the reader document carrying the article's words) and, pressed again, brings the article
+      // back (the chip unpressed where the pill shows it).
+      const opened = await openUrlInNewTab(s, article.url)
+      const tab = await waitFor(
+        async () => {
+          const t = await activeFeatureTab(s)
+          return t && t.url === article.url && t.readerable ? t : null
+        },
+        15000,
+        'the article tab active and read as readerable'
+      )
+      const chip = s.chrome.locator(READER_CHIP).first()
+      const chipBefore = (await chip.count()) ? await chip.getAttribute('aria-pressed') : null
+      if (chipBefore !== null && chipBefore !== 'false') {
+        throw new Error(`the reader chip reads aria-pressed=${chipBefore} on the article`)
+      }
+      await s.press(READER_COMBO)
+      const readerView = await waitFor(
+        async () =>
+          (await s.tabs()).find(
+            (v) => v.id === opened.tab.id && v.url.startsWith('zen://reader') && !v.loading
+          ) ?? null,
+        15000,
+        'the tab on zen://reader'
+      )
+      const named = new URL(readerView.url).searchParams.get('url')
+      if (named !== article.url) {
+        throw new Error(`the reader URL names ${named}, not the article ${article.url}`)
+      }
+      await chip.waitFor({ state: 'visible', timeout: 5000 })
+      await waitFor(
+        async () => (await chip.getAttribute('aria-pressed')) === 'true' || null,
+        5000,
+        'the reader chip pressed'
+      )
+      const text = String(
+        await s.tabEval(opened.tab.id, 'document.body ? document.body.innerText : ""')
+      )
+      if (!text.includes(article.marker)) {
+        throw new Error(
+          `the reader document lacks the article's words ("${article.marker}"): ${text.slice(0, 200)}`
+        )
+      }
+      await s.settle()
+      await s.shot('05-reader-view')
+      await s.press(READER_COMBO)
+      const back = await waitFor(
+        async () =>
+          (await s.tabs()).find(
+            (v) => v.id === opened.tab.id && v.url === article.url && !v.loading
+          ) ?? null,
+        15000,
+        'the tab back on the article'
+      )
+      const chipAfter = await waitFor(
+        async () => {
+          if (!(await chip.count())) return { shown: false }
+          const pressed = await chip.getAttribute('aria-pressed')
+          return pressed === 'false' ? { shown: true, pressed } : null
+        },
+        5000,
+        'the reader chip unpressed (or folded away) back on the article'
+      )
+      return {
+        tab: tab.id,
+        readerable: tab.readerable,
+        chipBefore,
+        readerUrl: readerView.url,
+        readerTextLength: text.length,
+        chipAfter,
+        back: back.url
+      }
+    })
+    await s.step('bookmarks-bar', async () => {
+      // Accel+D on the article: the star bubble ("Bookmark added") with the bookmark filed where
+      // Chrome files it (Other bookmarks); the Folder menulist moves it to the Bookmarks bar and
+      // its chip appears on the bar, named for the page. From the second page's tab a click on
+      // the chip opens the article in that tab; "Delete" from the chip's menu takes the chip and
+      // the bookmark away.
+      const active = await activeFeatureTab(s)
+      if (!active || active.url !== article.url) {
+        throw new Error(`the active tab is ${JSON.stringify(active)}, not the article`)
+      }
+      const bar = s.chrome.locator(BOOKMARKS_BAR).first()
+      await bar.waitFor({ state: 'visible', timeout: 5000 })
+      const chipsBefore = await bar.locator(BAR_CHIP).count()
+      if (chipsBefore) throw new Error(`${chipsBefore} chips on the bar before any bookmark`)
+      await s.press(`${ACCEL}+d`)
+      const dialog = s.chrome.locator(STAR_DIALOG).first()
+      await dialog.waitFor({ state: 'visible', timeout: 8000 })
+      const title = ((await dialog.locator('#zen-bm-star-title').textContent()) ?? '').trim()
+      if (!title.includes('Bookmark added')) throw new Error(`the star bubble is titled "${title}"`)
+      const folder = dialog.locator(STAR_FOLDER).first()
+      const folderBefore = ((await folder.textContent()) ?? '').trim()
+      await folder.click({ timeout: 5000 })
+      const list = s.chrome.locator(FOLDER_LIST).first()
+      await list.waitFor({ state: 'visible', timeout: 5000 })
+      await list
+        .getByRole('option', { name: 'Bookmarks bar', exact: true })
+        .click({ timeout: 5000 })
+      await waitFor(
+        async () => ((await folder.textContent()) ?? '').trim() === 'Bookmarks bar' || null,
+        5000,
+        'the Folder menulist reading Bookmarks bar'
+      )
+      const chip = bar.locator(BAR_CHIP).first()
+      await chip.waitFor({ state: 'visible', timeout: 8000 })
+      await s.settle()
+      await s.shot('06-bookmark-added')
+      await dialog.getByRole('button', { name: 'Done', exact: true }).click({ timeout: 5000 })
+      await dialog.waitFor({ state: 'hidden', timeout: 5000 })
+      const filed = await waitFor(
+        async () =>
+          (await featureState(s)).bookmarks.find(
+            (b) => b.type === 'url' && b.url === article.url && b.parentId === '1'
+          ) ?? null,
+        5000,
+        'the bookmark in the Bookmarks bar folder'
+      )
+      const chipId = await chip.getAttribute('data-bm-id')
+      const chipLabel = ((await chip.locator('.zen-bm-chip-label').textContent()) ?? '').trim()
+      const chipTooltip = await chip.getAttribute('data-tooltip')
+      if (chipId !== filed.id || chipTooltip !== article.url) {
+        throw new Error(
+          `the chip is ${chipId} for ${chipTooltip}; the bookmark is ${filed.id} for ${article.url}`
+        )
+      }
+      if (chipLabel !== article.title) {
+        throw new Error(`the chip is labelled "${chipLabel}", the page is "${article.title}"`)
+      }
+      await s.sidebarTab(pages.second.title).first().click({ timeout: 5000 })
+      const other = await waitFor(
+        async () => {
+          const t = await activeFeatureTab(s)
+          return t && t.url === pages.second.url ? t : null
+        },
+        5000,
+        'the second page active'
+      )
+      await chip.click({ timeout: 5000 })
+      const landed = await waitFor(
+        async () => {
+          const st = await featureState(s)
+          const t = st.tabs.find((x) => x.id === other.id)
+          return t && t.url === article.url ? t : null
+        },
+        15000,
+        'the chip opening the article in the current tab'
+      )
+      await waitFor(
+        async () =>
+          (await s.tabs()).filter((v) => v.url === article.url && !v.loading).length === 2 || null,
+        15000,
+        'two views on the article, both loaded'
+      )
+      const activeAfter = (await featureState(s)).activeTabId
+      if (activeAfter !== other.id) {
+        throw new Error(
+          `the chip moved the active tab to ${activeAfter}; it opens in the current tab ${other.id}`
+        )
+      }
+      await s.settle()
+      await s.shot('07-bookmark-opened')
+      const menu = await pickFromNextMenu(s, 'Delete', () =>
+        chip.click({ button: 'right', timeout: 5000 })
+      )
+      await chip.waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () =>
+          (await featureState(s)).bookmarks.some((b) => b.id === filed.id) ? null : true,
+        5000,
+        'the bookmark gone from the model'
+      )
+      const chipsAfter = await bar.locator(BAR_CHIP).count()
+      if (chipsAfter) throw new Error(`${chipsAfter} chips left on the bar after the delete`)
+      await s.settle()
+      await s.shot('08-bookmark-removed')
+      return {
+        title,
+        folderBefore,
+        bookmark: filed,
+        chip: { id: chipId, label: chipLabel, tooltip: chipTooltip },
+        openedIn: landed.id,
+        menu: menu.labels,
+        chipsAfter
+      }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      const state = assertCleanState(userData, article.url)
+      return { ...r, state }
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
 
 function finish(exitCode) {
   const failures = []
@@ -6028,6 +6503,7 @@ async function main() {
       'mv3-worker': scenarioMv3Worker,
       pip: scenarioPip,
       split: scenarioSplit,
+      features: scenarioFeatures,
       [DOWNLOADS_SCENARIO]: () =>
         scenarioDownloads({
           freshProfile,
