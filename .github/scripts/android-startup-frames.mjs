@@ -57,7 +57,8 @@ for (let i = 0; i < args.length; i++) {
   } else positional.push(args[i])
 }
 const [kind, video, slotArg, displayArg, outPath] = positional
-if (!kind || !video || !slotArg || !displayArg || !outPath || !['cold', 'hot'].includes(kind)) usage()
+if (!kind || !video || !slotArg || !displayArg || !outPath || !['cold', 'hot'].includes(kind))
+  usage()
 
 function usage() {
   console.error(
@@ -125,7 +126,20 @@ function decode(input, filters = []) {
   const vf = [...filters, `scale=${width}:${height}`].join(',')
   const ffmpeg = spawnSync(
     'ffmpeg',
-    ['-nostdin', '-loglevel', 'error', '-i', input, '-vf', vf, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'],
+    [
+      '-nostdin',
+      '-loglevel',
+      'error',
+      '-i',
+      input,
+      '-vf',
+      vf,
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      'pipe:1'
+    ],
     { maxBuffer: 1 << 30 }
   )
   if (ffmpeg.status !== 0) {
@@ -149,8 +163,12 @@ function readFrames(buffer) {
   return frames
 }
 
-say(`startup frames (${kind}): slot ${slot.join(' ')} of ${displayW}x${displayH}; read at ${width}x${height}, ${FPS} fps`)
-say(`sample points (reduced px): left ${points.left.join(',')} right ${points.right.join(',')} centre ${points.centre.join(',')}`)
+say(
+  `startup frames (${kind}): slot ${slot.join(' ')} of ${displayW}x${displayH}; read at ${width}x${height}, ${FPS} fps`
+)
+say(
+  `sample points (reduced px): left ${points.left.join(',')} right ${points.right.join(',')} centre ${points.centre.join(',')}`
+)
 
 let frames = []
 if (video !== '-') {
@@ -160,9 +178,12 @@ if (video !== '-') {
 }
 // A frame between the splash's last and the chrome's first that is neither is the exit's blend.
 const lastSplash = frames.map((f) => f.cls).lastIndexOf('splash')
-const firstChrome = frames.findIndex((f, i) => i > lastSplash && ['picture', 'page', 'blank'].includes(f.cls))
+const firstChrome = frames.findIndex(
+  (f, i) => i > lastSplash && ['picture', 'page', 'blank'].includes(f.cls)
+)
 if (lastSplash >= 0 && firstChrome > lastSplash) {
-  for (let i = lastSplash + 1; i < firstChrome; i++) if (frames[i].cls === 'other') frames[i].cls = 'fade'
+  for (let i = lastSplash + 1; i < firstChrome; i++)
+    if (frames[i].cls === 'other') frames[i].cls = 'fade'
 }
 
 if (frames.length) {
@@ -185,7 +206,11 @@ if (frames.length) {
   const firstOf = (cls) => classes.indexOf(cls)
   const at = (i) => (i < 0 ? 'never' : `${(i / FPS).toFixed(2)} s`)
   if (kind === 'cold') {
-    verdict('the splash was on screen', count('splash') > 0, `${count('splash')} splash frames, the last at ${at(lastSplash)}`)
+    verdict(
+      'the splash was on screen',
+      count('splash') > 0,
+      `${count('splash')} splash frames, the last at ${at(lastSplash)}`
+    )
     const first = firstChrome >= 0 ? classes[firstChrome] : 'none'
     verdict(
       "the chrome's first frame after the splash shows the restored picture",
@@ -193,7 +218,11 @@ if (frames.length) {
       `first chrome frame at ${at(firstChrome)} is ${first}`
     )
     const blanks = classes.filter((c, i) => i > lastSplash && c === 'blank').length
-    verdict('no blank page slot after the splash', blanks === 0, `${blanks} blank frames after the splash`)
+    verdict(
+      'no blank page slot after the splash',
+      blanks === 0,
+      `${blanks} blank frames after the splash`
+    )
     verdict(
       'the page painted after its picture',
       firstOf('page') > firstOf('picture') && firstOf('picture') >= 0,
@@ -205,8 +234,16 @@ if (frames.length) {
       `last splash at ${at(lastSplash)}, first chrome frame at ${at(firstChrome)}`
     )
   } else {
-    verdict('no splash frame on the hot start', count('splash') === 0, `${count('splash')} splash frames`)
-    verdict('no blank page slot on the hot start', count('blank') === 0, `${count('blank')} blank frames`)
+    verdict(
+      'no splash frame on the hot start',
+      count('splash') === 0,
+      `${count('splash')} splash frames`
+    )
+    verdict(
+      'no blank page slot on the hot start',
+      count('blank') === 0,
+      `${count('blank')} blank frames`
+    )
     const first = frames.find((f) => ['picture', 'page', 'blank'].includes(f.cls))
     verdict(
       "the page is on the chrome's first frame",
@@ -219,10 +256,25 @@ if (frames.length) {
     const untilS = Math.min(frames.length / FPS, (Math.max(firstOf('page'), 0) + FPS) / FPS)
     const fps = 18 / Math.max(untilS, 1)
     const result = spawnSync('ffmpeg', [
-      '-nostdin', '-loglevel', 'error', '-y', '-t', untilS.toFixed(2), '-i', video,
-      '-vf', `fps=${fps.toFixed(4)},scale=${width}:-1,tile=6x3:padding=4:color=black`, '-frames:v', '1', tile
+      '-nostdin',
+      '-loglevel',
+      'error',
+      '-y',
+      '-t',
+      untilS.toFixed(2),
+      '-i',
+      video,
+      '-vf',
+      `fps=${fps.toFixed(4)},scale=${width}:-1,tile=6x3:padding=4:color=black`,
+      '-frames:v',
+      '1',
+      tile
     ])
-    say(result.status === 0 ? `tile: ${tile} (${untilS.toFixed(2)} s over 18 frames)` : `the tile could not be written: ${String(result.stderr).trim()}`)
+    say(
+      result.status === 0
+        ? `tile: ${tile} (${untilS.toFixed(2)} s over 18 frames)`
+        : `the tile could not be written: ${String(result.stderr).trim()}`
+    )
   }
 } else if (video !== '-') {
   verdict('the recording could be read', false, `no frames decoded from ${video}`)
@@ -231,7 +283,11 @@ if (frames.length) {
 for (const still of stills) {
   const buffer = decode(still.path)
   if (!buffer) {
-    verdict(`the ${still.cls} still shows the ${still.cls}`, false, `${still.path} could not be decoded`)
+    verdict(
+      `the ${still.cls} still shows the ${still.cls}`,
+      false,
+      `${still.path} could not be decoded`
+    )
     continue
   }
   const [frame] = readFrames(buffer)

@@ -77,5 +77,7 @@ const server = createServer((req, res) => {
 })
 
 server.listen(port, '127.0.0.1', () => {
-  console.log(`${stamp()} fixture server on 127.0.0.1:${port} (10.0.2.2:${port} inside the emulator); hold file ${holdFile}`)
+  console.log(
+    `${stamp()} fixture server on 127.0.0.1:${port} (10.0.2.2:${port} inside the emulator); hold file ${holdFile}`
+  )
 })
