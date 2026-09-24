@@ -713,10 +713,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         else -> throw IllegalArgumentException("Unknown sync method: $method")
     }
 
-    /** Asynchronous methods (main thread). Call `reply` exactly once. */
-    fun dispatch(method: String, args: JSONObject, reply: (Any?) -> Unit) {
-        val tabId = args.strOrNull("tabId")
-        val tab = tabId?.let { tabs.get(it) }
+    /**
+     * The storage calls (`JsBridge.STORAGE_CALLS`), which the bridge dispatches ON THE STORAGE
+     * THREAD: it hands them over as the raw string and parses them there, off the thread the
+     * chrome's JS waits on (`JsBridge.Calls`; the overview's fold on thirty tabs, #349: the
+     * `state.json` write's bridge call was 143 ms of the frame). Every branch touches nothing of
+     * the host but [storage] – whose one executor is the thread the bridge runs this on, so a
+     * write queued from here lands behind every storage call parsed before it, in the order the
+     * chrome sent them – and [main], for the reply; it runs on whichever thread calls it. Call
+     * `reply` exactly once, on the main thread.
+     */
+    fun dispatchStorage(method: String, args: JSONObject, reply: (Any?) -> Unit) {
         when (method) {
             // A write that failed rejects the call: the chrome must not remember it as made.
             "storage.write" -> storage.write(args.str("name"), args.str("text"), args.bool("backup")) { failure ->
@@ -744,6 +751,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 val token = args.num("token").toLong()
                 storage.execute { storage.abortWrite(token); main.post { reply(null) } }
             }
+            else -> throw IllegalArgumentException("Not a storage call: $method")
+        }
+    }
+
+    /** Asynchronous methods (main thread). Call `reply` exactly once. */
+    fun dispatch(method: String, args: JSONObject, reply: (Any?) -> Unit) {
+        val tabId = args.strOrNull("tabId")
+        val tab = tabId?.let { tabs.get(it) }
+        when (method) {
+            // The storage calls come through `dispatchStorage` on the storage thread ([JsBridge.Calls]);
+            // one sent another way (a one-way `post`, say) still lands there, from here.
+            in JsBridge.STORAGE_CALLS -> dispatchStorage(method, args, reply)
 
             // --- request blocking (the BlockingHost contract and diagnostics) ----------------------
             "blocking.bundled" -> reply(blocking.bundledLists())
