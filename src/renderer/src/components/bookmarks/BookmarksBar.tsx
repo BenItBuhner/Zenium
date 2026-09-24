@@ -271,12 +271,38 @@ export function BookmarksBar({
   // Dragging a chip out: the page's link, as an HTML5 drag (bookmarks-15, dnd-13)
   // ---------------------------------------------------------------------------
 
-  // Where the press began, so `dragstart` can tell the reorder (along the bar) from the link
-  // drag (off it). Chromium raises `dragstart` three pixels into a press on a draggable
-  // element, before the pointer drag's five (`useBarDrag`), and asks once per press: refusing
-  // it leaves the pointer events to the reorder; letting it go cancels them (`pointercancel`),
-  // which the reorder takes as its cue to stand down.
+  // Where the press began and where the pointer last was, so `dragstart` can tell the reorder
+  // (along the bar) from the link drag (off it). Chromium raises `dragstart` three pixels into a
+  // press on a draggable element, before the pointer drag's five (`useBarDrag`), and asks once
+  // per press: refusing it leaves the pointer events to the reorder; letting it go cancels them
+  // (`pointercancel`), which the reorder takes as its cue to stand down. The event's own
+  // coordinates are no use for the direction: Blink dispatches `dragstart` from the mousedown
+  // it kept, so `clientX`/`clientY` are the press's (measured on Electron 44.4.5 by the W5-11
+  // drive: a press moved 14 px straight down raised `dragstart` at the press point). The pointer
+  // moves Blink dispatches before it – the `pointermove` of the same motion comes first – are
+  // followed on the window from the press until it lifts.
   const pressAt = useRef<{ x: number; y: number } | null>(null)
+  const lastPointer = useRef<{ x: number; y: number } | null>(null)
+  const stopFollowing = useRef<(() => void) | null>(null)
+  const followPress = (e: React.PointerEvent): void => {
+    stopFollowing.current?.()
+    pressAt.current = { x: e.clientX, y: e.clientY }
+    lastPointer.current = null
+    const move = (ev: PointerEvent): void => {
+      lastPointer.current = { x: ev.clientX, y: ev.clientY }
+    }
+    const stop = (): void => {
+      window.removeEventListener('pointermove', move, true)
+      window.removeEventListener('pointerup', stop, true)
+      window.removeEventListener('pointercancel', stop, true)
+      if (stopFollowing.current === stop) stopFollowing.current = null
+    }
+    window.addEventListener('pointermove', move, true)
+    window.addEventListener('pointerup', stop, true)
+    window.addEventListener('pointercancel', stop, true)
+    stopFollowing.current = stop
+  }
+  useEffect(() => () => stopFollowing.current?.(), [])
   // The card Chromium snapshots as the drag's image (§9.4's lifted item, the URL pill's link
   // card): drawn off screen for the chip under the press, so it stands when `dragstart` asks.
   const [linkCard, setLinkCard] = useState<{ node: BookmarkNode; drag: AddressDrag } | null>(null)
@@ -287,9 +313,12 @@ export function BookmarksBar({
 
   const onChipDragStart = (e: React.DragEvent, node: BookmarkNode, link: AddressDrag): void => {
     const press = pressAt.current
+    // The pointer's last place, or the event's own where none was followed (a `dragstart`
+    // dispatched without a press before it).
+    const at = lastPointer.current ?? { x: e.clientX, y: e.clientY }
     // Along the bar the press is the reorder's, where the bar reorders at all: a private
     // window's bar has no reorder, so every direction lifts the link there.
-    const alongBar = press ? Math.abs(e.clientX - press.x) >= Math.abs(e.clientY - press.y) : false
+    const alongBar = press ? Math.abs(at.x - press.x) >= Math.abs(at.y - press.y) : false
     if (alongBar && !readOnly) {
       e.preventDefault()
       return
@@ -653,7 +682,7 @@ export function BookmarksBar({
               draggable={link ? true : undefined}
               data-drag-address={link ? link.url : undefined}
               onPointerDown={(e) => {
-                pressAt.current = { x: e.clientX, y: e.clientY }
+                followPress(e)
                 setLinkCard(link ? { node, drag: link } : null)
                 // A reorder is an edit: a private window's chips stay where they are.
                 if (readOnly || (e.target as HTMLElement).closest('[data-drop]')) return

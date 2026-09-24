@@ -198,6 +198,28 @@ async function press(target: Element, x: number, y: number): Promise<void> {
   await flush()
 }
 
+/** The pointer moving (or lifting) after the press, as Blink dispatches it before `dragstart`. */
+async function pointer(
+  target: Element,
+  type: 'pointermove' | 'pointerup',
+  x: number,
+  y: number
+): Promise<void> {
+  await act(async () => {
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        button: type === 'pointerup' ? 0 : -1,
+        pointerType: 'mouse',
+        clientX: x,
+        clientY: y
+      })
+    )
+  })
+  await flush()
+}
+
 async function key(target: Element, k: string): Promise<void> {
   await act(async () => {
     target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
@@ -278,6 +300,54 @@ describe('a chip dragged off the bar is the page’s link (bookmarks-15, dnd-13)
     const second = transfer()
     expect(await drag(chip('docs'), 'dragstart', second, 26, 11)).toBe(false)
     expect(second.data.get(BOOKMARK_DRAG_TYPE)).toBe('docs')
+  })
+
+  it('Chromium’s dragstart carries the press’s coordinates: the direction is the pointer’s last move', async () => {
+    // Blink dispatches `dragstart` from the mousedown it kept (Electron 44.4.5: a press moved
+    // 14 px straight down raised it at the press point), so the event's own place says nothing
+    // of where the pointer went; the `pointermove` dispatched before it does.
+    await mountBar(state('synced'))
+    await press(chip('docs'), 20, 10)
+    await pointer(chip('docs'), 'pointermove', 20, 14)
+    const down = transfer()
+    expect(await drag(chip('docs'), 'dragstart', down, 20, 10)).toBe(false)
+    expect(down.data.get('text/uri-list')).toBe('https://docs.example/')
+    expect(down.data.get(BOOKMARK_DRAG_TYPE)).toBe('docs')
+    await drag(chip('docs'), 'dragend', down)
+
+    // The same press point, the pointer gone along the bar: the reorder's.
+    await press(chip('docs'), 20, 10)
+    await pointer(chip('docs'), 'pointermove', 26, 11)
+    const along = transfer()
+    expect(await drag(chip('docs'), 'dragstart', along, 20, 10)).toBe(true)
+    expect([...along.data.keys()]).toEqual([])
+    expect(along.image).toBeNull()
+    expect(calls('bookmark.open')).toEqual([])
+    expect(calls('bookmark.move')).toEqual([])
+  })
+
+  it('each press is followed afresh, and no further once it lifts', async () => {
+    await mountBar(state('synced'))
+    // A first press that went down, lifted; a second that goes along the bar.
+    await press(chip('docs'), 20, 10)
+    await pointer(chip('docs'), 'pointermove', 20, 14)
+    await pointer(chip('docs'), 'pointerup', 20, 14)
+    await press(chip('docs'), 20, 10)
+    await pointer(chip('docs'), 'pointermove', 26, 11)
+    const along = transfer()
+    expect(await drag(chip('docs'), 'dragstart', along, 20, 10)).toBe(true)
+    expect([...along.data.keys()]).toEqual([])
+
+    // A move after the lift is nobody's: the press it belonged to is over, so `dragstart` with
+    // no motion followed reads as no motion – along the bar, refused.
+    await pointer(chip('docs'), 'pointerup', 26, 11)
+    await pointer(chip('docs'), 'pointermove', 20, 40)
+    await press(chip('docs'), 20, 10)
+    await pointer(chip('docs'), 'pointerup', 20, 10)
+    await pointer(chip('docs'), 'pointermove', 20, 40)
+    const stale = transfer()
+    expect(await drag(chip('docs'), 'dragstart', stale, 20, 10)).toBe(true)
+    expect([...stale.data.keys()]).toEqual([])
   })
 
   it('in a private window every direction lifts the link (the bar has no reorder), and the bar takes no chip back', async () => {
