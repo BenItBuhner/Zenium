@@ -22,6 +22,9 @@
 #                      qemu process's threads and their stacks) and, on a second sample, the driver
 #                      ended so the rows before keep their reading; unset: never (the sweeps). The
 #                      same host capture then joins dump_hang. A single-row lane sets it.
+#   GUEST_PROBE_S    – seconds the `adb shell echo alive` probe of that check may take before the
+#                      guest counts as not answering (default 20; a frozen guest answers nothing,
+#                      so a lane racing a short-lived qemu sets it low)
 #   GFXINFO_EVERY_S  – `dumpsys gfxinfo` of the app every that many seconds into
 #                      gfxinfo-samples.txt (the render pipeline's own account up to the last
 #                      seconds before a death); unset: never
@@ -447,7 +450,7 @@ while kill -0 "$driver_pid" 2> /dev/null; do
     fi
     if [ "$logcat_still" -ge "$guest_silence_s" ] && [ $((tick - frozen_tick)) -ge 6 ] && pgrep -f qemu-system-x86_64 > /dev/null 2>&1; then
       frozen_tick=$tick
-      if [ "$(timeout 20 adb shell echo alive 2> /dev/null | tr -d '\r' || true)" = alive ]; then
+      if [ "$(timeout "${GUEST_PROBE_S:-20}" adb shell echo alive 2> /dev/null | tr -d '\r' || true)" = alive ]; then
         echo "the guest's logcat stood still for ${logcat_still}s but the guest answers adb; carrying on ($(date +%T))"
         logcat_still=0
       else

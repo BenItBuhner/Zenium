@@ -201,8 +201,9 @@ jobs:
         SWEEP_ONLY=hhdobjgopfphlmjbmnpglhfcgppchgje
         SWEEP_LAST=
         HANG_SILENCE_S=150
-        GUEST_SILENCE_S=120
-        GFXINFO_EVERY_S=10
+        GUEST_SILENCE_S=15
+        GUEST_PROBE_S=5
+        GFXINFO_EVERY_S=5
       setup-script: |
         if ! timeout 300 sudo apt-get install -y --no-install-recommends gdb elfutils > /tmp/apt-gdb.txt 2>&1; then
           (sudo apt-get update -qq && timeout 300 sudo apt-get install -y --no-install-recommends gdb elfutils) > /tmp/apt-gdb.txt 2>&1 \
@@ -227,8 +228,9 @@ jobs:
         SWEEP_ONLY=hhdobjgopfphlmjbmnpglhfcgppchgje
         SWEEP_LAST=
         HANG_SILENCE_S=150
-        GUEST_SILENCE_S=120
-        GFXINFO_EVERY_S=10
+        GUEST_SILENCE_S=15
+        GUEST_PROBE_S=5
+        GFXINFO_EVERY_S=5
       setup-script: |
         if ! timeout 300 sudo apt-get install -y --no-install-recommends gdb elfutils > /tmp/apt-gdb.txt 2>&1; then
           (sudo apt-get update -qq && timeout 300 sudo apt-get install -y --no-install-recommends gdb elfutils) > /tmp/apt-gdb.txt 2>&1 \
