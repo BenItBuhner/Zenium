@@ -1399,44 +1399,54 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * leaves the browser (`PredictiveBack.nothingLeft`, `moveTaskToBack`), and every evaluation
      * of the synthetic path answered null against the paused page (both jobs, every run).
      */
-    private fun googleTranslate(row: Row, entry: JSONObject): Grade {
-        val tab = createTab("$BASE/editor.html?translate")
+    private fun googleTranslate(row: Row, entry: JSONObject): Grade =
+        selectionTranslator("Google Translate", "editor.html?translate", "#gtx-trans", ".jfk-bubble, #gtx-host, .gtx-bubble, [class*=\"gtx-\"]")(row, entry)
+
+    /**
+     * A selection translator (Google Translate, Translate for Chrome): selecting text shows its
+     * `button` (a CSS selector) on `mouseup`; a click on it opens its `bubble` (a selector; the
+     * bubble's text, through a shadow root when it has one, is the reading). The long-press and
+     * synthetic-mouseup flow is Google Translate's above, the grading too: `P` on touch,
+     * `PARTIAL` when only a synthesised mouseup brings the button up, `F` when neither does.
+     */
+    private fun selectionTranslator(label: String, page: String, button: String, bubble: String): (Row, JSONObject) -> Grade = { _, _ ->
+        val tab = createTab("$BASE/$page")
         val view = waitForView(tab)
         poll(20_000, 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
         SystemClock.sleep(3_000)
         val extra = JSONObject()
         val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", "#phrase")))
         val point = screenPoint(view, centre)
-        val button = "(function(){var b=document.getElementById('gtx-trans');return JSON.stringify({pass:!!b&&b.offsetParent!==null,selection:String(getSelection()).trim().slice(0,40),button:!!b})})()"
+        val buttonProbe = "(function(){var b=document.querySelector(${JSONObject.quote(button)});return JSON.stringify({pass:!!b&&b.offsetParent!==null,selection:String(getSelection()).trim().slice(0,40),button:!!b})})()"
         var found = JSONObject()
         var how = "none"
-        if (point != null && onScreen("Google Translate: the long press")) {
+        if (point != null && onScreen("$label: the long press")) {
             val f = Finger()
             f.press(point.first, point.second)
             f.up()
-            found = pollExpr(view, button, 6_000)
+            found = pollExpr(view, buttonProbe, 6_000)
             extra.put("afterLongPress", found)
             if (found.optBoolean("pass")) how = "touch"
             tabEval(view, "(function(){getSelection().removeAllRanges();return 'ok'})()")
             SystemClock.sleep(600)
         }
-        if (how == "none" && onScreen("Google Translate: the synthetic selection")) {
+        if (how == "none" && onScreen("$label: the synthetic selection")) {
             tabEval(view, "(function(){var el=document.getElementById('phrase');var r=document.createRange();r.selectNodeContents(el);var s=getSelection();s.removeAllRanges();s.addRange(r);var rect=el.getBoundingClientRect();el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,clientX:rect.right-1,clientY:rect.top+rect.height/2,button:0}));return 'ok'})()")
-            found = pollExpr(view, button, 8_000)
+            found = pollExpr(view, buttonProbe, 8_000)
             extra.put("afterSyntheticMouseup", found)
             if (found.optBoolean("pass")) how = "synthetic mouseup"
         }
-        var bubble = JSONObject()
+        var bubbleFound = JSONObject()
         if (how != "none") {
-            tabEval(view, "(function(){var b=document.getElementById('gtx-trans');if(b)b.click();return 'ok'})()")
-            bubble = pollExpr(view, "(function(){var host=document.querySelector('.jfk-bubble, #gtx-host, .gtx-bubble, [class*=\"gtx-\"]');var text=host?((host.shadowRoot&&host.shadowRoot.textContent)||host.textContent||''):'';return JSON.stringify({pass:!!host&&text.trim().length>0,bubble:!!host,text:text.replace(/\\s+/g,' ').trim().slice(0,160)})})()", 10_000)
-            extra.put("bubble", bubble)
+            tabEval(view, "(function(){var b=document.querySelector(${JSONObject.quote(button)});if(b)b.click();return 'ok'})()")
+            bubbleFound = pollExpr(view, "(function(){var host=document.querySelector(${JSONObject.quote(bubble)});var text=host?((host.shadowRoot&&host.shadowRoot.textContent)||host.textContent||''):'';return JSON.stringify({pass:!!host&&text.trim().length>0,bubble:!!host,text:text.replace(/\\s+/g,' ').trim().slice(0,160)})})()", 10_000)
+            extra.put("bubble", bubbleFound)
         }
         extra.put("console", JSONArray(consoleOf(view).takeLast(10)))
-        return when (how) {
-            "touch" -> Grade("P", "selection button after a long press (touch): ${found.toString().take(120)}; bubble: ${bubble.toString().take(160)}", extra)
-            "synthetic mouseup" -> Grade("PARTIAL", "needs a mouse: no button after the touch selection (its script listens for mouseup, which a touch selection never fires); with a synthesised mouseup the button comes up: ${found.toString().take(120)}; bubble: ${bubble.toString().take(160)}", extra)
-            else -> Grade("F", "no translate button after a long press nor after a synthesised mouseup: ${found.toString().take(160)}", extra)
+        when (how) {
+            "touch" -> Grade("P", "$label: selection button after a long press (touch): ${found.toString().take(120)}; bubble: ${bubbleFound.toString().take(160)}", extra)
+            "synthetic mouseup" -> Grade("PARTIAL", "$label needs a mouse: no button after the touch selection (its script listens for mouseup, which a touch selection never fires); with a synthesised mouseup the button comes up: ${found.toString().take(120)}; bubble: ${bubbleFound.toString().take(160)}", extra)
+            else -> Grade("F", "$label: no translate button after a long press nor after a synthesised mouseup: ${found.toString().take(160)}", extra)
         }
     }
 
@@ -2298,9 +2308,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * shape with `getMediaStreamId` answering (an id or an error, not a missing function) the
      * core is the WebView's limit, `n/a`, with that shape, the popup and the page's
      * `navigator.mediaDevices` recorded as what the phone gives. A stream id answered is `P`; a
-     * missing namespace is `F`, ours.
+     * missing namespace is `F`, ours. A row whose first click only sets its popup
+     * (`firstClickSetsPopup`: Equalizer's `action.setPopup({popup: 'index.html'})` from
+     * `onClicked`) is clicked once more for the popup.
      */
-    private fun captureLimit(label: String, control: String): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun captureLimit(label: String, control: String, firstClickSetsPopup: Boolean = false): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (_, view) = fixture("audio.html?capture", factor, 2_000)
@@ -2308,6 +2320,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("page", media)
         val capture = backgroundView(row.id)?.let { captureShape(it, factor) } ?: JSONObject().put("error", "no background view")
         extra.put("capture", capture)
+        if (firstClickSetsPopup) {
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            SystemClock.sleep(scaled(2_500, factor))
+            extra.put("popupAfterFirstClick", extensionAction(row.id)?.opt("popup"))
+            runCatching { coreCall("extension.closePopup", "null") }
+            SystemClock.sleep(scaled(800, factor))
+        }
         val popup = openPopup(row, factor)
         var found = JSONObject()
         if (popup != null) {
@@ -3220,30 +3239,40 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * a tab; the list built by `scripting.executeScript` on the active tab under `activeTab`
      * shows the fixture's pictures. Four or more pictures listed is the pass; a surface that
      * renders without them ("cannot access the contents of this page") is PARTIAL with its
-     * text; no surface is F.
+     * text; no surface is F. A popup that is a menu first (`tap`: ImageAssistant's "Extract
+     * Current Page", which opens its `imageExtractor.html` as a tab) has the item tapped.
      */
-    private fun imageList(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun imageList(label: String, tap: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture("gallery.html?images", factor, 2_500)
         val before = tabUrls().keys
         val since = StepEvidence(row)
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        if (tap != null) {
+            val steps = JSONArray()
+            poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+            SystemClock.sleep(scaled(2_000, factor))
+            tapLabel(tap, factor, steps, "menu")
+            extra.put("menu", steps)
+        }
         var surface = ""
         var list = JSONObject()
         val found = poll(scaled(30_000, factor), 700) {
             val sheet = sheetView()
             val page = openedPage(before, row)
-            val view: WebView? = sheet ?: page?.let { runCatching { waitForView(it.key) }.getOrNull() }
+            // A page the click (or the menu tap) opened is the listing ahead of a sheet still up.
+            val pageView = page?.let { runCatching { waitForView(it.key) }.getOrNull() }
+            val view: WebView? = pageView ?: sheet
             if (view != null) {
-                surface = sheet?.let { "sheet (${it.context})" } ?: "tab ${extensionPath(page!!.value).take(40)}"
+                surface = if (pageView != null) "tab ${extensionPath(page!!.value).take(40)}" else "sheet (${sheet!!.context})"
                 list = json(tabEval(view, IMAGE_LIST_REPORT))
                 if (list.optBoolean("pass")) view else null
             } else null
         }
         if (found == null) {
             // The surface is up without the pictures: read it once more, settled.
-            (sheetView() ?: openedPage(before, row)?.let { runCatching { waitForView(it.key) }.getOrNull() })?.let { view ->
+            (openedPage(before, row)?.let { runCatching { waitForView(it.key) }.getOrNull() } ?: sheetView())?.let { view ->
                 SystemClock.sleep(scaled(3_000, factor))
                 list = json(tabEval(view, IMAGE_LIST_REPORT))
                 list.put("console", JSONArray(consoleOf(view).takeLast(10)))
@@ -4414,12 +4443,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-media-popup")
         runCatching { coreCall("extension.closePopup", "null") }
+        // Round 15: the observer path (the clip fed through fetch / XHR, which the relay does not serve) read beside the relay path.
+        val observed = observerPathListing(row, factor, "fetch-player.html?vdplus", listExpr, null, 25_000, extra, entry.optString("slug"))
         webRequest.stop()
         val measured = "; its sniffer listens to onResponseStarted with responseHeaders (a video/audio content-type, or content-length >= 100 KB with a media extension; tabId >= 0); the runtime gave it: ${webRequest.summary()}"
+        val paths = "; relay path (media.html): ${if (dom.optBoolean("pass")) "listed" else "not listed"}; observer path (fetch-player.html): ${if (observed.optBoolean("pass")) "listed" else "not listed"} ${observed.toString().take(160)}"
         return when {
-            dom.optBoolean("pass") -> Grade("P", "Video Downloader PLUS: popup over the playing clip ${dom.toString().take(220)}; measured: ${webRequest.summary()}", extra)
-            popup == null -> Grade("F", "Video Downloader PLUS: popup did not render in the core check (steps ${steps.toString().take(120)})$measured", extra)
-            else -> Grade("F", "Video Downloader PLUS: popup over the playing clip lists no clip: ${dom.toString().take(220)} (steps ${steps.toString().take(120)})$measured", extra)
+            dom.optBoolean("pass") && observed.optBoolean("pass") -> Grade("P", "Video Downloader PLUS: popup over the playing clip ${dom.toString().take(220)}$paths; measured: ${webRequest.summary()}", extra)
+            popup == null -> Grade("F", "Video Downloader PLUS: popup did not render in the core check (steps ${steps.toString().take(120)})$paths$measured", extra)
+            dom.optBoolean("pass") -> Grade("F", "Video Downloader PLUS: popup over the relay-fed clip lists it, over the fetch/XHR-fed clip it lists nothing$paths$measured", extra)
+            else -> Grade("F", "Video Downloader PLUS: popup over the playing clip lists no clip: ${dom.toString().take(220)} (steps ${steps.toString().take(120)})$paths$measured", extra)
         }
     }
 
@@ -4930,7 +4963,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * sniffer while the page loaded (compat round 13's item 4), and a failing grade carries the
      * measurement beside `listener`, the events the sniffer asked for (read off its code).
      */
-    private fun mediaPopup(label: String, page: String, listing: String, panel: String? = null, settleMs: Long = 25_000, probe: Boolean = false, listener: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun mediaPopup(label: String, page: String, listing: String, panel: String? = null, settleMs: Long = 25_000, probe: Boolean = false, listener: String? = null, observer: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val webRequest = if (probe) WebRequestProbe(row, factor).also { it.start() } else null
@@ -4944,12 +4977,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val popup = openPopup(row, factor)
         val steps = JSONArray()
         var found = JSONObject()
+        val listExpr = DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:$listing.test(text)&&!/no (video|media|download)s? (found|detected|yet)/i.test(text.slice(0,80)),controls:document.querySelectorAll('a[download], [class*=\"download\"], [id*=\"download\"], button').length,text:")
         if (popup != null) {
             SystemClock.sleep(scaled(3_000, factor))
             extra.put("popupFirst", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
             if (panel != null) tapLabel(panel, factor, steps, "panel")
             popupView()?.takeIf { it.context == "popup" }?.let { live ->
-                found = pollExpr(live, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:$listing.test(text)&&!/no (video|media|download)s? (found|detected|yet)/i.test(text.slice(0,80)),controls:document.querySelectorAll('a[download], [class*=\"download\"], [id*=\"download\"], button').length,text:"), scaled(settleMs, factor))
+                found = pollExpr(live, listExpr, scaled(settleMs, factor))
                 found.put("console", JSONArray(consoleOf(live).takeLast(10)))
             }
         }
@@ -4959,13 +4993,53 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-media-popup")
         runCatching { coreCall("extension.closePopup", "null") }
+        val observed = observer?.let { observerPathListing(row, factor, it, listExpr, panel, settleMs, extra, entry.optString("slug")) }
         webRequest?.stop()
         val measured = webRequest?.let { "; its sniffer listens to ${listener ?: "webRequest"}; the runtime gave it: ${it.summary()}" } ?: ""
+        val paths = observed?.let { "; relay path (media.html): ${if (found.optBoolean("pass")) "listed" else "not listed"}; observer path ($observer): ${if (it.optBoolean("pass")) "listed" else "not listed"} ${it.toString().take(160)}" } ?: ""
         when {
-            found.optBoolean("pass") -> Grade("P", "$label: popup over the playing clip lists it: ${found.toString().take(220)}${if (webRequest != null) "; measured: ${webRequest.summary()}" else ""}", extra)
-            popup == null -> Grade("F", "$label: popup did not render in the core check$measured", extra)
-            else -> Grade("F", "$label: popup over the playing clip lists no clip: ${found.toString().take(220)}$measured", extra)
+            found.optBoolean("pass") && (observed == null || observed.optBoolean("pass")) -> Grade("P", "$label: popup over the playing clip lists it: ${found.toString().take(220)}$paths${if (webRequest != null) "; measured: ${webRequest.summary()}" else ""}", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check$paths$measured", extra)
+            found.optBoolean("pass") -> Grade("F", "$label: popup over the relay-fed clip lists it, over the fetch/XHR-fed clip it lists nothing$paths$measured", extra)
+            else -> Grade("F", "$label: popup over the playing clip lists no clip: ${found.toString().take(220)}$paths$measured", extra)
         }
+    }
+
+    /**
+     * The observer path's reading of a media sniffer (round 15's item 1c): `fetch-player.html`
+     * (the clip fed to a media element through `fetch` and `XMLHttpRequest`, the loads the relay
+     * does not serve) opened as a tab and let settle (`window.__player.done`, thirty seconds at
+     * most), the popup opened over it (`panel` tapped when the sniffer keeps its listing behind
+     * one), the listing polled with the row's own `listExpr`. The reading goes into `extra` as
+     * `popupObserver` with the fixture's state, and the popup is closed again.
+     */
+    private fun observerPathListing(row: Row, factor: Double, page: String, listExpr: String, panel: String?, settleMs: Long, extra: JSONObject, slug: String): JSONObject {
+        val tab = createTab(fixtureUrl(page))
+        val view = runCatching { waitForView(tab) }.getOrElse { closeTab(tab); return JSONObject().put("pass", false).put("error", "no view for the observer fixture: ${it.toString().take(80)}") }
+        val state = poll(scaled(30_000, factor), 500) {
+            val s = json(tabEval(view, "JSON.stringify(window.__player||{})"))
+            if (s.optBoolean("done")) s else null
+        } ?: json(tabEval(view, "JSON.stringify(window.__player||{})"))
+        extra.put("observerFixture", JSONObject().put("done", state.optBoolean("done")).put("loads", state.optJSONArray("loads")?.length() ?: 0).put("playing", state.opt("playing")).put("timedOut", state.opt("timedOut")).put("playerError", state.opt("playerError")))
+        showTab(tab)
+        val popup = openPopup(row, factor)
+        var found = JSONObject().put("pass", false).put("popup", popup != null)
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            val steps = JSONArray()
+            if (panel != null) tapLabel(panel, factor, steps, "panel")
+            popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                found = pollExpr(live, listExpr, scaled(settleMs, factor))
+                found.put("console", JSONArray(consoleOf(live).takeLast(10))).put("popup", true)
+            }
+            if (steps.length() > 0) found.put("steps", steps)
+        }
+        extra.put("popupObserver", found)
+        SystemClock.sleep(600)
+        snap("$slug-observer-popup")
+        runCatching { coreCall("extension.closePopup", "null") }
+        closeTab(tab)
+        return found
     }
 
     /**
@@ -5052,9 +5126,60 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 put(pageVisibleRules("media.html fetch /data.json", "fetch", "$BASE/data.json?fetch=1", page.optJSONObject("fetchHeaders"), page.opt("fetch")?.toString()))
             })
             result.put("crossOrigin", crossOrigin())
+            result.put("fetchPlayer", fetchPlayer())
             result.put("headProbe", headProbe(listOf("$BASE/clip.mp4", "$BASE/stream?clip=2", "$BASE/data.json?xhr=1")))
             result.put("summary", summary())
             return result
+        }
+
+        /**
+         * `fetch-player.html` (round 15's observer fixture): a clip fed to a media element
+         * through `fetch` and `XMLHttpRequest`, same-origin and from the server's other origin,
+         * with and without `Range`, through a 302, beside a JSON control – the page's own record
+         * of every load (`window.__player`, each URL tagged `fp=<load>`; the tag survives the
+         * redirect hop), the engine's record of each request and the extension's deliveries for
+         * them. The response-stage events heard per load are the observer path's reading: none
+         * before the runtime-side twin; `onHeadersReceived`, `onResponseStarted`, `onCompleted`
+         * for the loads the relay did not serve after it.
+         */
+        private fun fetchPlayer(): JSONObject {
+            val out = JSONObject()
+            val before = engineSeen.size
+            val tab = createTab(fixtureUrl("fetch-player.html?probe"))
+            val view = runCatching { waitForView(tab) }.getOrElse { closeTab(tab); return out.put("error", "no view for the fetch-player fixture: ${it.toString().take(80)}") }
+            val page = poll(scaled(30_000, factor), 500) {
+                val s = json(tabEval(view, "JSON.stringify(window.__player||{})"))
+                if (s.optBoolean("done")) s else null
+            } ?: json(tabEval(view, "JSON.stringify(window.__player||{})"))
+            out.put("page", page)
+            out.put("events", readEvents())
+            out.put("engine", JSONArray(engineSeen.toList().drop(before).filter { it.optString("url").contains("fp=") }))
+            closeTab(tab)
+            return out
+        }
+
+        /** One line for the fetch-player fixture: per load, the events the extension heard (request stage only, or the response-stage names with counts) or nothing. */
+        private fun fetchPlayerSummary(): String {
+            val fp = result.optJSONObject("fetchPlayer") ?: return ""
+            fp.optString("error").takeIf { it.isNotEmpty() }?.let { return "; fetch-player: $it" }
+            val events = fp.optJSONObject("events")?.optJSONArray("events") ?: JSONArray()
+            val heard = (0 until events.length()).map { events.getJSONObject(it) }
+            val tags = listOf("player", "xhr", "range", "xhr-range", "xo", "xo-range", "fetch-redirect", "json", "video-redirect")
+            val parts = tags.map { tag ->
+                val re = Regex("[?&]fp=${Regex.escape(tag)}(&|$)")
+                val own = heard.filter { re.containsMatchIn(it.optString("url")) }
+                val response = own.filter { it.optString("ev") in RESPONSE_STAGE_EVENTS }
+                val reading = when {
+                    own.isEmpty() -> "nothing heard"
+                    response.isEmpty() -> "request stage only"
+                    else -> response.groupBy { it.optString("ev") }.entries.joinToString(" ") { (ev, list) -> "${ev}x${list.size}" }
+                }
+                "$tag: $reading"
+            }
+            val page = fp.optJSONObject("page")
+            return "; fetch-player (observer path): ${parts.joinToString(", ")}" +
+                (if (page?.optBoolean("timedOut") == true) " (the fixture timed out before every load settled)" else "") +
+                (page?.optString("playerError")?.takeIf { it.isNotEmpty() }?.let { " (player error $it)" } ?: "")
         }
 
         /**
@@ -5164,7 +5289,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val early = result.optJSONObject("eventsEarly")?.let { "; early read ${it.optInt("count", -1)} deliveries" } ?: ""
             return "$registered events registered; ${parts.joinToString("; ")}; response-stage events heard: $responseStage$early$readState" +
                 (result.optJSONObject("events")?.optJSONArray("errors")?.takeIf { it.length() > 0 }?.let { "; errors $it" } ?: "") +
-                crossOriginSummary()
+                crossOriginSummary() + fetchPlayerSummary()
         }
 
         /** One line for the cross-origin fixture: `Origin` at the intercept per fetch / XHR, and how many loads the page-visible headers would fire each rule on. */
@@ -5404,7 +5529,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * extension's `chrome.runtime.id`) and `injects`, a selector of what the scripts leave in the
      * DOM. Attached is `n/a` with the reason; nothing attached within the wait is F.
      */
-    private fun contentAttached(label: String, reason: String, injects: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun contentAttached(label: String, reason: String, injects: String? = null, verdict: String = "n/a"): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (_, view) = fixture("page-a.html?attached", factor, 3_000)
@@ -5425,7 +5550,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             dom.takeIf { it.optBoolean("pass") }?.let { "its <${it.optString("tag")}> in the DOM" }
         ).joinToString(", ")
         when {
-            attachedIn(world, row) || dom.optBoolean("pass") -> Grade("n/a", "$label: its content scripts are in the page ($how); $reason", extra)
+            attachedIn(world, row) || dom.optBoolean("pass") -> Grade(verdict, "$label: its content scripts are in the page ($how); $reason", extra)
             else -> Grade("F", "$label: its content scripts did not attach to the fixture within ${scaled(15_000, factor) / 1000} s: ${world.toString().take(200)}", extra)
         }
     }
@@ -6039,7 +6164,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Over `media.html` with the webRequest probe (round 13's item 4): its sniffer is an
         // `onHeadersReceived` listener with `responseHeaders` (`bg/bg.min.js`), reading the
         // content-type, content-length and content-disposition, or the URL's media extension.
-        Row("mciiogijehkdemklbdcbfkefimifhecn", "Chrono Download Manager", "chrono-download-manager", core = mediaPopup("Chrono Download Manager", "media.html?chrono", "/clip|mp4|webm|video/i", panel = "/sniffer|resources|media/i", probe = true, listener = "onHeadersReceived with responseHeaders (content-type image/audio/video, content-length, content-disposition; or the URL's media extension; tabId != -1)")),
+        Row("mciiogijehkdemklbdcbfkefimifhecn", "Chrono Download Manager", "chrono-download-manager", core = mediaPopup("Chrono Download Manager", "media.html?chrono", "/clip|mp4|webm|video/i", panel = "/sniffer|resources|media/i", probe = true, listener = "onHeadersReceived with responseHeaders (content-type image/audio/video, content-length, content-disposition; or the URL's media extension; tabId != -1)", observer = "fetch-player.html?chrono")),
         Row("nfmmmhanepmpifddlkkmihkalkoekpfd", "FetchV", "fetchv", core = mediaPopup("FetchV", "hls.html?fetchv", "/m3u8|stream|hls|download|clip/i")),
         Row("jlgkpaicikihijadgifklkbpdajbkhjo", "CrxMouse", "crxmouse", core = contentAttached("CrxMouse", "its gestures need a mouse's right button and wheel, which the phone has not got: not applicable")),
         Row("cmdgdghfledlbkbciggfjblphiafkcgg", "SBlock", "sblock", core = ::adBlocker),
