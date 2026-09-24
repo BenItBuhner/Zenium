@@ -240,6 +240,9 @@ export class AndroidTabView implements TabView {
           x: p.x ?? 0,
           y: p.y ?? 0,
           linkURL: p.linkURL ?? '',
+          // The anchor's text (`requestFocusNodeHref`'s `title`): the link menu's header title
+          // (PUI-18) and Copy Link Text; left out when the hold found none (an image link).
+          ...(p.linkText ? { linkText: p.linkText } : {}),
           srcURL: p.srcURL ?? '',
           mediaType: p.mediaType ?? (p.srcURL ? 'image' : 'none'),
           selectionText: p.selectionText ?? '',

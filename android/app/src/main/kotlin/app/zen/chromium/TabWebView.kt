@@ -862,15 +862,21 @@ class TabWebView(
         val density = resources.displayMetrics.density
         val anchorX = (left + lastTouchX) / density
         val anchorY = (top + lastTouchY) / density
-        when (result.type) {
-            HitTestResult.SRC_ANCHOR_TYPE, HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
+        when {
+            // A page link, an image in one, a `tel:` or a `mailto:` link (LinkHits): the WebView
+            // types the last two apart and hands their number or address bare.
+            LinkHits.opensLinkMenu(result.type) -> {
                 val msg = Message.obtain(Handler(Looper.getMainLooper()) { m ->
-                    val href = m.data.getString("url") ?: result.extra ?: ""
+                    val href = LinkHits.href(result.type, m.data.getString("url"), result.extra)
                     val src = m.data.getString("src") ?: ""
+                    // The anchor's text (`title` in the WebView's bundle): the link menu's
+                    // header title (PUI-18) and its Copy Link Text item.
+                    val text = m.data.getString("title")?.trim() ?: ""
                     host.viewEvent(
                         tabId, "contextMenu",
                         json(
                             "linkURL" to href,
+                            "linkText" to text,
                             "srcURL" to src,
                             "mediaType" to if (src.isNotEmpty()) "image" else "none",
                             "x" to anchorX, "y" to anchorY
@@ -881,7 +887,7 @@ class TabWebView(
                 requestFocusNodeHref(msg)
                 return true
             }
-            HitTestResult.IMAGE_TYPE -> {
+            result.type == HitTestResult.IMAGE_TYPE -> {
                 host.viewEvent(
                     tabId, "contextMenu",
                     json("linkURL" to "", "srcURL" to (result.extra ?: ""), "mediaType" to "image", "x" to anchorX, "y" to anchorY)

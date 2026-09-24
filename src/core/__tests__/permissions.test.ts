@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PermissionPromptHost, StoreIO } from '../platform'
 import type { PermissionPrompt, PermissionPromptAnswer } from '../../shared/types'
 import {
@@ -695,5 +695,93 @@ describe('PermissionService: private windows leave no trace', () => {
     expect(changes).toHaveLength(2)
     p.forgetContainer('private')
     expect(changes).toHaveLength(2)
+  })
+
+  const SITE = 'https://app.example'
+  const MOUSE = { deviceId: 'g1', name: 'Mouse', vendorId: 1, productId: 2, serialNumber: 'S1' }
+  const PAD = { deviceId: 'g2', name: 'Pad' }
+  const STICK = { deviceId: 'g3', name: 'Stick' }
+  const IN_PRIVATE = { privateContainerId: 'private' }
+  /** The store's debounced write lands, if one was scheduled. */
+  const settle = async (): Promise<void> => {
+    await vi.advanceTimersByTimeAsync(1_000)
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('a device picked in private is granted for its private session alone and never written', async () => {
+    vi.useFakeTimers()
+    const io = fakeIo()
+    const p = new PermissionService(io, prompts(true), () => 5)
+    p.grantDevice('hid', SITE, MOUSE, IN_PRIVATE)
+    // The private session's own status question is answered; a regular window's is not.
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE, IN_PRIVATE)).toBe(true)
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE)).toBe(false)
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE, { privateContainerId: 'other' })).toBe(false)
+    expect(p.hasDeviceGrant('usb', SITE, MOUSE, IN_PRIVATE)).toBe(false)
+    // No list shows it: Settings and the site-information rows read the store only.
+    expect(p.deviceGrants()).toEqual([])
+    expect(p.deviceGrantsFor(SITE)).toEqual([])
+    expect(p.listForPermission('hid')).toEqual([])
+    await settle()
+    expect(io.writes).toEqual([])
+  })
+
+  it('a private grant goes with its session, and a regular grant is read in private', async () => {
+    vi.useFakeTimers()
+    const io = fakeIo()
+    const p = new PermissionService(io, prompts(true), () => 5)
+    const changes: PermissionChange[] = []
+    p.subscribe((change) => changes.push(change))
+    p.grantDevice('hid', SITE, MOUSE, IN_PRIVATE)
+    expect(changes).toEqual([{ permission: 'hid', origin: SITE }])
+    p.forgetContainer('private')
+    expect(changes).toHaveLength(2)
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE, IN_PRIVATE)).toBe(false)
+    p.forgetContainer('private')
+    expect(changes).toHaveLength(2)
+    await settle()
+    expect(io.writes).toEqual([])
+    // The regular profile's connection stands in private too (the store is read first).
+    p.grantDevice('hid', SITE, MOUSE)
+    await settle()
+    expect(io.writes).toHaveLength(1)
+    expect(JSON.parse(io.writes[0]).devices).toEqual([
+      { origin: SITE, kind: 'hid', ...MOUSE, grantedAt: 5 }
+    ])
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE, IN_PRIVATE)).toBe(true)
+    // A block of the site refuses a private request for the device as it does a regular one.
+    p.set('hid', SITE, 'deny')
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE, IN_PRIVATE)).toBe(false)
+  })
+
+  it('a private page’s forget() drops the session’s grant only, and a reset drops it with the rest', async () => {
+    vi.useFakeTimers()
+    const io = fakeIo()
+    const p = new PermissionService(io, prompts(true), () => 5)
+    p.grantDevice('hid', SITE, MOUSE)
+    await settle()
+    expect(io.writes).toHaveLength(1)
+    p.grantDevice('hid', SITE, PAD, IN_PRIVATE)
+    p.grantDevice('usb', SITE, STICK, IN_PRIVATE)
+    p.forgetDevice('hid', SITE, MOUSE, IN_PRIVATE)
+    // The stored grant is not the private session's to take away.
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE)).toBe(true)
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE, IN_PRIVATE)).toBe(true)
+    p.forgetDevice('hid', SITE, PAD, IN_PRIVATE)
+    expect(p.hasDeviceGrant('hid', SITE, PAD, IN_PRIVATE)).toBe(false)
+    expect(p.hasDeviceGrant('usb', SITE, STICK, IN_PRIVATE)).toBe(true)
+    // A regular forget of the kind leaves the private session's grant where it is.
+    p.forgetDevice('usb', SITE)
+    expect(p.hasDeviceGrant('usb', SITE, STICK, IN_PRIVATE)).toBe(true)
+    await settle()
+    expect(io.writes).toHaveLength(1)
+    expect(JSON.parse(io.writes[0]).devices).toHaveLength(1)
+    // Clear browsing data's "Site settings" takes the private session's connections too.
+    p.resetSites()
+    expect(p.hasDeviceGrant('usb', SITE, STICK, IN_PRIVATE)).toBe(false)
+    expect(p.hasDeviceGrant('hid', SITE, MOUSE)).toBe(false)
   })
 })

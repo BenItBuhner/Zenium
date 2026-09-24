@@ -1,4 +1,4 @@
-import type { OverlayKind, PhoneBarPosition } from '@shared/types'
+import type { AppLinkState, OverlayKind, PhoneBarPosition } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
 import type { ThirdPartyCookieMode } from '@shared/privacy'
 import type { SiteDataList } from '@shared/siteData'
@@ -300,6 +300,17 @@ export type PreviewState =
       then?: PreviewStep[]
     }
   | {
+      /**
+       * The active page's link menu for a link to `url`, raised on its own the way a hold on the
+       * link raises it: the phone sheet's header over the items (PUI-18) – the link's `text` as
+       * the title over its address, or "Phone number" / "Email address" over a `tel:` or
+       * `mailto:` link's bare number or address, with the contact items (PUI-22).
+       */
+      kind: 'link'
+      url: string
+      text?: string
+    }
+  | {
       kind: 'overlay'
       overlay: OverlayKind
       /** The overlay's section to land on (History's `host:<host>`). */
@@ -584,6 +595,12 @@ export interface PreviewSeed {
   /** Where the phone bar docks (`bar=top` / `bar=bottom`; the setting `phoneBarPosition`). */
   bar: PhoneBarPosition | null
   /**
+   * What the stand-in host answers for Android's link-handling switch (`applinks=allowed`,
+   * `disallowed` or `unknown`): Settings › About's Open by default row reads it (DEF-06); `null`
+   * is the host's own word (allowed).
+   */
+  appLinks: AppLinkState | null
+  /**
    * Cookies and site data (`sitedata=<sample>[,<site>][,blockall][,exit]`): the three lists
    * seeded with sample patterns and the stand-in profile answering with the `sample` of stored
    * origins named (`none`, `some`, `many`; see `previewSiteData.ts`); `never`, `allow` or
@@ -654,7 +671,10 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * active tab in a group of n members made on the spot, the group strip up in the bar band (with
  * `then=<steps>` taken once the group has formed: `tap:Show group, Research` presses the strip's
  * show chip, `tap:New tab in Research` its plus chip; `&saved` makes a saved group beside it,
- * `&link=<url>` raises the page's link menu for that URL after the steps), `overlay=<kind>` for
+ * `&link=<url>` raises the page's link menu for that URL after the steps), `link=<url>` on its
+ * own for the active page's link menu for that URL (with `text=<label>` for the link's text,
+ * which the phone sheet's header shows over the address; a `tel:` or `mailto:` URL brings the
+ * contact items), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet or `menu=tabs` for the Tabs
@@ -725,7 +745,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * over a new tab page instead; `clip=<text>` puts that on the stand-in clipboard first, so the
  * clipboard row shows; `then=tap:<label>;…` presses the editor's controls once the suggestions
  * are up: `Show`, `Edit`, `Refine`). When several are given, `page` wins over
- * `extension-page`, that over `group`, `group` over `overlay`, `overlay` over `menu`, `menu`
+ * `extension-page`, that over `group` (which takes `link` along), `group` over `link`, `link`
+ * over `overlay`, `overlay` over `menu`, `menu`
  * over `sheet`, `sheet` over the permission `prompt`, that over `ntp`, `ntp` over `private`,
  * `private` over `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along),
  * `find` over `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `readAloud`,
@@ -768,6 +789,13 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const link = params.get('link')
     if (link) state.link = link
     if (then.length > 0) state.then = then
+    return state
+  }
+  const link = params.get('link')
+  if (link) {
+    const state: Extract<PreviewState, { kind: 'link' }> = { kind: 'link', url: link }
+    const text = params.get('text')
+    if (text) state.text = text
     return state
   }
   const overlay = params.get('overlay')
@@ -1084,6 +1112,7 @@ function parseDownload(filename: string, params: URLSearchParams): PreviewDownlo
 /**
  * The seeding a spec asks for on top of its state: `rules=<n>` remembered site permissions,
  * `lock=on` the private tabs' lock, `screenlock=off` (or `on`) the device's screen lock,
+ * `applinks=<state>` the host's link-handling switch for About's Open by default row,
  * `bar=top` / `bar=bottom` the phone bar's dock (the setting; left as it is without one),
  * `sitedata=<sample>[,<site>][,blockall][,exit]` the cookie and site-data policy with the
  * stand-in profile's sample of stored origins (see `PreviewSiteDataSeed`).
@@ -1102,8 +1131,13 @@ export function parsePreviewSeed(spec: string): PreviewSeed {
     lock: onOff(params.get('lock')) === true,
     screenLock: onOff(params.get('screenlock')),
     bar: bar === 'top' || bar === 'bottom' ? bar : null,
+    appLinks: parseAppLinks(params.get('applinks')),
     siteData: parsePreviewSiteData(params.get('sitedata'))
   }
+}
+
+function parseAppLinks(value: string | null): AppLinkState | null {
+  return value === 'allowed' || value === 'disallowed' || value === 'unknown' ? value : null
 }
 
 /**

@@ -1,4 +1,5 @@
 import type {
+  AppLinkState,
   DownloadItem,
   EventName,
   Events,
@@ -1340,6 +1341,10 @@ export class AndroidPlatform implements Platform {
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
       openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
+      openNotificationSettings: () => bridge.send('app.openNotificationSettings'),
+      // The link menu's Call / Send message / Add to contacts / Send email (PUI-22): the
+      // dialer, the messaging app, the contacts form and the mail app, by intent in Kotlin.
+      openLinkIn: (target, url) => bridge.send(`link.${target}`, { url }),
       openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings'),
       openKeyboardSettings: () => bridge.send('app.openKeyboardSettings')
     }
@@ -1467,6 +1472,9 @@ export class AndroidPlatform implements Platform {
       setAppIcon: (id) => bridge.send('app.setIcon', { id }),
       // Kotlin reads the browser role (RoleManager on Android 10+, the http handler before that).
       isDefaultBrowser: () => bridge.call<boolean | null>('app.isDefaultBrowser'),
+      // The "Open by default" screen's state (DEF-06): the link-handling switch on Android 12+
+      // (DomainVerificationManager), the http handler before that.
+      appLinkState: () => bridge.call<AppLinkState | null>('app.appLinkState'),
       // Resolves when the role dialog / default-apps screen hands control back to the app.
       requestDefaultBrowser: () => bridge.call<boolean | null>('app.requestDefaultBrowser')
     }

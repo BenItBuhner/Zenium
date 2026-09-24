@@ -18,8 +18,9 @@ import { SearchEngineForm } from '../blocks'
  * until the name and the template are in – and, editing, the shortcut too: an engine never holds
  * an empty word, so an emptied one says "Give the engine a shortcut" once left or on Enter, the
  * focus moved to it on Enter (§9.12's line on submit, the #419 lead check's ruling 1), where
- * adding leaves it the engine's to derive (the core's `search.addEngine` takes none yet) – and
- * submit hands the caller the three values.
+ * adding leaves it optional by the form's own choice (the same ruling 1): an empty word is the
+ * engine's to derive, a typed one the core keeps as the engine's `keyword` (#430's
+ * `search.addEngine`, its `keyword?`) – and submit hands the caller the three values.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true

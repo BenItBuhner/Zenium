@@ -135,11 +135,11 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
  * `devices/DeviceChooserDialog.tsx`): six digits typed into the field – `inputMode: 'numeric'`
  * so a phone or a tablet raises the digit keyboard, `pattern: '[0-9]*'`, and a class carrying
  * `font-variant-numeric: tabular-nums` and the letter-spacing that sets digits apart. That
- * prompt passes none of them yet: its look still reaches into the primitive from outside
- * (main.css's `.zen-confirm-dialog[data-pairing-kind='providePin'] .zen-v2-field[aria-label='PIN']`),
- * a rule that retires as the prompt adopts these options. The field stays `type="text"`
- * whatever the options say: a number field's spinner and a `tel` field's semantics are not a
- * prompt's (§9.12), and the keyboard on a touch host is `inputMode`'s to choose.
+ * prompt passes all three (`.zen-device-pairing-field`, main.css); the rule that once reached
+ * into the primitive from outside for its look is retired with them. The field stays
+ * `type="text"` whatever the options say: a number field's spinner and a `tel` field's
+ * semantics are not a prompt's (§9.12), and the keyboard on a touch host is `inputMode`'s to
+ * choose.
  */
 export interface PromptField {
   /**

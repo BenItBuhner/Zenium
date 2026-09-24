@@ -1,4 +1,5 @@
 import type {
+  AppLinkState,
   CertificateDetails,
   ClientCertificateInfo,
   CommandArgs,
@@ -85,6 +86,7 @@ import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
   DEFAULT_BROWSER_KEY,
+  APP_LINKS_KEY,
   PREVIEW_ARTICLE,
   PREVIEW_CLIP_EVENT,
   PREVIEW_EXTENSION_PAGE_EVENT,
@@ -164,7 +166,9 @@ const QR_EVENT_MARGIN_MS = 250
  * in order: a tap on a row opens its sheet and a second tap stacks one, `type` fills a form's
  * field, `back` closes the top sheet, `overview` opens the tab overview, `urlbar` the pill for
  * editing), `group=<n>` (the active tab in a group of n members made on the spot, so the group
- * strip is up in the bar band; `then=` steps run once the group has formed), `overlay=<kind>`
+ * strip is up in the bar band; `then=` steps run once the group has formed), `link=<url>` (the
+ * active page's link menu held up for that URL, `text=<label>` the link's text over the address
+ * in its header), `overlay=<kind>`
  * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
@@ -232,7 +236,8 @@ const QR_EVENT_MARGIN_MS = 250
  * over a private tab in front or over the Private pane, INC-05: `private=page&lock=on`,
  * `private=overview&lock=on`, `private=newtab&lock=on`), and `screenlock=off` says the device
  * has no screen lock (Settings' "Lock private tabs when you leave Zenium" disabled with its
- * description, SET-17).
+ * description, SET-17). `applinks=allowed|disallowed|unknown` is the stand-in host's answer for
+ * Android's link-handling switch, which About's Open by default row reads (DEF-06).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -309,6 +314,7 @@ function apply(browser: Browser, spec: string): void {
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
+    seedAppLinks(seed.appLinks)
     if (seed.siteData) seedSiteData(browser, seed.siteData, tab)
     // The private tabs' lock a previous spec put on comes off at once (no lift: the cover goes
     // with the private tab, below), and the device's screen lock is as the spec says or as the
@@ -730,20 +736,64 @@ async function dissolveGroup(): Promise<void> {
 
 /**
  * Raise the active page's context menu for a link to `url`, the way a hold on the link raises it
- * (`views.ts`: the host's `contextMenu` event with the link's URL), at a point in the page's
- * upper third – where a phone's link menu sheet leaves the page showing above it, and a tablet's
- * popover anchors.
+ * (`views.ts`: the host's `contextMenu` event with the link's URL, and its text when the hold
+ * has one – the phone sheet's header title, PUI-18), at a point in the page's upper third –
+ * where a phone's link menu sheet leaves the page showing above it, and a tablet's popover
+ * anchors.
  */
-function holdLink(tabId: string, url: string): void {
+function holdLink(tabId: string, url: string, text?: string): void {
   hostGlobal().viewEvent(
     tabId,
     'contextMenu',
     JSON.stringify({
       x: Math.round(window.innerWidth / 2),
       y: Math.round(window.innerHeight / 3),
-      linkURL: url
+      linkURL: url,
+      ...(text ? { linkText: text } : {})
     })
   )
+}
+
+/**
+ * The site tab a link is held on: `active` itself when it is on a site, else – a chrome page or
+ * a blank tab in front – its opener when that is a site tab, or the space's first loose site
+ * tab, made active first; null when the space has none.
+ */
+function onSiteTab(state: UIState, active: Tab, then: (tab: Tab | null) => void): void {
+  const onSite = (t: Tab): boolean => !isInternalPageUrl(t.url) && t.url !== BLANK_URL
+  if (onSite(active)) {
+    then(active)
+    return
+  }
+  const opener = active.openerTabId ? state.tabs[active.openerTabId] : undefined
+  const space = activeSpace(state)
+  const site =
+    opener && onSite(opener)
+      ? opener
+      : space
+        ? regularOf(state, space).find((t) => !t.folderId && onSite(t))
+        : undefined
+  if (!site) {
+    then(null)
+    return
+  }
+  void cmd('tab.activate', { tabId: site.id }).catch(() => undefined)
+  whenActiveTabIs(
+    (t) => t.id === site.id,
+    () => then(site)
+  )
+}
+
+/**
+ * `then` once the menu the core is about to show has landed in the ui store (`menu.show`) and
+ * its sheet has had a frame to mount.
+ */
+function whenMenuUp(then: () => void): void {
+  const unsubscribe = uiStore.subscribe(() => {
+    if (!uiStore.get().menu) return
+    unsubscribe()
+    afterFrames(2, then)
+  })
 }
 
 /** Close the private tabs, then `then` once none is left. */
@@ -907,17 +957,26 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         finish()
         return
       }
-      const unsubscribe = uiStore.subscribe(() => {
-        if (!uiStore.get().menu) return
-        unsubscribe()
-        afterFrames(2, finish)
-      })
+      whenMenuUp(finish)
       holdLink(tab.id, link)
     }
     void makeGroup(browser, tab.id, target.members, Boolean(target.saved)).then(() => {
       const then = target.then ?? []
       if (then.length === 0) end()
       else setTimeout(() => steps(then, end), STEP_SETTLE_MS)
+    })
+  } else if (target.kind === 'link' && tab && state) {
+    // The link menu on its own (PUI-18's header, PUI-22's contact items): held on a site's page
+    // – the active tab, or a site tab brought to the front when a chrome page (a previous
+    // `page=` state's, which stays open) is there – the state reached once the sheet has had a
+    // frame to mount.
+    onSiteTab(state, tab, (site) => {
+      if (!site) {
+        finish()
+        return
+      }
+      whenMenuUp(finish)
+      holdLink(site.id, target.url, target.text)
     })
   } else if (target.kind === 'overlay') {
     // A seeded engine state stands before the overlay opens: the History page's From your other
@@ -2539,10 +2598,12 @@ function tap(text: string): void {
 /**
  * Hold the first button whose accessible label or own text reads `text` – a row with a menu –
  * the way a finger resting on it would: the row's gestures take the `contextmenu` Chromium
- * raises for a touch hold (`useRowGestures`), so that event stands for the hold.
+ * raises for a touch hold (`useRowGestures`), so that event stands for the hold. Failing a
+ * button, a row that copies itself on a hold (`data-copies`: Settings › About's version block,
+ * SET-54) whose text reads `text` takes the same event (`useLongPress`).
  */
 function hold(text: string): void {
-  const button = pressable(text)
+  const button = pressable(text) ?? copying(text)
   if (!button) return
   const box = button.getBoundingClientRect()
   button.dispatchEvent(
@@ -2607,6 +2668,18 @@ function pressable(text: string): HTMLElement | null {
     if (node.textContent?.trim() !== wanted) continue
     const button = node.parentElement?.closest(PRESSABLE)
     if (reachable(button)) return button
+  }
+  return null
+}
+
+/** The first row that copies on a hold (`data-copies`) with a text node reading `text`. */
+function copying(text: string): HTMLElement | null {
+  const wanted = text.trim()
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.textContent?.trim() !== wanted) continue
+    const row = node.parentElement?.closest<HTMLElement>('[data-copies]')
+    if (row && !row.closest('[inert]')) return row
   }
   return null
 }
@@ -3571,6 +3644,21 @@ const DEMO_RULES: ReadonlyArray<
   { permission: 'notifications', url: 'https://mail.example/inbox', decision: 'allow' },
   { permission: 'idle-detection', url: 'https://chat.example/', decision: 'deny' }
 ]
+
+/**
+ * The stand-in host's answer for Android's link-handling switch (`applinks=<state>`; DEF-06):
+ * held under `APP_LINKS_KEY` for `app.appLinkState` (preview.ts), then the core asked for the
+ * role again, as the host asks it on every return to the foreground – the Open by default row
+ * reads the state off `defaultBrowser.appLinks`. Without the key the host answers `allowed`, so
+ * a spec without it puts the answer back.
+ */
+function seedAppLinks(state: AppLinkState | null): void {
+  const held = localStorage.getItem(APP_LINKS_KEY)
+  if (state) localStorage.setItem(APP_LINKS_KEY, state)
+  else localStorage.removeItem(APP_LINKS_KEY)
+  // A spec with no seed and nothing held has nothing to put back.
+  if (state !== null || held !== null) void run('defaultBrowser.refresh', undefined)
+}
 
 function seedRules(browser: Browser, count: number): void {
   browser.permissions.reset()
