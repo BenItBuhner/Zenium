@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Rect } from '@shared/types'
-import { POPOVER_MARGIN } from '../portals'
+import type { MenuDescriptor, Rect } from '@shared/types'
+import { closeAllPopovers, openPopover } from '../popoverStore'
+import { holdChromeInert, POPOVER_MARGIN } from '../portals'
 import {
   placeTooltip,
   TOOLTIP_ATTR,
@@ -9,12 +10,14 @@ import {
   TOOLTIP_DELAY,
   TOOLTIP_GAP,
   TOOLTIP_HIDDEN,
+  tooltipBlocked,
   TooltipController,
   tooltipPaneOf,
   tooltipSize,
   tooltipTargetOf,
   type TooltipState
 } from '../tooltip'
+import { HOVER_CARD_HIDDEN, uiStore, type DragState } from '../ui'
 
 /*
  * The chrome tooltip's timing and geometry (lib/tooltip.ts; v2 draft §9.31, a11y-26): the
@@ -311,6 +314,22 @@ describe('TooltipController', () => {
     expect(state.target).toBeNull()
   })
 
+  it('the block is asked about the control: the surface that has the window names its own, nothing outside it shows', () => {
+    // A bubble is up: `a` is one of its controls, `b` the toolbar button under it.
+    controller = new TooltipController(store, { blocked: (t) => t !== a, now: () => clock })
+    controller.pointerEnter(b)
+    tick(TOOLTIP_DELAY)
+    expect(writes).toEqual([])
+    controller.pointerEnter(a)
+    tick(TOOLTIP_DELAY)
+    expect(state).toEqual({ target: a, by: 'pointer' })
+    controller.pointerLeave(a)
+    controller.focus(b)
+    expect(state.target).toBeNull()
+    controller.focus(a)
+    expect(state).toEqual({ target: a, by: 'focus' })
+  })
+
   it('a control that left the DOM or lost its text shows nothing', () => {
     controller.pointerEnter(a)
     a.remove()
@@ -331,5 +350,129 @@ describe('TooltipController', () => {
     controller.hide()
     expect(state.target).toBeNull()
     expect(controller.showing()).toBe(false)
+  })
+})
+
+describe('tooltipBlocked', () => {
+  /*
+   * §9.20's one at a time, seen from the control asking (W5-1, a11y-26): the surface that has
+   * the window – the popover on top, else a frame dialog holding the chrome inert – names its
+   * own controls and nothing outside it; with neither up, the UI state's surfaces block every
+   * control; a drag or a native menu blocks all.
+   */
+  let toolbarButton: HTMLElement
+  let bubbleButton: HTMLElement
+  let bubble: HTMLElement
+  let listRow: HTMLElement
+  let list: HTMLElement
+  let dialogButton: HTMLElement
+  const releases: Array<() => void> = []
+
+  const reset = (): void => {
+    uiStore.set({
+      drag: null,
+      menu: null,
+      floatingChrome: 0,
+      hoverCard: HOVER_CARD_HIDDEN,
+      downloadsOpen: false
+    })
+  }
+
+  beforeEach(() => {
+    reset()
+    document.body.innerHTML = `
+      <header data-surface="window"><button ${TOOLTIP_ATTR}="Back">toolbar</button></header>
+      <div class="zen-frame-dialogs"><div role="dialog"><button ${TOOLTIP_ATTR}="Use the site's favicon">dialog</button></div></div>
+      <div class="zen-chrome-layer">
+        <div class="bubble"><button ${TOOLTIP_ATTR}="Pause">bubble</button></div>
+        <div class="list"><button ${TOOLTIP_ATTR}="Row">list</button></div>
+      </div>`
+    const q = (selector: string): HTMLElement => document.querySelector(selector) as HTMLElement
+    toolbarButton = q('header button')
+    dialogButton = q('[role="dialog"] button')
+    bubble = q('.bubble')
+    bubbleButton = q('.bubble button')
+    list = q('.list')
+    listRow = q('.list button')
+  })
+  afterEach(() => {
+    while (releases.length) releases.pop()?.()
+    closeAllPopovers()
+    reset()
+  })
+
+  const popover = (element: HTMLElement, anchor?: HTMLElement): void => {
+    releases.push(
+      openPopover({ element: () => element, anchor: anchor && (() => anchor), close: () => {} })
+    )
+  }
+
+  it('with nothing up, a control anywhere has its tooltip', () => {
+    expect(tooltipBlocked(toolbarButton)).toBe(false)
+    expect(tooltipBlocked(bubbleButton)).toBe(false)
+  })
+
+  it('an open popover names its own controls and blocks every other', () => {
+    popover(bubble, toolbarButton)
+    expect(tooltipBlocked(bubbleButton)).toBe(false)
+    expect(tooltipBlocked(toolbarButton)).toBe(true)
+    expect(tooltipBlocked(dialogButton)).toBe(true)
+    releases.pop()?.()
+    expect(tooltipBlocked(toolbarButton)).toBe(false)
+  })
+
+  it('only the popover on top has the window: a row of the popover under it waits', () => {
+    popover(bubble, toolbarButton)
+    // The list's anchor sits in the bubble, so the bubble stays open under it (its child).
+    popover(list, bubbleButton)
+    expect(tooltipBlocked(listRow)).toBe(false)
+    expect(tooltipBlocked(bubbleButton)).toBe(true)
+    releases.pop()?.()
+    expect(tooltipBlocked(bubbleButton)).toBe(false)
+  })
+
+  it('a frame dialog holding the chrome inert names its own controls and blocks the chrome under it', () => {
+    releases.push(holdChromeInert())
+    expect(tooltipBlocked(dialogButton)).toBe(false)
+    expect(tooltipBlocked(toolbarButton)).toBe(true)
+    expect(tooltipBlocked(bubbleButton)).toBe(true)
+    // A menulist's list over the dialog is on top of it.
+    popover(list, dialogButton)
+    expect(tooltipBlocked(listRow)).toBe(false)
+    expect(tooltipBlocked(dialogButton)).toBe(true)
+  })
+
+  it('the UI state’s surfaces block a control anywhere, the hover card and the tooltip’s own cover excepted', () => {
+    uiStore.set({ downloadsOpen: true })
+    expect(tooltipBlocked(toolbarButton)).toBe(true)
+    uiStore.set({
+      downloadsOpen: false,
+      hoverCard: { ...HOVER_CARD_HIDDEN, tabId: 't1', by: 'pointer' }
+    })
+    expect(tooltipBlocked(toolbarButton)).toBe(false)
+    uiStore.set({ hoverCard: HOVER_CARD_HIDDEN, floatingChrome: 1 })
+    expect(tooltipBlocked(toolbarButton)).toBe(true)
+    expect(tooltipBlocked(toolbarButton, 1)).toBe(false)
+  })
+
+  it('a drag or a native menu blocks every control, the open popover’s too', () => {
+    popover(bubble, toolbarButton)
+    const drag: DragState = {
+      tabId: 't1',
+      remote: false,
+      title: 'Tab',
+      favicon: null,
+      width: 200,
+      height: 32,
+      tile: false,
+      settling: false
+    }
+    uiStore.set({ drag })
+    expect(tooltipBlocked(bubbleButton)).toBe(true)
+    uiStore.set({ drag: null })
+    expect(tooltipBlocked(bubbleButton)).toBe(false)
+    const menu: MenuDescriptor = { id: 'm', items: [], source: 'page', x: 0, y: 0 }
+    uiStore.set({ menu })
+    expect(tooltipBlocked(bubbleButton)).toBe(true)
   })
 })

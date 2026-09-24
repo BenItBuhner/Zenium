@@ -435,7 +435,9 @@ describe('the Downloads page tab (§10.1)', () => {
     const f = row(el, 'failed')
     const line = f.querySelector('.zen-page-row-desc span.zen-dl-status-danger')!
     expect(text(line)).toBe('Failed · Check internet connection')
-    expect(line.getAttribute('title')).toBe('Check internet connection')
+    // The reason is the chrome's tooltip (§9.31, one vocabulary), never the toolkit's title.
+    expect(line.getAttribute('data-tooltip')).toBe('Check internet connection')
+    expect(line.hasAttribute('title')).toBe(false)
     expect(actions(f)).toEqual(['Retry', 'More actions'])
     expect(revealed(f)).toEqual(['More actions'])
     await act(async () => action(f, 'retry').click())

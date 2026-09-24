@@ -5488,7 +5488,7 @@ const ZEN_FEATURE_MODS = IS_MAC ? 'Meta+Control' : 'Control+Alt'
 const SPLIT_VERTICAL_COMBO = `${ZEN_FEATURE_MODS}+v`
 const UNSPLIT_COMBO = `${ZEN_FEATURE_MODS}+u`
 // The un-split button on a pane's header strip (SplitChrome.tsx), by its title.
-const UNSPLIT_BUTTON = 'button[title^="Un-split this tab"]'
+const UNSPLIT_BUTTON = 'button[data-tooltip^="Un-split this tab"]'
 // A vertical split's divider (SplitChrome.tsx Gutter): the chrome's one element with the class.
 const GUTTER = '.cursor-col-resize'
 // The sidebar row a split's tabs share (SplitGroupRow.tsx).

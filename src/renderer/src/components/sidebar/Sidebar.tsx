@@ -331,7 +331,8 @@ function LocalWindowHeader({ state, compact }: { state: UIState; compact: boolea
         <button
           type="button"
           className="zen-toolbar-button h-6 w-6"
-          title="Move these tabs to a space…"
+          aria-label="Move these tabs to a space…"
+          data-tooltip="Move these tabs to a space…"
           disabled={!canMove}
           onClick={() => setOpen(!open)}
         >
@@ -432,7 +433,7 @@ function Resizer({ state }: { state: UIState }): JSX.Element {
         'zen-resizer zen-no-drag absolute top-0 h-full w-1.5 hover:bg-[var(--zen-accent)]/30',
         side === 'left' ? '-right-0.5' : '-left-0.5'
       )}
-      title="Drag to resize · double-click to collapse"
+      data-tooltip="Drag to resize · double-click to collapse"
       onDoubleClick={() => run('sidebar.toggleExpanded', undefined)}
     />
   )

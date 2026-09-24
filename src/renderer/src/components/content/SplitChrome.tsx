@@ -72,7 +72,8 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
               <button
                 type="button"
                 className="zen-toolbar-button h-5 w-5"
-                title={`Layout: ${group.layout} (click to change)`}
+                aria-label={`Layout: ${group.layout}`}
+                data-tooltip={`Layout: ${group.layout} (click to change)`}
                 onClick={() =>
                   run('split.setLayout', { groupId: group.id, layout: NEXT_LAYOUT[group.layout] })
                 }
@@ -83,7 +84,8 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
             <button
               type="button"
               className="zen-toolbar-button h-5 w-5"
-              title="Un-split this tab (Shift: keep focus in the split)"
+              aria-label="Un-split this tab"
+              data-tooltip="Un-split this tab (Shift: keep focus in the split)"
               onClick={(e) => run('split.removeTab', { tabId: pane.tabId, focus: !e.shiftKey })}
             >
               <Minus className="h-3 w-3" />

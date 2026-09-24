@@ -178,6 +178,18 @@ export function openPopoverCount(): number {
   return entries.length
 }
 
+/**
+ * Whether `node` lies inside the popover on top – the last one opened, the one that has the
+ * window (§9.20). False while none is open, and for a node in a popover under the top one (the
+ * star bubble's row under its menulist's list). For chrome that yields to an open popover
+ * unless it is the popover's own: the tooltip (lib/tooltip.ts) names the bubble's controls
+ * while the bubble is up and nothing outside it.
+ */
+export function insideTopPopover(node: Node): boolean {
+  const top = entries[entries.length - 1]
+  return top !== undefined && contains(top, node)
+}
+
 // ---------------------------------------------------------------------------
 // The window listeners, on while any popover is open or a consumed press is being swallowed
 // ---------------------------------------------------------------------------

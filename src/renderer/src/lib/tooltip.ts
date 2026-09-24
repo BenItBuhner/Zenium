@@ -1,6 +1,6 @@
 import type { Rect } from '@shared/types'
-import { openPopoverCount } from './popoverStore'
-import { chromeInertHeld, POPOVER_MARGIN, type Size } from './portals'
+import { insideTopPopover, openPopoverCount } from './popoverStore'
+import { chromeInertHeld, insideFrameDialog, POPOVER_MARGIN, type Size } from './portals'
 import { createStore } from './store'
 import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from './ui'
 
@@ -12,8 +12,12 @@ import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from './ui'
  * is pressed – a key the tooltip never consumes: it goes on to whatever it is for the control
  * (Stop, the find bar's Close, the popups' Escape stack `useEscape`, the chrome's Escape in
  * `useGlobalKeys`) in the one press, the tooltip having gone with it. One at a time, and never
- * beside other chrome: no tooltip shows while a popover, menu or dialog has the window (§9.31's
- * rule for the hover card, kept for the tooltip).
+ * beside other chrome: while a popover, menu or dialog has the window no tooltip shows for a
+ * control outside it – the toolbar under an open bubble, the anchor that opened it – and the
+ * surface's own controls keep theirs (`tooltipBlocked`): §9.31's "never while a popover is up"
+ * is the hover card's sentence; plain tooltips are the platform's, which names a bubble's Pause
+ * as it names a toolbar's Back, and one vocabulary asks that the name be the chrome's tooltip,
+ * which a tooltip that never showed is not.
  *
  * A control takes the tooltip by carrying its text in `data-tooltip` (`TOOLTIP_ATTR`) in place
  * of a native `title`; its accessible name stays its own (`aria-label`, or its content). The
@@ -60,11 +64,12 @@ export interface TooltipStore {
 
 export interface TooltipOptions {
   /**
-   * Whether other chrome has the window right now – a popover, a menu, a dialog, a drag: no
-   * tooltip shows while it says so (checked when the pointer arrives, when focus lands, and
-   * again when the delay has run), and what was on its way is dropped.
+   * Whether other chrome has the window right now, seen from the control asking – a popover,
+   * a menu, a dialog the control is not inside, a drag: no tooltip shows for the control while
+   * it says so (checked when the pointer arrives, when focus lands, and again when the delay
+   * has run), and what was on its way is dropped.
    */
-  blocked?: () => boolean
+  blocked?: (target: HTMLElement) => boolean
   delay?: number
   browse?: number
   /** The clock, for the browse window; `performance.now` outside tests. */
@@ -84,7 +89,7 @@ export class TooltipController {
   private silenced: HTMLElement | null = null
   /** Until when the browse window is open (`TOOLTIP_BROWSE` after a pointer leave). */
   private browseUntil = 0
-  private readonly blocked: () => boolean
+  private readonly blocked: (target: HTMLElement) => boolean
   private readonly delay: number
   private readonly browse: number
   private readonly now: () => number
@@ -105,7 +110,7 @@ export class TooltipController {
     const shown = this.store.get().target
     if (shown === target) return
     this.cancel()
-    if (this.blocked()) {
+    if (this.blocked(target)) {
       this.clear()
       return
     }
@@ -135,7 +140,7 @@ export class TooltipController {
   /** Keyboard focus landed on a control (`:focus-visible`): its tooltip shows at once (§9.22). */
   focus(target: HTMLElement): void {
     this.cancel()
-    if (this.blocked()) {
+    if (this.blocked(target)) {
       this.clear()
       return
     }
@@ -181,7 +186,7 @@ export class TooltipController {
   private show(target: HTMLElement, by: TooltipCause): void {
     // Chrome that opened during the wait (a shortcut's bubble, a menu) has the window; a control
     // that left the DOM meanwhile has nothing to say.
-    if (this.blocked() || !target.isConnected || !target.getAttribute(TOOLTIP_ATTR)) {
+    if (this.blocked(target) || !target.isConnected || !target.getAttribute(TOOLTIP_ATTR)) {
       this.clear()
       return
     }
@@ -221,17 +226,27 @@ export function tooltipPaneOf(target: HTMLElement): HTMLElement | null {
 }
 
 /**
- * §9.20's one at a time, seen from the tooltip: other chrome has the window while a popover is
- * registered with the chrome layer, while a frame dialog holds the window chrome inert, or
- * while the UI state says something else is over the page – the URL bar, a menu, an overlay, a
- * drag, a prompt. The hover card is not other chrome to it (a focused control's tooltip and the
- * card the pointer rests a row for may stand together), and neither is the page's cover the
- * tooltip itself holds (`floatingChrome`, see components/Tooltip.tsx): `ownHolds` are taken
- * off the count before it is read.
+ * §9.20's one at a time, seen from the tooltip of `target`: other chrome has the window while a
+ * popover is registered with the chrome layer, while a frame dialog holds the window chrome
+ * inert, or while the UI state says something else is over the page – the URL bar, a menu, an
+ * overlay, a drag, a prompt. The control's own surface is not other chrome to it: the chrome
+ * layer's strata stand above the frame's, the popover on top has the window while any is
+ * registered and names its own controls (`insideTopPopover`: the downloads bubble's Pause, a
+ * folder menu's row) and no others – not a control in the frame or the window chrome under it,
+ * nor one in a popover it sits on; with none registered a frame dialog has the window and
+ * names its own (`insideFrameDialog`); with neither, the UI state's surfaces – all of them in
+ * the frame or over it, so a control anywhere waits on them. A drag blocks every tooltip, the
+ * pointer being spoken for; a native menu the same, the window being its. The hover card is
+ * not other chrome to it (a focused control's tooltip and the card the pointer rests a row for
+ * may stand together), and neither is the page's cover the tooltip itself holds
+ * (`floatingChrome`, see components/Tooltip.tsx): `ownHolds` are taken off the count before it
+ * is read.
  */
-export function tooltipBlocked(ownHolds = 0): boolean {
-  if (openPopoverCount() > 0 || chromeInertHeld()) return true
+export function tooltipBlocked(target: HTMLElement, ownHolds = 0): boolean {
   const ui = uiStore.get()
+  if (ui.drag !== null || ui.menu !== null) return true
+  if (openPopoverCount() > 0) return !insideTopPopover(target)
+  if (chromeInertHeld()) return !insideFrameDialog(target)
   return overlayCoversContent({
     ...ui,
     hoverCard: HOVER_CARD_HIDDEN,
@@ -350,5 +365,5 @@ export function tooltipCoverHeld(held: boolean): void {
 
 /** The app's controller; the host (`components/Tooltip.tsx`) feeds it the document's events. */
 export const tooltip = new TooltipController(tooltipStore, {
-  blocked: () => tooltipBlocked(ownHolds)
+  blocked: (target) => tooltipBlocked(target, ownHolds)
 })

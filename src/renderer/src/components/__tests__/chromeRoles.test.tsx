@@ -306,7 +306,7 @@ describe('the strip’s tablists (a11y-07, a11y-31, a11y-02)', () => {
     const outside = [
       q('[data-strip-item="header:space"]'),
       q('[data-tab-folder="work"]'),
-      q('button[title^="Clear unpinned tabs"]')
+      q('button[data-tooltip^="Clear unpinned tabs"]')
     ]
     for (const el of outside) expect(el.closest('[role="tablist"]')).toBeNull()
     expect(q('[data-strip-item="header:space"]').getAttribute('aria-expanded')).toBe('true')
@@ -358,12 +358,16 @@ describe('a row’s controls (§9.22)', () => {
     for (const control of controls) {
       expect(control.tagName).toBe('SPAN')
       expect(control.hasAttribute('tabindex')).toBe(false)
-      expect(control.getAttribute('title')).toBeTruthy()
+      // Named by the chrome's tooltip (a11y-26 / W5-1: `data-tooltip`, never a native `title`).
+      expect(control.getAttribute('data-tooltip')).toBeTruthy()
+      expect(control.hasAttribute('title')).toBe(false)
+      expect(control.getAttribute('aria-label')).toBeTruthy()
     }
-    expect(q('[data-tab-id="a"] .zen-tab-close').getAttribute('title')).toBe('Close tab')
+    expect(q('[data-tab-id="a"] .zen-tab-close').getAttribute('data-tooltip')).toBe('Close tab')
+    expect(q('[data-tab-id="a"] .zen-tab-close').getAttribute('aria-label')).toBe('Close tab')
     expect(q('[data-tab-id="b"] .zen-tab-audio').getAttribute('aria-pressed')).toBe('false')
     expect(q('[data-tab-id="c"] .zen-tab-audio').getAttribute('aria-pressed')).toBe('true')
-    expect(q('[data-tab-id="c"] .zen-tab-audio').getAttribute('title')).toBe('Unmute tab')
+    expect(q('[data-tab-id="c"] .zen-tab-audio').getAttribute('data-tooltip')).toBe('Unmute tab')
     expect(q('[data-tab-id="d"] .zen-tab-sleeping').getAttribute('aria-label')).toBe(
       'Sleeping – click to wake'
     )
