@@ -107,9 +107,10 @@ splash_held() {
 }
 # The boot's marks as the build logs them at the chrome's first frame (`ZenStartup: boot marks:
 # app=41 activity=312 … frame=2890`, ms since the process start; BootMarks.kt), the last such line;
-# empty for a build without them.
+# empty for a build without them (a grep with nothing to find exits 1, which under pipefail would
+# be the script's end – the readers of a build without the line must not be).
 boot_marks() {
-  adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'boot marks: .*' | tail -n 1 | sed 's/^boot marks: //'
+  adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'boot marks: .*' | tail -n 1 | sed 's/^boot marks: //' || true
 }
 # Ruling 5: the process's frame statistics since its start (`dumpsys gfxinfo`, the render thread's
 # own count), read at the same point of every run – after the READY wait – as `name=value` words:
@@ -122,7 +123,7 @@ frame_stats() {
     /^Number Slow UI thread:/ { printf "slowui=%s ", $2 }
     /^Number Frame deadline missed:/ { printf "missed=%s ", $2 }
     /^90th percentile:/ { sub(/ms/, "", $2); printf "p90=%s ", $2 }
-    /^99th percentile:/ { sub(/ms/, "", $2); printf "p99=%s ", $2 }'
+    /^99th percentile:/ { sub(/ms/, "", $2); printf "p99=%s ", $2 }' || true
 }
 # The names in the given marks lines, in order of first appearance, one per line.
 mark_names() {
