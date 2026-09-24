@@ -2983,6 +2983,9 @@ export class Browser {
       'urlbar.cancel': (_a, win) => this.extensions.omniboxCancel(win),
       'urlbar.deleteSuggestion': ({ input }, win) =>
         this.extensions.omniboxDeleteSuggestion(input, win),
+      'urlbar.suggestionContextMenu': ({ id, kind, ...anchor }, win) =>
+        this.menus.showSuggestionContextMenu(id, kind, win, anchor),
+      'urlbar.clearSearchHistory': () => this.omniboxShortcuts.forgetSearches(),
 
       'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
       'overlay.snapshotDevtools': ({ tabId, fresh }, win) => win.snapshotDevtools(tabId, fresh),

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Suggestion, Tab, UIState } from '@shared/types'
+import type { HostCapabilities, Suggestion, Tab, UIState } from '@shared/types'
 import type { UrlbarState } from '@renderer/lib/ui'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
@@ -22,7 +22,18 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (
   }
   return null
 })
-Object.assign(window, { zen: { invoke, on: () => () => undefined } })
+/** The core's events to the chrome (`window.zen.on`), fired by the tests through `fire`. */
+const listeners = new Map<string, Set<(payload: unknown) => void>>()
+const on = (name: string, listener: (payload: unknown) => void): (() => void) => {
+  const set = listeners.get(name) ?? new Set()
+  listeners.set(name, set)
+  set.add(listener)
+  return () => void set.delete(listener)
+}
+const fire = (name: string, payload: unknown): void => {
+  for (const listener of listeners.get(name) ?? []) listener(payload)
+}
+Object.assign(window, { zen: { invoke, on } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { Urlbar } = await import('../Urlbar')
@@ -66,10 +77,10 @@ function tab(url: string, patch: Partial<Tab> = {}): Tab {
   } as Tab
 }
 
-function state(t: Tab): UIState {
+function state(t: Tab, capabilities: Partial<HostCapabilities> = {}): UIState {
   return {
     platform: 'linux',
-    capabilities: {},
+    capabilities,
     tabs: { [t.id]: t },
     spaces: [],
     activeSpaceId: 'space',
@@ -83,9 +94,13 @@ function urlbarState(mode: UrlbarState['mode'] = 'edit'): UrlbarState {
   return { open: true, mode, tabId: 't1', initialText: undefined, attached: true }
 }
 
-const desktop = (t: Tab = tab(PAGE), mode: UrlbarState['mode'] = 'edit'): ReactElement =>
+const desktop = (
+  t: Tab = tab(PAGE),
+  mode: UrlbarState['mode'] = 'edit',
+  capabilities: Partial<HostCapabilities> = {}
+): ReactElement =>
   createElement(Urlbar, {
-    state: state(t),
+    state: state(t, capabilities),
     urlbar: urlbarState(mode),
     area: { x: 0, y: 0, width: 1200, height: 800 },
     phoneEdge: undefined
@@ -429,6 +444,176 @@ describe('removing a row (omnibox-22)', () => {
     await key(input(el), 'Delete', { shift: true })
     expect(rows(el)).toHaveLength(2)
     expect(commands()).not.toContain('history.delete')
+  })
+})
+
+describe('a row\u2019s native menu (context-menus-115)', () => {
+  /** The desktop host: its menus are native, so a row's right-click asks the core for one. */
+  const native = (t: Tab = tab(PAGE)): ReactElement => desktop(t, 'edit', { nativeMenus: true })
+  /** A remembered search (a removable search row), or with `deletable` unset the engine's own. */
+  const search = (n: number, extra: Partial<Suggestion> = { deletable: true }): Suggestion =>
+    row('search', `query ${n}`, `query ${n}`, `https://www.google.com/search?q=query+${n}`, {
+      targetId: 'google',
+      ...extra
+    })
+  const option = (r: HTMLElement): HTMLElement => r.querySelector<HTMLElement>('[role="option"]')!
+  const titles = (el: HTMLElement): string[] =>
+    rows(el).map((r) => r.querySelector('.zen-omnibox-row-title')!.textContent!)
+  const menuAsks = (): Array<{
+    id: string
+    kind: string
+    x: number
+    y: number
+    keyboard?: boolean
+  }> => callsTo('urlbar.suggestionContextMenu')
+
+  /** The mouse's right-click on a row at (40, 50): the press, then the `contextmenu` it raises. */
+  async function rightClick(r: HTMLElement): Promise<MouseEvent> {
+    await press(option(r), { button: 2 })
+    const ev = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+      clientX: 40,
+      clientY: 50
+    })
+    await act(async () => {
+      r.dispatchEvent(ev)
+      await Promise.resolve()
+    })
+    return ev
+  }
+
+  /** The core's word on a pick in the host's menu. */
+  async function picked(id: string, action: 'remove' | 'delete-search-history'): Promise<void> {
+    await act(async () => {
+      fire('urlbar.suggestionAction', { id, action })
+      await Promise.resolve()
+    })
+  }
+
+  it('a right-click on a removable row asks the host for the row\u2019s menu at the pointer, the press itself picking nothing; a bookmark row gets none', async () => {
+    suggestions = (q) => (q ? [history(1), bookmark(1)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 2)
+    const [page, mark] = rows(el)
+    const ev = await rightClick(page)
+    // The old rule picked the row on any mouse button's press; the right one is the menu's.
+    expect(submits()).toEqual([])
+    expect(ev.defaultPrevented).toBe(true)
+    expect(menuAsks()).toEqual([{ id: 'history:Page 1', kind: 'history', x: 40, y: 50 }])
+    // The bar stands as it was: the menu is the host's, its picks come back as events.
+    expect(uiStore.get().urlbar.open).toBe(true)
+    expect(rows(el)).toHaveLength(2)
+    expect(document.activeElement).toBe(input(el))
+    // A bookmark is not removable (Chrome): no menu, the event left to the chrome's own.
+    const kept = await rightClick(mark)
+    expect(kept.defaultPrevented).toBe(false)
+    expect(menuAsks()).toHaveLength(1)
+    expect(submits()).toEqual([])
+  })
+
+  it('a middle press still opens the row behind, as before', async () => {
+    suggestions = (q) => (q ? [history(1)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 1)
+    await press(option(rows(el)[0]), { button: 1 })
+    expect(submits().at(-1)).toMatchObject({ input: 'https://example.com/1', background: true })
+  })
+
+  it('a host without native menus (the tablet) is asked for nothing; its rows keep the X', async () => {
+    suggestions = (q) => (q ? [history(1)] : [])
+    const el = await render(desktop())
+    await typeAndList(el, 'pa', 1)
+    const ev = await rightClick(rows(el)[0])
+    expect(ev.defaultPrevented).toBe(false)
+    expect(menuAsks()).toEqual([])
+    expect(submits()).toEqual([])
+    expect(removeX(rows(el)[0])).not.toBeNull()
+  })
+
+  it('Remove takes the row through the core\u2019s removes; the highlight stays on its row, the field with it', async () => {
+    suggestions = (q) => (q ? [history(1), history(2), history(3)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 3)
+    await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('Page 1')
+    expect(input(el).value).toBe('example.com/1')
+    await rightClick(rows(el)[1])
+    await picked('history:Page 2', 'remove')
+    expect(callsTo('history.delete')).toEqual([{ url: 'https://example.com/2' }])
+    expect(titles(el)).toEqual(['Page 1', 'Page 3'])
+    expect(selectedRow(el)?.textContent).toContain('Page 1')
+    expect(input(el).value).toBe('example.com/1')
+    // A row above the highlighted one going, the highlight keeps its row too.
+    await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('Page 3')
+    await rightClick(rows(el)[0])
+    await picked('history:Page 1', 'remove')
+    expect(titles(el)).toEqual(['Page 3'])
+    expect(selectedRow(el)?.textContent).toContain('Page 3')
+    expect(input(el).value).toBe('example.com/3')
+    // The highlighted row itself going hands the highlight on, as Shift+Delete does; the last
+    // row's leaves the field with what was typed.
+    await rightClick(rows(el)[0])
+    await picked('history:Page 3', 'remove')
+    expect(rows(el)).toEqual([])
+    expect(selectedRow(el)).toBeNull()
+    expect(input(el).value).toBe('pa')
+    expect(callsTo('history.delete')).toHaveLength(3)
+  })
+
+  it('the highlighted row removed hands the highlight to the row that takes its place (Shift+Delete\u2019s rule)', async () => {
+    suggestions = (q) => (q ? [history(1), history(2), history(3)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 3)
+    await key(input(el), 'ArrowDown')
+    await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('Page 2')
+    await rightClick(rows(el)[1])
+    await picked('history:Page 2', 'remove')
+    expect(titles(el)).toEqual(['Page 1', 'Page 3'])
+    expect(selectedRow(el)?.textContent).toContain('Page 3')
+    expect(input(el).value).toBe('example.com/3')
+  })
+
+  it('a pick the list no longer has is nothing to act on', async () => {
+    suggestions = (q) => (q ? [history(1)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 1)
+    await picked('history:Page 9', 'remove')
+    expect(rows(el)).toHaveLength(1)
+    expect(commands()).not.toContain('history.delete')
+  })
+
+  it('Delete Search History, offered on a remembered search, forgets every remembered search and drops their rows; the engine\u2019s own suggestions and the pages stay', async () => {
+    suggestions = (q) =>
+      q ? [search(1), search(2), search(3, { deletable: undefined }), history(1)] : []
+    const el = await render(native())
+    await typeAndList(el, 'qu', 4)
+    for (let i = 0; i < 4; i += 1) await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('Page 1')
+    await rightClick(rows(el)[0])
+    expect(menuAsks().at(-1)).toMatchObject({ id: 'search:query 1', kind: 'search' })
+    await picked('search:query 1', 'delete-search-history')
+    expect(commands()).toContain('urlbar.clearSearchHistory')
+    expect(commands()).not.toContain('urlbar.forgetShortcut')
+    expect(titles(el)).toEqual(['query 3', 'Page 1'])
+    expect(selectedRow(el)?.textContent).toContain('Page 1')
+    expect(input(el).value).toBe('example.com/1')
+  })
+
+  it('Delete Search History with the highlight on a remembered search moves it to the row that takes the place', async () => {
+    suggestions = (q) => (q ? [history(1), search(1), search(2), history(2)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'qu', 4)
+    await key(input(el), 'ArrowDown')
+    await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('query 1')
+    await picked('search:query 1', 'delete-search-history')
+    expect(titles(el)).toEqual(['Page 1', 'Page 2'])
+    expect(selectedRow(el)?.textContent).toContain('Page 2')
+    expect(input(el).value).toBe('example.com/2')
   })
 })
 

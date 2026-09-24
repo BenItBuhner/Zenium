@@ -4302,6 +4302,18 @@ export interface Commands {
   'urlbar.cancel': { args: void; result: void }
   /** Delete on a row its owner marked `deletable` (`omnibox.onDeleteSuggestion`). */
   'urlbar.deleteSuggestion': { args: { input: string }; result: void }
+  /**
+   * A right-click on a removable row of the desktop popup (context-menus-115): the host's native
+   * menu – Remove, and on a remembered search Delete Search History – where the event says
+   * (`MenuAnchor`). A pick comes back to the bar as `urlbar.suggestionAction`, the list being
+   * the bar's to edit; the core knows the row by the id the bar drew it under.
+   */
+  'urlbar.suggestionContextMenu': {
+    args: { id: string; kind: SuggestionKind } & MenuAnchor
+    result: void
+  }
+  /** Delete Search History (the suggestion menu's second row): every remembered search goes. */
+  'urlbar.clearSearchHistory': { args: void; result: void }
 
   /**
    * A picture of the tab's page for the chrome to stand in for it under an overlay. Only a page
@@ -5446,6 +5458,12 @@ export interface Events {
   state: UIState
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
+  /**
+   * A pick in a suggestion row's native menu (`urlbar.suggestionContextMenu`): the bar removes
+   * the row through the core's removes as Shift+Delete does (`remove`), or has every remembered
+   * search forgotten and takes their rows out of its list (`delete-search-history`).
+   */
+  'urlbar.suggestionAction': { id: string; action: 'remove' | 'delete-search-history' }
   /**
    * A new tab page was opened (and activated) for the user: the chrome waits for the tab to
    * appear in its state, lets it paint, then opens the URL bar in new-tab mode over it.

@@ -38,6 +38,7 @@ import {
   type Settings,
   type Shortcut,
   type ShortcutAction,
+  type SuggestionKind,
   type SyncRemoteTab,
   type Tab
 } from '../shared/types'
@@ -1267,6 +1268,35 @@ export class Menus {
       checked: shown,
       click: () => this.browser.handleCommand(win, 'settings.update', patch)
     }
+  }
+
+  /**
+   * A removable suggestion row's menu (context-menus-115; Chrome's right-click on a row): Remove
+   * – the row's Shift+Delete, which the bar runs through the core's removes – and, on a
+   * remembered search, Delete Search History, which forgets every remembered search
+   * (`urlbar.clearSearchHistory`). The picks go back to the bar (`urlbar.suggestionAction`),
+   * whose list is the thing being edited: the core knows the row by its id alone, as the bar
+   * drew it. The desktop's; the phone's hold on a row asks with a sheet of its own.
+   */
+  showSuggestionContextMenu(
+    id: string,
+    kind: SuggestionKind,
+    win: ZenWindow,
+    anchor?: MenuAnchor
+  ): void {
+    const pick = (action: 'remove' | 'delete-search-history'): void =>
+      this.browser.emit('urlbar.suggestionAction', { id, action }, win)
+    this.popup(
+      [
+        { label: 'Remove', click: () => pick('remove') },
+        ...(kind === 'search'
+          ? [{ label: 'Delete Search History', click: () => pick('delete-search-history') }]
+          : [])
+      ],
+      win,
+      'urlbar',
+      anchor
+    )
   }
 
   /** Chrome's reload button menu (DevTools open): Normal Reload, Hard Reload, Empty Cache and Hard Reload. */
