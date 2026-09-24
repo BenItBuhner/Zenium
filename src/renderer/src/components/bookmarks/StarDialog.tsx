@@ -44,13 +44,15 @@ const NAME_ID = 'zen-bm-star-name'
 const FOLDER_ID = 'zen-bm-star-folder'
 
 /**
- * The bubble's first line for a bookmark a private tab made (bookmarks-43): a private window
- * files into the profile's store, as Chrome's Incognito does, and the bubble says so where
- * Chrome's says only "Bookmark added" – the bookmark is never a private window's secret.
+ * The bubble's first line for a bookmark a private tab made (bookmarks-43, §9.19): a private
+ * window files into the profile's store, as Chrome's Incognito does, and the bubble says so
+ * where Chrome's says only "Bookmark added" – the bookmark is never a private window's secret.
+ * The title keeps the bubble's own words ("Bookmark added") and adds the one fact the user must
+ * not miss; the line under it says the consequence – "your bookmarks", not the name of the
+ * folder standing in the menulist below.
  */
-export const PRIVATE_STAR_TITLE = 'Bookmark saved from a private window'
-export const PRIVATE_STAR_DESCRIPTION =
-  'It is kept with your other bookmarks and shows in every window.'
+export const PRIVATE_STAR_TITLE = 'Bookmark added from a private window'
+export const PRIVATE_STAR_DESCRIPTION = 'It is kept with your bookmarks and shows in every window.'
 /** How long a bubble waits for the node its event names before giving up on it. */
 const ARRIVAL_GRACE_MS = 2000
 
