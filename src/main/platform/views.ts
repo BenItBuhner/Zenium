@@ -144,20 +144,55 @@ const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta'
  */
 const INPUT_DIAG = Boolean(process.env.ZEN_INPUT_DIAG)
 let lastMoveDiagAt = 0
+/** Agent input dispatches under way (their moves are logged unthrottled while one is). */
+let sendInputInFlight = 0
 function inputDiag(message: string): void {
   if (INPUT_DIAG) console.log(`[signin-diag] t=${process.uptime().toFixed(3)} ${message}`)
 }
-/** One line per browser-side input event (mouse moves throttled to two a second). */
+/**
+ * One line per browser-side input event (mouse moves throttled to two a second, except while an
+ * agent input dispatch is under way – round 2 lost the dispatch's own move to the throttle).
+ */
 function inputDiagEvent(wcId: number, input: Electron.InputEvent): void {
   if (!INPUT_DIAG) return
   const now = Date.now()
-  if (input.type === 'mouseMove') {
+  if (input.type === 'mouseMove' && sendInputInFlight === 0) {
     if (now - lastMoveDiagAt < 500) return
     lastMoveDiagAt = now
   }
   const m = input as Electron.MouseInputEvent
   const at = typeof m.x === 'number' ? ` (${m.x},${m.y})` : ''
   inputDiag(`input-event wc=${wcId} ${input.type}${at}`)
+}
+/**
+ * DIAG: whether a renderer is producing frames – the time to its next animation frame (or
+ * `timeout`), its document's visibility and its paint-timing entries. A renderer that answers
+ * `timeout` has no BeginMainFrame coming, which is what keeps Chromium's first-paint input
+ * suppression (`WidgetInputHandlerManager`: non-move events dropped while commits are deferred)
+ * in place – the deferral's 500 ms timeout is only checked at a BeginMainFrame (cc `ProxyMain`).
+ */
+const FRAME_PROBE_SCRIPT = `(() => {
+  const t0 = performance.now()
+  return Promise.race([
+    new Promise((r) => requestAnimationFrame(() => r(Math.round(performance.now() - t0)))),
+    new Promise((r) => setTimeout(() => r('timeout'), 1500))
+  ]).then((raf) => ({
+    raf,
+    vis: document.visibilityState,
+    now: Math.round(performance.now()),
+    paint: performance.getEntriesByType('paint').map((e) => e.name + '@' + Math.round(e.startTime))
+  }))
+})()`
+async function frameProbe(wc: WebContents | null | undefined, isolated: boolean): Promise<string> {
+  if (!wc || wc.isDestroyed()) return 'gone'
+  const run = isolated
+    ? wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: FRAME_PROBE_SCRIPT }], true)
+    : wc.executeJavaScript(FRAME_PROBE_SCRIPT, true)
+  const result = await Promise.race([
+    run,
+    new Promise<string>((r) => setTimeout(() => r('no answer in 2500 ms'), 2500))
+  ]).catch((error) => `error ${(error as Error)?.message ?? error}`)
+  return typeof result === 'string' ? result : JSON.stringify(result)
 }
 
 /**
@@ -1250,7 +1285,21 @@ export class ElectronTabView implements TabView {
   async sendInput(event: AgentInputEvent): Promise<void> {
     const wc = this.wc
     if (wc.isDestroyed()) return
-    if (INPUT_DIAG) this.inputDiagDump(event)
+    if (INPUT_DIAG) {
+      this.inputDiagDump(event)
+      sendInputInFlight++
+      // Frames after the dispatch (not awaited: the dispatch's timing is the thing under test).
+      setTimeout(() => {
+        void Promise.all([frameProbe(this.win?.webContents, false), frameProbe(wc, true)]).then(
+          ([chrome, page]) => {
+            sendInputInFlight--
+            inputDiag(
+              `frames after ${event.type} wc=${this.webContentsId} chrome=${chrome} page=${page}`
+            )
+          }
+        )
+      }, 50)
+    }
     try {
       await this.withDebugger((dbg) => dispatchInputViaCdp(dbg, event))
       inputDiag(`path=cdp ${event.type} wc=${this.webContentsId}`)
@@ -1323,7 +1372,7 @@ export class ElectronTabView implements TabView {
       const cur = screen.getCursorScreenPoint()
       const xy = 'x' in event ? `(${event.x},${event.y})` : `[${event.type}]`
       inputDiag(
-        `sendInput ${event.type} ${xy} wc=${this.webContentsId} viewBounds=${JSON.stringify(this.view.getBounds())} visible=${this.view.getVisible()}/${this.visible} zoom=${wc.getZoomFactor()} url=${wc.getURL()} wcFocused=${wc.isFocused()} pid=${wc.mainFrame.processId} rid=${wc.mainFrame.routingId} frames=${wc.mainFrame.framesInSubtree.length} cursorScreen=(${cur.x},${cur.y})`
+        `sendInput ${event.type} ${xy} wc=${this.webContentsId} viewBounds=${JSON.stringify(this.view.getBounds())} visible=${this.view.getVisible()}/${this.visible} zoom=${wc.getZoomFactor()} url=${wc.getURL()} wcFocused=${wc.isFocused()} pid=${wc.mainFrame.processId} ospid=${wc.getOSProcessId()} rid=${wc.mainFrame.routingId} frames=${wc.mainFrame.framesInSubtree.length} cursorScreen=(${cur.x},${cur.y})`
       )
       if (win) {
         const children = win.contentView.children.map((child, index) => {

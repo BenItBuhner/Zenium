@@ -36,11 +36,12 @@
  * workflow's artifact). Exit code 0 when every check passes, 1 otherwise.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gzipSync } from 'node:zlib'
 import { removeTree } from './remove-tree.mjs'
 
 const argv = process.argv.slice(2)
@@ -97,6 +98,11 @@ const site = createServer((req, res) => {
     window.__lastMove = null;
     window.__events = [];
     window.__moveCount = 0;
+    // DIAG: whether this renderer gets animation frames at all (none: no BeginMainFrame, which
+    // keeps Chromium's first-paint input suppression up – non-move input dropped, moves kept).
+    window.__rafCount = 0;
+    window.__rafLast = null;
+    (function tick() { window.__rafCount++; window.__rafLast = Math.round(performance.now()); requestAnimationFrame(tick) })();
     addEventListener('message', (e) => { window.__popupMessage = e.data });
     addEventListener('mousemove', (e) => { window.__moveCount++; window.__lastMove = { screenX: e.screenX, screenY: e.screenY, clientX: e.clientX, clientY: e.clientY, trusted: e.isTrusted } }, true);
     // DIAG: a capture-phase trace of every discrete pointer/mouse event the renderer received,
@@ -158,7 +164,15 @@ writeFileSync(
     }
   })
 )
+/**
+ * DIAG: microseconds on CLOCK_MONOTONIC – the clock Chromium's trace timestamps (`ts`) are on,
+ * so the harness's moments (spawn, the click) can be placed on the browser's trace.
+ */
+const mono = () => Number(process.hrtime.bigint() / 1000n)
+const marks = []
+const mark = (what) => marks.push({ at: mono(), what })
 const startedAt = Date.now()
+const spawnMono = mono()
 const app = spawn(binary, ['--no-sandbox'], {
   env: { ...process.env, XDG_CONFIG_HOME: config, ZEN_INPUT_DIAG: '1' },
   stdio: ['ignore', 'pipe', 'pipe']
@@ -288,6 +302,7 @@ async function waitOnScreen() {
  * (for `clickThroughXdotool` to dismiss), or null when it names none.
  */
 async function clickThroughMcp() {
+  mark('browser_click')
   const out = await tool('browser_click', { target: 'text=open' })
   const [headline, ...rest] = out.split('\n')
   log(`browser_click: ${headline}`)
@@ -306,12 +321,15 @@ async function clickThroughMcp() {
       ow: outerWidth, oh: outerHeight, rect: { l: b.left, t: b.top, w: b.width, h: b.height },
       cx, cy, at: at ? at.tagName.toLowerCase() + (at.id ? '#' + at.id : '') : null,
       hasFocus: document.hasFocus(), vis: document.visibilityState,
-      moves: window.__moveCount, events: window.__events };
+      moves: window.__moveCount, events: window.__events, now: Math.round(performance.now()),
+      raf: { count: window.__rafCount, last: window.__rafLast },
+      paint: performance.getEntriesByType('paint').map((e) => e.name + '@' + Math.round(e.startTime)) };
   })()`).catch((e) => ({ diagError: String(e) }))
   log(`  DIAG mcp geometry+events: ${JSON.stringify(diag)}`)
   for (let r = 1; r <= 5; r++) {
     await sleep(1000)
     await evaluate('(window.__clickTrusted = null, true)').catch(() => null)
+    mark(`browser_click retry ${r}`)
     const retryOut = await tool('browser_click', { target: 'text=open' }).catch(
       (e) => `err ${e.message}`
     )
@@ -319,7 +337,7 @@ async function clickThroughMcp() {
     const synth = /input: synthetic/.test(String(retryOut))
     const rv = await evaluate('window.__clickTrusted').catch(() => 'evalErr')
     const rs = await evaluate(
-      `({ events: window.__events.length, moves: window.__moveCount, lastMove: window.__lastMove, active: navigator.userActivation.hasBeenActive })`
+      `({ events: window.__events.length, moves: window.__moveCount, lastMove: window.__lastMove, active: navigator.userActivation.hasBeenActive, now: Math.round(performance.now()), raf: { count: window.__rafCount, last: window.__rafLast }, paint: performance.getEntriesByType('paint').length })`
     ).catch(() => '?')
     log(
       `  DIAG mcp retry ${r}: __clickTrusted=${JSON.stringify(rv)} synthetic=${synth} headline=${JSON.stringify(rHead)} page=${JSON.stringify(rs)}`
@@ -434,6 +452,7 @@ async function clickThroughXdotool(cover) {
     }
     xdotool('mousemove', '--sync', String(x), String(y))
     await sleep(120)
+    mark(`xdotool click ${attempt}`)
     xdotool('click', '1')
     log(
       `xdotool: clicked at (${x}, ${y})${attempt === 2 ? ' – the retry, after a fresh mousemove' : ''}`
@@ -451,7 +470,7 @@ async function clickThroughXdotool(cover) {
     // DIAG: what the renderer saw of the X click (the capture-phase trace), the X windows on
     // the display (geometry, map state, stacking) and the X focus window.
     const trace = await evaluate(
-      `({ events: window.__events, moves: window.__moveCount, active: navigator.userActivation.hasBeenActive })`
+      `({ events: window.__events, moves: window.__moveCount, active: navigator.userActivation.hasBeenActive, now: Math.round(performance.now()), raf: { count: window.__rafCount, last: window.__rafLast }, paint: performance.getEntriesByType('paint').map((e) => e.name + '@' + Math.round(e.startTime)) })`
     ).catch((e) => String(e))
     log(`  DIAG page after X click: ${JSON.stringify(trace)}`)
     const x11 = (cmd, args) => {
@@ -507,6 +526,203 @@ function screenshot(path) {
     { stdio: 'ignore' }
   )
   return result.status === 0
+}
+
+// --- DIAG: the browser's Chromium trace (temporary, W5-H) ------------------------------------
+
+/**
+ * The trace events that tell one input event's story and the renderer's rendering state around
+ * it: the browser side's forward, the renderer compositor thread's "Input Suppressed" (with the
+ * reason bits: DeferMainFrameUpdates, DeferCommits, HasNotPainted), the main-thread queue's
+ * receipt (non-move events only), the acks; each renderer's deferral spans (`SetDeferCommits` –
+ * paint holding until first contentful paint, `SetDeferMainFrameUpdate`) and frame-sink life;
+ * the display compositor's visibility and skipped draws. Reading the spans: both are begin/end
+ * pairs on one track per ProxyMain, paired LIFO by the exporter – `BeginLifecycleUpdates`
+ * starts the commit deferral and ends the main-frame-update deferral within microseconds, so
+ * the `e` right after a `b SetDeferCommits` is the main-frame-update deferral's end, and the
+ * later `e SetDeferMainFrameUpdate` is the commit deferral's (first contentful paint, or the
+ * 500 ms timeout – which Chromium 152 checks only inside a BeginMainFrame).
+ */
+const TRACE_NAMES = new Set([
+  'Input Suppressed',
+  'RenderWidgetHostImpl::ForwardMouseEvent',
+  'MainThreadEventQueue::HandleEvent',
+  'WidgetInputHandlerManager::DidHandleInputEventSentToMain',
+  'WidgetInputHandlerManager::DidHandleInputEventSentToCompositor',
+  'ProxyMain::SetDeferMainFrameUpdate',
+  'ProxyMain::SetDeferCommits',
+  'ProxyMain::SetPauseRendering',
+  'ProxyMain::SetBeginFrameSourcePaused',
+  'ProxyMain::SetVisible',
+  'ProxyMain::DidInitializeLayerTreeFrameSink',
+  'ProxyMain::RequestNewLayerTreeFrameSink',
+  'ProxyMain::DidLoseLayerTreeFrameSink',
+  'Display::SetVisible',
+  'No output surface',
+  'No root surface.',
+  'Draw skipped.',
+  'Skip draw'
+])
+/** Per process, per second since spawn: BeginMainFrames (a renderer's frames) and display draws. */
+const TRACE_COUNTED = new Set([
+  'ProxyMain::BeginMainFrame',
+  'Display::DrawAndSwap',
+  'MainFrameAborted'
+])
+const TRACE_WAIT_MS = 40_000
+const TRACE_MAX_LINES = 600
+
+/** Iterates the objects of the trace file's `traceEvents` array without parsing the whole file. */
+function* traceObjects(buf) {
+  let i = buf.indexOf('"traceEvents"')
+  i = buf.indexOf('[', i === -1 ? 0 : i)
+  if (i === -1) return
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
+  for (i++; i < buf.length; i++) {
+    const c = buf[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === 0x5c) escaped = true
+      else if (c === 0x22) inString = false
+    } else if (c === 0x22) inString = true
+    else if (c === 0x7b) {
+      if (depth++ === 0) start = i
+    } else if (c === 0x7d) {
+      if (--depth === 0 && start !== -1) {
+        yield buf.toString('utf8', start, i + 1)
+        start = -1
+      }
+    } else if (c === 0x5d && depth === 0) return
+  }
+}
+
+/**
+ * Asks the browser (booted with `ZEN_INPUT_DIAG`) to stop the Chromium trace it has recorded
+ * since boot, keeps it gzipped in `outDir`, and logs a digest: the process names, then the
+ * events of `TRACE_NAMES` in time order (time since spawn; the harness's own moments – the
+ * clicks – interleaved), then per-second counts of frames and draws per process.
+ */
+async function collectInputTrace() {
+  if (!outDir || exited()) return
+  const zenDir = join(config, 'Zenium', 'zen')
+  const traceFile = join(zenDir, 'input-trace.json')
+  const doneFile = `${traceFile}.done`
+  const requestedAt = Date.now()
+  writeFileSync(join(zenDir, 'input-diag-stop'), '')
+  while (!existsSync(doneFile) && Date.now() - requestedAt < TRACE_WAIT_MS && !exited())
+    await sleep(200)
+  if (!existsSync(doneFile)) {
+    log(`DIAG trace: not written within ${TRACE_WAIT_MS} ms (browser exited: ${exited()})`)
+    return
+  }
+  const done = readFileSync(doneFile, 'utf8')
+  if (done.startsWith('error:')) {
+    log(`DIAG trace: ${done}`)
+    return
+  }
+  const raw = readFileSync(traceFile)
+  mkdirSync(outDir, { recursive: true })
+  writeFileSync(join(outDir, 'input-trace.json.gz'), gzipSync(raw, { level: 6 }))
+  log(
+    `DIAG trace: ${raw.length} bytes, stopped in ${Date.now() - requestedAt} ms → ${outDir}/input-trace.json.gz`
+  )
+
+  const names = new Map()
+  const pagePids = new Set([...appLog.matchAll(/ospid=(\d+)/g)].map((m) => Number(m[1])))
+  const events = []
+  const counts = new Map()
+  let minTs = Infinity
+  let total = 0
+  for (const text of traceObjects(raw)) {
+    total++
+    // The exporter writes keys sorted, so the event's own `"name"` is the last one in the text
+    // (`args` – which may carry a `name` of its own – comes first).
+    const nameAt = text.lastIndexOf('"name":"')
+    if (nameAt === -1) continue
+    const name = text.slice(nameAt + 8, text.indexOf('"', nameAt + 8))
+    if (name === 'process_name') {
+      const e = JSON.parse(text)
+      names.set(e.pid, e.args?.name ?? '?')
+      continue
+    }
+    const counted = TRACE_COUNTED.has(name)
+    if (!counted && !TRACE_NAMES.has(name)) continue
+    const e = JSON.parse(text)
+    if (typeof e.ts !== 'number') continue
+    if (e.ts < minTs) minTs = e.ts
+    if (counted) {
+      if (e.ph === 'E' || e.ph === 'e') continue
+      const key = `${name}|${e.pid}`
+      if (!counts.has(key)) counts.set(key, { name, pid: e.pid, seconds: [] })
+      counts.get(key).seconds.push(e.ts)
+      continue
+    }
+    // Moves (exported as the enum's name, `kMouseMove`; 2 as a number) are the noise here.
+    if (
+      name === 'MainThreadEventQueue::HandleEvent' &&
+      (e.args?.event_type === 2 || /Move/.test(String(e.args?.event_type)))
+    )
+      continue
+    events.push({ ts: e.ts, pid: e.pid, ph: e.ph, name, args: e.args })
+  }
+  // Time since spawn when the trace is on the harness's clock (CLOCK_MONOTONIC); else since the
+  // earliest event of interest.
+  const onOurClock = minTs > spawnMono - 2_000_000 && minTs < spawnMono + 120_000_000
+  const t0 = onOurClock ? spawnMono : minTs
+  const rel = (ts) => `+${((ts - t0) / 1e6).toFixed(3)}s`
+  const who = (pid) =>
+    `pid ${pid} ${names.get(pid) ?? '?'}${pagePids.has(pid) ? ' (page renderer)' : ''}`
+  log(
+    `DIAG trace: ${total} events; ${events.length} of interest; clock ${onOurClock ? 'shared with the harness (times since spawn)' : 'not the harness’s (times since the first event of interest)'}; processes ${JSON.stringify([...names].map(([pid, name]) => `${pid}:${name}`))}; page renderer pid(s) ${JSON.stringify([...pagePids])}`
+  )
+  const timeline = [
+    ...events.map((e) => ({
+      ts: e.ts,
+      text: `${rel(e.ts)} ${who(e.pid)} ${e.ph} ${e.name} ${e.args ? JSON.stringify(e.args) : ''}`
+    })),
+    ...(onOurClock
+      ? marks.map((m) => ({ ts: m.at, text: `${rel(m.at)} --- harness: ${m.what}` }))
+      : [])
+  ].sort((a, b) => a.ts - b.ts)
+  let printed = 0
+  let last = null
+  let repeats = 0
+  const flush = () => {
+    if (last && repeats > 0)
+      log(`  DIAG trace   … ×${repeats} more (same process, event and args within the second)`)
+    repeats = 0
+  }
+  for (const item of timeline) {
+    const sameAsLast =
+      last &&
+      item.text.slice(item.text.indexOf(' ')) === last.text.slice(last.text.indexOf(' ')) &&
+      item.ts - last.ts < 1_000_000
+    if (sameAsLast) {
+      repeats++
+      continue
+    }
+    flush()
+    last = item
+    if (printed++ < TRACE_MAX_LINES) log(`  DIAG trace ${item.text}`)
+  }
+  flush()
+  if (printed > TRACE_MAX_LINES)
+    log(`  DIAG trace: ${printed - TRACE_MAX_LINES} more lines not shown`)
+  for (const { name, pid, seconds } of [...counts.values()].sort((a, b) => a.pid - b.pid)) {
+    const perSecond = []
+    for (const ts of seconds) {
+      const s = Math.floor((ts - t0) / 1e6)
+      if (s >= 0 && s < 120) perSecond[s] = (perSecond[s] ?? 0) + 1
+    }
+    const span = Math.max(perSecond.length, 1)
+    const cells = Array.from({ length: span }, (_, s) => perSecond[s] ?? 0)
+    log(
+      `  DIAG trace ${name} per second, ${who(pid)}: ${cells.join(' ')} (total ${seconds.length})`
+    )
+  }
 }
 
 // --- the checks ------------------------------------------------------------------------------
@@ -649,6 +865,12 @@ try {
   // what a plain rmSync met on #392's run (ENOTEMPTY, every check passed): removeTree repeats
   // the pass until the tree is gone. A profile that stays after five seconds of that is logged
   // and left in the temp dir; the checks decide the exit code.
+  // DIAG (temporary): the browser's trace first, while it is still alive.
+  try {
+    await collectInputTrace()
+  } catch (error) {
+    log(`DIAG trace: failed: ${error?.stack ?? error}`)
+  }
   app.kill('SIGTERM')
   await waitForExit(5000)
   if (!exited()) {
