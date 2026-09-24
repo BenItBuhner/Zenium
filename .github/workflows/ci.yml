@@ -127,6 +127,21 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label clear-on-exit
           --out "$SMOKE_OUT" --scenarios clear-on-exit --extra-args="--no-sandbox --disable-gpu"
+      - name: Feature legs under Xvfb (omnibox rows, Settings row landings, Reader View, the bookmarks bar)
+        # The features scenario (parity row ci-04) on its own run of the harness: one launch of
+        # a profile past onboarding with search suggestions off (no engine is asked, nothing
+        # leaves the loopback fixture) and the bookmarks bar always on. A step per leg, so a red
+        # names the leg: omnibox-suggestions (a history row typed up, Enter navigates in place),
+        # settings-row-landing-look / -tabs / -resources (zenium://settings/<section>?row=<id>
+        # lands the row's group at the column's top), reader-toggle (zen://reader on the fixture's
+        # article, the chip's aria-pressed both ways), bookmarks-bar (Ctrl+D filed to the bar,
+        # the chip opened from another tab, deleted from its menu). Its own log, result.json and
+        # screenshots under smoke-out/features; runs after a red step above as well.
+        if: ${{ !cancelled() }}
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label features
+          --out "$SMOKE_OUT" --scenarios features --extra-args="--no-sandbox --disable-gpu"
       - name: Make the unpacked build's sandbox helper setuid root (for the sandboxed leg)
         # Electron evaluates service-worker preload scripts in sandboxed renderers only, and
         # Zenium's chrome.* layer for MV3 background workers (src/preload/extension.ts, registered
@@ -161,7 +176,7 @@ jobs:
         if: always()
         run: >
           node .github/smoke/verdict.mjs --out "$SMOKE_OUT"
-          --expect unpacked,clear-on-exit,mv3-worker-sandboxed,mv3-worker-no-sandbox
+          --expect unpacked,clear-on-exit,features,mv3-worker-sandboxed,mv3-worker-no-sandbox
           --title linux-x64
       - name: Sign-in fidelity smoke test
         # After the boot smoke and its verdict, so a failure here never hides the boot results.
