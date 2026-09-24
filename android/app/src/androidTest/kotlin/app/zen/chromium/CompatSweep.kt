@@ -82,6 +82,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val last: Set<String> = arguments.getString("last")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
         ?: setOf(UBO_MV2)
     private val skipInstall = arguments.getString("skipInstall") == "1"
+    /**
+     * The bare-window sample (`bareWindow=1`): each row's MV3 worker read three times on one
+     * boot – as installed, restarted unchanged (the control), and restarted with the identifier
+     * `window` hidden from its script by a driver-side rewrite of the unpacked file
+     * ([BareWindowBracket]) – with the probe, the uncaught count over thirty seconds and, for a
+     * row whose core rounds 9-14 could measure, the core check re-read under each. The popup and
+     * options stages are not run; the runtime is not changed. See [bareWindowSweep].
+     */
+    private val bareWindow = arguments.getString("bareWindow") == "1"
     /** Prompts no reachable button answered on screen, answered through the chrome's command instead. */
     private var promptsAnsweredByCommand = 0
     /** Why the last prompt went through the command (the button's measurements), for the row's evidence. */
@@ -168,6 +177,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         results.put("isolatedWorlds", worlds)
         results.put("webView", WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" } ?: JSONObject.NULL)
         results.put("only", only?.let { JSONArray(it.toList()) } ?: JSONObject.NULL)
+        results.put("bareWindow", bareWindow)
         results.put("startedAt", System.currentTimeMillis())
         // The core's toasts carry what an install refused to do (the store host toasts instead of rejecting).
         chromeJs("window.__toasts=[];window.zen.on('toast',function(p){window.__toasts.push(String(p&&p.message||p))});'ok'")
@@ -409,6 +419,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return
         }
         entry.put("version", ext.optString("version")).put("manifestVersion", manifest.optInt("manifest_version"))
+        if (bareWindow) {
+            bareWindowSweep(row, entry, slug, dir, manifest)
+            evidence(row, entry)
+            entry.put("heapEnabledKb", heapKb())
+            return
+        }
         background(row, entry, manifest)
         showTab(fixtureTab)
         popup(row, entry, manifest, slug)
@@ -608,6 +624,200 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 (if (errors.isNotEmpty()) "; console.error x${errors.size}: ${errors.first().take(160)}" else ""),
             detail
         )
+    }
+
+    // --- the bare-window sample -----------------------------------------------------------------
+
+    /**
+     * The three passes of the bare-window sample over one row's MV3 worker (see [bareWindow]):
+     * `off` (the worker as installed: the standard background read, thirty seconds of console,
+     * the realm's `typeof window`, the row's core check when it is one rounds 9-14 could
+     * measure), `offRestart` (the extension disabled and enabled again with nothing changed – the
+     * control that separates what a restart does from what the bracket does), and `on` (the
+     * worker's file and the files it reaches rewritten by [BareWindowBracket], the extension
+     * restarted, the same reads plus the bracket's own probe, the core check again). The files
+     * are restored from the driver's backup before the row's cleanup, whatever happened. The
+     * row's `background` and `core` stages carry the `off` pass (today's state); everything else
+     * is under `bareWindow` in the row.
+     */
+    private fun bareWindowSweep(row: Row, entry: JSONObject, slug: String, dir: File, manifest: JSONObject) {
+        val bg = manifest.optJSONObject("background")
+        val worker = bg?.optString("service_worker")?.takeIf { it.isNotEmpty() }
+        val module = bg?.optString("type") == "module"
+        val report = JSONObject().put("worker", worker ?: JSONObject.NULL).put("type", if (module) "module" else "classic")
+        entry.put("bareWindow", report)
+        if (worker == null) {
+            stage(entry, "background", "-", "no MV3 service worker in the manifest: the sample reads workers alone")
+            return
+        }
+        val measurable = row.id in BARE_WINDOW_CORE
+        report.put("coreMeasured", measurable)
+        val backup = File(out, "bare-window-backup/${row.id}")
+        backup.deleteRecursively()
+        try {
+            val off = workerRead(row, entry, slug, "off", measurable)
+            report.put("off", off)
+            stage(entry, "background", off.optString("verdict", "F"), "as installed: ${off.optString("note")}", off)
+            off.optJSONObject("core")?.let { stage(entry, "core", it.optString("verdict"), "as installed: ${it.optString("note")}", it) }
+            if (!chromeAnswers()) return
+            report.put("restart1", restartExtension(row))
+            val control = workerRead(row, entry, slug, "off-restart", core = false)
+            report.put("offRestart", control)
+            if (!chromeAnswers()) return
+            // The bracket: planned from the files as they are on disk, applied, the served text
+            // is what the next start loads.
+            val plan = BareWindowBracket.plan(dir, worker, module)
+            val applied = BareWindowBracket.apply(dir, plan, backup)
+            report.put(
+                "bracket",
+                JSONArray(applied.map { (p, outcome) ->
+                    JSONObject().put("file", p.file).put("mode", p.mode.name.lowercase()).put("main", p.main).put("exists", p.exists)
+                        .put("bytes", p.bytes).put("strict", p.strict).put("bareReads", p.bareReads).put("declaresWindow", p.declaresWindow)
+                        .put("lexicalAtLineStart", p.lexicalAtLineStart).put("dynamicImports", p.dynamicImports)
+                        .put("imports", JSONArray(p.imports)).put("applied", p.apply).put("outcome", outcome)
+                })
+            )
+            val rewritten = applied.count { it.second.startsWith("rewritten") }
+            report.put("filesRewritten", rewritten).put("filesPlanned", plan.size)
+            Log.i(TAG, "BARE ${row.name}: bracket ${if (module) "module" else "with"} over $rewritten of ${plan.size} file(s): ${applied.joinToString("; ") { "${it.first.file} ${it.second}" }.take(600)}")
+            report.put("restart2", restartExtension(row))
+            val on = workerRead(row, entry, slug, "on", measurable)
+            report.put("on", on)
+            if (row.id in BARE_WINDOW_STILLS) {
+                showTab(fixtureTab)
+                SystemClock.sleep(600)
+                snap("$slug-on")
+            }
+        } finally {
+            val (restored, failed) = BareWindowBracket.restore(dir, backup)
+            report.put("restored", JSONArray(restored)).put("restoreFailed", JSONArray(failed))
+            backup.deleteRecursively()
+            val off = report.optJSONObject("off")
+            val on = report.optJSONObject("on")
+            val control = report.optJSONObject("offRestart")
+            Log.i(
+                TAG,
+                "BARE ${row.name}: off ${bareLine(off)} | restart ${bareLine(control)} | on ${bareLine(on)}" +
+                    (if (failed.isNotEmpty()) "; RESTORE FAILED $failed" else "")
+            )
+        }
+    }
+
+    private fun bareLine(pass: JSONObject?): String {
+        if (pass == null) return "-"
+        val realm = pass.optJSONObject("realm")
+        val probe = pass.optJSONObject("probe")
+        return "up=${pass.optBoolean("up")} typeof=${probe?.optString("typeofWindow") ?: realm?.optString("typeofWindow") ?: "?"} " +
+            "uncaught=${pass.optInt("uncaught", -1)} core=${pass.optJSONObject("core")?.optString("verdict") ?: "-"}"
+    }
+
+    /**
+     * One read of the row's worker: the view within [BACKGROUND_TIMEOUT_MS] (woken once when it
+     * idled out before the read), `document.readyState` complete, the realm report (the page's
+     * `typeof window`, `typeof document`, the bracket's probe when the pass is `on`), the
+     * console after thirty seconds from the view's arrival (uncaught count, the first lines, the
+     * class-A signatures), then the core check when asked. `verdict` reads as the background
+     * stage's: `P` up without an uncaught exception, `PARTIAL` up and threw, `F` never up.
+     */
+    private fun workerRead(row: Row, entry: JSONObject, slug: String, pass: String, core: Boolean): JSONObject {
+        val r = JSONObject().put("pass", pass)
+        val started = SystemClock.uptimeMillis()
+        var view = poll(BACKGROUND_TIMEOUT_MS, 400) { backgroundView(row.id) }
+        var woken = false
+        if (view == null) {
+            woken = true
+            instrumentation.runOnMainSync { host.extensions.wakeBackground(row.id) }
+            view = poll(15_000, 400) { backgroundView(row.id) }
+        }
+        val viewMs = SystemClock.uptimeMillis() - started
+        r.put("up", view != null).put("viewMs", viewMs).put("woken", woken)
+        var configure: JSONObject? = null
+        instrumentation.runOnMainSync { configure = host.extensions.configureStats[row.id] }
+        r.put("configure", configure ?: JSONObject.NULL)
+        if (view == null) {
+            val ext = extensions().firstOrNull { it.getString("id") == row.id }
+            r.put("verdict", "F").put("uncaught", -1)
+                .put("note", "no worker view within ${(BACKGROUND_TIMEOUT_MS + 15_000) / 1000} s (record error: ${ext?.optString("error")?.ifEmpty { null } ?: "none"}; enabled: ${ext?.optBoolean("enabled")}; configured: ${configure != null})")
+            return r
+        }
+        val v = view
+        val complete = poll(20_000, 300) { if (runCatching { tabEval(v, "document.readyState", 5) }.getOrNull() == "complete") true else null }
+        r.put("complete", complete == true).put("completeMs", SystemClock.uptimeMillis() - started)
+        // The bracket's probe is the script's first statement; it is there as soon as the script ran.
+        if (pass == "on") {
+            poll(10_000, 300) { runCatching { tabEval(v, "JSON.stringify(self.__zenBareWindow||null)", 5) }.getOrNull()?.takeIf { it != "null" && it.startsWith("{") } }
+        }
+        val realm = json(runCatching { tabEval(v, BARE_WINDOW_REALM, 8) }.getOrDefault("{}"))
+        r.put("realm", realm)
+        realm.optJSONObject("probe")?.let { r.put("probe", it) }
+        realm.optJSONArray("files")?.let { r.put("probeFiles", it) }
+        // Thirty seconds of console from the view's arrival; the view may idle out meanwhile (its console outlives it).
+        val settle = 30_000 - (SystemClock.uptimeMillis() - started - viewMs)
+        if (settle > 0) SystemClock.sleep(settle)
+        val console = consoleOf(v)
+        val uncaught = console.filter(::isUncaught)
+        val errors = console.filter { it.startsWith("ERROR ") && !isUncaught(it) }
+        r.put("uncaught", uncaught.size)
+            .put("uncaughtFirst", JSONArray(uncaught.take(6).map { it.take(300) }))
+            .put("consoleErrors", errors.size)
+            .put("consoleLines", console.size)
+            .put("consoleFirst", JSONArray(console.take(10).map { it.take(300) }))
+        val signatures = JSONObject()
+        for ((name, re) in BARE_WINDOW_SIGNATURES) signatures.put(name, console.count { re.containsMatchIn(it) })
+        r.put("signatures", signatures)
+        r.put("aliveAfterSettle", backgroundView(row.id) != null)
+        val typeofWindow = r.optJSONObject("probe")?.optString("typeofWindow") ?: realm.optString("typeofWindow", "?")
+        r.put("verdict", if (uncaught.isEmpty()) "P" else "PARTIAL")
+        r.put(
+            "note",
+            "worker up after ${viewMs / 1000.0} s${if (woken) " (woken)" else ""}, readyState ${if (complete == true) "complete" else "not complete in 20 s"}, " +
+                "typeof window $typeofWindow, ${uncaught.size} uncaught in 30 s" +
+                (if (uncaught.isNotEmpty()) ": ${uncaught.first().take(200)}" else "") +
+                (if (errors.isNotEmpty()) "; console.error x${errors.size}: ${errors.first().take(160)}" else "")
+        )
+        if (core) {
+            showTab(fixtureTab)
+            val coreStarted = SystemClock.uptimeMillis()
+            val grade = try {
+                row.core(row, entry)
+            } catch (e: Throwable) {
+                Log.e(TAG, "${row.name}: core check threw ($pass)", e)
+                Grade("F", "core check threw: $e")
+            }
+            SystemClock.sleep(600)
+            snap("$slug-$pass-core")
+            r.put(
+                "core",
+                JSONObject().put("verdict", grade.verdict).put("note", grade.note).put("ms", SystemClock.uptimeMillis() - coreStarted).put("extra", grade.extra ?: JSONObject.NULL)
+            )
+            runCatching { closeExtraTabs() }
+            showTab(fixtureTab)
+            // The worker's console once more, after the core's traffic (a branch that shows only on use).
+            val after = consoleOf(v)
+            r.put("uncaughtAfterCore", after.count(::isUncaught)).put("consoleLinesAfterCore", after.size)
+        }
+        Log.i(TAG, "BARE ${row.name} $pass: ${r.optString("note")}")
+        return r
+    }
+
+    /** The extension disabled (its background view gone) and enabled again: a fresh worker page from the files as they are on disk now. */
+    private fun restartExtension(row: Row): JSONObject {
+        val r = JSONObject()
+        val started = SystemClock.uptimeMillis()
+        runCatching { coreCall("extension.closePopup", "null") }
+        runCatching { coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", false).toString()) }
+            .onFailure { r.put("disableError", it.toString()) }
+        val off = poll(20_000, 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { !it.getBoolean("enabled") } }
+        r.put("disabled", off != null)
+        val gone = poll(10_000, 300) { if (backgroundView(row.id) == null) true else null }
+        r.put("backgroundGone", gone == true)
+        SystemClock.sleep(1_000)
+        runCatching { coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString()) }
+            .onFailure { r.put("enableError", it.toString()) }
+        val on = poll(20_000, 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { it.getBoolean("enabled") } }
+        r.put("enabled", on != null).put("ms", SystemClock.uptimeMillis() - started)
+        runCatching { closeExtraTabs() }
+        return r
     }
 
     /**
@@ -7346,6 +7556,51 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val UBO_MV2 = "odfafepnkmbhccpbejgmiehpchacaeak"
         private const val BACKGROUND_TIMEOUT_MS = 40_000L
         private const val BACKGROUND_SETTLE_MS = 6_000L
+        /**
+         * The bare-window sample's rows whose core check rounds 9-14 could measure (a `P` or an
+         * `F`, not an account gate or a service the phone has no equivalent of): the check is
+         * re-read under each pass. The other rows of the sample read the worker alone.
+         */
+        private val BARE_WINDOW_CORE = setOf(
+            "bhmmomiinigofkjcapegjjndpbikblnp", // WOT (class A, core F)
+            "cbhilkcodigmigfbnphipnnmamjfkipp", // Calendly (class A, core F)
+            "egjidjbpglichdcondbcbdnbeeppgdph", // Trust Wallet (class A, core P)
+            "nkbihfbeogaeaoehlefnkodbefgpgknn", // MetaMask (wallet provider)
+            "epcnnfbjfcgphgdmggkamkmgojdagdnn", // uBlock (ad blocker)
+            "mcohilncbfahbmgdjkbpemcciiolgcge", // OKX Wallet
+            "hnfanknocfeofbddgcijnmhnfnkdnaad", // Coinbase Wallet
+            "kbfnbcaeplbcioakkpcpgfkobkghlhen", // Grammarly (editor attach)
+            "gekdekpbfehejjiecgonmgmepbdnaggp", // Total Adblock
+            "eenjdnjldapjajjofmldgmkjaienebbj", // Copyfish
+            "pfnededegaaopdmhkdmcofjmoldfiped", // ZeroOmega
+            "bhhhlbepdkbapadjdnnojkbgioiodbic", // Solflare
+            "oifijhaokejakekmnjmphonojcfkpbbh", // Open Multiple URLs
+            "kioaomfokioenhackhaijiebhhkkcojo", // Keep Awake
+            "ohlencieiipommannpdfcmfdpjjmeolj", // PrintFriendly
+            "epbobagokhieoonfplomdklollconnkl", // Scribbr
+            "mciiogijehkdemklbdcbfkefimifhecn" // Chrono Download Manager (core F by the page-visible headers)
+        )
+        /** The class-A rows: a still of the fixture after the `on` pass besides the core stills. */
+        private val BARE_WINDOW_STILLS = setOf("bhmmomiinigofkjcapegjjndpbikblnp", "cbhilkcodigmigfbnphipnnmamjfkipp", "egjidjbpglichdcondbcbdnbeeppgdph")
+        /** Console lines the sample counts by name: round 14 section 7.1's class-A mechanisms and the bracket's own error shapes. */
+        private val BARE_WINDOW_SIGNATURES = mapOf(
+            "isNotAFunction" to Regex("is not a function"),
+            "wotGrowthBook" to Regex("""Object\(\.\.\.\) is not a function"""),
+            "calendlyTokenHandler" to Regex("""chromeNetwork\.setTokenHandler is not a function"""),
+            "unsafeHeader" to Regex("Refused to set unsafe header"),
+            "windowNotDefined" to Regex("window is not defined"),
+            "documentNotDefined" to Regex("document is not defined"),
+            "readOfUndefined" to Regex("""Cannot read propert(?:y|ies) of undefined"""),
+            "alreadyDeclared" to Regex("has already been declared"),
+            "syntaxError" to Regex("SyntaxError"),
+            "referenceError" to Regex("ReferenceError")
+        )
+        /** The worker page's realm as `evaluateJavascript` sees it (outside the bracket's block), with the bracket's probe records when present. */
+        private const val BARE_WINDOW_REALM =
+            "JSON.stringify({typeofWindow:typeof window,typeofDocument:typeof document,inSelf:('window' in self),inGlobalThis:('window' in globalThis)," +
+                "selfWindow:typeof self.window,selfCtor:(function(){try{return self.constructor.name}catch(e){return String(e)}})()," +
+                "href:location.href,readyState:document.readyState,scripts:document.scripts.length,typeofImportScripts:typeof importScripts," +
+                "chrome:typeof chrome==='object'&&!!chrome.runtime,probe:self.__zenBareWindow||null,files:self.__zenBareWindowFiles||null})"
         private const val POPUP_TIMEOUT_MS = 30_000L
         /** After the action click opened a tab: how long a sheet gets to follow it before the tab is read as the click's whole answer. */
         private const val POPUP_AFTER_TAB_MS = 5_000L

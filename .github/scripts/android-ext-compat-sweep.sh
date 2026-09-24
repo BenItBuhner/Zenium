@@ -15,6 +15,10 @@
 #   SWEEP_LAST    – comma-separated extension ids to run after every other row (the driver's `last`;
 #                   uBlock Origin MV2 when unset)
 #   SWEEP_OUT     – artifact directory (default artifacts/android-ext-compat-sweep)
+#   SWEEP_BARE_WINDOW=1 – the bare-window sample (the driver's `bareWindow`): every row's MV3
+#                   worker read as installed, restarted unchanged, then restarted with the
+#                   identifier `window` hidden from its script by a rewrite of the unpacked file
+#                   (a driver-side experiment; the runtime is not changed)
 #
 # Handshake with the driver, through files in the app's private storage (via run-as):
 #   files/ext-compat-sweep/record     – written by the driver once its warm-up is done
@@ -284,6 +288,7 @@ dump_hang() {
 args=()
 if [ -n "${SWEEP_ONLY:-}" ]; then args+=(-e only "$SWEEP_ONLY"); fi
 if [ -n "${SWEEP_LAST:-}" ]; then args+=(-e last "$SWEEP_LAST"); fi
+if [ -n "${SWEEP_BARE_WINDOW:-}" ]; then args+=(-e bareWindow "$SWEEP_BARE_WINDOW"); fi
 start_driver() {
   adb shell am instrument -w -e class app.zen.chromium.CompatSweep "${args[@]}" "$runner" > "$out/instrument.txt" 2>&1 &
   driver_pid=$!
