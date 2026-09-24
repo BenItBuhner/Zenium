@@ -49,7 +49,7 @@ import kotlin.math.roundToInt
 /**
  * Both directions of sharing. Out: the core's `app.share` becomes the system share sheet with a
  * link preview (title and favicon), Zenium's own action row on Android 14 (Copy link, QR code,
- * Screenshot, Print), or an image handed over as a file; below Android 14 the browser's own
+ * Long screenshot, Print; [browserRow]), or an image handed over as a file; below Android 14 the browser's own
  * shares go to Zenium's share panel in the chrome instead (SH-03, [openPanel]). In: another
  * app's `ACTION_SEND` or `ACTION_WEB_SEARCH` is described to the core, which routes it to a tab,
  * a search with the user's engine, or an image page.
@@ -317,33 +317,24 @@ class Share(private val host: Host, private val io: Executor) {
 
 
     /**
-     * Android 14's row of the sharing app's own actions. Each is a `PendingIntent` back into
-     * `MainActivity` (single task, so it arrives as a new intent) naming the action and the link.
+     * Android 14's row of the sharing app's own actions ([browserRow]). Each is a `PendingIntent`
+     * back into `MainActivity` (single task, so it arrives as a new intent) naming the action and
+     * the link.
      */
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    private fun browserActions(url: String, tabId: String?): List<ChooserAction> {
-        fun action(kind: String, label: String, icon: Int): ChooserAction {
+    private fun browserActions(url: String, tabId: String?): List<ChooserAction> =
+        browserRow(withTab = tabId != null).map { row ->
             val intent = Intent(activity, MainActivity::class.java)
                 .setAction(ACTION_BROWSER_ACTION)
-                .putExtra(EXTRA_KIND, kind)
+                .putExtra(EXTRA_KIND, row.kind)
                 .putExtra(EXTRA_URL, url)
                 .putExtra(EXTRA_TAB_ID, tabId)
             // One request code per action keeps the four apart; the URL is updated in place.
             val pending = PendingIntent.getActivity(
-                activity, kind.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                activity, row.kind.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            return ChooserAction.Builder(Icon.createWithResource(activity, icon), label, pending).build()
+            ChooserAction.Builder(Icon.createWithResource(activity, row.icon), row.label, pending).build()
         }
-        val actions = mutableListOf(
-            action(KIND_COPY, "Copy link", R.drawable.ic_share_copy),
-            action(KIND_QR, "QR code", R.drawable.ic_share_qr)
-        )
-        if (tabId != null) {
-            actions += action(KIND_SCREENSHOT, "Screenshot", R.drawable.ic_share_screenshot)
-            actions += action(KIND_PRINT, "Print", R.drawable.ic_share_print)
-        }
-        return actions
-    }
 
     /** One of the action row's buttons was tapped (the sheet has closed and Zenium is back). */
     fun onBrowserAction(intent: Intent) {
@@ -355,8 +346,9 @@ class Share(private val host: Host, private val io: Executor) {
             return
         }
         val event = json("kind" to kind, "url" to url, "tabId" to tabId)
-        // A screenshot wants the page back on screen first: the sheet is still on its way out.
-        if (kind == KIND_SCREENSHOT) main.postDelayed({ host.chrome.hostEvent("share.action", event) }, SCREENSHOT_DELAY_MS)
+        // The long screenshot stitches the page out of the window, so it wants the page back on
+        // screen first: the sheet is still on its way out.
+        if (kind == KIND_LONG_SCREENSHOT) main.postDelayed({ host.chrome.hostEvent("share.action", event) }, SCREENSHOT_DELAY_MS)
         else host.chrome.hostEvent("share.action", event)
     }
 
@@ -732,8 +724,34 @@ class Share(private val host: Host, private val io: Executor) {
         const val EXTRA_TAB_ID = "tabId"
         const val KIND_COPY = "copy"
         const val KIND_QR = "qr"
-        const val KIND_SCREENSHOT = "screenshot"
+        /**
+         * The row's Long screenshot: the chrome's editor over the page (SH-08), the one the share
+         * panel's chip opens below 14 – the word the chrome's platform routes to it
+         * (`src/android/platform.ts`, `share.action`), not the core's viewport shot.
+         */
+        const val KIND_LONG_SCREENSHOT = "longScreenshot"
         const val KIND_PRINT = "print"
+
+        /** One of the row's actions: the kind the tap's intent names, the button's label and glyph. */
+        data class RowAction(val kind: String, val label: String, val icon: Int)
+
+        /**
+         * Zenium's row in Android 14's share sheet (SH-02), in the design's order – Copy link, QR
+         * code, Long screenshot, Print – the same words in the same order as the share panel's
+         * chips below 14 (§9.38: one order for one object on both paths). Long screenshot and
+         * Print work on the sharing tab, so a share without one (a bare link's) goes without them.
+         */
+        fun browserRow(withTab: Boolean): List<RowAction> {
+            val row = mutableListOf(
+                RowAction(KIND_COPY, "Copy link", R.drawable.ic_share_copy),
+                RowAction(KIND_QR, "QR code", R.drawable.ic_share_qr)
+            )
+            if (withTab) {
+                row += RowAction(KIND_LONG_SCREENSHOT, "Long screenshot", R.drawable.ic_share_long_screenshot)
+                row += RowAction(KIND_PRINT, "Print", R.drawable.ic_share_print)
+            }
+            return row
+        }
 
         /** The chooser's report of a chosen target comes back under this action ([Outcome]). */
         const val ACTION_CHOSEN = "app.zen.chromium.SHARE_CHOSEN"
@@ -767,6 +785,7 @@ class Share(private val host: Host, private val io: Executor) {
         /** Chrome's `PACKAGE_BLOCK_LIST` (crbug.com/40838852): the CTS shims declare a share target that opens nothing. */
         val PANEL_BLOCKED_PACKAGES = setOf("com.android.cts.ctsshim", "com.android.cts.priv.ctsshim")
 
+        /** The sheet's way out before the row's Long screenshot is relayed: its stitch copies the page off the screen. */
         private const val SCREENSHOT_DELAY_MS = 450L
         private const val FETCH_TIMEOUT_MS = 10_000
 
