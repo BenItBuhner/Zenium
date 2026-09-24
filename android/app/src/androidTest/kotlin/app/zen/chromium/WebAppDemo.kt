@@ -27,8 +27,11 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.math.abs
 
 /**
@@ -53,7 +56,11 @@ import kotlin.math.abs
  * X and the page's origin (frames measured), the X walking the history back to the last in-scope
  * page (frames measured); the overflow (Share, Copy Link, Reload, Open in Zenium) with Copy Link
  * under a finger and Open in Zenium handing the live page to the browser window; the shortcut's
- * intent launched again through `am start -W` (the launch's frames and its `TotalTime`); then the
+ * intent launched again (the launch's frames) – first shown refused to the shell's own `am start`
+ * ([WebAppLauncherActivity] is not exported: the system starts a pinned shortcut as its
+ * publisher, another uid cannot open the window with a record of its choosing, Chrome's
+ * `SecureWebAppLauncher` pose), then started as root (`su 0 am start -W`, with its `TotalTime`;
+ * the recipe's userdebug image has `su`) or, without `su`, from the app's own uid; then the
  * `minimal-ui` fixture (no toolbar strip on a phone – Chrome's `WebappDisplayModeTest`, an open
  * question for the design lead) and the `fullscreen` fixture (both bars hidden), each launched
  * with the intent PWA-02's install would write for it.
@@ -320,21 +327,28 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         beat()
     }
 
-    // --- 8. the launch, again, through am start -------------------------------------------------
+    // --- 8. the launch, again, from the shortcut's intent ---------------------------------------
 
     private fun launchAgain() {
-        finding("\n8. The shortcut's intent through am start -W (the launch's frames)")
+        finding("\n8. The shortcut's intent launched again (the launch's frames)")
         val intent = shortcutIntent ?: Shortcuts.launchIntent(app, APP_URL, SKETCH)
-        var started = ""
-        var webApp: WebAppActivity? = null
+        // The shell's own am start first: refused, since the launcher activity is not exported
+        // (uid 2000 is neither the app nor the system starting a pinned shortcut as its publisher).
+        val asShell = shellCommandWithin(amStartCommand(intent), 8_000) ?: ""
+        val slippedIn = awaitWebApp(2_500)
+        check(
+            "the shell's am start does not reach WebAppLauncherActivity: not exported (Chrome's SecureWebAppLauncher pose)${if (slippedIn == null) "" else " – a window came up"}",
+            slippedIn == null && !asShell.contains("Status:")
+        )
+        if (slippedIn != null) finishWebApps()
+        var launch: Launch? = null
         measureFrames("webapp-launch", JankBudget.Kind.OPEN) {
-            started = amStart(intent)
-            webApp = awaitWebApp(15_000)
-            webApp?.let { waitForPage(it, "/app/") }
+            launch = launch(intent, "/app/")
             SystemClock.sleep(1_500)
         }
-        finding("am start -W: ${started.lines().filter { it.contains("Time") || it.contains("LaunchState") || it.contains("Status") }.joinToString(" | ")}")
-        val opened = webApp ?: return fail("no WebAppActivity came up on am start (${started.trim()})")
+        val started = launch ?: return fail("no launch")
+        finding("launched ${started.route}${if (started.timing.isEmpty()) "" else "; am start -W: ${started.timing}"}")
+        val opened = started.webApp ?: return fail("no WebAppActivity came up from the shortcut's intent")
         shot("frames-launch-$THEME")
         beat()
         describeWindow(opened, "standalone (relaunched)", THEME_COLOR, expectToolbar = false, expectBarsHidden = false, expectMode = "standalone")
@@ -348,14 +362,13 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
     private fun minimalUi() {
         finding("\n9. minimal-ui: no strip on a phone (Chrome's pose; the design lead's question)")
         val intent = Shortcuts.launchIntent(app, MINI_URL, MINI)
-        var webApp: WebAppActivity? = null
+        var launch: Launch? = null
         measureFrames("webapp-launch-minimal-ui", JankBudget.Kind.OPEN) {
-            amStart(intent)
-            webApp = awaitWebApp(15_000)
-            webApp?.let { waitForPage(it, "/mini/") }
+            launch = launch(intent, "/mini/")
             SystemClock.sleep(1_500)
         }
-        val opened = webApp ?: return fail("no WebAppActivity came up for the minimal-ui fixture")
+        finding("launched ${launch?.route}${launch?.timing?.takeIf { it.isNotEmpty() }?.let { "; am start -W: $it" } ?: ""}")
+        val opened = launch?.webApp ?: return fail("no WebAppActivity came up for the minimal-ui fixture")
         SystemClock.sleep(1_000)
         shot("design-minimal-ui-$THEME")
         beat()
@@ -366,14 +379,13 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
     private fun fullscreen() {
         finding("\n10. fullscreen: both bars hidden (immersive)")
         val intent = Shortcuts.launchIntent(app, FULL_URL, FULL)
-        var webApp: WebAppActivity? = null
+        var launch: Launch? = null
         measureFrames("webapp-launch-fullscreen", JankBudget.Kind.OPEN) {
-            amStart(intent)
-            webApp = awaitWebApp(15_000)
-            webApp?.let { waitForPage(it, "/full/") }
+            launch = launch(intent, "/full/")
             SystemClock.sleep(1_500)
         }
-        val opened = webApp ?: return fail("no WebAppActivity came up for the fullscreen fixture")
+        finding("launched ${launch?.route}${launch?.timing?.takeIf { it.isNotEmpty() }?.let { "; am start -W: $it" } ?: ""}")
+        val opened = launch?.webApp ?: return fail("no WebAppActivity came up for the fullscreen fixture")
         SystemClock.sleep(1_500)
         shot("design-fullscreen-$THEME")
         beat()
@@ -439,13 +451,64 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
 
     // --- launching -----------------------------------------------------------------------------------
 
+    /** How a window was opened: the [route] taken, `am start -W`'s timing lines when it was that. */
+    private class Launch(val webApp: WebAppActivity?, val route: String, val timing: String)
+
     /**
-     * `am start -W` of `intent` through the shell, the way a launcher's start reaches the app
-     * (the shortcut's own component, action, data, flags and extras rendered as the command's
-     * words; the extras are URLs, single words and ints, which need no quoting). The command's
-     * output, with its `TotalTime`.
+     * Opens the window `intent` names, the intent being a shortcut's (or the one the install
+     * would write). [WebAppLauncherActivity] is not exported, so the shell's own `am start`
+     * cannot reach it (see [launchAgain]); the launch goes as root – `su 0 am start -W`, which
+     * the recipe's userdebug image allows the shell and which yields the launch's `TotalTime` –
+     * or, on an image without `su`, from the app's own uid with the same intent
+     * (`Context.startActivity`, what the system does on the publisher's behalf for a tile).
+     * Then the page at [path] is awaited.
      */
-    private fun amStart(intent: Intent): String {
+    private fun launch(intent: Intent, path: String): Launch {
+        var webApp: WebAppActivity? = null
+        var route = ""
+        var timing = ""
+        val asRoot = shellCommandWithin("su 0 ${amStartCommand(intent)}", 12_000)
+        Log.i(tag, "su 0 am start -> ${asRoot?.trim()}")
+        val rootAnswered = asRoot != null && asRoot.contains("Status:")
+        webApp = awaitWebApp(if (rootAnswered) 15_000 else 1_500)
+        if (webApp != null) {
+            route = "as root: su 0 am start -W"
+            timing = (asRoot ?: "").lines().filter { it.contains("Time") || it.contains("LaunchState") || it.contains("Status") }.joinToString(" | ")
+        } else {
+            app.startActivity(Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            webApp = awaitWebApp(15_000)
+            route = "from the app's own uid: Context.startActivity with the shortcut's intent (no su on this image)"
+        }
+        webApp?.let { waitForPage(it, path) }
+        return Launch(webApp, route, timing)
+    }
+
+    /**
+     * A shell command with its output, or null when it has not returned within [timeoutMs]
+     * (`am start -W` waits for the window; a `su` that is not there answers at once on stderr,
+     * which the shell's pipe does not carry).
+     */
+    private fun shellCommandWithin(command: String, timeoutMs: Long): String? {
+        val pool = Executors.newSingleThreadExecutor()
+        return try {
+            pool.submit(Callable { shellCommand(command) }).get(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            Log.w(tag, "shell command did not return within $timeoutMs ms: $command")
+            null
+        } catch (e: Exception) {
+            Log.w(tag, "shell command failed: $command", e)
+            null
+        } finally {
+            pool.shutdown()
+        }
+    }
+
+    /**
+     * `am start -W` of `intent` as the command's words, the way a launcher's start reaches the
+     * app (the shortcut's own component, action, data, flags and extras; the extras are URLs,
+     * single words and ints, which need no quoting).
+     */
+    private fun amStartCommand(intent: Intent): String {
         val words = ArrayList<String>()
         words += "am start -W"
         intent.action?.let { words += "-a $it" }
@@ -464,11 +527,7 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
                 }
             }
         }
-        val command = words.joinToString(" ")
-        Log.i(tag, command)
-        val output = shellCommand(command)
-        Log.i(tag, output.trim())
-        return output
+        return words.joinToString(" ").also { Log.i(tag, it) }
     }
 
     private fun finishWebApps() {
