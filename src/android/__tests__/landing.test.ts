@@ -11,6 +11,7 @@ import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '@core/
 import type { ZenWindow } from '@core/window'
 import { rootBackAction } from '@renderer/lib/back'
 import { browserStore } from '@renderer/lib/browserStore'
+import { uiStore } from '@renderer/lib/ui'
 import {
   LANDING_STATES,
   landFromIntent,
@@ -122,7 +123,8 @@ function recorder(): { over: LandingSurfaces; calls: Array<[keyof LandingSurface
     over: {
       omnibox: (tabId) => calls.push(['omnibox', tabId]),
       voice: (tabId) => calls.push(['voice', tabId]),
-      scan: (tabId) => calls.push(['scan', tabId])
+      scan: (tabId) => calls.push(['scan', tabId]),
+      unavailable: (message) => calls.push(['unavailable', message])
     }
   }
 }
@@ -136,6 +138,7 @@ const activeTabId = (browser: Browser, win: ZenWindow): string | null | undefine
 
 afterEach(() => {
   browserStore.set({ state: null })
+  uiStore.set({ toasts: [] })
   vi.restoreAllMocks()
 })
 
@@ -216,14 +219,33 @@ describe('landing from a widget or a shortcut', () => {
     expect(calls).toEqual([])
   })
 
-  it('private on a WebView without profiles: nothing opens and the toast says why', () => {
+  it("private on a WebView without profiles: nothing opens and the chrome itself says why – as the chrome is ready, not through the window's toast event, which no one hears inside the boot's run", () => {
     const { browser, win, page } = running({ privateTabs: false })
+    const { over, calls } = recorder()
     const toast = vi.spyOn(browser, 'toast')
+    browserStore.set({ state: null })
 
-    expect(landFromIntent('private', browser, win, recorder().over, now)).toBeNull()
-
+    // Cold: the boot's run, the chrome not yet holding the state – the word waits for it.
+    expect(landFromIntent('private', browser, win, over)).toBeNull()
     expect(activeTabId(browser, win)).toBe(page.id)
-    expect(toast).toHaveBeenCalledWith(PRIVATE_TABS_UNAVAILABLE, 'error', win)
+    expect(calls).toEqual([])
+    browserStore.set({ state: browser.state.snapshot(win) })
+    expect(calls).toEqual([['unavailable', PRIVATE_TABS_UNAVAILABLE]])
+
+    // Warm: the chrome holds the state, so the word is said in the intent's own turn.
+    expect(landFromIntent('private', browser, win, over)).toBeNull()
+    expect(calls).toEqual([
+      ['unavailable', PRIVATE_TABS_UNAVAILABLE],
+      ['unavailable', PRIVATE_TABS_UNAVAILABLE]
+    ])
+    expect(toast).not.toHaveBeenCalled()
+    expect(activeTabId(browser, win)).toBe(page.id)
+
+    // The default surface is the chrome's own toast store, an error toast reading the word.
+    expect(landFromIntent('private', browser, win)).toBeNull()
+    expect(
+      uiStore.get().toasts.filter((t) => t.message === PRIVATE_TABS_UNAVAILABLE)
+    ).toMatchObject([{ kind: 'error' }])
   })
 
   it("the widget's tab is one the launcher sent: back at its root returns to the launcher and closes it (#117)", () => {

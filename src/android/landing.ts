@@ -4,9 +4,9 @@ import type { Browser } from '@core/browser'
 import type { ZenWindow } from '@core/window'
 import { browserStore } from '@renderer/lib/browserStore'
 import { startQrScan } from '@renderer/lib/qrScan'
-import { openNewTabPageUrlbar } from '@renderer/lib/ui'
+import { openNewTabPageUrlbar, pushToast } from '@renderer/lib/ui'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
-import { openShortcutPrivateTab } from './privateShortcut'
+import { openShortcutPrivateTab, PRIVATE_TABS_UNAVAILABLE } from './privateShortcut'
 
 /**
  * The states the search widget and the launcher's shortcuts ask the app to open in (WID-07). The
@@ -33,6 +33,8 @@ export interface LandingSurfaces {
   voice(tabId: string): void
   /** The QR scan sheet over the tab. */
   scan(tabId: string): void
+  /** The word for a landing the core declines (the private tab on a WebView without profiles). */
+  unavailable(message: string): void
 }
 
 const surfaces: LandingSurfaces = {
@@ -40,7 +42,11 @@ const surfaces: LandingSurfaces = {
   // bound to the tab, attached to the bar, so what is typed navigates this tab.
   omnibox: (tabId) => openNewTabPageUrlbar(tabId, undefined, true),
   voice: (tabId) => void startVoiceSearch({ tabId }),
-  scan: (tabId) => void startQrScan({ tabId })
+  scan: (tabId) => void startQrScan({ tabId }),
+  // The chrome's own toast store, where the window's `toast` event ends (`useMainEvents`) – but
+  // said here directly, so a word given inside the boot's run is in the first frame: the event
+  // has no subscriber until after the first render and is not replayed to a late one.
+  unavailable: (message) => void pushToast(message, 'error')
 }
 
 /**
@@ -81,7 +87,10 @@ function whenChromeHasState(fn: () => void): void {
  * tab is one the launcher sent, and Chrome's search widget behaves the same.
  *
  * Returns the tab it opened (null: an unknown word, or the private tab declined by a WebView
- * without profiles, which `openShortcutPrivateTab` has already explained in a toast).
+ * without profiles – the shortcut's word for that, `PRIVATE_TABS_UNAVAILABLE`, is said through
+ * the chrome's own surface as the chrome is ready, the way the other surfaces go up: the
+ * shortcut's `browser.toast` is the window's `toast` event, and inside the boot's run that event
+ * has no subscriber yet, so a cold private landing on such a WebView used to land in silence).
  */
 export function landFromIntent(
   word: string,
@@ -95,7 +104,11 @@ export function landFromIntent(
     console.warn(`[zen] landing: not a state: ${JSON.stringify(word)}`)
     return null
   }
-  if (state === 'private') return openShortcutPrivateTab(browser, win)
+  if (state === 'private') {
+    if (browser.state.capabilities.privateTabs) return openShortcutPrivateTab(browser, win)
+    ready(() => over.unavailable(PRIVATE_TABS_UNAVAILABLE))
+    return null
+  }
   const tab = browser.tabs.createTab({ url: BLANK_URL, active: true, fromIntent: true }, win)
   const surface = surfaceOf(state)
   if (surface) ready(() => over[surface](tab.id))
