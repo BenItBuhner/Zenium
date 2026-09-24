@@ -703,7 +703,9 @@ describe('PermissionService: private windows leave no trace', () => {
   const STICK = { deviceId: 'g3', name: 'Stick' }
   const IN_PRIVATE = { privateContainerId: 'private' }
   /** The store's debounced write lands, if one was scheduled. */
-  const settle = (): Promise<void> => vi.advanceTimersByTimeAsync(1_000)
+  const settle = async (): Promise<void> => {
+    await vi.advanceTimersByTimeAsync(1_000)
+  }
 
   afterEach(() => {
     vi.useRealTimers()
