@@ -12,9 +12,11 @@ import {
   ANNOUNCE_CLEAR_MS,
   ANNOUNCE_REPEAT_MS,
   announce,
+  announcementVoice,
   announcerStore,
   downloadAnnouncement,
   findAnnouncement,
+  loadCompleteAnnouncement,
   muteAnnouncements,
   resetAnnouncer,
   startAnnouncer,
@@ -185,6 +187,117 @@ describe('announcement text', () => {
   })
 })
 
+describe('the phone’s voice (A11Y-02)', () => {
+  it('is the phone’s alone: the tablet’s strip and the desktop read as the desktop', () => {
+    expect(announcementVoice('phone')).toBe('phone')
+    expect(announcementVoice('tablet')).toBe('desktop')
+    expect(announcementVoice('desktop')).toBe('desktop')
+  })
+
+  it('names the front tab first, then its place, as the overview’s cards read (Chrome’s grid switcher)', () => {
+    const s = state({})
+    expect(tabSwitchAnnouncement(s, 'e', 'phone')).toBe('Mail, tab 1 of 6')
+    expect(tabSwitchAnnouncement(s, 'a', 'phone')).toBe('Example Domain, tab 4 of 6')
+    expect(tabSwitchAnnouncement(s, 'b', 'phone')).toBe('https://b.example/path, tab 5 of 6')
+    expect(tabSwitchAnnouncement(s, 'c', 'phone')).toBe('My notes, tab 6 of 6')
+    const popup = state({ tabs: { x: tab('x', { title: 'Popup' }) } })
+    expect(tabSwitchAnnouncement(popup, 'x', 'phone')).toBe('Popup, tab')
+    expect(tabSwitchAnnouncement(popup, 'nope', 'phone')).toBeNull()
+    // The desktop's words are untouched.
+    expect(tabSwitchAnnouncement(s, 'a')).toBe('Tab 4 of 6, Example Domain')
+  })
+
+  it('says the front tab’s load finishing by its title, once, as `loading` goes off – not as it starts, not on a progress tick, not for a tab behind', () => {
+    const loading = state({
+      active: 'a',
+      tabs: { ...state({}).tabs, a: tab('a', { title: 'Example Domain', loading: true }) }
+    })
+    const loaded = state({
+      active: 'a',
+      tabs: { ...state({}).tabs, a: tab('a', { title: 'Example Domain', loading: false }) }
+    })
+    expect(loadCompleteAnnouncement(loading, loaded)).toBe('Example Domain loaded')
+    expect(loadCompleteAnnouncement(loaded, loading)).toBeNull()
+    expect(loadCompleteAnnouncement(loading, loading)).toBeNull()
+    expect(loadCompleteAnnouncement(loaded, loaded)).toBeNull()
+    // A tab behind finishing is not the front tab's news.
+    const behindLoading = state({
+      active: 'a',
+      tabs: { ...state({}).tabs, c: tab('c', { title: 'Third', loading: true }) }
+    })
+    const behindLoaded = state({
+      active: 'a',
+      tabs: { ...state({}).tabs, c: tab('c', { title: 'Third', loading: false }) }
+    })
+    expect(loadCompleteAnnouncement(behindLoading, behindLoaded)).toBeNull()
+    // A page still without a title reads by its address; a user's title wins.
+    const untitledLoading = state({
+      active: 'b',
+      tabs: {
+        ...state({}).tabs,
+        b: tab('b', { title: '', url: 'https://b.example/path', loading: true })
+      }
+    })
+    const untitledLoaded = state({
+      active: 'b',
+      tabs: {
+        ...state({}).tabs,
+        b: tab('b', { title: '', url: 'https://b.example/path', loading: false })
+      }
+    })
+    expect(loadCompleteAnnouncement(untitledLoading, untitledLoaded)).toBe(
+      'https://b.example/path loaded'
+    )
+  })
+
+  it('reads a switch as the switch alone – a tab that arrives loading or loaded says nothing of its load – and a load finishing on the tab in front; the desktop’s voice hears no load', () => {
+    const before = state({
+      active: 'a',
+      tabs: {
+        ...state({}).tabs,
+        c: tab('c', { title: 'Third', customTitle: 'My notes', loading: true })
+      }
+    })
+    const switched = state({
+      active: 'c',
+      tabs: {
+        ...state({}).tabs,
+        c: tab('c', { title: 'Third', customTitle: 'My notes', loading: false })
+      }
+    })
+    expect(stateAnnouncements(before, switched, 'phone')).toEqual(['My notes, tab 6 of 6'])
+    const loaded = state({
+      active: 'a',
+      tabs: {
+        ...state({}).tabs,
+        c: tab('c', { title: 'Third', customTitle: 'My notes', loading: false })
+      }
+    })
+    const frontLoading = state({
+      active: 'a',
+      tabs: { ...state({}).tabs, a: tab('a', { title: 'Example Domain', loading: true }) }
+    })
+    const frontLoaded = state({
+      active: 'a',
+      tabs: { ...state({}).tabs, a: tab('a', { title: 'Example Domain', loading: false }) }
+    })
+    expect(stateAnnouncements(before, loaded, 'phone')).toEqual([])
+    expect(stateAnnouncements(frontLoading, frontLoaded, 'phone')).toEqual([
+      'Example Domain loaded'
+    ])
+    expect(stateAnnouncements(frontLoading, frontLoaded)).toEqual([])
+    expect(stateAnnouncements(frontLoading, frontLoaded, 'desktop')).toEqual([])
+    // A background window's snapshot says nothing in either voice.
+    expect(
+      stateAnnouncements(
+        frontLoading,
+        { ...frontLoaded, window: { focused: false } } as UIState,
+        'phone'
+      )
+    ).toEqual([])
+  })
+})
+
 describe('the status region', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -232,5 +345,29 @@ describe('the status region', () => {
     stop()
     browserStore.set({ state: state({ active: 'a' }) })
     expect(announcerStore.get().seq).toBe(1)
+  })
+
+  it('speaks in the voice it is given per change: the phone’s words for a switch, and the load finishing on the tab in front', () => {
+    let voice: 'desktop' | 'phone' = 'phone'
+    const loading = state({
+      active: 'b',
+      tabs: { ...state({}).tabs, b: tab('b', { title: 'Second', loading: true }) }
+    })
+    browserStore.set({ state: state({ active: 'a' }) })
+    const stop = startAnnouncer(() => voice)
+    browserStore.set({ state: loading })
+    expect(announcerStore.get().text).toBe('Second, tab 5 of 6')
+    browserStore.set({
+      state: state({
+        active: 'b',
+        tabs: { ...state({}).tabs, b: tab('b', { title: 'Second', loading: false }) }
+      })
+    })
+    expect(announcerStore.get()).toEqual({ text: 'Second loaded', seq: 2 })
+    // The layout moved (the phone docked): the desktop's words from the next change on.
+    voice = 'desktop'
+    browserStore.set({ state: state({ active: 'a' }) })
+    expect(announcerStore.get().text).toBe('Tab 4 of 6, Example Domain')
+    stop()
   })
 })

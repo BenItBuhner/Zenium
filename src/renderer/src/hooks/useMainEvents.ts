@@ -1,6 +1,11 @@
 import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
-import { announce, startAnnouncer, zoomAnnouncement } from '@renderer/lib/announce'
+import {
+  announce,
+  announcementVoice,
+  startAnnouncer,
+  zoomAnnouncement
+} from '@renderer/lib/announce'
 import { installedMessage } from '@shared/webApp'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
@@ -90,8 +95,9 @@ export function useMainEvents(): void {
     const offs = [
       // The downloads button and bubble follow the engine's list and the `downloads.reveal` event.
       startDownloadsUi(),
-      // The status region hears of the tab that came to the front and of tabs muted or unmuted.
-      startAnnouncer(),
+      // The status region hears of the tab that came to the front and of tabs muted or unmuted;
+      // in the phone's voice (name first, as its overview cards read) and of a load finishing.
+      startAnnouncer(() => announcementVoice(viewportStore.get().formFactor)),
       onEvent('urlbar.toggle', ({ mode, text }) => {
         const ui = uiStore.get()
         if (ui.urlbar.open && ui.urlbar.mode === mode && text === undefined) {
