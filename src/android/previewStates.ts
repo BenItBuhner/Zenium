@@ -64,6 +64,7 @@ import {
   openMediaSheet,
   openOverlay,
   openReaderPreferences,
+  openSharePanel,
   openTabsMenu,
   openUrlbar,
   openZoom,
@@ -128,6 +129,7 @@ import {
   type PreviewWebAppSurface
 } from './previewSpec'
 import { holdPreviewScreenshots, resetPreviewScreenshots } from './previewScreenshots'
+import { previewShareRequest } from './previewShare'
 import { hideUnresponsivePrompt, showUnresponsivePrompt } from './previewUnresponsive'
 import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 
@@ -293,7 +295,9 @@ function apply(browser: Browser, spec: string): void {
       extensionsSheetOpen: false,
       sendTabSheet: null,
       barEditorOpen: false,
-      bookmarkAllTabs: null
+      bookmarkAllTabs: null,
+      // A share panel a `share=` state put up goes with it (its stand-in host holds nothing).
+      sharePanel: null
     })
     abortPull()
     cancelVoiceSearch()
@@ -1266,6 +1270,17 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     } else {
       whenStore(() => uiStore.get().toasts.length > 0, spec)
     }
+  } else if (target.kind === 'share' && state) {
+    // The panel as the host would put it up for the active tab – over a private tab on the page
+    // first when the share is a private tab's – with the stand-in row of apps; the state is
+    // reached once the sheet is up.
+    const panel = (): void => {
+      const now = browserStore.get().state ?? state
+      void openSharePanel(previewShareRequest(target.share, activeTab(now) ?? null, target.private))
+      whenStore(() => uiStore.get().sharePanel !== null, spec)
+    }
+    if (target.private) applyPrivate('page', PRIVATE_PAGE, state, panel)
+    else panel()
   } else if (target.kind === 'overview' && state) {
     // The grid mounts on the next render and its cards read their pictures then; the steps, if
     // any, press its header and its cards once it is up (the select-tabs mode, a card's sheet,
