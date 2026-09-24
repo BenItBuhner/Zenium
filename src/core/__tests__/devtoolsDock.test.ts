@@ -10,7 +10,6 @@ import type {
   TabViewHost,
   WindowHost
 } from '../platform'
-import type { Persisted } from '../state'
 import type { ZenWindow } from '../window'
 
 /*
@@ -230,7 +229,8 @@ describe('where each tab’s toolbox stands (v2 §9.29)', () => {
     expect([...browser.state.devtoolsOpenFor]).toEqual([b.id])
     await tick()
     await browser.state.flush()
-    const written = JSON.parse(io.writes[io.writes.length - 1]) as Persisted & {
+    const written = JSON.parse(io.writes[io.writes.length - 1]) as {
+      tabs: Array<{ id: string } & Record<string, unknown>>
       recentlyClosed: Array<{ kind: string; tab?: Record<string, unknown> }>
     }
     const records = written.tabs.filter((t) => t.id === a.id || t.id === b.id)

@@ -4,7 +4,7 @@ import { MonitorSmartphone, Plus, X } from 'lucide-react'
 import type { Rect, SidePanelInfo, SplitGroup, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
-import { devtoolsDockedInFrame } from '@renderer/lib/contentRadius'
+import { devtoolsDockOf, devtoolsDockedInFrame } from '@renderer/lib/contentRadius'
 import { coverPrimed, hideFollowsCover } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { fakeboxHoldsChrome, fakeboxMorphStore } from '@renderer/lib/fakeboxMorph'
@@ -75,8 +75,20 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
   useRecedeSurface(frameRef)
   const tab = activeTab(state)
   const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
-  // A developer toolbox docked in the frame's box on a page the window shows (§9.29).
+  // A developer toolbox docked in the frame's box on a page the window shows (§9.29), and where
+  // the tab in front keeps its own – the side its page's picture is anchored to under a cover.
   const toolboxDocked = devtoolsDockedInFrame(state)
+  const toolboxDock = tab ? devtoolsDockOf(state, tab.id) : null
+  // With a toolbox docked in the frame the host's picture of the page is the page's part of the
+  // box alone – the toolbox is not in its `capturePage` – so it is drawn at its own size in the
+  // page's corner (the toolbox at the right or the bottom: the top-left; at the left: the
+  // top-right), never scaled up over the whole box; the toolbox's own picture lies under it.
+  const coverFit =
+    toolboxDocked && !group
+      ? toolboxDock === 'left'
+        ? 'object-contain object-right-top'
+        : 'object-contain object-left-top'
+      : 'object-cover object-top'
   const glanceActive = ui.glanceActive
   const glanceTabId = state.glance?.tabId ?? null
   const glanceParentId = state.glance?.parentTabId ?? null
@@ -265,23 +277,35 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                 {ui.snapshot &&
                 ui.snapshotTabId &&
                 ui.snapshotTabId === (glanceActive ? glanceParentId : tab?.id) ? (
-                  <CoverImage
-                    tabId={ui.snapshotTabId}
-                    src={ui.snapshot}
-                    // The page is swapped for this picture on every host: the view goes only
-                    // once the picture is painted (see lib/cover.ts, `hideFollowsCover`).
-                    cover={hideFollowsCover()}
-                    // With a developer toolbox docked in the frame (§9.29) the picture is the
-                    // page's part of the box alone – the toolbox is not in the host's capture –
-                    // so it is drawn at its own size in the page's corner, the toolbox's band
-                    // left to the frame's ground, rather than scaled up over the whole box.
-                    className={cn(
-                      'h-full w-full',
-                      toolboxDocked && !group
-                        ? 'object-contain object-left-top'
-                        : 'object-cover object-top'
-                    )}
-                  />
+                  <>
+                    {/*
+                     * The toolbox docked in the box (§9.29), from the host's capture of its
+                     * frontend – the whole box, its seam in it – laid under the page's picture,
+                     * which covers the page's hole in it: a menu over a docked toolbox leaves
+                     * the toolbox in view rather than the frame's ground. Not a tracked cover:
+                     * the page view waits for the page's picture alone, so the hole is never
+                     * bare for a frame while this decodes.
+                     */}
+                    {ui.toolboxSnapshot && toolboxDocked && !group ? (
+                      <img
+                        data-testid="toolbox-cover"
+                        src={ui.toolboxSnapshot}
+                        alt=""
+                        decoding="sync"
+                        draggable={false}
+                        className="absolute inset-0 h-full w-full object-contain object-left-top"
+                      />
+                    ) : null}
+                    <CoverImage
+                      tabId={ui.snapshotTabId}
+                      src={ui.snapshot}
+                      // The page is swapped for this picture on every host: the view goes only
+                      // once the picture is painted (see lib/cover.ts, `hideFollowsCover`).
+                      cover={hideFollowsCover()}
+                      // Positioned, so it paints over the toolbox's picture before it in order.
+                      className={cn('relative h-full w-full', coverFit)}
+                    />
+                  </>
                 ) : null}
                 {/*
                  * Desktop and tablet: the capture is dimmed under the URL bar and the overlays.

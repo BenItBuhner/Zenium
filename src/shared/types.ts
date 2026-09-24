@@ -4298,6 +4298,14 @@ export interface Commands {
    * capture a hidden page answer null.
    */
   'overlay.snapshot': { args: { tabId: string; fresh?: boolean }; result: string | null }
+  /**
+   * The picture of the developer toolbox docked in the tab's frame box (design language v2
+   * §9.29) – the frontend's own capture, the whole box at its size – for the cover to lay under
+   * the page's picture, so a menu over a docked toolbox leaves the toolbox in view rather than
+   * the frame's ground. `fresh` as `overlay.snapshot` has it. Null with no toolbox up, one
+   * undocked (a window of its own) or on a host without an in-frame toolbox (Android).
+   */
+  'overlay.snapshotDevtools': { args: { tabId: string; fresh?: boolean }; result: string | null }
 
   /**
    * Tab card thumbnails, on hosts that keep them (`Platform.thumbnails`; the Android host). The

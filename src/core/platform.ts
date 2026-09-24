@@ -830,6 +830,12 @@ export interface TabView {
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
   snapshot(): Promise<string | null>
   /**
+   * The picture of a developer toolbox docked in the view's box (design language v2 §9.29), the
+   * whole box at its size, for the cover to lay under the page's picture while a menu is up;
+   * null with no toolbox docked there. Hosts without an in-frame toolbox leave it out.
+   */
+  snapshotDevtools?(): Promise<string | null>
+  /**
    * Full-resolution PNG saved to the downloads location; resolves with the saved path. The
    * visible area, or with `fullPage` the whole document beyond the viewport (hosts that cannot
    * paint beyond it – the debugger taken by DevTools – save the visible area instead).

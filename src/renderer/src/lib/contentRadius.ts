@@ -15,7 +15,7 @@ export const PHONE_CONTENT_RADIUS = 14
  * at the setting, the default every toolbox opens at.
  */
 export function devtoolsDockOf(state: UIState, tabId: string): DevtoolsDock | null {
-  const own = state.tabs[tabId]?.devtools
+  const own = state.tabs?.[tabId]?.devtools
   if (own) return sanitizeDevtoolsDock(own.dock, state.settings.devtoolsDock ?? 'bottom')
   const open = state.devtoolsOpenFor
   if (!open || !open.includes(tabId)) return null

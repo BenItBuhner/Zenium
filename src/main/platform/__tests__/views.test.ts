@@ -1287,6 +1287,58 @@ describe('ElectronTabView.snapshot', () => {
       expect(sw * sh).toBeLessThanOrEqual(3_700_000)
     }
   })
+
+  /*
+   * The docked toolbox's picture for the cover (§9.29, W5-5): the frontend's own `capturePage`
+   * – the whole box – encoded as the page's is; nothing with no toolbox up or one undocked (a
+   * window of its own), and the page's own capture never stands in for it.
+   */
+  it('pictures a docked toolbox from its frontend, the whole box, and nothing with none docked in the frame', async () => {
+    const { view, wc } = tabView()
+    const page = fakeCapture(1200, 700)
+    Object.assign(wc, { capturePage: () => Promise.resolve(page.image) })
+    // Closed: nothing.
+    await expect(view.snapshotDevtools()).resolves.toBeNull()
+    for (const dock of ['bottom', 'right', 'left'] as const) {
+      view.openDevTools('toggle', dock)
+      const frontend = fakeCapture(1200, 1000)
+      Object.assign(wc.devToolsWebContents!, {
+        capturePage: () => Promise.resolve(frontend.image)
+      })
+      await expect(view.snapshotDevtools()).resolves.toBe(
+        `data:image/jpeg;base64,${Buffer.from('jpeg-1200x1000-90').toString('base64')}`
+      )
+      expect(frontend.encoded).toEqual([{ width: 1200, height: 1000, quality: 90 }])
+      // The page's picture is its own capture still, untouched by the toolbox's.
+      await expect(view.snapshot()).resolves.toBe(
+        `data:image/jpeg;base64,${Buffer.from('jpeg-1200x700-90').toString('base64')}`
+      )
+      view.openDevTools('toggle', dock)
+    }
+    expect(page.encoded).toHaveLength(3)
+    // Undocked: a window of its own, nothing of it in the frame's box.
+    view.openDevTools('toggle', 'undocked')
+    Object.assign(wc.devToolsWebContents!, {
+      capturePage: () => Promise.resolve(fakeCapture(900, 600).image)
+    })
+    await expect(view.snapshotDevtools()).resolves.toBeNull()
+    // Docked again by its own button (the console read-back): pictured again.
+    await new Promise((r) => setImmediate(r))
+    wc.devToolsWebContents!.emit('console-message', { message: 'zenium-devtools-dock:bottom' })
+    await expect(view.snapshotDevtools()).resolves.toBe(
+      `data:image/jpeg;base64,${Buffer.from('jpeg-900x600-90').toString('base64')}`
+    )
+    // A frontend whose capture never comes: nothing, after the wait.
+    Object.assign(wc.devToolsWebContents!, { capturePage: () => new Promise(() => undefined) })
+    vi.useFakeTimers()
+    try {
+      const pending = view.snapshotDevtools()
+      await vi.advanceTimersByTimeAsync(600)
+      await expect(pending).resolves.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 /**

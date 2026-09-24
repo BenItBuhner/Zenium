@@ -34,6 +34,7 @@ import {
   devtoolsMoveScript,
   dockFromConsoleMessage
 } from './devtoolsFrontend'
+import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
 import type { SafeBrowsingHit } from '../../shared/privacy'
@@ -1076,32 +1077,24 @@ export class ElectronTabView implements TabView {
    * whatever its pixels (`CoverImage`, `object-cover`), so a 1:1 capture at DPR 2 does not
    * double. The Android host's cover is its own copy and encode (`TabWebView.snapshot`).
    */
-  async snapshot(): Promise<string | null> {
-    try {
-      const image = await Promise.race([
-        this.wc.capturePage(),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_TIMEOUT_MS))
-      ])
-      if (!image || image.isEmpty()) return null
-      const size = image.getSize()
-      // `capturePage` hands the device pixels over as a 1x bitmap (`getScaleFactors()` is [1],
-      // `getSize()` device pixels); the representation's scale is read all the same, so the
-      // arithmetic stays in device pixels should a capture ever come with one of its own.
-      const scales = image.getScaleFactors()
-      const fit = standinScale(size.width, size.height, scales.length ? Math.max(...scales) : 1, {
-        trigger: SNAPSHOT_MAX_PIXELS,
-        target: SNAPSHOT_TARGET_PIXELS
-      })
-      // Past the trigger: Hamming-1 (`good`), not the default Lanczos-3 – half the time on a
-      // picture that is being softened anyway (`SNAPSHOT_TARGET_PIXELS`).
-      const scaled =
-        fit.scale < 1
-          ? image.resize({ width: fit.width, height: fit.height, quality: 'good' })
-          : image
-      return `data:image/jpeg;base64,${scaled.toJPEG(SNAPSHOT_JPEG_QUALITY).toString('base64')}`
-    } catch {
-      return null
-    }
+  snapshot(): Promise<string | null> {
+    return snapshotOf(this.wc)
+  }
+
+  /**
+   * The picture of the developer toolbox docked in this view's box (§9.29), for the cover to lay
+   * under the page's picture: the frontend's own `capturePage`, the whole box at its size – the
+   * toolbox's band with its seam, and the page's hole, which the page's picture goes over. Null
+   * with no toolbox up, an undocked one (a window of its own, nothing of it in the frame) or a
+   * frontend that is gone; encoded as the page's picture is (`snapshot`).
+   */
+  snapshotDevtools(): Promise<string | null> {
+    const wc = this.wc
+    if (wc.isDestroyed() || !wc.isDevToolsOpened()) return Promise.resolve(null)
+    if (!this.devtoolsDock || !isDockedInFrame(this.devtoolsDock)) return Promise.resolve(null)
+    const frontend = wc.devToolsWebContents
+    if (!frontend || frontend.isDestroyed()) return Promise.resolve(null)
+    return snapshotOf(frontend)
   }
 
   /**
@@ -1704,6 +1697,39 @@ export class ElectronTabView implements TabView {
   /** Where this page's full-page paint is cut, for its zoom on the most scaled display. */
   private fullPageCut(): number {
     return fullPageCut(zoomFactorOf(this.wc), largestDisplayScale())
+  }
+}
+
+/**
+ * The stand-in picture of `wc`'s current paint (`snapshot`, `snapshotDevtools`): `capturePage`
+ * within `SNAPSHOT_TIMEOUT_MS`, scaled past the trigger, a JPEG data URL; null for a capture
+ * that came empty, late or not at all.
+ */
+async function snapshotOf(wc: WebContents): Promise<string | null> {
+  try {
+    const image = await Promise.race([
+      wc.capturePage(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_TIMEOUT_MS))
+    ])
+    if (!image || image.isEmpty()) return null
+    const size = image.getSize()
+    // `capturePage` hands the device pixels over as a 1x bitmap (`getScaleFactors()` is [1],
+    // `getSize()` device pixels); the representation's scale is read all the same, so the
+    // arithmetic stays in device pixels should a capture ever come with one of its own.
+    const scales = image.getScaleFactors()
+    const fit = standinScale(size.width, size.height, scales.length ? Math.max(...scales) : 1, {
+      trigger: SNAPSHOT_MAX_PIXELS,
+      target: SNAPSHOT_TARGET_PIXELS
+    })
+    // Past the trigger: Hamming-1 (`good`), not the default Lanczos-3 – half the time on a
+    // picture that is being softened anyway (`SNAPSHOT_TARGET_PIXELS`).
+    const scaled =
+      fit.scale < 1
+        ? image.resize({ width: fit.width, height: fit.height, quality: 'good' })
+        : image
+    return `data:image/jpeg;base64,${scaled.toJPEG(SNAPSHOT_JPEG_QUALITY).toString('base64')}`
+  } catch {
+    return null
   }
 }
 

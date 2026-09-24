@@ -2985,6 +2985,7 @@ export class Browser {
         this.extensions.omniboxDeleteSuggestion(input, win),
 
       'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
+      'overlay.snapshotDevtools': ({ tabId, fresh }, win) => win.snapshotDevtools(tabId, fresh),
 
       // Tab card pictures are the host's (`ThumbnailHost`); a host without them has none to show.
       'thumbnail.configure': ({ width }) => this.platform.thumbnails?.configure(width),
