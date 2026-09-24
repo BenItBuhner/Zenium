@@ -1651,7 +1651,9 @@ const SYNC_FIXTURE_TREE =
  * sync is live and its sheet has a folder to set up), `busy` (`chosen`, with the engine's
  * `sync.setup` held open so the passphrase sheet stays on its §9.30 busy form once sent), `on`
  * (connected: four other devices – a laptop, a desktop, a tablet and one of an older build that
- * announced no kind – last synced five minutes ago), `tabs` (`on` with Open tabs
+ * announced no kind – last synced five minutes ago), `unknown` (`on` with the same four devices
+ * all of older builds: no record carries a kind, so the list draws no glyph column at all –
+ * §10.4's condition, `anyDeviceKind`), `tabs` (`on` with Open tabs
  * syncing and the laptop's and the desktop's open tabs published: Tabs from other devices, History's From your
  * other devices group and the tab search's reach (TAB-02, TAB-21) are live, the menus carry
  * Send to your devices, and the core's sync stands in for the engine so they act; see
@@ -1846,21 +1848,21 @@ export function syncFixture(state: UIState, variant: string, now: number): UISta
   const merge = variant === 'merge'
   // The other devices with the kind each announced (§10.4's glyph per row): a laptop, a
   // desktop and a tablet, and one whose build predates the kind – its record has none, so its
-  // rows draw the stand-in.
+  // rows draw the stand-in. `unknown`: the same four, every build predating the kind – no
+  // record carries one, and the list draws no glyph column (`anyDeviceKind`).
+  const unknown = variant === 'unknown'
+  const announced: SyncDevice[] = [
+    { id: 'device-laptop', name: 'Work laptop', lastSeen: now - 2 * HOUR_MS, kind: 'laptop' },
+    { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000, kind: 'desktop' },
+    { id: 'device-tablet', name: 'Galaxy Tab', lastSeen: now - 26 * HOUR_MS, kind: 'tablet' },
+    { id: 'device-study', name: 'Study PC', lastSeen: now - 9 * 24 * HOUR_MS }
+  ]
   const devices: SyncDevice[] =
     variant === 'empty' || merge
       ? []
-      : [
-          { id: 'device-laptop', name: 'Work laptop', lastSeen: now - 2 * HOUR_MS, kind: 'laptop' },
-          {
-            id: 'device-desktop',
-            name: 'Home desktop',
-            lastSeen: now - 3 * 60_000,
-            kind: 'desktop'
-          },
-          { id: 'device-tablet', name: 'Galaxy Tab', lastSeen: now - 26 * HOUR_MS, kind: 'tablet' },
-          { id: 'device-study', name: 'Study PC', lastSeen: now - 9 * 24 * HOUR_MS }
-        ]
+      : unknown
+        ? announced.map(({ id, name, lastSeen }) => ({ id, name, lastSeen }))
+        : announced
   // `tabs`: `on` with Open tabs among what syncs and the devices' lists published (ID-28), so
   // Tabs from other devices, History's From your other devices group (TAB-02) and the menus'
   // Send to your devices (ID-27) are live.
