@@ -854,6 +854,15 @@ export interface TabView {
    * a person's input would: `isTrusted`, user activation, pop-ups and autoplay allowed.
    */
   sendInput?(event: AgentInputEvent): Promise<void>
+  /**
+   * Whether the page's renderer takes real input yet: it has presented its first frame, or its
+   * document is one the engine never holds back. Chromium defers a new http(s) page's commits
+   * until its first contentful paint (paint holding) and drops presses and keys meanwhile with a
+   * "handled" ack, so a placed but unpainted view swallows a click without a trace; the core
+   * waits for this before `sendInput`. Hosts that cannot tell leave it out (the core then sends
+   * as soon as the view is on screen); an answer the host is unsure of should be true.
+   */
+  hasPainted?(): Promise<boolean>
   /** Run script in a world the page cannot observe (Electron's isolated world). */
   executeIsolatedJavaScript?(code: string): Promise<unknown>
   /**
