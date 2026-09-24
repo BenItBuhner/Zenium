@@ -148,6 +148,13 @@ pull_new() {
       *) continue ;;
     esac
     if timeout 60 adb exec-out run-as "$app_id" cat "files/ext-compat-sweep/$name" > "$out/$name.part" 2> /dev/null && [ -s "$out/$name.part" ]; then
+      # results.json is kept only whole: a pull that raced the driver's write (the file is
+      # renamed into place, so a cut-off read is a stale name, not a half file) or a frozen
+      # guest's cut-off cat keeps the previous good copy.
+      if [ "$name" = results.json ] && ! python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$out/$name.part" 2> /dev/null; then
+        rm -f "$out/$name.part"
+        continue
+      fi
       mv -f "$out/$name.part" "$out/$name"
     else
       rm -f "$out/$name.part"
@@ -277,19 +284,38 @@ dump_hang() {
 args=()
 if [ -n "${SWEEP_ONLY:-}" ]; then args+=(-e only "$SWEEP_ONLY"); fi
 if [ -n "${SWEEP_LAST:-}" ]; then args+=(-e last "$SWEEP_LAST"); fi
-adb shell am instrument -w -e class app.zen.chromium.CompatSweep "${args[@]}" "$runner" > "$out/instrument.txt" 2>&1 &
-driver_pid=$!
+start_driver() {
+  adb shell am instrument -w -e class app.zen.chromium.CompatSweep "${args[@]}" "$runner" > "$out/instrument.txt" 2>&1 &
+  driver_pid=$!
+}
+start_driver
 
+# The handshake: the driver's `record` file. A driver whose process the system killed before
+# it (the Google image's GMS restarts itself for a module update a minute or so after boot, and
+# the ActivityManager kills every process bound to its providers with it – round 14's before
+# run: "Killing io.github.benitbuhner.zenium.debug (adj 0): depends on provider
+# com.google.android.gms/.fonts.provider.FontsProvider in dying proc com.google.android.gms.persistent",
+# 6 s into the driver) is started once more on the same boot, the first try's instrument
+# output kept beside the second's.
 ready=0
-for _ in $(seq 1 1600); do
-  if adb shell run-as "$app_id" test -f files/ext-compat-sweep/record 2> /dev/null; then
-    ready=1
-    break
-  fi
-  if ! kill -0 "$driver_pid" 2> /dev/null; then
-    break
-  fi
-  sleep 0.25
+attempt=1
+while :; do
+  for _ in $(seq 1 1600); do
+    if adb shell run-as "$app_id" test -f files/ext-compat-sweep/record 2> /dev/null; then
+      ready=1
+      break
+    fi
+    if ! kill -0 "$driver_pid" 2> /dev/null; then
+      break
+    fi
+    sleep 0.25
+  done
+  if [ "$ready" -eq 1 ] || [ "$attempt" -ge 2 ] || ! grep -q 'Process crashed' "$out/instrument.txt" 2> /dev/null; then break; fi
+  attempt=$((attempt + 1))
+  echo "the driver's process died before its handshake ($(grep -m1 -oE 'Killing [0-9]+:[^ ]+ \(adj [-0-9]+\): [^"]*' "$out/logcat.txt" | tail -1 || true)); started once more"
+  cp -f "$out/instrument.txt" "$out/instrument-first-try.txt"
+  sleep 15
+  start_driver
 done
 if [ "$ready" -ne 1 ]; then
   cat "$out/instrument.txt" || true
@@ -301,10 +327,15 @@ fi
 adb shell run-as "$app_id" touch files/ext-compat-sweep/recording
 
 # Progress in the job log while the driver runs: one line per graded row, and the driver's
-# files pulled as they land (pull_new); the app's silence watched (dump_hang).
+# files pulled as they land (pull_new) – the ROW line is looked for every 5 s and the pull
+# follows it at once, so a guest that freezes under the next row (round 13's 113 lane lost
+# Voice In's and Adobe Photoshop's grades to a pull one row behind) has this row's results.json
+# in the artifact; the done file and the app's silence (dump_hang) are checked every 30 s.
 seen=0
+tick=0
 while kill -0 "$driver_pid" 2> /dev/null; do
-  sleep 30
+  sleep 5
+  tick=$((tick + 1))
   rows=$(grep -cE 'I/CompatSweep\( *[0-9]+\): ROW ' "$out/logcat.txt" 2> /dev/null || true)
   rows=${rows:-0}
   if [ "$rows" -gt "$seen" ]; then
@@ -312,6 +343,7 @@ while kill -0 "$driver_pid" 2> /dev/null; do
     seen=$rows
     pull_new
   fi
+  if [ $((tick % 6)) -ne 0 ]; then continue; fi
   if timeout 60 adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
   if [ "$hung" -eq 0 ]; then
     # `pidof` exits 1 while the app is dead (a crash the instrumentation is still winding down):
