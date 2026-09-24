@@ -19,6 +19,9 @@
 #                   worker read as installed, restarted unchanged, then restarted with the
 #                   identifier `window` hidden from its script by a rewrite of the unpacked file
 #                   (a driver-side experiment; the runtime is not changed)
+#   SWEEP_BARE_WINDOW=2 – sample 2 of the same: the fuller chrome-shaping (`window` and
+#                   `document` misses, `self`/`globalThis` one worker-shaped global, `Function`
+#                   bracketed, a module graph shaped through one added file)
 #
 # Handshake with the driver, through files in the app's private storage (via run-as):
 #   files/ext-compat-sweep/record     – written by the driver once its warm-up is done

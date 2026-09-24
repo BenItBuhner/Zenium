@@ -89,8 +89,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * ([BareWindowBracket]) – with the probe, the uncaught count over thirty seconds and, for a
      * row whose core rounds 9-14 could measure, the core check re-read under each. The popup and
      * options stages are not run; the runtime is not changed. See [bareWindowSweep].
+     *
+     * `bareWindow=2` is sample 2, the fuller chrome-shaping ([BareWindowBracket.Shape.FULL]):
+     * `window` and `document` both misses, `self` and `globalThis` one worker-shaped global a
+     * scuttler cannot redefine, `Function` bracketed, a module graph shaped through one added
+     * file – the same three passes, the probe with `typeof document` beside `typeof window`.
      */
-    private val bareWindow = arguments.getString("bareWindow") == "1"
+    private val bareWindowMode: String? = arguments.getString("bareWindow")
+    private val bareWindow = bareWindowMode == "1" || bareWindowMode == "2"
+    private val bareWindowShape = if (bareWindowMode == "2") BareWindowBracket.Shape.FULL else BareWindowBracket.Shape.WINDOW
     /** Prompts no reachable button answered on screen, answered through the chrome's command instead. */
     private var promptsAnsweredByCommand = 0
     /** Why the last prompt went through the command (the button's measurements), for the row's evidence. */
@@ -178,6 +185,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         results.put("webView", WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" } ?: JSONObject.NULL)
         results.put("only", only?.let { JSONArray(it.toList()) } ?: JSONObject.NULL)
         results.put("bareWindow", bareWindow)
+        results.put("bareWindowShape", if (bareWindow) bareWindowShape.name.lowercase() else JSONObject.NULL)
         results.put("startedAt", System.currentTimeMillis())
         // The core's toasts carry what an install refused to do (the store host toasts instead of rejecting).
         chromeJs("window.__toasts=[];window.zen.on('toast',function(p){window.__toasts.push(String(p&&p.message||p))});'ok'")
@@ -645,6 +653,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val worker = bg?.optString("service_worker")?.takeIf { it.isNotEmpty() }
         val module = bg?.optString("type") == "module"
         val report = JSONObject().put("worker", worker ?: JSONObject.NULL).put("type", if (module) "module" else "classic")
+            .put("shape", bareWindowShape.name.lowercase())
         entry.put("bareWindow", report)
         if (worker == null) {
             stage(entry, "background", "-", "no MV3 service worker in the manifest: the sample reads workers alone")
@@ -665,8 +674,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             report.put("offRestart", control)
             if (!chromeAnswers()) return
             // The bracket: planned from the files as they are on disk, applied, the served text
-            // is what the next start loads.
-            val plan = BareWindowBracket.plan(dir, worker, module)
+            // is what the next start loads. The fuller shape's module prologue skips the `var`
+            // for a name the graph installs on the global itself: the runtime's word from the
+            // two unshaped passes (`'window' in self`, `'document' in self`).
+            val installs = LinkedHashSet<String>()
+            for (pass in listOf(off, control)) {
+                val realm = pass.optJSONObject("realm") ?: continue
+                if (realm.optBoolean("inSelf")) installs += "window"
+                if (realm.optBoolean("inSelfDocument")) installs += "document"
+            }
+            report.put("installs", JSONArray(installs.toList()))
+            val plan = BareWindowBracket.plan(dir, worker, module, bareWindowShape, installs)
             val applied = BareWindowBracket.apply(dir, plan, backup)
             report.put(
                 "bracket",
@@ -675,11 +693,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         .put("bytes", p.bytes).put("strict", p.strict).put("bareReads", p.bareReads).put("declaresWindow", p.declaresWindow)
                         .put("lexicalAtLineStart", p.lexicalAtLineStart).put("dynamicImports", p.dynamicImports)
                         .put("imports", JSONArray(p.imports)).put("applied", p.apply).put("outcome", outcome)
+                        .put("shape", p.shape.name.lowercase()).put("declares", JSONArray(p.declares.toList())).put("shadows", JSONArray(p.shadows))
                 })
             )
             val rewritten = applied.count { it.second.startsWith("rewritten") }
             report.put("filesRewritten", rewritten).put("filesPlanned", plan.size)
-            Log.i(TAG, "BARE ${row.name}: bracket ${if (module) "module" else "with"} over $rewritten of ${plan.size} file(s): ${applied.joinToString("; ") { "${it.first.file} ${it.second}" }.take(600)}")
+            Log.i(TAG, "BARE ${row.name}: ${bareWindowShape.name.lowercase()} bracket ${if (module) "module" else "with"} over $rewritten of ${plan.size} file(s), installs $installs: ${applied.joinToString("; ") { "${it.first.file} ${it.second}" }.take(600)}")
             report.put("restart2", restartExtension(row))
             val on = workerRead(row, entry, slug, "on", measurable)
             report.put("on", on)
@@ -708,6 +727,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val realm = pass.optJSONObject("realm")
         val probe = pass.optJSONObject("probe")
         return "up=${pass.optBoolean("up")} typeof=${probe?.optString("typeofWindow") ?: realm?.optString("typeofWindow") ?: "?"} " +
+            "tdoc=${probe?.optString("typeofDocument")?.ifEmpty { null } ?: realm?.optString("typeofDocument")?.ifEmpty { null } ?: "?"} " +
             "uncaught=${pass.optInt("uncaught", -1)} core=${pass.optJSONObject("core")?.optString("verdict") ?: "-"}"
     }
 
@@ -743,9 +763,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val v = view
         val complete = poll(20_000, 300) { if (runCatching { tabEval(v, "document.readyState", 5) }.getOrNull() == "complete") true else null }
         r.put("complete", complete == true).put("completeMs", SystemClock.uptimeMillis() - started)
-        // The bracket's probe is the script's first statement; it is there as soon as the script ran.
+        // The bracket's probe is the script's first statement; it is there as soon as the script
+        // ran. Read through the page's `window` (the record lands on the page global under either
+        // shape), not `self`: a scuttled `self` throws on the unshaped passes of one row.
         if (pass == "on") {
-            poll(10_000, 300) { runCatching { tabEval(v, "JSON.stringify(self.__zenBareWindow||null)", 5) }.getOrNull()?.takeIf { it != "null" && it.startsWith("{") } }
+            poll(10_000, 300) { runCatching { tabEval(v, "JSON.stringify(window.__zenBareWindow||null)", 5) }.getOrNull()?.takeIf { it != "null" && it.startsWith("{") } }
         }
         val realm = json(runCatching { tabEval(v, BARE_WINDOW_REALM, 8) }.getOrDefault("{}"))
         r.put("realm", realm)
@@ -766,12 +788,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         for ((name, re) in BARE_WINDOW_SIGNATURES) signatures.put(name, console.count { re.containsMatchIn(it) })
         r.put("signatures", signatures)
         r.put("aliveAfterSettle", backgroundView(row.id) != null)
-        val typeofWindow = r.optJSONObject("probe")?.optString("typeofWindow") ?: realm.optString("typeofWindow", "?")
+        val probe = r.optJSONObject("probe")
+        val typeofWindow = probe?.optString("typeofWindow")?.ifEmpty { null } ?: realm.optString("typeofWindow", "?")
+        // The probe's `typeof document` is the fuller shape's; the page's realm answers for the other passes.
+        val typeofDocument = probe?.optString("typeofDocument")?.ifEmpty { null } ?: realm.optString("typeofDocument", "?")
+        r.put("typeofWindow", typeofWindow).put("typeofDocument", typeofDocument)
         r.put("verdict", if (uncaught.isEmpty()) "P" else "PARTIAL")
         r.put(
             "note",
             "worker up after ${viewMs / 1000.0} s${if (woken) " (woken)" else ""}, readyState ${if (complete == true) "complete" else "not complete in 20 s"}, " +
-                "typeof window $typeofWindow, ${uncaught.size} uncaught in 30 s" +
+                "typeof window $typeofWindow, typeof document $typeofDocument, ${uncaught.size} uncaught in 30 s" +
                 (if (uncaught.isNotEmpty()) ": ${uncaught.first().take(200)}" else "") +
                 (if (errors.isNotEmpty()) "; console.error x${errors.size}: ${errors.first().take(160)}" else "")
         )
@@ -7580,8 +7606,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "epbobagokhieoonfplomdklollconnkl", // Scribbr
             "mciiogijehkdemklbdcbfkefimifhecn" // Chrono Download Manager (core F by the page-visible headers)
         )
-        /** The class-A rows: a still of the fixture after the `on` pass besides the core stills. */
-        private val BARE_WINDOW_STILLS = setOf("bhmmomiinigofkjcapegjjndpbikblnp", "cbhilkcodigmigfbnphipnnmamjfkipp", "egjidjbpglichdcondbcbdnbeeppgdph")
+        /** The class-A rows and sample 1's casualties: a still of the fixture after the `on` pass besides the core stills. */
+        private val BARE_WINDOW_STILLS = setOf(
+            "bhmmomiinigofkjcapegjjndpbikblnp", // WOT
+            "cbhilkcodigmigfbnphipnnmamjfkipp", // Calendly
+            "egjidjbpglichdcondbcbdnbeeppgdph", // Trust Wallet
+            "pfnededegaaopdmhkdmcofjmoldfiped", // ZeroOmega (sample 1: core P to F)
+            "mcohilncbfahbmgdjkbpemcciiolgcge", // OKX Wallet (sample 1: a start-up uncaught)
+            "nkbihfbeogaeaoehlefnkodbefgpgknn" // MetaMask (sample 1: the scuttle's noise)
+        )
         /** Console lines the sample counts by name: round 14 section 7.1's class-A mechanisms and the bracket's own error shapes. */
         private val BARE_WINDOW_SIGNATURES = mapOf(
             "isNotAFunction" to Regex("is not a function"),
@@ -7595,12 +7628,40 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "syntaxError" to Regex("SyntaxError"),
             "referenceError" to Regex("ReferenceError")
         )
-        /** The worker page's realm as `evaluateJavascript` sees it (outside the bracket's block), with the bracket's probe records when present. */
-        private const val BARE_WINDOW_REALM =
-            "JSON.stringify({typeofWindow:typeof window,typeofDocument:typeof document,inSelf:('window' in self),inGlobalThis:('window' in globalThis)," +
-                "selfWindow:typeof self.window,selfCtor:(function(){try{return self.constructor.name}catch(e){return String(e)}})()," +
-                "href:location.href,readyState:document.readyState,scripts:document.scripts.length,typeofImportScripts:typeof importScripts," +
-                "chrome:typeof chrome==='object'&&!!chrome.runtime,probe:self.__zenBareWindow||null,files:self.__zenBareWindowFiles||null})"
+        /**
+         * The worker page's realm as `evaluateJavascript` sees it (outside the bracket's block),
+         * with the bracket's probe records when present. Each field in its own `try`: a global a
+         * scuttler poisoned (`self` on one row's unshaped passes) records as `!TypeError…` and
+         * leaves the rest readable. The probe records are read through the page's `window`, where
+         * they land under either shape.
+         */
+        private val BARE_WINDOW_REALM = listOf(
+            "typeofWindow" to "typeof window",
+            "typeofDocument" to "typeof document",
+            "inSelf" to "'window' in self",
+            "inSelfDocument" to "'document' in self",
+            "inGlobalThis" to "'window' in globalThis",
+            "selfWindow" to "typeof self.window",
+            "selfDocument" to "typeof self.document",
+            "selfIsGlobalThis" to "self===globalThis",
+            "selfCtor" to "self.constructor.name",
+            "selfTag" to "Object.prototype.toString.call(self)",
+            "shape" to "typeof window.__zenBW",
+            "selfIsShape" to "!!window.__zenBW&&self===window.__zenBW.G",
+            "selfOwnDescriptor" to "(function(d){return d?{writable:d.writable,configurable:d.configurable,enumerable:d.enumerable,accessor:'get' in d,isSelf:d.value===self}:null})(Object.getOwnPropertyDescriptor(self,'self'))",
+            "realmFunctionThis" to "Function('return this')()===self?'self':'window'",
+            "href" to "location.href",
+            "readyState" to "document.readyState",
+            "scripts" to "document.scripts.length",
+            "typeofImportScripts" to "typeof importScripts",
+            "chrome" to "typeof chrome==='object'&&!!chrome.runtime",
+            "probe" to "window.__zenBareWindow||null",
+            "files" to "window.__zenBareWindowFiles||null"
+        ).joinToString(
+            prefix = "(function(){var r={};function f(k,g){try{r[k]=g()}catch(e){r[k]='!'+String(e).slice(0,160)}}",
+            separator = "",
+            postfix = "return JSON.stringify(r)})()"
+        ) { (key, expr) -> "f('$key',function(){return $expr});" }
         private const val POPUP_TIMEOUT_MS = 30_000L
         /** After the action click opened a tab: how long a sheet gets to follow it before the tab is read as the click's whole answer. */
         private const val POPUP_AFTER_TAB_MS = 5_000L
