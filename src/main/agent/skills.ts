@@ -56,7 +56,7 @@ export const SKILL_TARGETS: readonly SkillTargetSpec[] = [
   { id: 'codex', label: 'Codex', skillsDir: ['.codex', 'skills'], detect: [['.codex']] },
   {
     id: 'agents',
-    label: 'Shared skills folder (.agents)',
+    label: 'Shared skills folder',
     skillsDir: ['.agents', 'skills'],
     detect: [['.agents'], ['.gemini'], ['.copilot'], ['.config', 'opencode']]
   }
