@@ -4,7 +4,8 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, useState, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { FrameDialogHost } from '@renderer/lib/portals'
+import { FrameDialogHost, closeAllPopovers } from '@renderer/lib/portals'
+import { viewportStore } from '@renderer/lib/formFactor'
 import { DialogStack } from '../dialogs'
 import { useSheetDismiss } from '../sheetContext'
 import type { ActionRow, FieldRow, ItemRow, RowGroup, SettingsRow } from '../model'
@@ -828,6 +829,126 @@ describe('a prompt holds the focus itself as it opens (§9.22, §9.23)', () => {
     expect(onPress).toHaveBeenCalledTimes(1)
     expect(h.querySelector('[data-row="security-forget-all"]')).toBe(row)
     expect(document.activeElement).toBe(button)
+  })
+
+  it('an item row’s ⋯ (§10.5) picking an action with a confirmation opens its prompt over the page – Settings › Apps’ Uninstall while a window of the app is open: the third form, `verbTone: "plain"`, Cancel and the verb two secondaries on the 320 alertdialog with no destructive mark though the row wears the danger ink in the menu, Enter from the held container inert – and the way back is the ⋯ itself after Escape and after the verb (the #435 lead check)', async () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+    const onPress = vi.fn()
+    const uninstall: ActionRow = {
+      kind: 'action',
+      id: 'app:app-notes:uninstall',
+      label: 'Uninstall',
+      button: 'Uninstall',
+      destructive: true,
+      confirm: {
+        title: 'Uninstall Notes?',
+        description: 'Its open window closes.',
+        action: 'Uninstall',
+        verbTone: 'plain'
+      },
+      onPress
+    }
+    const app: ItemRow = {
+      kind: 'item',
+      id: 'app:app-notes',
+      label: 'Notes',
+      description: 'notes.example',
+      menu: 'Options for Notes',
+      sheet: {
+        title: 'Notes',
+        groups: [
+          {
+            id: 'app:app-notes:actions',
+            heading: null,
+            rows: [
+              {
+                kind: 'action',
+                id: 'app:app-notes:open',
+                label: 'Open',
+                button: 'Open',
+                onPress: () => undefined
+              },
+              uninstall
+            ]
+          }
+        ]
+      }
+    }
+    const groups: RowGroup[] = [{ id: 'apps', heading: 'Installed apps', rows: [app] }]
+    const h = render(<Stack groups={groups} initial={[]} page={app} />)
+    const row = h.querySelector<HTMLElement>('[data-row="app:app-notes"]')!
+    expect(row.hasAttribute('data-static')).toBe(true)
+    const dots = row.querySelector<HTMLButtonElement>('button.zen-settings-row-menu')!
+    expect(dots.getAttribute('aria-label')).toBe('Options for Notes')
+    expect(row.querySelectorAll('button')).toHaveLength(1)
+
+    /** Open the ⋯ from the keyboard's seat on it and pick the item `label` names. */
+    const pick = async (label: string): Promise<void> => {
+      act(() => dots.focus())
+      // The menu holds its first paint until the page's capture is in place (useFloatingChrome):
+      // a few microtasks here, where there is no page.
+      await act(async () => {
+        dots.click()
+        await Promise.resolve()
+      })
+      const menu = document.querySelector<HTMLElement>('[role="menu"]')!
+      expect(menu).not.toBeNull()
+      const items = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      expect(items.map((i) => i.textContent)).toEqual(['Open', 'Uninstall'])
+      const item = items.find((i) => i.textContent === label)!
+      act(() => item.click())
+      expect(document.querySelector('[role="menu"]')).toBeNull()
+    }
+
+    // The pick opens the prompt, not the action.
+    await pick('Uninstall')
+    expect(onPress).not.toHaveBeenCalled()
+    const prompt = h.querySelector<HTMLElement>(LIVE_PROMPT)!
+    expect(prompt).not.toBeNull()
+    expect(prompt.getAttribute('data-dialog')).toBe('confirm:app:app-notes:uninstall')
+    expect(prompt.getAttribute('role')).toBe('alertdialog')
+    expect(prompt.style.width).toBe('320px')
+    expect(prompt.dataset.verb).toBe('plain')
+    expect(prompt.hasAttribute('data-destructive')).toBe(false)
+    expect(prompt.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Uninstall Notes?')
+    expect(prompt.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
+      'Its open window closes.'
+    )
+    expect(prompt.querySelector('input')).toBeNull()
+    const footer = [
+      ...prompt.querySelectorAll<HTMLButtonElement>('.zen-confirm-dialog-footer > button')
+    ]
+    expect(footer.map((b) => b.textContent)).toEqual(['Cancel', 'Uninstall'])
+    for (const b of footer) {
+      expect(b.classList.contains('zen-v2-button')).toBe(true)
+      expect(b.hasAttribute('data-primary')).toBe(false)
+      expect(b.hasAttribute('data-danger')).toBe(false)
+    }
+    // §9.22: the container holds the focus, and Enter from it recommends nothing.
+    expect(document.activeElement).toBe(prompt)
+    expect(enter(prompt).defaultPrevented).toBe(true)
+    expect(onPress).not.toHaveBeenCalled()
+    expect(h.querySelector(LIVE_PROMPT)).toBe(prompt)
+    // Escape is Cancel: the prompt goes, nothing ran, and the ⋯ has the keyboard again.
+    escape()
+    expect(h.querySelector(LIVE_PROMPT)).toBeNull()
+    expect(onPress).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(dots)
+
+    // The verb: the row acts once (`webapp.uninstall` on the page), the prompt goes, and the ⋯
+    // – still on the page here; in the app the row leaves with the record and the return falls
+    // to the opener – has the keyboard again.
+    await pick('Uninstall')
+    const again = h.querySelector<HTMLElement>(LIVE_PROMPT)!
+    expect(again).not.toBeNull()
+    const verb = again.querySelector<HTMLButtonElement>('[data-action="confirm"]')!
+    act(() => verb.focus())
+    act(() => verb.click())
+    expect(h.querySelector(LIVE_PROMPT)).toBeNull()
+    expect(onPress).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).toBe(dots)
+    document.getElementById('zen-chrome-layer')?.remove()
+    closeAllPopovers()
   })
 
   it('an item dialog still opens on its first row, a form on its field (§9.22 leaves the container to a notice)', () => {

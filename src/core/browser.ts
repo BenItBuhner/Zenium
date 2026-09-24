@@ -505,7 +505,7 @@ export class Browser {
       extensionUpdates: this.extensions.updateCheck(),
       sidePanel: this.extensions.sidePanel(win),
       mods: this.mods.all(),
-      webApps: this.webApps.allPinned(),
+      webApps: this.webApps.installed(),
       sync: this.sync.status(),
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),

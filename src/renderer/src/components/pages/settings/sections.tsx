@@ -4049,10 +4049,15 @@ function extensionsSection(ctx: SectionContext): RowGroup[] {
  * name – with the row's ⋯ (§10.5: a row of actions and nothing to set, so no dialog opens to
  * hold them) holding Open, which launches the app as its launcher does (`webapp.launch`: the
  * app's open window forward, else a window of its own), and Uninstall in the danger ink
- * (`webapp.uninstall`: the launcher and the record go, the app's windows close; a row's action
- * runs at once, §10.5). Installing is a page's own act – the app menu's Save and Share ›
- * Install <app>… or Create Shortcut… on the site – which the empty state and the description
- * name, since nothing here adds one.
+ * (`webapp.uninstall`: the launcher and the record go, the app's windows close). A row's
+ * action runs at once (§10.5) – except that closing a window the user has in front of them is
+ * the one thing here that costs something, so WHILE A WINDOW OF THE APP IS OPEN (`windows`,
+ * the snapshot's count) Uninstall asks first with §9.23's notice: "Uninstall <app>? Its open
+ * window closes." (or "Its open windows close."), Cancel | Uninstall as two secondaries with
+ * the verb in the plain ink, since nothing of the user's data goes (the #435 lead check, ruling
+ * 5); with no window open, no prompt. Installing is a page's own act – the app menu's Save and
+ * Share › Install <app>… or Create Shortcut… on the site – which the empty state and the
+ * description name, since nothing here adds one.
  */
 function appsSection({ state }: SectionContext): RowGroup[] {
   const apps = [...state.webApps].sort((a, b) => a.name.localeCompare(b.name))
@@ -4081,6 +4086,16 @@ function appsSection({ state }: SectionContext): RowGroup[] {
               label: 'Uninstall',
               button: 'Uninstall',
               destructive: true,
+              confirm:
+                app.windows > 0
+                  ? {
+                      title: `Uninstall ${app.name}?`,
+                      description:
+                        app.windows === 1 ? 'Its open window closes.' : 'Its open windows close.',
+                      action: 'Uninstall',
+                      verbTone: 'plain'
+                    }
+                  : undefined,
               onPress: () => run('webapp.uninstall', { appId: app.id })
             }
           ],

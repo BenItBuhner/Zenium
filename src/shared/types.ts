@@ -28,7 +28,7 @@ import type {
   SiteDataStatus
 } from './siteData'
 import type { InternalPageId, InternalPageQuery } from './internalPages'
-import type { InstallSurface, PinnedWebApp, WebAppInfo } from './webApp'
+import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
@@ -3568,11 +3568,11 @@ export interface UIState {
   sidePanel: SidePanelInfo | null
   mods: Mod[]
   /**
-   * The web apps installed on this host (the launchers it pinned, `WebAppService.allPinned`),
-   * in the order they were installed: Settings › Apps lists, opens and uninstalls them
-   * (shortcuts-menus-138); the app menu's Open in <app> and Install rows read the core's own.
+   * The web apps installed on this host (`WebAppService.installed`), in the order they were
+   * installed, each with how many of its windows stand open: Settings › Apps lists, opens and
+   * uninstalls them (shortcuts-menus-138), asking first when a window would close (§9.23; #435).
    */
-  webApps: PinnedWebApp[]
+  webApps: InstalledWebApp[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]

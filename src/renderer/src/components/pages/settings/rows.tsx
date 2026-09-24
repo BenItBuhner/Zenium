@@ -59,7 +59,12 @@ export type RowVariant = 'phone' | 'desktop'
 export type SheetRequest =
   | { kind: 'options'; rowId: string }
   | { kind: 'field'; rowId: string }
-  | { kind: 'confirm'; rowId: string }
+  /**
+   * `from`: the row whose control opened the prompt when that is not the row itself – an item
+   * row's ⋯ picking one of its sheet's confirming actions (§10.5); the focus goes back to that
+   * row's control, the ⋯, as the prompt leaves (§9.5).
+   */
+  | { kind: 'confirm'; rowId: string; from?: string }
   | { kind: 'form'; rowId: string }
   | { kind: 'item'; rowId: string }
   | { kind: 'detail'; rowId: string }
@@ -475,7 +480,13 @@ function DesktopRowView({
             <RowText label={row.label} description={row.description} caption={caption} />
             <span className="zen-settings-trailing zen-settings-control">
               <RowMenuButton
-                menu={{ label: row.menu, items: itemMenuItems(row) }}
+                menu={{
+                  label: row.menu,
+                  // A confirming action opens its prompt over the page, the ⋯ its way back.
+                  items: itemMenuItems(row, (action) =>
+                    ctx.open({ kind: 'confirm', rowId: action.id, from: row.id })
+                  )
+                }}
                 title={row.label}
                 disabled={row.disabled}
               />

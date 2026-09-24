@@ -16,7 +16,7 @@ import type {
   ToolbarLayout,
   UIState
 } from '@shared/types'
-import type { PinnedWebApp } from '@shared/webApp'
+import type { InstalledWebApp } from '@shared/webApp'
 import { defaultScope } from '@core/sync/records'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import {
@@ -1767,7 +1767,7 @@ describe('the section model', () => {
       return r
     }
     const menuOf = (id: string): { label: string; disabled?: boolean; onSelect(): void }[] =>
-      itemMenuItems(itemOf(model, id)).map((i) => ({
+      itemMenuItems(itemOf(model, id), () => undefined).map((i) => ({
         label: i.label,
         disabled: i.disabled,
         onSelect: i.onSelect
@@ -1803,7 +1803,9 @@ describe('the section model', () => {
     // One language left: Chrome keeps it, so Remove is disabled on the only row.
     const one = buildSection(def, context(state({}, { languages: ['en'] })).ctx)
     expect(
-      itemMenuItems(itemOf(one, 'languages-preferred:en')).map((i) => i.disabled ?? false)
+      itemMenuItems(itemOf(one, 'languages-preferred:en'), () => undefined).map(
+        (i) => i.disabled ?? false
+      )
     ).toEqual([true, true, true])
 
     // Add language: an action row with the desktop's button (§10.5) that on the phone leaves
@@ -4534,23 +4536,25 @@ describe('the Apps category (shortcuts-menus-138)', () => {
     extensions: true,
     pinShortcuts: true
   }
-  const NOTES: PinnedWebApp = {
+  const NOTES: InstalledWebApp = {
     id: 'notes',
     name: 'Notes',
     startUrl: 'https://notes.example/today',
     scope: 'https://notes.example/',
     pinnedAt: 2,
     icon: 'file:///icons/notes.png',
-    bounds: null
+    bounds: null,
+    windows: 0
   }
-  const ATLAS: PinnedWebApp = {
+  const ATLAS: InstalledWebApp = {
     id: 'atlas',
     name: 'Atlas',
     startUrl: 'https://atlas.example/',
     scope: 'https://atlas.example/',
-    pinnedAt: 1
+    pinnedAt: 1,
+    windows: 0
   }
-  const appsState = (webApps: PinnedWebApp[]): UIState =>
+  const appsState = (webApps: InstalledWebApp[]): UIState =>
     state({ platform: 'linux', capabilities: PINS, webApps })
 
   it('is a section of the desktop OSes on a host that pins launchers, after Extensions; Android has none', () => {
@@ -4590,8 +4594,10 @@ describe('the Apps category (shortcuts-menus-138)', () => {
     expect(iconOf(notes)).toBe(NOTES.icon)
     expect(iconOf(row(model, 'app:atlas'))).toBeUndefined()
     // The ⋯'s menu is the sheet's two action rows: Open launches the app, Uninstall – in the
-    // danger ink, acting at once (§10.5) – removes its launcher and record.
-    const menu = itemMenuItems(notes)
+    // danger ink, acting at once with no window of the app open (§10.5; the #435 lead check's
+    // ruling 5: no prompt then) – removes its launcher and record.
+    const prompt = vi.fn()
+    const menu = itemMenuItems(notes, prompt)
     expect(menu.map((i) => ({ label: i.label, danger: i.danger ?? false }))).toEqual([
       { label: 'Open', danger: false },
       { label: 'Uninstall', danger: true }
@@ -4600,10 +4606,50 @@ describe('the Apps category (shortcuts-menus-138)', () => {
     expect(invoke).toHaveBeenLastCalledWith('webapp.launch', { appId: 'notes' })
     menu[1]!.onSelect()
     expect(invoke).toHaveBeenLastCalledWith('webapp.uninstall', { appId: 'notes' })
+    expect(prompt).not.toHaveBeenCalled()
     const uninstall = allRows(notes.sheet.groups).find((r) => r.id === 'app:notes:uninstall')
     if (uninstall?.kind !== 'action') throw new Error('not an action')
     expect(uninstall.destructive).toBe(true)
     expect(uninstall.confirm).toBeUndefined()
+  })
+
+  it('while a window of the app is open, Uninstall asks first with §9.23’s notice – "Uninstall <app>? Its open window closes.", Cancel | Uninstall as two secondaries, the verb plain – and the ⋯’s pick opens it rather than acting (the #435 lead check, ruling 5)', () => {
+    const model = section(
+      'apps',
+      appsState([
+        { ...NOTES, windows: 1 },
+        { ...ATLAS, windows: 3 }
+      ])
+    )
+    const notes = row(model, 'app:notes')
+    if (notes.kind !== 'item') throw new Error('not an item')
+    const uninstall = allRows(notes.sheet.groups).find((r) => r.id === 'app:notes:uninstall')
+    if (uninstall?.kind !== 'action') throw new Error('not an action')
+    expect(uninstall.confirm).toEqual({
+      title: 'Uninstall Notes?',
+      description: 'Its open window closes.',
+      action: 'Uninstall',
+      verbTone: 'plain'
+    })
+    // More than one window: the count is in the sentence's number.
+    const atlas = row(model, 'app:atlas')
+    if (atlas.kind !== 'item') throw new Error('not an item')
+    const atlasUninstall = allRows(atlas.sheet.groups).find((r) => r.id === 'app:atlas:uninstall')
+    if (atlasUninstall?.kind !== 'action') throw new Error('not an action')
+    expect(atlasUninstall.confirm?.description).toBe('Its open windows close.')
+    // The ⋯: Open acts at once as before; Uninstall hands its row to the prompt opener and does
+    // nothing itself – the row's `onPress` is the prompt's verb (`ConfirmRowDialog`).
+    invoke.mockClear()
+    const prompt = vi.fn()
+    const menu = itemMenuItems(notes, prompt)
+    menu[0]!.onSelect()
+    expect(invoke).toHaveBeenLastCalledWith('webapp.launch', { appId: 'notes' })
+    menu[1]!.onSelect()
+    expect(prompt).toHaveBeenCalledTimes(1)
+    expect(prompt).toHaveBeenCalledWith(uninstall)
+    expect(invoke).not.toHaveBeenCalledWith('webapp.uninstall', expect.anything())
+    uninstall.onPress?.()
+    expect(invoke).toHaveBeenLastCalledWith('webapp.uninstall', { appId: 'notes' })
   })
 
   it('with nothing installed: the one group’s empty line, naming where an app is installed from', () => {

@@ -58,7 +58,7 @@ import type {
 } from '../shared/types'
 import type { TranslateUIState } from '../shared/translate'
 import type { ContentDefault } from '../shared/contentSettings'
-import type { PinnedWebApp } from '../shared/webApp'
+import type { InstalledWebApp } from '../shared/webApp'
 import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
@@ -259,7 +259,7 @@ export interface StateExtras {
   extensionUpdates: ExtensionUpdateCheck
   sidePanel: SidePanelInfo | null
   mods: Mod[]
-  webApps: PinnedWebApp[]
+  webApps: InstalledWebApp[]
   sync: SyncStatus
   agents: AgentInfo[]
   agentServer: AgentServerStatus
