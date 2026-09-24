@@ -1,4 +1,4 @@
-import type { SyncDeviceTabs, SyncScope, SyncStatus } from '../../shared/types'
+import type { SyncDevice, SyncDeviceTabs, SyncScope, SyncStatus } from '../../shared/types'
 import { newId } from '../../shared/ids'
 import { JsonStore } from '../store/JsonStore'
 import type { Browser } from '../browser'
@@ -86,7 +86,7 @@ interface Persisted {
   scope: SyncScope
   meta: MetaMap
   lastSyncAt: number | null
-  devices: Array<{ id: string; name: string; lastSeen: number }>
+  devices: SyncDevice[]
   /** First sync still needs the user's merge decision. */
   pendingMerge: boolean
   /** The history stream: this device's pages and its place in the others' (`history.ts`). */
@@ -426,7 +426,15 @@ export class SyncEngine implements SyncHost {
 
   tabsFromDevices(): SyncDeviceTabs[] {
     if (!this.data.enabled || !this.data.scope.openTabs) return []
-    return sortDeviceTabs([...this.remoteTabs.values()], Date.now())
+    // The device's kind rides on its announcement (the device file), not on its tabs document.
+    const kinds = new Map(this.data.devices.map((d) => [d.id, d.kind]))
+    return sortDeviceTabs(
+      [...this.remoteTabs.values()].map((list) => {
+        const deviceKind = kinds.get(list.deviceId)
+        return deviceKind ? { ...list, deviceKind } : list
+      }),
+      Date.now()
+    )
   }
 
   /**
@@ -587,7 +595,8 @@ export class SyncEngine implements SyncHost {
         devices.set(file.deviceId, {
           id: file.deviceId,
           name: file.deviceName,
-          lastSeen: file.updatedAt
+          lastSeen: file.updatedAt,
+          ...(file.kind ? { kind: file.kind } : {})
         })
       } catch {
         this.lastError = `Could not decrypt data from "${file.deviceName}" (different passphrase?)`
@@ -659,9 +668,11 @@ export class SyncEngine implements SyncHost {
         }
       }
       this.data.meta = local.meta
+      const kind = this.host.deviceKind?.()
       const file: DeviceFile = {
         deviceId: this.data.deviceId,
         deviceName: this.data.deviceName,
+        ...(kind ? { kind } : {}),
         updatedAt: now,
         envelope: await encryptJson(this.key, this.data.salt ?? newSalt(), {
           v: 1,

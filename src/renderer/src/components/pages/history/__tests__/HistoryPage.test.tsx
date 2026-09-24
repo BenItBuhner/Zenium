@@ -119,11 +119,15 @@ const CLOSED: ClosedEntrySummary[] = [
   }
 ]
 
-/** Two other devices' open tabs, the phone's list the newer (`sync.tabsFromDevices` answers newest first). */
+/**
+ * Two other devices' open tabs, the phone's list the newer (`sync.tabsFromDevices` answers newest
+ * first). The phone announced its kind; the laptop's build announced none (services pass 4).
+ */
 const DEVICES: SyncDeviceTabs[] = [
   {
     deviceId: 'phone',
     deviceName: 'Pixel 9',
+    deviceKind: 'phone',
     updatedAt: NOW - 5 * 60_000,
     tabs: [
       {
@@ -912,6 +916,21 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     expect(phone.getAttribute('aria-labelledby')).toBe('zen-history-device-phone')
     expect(text(phone.querySelector('.zen-page-heading-aside'))).toBe('Last active 5 min ago')
     expect(text(cards[1]!.querySelector('.zen-page-heading-aside'))).toBe('Last active 3 h ago')
+    // The heading leads with the device's kind glyph on the rows' favicon column (services pass
+    // 4): the phone's glyph at the full ink; the laptop, whose build announced no kind, the
+    // stand-in at 69 %. Decorative – the heading's text is still the name alone.
+    const glyph = (card: Element): { kind: string | null; standin: boolean } => {
+      const svg = card.querySelector<SVGElement>(
+        '.zen-page-heading > .zen-page-heading-lead[aria-hidden] > svg[data-testid="device-glyph"]'
+      )!
+      return {
+        kind: svg.getAttribute('data-kind'),
+        standin: svg.classList.contains('zen-list-standin')
+      }
+    }
+    expect(glyph(phone)).toEqual({ kind: 'phone', standin: false })
+    expect(glyph(cards[1]!)).toEqual({ kind: 'none', standin: true })
+    expect(text(phone.querySelector('h2'))).toBe('Pixel 9')
     const rows = [...phone.querySelectorAll('li.zen-v2-row.zen-page-row')]
     expect(rows).toHaveLength(2)
     const first = rows[0]!
@@ -934,6 +953,19 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     // The rows join the arrow walk between the closed tabs and the visits.
     const targets = [...el.querySelectorAll<HTMLButtonElement>('button[data-row-focus]')]
     expect(targets.length).toBe(2 + 3 + 5)
+  })
+
+  it('a list in which no device announced a kind – every peer an older build – leads no heading with a glyph: the names on the rows’ text edge, no stand-in column (§10.4’s condition, anyDeviceKind)', async () => {
+    devices = DEVICES.map((device) => ({ ...device, deviceKind: undefined }))
+    const el = await mountPage(tab(), state(sync(true)))
+    const cards = [...el.querySelectorAll('[data-testid="history-remote-device"]')]
+    expect(cards.map((c) => c.getAttribute('data-device-id'))).toEqual(['phone', 'work'])
+    for (const card of cards) {
+      expect(card.querySelector('.zen-page-heading-lead')).toBeNull()
+      expect(card.querySelector('[data-testid="device-glyph"]')).toBeNull()
+      expect(card.querySelector('.zen-page-heading')!.firstElementChild!.tagName).toBe('H2')
+    }
+    expect(headings(el).slice(0, 4)).toEqual(['Recently closed', 'Pixel 9', 'Work laptop', 'Today'])
   })
 
   it('a click opens the page in a new tab in front; a middle or Ctrl click one behind; a tab this device holds comes to the front', async () => {
