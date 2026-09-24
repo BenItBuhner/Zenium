@@ -207,6 +207,33 @@ export function overviewColumns(width: number): number {
   return 4
 }
 
+/** The overview grid's gutter each side and the gap between its cells (`px-3`, `gap-3`), in px. */
+const OVERVIEW_GRID_GUTTER = 12
+const OVERVIEW_GRID_GAP = 12
+
+/**
+ * The tablet overview card's aspect (v2 §9.36: "a card's picture takes the frame's aspect –
+ * landscape on a landscape tablet, the phone's on a phone"): the cell is the column's width over
+ * the picture at the frame's ratio plus the title row above it, so the picture under the row is
+ * the page as the frame shows it. The column is the frame's width less the grid's gutters,
+ * shared by the width's columns. On the tablet shard's 1280 × 800 the frame is 1040 × 744 under
+ * the toolbar beside the sidebar, the column 245, the picture 245 × 175 (1040 : 744, about
+ * 1.40 : 1) and the card 245 × 219 with its 44 row, about 1.12 : 1. A frame without a size yet
+ * draws the phone's ratio. `TabOverview` sets it on the layer's box as
+ * `--zen-overview-card-aspect`, which the cells read (`CARD_ASPECT` in `OverviewCard`).
+ */
+export function tabletCardAspect(
+  frame: { width: number; height: number },
+  columns: number,
+  header: number
+): number {
+  const column =
+    (frame.width - 2 * OVERVIEW_GRID_GUTTER - (columns - 1) * OVERVIEW_GRID_GAP) / columns
+  if (!(frame.width > 0) || !(frame.height > 0) || !(column > 0)) return 3 / 4
+  const picture = column * (frame.height / frame.width)
+  return column / (picture + header)
+}
+
 export function layoutLabel(layout: SplitLayout): string {
   return layout === 'grid' ? 'Grid' : layout === 'vertical' ? 'Side by side' : 'Stacked'
 }

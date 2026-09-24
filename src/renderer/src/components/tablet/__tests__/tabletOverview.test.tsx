@@ -16,10 +16,12 @@ import { BLANK_URL } from '@shared/url'
  * transient state – the query, the select-tabs mode and its picks, the sheet that is up, the
  * grid's scroll – is `overviewUiStore`'s, not the component's: a window resized between the phone
  * and tablet layouts swaps shells, and the next shell's mount comes up where the last one stood
- * (a fold, TABLET-08); the stage's one close path resets it. On the tablet the switcher slides up
- * over the page (`translateY` on the overview's progress), the page's still under it, in place of
- * the phone's fakebox morph; reduced motion is the fade at scale 1 (§11.3). The phone's mount is
- * untouched. Rendered for real in happy-dom, the frame loop cranked by hand, the core stubbed.
+ * (a fold, TABLET-08); the stage's one close path resets it. On the tablet the switcher comes
+ * DOWN from the toolbar's edge over the page (a negative `translateY` on the overview's progress,
+ * §9.36's "pulled down from the toolbar"), the page's still under it, in place of the phone's
+ * fakebox morph; reduced motion is the fade at scale 1 (§11.3); the cards take the frame's
+ * aspect and the grid opens with the active card's row whole. The phone's mount is untouched.
+ * Rendered for real in happy-dom, the frame loop cranked by hand, the core stubbed.
  */
 
 const SPACE = 'space'
@@ -33,6 +35,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { TabOverview } = await import('../../phone/TabOverview')
+const { tabletCardAspect } = await import('@renderer/lib/layout')
 const { PhoneStage } = await import('../../phone/PhoneStage')
 const { cancelLift } = await import('../../phone/useCardLift')
 const { clearDepartures } = await import('../../phone/departureStore')
@@ -703,10 +706,13 @@ describe("the phone switcher's gates hold on the tablet mount", () => {
   })
 })
 
-// --- (E) the slide-up --------------------------------------------------------------------------
+// --- (E) the slide down from the toolbar ---------------------------------------------------------
 
-describe('the tablet switcher slides up over the page (MOT-04)', () => {
-  it('the layer rises on the progress, the page`s still under it in the page`s frame; open lands untransformed', () => {
+/** The layer's transform at `p`: a full height above its rest at 0, descending to rest at 1. */
+const descent = (p: number): string => `translateY(${-(1 - p) * 744}px)`
+
+describe('the tablet switcher comes down from the toolbar`s edge over the page (MOT-04, §9.36)', () => {
+  it('the layer descends on the progress – from above its box, a negative translateY – the page`s still under it in the page`s frame; open lands untransformed', () => {
     const state = stateOf(pages())
     pageOff('ex')
     overview({ phase: 'settling', progress: 0.3, heroTabId: 'ex', target: 1 })
@@ -714,7 +720,9 @@ describe('the tablet switcher slides up over the page (MOT-04)', () => {
     const root = layer()
     expect(root.style.visibility).toBe('')
     expect(root.style.opacity).toBe('1')
-    expect(root.style.transform).toBe(`translateY(${(1 - 0.3) * 744}px)`)
+    expect(root.style.transform).toBe(descent(0.3))
+    // Above its rest, not below: the toolbar's edge is where it comes from.
+    expect(parseFloat(root.style.transform.slice('translateY('.length))).toBeLessThan(0)
     // The still: the hero in the page's frame, before the layer's box in the tree (under it).
     const still = hero()!
     expect(still).not.toBeNull()
@@ -723,15 +731,39 @@ describe('the tablet switcher slides up over the page (MOT-04)', () => {
     expect(still.style.width).toBe(`${AREA.width}px`)
     expect(still.style.height).toBe(`${AREA.height}px`)
     expect(still.compareDocumentPosition(root) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    // Frames of the spring: written off React, the same 0…1.
+    // Frames of the spring: written off React, the same 0…1, the layer lower each frame.
     overview({ progress: 0.75 })
-    expect(layer().style.transform).toBe(`translateY(${(1 - 0.75) * 744}px)`)
+    expect(layer().style.transform).toBe(descent(0.75))
     expect(hero()!.style.left).toBe(`${AREA.x}px`)
     // Open: at rest, the layer untransformed and the still gone.
     overview({ phase: 'open', progress: 1 })
     expect(layer().style.transform).toBe('')
     expect(layer().style.opacity).toBe('1')
     expect(hero()).toBeNull()
+  })
+
+  it('the pull and its release read the same direction, and the close is the same writer run back up', () => {
+    const state = stateOf(pages())
+    pageOff('ex')
+    // The finger's pull: the layer follows it down, a full height above its rest at the start.
+    overview({ phase: 'dragging', progress: 0, heroTabId: 'ex', target: 1 })
+    mountStage(state, true)
+    expect(layer().style.transform).toBe(`translateY(${-744}px)`)
+    overview({ progress: 0.2 })
+    expect(layer().style.transform).toBe(descent(0.2))
+    overview({ progress: 0.4 })
+    expect(layer().style.transform).toBe(descent(0.4))
+    // The release: the spring carries it the rest of the way down, the same sign.
+    overview({ phase: 'settling', progress: 0.6, target: 1 })
+    expect(layer().style.transform).toBe(descent(0.6))
+    overview({ phase: 'open', progress: 1 })
+    expect(layer().style.transform).toBe('')
+    // The dismissal: the layer goes back up the way it came, to the toolbar's edge.
+    overview({ phase: 'settling', progress: 0.5, target: 0 })
+    expect(layer().style.transform).toBe(descent(0.5))
+    overview({ progress: 0.1 })
+    expect(layer().style.transform).toBe(descent(0.1))
+    expect(parseFloat(layer().style.transform.slice('translateY('.length))).toBeLessThan(-0.8 * 744)
   })
 
   it('under reduced motion the slide is the fade at scale 1 (§11.3)', () => {
@@ -759,10 +791,10 @@ describe('the tablet switcher slides up over the page (MOT-04)', () => {
     const state = stateOf(pages())
     overview({ phase: 'dragging', progress: 0.3, heroTabId: 'ex', target: 1 })
     mountStage(state, true)
-    // On Android the chrome lies under the page: a layer risen now would show beside it, in
+    // On Android the chrome lies under the page: a layer come down now would show beside it, in
     // the sidebar's column. The still stands in the page's frame from this first frame.
     expect(layer().style.visibility).toBe('hidden')
-    expect(layer().style.transform).toBe(`translateY(${(1 - 0.3) * 744}px)`)
+    expect(layer().style.transform).toBe(descent(0.3))
     expect(hero()!.style.left).toBe(`${AREA.x}px`)
     expect(hero()!.style.width).toBe(`${AREA.width}px`)
     // The finger moves while the view is on its way down: the layer follows, still unseen.
@@ -770,12 +802,12 @@ describe('the tablet switcher slides up over the page (MOT-04)', () => {
     overview({ progress: 0.5 })
     await settle()
     expect(layer().style.visibility).toBe('hidden')
-    expect(layer().style.transform).toBe(`translateY(${(1 - 0.5) * 744}px)`)
+    expect(layer().style.transform).toBe(descent(0.5))
     // The host drew the frame without the page: the layer shows where the finger has it.
     act(() => onViewDrawn('ex', false))
     await settle()
     expect(layer().style.visibility).toBe('')
-    expect(layer().style.transform).toBe(`translateY(${(1 - 0.5) * 744}px)`)
+    expect(layer().style.transform).toBe(descent(0.5))
     expect(layer().style.opacity).toBe('1')
   })
 
@@ -803,5 +835,138 @@ describe('the tablet switcher slides up over the page (MOT-04)', () => {
     mountStage(state, false)
     expect(layer().style.visibility).toBe('')
     expect(layer().hasAttribute('data-tablet')).toBe(false)
+  })
+})
+
+// --- (F) the cards' aspect -----------------------------------------------------------------------
+
+/** The layer's box: the slide's clip, where the cards' ratio is set for every cell in it. */
+const box = (): HTMLElement => layer().parentElement!
+
+describe('the tablet card takes the frame`s aspect (§9.36)', () => {
+  it('a landscape picture on a landscape tablet: the column over the frame`s ratio plus the title row, the phone`s 3 / 4 kept on a phone', () => {
+    // The shard's frame beside the sidebar: 1040 × 744, four columns of 245 – the picture
+    // 245 × 175 at the frame's 1040 : 744, the card 245 × 219 with its 44 row.
+    const shard = tabletCardAspect({ width: 1040, height: 744 }, 4, 44)
+    expect(shard).toBeCloseTo(245 / (245 * (744 / 1040) + 44), 6)
+    expect(shard).toBeGreaterThan(1)
+    expect(shard).toBeCloseTo(1.117, 3)
+    // The picture under the row is the frame's: the cell's height less the row, over its width.
+    const column = 245
+    expect(column / (column / shard - 44)).toBeCloseTo(1040 / 744, 6)
+    // A portrait tablet's frame draws a portrait picture; a frame without a size yet, the phone's.
+    expect(tabletCardAspect({ width: 800, height: 1224 }, 4, 44)).toBeLessThan(1)
+    expect(tabletCardAspect({ width: 0, height: 0 }, 4, 44)).toBe(3 / 4)
+  })
+
+  it('the ratio is set on the layer`s box for every cell to read; the phone`s box sets none and its cells draw 3 / 4', () => {
+    render(stateOf(pages()), true)
+    const ratio = box().style.getPropertyValue('--zen-overview-card-aspect')
+    expect(Number(ratio)).toBeCloseTo(tabletCardAspect(AREA, 4, 44), 6)
+    expect(Number(ratio)).toBeGreaterThan(1)
+    // Every cell: a card, the New Tab card.
+    const aspect = `var(--zen-overview-card-aspect, 3 / 4)`
+    expect(document.querySelector<HTMLElement>('[data-cell="ex"]')!.style.aspectRatio).toBe(aspect)
+    expect(byTestId('overview-new-tab')!.style.aspectRatio).toBe(aspect)
+    // The frame narrows (the sidebar's drawer on a split-screen width): the ratio follows it.
+    act(() => viewportStore.set({ ...TABLET, width: 600, height: 1000 }))
+    act(() =>
+      ensureRoot().render(
+        createElement(
+          FrameDialogHost,
+          null,
+          createElement(TabOverview, {
+            state: stateOf(pages()),
+            overview: OPEN,
+            area: { x: 0, y: 56, width: 600, height: 944 },
+            edge: 'top',
+            tablet: true
+          })
+        )
+      )
+    )
+    expect(Number(box().style.getPropertyValue('--zen-overview-card-aspect'))).toBeCloseTo(
+      tabletCardAspect({ width: 600, height: 944 }, 3, 44),
+      6
+    )
+    // The phone: nothing set, the cells' fallback is the ratio they draw.
+    act(() => ensureRoot().render(null))
+    viewportStore.set(PHONE)
+    render(stateOf(pages()), false)
+    expect(box().style.getPropertyValue('--zen-overview-card-aspect')).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-cell="ex"]')!.style.aspectRatio).toBe(aspect)
+  })
+})
+
+// --- (G) the opening scroll ----------------------------------------------------------------------
+
+describe('the grid opens with the active card`s row whole (§9.36)', () => {
+  let scrolled: Array<[string, ScrollIntoViewOptions | boolean | undefined]> = []
+  beforeEach(() => {
+    scrolled = []
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (
+      this: Element,
+      arg?: ScrollIntoViewOptions | boolean
+    ) {
+      scrolled.push([this.getAttribute('data-cell') ?? this.className, arg])
+    })
+  })
+
+  it('the hero`s cell is scrolled into view by `nearest` as the layer starts down, before the first paint, and not again once open', () => {
+    // Eight tabs at four columns: the active one in the second row.
+    const tabs = [
+      ...pages(),
+      tab('a', 'https://a.example/', { title: 'A' }),
+      tab('b', 'https://b.example/', { title: 'B' })
+    ]
+    const state = stateOf(tabs)
+    state.spaces[0]!.activeTabId = 'hn'
+    overview({ phase: 'settling', progress: 0.05, heroTabId: 'hn', target: 1 })
+    mountStage(state, true)
+    // In the commit's layout phase – the mount's act returned with it done – the hero's cell,
+    // the least move that shows it whole, the rows above it left as they fall.
+    expect(scrolled).toEqual([['hn', { block: 'nearest' }]])
+    // The grid keeps the card clear of its fades: the scroll's padding is the rule's other half.
+    expect(scroller().style.scrollPaddingBlock).toBe('16px')
+    // Frames of the spring move nothing; landing open asks for no second scroll.
+    overview({ progress: 0.6 })
+    overview({ phase: 'open', progress: 1 })
+    expect(scrolled).toHaveLength(1)
+  })
+
+  it('a hero inside an open group brings the group`s card first, then its own', () => {
+    const research = {
+      id: 'research',
+      spaceId: SPACE,
+      name: 'Research',
+      icon: '',
+      collapsed: false,
+      color: 'blue'
+    }
+    const state = stateOf([
+      tab('a', 'https://a.example/', { title: 'A' }),
+      tab('m1', 'https://en.wikipedia.org/wiki/Zen', { title: 'Zen', folderId: 'research' }),
+      tab('m2', 'https://github.com/BenItBuhner/Zenium', { title: 'Zenium', folderId: 'research' })
+    ])
+    ;(state.folders as Record<string, unknown>).research = research
+    state.spaces[0]!.activeTabId = 'm2'
+    overview({ phase: 'settling', progress: 0.05, heroTabId: 'm2', target: 1 })
+    mountStage(state, true)
+    expect(scrolled).toEqual([
+      ['group:research', { block: 'nearest' }],
+      ['m2', { block: 'nearest' }]
+    ])
+  })
+
+  it('a grid mounted open – the shell swapped under an open overview – scrolls to no card: the last grid`s scroll is restored instead (TABLET-08)', async () => {
+    const state = stateOf(pages())
+    viewportStore.set(PHONE)
+    mountStage(state, false)
+    await settle()
+    scrollGridTo(240)
+    scrolled = []
+    await swapTo(state, true)
+    expect(scrolled).toEqual([])
+    expect(scroller().scrollTop).toBe(240)
   })
 })

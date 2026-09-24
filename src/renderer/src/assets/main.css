@@ -8718,8 +8718,8 @@
 /*
  * The tablet's tab overview (TABLET-14, MOT-04; §9.36 "the overview is the phone's, pulled down
  * from the toolbar, at the width's columns, the sidebar fading under it"): the phone's grid,
- * mounted by the tablet shell's stage with `data-tablet`. Its layer is opaque – it slides up
- * over the page's still on the spring, Chrome's tablet switcher, in place of the phone's morph –
+ * mounted by the tablet shell's stage with `data-tablet`. Its layer is opaque – it comes down
+ * from the toolbar's edge over the page's still on the spring, in place of the phone's morph –
  * in the window's own tone: `--zen-bg` as `.zen-window` paints it – read as the §11.6 blend
  * writes it, no transition of its own, as the touch windows' rule above – laid at the window's
  * size and offset by `TabOverview`'s morph effect so at rest the gradient is the window's,

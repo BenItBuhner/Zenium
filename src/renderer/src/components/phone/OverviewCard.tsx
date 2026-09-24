@@ -14,6 +14,15 @@ import { liftStore, useCardLift, type CardLiftOptions } from './useCardLift'
 
 /** Corner radius of a tab card; the page morphs from the content radius to this. */
 export const CARD_RADIUS = 14
+/** The phone card's aspect (Chrome's), what a cell draws where the tablet's ratio is unset. */
+export const PHONE_CARD_ASPECT = '3 / 4'
+/**
+ * A cell's `aspect-ratio`: the tablet layer's ratio – the frame's, landscape on a landscape
+ * tablet, set on the layer's box as `--zen-overview-card-aspect` by `TabOverview` (v2 §9.36) –
+ * or the phone's where none is set. Every cell in the box draws it: a card, the New Tab card,
+ * a dissolving group's members (`Departures`).
+ */
+export const CARD_ASPECT = `var(--zen-overview-card-aspect, ${PHONE_CARD_ASPECT})`
 /**
  * How far past the grid's edges a card counts as on screen, as a share of the grid's height
  * (`useOnScreen` measures from the card's scroller): about a row of cards, so the pictures of
@@ -93,7 +102,7 @@ export function OverviewCard({
     <div
       ref={cellRef}
       className="relative"
-      style={{ aspectRatio: '3 / 4' }}
+      style={{ aspectRatio: CARD_ASPECT }}
       data-tab-id={tab.id}
       data-cell={tab.id}
     >

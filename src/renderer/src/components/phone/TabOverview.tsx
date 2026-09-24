@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Archive,
@@ -43,7 +43,7 @@ import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRow
 import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
-import { overviewColumns } from '@renderer/lib/layout'
+import { overviewColumns, tabletCardAspect } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import {
@@ -128,7 +128,7 @@ import {
 import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
 import { InactiveTabsSheet } from './InactiveTabsSheet'
-import { CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
+import { CARD_ASPECT, CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
@@ -193,9 +193,11 @@ interface Props {
   /**
    * The tablet shell's mount (TABLET-14, MOT-04; v2 §9.36): the same grid at the width's
    * columns, with the tab search as a field in the header row in place of the phone's magnifier
-   * (a tablet has the room), and an entrance that slides the whole layer up over the page on
-   * the spring – Chrome's tablet switcher – in place of the phone's morph of the page into its
-   * card. The phone's rendering is untouched by it.
+   * (a tablet has the room), the cards' pictures at the frame's aspect, and an entrance that
+   * brings the whole layer DOWN from the toolbar's edge over the page on the spring – the
+   * overview is pulled down from the toolbar, and a surface arrives from where it lives (§11) –
+   * in place of the phone's morph of the page into its card. The phone's rendering is untouched
+   * by it.
    */
   tablet?: boolean
 }
@@ -383,6 +385,14 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const isDark = isDarkScheme(state)
   // A phone on its side gets a row of four smaller cards, as Chrome's grid does.
   const columns = overviewColumns(useViewport().width)
+  // On the tablet the cards take the frame's aspect (§9.36): the ratio is set on the layer's box
+  // for its cells to read (`CARD_ASPECT` – a card, the New Tab card, a dissolving group's
+  // members); the phone sets nothing and its cells draw 3 / 4.
+  const cardAspectStyle = tablet
+    ? ({
+        '--zen-overview-card-aspect': String(tabletCardAspect(area, columns, cardHeaderHeight()))
+      } as CSSProperties)
+    : undefined
 
   const boxRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -580,8 +590,13 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     // hero inside an open group brings its group along – the group's card first, so the header
     // is in view when the group fits (the strip's show-group chip opens the overview at the
     // group, TAB-14), then its own card, which wins when the group is taller than the grid.
-    // The progress read live: the prop's is the one at the shape's last change, and a card
-    // arriving or leaving mid-drag re-runs this with the finger well past the start.
+    // `nearest` with the grid's `scrollPaddingBlock` moves the grid the least that shows the
+    // card whole, clear of the fades: a card already in view leaves the scroll alone. On the
+    // tablet nothing morphs, and the same rule is the grid's opening scroll (v2 §9.36): the
+    // active card's row whole under the header, set by the hero's slot – the rows above it cut
+    // at the top are the grid's earlier rows. The progress read live: the prop's is the one at
+    // the shape's last change, and a card arriving or leaving mid-drag re-runs this with the
+    // finger well past the start.
     const morphing = (phase === 'dragging' && liveProgress(overview) < 0.05) || phase === 'settling'
     if (cell && morphing) {
       if (heroGroup && !heroGroup.collapsed)
@@ -1479,6 +1494,22 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       hold.cancel()
     }
   }, [tablet, heroTabId, state.platform])
+  // The tablet layer's geometry – the slide's travel (the layer's height) and the backdrop's
+  // alignment (the window's rect and the box's) – read in one measure pass, then written, when
+  // the frame the layer stands in changes: at the mount, a fold, the sidebar's toggle, never on
+  // the grid's own commits (a query's keystroke, a card picked, the scroll's measure), which
+  // the morph effect below runs on – it has no deps, so each of them would have forced a
+  // layout for three reads. The slide is a transform alone, so the writer needs no read per
+  // frame, and the box the slide's transform never moves is what is measured.
+  const slideTravel = useRef(0)
+  useLayoutEffect(() => {
+    if (!tablet) {
+      slideTravel.current = 0
+      return
+    }
+    slideTravel.current = rootRef.current?.offsetHeight ?? 0
+    alignBackdrop(rootRef.current, boxRef.current)
+  }, [tablet, area.x, area.y, area.width, area.height])
   useLayoutEffect(() => {
     const contentRadius =
       parseFloat(
@@ -1487,14 +1518,15 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     const reduced = reducedMotion()
     const shadowTo = cardShadow(isDark)
     const headerHeight = cardHeaderHeight()
-    // The tablet's entrance (MOT-04): the layer slides up over the page from below its box, its
-    // travel the box's height, on the same 0…1 the phone's morph reads – the spring's, or the
-    // toolbar pull's – so the page's still stands where the page is under it the whole way and
-    // the sidebar fades beneath it (v2 §9.36); under reduced motion the slide is the phone's
-    // fade at scale 1 (§11.3). The height is read once here, not per frame: the slide is a
-    // transform alone, and a layout read against the hero's writes would cost a layout a frame.
-    const slide = tablet ? (rootRef.current?.offsetHeight ?? 0) : 0
-    if (tablet) alignBackdrop(rootRef.current, boxRef.current)
+    // The tablet's entrance (MOT-04, v2 §9.36): the layer comes DOWN from the toolbar's edge
+    // over the page – the overview is pulled down from the toolbar, and a surface arrives from
+    // where it lives (§11), the same way on a tap as under the finger's pull – its travel the
+    // box's height, on the same 0…1 the phone's morph reads (the spring's, or the pull's, which
+    // it follows downward 1:1), so the page's still stands where the page is under it the whole
+    // way and the sidebar fades beneath it; the dismissal is the same writer run back up. At 0
+    // the layer stands a full height above its rest, clipped by the box, so the page shows
+    // whole; under reduced motion the slide is the phone's fade at scale 1 (§11.3).
+    const slide = slideTravel.current
     morph.current = (p) => {
       const root = rootRef.current
       if (root) {
@@ -1502,7 +1534,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
         if (tablet) root.style.visibility = covered.current ? '' : 'hidden'
         if (tablet && !reduced) {
           root.style.opacity = '1'
-          root.style.transform = p >= 1 ? '' : `translateY(${(1 - p) * slide}px)`
+          root.style.transform = p >= 1 ? '' : `translateY(${-(1 - p) * slide}px)`
         } else {
           root.style.opacity = String(Math.min(1, p * 1.6))
           // Under reduced motion the grid appears at scale 1 with a 120 ms fade (v2 §11.3).
@@ -1559,7 +1591,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // The hero's box, radius, shadow and fade, and its title row's height and fade, are the morph
   // effect's per frame (its first frame written in the commit, before the paint). On the phone
   // it stands over the grid – the page's card flying to its slot; on the tablet under the layer
-  // that slides up over it – the page's still in the page's frame, so it comes first in the tree.
+  // that comes down over it – the page's still in the page's frame, so it comes first in the tree.
   const heroNode = hero && p < 1 && (
     <div
       ref={heroRef}
@@ -1613,9 +1645,12 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
               ? 'calc(var(--zen-phone-band) + var(--zen-inset-bottom))'
               : 'var(--zen-inset-bottom)',
           pointerEvents: interactive ? 'auto' : 'none',
-          // The tablet's layer slides up from below this box (MOT-04): the box is its clip, so
-          // the layer rises out of the box's foot, not through the inset under it.
-          overflow: tablet ? 'hidden' : undefined
+          // The tablet's layer comes down from above this box (MOT-04): the box is its clip, so
+          // the layer descends out of the box's head – the toolbar's edge – not over the toolbar.
+          overflow: tablet ? 'hidden' : undefined,
+          // The tablet's card aspect (§9.36), read by every cell in the box: the layer's and a
+          // dissolving group's shell beside it (`Departures`).
+          ...cardAspectStyle
         }}
       >
         <div
@@ -1626,9 +1661,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           data-surface="window"
           // The tablet's mount (TABLET-14): the layer is opaque – it slides over the page – in
           // the window's own tone, its gradient laid at the window's size and offset so that at
-          // rest it is the window's, seamless at the toolbar's edge (the morph effect writes the
-          // size and offset; `background-attachment: fixed` would do it but for the transform,
-          // under which it is read as `scroll`).
+          // rest it is the window's, seamless at the toolbar's edge (the geometry effect writes
+          // the size and offset; `background-attachment: fixed` would do it but for the
+          // transform, under which it is read as `scroll`). Its cards take the frame's aspect
+          // (§9.36): the ratio the cells read (`--zen-overview-card-aspect`, set on the box),
+          // the phone's 3 / 4 where it is unset.
           data-tablet={tablet || undefined}
           // The pane swipe listens here, above the slot it outlives (GN-19).
           {...swipe}
@@ -2424,7 +2461,7 @@ function NewTabCard({ pane, disabled }: { pane: OverviewPane; disabled?: boolean
     <button
       type="button"
       className="zen-overview-new flex flex-col items-center justify-center gap-2 text-[var(--zen-muted)] active:text-[var(--zen-fg)]"
-      style={{ aspectRatio: '3 / 4' }}
+      style={{ aspectRatio: CARD_ASPECT }}
       data-cell={NEW_TAB_CELL}
       data-testid={isPrivate ? 'overview-new-private-tab' : 'overview-new-tab'}
       disabled={disabled}
