@@ -1993,6 +1993,13 @@ export type ShortcutAction =
    * name of the user's (`ZenWindow.name`). Unbound in both presets, as in Chrome.
    */
   | 'window.name'
+  /**
+   * Duplicate Window (session-19): a second window like this one – its kind, its space, its
+   * tabs (a blank or private window's as copies: the addresses in their order, pinned as they
+   * are) – cascaded from it. Unbound in both presets; the row is in the table so Settings can
+   * bind one and the palette lists it.
+   */
+  | 'window.duplicate'
   | 'app.quit'
   /** Open the application menu from the keyboard (Alt+F / F10 on Windows and Linux). */
   | 'menu.app'

@@ -358,8 +358,15 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Select Previous Tab', action: 'tab.prev', enabled: Boolean(active) },
       { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) },
       { type: 'separator' },
-      // Chrome's Window › Name Window…, in a group of its own as Chrome's menu has it.
+      // Chrome's Window › Name Window…, in a group of its own as Chrome's menu has it; Duplicate
+      // Window (session-19) is the group's other row about this window – not for a popup or an
+      // app window, which have no tab strip to duplicate.
       { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
+      {
+        label: 'Duplicate Window',
+        action: 'window.duplicate',
+        enabled: Boolean(win) && win!.chrome === 'full'
+      },
       { type: 'separator' },
       { label: 'Next Space', action: 'space.next', enabled: Boolean(win) && !local },
       { label: 'Previous Space', action: 'space.prev', enabled: Boolean(win) && !local },

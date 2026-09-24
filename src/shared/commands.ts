@@ -315,6 +315,14 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'window.name',
     layouts: DESKTOP_LAYOUT
   },
+  // Duplicate Window (session-19): a second window like this one, cascaded from it.
+  {
+    id: 'duplicate-window',
+    label: 'Duplicate Window',
+    keywords: ['window', 'duplicate', 'clone', 'copy'],
+    action: 'window.duplicate',
+    requires: 'windows'
+  },
   {
     id: 'addons',
     label: 'Add-ons and Themes',

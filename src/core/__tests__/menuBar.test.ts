@@ -207,10 +207,12 @@ describe('the macOS menu bar', () => {
     const labels = window.map((i) => (i.type === 'separator' ? '-' : i.label))
     const at = labels.indexOf('Name Window…')
     expect(at).toBeGreaterThan(0)
-    expect(labels.slice(at - 2, at + 3)).toEqual([
+    // The group about this window: its name, then its double (session-19).
+    expect(labels.slice(at - 2, at + 4)).toEqual([
       'Search Tabs…',
       '-',
       'Name Window…',
+      'Duplicate Window',
       '-',
       'Next Space'
     ])
@@ -224,6 +226,30 @@ describe('the macOS menu bar', () => {
     // Nothing to name without a window: no window opens for it.
     h.win.onClosing()
     h.win.onClosed()
+    expect(h.browser.allWindows()).toHaveLength(0)
+    row.click?.()
+    expect(h.browser.allWindows()).toHaveLength(0)
+  })
+
+  it('carries Window › Duplicate Window beside Name Window…: a second window on the front window’s space, none with every window closed (session-19)', () => {
+    const h = harness()
+    const row = item(submenu(last(h), 'Window'), 'Duplicate Window')
+    expect(row.action).toBe('window.duplicate')
+    expect(row.enabled).toBe(true)
+    // Unbound in both presets: no chord after the label.
+    expect(row.accelerator).toBeUndefined()
+    row.click?.()
+    const windows = h.browser.allWindows()
+    expect(windows).toHaveLength(2)
+    const dup = windows.find((w) => w !== h.win)
+    expect(dup?.kind).toBe('synced')
+    expect(dup?.activeSpace().id).toBe(h.win.activeSpace().id)
+    expect(dup?.cascadeFrom).toBe(h.win)
+    // Nothing to duplicate without a window: no window opens for it.
+    for (const w of windows) {
+      w.onClosing()
+      w.onClosed()
+    }
     expect(h.browser.allWindows()).toHaveLength(0)
     row.click?.()
     expect(h.browser.allWindows()).toHaveLength(0)

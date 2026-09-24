@@ -596,6 +596,45 @@ export class Browser {
   }
 
   /**
+   * Duplicate Window (session-19): a second window like `win` – its kind, its space, its compact
+   * state – cascaded from it, `win` itself untouched. A synced window's tabs are the model's,
+   * shared by every synced window: the duplicate shows the same space with the same tab
+   * selected, and the held-tab rule decides which window holds each page. A blank or private
+   * window's tabs are its own: the duplicate gets copies – the addresses in their order, pinned
+   * as the originals are, the same tab selected – as fresh loads on demand, not the pages' state
+   * (a private page's state stays in its window). Toolbar-only popups and app windows have no
+   * tab strip to duplicate, and a host with one window nothing to duplicate into: null.
+   */
+  duplicateWindow(win: ZenWindow): ZenWindow | null {
+    if (!this.state.capabilities.windows || win.chrome !== 'full') return null
+    const source = win.activeSpace()
+    const selected = win.selectedTabIn(source)
+    const dup = this.createWindow({ kind: win.kind, from: win, empty: true })
+    if (!win.localSpace) {
+      if (selected) dup.select(dup.activeSpace(), selected)
+      this.state.commit()
+      return dup
+    }
+    const m = this.state.model
+    const copies: Tab[] = []
+    let selectedCopy: Tab | undefined
+    for (const id of source.tabIds) {
+      const tab = m.tabs[id]
+      if (!tab) continue
+      const copy = this.tabs.createTab(
+        { url: tab.url, pinned: tab.pinned, active: false, load: false },
+        dup
+      )
+      copies.push(copy)
+      if (id === selected) selectedCopy = copy
+    }
+    const shown = selectedCopy ?? copies[0]
+    if (shown) this.tabs.activateTab(shown.id, dup)
+    else this.openFreshTab(dup)
+    return dup
+  }
+
+  /**
    * A web app in a standalone window of its own – `zenium --app=<url>`, what an installed app's
    * launcher runs (MW-23, Chrome's app window): no browser chrome, the app's name and icon on the
    * frame, one page that stays inside the app's scope (a navigation out of it opens in a browser

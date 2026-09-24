@@ -620,6 +620,15 @@ const DEFS: Def[] = [
     ...both(UNBOUND)
   },
   {
+    // Duplicate Window (session-19) has no chord in either browser; in the table, as the other
+    // window rows are, so Settings can bind one and the palette lists it where windows exist.
+    id: 'zen-duplicate-window',
+    action: 'window.duplicate',
+    group: 'windowAndTabManagement',
+    label: 'Duplicate Window',
+    ...both(UNBOUND)
+  },
+  {
     // Chrome quits on Ctrl+Shift+Q (Linux) and Cmd+Q; Zen keeps Firefox's Ctrl+Q.
     id: 'key_quitApplication',
     action: 'app.quit',
