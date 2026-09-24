@@ -3149,7 +3149,7 @@ export class Menus {
         // bookmarks (Reading list ▸ in Bookmarks and lists ▸) – and not as Chrome's top-level
         // row: a twenty-first row gives 692 at rest and 732 folded (Now Playing…) against the
         // 718 of room on an 800 px window, the numbers the #396 review turned down, where the
-        // Bookmarks submenu has the room (289 for eight rows). The desktop's alone: the phone's
+        // Bookmarks submenu has the room (258 for its seven rows). The desktop's alone: the phone's
         // and the tablet's Tab groups pane is the overview's (TAB-16), and a private or blank
         // window (`local`) shows no synced space for a restored group to open in.
         ...desktop(
