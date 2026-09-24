@@ -1,3 +1,0 @@
-37e84186ae474930afeb4f594fc95bd7970b41b9
-TEMPORARY (W5-16): the first line is the pair's base ref; bumped to fire the cold start pair on this branch. Removed before completion.
-run 4 again: the final head, rebased onto main's tip (#452), against that tip - the P0 table's ruling pair (the first attempt died reading main's missing marks line)
