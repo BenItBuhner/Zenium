@@ -24,8 +24,6 @@ name: Android chrome accessibility and font scale demo
 # demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-a11y-pass-2-bb11]
 
 permissions:
   contents: read
@@ -52,7 +50,7 @@ jobs:
         DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
       artifact-name: android-a11y-chrome-demo
       artifact-path: artifacts/android-a11y-chrome-demo/
-      # Eighteen scenes, three of them at a font scale each: the driver alone runs a good while.
+      # Nineteen scenes, three of them at a font scale each: the driver alone runs a good while.
       timeout-minutes: 70
 
   record-private:
