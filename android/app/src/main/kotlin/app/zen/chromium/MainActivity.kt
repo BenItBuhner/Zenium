@@ -424,6 +424,13 @@ class MainActivity : BrowserActivity() {
      */
     fun setSystemBarsLight(light: Boolean) = startupSplash.systemBarsLight(light)
 
+    /**
+     * Whether the boot's restore is still in flight: a `view.load` before the chrome's READY is
+     * the session coming back, and its page gets its last picture (RestoredPictures); one after
+     * it is the user's.
+     */
+    val restoringAtBoot: Boolean get() = !chromeReadyHeard
+
     // --- picture-in-picture (MediaSessions.kt) ---------------------------------------------------
 
     /** Home or Recents pressed: on Android 8-11 a video playing fullscreen goes into the small window from here. */
@@ -456,7 +463,11 @@ class MainActivity : BrowserActivity() {
         // dropping (see HostLifecycle for why UI_HIDDEN is not pressure).
         if (HostLifecycle.trimDropsSnapshots(level)) host.snapshots.clear()
         // Short of memory: the core puts hidden pages to sleep ahead of their timeout (CT-22).
-        HostLifecycle.memoryPressure(level)?.let { host.chrome.hostEvent("memoryPressure", json("level" to it)) }
+        HostLifecycle.memoryPressure(level)?.let {
+            host.chrome.hostEvent("memoryPressure", json("level" to it))
+            // A restored tab's picture still up is a bitmap the page beneath will replace anyway.
+            host.restoredPictures.releaseAll("memory pressure")
+        }
     }
 
     // --- keyboard --------------------------------------------------------------------------------

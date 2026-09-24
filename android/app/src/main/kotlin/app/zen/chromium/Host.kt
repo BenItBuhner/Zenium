@@ -388,6 +388,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The tab cards' pictures, one JPEG per tab under the cache dir (`thumbnail.*`, [TabWebView.captureThumbnail]). */
     override val thumbnails = Thumbnails(File(activity.cacheDir, Thumbnails.DIR))
     /**
+     * The restored tab's card picture over its page view from the boot's `view.load` to the
+     * page's first paint (OS-26, `RestoredPictures`): only while the boot's restore is in flight,
+     * before the chrome's READY.
+     */
+    val restoredPictures = RestoredPictures(thumbnails, main) { activity.restoringAtBoot }
+    /**
      * Each tab's last pushed list and the `hostState` behind it, for the synchronous
      * `view.navigationEntries` and `view.navigationHostState` the core makes from the bridge
      * thread, where the WebView cannot be asked (see [NavigationMirror]).
@@ -826,9 +832,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // A load the rebooted core sets up for a page whose renderer went with it in front
             // (`deliverRendererExit`): the crash page's word follows the reply and supersedes it.
             "view.load" -> {
-                tab?.loadUrl(args.str("url"))
+                val url = args.str("url")
+                tab?.loadUrl(url)
                 reply(null)
-                if (tab != null) deliverRendererExit(tab.tabId)
+                if (tab != null) {
+                    // At boot, the restored tab's last picture over the blank page until it paints.
+                    restoredPictures.offer(tab, url)
+                    deliverRendererExit(tab.tabId)
+                }
             }
             "view.loadHtml" -> {
                 val hold = tab?.let { debugLoadHtmlHold(it.tabId) }
@@ -2300,6 +2311,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     fun destroy() {
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
+        restoredPictures.releaseAll("host destroyed")
         connectivity.stop()
         extensions.destroy()
         cancelProbe()

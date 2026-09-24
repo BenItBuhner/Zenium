@@ -104,4 +104,12 @@ class StartupSplashTest {
         val build = read("build.gradle.kts", "app/build.gradle.kts")
         assertTrue(build.contains("androidx.core:core-splashscreen:"))
     }
+
+    @Test
+    fun theRestoredPictureIsForTheBootsRestoreOnlyOverAnUnpaintedViewOnce() {
+        assertTrue(RestoredPictures.wanted(restoring = true, painted = false, shown = false))
+        assertFalse("a load after READY is the user's", RestoredPictures.wanted(restoring = false, painted = false, shown = false))
+        assertFalse("a page that has drawn is not covered", RestoredPictures.wanted(restoring = true, painted = true, shown = false))
+        assertFalse("one per tab", RestoredPictures.wanted(restoring = true, painted = false, shown = true))
+    }
 }
