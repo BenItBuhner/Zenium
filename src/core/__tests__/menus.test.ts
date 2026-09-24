@@ -2334,6 +2334,62 @@ describe('the page context menu', () => {
     expect(item(h.items(), 'Inspect Element').action).toBe('devtools.inspector')
   })
 
+  it('on the new tab page leads with the page’s own rows (NTP-18, NTP-22): Hide Greeting / Hide Shortcuts for the sections it shows, Restore Default Shortcuts with the grid, Customise New Tab Page…', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'settings.update', { newTab: { preset: 'inspirational' } })
+    h.browser.handleCommand(h.win, 'newtab.open', undefined)
+    const tab = h.browser.tabs.activeTabFor(h.win)!
+    const menu = (): string[] => {
+      h.browser.menus.showPageContextMenu(tab.id, pageParams(), h.win)
+      return topLabels(h.shown())
+    }
+    expect(menu().slice(0, 5)).toEqual([
+      'Hide Greeting',
+      'Hide Shortcuts',
+      'Restore Default Shortcuts',
+      'Customise New Tab Page…',
+      '-'
+    ])
+    // A fresh profile's grid: the restore has nothing to do and its row is greyed.
+    expect(item(h.shown(), 'Restore Default Shortcuts').enabled).toBe(false)
+    const commands: unknown[] = []
+    h.browser.tabs.view(tab.id)!.sendNewTabCommand = (c) => {
+      commands.push(c)
+    }
+    // A pinned shortcut enables the row; the row restores through the model and raises the
+    // page's toast (Undo alone, §9.33) in place of a confirmation – the toast's link is gone.
+    h.browser.newTab.addShortcut('Docs', 'docs.example')
+    menu()
+    expect(item(h.shown(), 'Restore Default Shortcuts').enabled).toBe(true)
+    item(h.shown(), 'Restore Default Shortcuts').click?.()
+    expect(h.browser.state.newTabDevice.shortcuts).toEqual([])
+    expect(commands).toEqual([{ type: 'defaults-restored' }])
+    menu()
+    expect(item(h.shown(), 'Restore Default Shortcuts').enabled).toBe(false)
+    commands.length = 0
+    item(h.shown(), 'Hide Greeting').click?.()
+    expect(h.browser.state.settings.newTab).toMatchObject({ modules: { greeting: false } })
+    expect(commands).toEqual([{ type: 'section-hidden', section: 'greeting' }])
+    // A hidden section has no row – the grid's restore goes with the grid; a page with neither
+    // section shows only the way to Customise.
+    expect(menu().slice(0, 4)).toEqual([
+      'Hide Shortcuts',
+      'Restore Default Shortcuts',
+      'Customise New Tab Page…',
+      '-'
+    ])
+    item(h.shown(), 'Hide Shortcuts').click?.()
+    expect(menu().slice(0, 2)).toEqual(['Customise New Tab Page…', '-'])
+    // The private page has neither section and no rows of its own.
+    const priv = h.browser.openWindow('private')!
+    const privTab = h.browser.tabs.activeTabFor(priv)!
+    h.browser.menus.showPageContextMenu(privTab.id, pageParams(), priv)
+    expect(topLabels(h.shown())[0]).toBe('Back')
+    // A web page keeps Chrome's groups alone.
+    const page = pageHarness()
+    expect(page.menu(pageParams())[0]).toBe('Back')
+  })
+
   it('says capture once on the desktop – one Web Capture… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
     const h = pageHarness()
     const menu = h.menu(pageParams())

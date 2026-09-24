@@ -48,6 +48,7 @@ import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES, withDefaultSearchEngineActive } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
+import { makeTheme } from '@shared/theme'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { emptySiteDataStatus } from '@shared/siteData'
@@ -294,7 +295,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
     siteData: emptySiteDataStatus(),
-    newTabBackground: { image: false, canPick: false },
+    newTabBackground: { image: false, canPick: false, accent: null },
     translate: TRANSLATE,
     spellcheck: UNAVAILABLE_SPELLCHECK,
     ...patch
@@ -1278,8 +1279,28 @@ describe('the section model', () => {
     const models = buildSections(availableSections(PAGE, c.ctx.state.capabilities, 'phone'), c.ctx)
     expect(models.map((m) => m.section.id).slice(0, 3)).toEqual(['look', 'newtab', 'tabs'])
     const newtab = models[1]
-    expect(newtab.groups.map((g) => g.heading)).toEqual(['New tab page', 'My shortcuts', null])
+    expect(newtab.groups.map((g) => g.heading)).toEqual([
+      'New tab page',
+      'My shortcuts',
+      null,
+      null
+    ])
     expect(newtab.groups.every(groupShows)).toBe(true)
+
+    // NTP-12 / NTP-22: the background's own reset is one row and asks nothing – disabled on the
+    // default already; the whole page's reset is bulk, behind the row's destructive confirmation.
+    const resetBackground = row(newtab, 'newtab-reset-background')
+    if (resetBackground.kind !== 'action') throw new Error('not an action')
+    expect(resetBackground.disabled).toBe(true)
+    expect(resetBackground.confirm).toBeUndefined()
+    resetBackground.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.resetBackground', undefined)
+    const reset = row(newtab, 'newtab-reset')
+    if (reset.kind !== 'action') throw new Error('not an action')
+    expect(reset.destructive).toBe(true)
+    expect(reset.confirm).toMatchObject({ title: 'Reset the new tab page?', action: 'Reset' })
+    reset.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.reset', undefined)
 
     // The page's preferences patch inside `newTab`, keeping the rest of it. The rows write the
     // one model's sections as the phone's sheet does: a background other than the space gradient
@@ -1354,6 +1375,70 @@ describe('the section model', () => {
     expect(row(synced, 'newtab-greeting')).toMatchObject({ checked: true })
     expect(row(synced, 'newtab-background')).toMatchObject({ value: 'space' })
     expect(row(synced, 'newtab-shortcuts')).toMatchObject({ value: 'most-visited' })
+    // A background other than the default – as the page shows it, so a solid colour under a
+    // layout with its wallpaper section on – arms its reset row.
+    const solid = section(
+      'newtab',
+      state({ capabilities: { ...ANDROID, newTabPage: true } } as Partial<UIState>, {
+        newTab: {
+          ...DEFAULT_SETTINGS.newTab,
+          preset: 'custom',
+          modules: { ...DEFAULT_SETTINGS.newTab.modules, wallpaper: true },
+          background: 'solid'
+        }
+      })
+    )
+    expect(row(solid, 'newtab-reset-background')).toMatchObject({ disabled: false })
+
+    // NTP-14: "Use the picture's colour" is a switch directly under the background – with the
+    // image rows, so only where a file can be picked – at rest (disabled) without an image and
+    // until its colour is read, on when the active space's theme follows the picture; flipping
+    // it is the command.
+    expect(findRow(newtab.groups, 'newtab-image-colour')).toBeNull()
+    const pickable = (accent: string | null, image = true, following = false): Model =>
+      section(
+        'newtab',
+        state({
+          capabilities: { ...ANDROID, newTabPage: true },
+          newTabBackground: { image, canPick: true, accent },
+          spaces: [
+            {
+              id: 'space',
+              name: 'Personal',
+              activeTabId: 'settings',
+              tabIds: ['site', 'settings'],
+              theme: following ? { ...makeTheme('#3b6fd6'), fromImage: true } : null
+            }
+          ]
+        } as unknown as Partial<UIState>)
+      )
+    expect(row(pickable(null, false), 'newtab-image-colour')).toMatchObject({
+      kind: 'switch',
+      checked: false,
+      disabled: true
+    })
+    expect(row(pickable(null), 'newtab-image-colour')).toMatchObject({ disabled: true })
+    const ids = pickable('#3b6fd6').groups[0].rows.map((r) => r.id)
+    expect(ids.indexOf('newtab-image-colour')).toBe(ids.indexOf('newtab-background') + 1)
+    const useColour = row(pickable('#3b6fd6'), 'newtab-image-colour')
+    if (useColour.kind !== 'switch') throw new Error('not a switch')
+    expect(useColour).toMatchObject({
+      label: "Use the picture's colour",
+      checked: false,
+      disabled: false
+    })
+    useColour.onChange(true)
+    expect(invoke).toHaveBeenCalledWith('newtab.useImageColor', { on: true })
+    const following = row(pickable('#3b6fd6', true, true), 'newtab-image-colour')
+    if (following.kind !== 'switch') throw new Error('not a switch')
+    expect(following).toMatchObject({ checked: true, disabled: false })
+    following.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('newtab.useImageColor', { on: false })
+    // The picture let go while on: the switch keeps the space's choice, at rest.
+    expect(row(pickable(null, false, true), 'newtab-image-colour')).toMatchObject({
+      checked: true,
+      disabled: true
+    })
 
     // A shortcut without a name is listed by its address; its sheet edits, moves and removes it.
     expect(row(newtab, 'shortcut:b').label).toBe('https://b.test/')
@@ -2486,6 +2571,14 @@ describe('the section model', () => {
     expect(c.patches).toEqual([{ splitEdgeZones: false }])
     // A finger scrolls the strip rather than dragging a tab: the touch host has no such row.
     expect(section('look').groups.map((g) => g.id)).not.toContain('split-view')
+  })
+
+  it('keeps the left pane’s link rule off the page: the split view group is the drag switch alone – the rule is each split’s own, on the pane’s ⋯ menu (split-13, §9.35)', () => {
+    const c = context(state(), true)
+    const look = buildSection(PAGE.sections[0], c.ctx)
+    const group = look.groups.find((g) => g.id === 'split-view')!
+    expect(group.rows.map((r) => r.id)).toEqual(['split-edge-zones'])
+    expect(searchRows([look], 'right pane').map((h) => h.row.id)).toEqual([])
   })
 
   it('tells a touch host its own gestures: no double-click, Glance from the link menu', () => {

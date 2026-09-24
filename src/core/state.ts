@@ -354,7 +354,11 @@ export class BrowserState {
   /** The stacks' host-state blobs, one document per tab, kept out of `state.json`. */
   readonly navigationState: NavigationStateStore
   /** The new tab page's custom background image; provided by the Browser (the host owns the file). */
-  newTabBackgroundFor: () => UIState['newTabBackground'] = () => ({ image: false, canPick: false })
+  newTabBackgroundFor: () => UIState['newTabBackground'] = () => ({
+    image: false,
+    canPick: false,
+    accent: null
+  })
   /**
    * The new tab page's device-local sets: the user's shortcuts in grid order and the hosts
    * removed from the most-visited tiles. Replaced whole by the `NewTabService` (never mutated in
@@ -842,6 +846,9 @@ export class BrowserState {
       }
       if (group.sizes?.length !== group.tabIds.length)
         group.sizes = group.tabIds.map(() => 1 / group.tabIds.length)
+      // The split's link rule (split-13) reads on only when the record says `true`: a session
+      // from before it existed, a peer's record or anything else reads off, stored as absent.
+      if (group.linksToRight !== true) delete group.linksToRight
       for (const id of group.tabIds) m.tabs[id].splitGroupId = group.id
     }
     for (const tab of Object.values(m.tabs)) {
