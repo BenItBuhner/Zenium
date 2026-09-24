@@ -2,17 +2,18 @@ import type { TabCapture } from '@shared/captureState'
 import { FILE_SITE } from '@shared/contentSettings'
 import type { IndicatorState } from '@shared/siteInfo'
 import type { Tab, UIState } from '@shared/types'
-import { originOf } from './security'
+import { originOf, quietPermissionPrompt } from './security'
 
 /**
  * What the URL pill's site-information slot says of a site's permissions (omnibox-38, design
  * language v2 §9.29): the slot's glyph is the site's state, one at a time – a certificate
  * error's danger glyph, else the camera / microphone / screen the page is using right now, else
- * the crossed-out glyph of the first permission the user blocked on the site, else the Memory
- * Saver leaf of a tab just woken from sleep (omnibox-40), else the connection's own glyph –
- * never a second chip for a state the slot can carry (at the 240 sidebar an added 28 px chip
- * takes the address under its floor). The words and the readings live here, apart from the chip
- * that draws them, so they are tested without a DOM.
+ * the crossed-out glyph of the first permission the user blocked on the site, else the bell-off
+ * of a quiet notification request waiting for the user (NOT-03), else the Memory Saver leaf of
+ * a tab just woken from sleep (omnibox-40), else the connection's own glyph – never a second
+ * chip for a state the slot can carry (at the 240 sidebar an added 28 px chip takes the address
+ * under its floor). The words and the readings live here, apart from the chip that draws them,
+ * so they are tested without a DOM.
  */
 
 /**
@@ -127,9 +128,9 @@ export function memorySaverLabel(savedMb: number): string {
 
 /**
  * The state the site-information slot carries in place of the connection's glyph: a live
- * capture, the site's standing blocks, or the leaf of a tab just woken from sleep. `label` is
- * the state's name – the chip's tooltip, and what the chip's name appends to "Site
- * information" (`siteChipName`).
+ * capture, the site's standing blocks, a quiet notification request waiting for the user, or
+ * the leaf of a tab just woken from sleep. `label` is the state's name – the chip's tooltip,
+ * and what the chip's name appends to "Site information" (`siteChipName`).
  */
 export type SiteSlotState =
   | { kind: 'capture'; glyph: CaptureGlyph; label: string }
@@ -138,6 +139,17 @@ export type SiteSlotState =
       glyph: BlockedGlyph
       /** Every permission blocked on the site, in the pill's order; the glyph is the first's. */
       permissions: BlockedPermission[]
+      label: string
+    }
+  | {
+      /**
+       * The page asked for notifications quietly (`PermissionPrompt.quiet`, NOT-03): the bell-off
+       * in place of a bubble, the bubble opening from the bell alone. `promptId` is the prompt the
+       * bell stands for – what the click opens (`openQuietPrompt`).
+       */
+      kind: 'quiet'
+      glyph: 'notifications-off'
+      promptId: string
       label: string
     }
   | {
@@ -182,13 +194,35 @@ export function memorySaverLeaf(
 }
 
 /**
- * Which state the slot shows for the tab, by §9.29's precedence: a certificate error's danger
- * glyph beats everything (the identity is in question, so the connection's glyph stays and this
- * returns null); a live capture (`Tab.capture`, folded from the frames' reports) beats a
- * standing block; a stored site-level block beats the leaf of a tab just woken from sleep (a
- * decision of the user's over a passing notice); the leaf beats the connection's own glyph;
- * null where the connection's glyph is all there is. A masked private tab is no page to the
- * pill (the caller passes no tab).
+ * The quiet notification request's bell for the tab (NOT-03, omnibox-38): the quiet prompt
+ * pending on it, if any, as the slot's state – Chrome's crossed-out bell, named as a standing
+ * block of notifications is ("Notifications blocked": the words Chrome's quiet chip and the
+ * prompt's own title use, the site being one the user usually blocks). Null while no quiet
+ * request waits.
+ */
+export function quietBell(
+  state: UIState,
+  tab: Tab | null | undefined
+): Extract<SiteSlotState, { kind: 'quiet' }> | null {
+  const prompt = tab ? quietPermissionPrompt(state, tab.id) : null
+  if (!prompt) return null
+  return {
+    kind: 'quiet',
+    glyph: 'notifications-off',
+    promptId: prompt.id,
+    label: blockedPermissionLabel('notifications')
+  }
+}
+
+/**
+ * Which state the slot shows for the tab, by §9.29's precedence (as ruled for NOT-03 on the
+ * design gate, 2026-09-24): a certificate error's danger glyph beats everything (the identity is
+ * in question, so the connection's glyph stays and this returns null); a live capture
+ * (`Tab.capture`, folded from the frames' reports) beats a standing block; a stored site-level
+ * block beats a quiet request (a decision of the user's over a question still open); the quiet
+ * request's bell beats the leaf of a tab just woken from sleep (a question waiting on the user
+ * over a passing notice); the leaf beats the connection's own glyph; null where the connection's
+ * glyph is all there is. A masked private tab is no page to the pill (the caller passes no tab).
  */
 export function siteSlotState(
   state: UIState,
@@ -210,7 +244,7 @@ export function siteSlotState(
       label: blockedPermissionsLabel(permissions)
     }
   }
-  return memorySaverLeaf(tab, options)
+  return quietBell(state, tab) ?? memorySaverLeaf(tab, options)
 }
 
 /**

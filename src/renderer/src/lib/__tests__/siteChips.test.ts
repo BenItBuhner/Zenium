@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TabCapture } from '@shared/captureState'
-import type { Tab, UIState } from '@shared/types'
+import type { PermissionPrompt, Tab, UIState } from '@shared/types'
 import {
   BLOCKED_PERMISSIONS,
   MEMORY_SAVER_LEAF_MS,
@@ -11,6 +11,7 @@ import {
   captureLabel,
   memorySaverLeaf,
   permissionSiteOf,
+  quietBell,
   siteChipName,
   siteSlotState
 } from '../siteChips'
@@ -19,13 +20,16 @@ import {
  * The URL pill's readings of a site's permissions (omnibox-38): which blocks the pill shows
  * (a stored deny of the site's own, in the pill's order, and only the four with an icon), keyed
  * by the engine's site (the origin; one site for local files), the glyph and name for what the
- * page holds, and the site-information slot's one state at a time (§9.29's precedence).
+ * page holds, the bell of a quiet notification request (NOT-03), and the site-information
+ * slot's one state at a time (§9.29's precedence).
  */
 
 const tab = (url: string, capture: TabCapture | null = null): Tab =>
   ({ id: 't1', url, capture }) as unknown as Tab
-const state = (rules: UIState['permissionRules']): UIState =>
-  ({ permissionRules: rules }) as unknown as UIState
+const state = (
+  rules: UIState['permissionRules'],
+  permissionPrompts: PermissionPrompt[] = []
+): UIState => ({ permissionRules: rules, permissionPrompts }) as unknown as UIState
 
 describe('blocked permissions of a site', () => {
   it('reads the site’s own deny rules, in the pill’s order, and only the four with an icon', () => {
@@ -180,6 +184,92 @@ describe('the site-information slot’s state (§9.29)', () => {
         siteSlotState(none, tab('https://docs.example/'), 'secure', { now: wokeAt })
       ).toBeNull()
       expect(memorySaverLeaf(null)).toBeNull()
+    })
+  })
+
+  describe('the bell of a quiet notification request (NOT-03, omnibox-38)', () => {
+    const wokeAt = Date.parse('2026-09-24T05:00:00Z')
+    const ask = (id: string, tabId: string): PermissionPrompt => ({
+      id,
+      tabId,
+      origin: 'https://news.example',
+      permission: 'notifications',
+      message: 'Notifications blocked',
+      detail: 'You usually block notifications. To let news.example notify you, choose Allow.',
+      allowLabel: 'Allow',
+      blockLabel: 'Keep blocking',
+      allowOnce: false,
+      requestedAt: wokeAt,
+      quiet: true
+    })
+    /** The loud ask of the same site: a sheet or a bubble in its turn, no bell. */
+    const loud = (id: string, tabId: string): PermissionPrompt => ({
+      ...ask(id, tabId),
+      message: 'Allow news.example to send notifications?',
+      blockLabel: 'Block',
+      quiet: undefined
+    })
+    const bell = {
+      kind: 'quiet',
+      glyph: 'notifications-off',
+      promptId: 'perm-q1',
+      label: 'Notifications blocked'
+    }
+    const quiet = state([], [ask('perm-q1', 't1')])
+
+    it('is the crossed-out bell for the quiet prompt pending on the tab, named as Chrome names it', () => {
+      expect(quietBell(quiet, tab('https://news.example/'))).toEqual(bell)
+      expect(siteSlotState(quiet, tab('https://news.example/'), 'secure')).toEqual(bell)
+      expect(siteChipName(quietBell(quiet, tab('https://news.example/')))).toBe(
+        'Site information · Notifications blocked'
+      )
+      // The same words the slot uses for a standing block of notifications, and the prompt's title.
+      expect(bell.label).toBe(blockedPermissionLabel('notifications'))
+      expect(ask('perm-q1', 't1').message).toBe(bell.label)
+    })
+
+    it('stands for the tab’s own quiet prompt alone: another tab’s, a loud one, or none is no bell', () => {
+      const others = state([], [ask('perm-q2', 't2'), loud('perm-p3', 't1')])
+      expect(quietBell(others, tab('https://news.example/'))).toBeNull()
+      expect(siteSlotState(others, tab('https://news.example/'), 'secure')).toBeNull()
+      expect(quietBell(none, tab('https://news.example/'))).toBeNull()
+      expect(quietBell(quiet, null)).toBeNull()
+      // A state built without the list (a test's) reads as no request, not a crash.
+      expect(quietBell(state([]), tab('https://news.example/'))).toBeNull()
+      // Two quiet prompts on the tab: the first in the queue is the bell's (the core keeps one
+      // per tab; a second request joins it).
+      const two = state([], [ask('perm-q1', 't1'), ask('perm-q9', 't1')])
+      expect(quietBell(two, tab('https://news.example/'))?.promptId).toBe('perm-q1')
+    })
+
+    it('ranks below a live capture and a standing block, above the leaf; a certificate error takes the slot', () => {
+      const woken = {
+        ...tab('https://news.example/'),
+        memorySaver: { savedMb: 120, wokeAt }
+      } as Tab
+      // Over the leaf: a question waiting on the user beats a passing notice.
+      expect(siteSlotState(quiet, woken, 'secure', { now: wokeAt })).toEqual(bell)
+      // The leaf's bubble held open changes nothing: the bell still leads.
+      expect(siteSlotState(quiet, woken, 'secure', { now: wokeAt, leafHeld: true })).toEqual(bell)
+      // Under a standing block of another permission: the user's decision over the open question.
+      const camera = state(
+        [{ origin: 'https://news.example', permission: 'camera', decision: 'deny' }],
+        [ask('perm-q1', 't1')]
+      )
+      expect(siteSlotState(camera, tab('https://news.example/'), 'secure')).toMatchObject({
+        kind: 'blocked',
+        glyph: 'camera-off'
+      })
+      // Under a live capture.
+      expect(siteSlotState(quiet, tab('https://news.example/', both), 'secure')).toMatchObject({
+        kind: 'capture'
+      })
+      // Under the danger tier.
+      expect(siteSlotState(quiet, tab('https://news.example/'), 'certificate-error')).toBeNull()
+      // The bell gone (answered or withdrawn): the leaf is back while its ten seconds run.
+      expect(siteSlotState(none, woken, 'secure', { now: wokeAt })).toMatchObject({
+        kind: 'memory-saver'
+      })
     })
   })
 })

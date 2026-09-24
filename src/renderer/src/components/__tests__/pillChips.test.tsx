@@ -9,6 +9,7 @@ import {
   type AutofillPrompt,
   type BookmarkNode,
   type MediaState,
+  type PermissionPrompt,
   type Space,
   type Tab,
   type UIState
@@ -1121,6 +1122,206 @@ describe('desktop pill (NavRow)', () => {
         expect(slot.getAttribute('data-slot-state')).toBe('capture')
         expect(uiStore.get().memorySaverBubble).toBeNull()
         expect(slot.getAttribute('aria-expanded')).toBe('false')
+      })
+    })
+
+    // NOT-03 / omnibox-38: a quiet notification request asks through the slot – the crossed-out
+    // bell at rest, its bubble opening from the bell alone (`quietPromptId`), never on its own.
+    describe('the quiet notification request’s bell (NOT-03)', () => {
+      const quietAsk = (id = 'perm-q1', tabId = 't1'): PermissionPrompt => ({
+        id,
+        tabId,
+        origin: 'https://example.com',
+        permission: 'notifications',
+        message: 'Notifications blocked',
+        detail: 'You usually block notifications. To let example.com notify you, choose Allow.',
+        allowLabel: 'Allow',
+        blockLabel: 'Keep blocking',
+        allowOnce: false,
+        requestedAt: 0,
+        quiet: true
+      })
+      /** The state with the prompts pending, the tab's quiet ask among them. */
+      const asking = (t: Tab, prompts: PermissionPrompt[] = [quietAsk()]): UIState => ({
+        ...state(t),
+        permissionPrompts: prompts
+      })
+      const hasPressedFill = (chip: HTMLElement): boolean =>
+        chip.className.split(/\s+/).includes('bg-[var(--v2-control-fill-hover)]')
+
+      afterEach(() => {
+        uiStore.set({ quietPromptId: null })
+      })
+
+      it('draws the crossed-out bell at the slot’s one size and rest ink, named as Chrome names it, and no bubble on its own', () => {
+        const el = render(<NavRow state={asking(page)} tab={page} compact={false} />)
+        const slot = slotOf(el)
+        expectChip(slot, 'Site information · Notifications blocked')
+        expect(slot.getAttribute('data-slot-state')).toBe('quiet')
+        expect(slot.getAttribute('data-slot-glyph')).toBe('notifications-off')
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        expect(slot.querySelectorAll('svg')).toHaveLength(1)
+        expect(slot.getAttribute('data-tooltip')).toBe('Notifications blocked')
+        expect(slot.hasAttribute('title')).toBe(false)
+        expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        // §9.19's 16 in the 24 box at the row's stroke: the address's room is unchanged.
+        expectSlotGlyph(glyphOf(slot))
+        expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+        // A question, not a live state: the slot's 69 % rest ink, the token once (§9.29).
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+        expect(restOpacity(slot)).toEqual([])
+        expect(hasPressedFill(slot)).toBe(false)
+        // Nothing opened by itself: the bell waits for the user.
+        expect(uiStore.get().quietPromptId).toBeNull()
+        // Never a second chip for it.
+        expect(chipLabels(el).filter((l) => l?.includes('Notifications'))).toHaveLength(1)
+        // A loud ask on the tab, or another tab's quiet one, is no bell: the connection's glyph.
+        act(() =>
+          root!.render(
+            <NavRow
+              state={asking(page, [{ ...quietAsk(), quiet: undefined }, quietAsk('perm-q2', 't2')])}
+              tab={page}
+              compact={false}
+            />
+          )
+        )
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(el.querySelector('svg.lucide-bell-off')).toBeNull()
+      })
+
+      it('stands above the leaf and the private mask, below a standing block; a capture and a certificate error take the slot over it', () => {
+        // Over the leaf: a question waiting on the user beats a passing notice.
+        const woken = tab(page.url, {
+          readerable: true,
+          memorySaver: { savedMb: 312, wokeAt: Date.now() }
+        })
+        const el = render(<NavRow state={asking(woken)} tab={woken} compact={false} />)
+        const slot = slotOf(el)
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('quiet')
+        expect(el.querySelector('svg.lucide-leaf')).toBeNull()
+        // Over the mask: a private tab's quiet ask shows the bell, the mask gone from the box.
+        const secret = tab(page.url, { readerable: true, containerId: PRIVATE_CONTAINER_ID })
+        act(() => root!.render(<NavRow state={asking(secret)} tab={secret} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        expect(el.querySelector('svg.lucide-venetian-mask')).toBeNull()
+        expect(slot.querySelectorAll('svg')).toHaveLength(1)
+        // Under a standing block of another permission: the user's decision over the question.
+        act(() =>
+          root!.render(
+            <NavRow
+              state={{ ...asking(page), permissionRules: [deny('camera')] }}
+              tab={page}
+              compact={false}
+            />
+          )
+        )
+        expect(glyphOf(slot).classList.contains('lucide-camera-off')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('blocked')
+        expect(slot.getAttribute('aria-label')).toBe('Site information · Camera blocked')
+        // Under a live capture.
+        const call = using({ camera: false, microphone: true, display: false })
+        act(() => root!.render(<NavRow state={asking(call)} tab={call} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-mic')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('capture')
+        // Under the danger tier: the triangle in the danger ink, the bell's name gone with it.
+        const broken = tab(page.url, {
+          readerable: true,
+          certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+        })
+        act(() => root!.render(<NavRow state={asking(broken)} tab={broken} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-triangle-alert')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+        expect(el.querySelector('svg.lucide-bell-off')).toBeNull()
+        // The states end: the bell returns, the question still waiting, in the same box.
+        act(() => root!.render(<NavRow state={asking(page)} tab={page} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      })
+
+      it('opens the quiet prompt on a click – not the site information – with the slot as its pressed anchor; a second press opens nothing new', async () => {
+        const el = render(<NavRow state={asking(page)} tab={page} compact={false} />)
+        const slot = slotOf(el)
+        slot.focus()
+        await act(async () => {
+          slot.click()
+        })
+        // The bell's prompt is the one to show (`PermissionPrompts` draws it); site information
+        // stayed shut.
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        expect(uiStore.get().siteInfoOpen).toBe(false)
+        expect(siteInfoStore.get().tabId).toBeNull()
+        // The pressed anchor (§9.20): the window fill at full ink, `aria-expanded` on, the bell
+        // still the glyph.
+        expect(slot.getAttribute('aria-expanded')).toBe('true')
+        expect(hasPressedFill(slot)).toBe(true)
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        // A second press on the anchor opens nothing new (the layer's light dismiss closes it).
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        // The bubble put away without a word (Escape, a press outside): the bell stays, at rest.
+        act(() => uiStore.set({ quietPromptId: null }))
+        expect(slot.getAttribute('data-slot-state')).toBe('quiet')
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        expect(hasPressedFill(slot)).toBe(false)
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+        // Nothing went to the core: a quiet prompt is never dismissed from here.
+        expect(commands()).not.toContain('permissions.respond')
+      })
+
+      it('puts the bubble away when a state takes the slot over the bell, or another tab comes forward', async () => {
+        const el = render(<NavRow state={asking(page)} tab={page} compact={false} />)
+        const slot = slotOf(el)
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        // The camera starts on the page: the capture takes the slot, and the bell's bubble goes
+        // with the bell – the question is still pending, so the bell returns when the state ends.
+        const call = using({ camera: true, microphone: false, display: false })
+        act(() => root!.render(<NavRow state={asking(call)} tab={call} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('capture')
+        expect(uiStore.get().quietPromptId).toBeNull()
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        act(() => root!.render(<NavRow state={asking(page)} tab={page} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('quiet')
+        expect(uiStore.get().quietPromptId).toBeNull()
+        // Opened again, then another tab in front: the bubble hung from this tab's bell.
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        const other = tab('https://other.example/', { id: 't2' })
+        act(() =>
+          root!.render(
+            <NavRow
+              state={{
+                ...asking(other),
+                tabs: { t1: page, t2: other },
+                spaces: [{ ...space, tabIds: ['t1', 't2'], activeTabId: 't2' }]
+              }}
+              tab={other}
+              compact={false}
+            />
+          )
+        )
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(uiStore.get().quietPromptId).toBeNull()
+        // The prompt answered or withdrawn while its bubble was up: the flag goes too (the
+        // bubble's own effect; the slot's one sees the bell gone).
+        act(() => root!.render(<NavRow state={asking(page)} tab={page} compact={false} />))
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        act(() => root!.render(<NavRow state={asking(page, [])} tab={page} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(uiStore.get().quietPromptId).toBeNull()
       })
     })
   })

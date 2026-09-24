@@ -50,7 +50,13 @@ import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { dropStore } from '@renderer/lib/drag'
 import { PRIVATE_TAB_PLACEHOLDER, unlockPrivateTabs, useTabMasked } from '@renderer/lib/privateLock'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
-import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
+import {
+  blockedPopupsOf,
+  closeBlockedPopups,
+  closeQuietPrompt,
+  openBlockedPopups,
+  openQuietPrompt
+} from '@renderer/lib/security'
 import { isPrivateWindow, tabTitle } from '@renderer/lib/selectors'
 import {
   MEMORY_SAVER_LEAF_MS,
@@ -364,8 +370,11 @@ export function NavRow({
   // certificate error's glyph over both. Never a second chip: a state the slot can carry adds
   // nothing to the tier, so the address keeps its width at 240 whatever the state. A masked
   // page and an extension's page (its icon in the slot) say nothing of it. Below a standing
-  // block, the Memory Saver leaf of a tab just woken from sleep (omnibox-40): ten seconds from
-  // the wake on the slot's clock (`useLeafClock`), held while its bubble is up, its click
+  // block, the bell-off of a quiet notification request (NOT-03): a question the page waits
+  // on, asked without a bubble – the bubble opens from the bell alone, and its Escape or an
+  // outside press puts the bubble away and leaves the bell up, the core hearing nothing. Below
+  // the bell, the Memory Saver leaf of a tab just woken from sleep (omnibox-40): ten seconds
+  // from the wake on the slot's clock (`useLeafClock`), held while its bubble is up, its click
   // opening that bubble rather than site information.
   const memorySaverOpen = uiStore.use(
     (s) => s.memorySaverBubble !== null && s.memorySaverBubble.tabId === tab?.id
@@ -381,6 +390,16 @@ export function NavRow({
   useEffect(() => {
     if (memorySaverOpen && !leafUp) closeMemorySaverBubble()
   }, [memorySaverOpen, leafUp])
+  // The quiet prompt's bubble is the bell's in the same way: open while the bell it hangs from
+  // is in this slot (`quietPromptId` names the prompt), pressed as any open popover's anchor
+  // (§9.20); a state taking the slot over the bell, or another tab coming forward, puts the
+  // bubble away – the bell returns with the slot, the question still waiting.
+  const quietPromptId = uiStore.use((s) => s.quietPromptId)
+  const quietOpen = slot?.kind === 'quiet' && slot.promptId === quietPromptId
+  useEffect(() => {
+    if (quietPromptId !== null && !quietOpen) closeQuietPrompt()
+  }, [quietPromptId, quietOpen])
+  const anchored = siteAnchored || memorySaverOpen || quietOpen
   // The mask draws in the slot on a private tab with a page (§9.19) at the connection glyph's
   // rank: a state in the slot (`slot`) and the danger tier of the connection itself – a
   // certificate error, a dangerous site – take the one 16 box over it (`maskYields`).
@@ -693,7 +712,7 @@ export function NavRow({
                       : indicator.title
                 }
                 popup="dialog"
-                expanded={siteAnchored || memorySaverOpen}
+                expanded={anchored}
                 data-site-chip=""
                 data-indicator={indicator.state}
                 data-slot-state={slot?.kind ?? (maskDraws ? 'private' : 'connection')}
@@ -709,8 +728,7 @@ export function NavRow({
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--v2-control-text-deemphasized)] hover:bg-[var(--v2-control-fill-hover)] hover:text-[var(--v2-control-text)]',
                   slot?.kind === 'capture' && 'text-[var(--v2-control-text)]',
-                  (siteAnchored || memorySaverOpen) &&
-                    'bg-[var(--v2-control-fill-hover)] text-[var(--v2-control-text)]',
+                  anchored && 'bg-[var(--v2-control-fill-hover)] text-[var(--v2-control-text)]',
                   indicator.state === 'certificate-error' && 'text-[var(--v2-danger)]'
                 )}
                 onActivate={(e) => {
@@ -720,6 +738,12 @@ export function NavRow({
                   // it without reopening (§9.20), which the layer's light dismiss does.
                   if (slot?.kind === 'memory-saver') {
                     if (!memorySaverOpen) void openMemorySaverBubble(tab.id)
+                    return
+                  }
+                  // The bell opens the quiet prompt's bubble (NOT-03): the question asked
+                  // only once the user comes to it; the same second press closes it.
+                  if (slot?.kind === 'quiet') {
+                    if (!quietOpen) openQuietPrompt(slot.promptId)
                     return
                   }
                   // A state in the slot leads straight to the Permissions level, where its row
@@ -1033,10 +1057,12 @@ function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>, mounted: boole
 /**
  * The slot's state glyphs (omnibox-38; Chrome's location-bar icons): the camera, the microphone
  * or the sharing glyph while the page captures, the crossed-out camera, microphone, location or
- * bell for a permission blocked on the site, Chrome's leaf for a tab just woken from sleep
- * (omnibox-40). Drawn at the slot's one size (`SLOT_GLYPH`, §9.19's 16 in the 24 box), at the
- * row's stroke like every 16 px glyph in the row (§9.3); the ink is the chip's – the leaf at the
- * slot's rest 69 %, a notice and not a live state (§9.29).
+ * bell for a permission blocked on the site – the same crossed-out bell for a quiet notification
+ * request waiting to be asked (NOT-03; Chrome's quiet chip draws it too) – and Chrome's leaf for
+ * a tab just woken from sleep (omnibox-40). Drawn at the slot's one size (`SLOT_GLYPH`, §9.19's
+ * 16 in the 24 box), at the row's stroke like every 16 px glyph in the row (§9.3); the ink is
+ * the chip's – the bell and the leaf at the slot's rest 69 %, a question and a notice, not a
+ * live state (§9.29).
  */
 const SLOT_GLYPHS = {
   camera: Camera,
