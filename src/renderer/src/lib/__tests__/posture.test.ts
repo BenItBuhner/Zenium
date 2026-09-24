@@ -7,14 +7,16 @@ import {
   describePosture,
   poseOf,
   postureStore,
+  resetPosture,
   samePosture
 } from '../posture'
 
 /*
  * The fold's posture on the chrome's side (OS-11, `lib/posture.ts`): the host's `posture` event
  * lands in a store, on the root as `data-posture`, and in the log – once per change, since the
- * boot's replay repeats the last pose – and the viewport re-derives the layout from the window's
- * width. No layout reads the pose (no tabletop layout): a driver and the log do.
+ * boot's replay repeats the last pose; the first report marks the root whatever it says, so a
+ * flat boot reads `flat` and not nothing – and the viewport re-derives the layout from the
+ * window's width. No layout reads the pose (no tabletop layout): a driver and the log do.
  */
 
 const TABLETOP: DevicePosture = {
@@ -30,13 +32,11 @@ let info: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-  postureStore.set({ posture: FLAT_POSTURE, pose: 'flat' })
-  delete document.documentElement.dataset.posture
+  resetPosture()
 })
 
 afterEach(() => {
-  postureStore.set({ posture: FLAT_POSTURE, pose: 'flat' })
-  delete document.documentElement.dataset.posture
+  resetPosture()
   vi.restoreAllMocks()
 })
 
@@ -92,5 +92,23 @@ describe('applyDevicePosture', () => {
     expect(document.documentElement.dataset.posture).toBe('flat')
     expect(postureStore.get().pose).toBe('flat')
     expect(info).toHaveBeenCalledTimes(2)
+  })
+
+  it('a flat boot marks the root flat on the first report – no change, no line – and a sticky replay of it writes nothing more', () => {
+    expect(document.documentElement.dataset.posture).toBeUndefined()
+    const before = postureStore.get()
+    expect(applyDevicePosture(FLAT_POSTURE)).toBe(false)
+    expect(document.documentElement.dataset.posture).toBe('flat')
+    expect(postureStore.get()).toBe(before)
+    expect(info).not.toHaveBeenCalled()
+    // The bus replays the boot's copy: the mark stands, still no line.
+    delete document.documentElement.dataset.posture
+    expect(applyDevicePosture({ kind: 'flat', hinge: null })).toBe(false)
+    expect(document.documentElement.dataset.posture).toBeUndefined()
+    expect(info).not.toHaveBeenCalled()
+    // The first change after a flat boot is logged as any change is.
+    expect(applyDevicePosture(BOOK)).toBe(true)
+    expect(document.documentElement.dataset.posture).toBe('book')
+    expect(info).toHaveBeenCalledTimes(1)
   })
 })

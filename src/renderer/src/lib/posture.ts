@@ -65,21 +65,42 @@ export function describePosture(posture: DevicePosture): string {
   return `${pose}, ${hinge.orientation} hinge ${size}${hinge.separating ? ', separating' : ''}`
 }
 
+/** Whether a report has been heard: the first marks the root whatever it says. */
+let reported = false
+
 /**
  * The host's `posture` event (and the boot payload's copy, replayed by the bus): the store, the
  * root's `data-posture` and a line in the log when the pose differs from the last one heard – the
- * host reports on a change alone, but a boot replay repeats the last. The viewport re-derives
- * the layout from the window's width in the same breath (`formFactor.ts`): a fold that changed
- * the window has the class follow it, whether or not the resize was heard first. Answers whether
- * anything changed.
+ * host reports on a change alone, but a boot replay repeats the last. The first report marks the
+ * root whatever it says – a flat boot writes `data-posture="flat"` too, so a driver reading the
+ * root finds the pose and not an absence (the store already holds `flat`, so nothing else moves
+ * and nothing is logged for it). The viewport re-derives the layout from the window's width in
+ * the same breath as a change (`formFactor.ts`): a fold that changed the window has the class
+ * follow it, whether or not the resize was heard first. Answers whether anything changed.
  */
 export function applyDevicePosture(posture: DevicePosture): boolean {
   const was = postureStore.get().posture
-  if (samePosture(was, posture)) return false
+  if (samePosture(was, posture)) {
+    if (!reported) markRoot(poseOf(posture))
+    reported = true
+    return false
+  }
+  reported = true
   const pose = poseOf(posture)
   postureStore.set({ posture, pose })
-  if (typeof document !== 'undefined') document.documentElement.dataset.posture = pose
+  markRoot(pose)
   console.info(`[zen] posture ${describePosture(posture)}`)
   refreshViewport()
   return true
+}
+
+function markRoot(pose: Pose): void {
+  if (typeof document !== 'undefined') document.documentElement.dataset.posture = pose
+}
+
+/** The tests' reset: the store's flat, the root unmarked, no report heard. */
+export function resetPosture(): void {
+  reported = false
+  postureStore.set({ posture: FLAT_POSTURE, pose: 'flat' })
+  if (typeof document !== 'undefined') delete document.documentElement.dataset.posture
 }
