@@ -12037,6 +12037,35 @@
   font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-small);
 }
+/*
+ * A heading's leading glyph (`PageGroup.lead`: the History page's device groups, whose kind
+ * glyph leads the device's name – services pass 4). The rows under it lead with a 16 favicon
+ * at the gutter and their text 12 on (§9.21's 44), so the glyph's box adds 4 to the heading's
+ * 8 gap: the name starts on its rows' text edge and the glyph on their favicon column – one
+ * glyph column for the group (§10.4).
+ */
+.zen-page-heading-lead {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  align-items: center;
+  justify-content: center;
+  margin-inline-end: 4px;
+}
+/*
+ * A device's kind glyph (`DeviceGlyph`, services pass 4; §10.4's leading slot at the full ink):
+ * the icon size and stroke of the layout it stands on – 16 at 1.5 on a mouse, 20 at 1.75 on a
+ * phone – so the one component serves a Settings row, a phone sheet's row, a heading and a menu
+ * row alike. The stand-in for a device that announced no kind carries `.zen-list-standin`'s
+ * 69 % besides, the deemphasis of a missing favicon's globe (phonePanels.css).
+ */
+.zen-device-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
 .zen-page-heading > .zen-v2-icon-button {
   margin-block: calc((var(--v2-line-body-box) - var(--v2-icon-button)) / 2);
 }

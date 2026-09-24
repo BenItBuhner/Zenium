@@ -5528,8 +5528,9 @@ describe('ID-08’s Sync category on a phone', () => {
       folderName: 'Zenium',
       lastSyncAt: Date.now() - 5 * 60_000,
       devices: [
+        // The laptop's build announced no kind; the desktop's did (services pass 4).
         { id: 'dev-2', name: 'Work laptop', lastSeen: Date.now() - 2 * 3_600_000 },
-        { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000 }
+        { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000, kind: 'desktop' }
       ],
       ...patch
     })
@@ -5700,6 +5701,21 @@ describe('ID-08’s Sync category on a phone', () => {
       if (r.kind !== 'info') continue
       expect(r.trailing).toBeTruthy()
     }
+    // Each device row leads with the device's kind glyph (services pass 4; §10.4's leading slot
+    // at the full ink): the desktop's monitor, and for the laptop – whose build announced no
+    // kind – the stand-in at 69 %. The kind is searchable with the row.
+    const glyphOf = (id: string): { kind: string | null; standin: boolean } => {
+      const r = row(model, id)
+      if (r.kind !== 'info' || !isValidElement(r.leading)) throw new Error(`no glyph on ${id}`)
+      const markup = renderToStaticMarkup(r.leading)
+      return {
+        kind: /data-kind="([^"]+)"/.exec(markup)?.[1] ?? null,
+        standin: markup.includes('zen-list-standin')
+      }
+    }
+    expect(glyphOf('sync-device:dev-3')).toEqual({ kind: 'desktop', standin: false })
+    expect(glyphOf('sync-device:dev-2')).toEqual({ kind: 'none', standin: true })
+    expect(row(model, 'sync-device:dev-3').keywords).toContain('desktop')
 
     const off = model.groups.find((g) => g.id === 'sync-off')
     expect(off?.heading).toBeNull()

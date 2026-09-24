@@ -190,6 +190,53 @@ describe('the popover menu', () => {
     expect(menu.querySelector('[data-menu-note] .zen-v2-menu-glyph')).not.toBeNull()
   })
 
+  it("a device's row draws the device's kind glyph in the slot at the full ink, the stand-in at 69 % for a kind it did not announce, and gives the level the slot (the Send to Your Devices submenu; services pass 4)", () => {
+    show(
+      tabMenu({
+        source: 'app',
+        items: [
+          item('desk', 'Home desktop', { device: { kind: 'desktop' } }),
+          item('pixel', 'Pixel 9', { device: { kind: 'phone' } }),
+          item('pad', 'Tab S9', { device: { kind: 'tablet' } }),
+          item('book', 'Work laptop', { device: { kind: 'laptop' } }),
+          item('old', 'Old build', { device: { kind: null } })
+        ]
+      })
+    )
+    const [menu] = menus()
+    // The rows read by their names alone: the glyph is no part of what a row says.
+    expect(rows(menu).map((r) => r.textContent)).toEqual([
+      'Home desktop',
+      'Pixel 9',
+      'Tab S9',
+      'Work laptop',
+      'Old build'
+    ])
+    const glyph = (
+      id: string
+    ): { kind: string | undefined; standin: boolean; hidden: string | null } => {
+      const svg = rowOf(id).querySelector<SVGElement>(
+        '.zen-v2-menu-glyph > svg[data-testid="device-glyph"]'
+      )!
+      expect(svg, id).not.toBeNull()
+      return {
+        kind: svg.dataset.kind,
+        standin: svg.classList.contains('zen-list-standin'),
+        hidden: svg.getAttribute('aria-hidden')
+      }
+    }
+    expect(glyph('desk')).toEqual({ kind: 'desktop', standin: false, hidden: 'true' })
+    expect(glyph('pixel')).toEqual({ kind: 'phone', standin: false, hidden: 'true' })
+    expect(glyph('pad')).toEqual({ kind: 'tablet', standin: false, hidden: 'true' })
+    expect(glyph('book')).toEqual({ kind: 'laptop', standin: false, hidden: 'true' })
+    expect(glyph('old')).toEqual({ kind: 'none', standin: true, hidden: 'true' })
+    // Four kinds, four different pictures; the stand-in a fifth.
+    const paths = ['desk', 'pixel', 'pad', 'book', 'old'].map(
+      (id) => rowOf(id).querySelector('.zen-v2-menu-glyph > svg')!.innerHTML
+    )
+    expect(new Set(paths).size).toBe(5)
+  })
+
   it('opened by the pointer the panel holds the focus and Down starts at the first row; from the keyboard the first row has it', () => {
     show(tabMenu())
     expect(document.activeElement).toBe(menus()[0])

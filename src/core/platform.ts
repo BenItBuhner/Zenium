@@ -26,6 +26,7 @@ import type {
   KeyBinding,
   LongCapture,
   LongCaptureCrop,
+  MenuDeviceMark,
   MenuGlyph,
   MenuGroupMark,
   MenuHeader,
@@ -1121,6 +1122,12 @@ export interface MenuItemTemplate {
    * colour and icon, the ring for a saved group. Native menu hosts draw the row as text.
    */
   group?: MenuGroupMark
+  /**
+   * Another device's mark before the label of a renderer-drawn menu's row (the app menu's Send
+   * to Your Devices submenu; services pass 4): the chrome draws the device's kind glyph, the
+   * stand-in for a kind it did not announce. Native menu hosts draw the row as text.
+   */
+  device?: MenuDeviceMark
   /**
    * An icon-row item of a renderer-drawn menu (the phone app menu's first group, design language
    * v2 §9.3): the chrome draws the glyph in a 44 px button named by `label`. Native menu hosts

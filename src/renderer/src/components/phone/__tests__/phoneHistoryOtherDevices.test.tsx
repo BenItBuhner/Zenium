@@ -200,7 +200,10 @@ const remoteTab = (
   lastActive
 })
 
-/** Two devices: the laptop published two hours ago, the desktop three minutes ago. */
+/**
+ * Two devices: the laptop published two hours ago, the desktop three minutes ago. The desktop
+ * announced its kind; the laptop's build announced none (services pass 4).
+ */
 const devices = (): SyncDeviceTabs[] => [
   {
     deviceId: 'device-laptop',
@@ -214,6 +217,7 @@ const devices = (): SyncDeviceTabs[] => [
   {
     deviceId: 'device-desktop',
     deviceName: 'Home desktop',
+    deviceKind: 'desktop',
     updatedAt: NOW - 3 * 60_000,
     tabs: [remoteTab('d-1', 'https://archive.org/', 'Internet Archive', NOW - 4 * 60_000)]
   }
@@ -367,6 +371,23 @@ describe("the History page's other devices' groups (TAB-02)", () => {
       'Work laptop, Last active 2 h ago'
     ])
     expect(headings.map((h) => h.getAttribute('aria-haspopup'))).toEqual(['menu', 'menu'])
+    // Each heading leads with the device's kind glyph (services pass 4): the desktop's monitor
+    // at the full ink, the laptop's – its build announced no kind – the stand-in at 69 %.
+    // Decorative: the headings' text above is the name and the aside alone.
+    expect(
+      headings.map((h) => {
+        const glyph = h.firstElementChild as SVGElement
+        return [
+          glyph.getAttribute('data-testid'),
+          glyph.getAttribute('data-kind'),
+          glyph.classList.contains('zen-list-standin'),
+          glyph.getAttribute('aria-hidden')
+        ]
+      })
+    ).toEqual([
+      ['device-glyph', 'desktop', false, 'true'],
+      ['device-glyph', 'none', true, 'true']
+    ])
     // A row reads the title over the host.
     expect(rowByTitle('Internet Archive').textContent).toContain('archive.org')
     expect(rowByTitle('Zenium').textContent).toContain('github.com')

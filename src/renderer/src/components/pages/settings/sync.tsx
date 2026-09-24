@@ -17,6 +17,7 @@ import {
   syncStatusLine
 } from '@renderer/lib/syncSetup'
 import { relativeTime } from '@renderer/lib/utils'
+import { DeviceGlyph } from '../../DeviceGlyph'
 import { FaviconGlyph } from './blocks'
 import type { RowGroup, SettingsRow } from './model'
 import type { SectionContext } from './sections'
@@ -206,7 +207,12 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
             kind: 'info',
             id: `sync-device:${device.id}`,
             label: device.name,
-            keywords: ['device', 'last seen'],
+            keywords: ['device', 'last seen', ...(device.kind ? [device.kind] : [])],
+            // The device's kind leads the name at the full ink (§10.4; services pass 4): the
+            // monitor, laptop, phone or tablet its announcement carried, the 69 % stand-in for a
+            // device whose build carried none – every row has the glyph, so the list keeps one
+            // glyph column.
+            leading: <DeviceGlyph kind={device.kind} />,
             // The last-seen age trails the name in the summary's 13 at 69 %, `tabular-nums` (§4).
             trailing: <span className="zen-settings-summary">{relativeTime(device.lastSeen)}</span>
           })),

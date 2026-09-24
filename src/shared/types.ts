@@ -3912,6 +3912,17 @@ export interface MenuGroupMark {
   saved: boolean
 }
 
+/**
+ * Another device's mark before a row's label (the app menu's Send to Your Devices submenu;
+ * services pass 4): the device's kind glyph (`DeviceGlyph`, the one every device row draws) –
+ * the kind its announcement carried, or `null` for a device whose build announced none, drawn
+ * as the 69 % stand-in – so every row of the submenu has the glyph and the labels share one
+ * edge. A native menu host has no glyph in the platform's menu ink and draws the row as text.
+ */
+export interface MenuDeviceMark {
+  kind: SyncDeviceKind | null
+}
+
 export interface MenuItemDescriptor {
   id: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -3922,6 +3933,8 @@ export interface MenuItemDescriptor {
   icon?: string | null
   /** A tab group's mark in the glyph slot (the Tab Folders submenu's rows). */
   group?: MenuGroupMark
+  /** Another device's kind in the glyph slot (the Send to Your Devices submenu's rows). */
+  device?: MenuDeviceMark
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */
   danger?: boolean

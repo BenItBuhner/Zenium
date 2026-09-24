@@ -5,6 +5,7 @@ import { run } from '@renderer/lib/api'
 import { SYNC_COPY } from '@renderer/lib/syncSetup'
 import { browserStore, closeSendTabSheet, uiStore } from '@renderer/lib/ui'
 import { relativeTime } from '@renderer/lib/utils'
+import { DeviceGlyph } from '../DeviceGlyph'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { PhoneEmptyNote, PhoneListRow } from './PhoneList'
 import { PhoneSheet } from './PhoneSheet'
@@ -16,15 +17,15 @@ import { PhoneSheet } from './PhoneSheet'
  * most recently seen first: the device's name over when it was last active (the same age the
  * Settings › Sync device rows trail). A tap sends the tab's page to that device once the sheet
  * has gone (`sync.sendTab`; the engine's toast, "Sent to Laptop", confirms the hand-over, and the
- * target opens it as a tab when it next syncs). The rows draw no glyph: the folder records a
- * device's name and not its kind, and a column whose every picture is the same tells nothing
- * (§9.3's leading glyph is the row's subject), so the rows are bare as the Settings › Sync
- * device rows are – the name from the gutter – until `devices[]` carries a kind (the interface
- * note's follow-up; then a laptop / phone / tablet per row, as Chrome's). A list sheet, it opens
- * on its first row (§9.22; the #314 lead's ruling: the container is for a title-and-notice sheet
- * and the form-sheet exception only), the dialog's title read ahead of it. With one other device
- * the menu names it and sends outright, so this sheet is for two or more; should the list have
- * emptied meanwhile it says so (§9.17).
+ * target opens it as a tab when it next syncs). Each row leads with the device's kind glyph
+ * (`DeviceGlyph`, services pass 4: `devices[].kind` – the monitor, laptop, phone or tablet the
+ * device announced, as Chrome's picker draws them; the 69 % stand-in for a device whose build
+ * announced none), the row's subject in §9.3's leading slot, so the sheet keeps one glyph
+ * column as the Settings › Sync device rows do. A list sheet, it opens on its first row (§9.22;
+ * the #314 lead's ruling: the container is for a title-and-notice sheet and the form-sheet
+ * exception only), the dialog's title read ahead of it. With one other device the menu names it
+ * and sends outright, so this sheet is for two or more; should the list have emptied meanwhile
+ * it says so (§9.17).
  */
 export function SendTabSheetLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.sendTabSheet)
@@ -70,6 +71,7 @@ function SendTabSheet({ state, tab }: { state: UIState; tab: Tab }): JSX.Element
             return (
               <PhoneListRow
                 key={device.id}
+                icon={<DeviceGlyph kind={device.kind} />}
                 title={device.name}
                 subtitle={when}
                 ariaLabel={`${device.name}, ${when}`}

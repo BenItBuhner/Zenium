@@ -46,6 +46,7 @@ import {
 } from '@renderer/lib/portals'
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { DeviceGlyph } from '../DeviceGlyph'
 import { GroupGlyph } from '../GroupGlyph'
 import { ReloadStopGlyph, StarGlyph } from '../phone/BarGlyphs'
 import { RowFavicon } from '../phone/PhoneList'
@@ -778,9 +779,10 @@ function MenuLevel({
     onFocused()
   }, [focus, onFocused, placed])
   // The glyph slot stands before every label when any row of the level has something to put in
-  // it – a favicon, a group's mark, a check – so the labels share one edge.
+  // it – a favicon, a group's mark, a device's kind, a check – so the labels share one edge.
   const withGlyphs = items.some(
-    (item) => item.icon || item.group || item.type === 'checkbox' || item.type === 'radio'
+    (item) =>
+      item.icon || item.group || item.device || item.type === 'checkbox' || item.type === 'radio'
   )
   return (
     <div
@@ -853,6 +855,10 @@ function MenuLevel({
                   // A saved group's row (the Tab Folders submenu): the one group glyph (§9.37)
                   // in the slot, the ring of its colour, or the folder's own icon.
                   <GroupGlyph folder={item.group} saved={item.group.saved} />
+                ) : item.device ? (
+                  // Another device's row (the Send to Your Devices submenu): the device's kind
+                  // glyph, the stand-in for a kind it did not announce.
+                  <DeviceGlyph kind={item.device.kind} />
                 ) : item.icon ? (
                   <img src={item.icon} alt="" className="h-4 w-4 rounded-sm" draggable={false} />
                 ) : null}

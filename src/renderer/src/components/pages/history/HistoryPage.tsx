@@ -28,6 +28,7 @@ import { createStore, type Store } from '@renderer/lib/store'
 import { SYNC_COPY, syncScopeRowId } from '@renderer/lib/syncSetup'
 import { openClearBrowsingData } from '@renderer/lib/ui'
 import { relativeTime } from '@renderer/lib/utils'
+import { DeviceGlyph } from '../../DeviceGlyph'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { inTextField, walkRows } from '../rowKeys'
 import { usePageSearch } from '../usePageSearch'
@@ -1060,7 +1061,10 @@ function RemoteTabs({
  * Device – are the heading line's native context menu (the lead's #326 ruling: a right-click
  * on the line or the menu key with the focus in it, as Firefox's Synced Tabs; the heading's
  * one trailing slot holds the disclosure alone, and the disclosure stays one – `aria-expanded`
- * for the rows, no `aria-haspopup`, so it takes no pressed fill, §9.20).
+ * for the rows, no `aria-haspopup`, so it takes no pressed fill, §9.20). The heading leads with
+ * the device's kind glyph (`DeviceGlyph`, services pass 4: the kind its announcement carried,
+ * the 69 % stand-in for one that carried none) on its rows' favicon column, the name on their
+ * text edge – Chrome's device card and Firefox's Synced Tabs lead with the same glyph.
  */
 function DeviceGroup({
   device,
@@ -1084,6 +1088,7 @@ function DeviceGroup({
   return (
     <PageGroup
       heading={device.deviceName}
+      lead={<DeviceGlyph kind={device.deviceKind} />}
       headingId={`zen-history-device-${safeId}`}
       aside={REMOTE_COPY.lastActive(device.updatedAt)}
       data-testid="history-remote-device"
