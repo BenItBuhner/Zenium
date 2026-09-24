@@ -84,15 +84,17 @@ export interface ConfirmDialogProps {
  * sentences ran to three lines and its checkbox label wrapped, measured); and the notice again,
  * row or not, when it opens over another dialog in the slot ("a 400 prompt over a 400 dialog is
  * the unreadable stack of §9"; §9.5: "never the 400 of the dialog it covers"). The place is read
- * once, as the prompt mounts, before its first paint.
+ * as the prompt mounts, before its first paint, and again only should the row's presence change.
  *
  * The keyboard (§9.22 as amended by the design lead on #392; `useConfirmKeyboard` in
  * `confirmKeyboard.ts` beside this file, the one implementation of it, for any held
  * container): the CONTAINER holds the focus as
  * the prompt opens – its root is `tabIndex -1`, the container the keyboard is sent to and cannot
- * reach by Tab, so the chassis draws no ring on it
- * (`[role='alertdialog'][tabindex='-1']:focus-visible` in main.css) and no verb is preselected.
- * Tab enters at Cancel, Shift+Tab at the verb, and between them the keys wrap at the ends
+ * reach by Tab, so the chassis draws no ring on it (the `[role='dialog'][tabindex='-1']` and
+ * `[role='alertdialog'][tabindex='-1']` `:focus-visible` rule in main.css – both roles, since a
+ * prompt carrying a field or a list is a `dialog`) and no verb is preselected. Tab enters at the
+ * first control – Cancel, or the check row's box when the prompt carries one – Shift+Tab at the
+ * verb, and between them the keys wrap at the ends
  * (lib/popover.ts `wrapTab`). On a prompt whose verb is the primary (Quit), Enter from the
  * container, or from the check row, activates the verb as the prompt's default button – as
  * Firefox's and Chrome's dialogs answer Enter from the dialog itself, because they draw the verb
@@ -123,7 +125,22 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
   )
 }
 
-/** A prompt's one field (§9.12): its name, its value, and whether the value is selected on open. */
+/**
+ * A prompt's one field (§9.12): its name, its value, whether the value is selected on open, and
+ * – for a field that asks for one kind of value – the input's own options: what keyboard a
+ * touch host raises (`inputMode`), what the value must match (`pattern`), what the host may
+ * fill in (`autoComplete`), and a class of the consumer's on the `<input>` itself
+ * (`className`) for what the field's look needs that the shared `.zen-v2-field` does not draw.
+ * The case that asked for them (#418's Bluetooth `providePin` prompt,
+ * `devices/DeviceChooserDialog.tsx`): six digits typed into the field – `inputMode: 'numeric'`
+ * so a phone or a tablet raises the digit keyboard, `pattern: '[0-9]*'`, and a class carrying
+ * `font-variant-numeric: tabular-nums` and the letter-spacing that sets digits apart. That
+ * prompt passes none of them yet: its look still reaches into the primitive from outside
+ * (main.css's `.zen-confirm-dialog[data-pairing-kind='providePin'] .zen-v2-field[aria-label='PIN']`),
+ * a rule that retires as the prompt adopts these options. The field stays `type="text"`
+ * whatever the options say: a number field's spinner and a `tel` field's semantics are not a
+ * prompt's (§9.12), and the keyboard on a touch host is `inputMode`'s to choose.
+ */
 export interface PromptField {
   /**
    * The field's name, its `aria-label` – a one-field prompt whose title names what is asked
@@ -136,6 +153,31 @@ export interface PromptField {
   maxLength?: number
   /** Select the value as the prompt opens, so typing replaces it (a rename, a window's name). */
   autoSelect?: boolean
+  /**
+   * The keyboard a touch host raises for the field (the `inputmode` attribute): `numeric` for
+   * a PIN or a count, `decimal` for a measure, `tel`, `email`, `url` for those; `text` – the
+   * default, drawn as no attribute – for words. A mouse host ignores it.
+   */
+  inputMode?: 'text' | 'numeric' | 'decimal' | 'tel' | 'email' | 'url'
+  /**
+   * What the value must match, as the `pattern` attribute (`[0-9]*` for digits): the host's
+   * own constraint, read by ATs and by a touch keyboard beside `inputMode`; the consumer keeps
+   * the value clean in `onChange` all the same (a PIN's `sanitizePin`), since a pattern does
+   * not stop a paste.
+   */
+  pattern?: string
+  /**
+   * The `autocomplete` attribute: `off` – the default – for a value the host must not fill in
+   * (a name, a PIN: `one-time-code` is a code sent to the user, which a pairing PIN is not);
+   * a consumer that wants the host's help names the token (`username`, `url`).
+   */
+  autoComplete?: string
+  /**
+   * A class of the consumer's on the `<input>`, beside the shared `.zen-v2-field`: the PIN's
+   * `tabular-nums` and letter-spacing, a monospace value – the look of the value, never the
+   * field's box, which is the chassis's.
+   */
+  className?: string
 }
 
 export type PromptDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructive'> & {
@@ -206,12 +248,12 @@ export type PickerDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructi
  * The CONTAINER holds the focus as it opens (§9.22): a picker is a choice, not a form – no row
  * is preselected by the keyboard and no verb is – so the first Tab enters the list at the row
  * the consumer made tabbable, Shift+Tab lands on the verb, and between them the keys wrap at
- * the ends; a step within the list is the consumer's roving focus. Enter is the prompt's
- * throughout (§9.22): from the container or from a row – a row is not an `OWN_ENTER` control –
- * it is the verb once a pick has enabled it, as Chrome's chooser connects the highlighted device
- * on Return, and inert while `disabled` (consumed, answering nothing); so a row picks on click,
- * Space or the arrows, never on Enter. Escape and the scrim are Cancel, one hop; the return is
- * the primitive's.
+ * the ends; a step within the list is the consumer's roving focus. Enter from the container is
+ * the verb once a pick has enabled it and inert while `disabled` (consumed, answering nothing);
+ * a row is the consumer's control (a `button` with `role="radio"` or `"option"` – an
+ * `OWN_ENTER` control the hook steps aside for) and answers its own Enter: on an unpicked row
+ * it picks, on the picked row it is the verb, as Chrome's chooser connects the highlighted
+ * device on Return. Escape and the scrim are Cancel, one hop; the return is the primitive's.
  */
 export function PickerDialog(props: PickerDialogProps): JSX.Element {
   return (
@@ -344,13 +386,16 @@ function ConfirmPanel({
           <input
             ref={fieldRef}
             type="text"
-            className="zen-v2-field"
+            className={cn('zen-v2-field', field.className)}
             aria-label={field.label}
             value={field.value}
             onChange={(e) => field.onChange(e.target.value)}
             maxLength={field.maxLength}
+            // `text` is the attribute's default: drawn as none, so a words field stays as it was.
+            inputMode={field.inputMode === 'text' ? undefined : field.inputMode}
+            pattern={field.pattern}
             spellCheck={false}
-            autoComplete="off"
+            autoComplete={field.autoComplete ?? 'off'}
           />
         )}
         {hasBody && <div className="zen-confirm-dialog-slot">{body}</div>}

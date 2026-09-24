@@ -1010,7 +1010,7 @@ function OverflowMenu({ sort, onSort, onImport, onExport }: OverflowProps): JSX.
         onSelect()
       }}
     >
-      <span className="flex h-4 w-4 items-center justify-center opacity-70">{icon}</span>
+      <span className="flex h-4 w-4 items-center justify-center">{icon}</span>
       <span className="flex-1">{label}</span>
       {checked && <Check className="h-4 w-4" />}
     </button>
