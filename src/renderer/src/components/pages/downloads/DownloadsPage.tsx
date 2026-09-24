@@ -15,6 +15,7 @@ import { browserStore } from '@renderer/lib/browserStore'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
 import {
+  clearableCount,
   downloadStatus,
   filterDownloads,
   groupDownloadsByDay,
@@ -25,6 +26,7 @@ import {
 } from '@renderer/lib/downloadsView'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { cn } from '@renderer/lib/utils'
+import { ClearAllConfirm } from '../../downloads/ClearAllConfirm'
 import {
   DangerActions,
   DownloadProgressBar,
@@ -35,8 +37,6 @@ import {
 } from '../../downloads/DownloadParts'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { walkRows } from '../rowKeys'
-import { SheetActions } from '../settings/blocks'
-import { SettingsDialog } from '../settings/dialogs'
 import { usePageSearch } from '../usePageSearch'
 
 /**
@@ -61,7 +61,8 @@ import { usePageSearch } from '../usePageSearch'
  * finished file can be dragged out to the OS, its folder opens from here); single-window hosts
  * show the list only. As the page opens, the finished files are checked for being on disk
  * (Chrome does the same), so a row whose file went since reads Deleted. "Clear all" asks first,
- * in a v2 prompt over the content frame (§9.23).
+ * on the program's confirmation primitive (§9.23; `ClearAllConfirm`, shared with the phone's
+ * sheet).
  */
 export function DownloadsPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const urlQuery = parseInternalPageUrl(tab.url)?.query?.q ?? ''
@@ -83,7 +84,7 @@ export function DownloadsPage({ state, tab }: { state: UIState; tab: Tab }): JSX
       })
   })
   const groups = groupDownloadsByDay(filterDownloads(items, text))
-  const clearable = items.filter((i) => !isActiveDownload(i)).length
+  const clearable = clearableCount(items)
 
   useChromeShortcut('find.open', (request) => {
     if (request.tabId !== tab.id) return false
@@ -155,13 +156,10 @@ export function DownloadsPage({ state, tab }: { state: UIState; tab: Tab }): JSX
         </div>
       </PageColumn>
       {clearing !== null && (
-        <ClearAllDialog
+        <ClearAllConfirm
           count={clearing}
-          onCancel={() => setClearing(null)}
-          onConfirm={() => {
-            setClearing(null)
-            downloadsEngine.removeCompleted()
-          }}
+          close={() => setClearing(null)}
+          confirm={() => downloadsEngine.removeCompleted()}
         />
       )}
     </>
@@ -371,39 +369,5 @@ function DownloadPageRow({
         />
       </div>
     </li>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Clear all
-// ---------------------------------------------------------------------------
-
-/**
- * "Clear all" asks before it empties the list, saying what goes and that the files stay (the
- * engine's `removeCompleted` leaves transfers still running alone): a v2 prompt (§9.23) over
- * the content frame on the frame's dialog host – Escape, the scrim and Cancel keep the list,
- * the destructive action clears it; focus starts on Cancel so a stray Enter does no harm.
- */
-function ClearAllDialog({
-  count,
-  onCancel,
-  onConfirm
-}: {
-  count: number
-  onCancel: () => void
-  onConfirm: () => void
-}): JSX.Element {
-  const rows = count === 1 ? '1 download' : `${count} downloads`
-  return (
-    <SettingsDialog
-      name="downloads:clear-all"
-      title="Clear all downloads?"
-      description={`${rows} will be removed from the list. The files stay where they were saved, and downloads still running are not touched.`}
-      under={false}
-      onClose={onCancel}
-      className="zen-settings-dialog-prompt"
-    >
-      <SheetActions action="Clear all" destructive onCancel={onCancel} onAction={onConfirm} />
-    </SettingsDialog>
   )
 }

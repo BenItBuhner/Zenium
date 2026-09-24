@@ -2,10 +2,11 @@ import type { WebContents } from 'electron'
 
 /**
  * Who holds a page's DevTools session. Electron gives a WebContents one `debugger` client, and
- * Zenium's own holders share it: the resource governor's overrides keep it attached on nearly
- * every page (`Emulation.setHardwareConcurrencyOverride`), captures, input, the dark theme for
- * sites and the page fonts borrow it while they run. `debugger.isAttached()` therefore says
- * nothing about ownership – it is true on an ordinary page.
+ * Zenium's own holders share it: the resource governor's CPU clamp keeps it attached on the
+ * pages behind (`Emulation.setHardwareConcurrencyOverride`; a page in front carries no session
+ * of the governor's, so Chromium's hang monitor reports for it), captures, input, the dark theme
+ * for sites and the page fonts borrow it while they run. `debugger.isAttached()` therefore says
+ * nothing about ownership – it is true on an ordinary background page.
  *
  * Another owner is an extension's `chrome.debugger` session (`extensionApi/debugger.ts`): the
  * agent's state is the extension's (its emulations, `Page.setFontFamilies`' once-per-agent

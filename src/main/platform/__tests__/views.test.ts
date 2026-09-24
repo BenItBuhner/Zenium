@@ -352,6 +352,91 @@ describe('ElectronTabViewHost', () => {
 })
 
 /**
+ * The resource governor's CPU clamp sits on background pages only (W5-15): it reads the
+ * layout's showing and hiding of a page from the host, and its lifting of a shared session from
+ * under the dark theme's hold is healed by the view.
+ */
+describe('the layout’s visibility and the page’s shared session', () => {
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 2))
+  }
+  const make = (
+    host: ElectronTabViewHost,
+    id: string
+  ): { view: ElectronTabView; dbg: EventEmitter & { attached: boolean; log: string[] } } => {
+    const view = host.createView(
+      { id, containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    return {
+      view,
+      dbg: (
+        view.webContents as unknown as {
+          debugger: EventEmitter & { attached: boolean; log: string[] }
+        }
+      ).debugger
+    }
+  }
+
+  it('tells its listeners of a flip of a page’s visibility, once per flip and not of a repeat', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view } = make(host, 'tab_vis')
+    const other = make(host, 'tab_vis_other').view
+    const flips: Array<[ElectronTabView, boolean]> = []
+    const off = host.onVisibilityChanged((v) => flips.push([v, v.isVisible()]))
+    // Born hidden; the layout shows it.
+    view.setVisible(true)
+    expect(flips).toEqual([[view, true]])
+    // The same layout again (a resize pass): no flip.
+    view.setVisible(true)
+    expect(flips).toHaveLength(1)
+    // `refreshVisibility`'s hide-then-show is two flips – the clamp folds them.
+    view.setVisible(false)
+    view.setVisible(true)
+    expect(flips.slice(1)).toEqual([
+      [view, false],
+      [view, true]
+    ])
+    // A page hidden that was hidden already says nothing.
+    other.setVisible(false)
+    expect(flips).toHaveLength(3)
+    off()
+    view.setVisible(false)
+    expect(flips).toHaveLength(3)
+  })
+
+  it('puts the dark theme’s override back when the shared session goes from under its hold (the clamp lifting as the page comes in front)', async () => {
+    const { nativeTheme } = await import('electron')
+    const theme = nativeTheme as unknown as { shouldUseDarkColors: boolean }
+    theme.shouldUseDarkColors = true
+    try {
+      const host = new ElectronTabViewHost(sessions)
+      const { view, dbg } = make(host, 'tab_vis_dark')
+      view.setDarkening(true)
+      await settle()
+      expect(dbg.log).toEqual(['attach', 'Emulation.setAutoDarkModeOverride'])
+      // The governor detaches the session to clear its clamp; Electron emits `detach` after letting go.
+      ;(dbg as unknown as { detach(): void }).detach()
+      dbg.emit('detach', {}, 'target closed')
+      await settle()
+      expect(dbg.log.slice(2)).toEqual(['detach', 'attach', 'Emulation.setAutoDarkModeOverride'])
+      expect(dbg.attached).toBe(true)
+      // The hold ending takes the session it re-opened with it.
+      view.setDarkening(false)
+      await settle()
+      expect(dbg.attached).toBe(false)
+      // A page with no hold is left as the governor wants a page in front: with no session.
+      dbg.emit('detach', {}, 'target closed')
+      await settle()
+      expect(dbg.attached).toBe(false)
+    } finally {
+      theme.shouldUseDarkColors = false
+    }
+  })
+})
+
+/**
  * Electron 44 gives a new WebContentsView the keyboard once its renderer is up, hidden or not,
  * so a tab opened in the background (a middle-clicked link) would leave the next Ctrl+1 or
  * Ctrl+W with a page that is not on screen. A hidden page that finds itself with the keyboard

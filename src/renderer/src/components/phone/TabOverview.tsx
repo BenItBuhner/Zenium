@@ -125,6 +125,7 @@ import {
   type Departure,
   type GroupDeparture
 } from './departureStore'
+import { groupActions } from './groupActions'
 import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
 import { InactiveTabsSheet } from './InactiveTabsSheet'
@@ -1188,6 +1189,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     if (row.count > 0) setSheet({ kind: 'delete-group', folderId: row.folder.id })
     else run('folder.delete', { folderId: row.folder.id, unpack: false })
   }
+  /** The same ask from a card's Delete Group (its hold sheet, or the reader's control). */
+  const deleteGroupOf = (folder: Folder): void => {
+    const row = rowOf(folder.id)
+    if (row) deleteGroupAsked(row)
+  }
   const deleteGroup = (row: GroupRow): void => {
     const live = liveMembersOf(row.folder.id)
     const remove = (): void => run('folder.delete', { folderId: row.folder.id, unpack: false })
@@ -1892,6 +1898,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                       card={card}
                       columns={columns}
                       onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                      onCloseGroup={closeGroup}
+                      onDelete={deleteGroupOf}
                       forming={tabs.length > 0 && forming(folder, tabs)}
                       dissolving={tabs.length === 0}
                       held={gone?.count}
@@ -1948,10 +1956,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
           count={liveMembersOf(sheet.folderId).length}
           onClose={() => leaveSheet('group')}
           onCloseGroup={closeGroup}
-          onDelete={(folder) => {
-            const row = rowOf(folder.id)
-            if (row) deleteGroupAsked(row)
-          }}
+          onDelete={deleteGroupOf}
         />
       )}
       {interactive && rowSheet && (
@@ -2395,10 +2400,9 @@ function TabSheet({
 
 /**
  * A group card's hold sheet (the header's menu): the colour swatches (`GroupColorPalette`, the
- * Groups pane's row sheet shares them), Rename, Collapse / Expand, Ungroup, then Close Group –
- * its tabs close and the group stays saved with their pages on the Groups pane (TAB-16) – and
- * Delete Group, which asks first (§9.23) since the group holds tabs. Menu items, so Title Case
- * (v2 §9.1): the count keeps its unit, capitalised with the rest.
+ * Groups pane's row sheet shares them) over the group's actions (`groupActions`: Rename,
+ * Collapse / Expand, Ungroup, Close Group, Delete Group – the same actions the card gives a
+ * reader as controls under touch exploration, by the same names).
  */
 function GroupSheet({
   folder,
@@ -2413,37 +2417,10 @@ function GroupSheet({
   onCloseGroup: (folder: Folder) => void
   onDelete: (folder: Folder) => void
 }): JSX.Element {
-  const actions: SheetAction[] = [
-    {
-      id: 'rename',
-      label: 'Rename',
-      onPick: () => uiStore.set({ renamingFolderId: folder.id })
-    },
-    {
-      id: 'collapse',
-      label: folder.collapsed ? 'Expand' : 'Collapse',
-      onPick: () =>
-        run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
-    },
-    {
-      id: 'ungroup',
-      label: 'Ungroup',
-      onPick: () => run('folder.delete', { folderId: folder.id, unpack: true })
-    },
-    // Close Group destroys nothing the saved group does not keep (`folder.close`): the plain
-    // ink, as on the Groups pane's row sheet and the tablet's menu; Delete Group alone is danger.
-    {
-      id: 'close',
-      label: `Close Group (${count} ${count === 1 ? 'Tab' : 'Tabs'})`,
-      onPick: () => onCloseGroup(folder)
-    },
-    {
-      id: 'delete',
-      label: 'Delete Group',
-      destructive: true,
-      onPick: () => onDelete(folder)
-    }
-  ]
+  const actions: SheetAction[] = groupActions(folder, count, {
+    closeGroup: onCloseGroup,
+    deleteGroup: onDelete
+  }).map(({ id, label, destructive, run: onPick }) => ({ id, label, destructive, onPick }))
   return (
     <OverviewSheet
       title={folder.name}

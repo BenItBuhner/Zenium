@@ -26,9 +26,10 @@
  * Chrome's task manager ends a tab – and a helper is killed. The browser process is refused
  * (quitting has its own verb), and so is a pid that is no longer one of ours.
  */
-import { app, webContents as electronWebContents, type WebContents } from 'electron'
+import { webContents as electronWebContents, type WebContents } from 'electron'
 import type { TaskHost, TaskSample } from '../../core/platform'
 import type { TaskKind } from '../../shared/types'
+import { hostMetrics } from './resources/hostMetrics'
 import type { WebRequestMultiplexer } from './webRequest'
 
 /** `app.getAppMetrics()`'s row, the part the host reads. */
@@ -69,6 +70,8 @@ export interface TaskEngine {
   /** The browser process's own pid. */
   browserPid(): number
   kill(pid: number): boolean
+  /** The page has stopped sampling: whatever the engine keeps for it may go. */
+  release?(): void
 }
 
 export interface ElectronTaskHostOptions {
@@ -304,6 +307,7 @@ export class ElectronTaskHost implements TaskHost {
     this.detachNetwork = null
     this.bytesByTab.clear()
     this.lastSampleAt = null
+    this.engine.release?.()
   }
 
   private bytesOf(tabIds: readonly string[]): number {
@@ -420,10 +424,15 @@ export function contentLength(headers: Record<string, string[]> | undefined): nu
 // Electron
 // ---------------------------------------------------------------------------
 
+/**
+ * The task page reads the engine through the browser's shared sampler (`resources/hostMetrics.ts`),
+ * so its polling every second or two does not shrink the resource governor's CPU window:
+ * `percentCPUUsage` is Electron's since the previous `getAppMetrics()` by ANY caller.
+ */
 function electronEngine(): TaskEngine {
   return {
     processes: () =>
-      app.getAppMetrics().map((m) => ({
+      hostMetrics.sample('tasks').map((m) => ({
         pid: m.pid,
         type: m.type,
         serviceName: m.serviceName,
@@ -457,7 +466,9 @@ function electronEngine(): TaskEngine {
       } catch {
         return false
       }
-    }
+    },
+    // A reopened page starts a fresh window, not an average over the time it was closed.
+    release: () => hostMetrics.forget('tasks')
   }
 }
 

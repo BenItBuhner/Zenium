@@ -12,9 +12,13 @@ import {
  *    `Notification.permission` (`default` for an undecided site, which Chromium's yes-or-no host
  *    check cannot say) and Chrome's `requestPermission()` result (a dismissed prompt leaves the
  *    site undecided, not denied). It also reports a `window.focus()` the page calls while it
- *    holds a gesture – the click handler of a notification does that to come forward.
+ *    holds a gesture – the click handler of a notification does that to come forward – and
+ *    announces each `requestPermission()` call before the engine's own request leaves.
  *  - `installNotificationBridge` runs in the isolated world, answers the shim's questions from
- *    the browser and forwards the focus request.
+ *    the browser, forwards the focus request, and relays with each announced request whether
+ *    the frame holds a user activation right now (`navigator.userActivation.isActive`, read
+ *    here and not taken from the page) – the browser's quiet notification rule (NOT-03) turns
+ *    on it, and the engine's permission request does not carry it.
  *
  * The status is fetched lazily, on the page's first read, and then kept current by the browser:
  * most pages never touch `Notification`, and the ones that read it on every render pay one
@@ -77,6 +81,11 @@ export function installNotificationShim(events: NotificationShimEvents): void {
     value: function requestPermission(
       callback?: (status: NotificationPermission) => void
     ): Promise<NotificationPermission> {
+      // The isolated world hears of the call first – synchronously, before the engine's own
+      // request leaves in the microtask below – and tells the browser whether the page holds a
+      // gesture right now (the quiet rule, NOT-03). It reads the frame's activation itself; this
+      // event only says a request is being made.
+      doc.dispatchEvent(new Event(events.request))
       return Promise.resolve()
         .then(() => nativeRequest.call(N))
         .then(() => {
@@ -99,6 +108,12 @@ export interface NotificationBridgeTransport {
   onStatus(listener: (status: unknown) => void): void
   /** The page asked to come forward with a gesture in hand. */
   focus(): void
+  /**
+   * The page is calling `Notification.requestPermission()`: whether the document holds a user
+   * activation at this moment (undefined where the engine cannot say), for the browser's quiet
+   * rule. Sent before the engine's own request leaves.
+   */
+  request(gesture: boolean | undefined): void
   /** Run `installNotificationShim` in the main world. */
   installShim(events: NotificationShimEvents): void
 }
@@ -115,12 +130,17 @@ export function installNotificationBridge(
   }
   document.addEventListener(events.query, () => push(transport.status()))
   transport.onStatus(push)
+  // Activation is a property of the frame, seen from here too: what the page claims of a gesture
+  // is never taken on its word – the isolated world reads it itself.
+  const activation = (): { isActive: boolean } | undefined =>
+    (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation
+  document.addEventListener(events.request, () => {
+    const current = activation()
+    transport.request(current ? current.isActive === true : undefined)
+  })
   let lastFocus = -Infinity
   document.addEventListener(events.focus, () => {
-    // The page's own claim is checked: activation is a property of the frame, seen from here too.
-    const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
-      .userActivation
-    if (!activation?.isActive) return
+    if (!activation()?.isActive) return
     const now = Date.now()
     if (now - lastFocus < FOCUS_REPORT_INTERVAL_MS) return
     lastFocus = now

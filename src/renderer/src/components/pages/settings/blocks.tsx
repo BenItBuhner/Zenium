@@ -200,11 +200,22 @@ export function ZoomBlock({
 
 /**
  * §9.12's validation text: 13 in the danger ink with a 16 px glyph, under the field. `id` lets
- * the field it belongs to name it (`aria-describedby`), so a reader on the field hears the error.
+ * the field it belongs to name it (`aria-describedby`), so a reader on the field hears the error;
+ * the glyph is decoration and stays out of the reading. Every validation line in the program is
+ * this one – a form's under its field, the phone field sheet's, the desktop row's inline field
+ * (`rows.tsx`'s `InlineField`, which adds its own class for the row's geometry).
  */
-export function ValidationMessage({ message, id }: { message: string; id?: string }): JSX.Element {
+export function ValidationMessage({
+  message,
+  id,
+  className
+}: {
+  message: string
+  id?: string
+  className?: string
+}): JSX.Element {
   return (
-    <span className="zen-settings-validation" role="alert" id={id}>
+    <span className={cn('zen-settings-validation', className)} role="alert" id={id}>
       <CircleAlert aria-hidden="true" />
       {message}
     </span>

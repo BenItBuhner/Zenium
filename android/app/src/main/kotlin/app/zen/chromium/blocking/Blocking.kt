@@ -7,6 +7,7 @@ import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import app.zen.chromium.Storage
+import app.zen.chromium.ext.ExtensionUrls
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -264,7 +265,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
      */
     fun guardNavigation(url: String): SafeBrowsingHit? {
         val policy = policy ?: return null
-        return if (isHttp(url)) policy.unsafe(url) else null
+        return if (isWeb(url)) policy.unsafe(url) else null
     }
 
     /** Honour an `upgradeScheme` decision on a navigation of `tab` from `url`; see the companion's. */
@@ -384,6 +385,16 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
 
         /**
+         * An `http(s)` URL that is a web page's, not an extension's own: the origin the runtime
+         * serves an extension's pages on (`https://<id>.ext.zenium.invalid/`, [ExtensionUrls]) is
+         * exempt from the rules as `chrome-extension://` is in Chrome, whose `RulesetManager`
+         * never evaluates a request for a `chrome-extension://` URL (contract 1.11) – and from
+         * the Safe Browsing question, which no `.invalid` host can answer. Read of the request's
+         * URL only: a request an extension page makes to the web is a web request.
+         */
+        private fun isWeb(url: String): Boolean = isHttp(url) && !ExtensionUrls.isExtensionUrl(url)
+
+        /**
          * The whole of `shouldInterceptRequest` but the `WebResourceResponse`: the engine's
          * verdict first ([evaluate] below), then – for a request the engine let through – the
          * `onBeforeRequest` listeners, whose composed answer is applied the way WebView allows:
@@ -479,7 +490,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             ranged: Boolean = false,
             hasOrigin: Boolean = false
         ): Verdict {
-            if (!isHttp(url)) return Verdict.Pass
+            // Outside the web – `data:`, `about:`, an extension's own page in either spelling –
+            // nothing is asked, the policy included: the pass, before any rule.
+            if (!isWeb(url)) return Verdict.Pass
             val known = ResourceType.guessKnown(url, isMainFrame, accept)
             val type = known ?: ResourceType.XMLHTTPREQUEST
             if (policy != null && (isMainFrame || type == ResourceType.SUB_FRAME)) {
@@ -574,7 +587,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         }
 
         fun decideNavigation(snap: EngineSnapshot, tab: BlockingTab, url: String): Decision {
-            if (snap === EngineSnapshot.EMPTY || !isHttp(url)) return Decision.ALLOW
+            if (snap === EngineSnapshot.EMPTY || !isWeb(url)) return Decision.ALLOW
             return snap.decide(Request(url, ResourceType.MAIN_FRAME, null, "GET", tabId = tab.tabId, partition = tab.containerId))
         }
 

@@ -1,5 +1,5 @@
 import type { FocusEvent, JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
@@ -26,6 +26,7 @@ import {
   type SwitchRow,
   type ValueRow
 } from './model'
+import { ValidationMessage } from './blocks'
 import { attachLineCount } from './lineCount'
 import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
@@ -81,6 +82,29 @@ export interface RowContext {
 }
 
 /**
+ * The level of a group's heading in the page's outline, which steps by one from the heading
+ * above it (axe `heading-order`): `3` under the desktop pane's `h2` section title and under a
+ * sheet's or dialog's `h2` title block; `2` on the phone's drill-in page, whose bar is the
+ * page's `h1` and which has no section title between the bar and the groups (#391's
+ * pre-existing `heading-order` on the phone layout). The styles hang on the class, not the tag.
+ */
+export type GroupHeadingLevel = 2 | 3
+
+/** A group's heading (§9.27) at its outline level; the classes are the same at either. */
+export function GroupHeading({
+  level,
+  className,
+  children
+}: {
+  level: GroupHeadingLevel
+  className?: string
+  children: ReactNode
+}): JSX.Element {
+  const Tag = level === 2 ? 'h2' : 'h3'
+  return <Tag className={cn('zen-v2-heading zen-settings-heading', className)}>{children}</Tag>
+}
+
+/**
  * The groups of a section (or an item sheet): heading, description, rows, or the empty line.
  * `children` come after the groups, as one more of them (a search's "Other categories").
  */
@@ -89,12 +113,15 @@ export function GroupList({
   ctx,
   className,
   variant = 'phone',
+  headingLevel = 3,
   children
 }: {
   groups: readonly RowGroup[]
   ctx: RowContext
   className?: string
   variant?: RowVariant
+  /** The groups' heading level (`GroupHeadingLevel`); 3 unless the list stands right under a page's `h1`. */
+  headingLevel?: GroupHeadingLevel
   children?: ReactNode
 }): JSX.Element {
   return (
@@ -111,10 +138,10 @@ export function GroupList({
           aria-label={group.heading ?? undefined}
         >
           {group.heading !== null && (
-            <h3 className="zen-v2-heading zen-settings-heading">
+            <GroupHeading level={headingLevel}>
               {group.heading}
               {group.aside && <span className="zen-settings-heading-aside">{group.aside}</span>}
-            </h3>
+            </GroupHeading>
           )}
           {group.description && (
             <p className="zen-settings-group-description">{group.description}</p>
@@ -792,9 +819,12 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
 /**
  * A desktop input in its row (§9.12): the row's value edited in place and committed on Enter
  * or when the field loses focus; Escape puts the row's value back. A commit the row refuses
- * keeps the typed value, marks the field and shows the message where the description was.
+ * keeps the typed value, marks the field and shows the message under it as §9.12's validation
+ * line (`ValidationMessage`: 13 in the danger ink with its 16 glyph), which the field names
+ * (`aria-describedby`) so a reader on the field hears the error.
  */
 function InlineField({ row }: { row: FieldRow }): JSX.Element {
+  const errorId = `${useId()}-error`
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -838,6 +868,7 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
         placeholder={row.placeholder}
         aria-label={row.label}
         aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
@@ -866,9 +897,7 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
         }}
       />
       {error && (
-        <span className="zen-settings-inline-error" role="alert">
-          {error}
-        </span>
+        <ValidationMessage id={errorId} message={error} className="zen-settings-inline-error" />
       )}
     </span>
   )
