@@ -477,6 +477,53 @@ describe('TabCaptureApi', () => {
     expect(() => w.api.handlers.getMediaStreamId(w.workerCtx(), {})).not.toThrow()
   })
 
+  it("an id the action popup asked for is redeemed by the offscreen document (Chrome ties an MV3 extension's id to its process, not the calling frame; Audio Master's popup -> offscreen hand-over)", () => {
+    const w = world()
+    const { wc: target } = w.addTab('t1', 5, 'https://example.com/')
+    w.grant(EXT, 5)
+    const popup = w.page(31)
+    const streamId = w.api.handlers.getMediaStreamId(w.frameCtx(popup), {
+      targetTabId: 5
+    }) as string
+    expect(streamId).toMatch(/^zen-tab-capture-/)
+    // Another extension's document, or a sub-frame, still cannot.
+    const offscreen = w.page(77)
+    expect(() => w.api.handlers.resolveStreamId(w.frameCtx(offscreen, OTHER), streamId)).toThrow(
+      TAB_CAPTURE_INVALID_TAB_ERROR
+    )
+    expect(() => w.api.handlers.resolveStreamId(w.frameCtx(offscreen, EXT, {}), streamId)).toThrow(
+      TAB_CAPTURE_INVALID_TAB_ERROR
+    )
+    expect(w.api.handlers.resolveStreamId(w.frameCtx(offscreen), streamId)).toBe('engine-1')
+    expect(w.registered).toEqual([{ target: target.id, consumer: 77, id: 'engine-1' }])
+    expect(
+      w.api.allowsMediaRequest(target as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(true)
+    // Once registered for the offscreen document, the id is that document's.
+    expect(() => w.api.handlers.resolveStreamId(w.frameCtx(popup), streamId)).toThrow(
+      TAB_CAPTURE_INVALID_TAB_ERROR
+    )
+  })
+
+  it("an MV2 page's id with no consumerTabId is its own frame's, as Chrome restricts it", () => {
+    const w = world()
+    w.addTab('t1', 5, 'https://example.com/')
+    w.grant(EXT, 5)
+    const page = w.page(31)
+    const mv2 = (wc: FakeWebContents): ApiContext => {
+      const ctx = w.frameCtx(wc)
+      return {
+        ...ctx,
+        extension: { manifest: { name: 'Probe', manifest_version: 2 } }
+      } as ApiContext
+    }
+    const streamId = w.api.handlers.getMediaStreamId(mv2(page), { targetTabId: 5 }) as string
+    expect(() => w.api.handlers.resolveStreamId(mv2(w.page(77)), streamId)).toThrow(
+      TAB_CAPTURE_INVALID_TAB_ERROR
+    )
+    expect(w.api.handlers.resolveStreamId(mv2(page), streamId)).toBe('engine-1')
+  })
+
   it("refuses without the user's invocation on the tab, and on the browser's own pages", () => {
     const w = world()
     w.addTab('t1', 5, 'https://example.com/')

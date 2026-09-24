@@ -115,7 +115,8 @@ interface LiveRequest {
  * answer a stream id: the engine's when the consumer is a tab named by `consumerTabId`
  * (registered for it at once, as Chrome does), otherwise one of this layer's, which
  * `resolveStreamId` turns into the engine's for the document that calls `getUserMedia` with it
- * (the caller's own, or for a worker's request any document of the extension). The media
+ * (any document of the extension, as Chrome ties an MV3 extension's id to its process; an MV2
+ * page's own only). The media
  * request the engine then makes on the target is approved by `allowsMediaRequest` (the
  * session's permission handler asks) when a registered request of that consumer's origin exists
  * for the tab: the user's gesture on the extension was the consent, as in Chrome.
@@ -206,6 +207,11 @@ export class TabCaptureApi {
     }
     this.requireFree(target)
     const streamId = this.mint()
+    // Chrome's `TabCaptureGetMediaStreamIdFunction` restricts an id with no `consumerTabId` to
+    // the calling frame in manifest version 2 only (`should_restrict_to_render_frame`); an MV3
+    // extension's id is for its process, so any of its documents may redeem it: the offscreen
+    // document an action popup hands the id to (Audio Master), as much as the worker's own.
+    const restrictToCaller = ctx.extension.manifest.manifest_version === 2
     this.add({
       streamId,
       extensionId: ctx.extensionId,
@@ -213,7 +219,7 @@ export class TabCaptureApi {
       chromeTabId,
       anonymous: true,
       origin: extensionOrigin(ctx.extensionId),
-      consumer: ctx.sender.kind === 'frame' ? ctx.sender.webContents.id : null,
+      consumer: restrictToCaller && ctx.sender.kind === 'frame' ? ctx.sender.webContents.id : null,
       registered: false,
       state: null,
       createdAt: this.now()
