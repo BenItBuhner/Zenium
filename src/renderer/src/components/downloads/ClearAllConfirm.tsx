@@ -11,10 +11,14 @@ import { ConfirmSheet } from '../pages/settings/sheets'
  * notice on the frame's dialog host, the question as the title block over its one paragraph,
  * Cancel | Clear all as §9.11 peers) and on the phone its sheet mirror, `ConfirmSheet`
  * (pages/settings/sheets.tsx – the form every phone confirmation takes, `SiteDataPrompt`'s
- * sheet form among them), chosen the way the Settings chassis chooses its host, by the
- * viewport's form factor. One prompt for both Downloads surfaces: the page tab of the desktop
- * and the tablet (`pages/downloads/DownloadsPage.tsx`) and the phone's sheet
- * (`DownloadsSheet.tsx`), which is what `zen://downloads` opens as on a phone
+ * sheet form among them). The prompt picks its host by form factor – a phone the sheet, every
+ * other width the dialog, as the bespoke prompt did (not the Settings chassis's rule, which
+ * picks its layout by width: `SettingsPage.tsx`'s 720); the lead's #448 Q2 ruling (§9.36 as
+ * amended) moves that choice into the confirm primitive itself – §9.20's dialog on a mouse, the
+ * docked 480 sheet on the tablet, the edge-to-edge sheet on the phone – as the primitive
+ * owner's follow-up, and this caller then follows it. One prompt for both Downloads surfaces:
+ * the page tab of the desktop and the tablet (`pages/downloads/DownloadsPage.tsx`) and the
+ * phone's sheet (`DownloadsSheet.tsx`), which is what `zen://downloads` opens as on a phone
  * (`shared/internalPages.ts`, `TAB_LAYOUTS`). The keyboard is the primitive's on both (§9.22
  * as amended on #392): the container holds the focus as the prompt opens, named by the
  * question and described by the paragraph; Tab reaches Cancel then the verb; Escape and the
