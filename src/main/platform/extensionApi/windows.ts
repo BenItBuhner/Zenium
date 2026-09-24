@@ -146,6 +146,14 @@ export class WindowsApi {
     urls.forEach((url, i) => {
       this.host.browser.tabs.createTab({ url, active: i === 0 && !moving }, win)
     })
+    // Chrome gives a window created on neither a URL nor a tab a new tab of its own
+    // (`WindowsCreateFunction::Run`: "Create a new tab if the created window is still empty"),
+    // so the caller's `window.tabs[0]` exists: Tab Resize reads its id to file the layout's
+    // remaining cells. A synced window owns none of the shared strip until it gets one; a
+    // private window already holds its starter tab.
+    if (this.model.tabsInWindow(win).length === 0) {
+      this.host.browser.tabs.createTab({ active: true }, win)
+    }
     return this.model.chromeWindow(win, true, this.urlsFor(ctx.extension))
   }
 

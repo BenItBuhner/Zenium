@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Space, Tab } from '../../../shared/types'
+import { BLANK_URL } from '../../../shared/url'
 import type { ZenWindow } from '../../../core/window'
 import { TabsApi } from '../extensionApi/tabs'
 import { WindowsApi } from '../extensionApi/windows'
@@ -71,6 +72,11 @@ function world({ ownPrivate = false } = {}): World {
     ['t1', own],
     ['t2', own]
   ])
+  /** Tabs `createTab` made, filed in the window they were made in (Chrome ids from 100). */
+  const made: Tab[] = []
+  const all = (): Tab[] => [tab, other, ...made]
+  const chromeIdOf = (t: Tab): number =>
+    t.id === 't1' ? 7 : t.id === 't2' ? 8 : 100 + made.indexOf(t)
   const w: Partial<World> = {
     tearOffs: [],
     moves: [],
@@ -83,31 +89,35 @@ function world({ ownPrivate = false } = {}): World {
   const model = {
     zenWindow: (id: number) => windows.get(id),
     zenTab: (id: number) => (id === 7 ? tab : id === 8 ? other : undefined),
-    chromeTabId: (t: Tab) => (t.id === 't1' ? 7 : 8),
-    chromeTab: (t: Tab) => ({ id: t.id === 't1' ? 7 : 8, url: t.url }),
+    chromeTabId: chromeIdOf,
+    chromeTab: (t: Tab) => ({ id: chromeIdOf(t), url: t.url }),
     windowOfTab: (t: Tab) => homes.get(t.id),
-    tabsInWindow: (win: FakeWindow) => [tab, other].filter((t) => homes.get(t.id) === win),
+    tabsInWindow: (win: FakeWindow) => all().filter((t) => homes.get(t.id) === win),
     lastFocusedWindow: () => own,
     setOpener: () => undefined,
     browserWindowOf: (win: FakeWindow) => bw.get(win.id),
     chromeWindow: (win: FakeWindow, populate: boolean) => ({
       id: idOf(win),
       tabs: populate
-        ? [tab, other]
+        ? all()
             .filter((t) => homes.get(t.id) === win)
-            .map((t) => ({ id: t.id === 't1' ? 7 : 8 }))
+            .map((t) => ({ id: chromeIdOf(t) }))
         : undefined
     }),
     windowIds: () => [...windows.keys()],
     windowIdOf: (win: FakeWindow) => idOf(win)
   }
+  const createTab = (options: { url?: string; active?: boolean }, win: FakeWindow): Tab => {
+    w.created!.push({ url: options.url, active: options.active, win })
+    const fresh = { ...tab, id: `t-new-${made.length + 1}`, url: options.url ?? '' } as Tab
+    made.push(fresh)
+    homes.set(fresh.id, win)
+    return fresh
+  }
   const browser = {
     extensions: { list: () => [{ id: EXT, path: '/ext/' + EXT, allowFileAccess: false }] },
     tabs: {
-      createTab: (options: { url?: string; active?: boolean }, win: FakeWindow) => {
-        w.created!.push({ url: options.url, active: options.active, win })
-        return { ...tab, id: 't-new', url: options.url ?? '' }
-      },
+      createTab,
       // The core's tear-off files the tab in the new window's own space, as `moveTab` does.
       moveTabToNewWindow: (tabId: string, at: unknown, from: FakeWindow) => {
         w.tearOffs!.push({ tabId, at, from })
@@ -127,11 +137,18 @@ function world({ ownPrivate = false } = {}): World {
       activeTabFor: () => tab,
       activateTab: () => undefined
     },
-    createWindow: () => {
+    createWindow: (opts: { kind: 'synced' | 'private' }) => {
       w.newWindows!++
-      const fresh: FakeWindow = { id: 'w9', isPrivate: false, localSpace: null }
+      const isPrivate = opts.kind === 'private'
+      const fresh: FakeWindow = {
+        id: 'w9',
+        isPrivate,
+        localSpace: isPrivate ? ({ id: 'local-w9', tabIds: [] } as unknown as Space) : null
+      }
       windows.set(9, fresh)
       bw.set('w9', browserWindow())
+      // The core's `createWindow` gives a private (or blank) window its starter tab.
+      if (isPrivate) createTab({ url: BLANK_URL, active: true }, fresh)
       return fresh
     }
   }
@@ -192,6 +209,39 @@ describe('windows.create({ tabId }) and tabs.move across windows', () => {
     again.windows.handlers.create(again.ctx, { tabId: 7, type: 'popup', width: 400, height: 300 })
     expect(again.tearOffs).toHaveLength(1)
     expect(again.bw.get('w2')?.bounds).toEqual({ x: 60, y: 40, width: 400, height: 300 })
+  })
+
+  it('gives a window created on neither a URL nor a tab a new tab of its own, as Chrome does (Tab Resize reads window.tabs[0].id for its "Empty Tab" cell), and adds none beside URLs or a starter tab', () => {
+    const w = world()
+    const record = w.windows.handlers.create(w.ctx, {
+      left: 700,
+      top: 0,
+      width: 700,
+      height: 900
+    }) as { id: number; tabs?: Array<{ id: number }> }
+    expect(w.newWindows).toBe(1)
+    expect(w.tearOffs).toEqual([])
+    expect(w.created.map((c) => [c.url, c.active, c.win.id])).toEqual([[undefined, true, 'w9']])
+    expect(w.bw.get('w9')?.bounds).toEqual({ x: 700, y: 0, width: 700, height: 900 })
+    expect(record.id).toBe(9)
+    expect(record.tabs).toEqual([{ id: 100 }])
+    // On URLs the URLs are the window's tabs, and nothing more.
+    const urls = world()
+    const onUrls = urls.windows.handlers.create(urls.ctx, {
+      url: ['https://example.net/', 'https://example.org/']
+    }) as { tabs?: Array<{ id: number }> }
+    expect(urls.created.map((c) => [c.url, c.active])).toEqual([
+      ['https://example.net/', true],
+      ['https://example.org/', false]
+    ])
+    expect(onUrls.tabs).toEqual([{ id: 100 }, { id: 101 }])
+    // A private window arrives holding its starter tab: that tab is the one reported.
+    const priv = world()
+    const incognito = priv.windows.handlers.create(priv.ctx, { incognito: true }) as {
+      tabs?: Array<{ id: number }>
+    }
+    expect(priv.created.map((c) => [c.url, c.active, c.win.id])).toEqual([[BLANK_URL, true, 'w9']])
+    expect(incognito.tabs).toEqual([{ id: 100 }])
   })
 
   it("refuses an unknown tab and a tab of another profile with Chrome's texts, before any window is made", () => {
