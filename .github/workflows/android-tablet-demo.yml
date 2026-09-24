@@ -42,6 +42,12 @@ on:
         options:
           - soft
           - hard
+  # TEMPORARY: the run of the tablet continuity PR (#439) on its branch, once in each colour
+  # scheme (the `record` matrix below is temporary with it); off again before the review (the
+  # recipe is dispatch-only and the nightly's).
+  push:
+    branches:
+      - cursor/android-tablet-continuity-dc0f
 
 permissions:
   contents: read
@@ -52,7 +58,11 @@ concurrency:
 
 jobs:
   record:
-    name: Tablet layout demo (${{ inputs.theme || 'light' }})
+    name: Tablet layout demo (${{ matrix.theme }})
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
@@ -65,11 +75,11 @@ jobs:
         DEMO_CLASS=app.zen.chromium.TabletLayoutDemo
         DEMO_DIR=tablet-demo
         DEMO_OUT=artifacts/android-tablet-demo
-        DEMO_VIDEO=tablet-demo-${{ inputs.theme || 'light' }}.mp4
-        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_VIDEO=tablet-demo-${{ matrix.theme }}.mp4
+        DEMO_THEME=${{ matrix.theme }}
         DEMO_DISPLAY=1280x800@160
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
-      artifact-name: android-tablet-demo-${{ inputs.theme || 'light' }}
+      artifact-name: android-tablet-demo-${{ matrix.theme }}
       artifact-path: artifacts/android-tablet-demo/
 
   # One more boot when the emulator itself went away under the driver (adb lost the device), and
