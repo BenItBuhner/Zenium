@@ -5,6 +5,7 @@ import { applicationMenu } from '../menuBar'
 import type {
   MenuHost,
   MenuItemTemplate,
+  PageContextParams,
   PageFlags,
   Platform,
   StoreIO,
@@ -589,5 +590,115 @@ describe('links from the left pane open in the right pane (split-13)', () => {
     h.browser.handlePageMessage(b.id, { type: 'split-link', url: 'https://b.example/next' })
     expect(h.browser.tabs.tab(b.id)?.url).toBe('https://b.example/next')
     expect(h.browser.tabs.tab(a.id)?.url).toBe('https://a.example/story')
+  })
+})
+
+describe('the split rows of the link menu and the tab row’s menu (context-menus-24, -92)', () => {
+  const linkParams = (url: string): PageContextParams => ({
+    x: 120,
+    y: 240,
+    linkURL: 'https://link.example/next',
+    srcURL: '',
+    mediaType: 'none',
+    selectionText: '',
+    isEditable: false,
+    misspelledWord: '',
+    dictionarySuggestions: [],
+    pageURL: url,
+    frameURL: '',
+    frameId: 0,
+    editFlags: {
+      canUndo: false,
+      canRedo: false,
+      canCut: false,
+      canCopy: false,
+      canPaste: false,
+      canDelete: false,
+      canSelectAll: false
+    }
+  })
+  const linkMenu = (h: Harness, tab: Tab): MenuItemTemplate[] => {
+    h.eventsOf(tab.id).onContextMenu(linkParams(tab.url))
+    return h.shown()
+  }
+  const find = (items: MenuItemTemplate[], label: string): MenuItemTemplate => {
+    const item = items.find((i) => i.label === label)
+    if (!item) throw new Error(`no row "${label}"`)
+    return item
+  }
+  const groupOf = (h: Harness): string[] =>
+    Object.values(h.browser.state.model.splitGroups)[0]?.tabIds ?? []
+
+  it('Open Link in Split View is greyed once the page’s split is full, and opens the link as a pane until then', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    expect(find(linkMenu(h, a), 'Open Link in Split View').enabled).toBe(true)
+    click(linkMenu(h, a), 'Open Link in Split View')
+    expect(groupOf(h)).toHaveLength(2)
+    expect(h.browser.tabs.tab(groupOf(h)[1])?.url).toBe('https://link.example/next')
+    click(linkMenu(h, a), 'Open Link in Split View')
+    click(linkMenu(h, a), 'Open Link in Split View')
+    expect(groupOf(h)).toHaveLength(4)
+    expect(find(linkMenu(h, a), 'Open Link in Split View').enabled).toBe(false)
+  })
+
+  it('is greyed on a page that cannot be split, and is not offered on the phone', () => {
+    const h = harness()
+    // A chrome page is the chrome's own (no page menu comes from it): its rule reads greyed.
+    const settings = h.open('zen://settings')
+    expect(h.browser.pages.splittable(settings)).toBe(false)
+    expect(h.browser.tabs.canSplitLink(settings)).toBe(false)
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'phone' })
+    expect(labels(linkMenu(h, a))).not.toContain('Open Link in Split View')
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: a.id })
+    expect(labels(h.shown())).not.toContain('Split with Current Tab')
+    expect(labels(h.shown())).not.toContain('Add Tab to Split View')
+    h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: a.id })
+    expect(labels(h.shown())).not.toContain('Un-split Tab')
+  })
+
+  it('Add Tab to Split View is offered while a split is on screen, after Split with Current Tab, and joins the tab as the last pane, shown', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    const c = h.open('https://c.example/')
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: c.id })
+    expect(labels(h.shown())).not.toContain('Add Tab to Split View')
+    h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: c.id })
+    const rows = labels(h.shown())
+    expect(rows.indexOf('Add Tab to Split View')).toBe(rows.indexOf('Split with Current Tab') + 1)
+    expect(find(h.shown(), 'Add Tab to Split View').enabled).toBe(true)
+    click(h.shown(), 'Add Tab to Split View')
+    expect(groupOf(h)).toEqual([a.id, b.id, c.id])
+    expect(h.activeId()).toBe(c.id)
+  })
+
+  it('is greyed for a pane of the split, for a page that cannot be split, and once the split is full', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    const settings = h.open('zen://settings')
+    h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: a.id })
+    expect(find(h.shown(), 'Add Tab to Split View').enabled).toBe(false)
+    expect(labels(h.shown())).toContain('Un-split Tab')
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: settings.id })
+    expect(find(h.shown(), 'Add Tab to Split View').enabled).toBe(false)
+    const c = h.open('https://c.example/')
+    const d = h.open('https://d.example/')
+    const e = h.open('https://e.example/')
+    h.browser.tabs.activateTab(a.id, h.win)
+    for (const t of [c, d]) {
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: t.id })
+      click(h.shown(), 'Add Tab to Split View')
+    }
+    expect(groupOf(h)).toEqual([a.id, b.id, c.id, d.id])
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: e.id })
+    expect(find(h.shown(), 'Add Tab to Split View').enabled).toBe(false)
+    expect(h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: e.id })).toBeUndefined()
   })
 })

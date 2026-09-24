@@ -658,21 +658,28 @@ export class Menus {
           click: () => tabs.newPrivateTab(url, win)
         })
       }
-      open.push(
-        {
-          label: 'Open Link in Glance',
-          enabled: glanceAllowed,
-          click: () => tabs.openGlance(url, tab.id, 0.5, 0.5, win)
-        },
-        { label: 'Open Link in Split View', click: () => this.splitLink(tab.id, url, win) },
-        {
-          label: 'Open Link in New Container Tab',
-          enabled: !win.isPrivate,
-          submenu: this.containerSubmenu((cid) =>
-            tabs.createTab({ url, active: true, containerId: cid }, win)
-          )
-        }
-      )
+      open.push({
+        label: 'Open Link in Glance',
+        enabled: glanceAllowed,
+        click: () => tabs.openGlance(url, tab.id, 0.5, 0.5, win)
+      })
+      // Split view is the desktop's and the tablet's (the phone draws no panes): the row is
+      // theirs (context-menus-24, Edge's "Open link in split screen"), greyed when the link has
+      // no pane to go to – this page cannot be split (a chrome page) or its split is full.
+      if (win.formFactor !== 'phone') {
+        open.push({
+          label: 'Open Link in Split View',
+          enabled: tabs.canSplitLink(tab),
+          click: () => this.splitLink(tab.id, url, win)
+        })
+      }
+      open.push({
+        label: 'Open Link in New Container Tab',
+        enabled: !win.isPrivate,
+        submenu: this.containerSubmenu((cid) =>
+          tabs.createTab({ url, active: true, containerId: cid }, win)
+        )
+      })
     }
     const transfer: Template = []
     if (isDownloadable(url)) {
@@ -1634,6 +1641,7 @@ export class Menus {
     const otherWindows = tabs.windowsForMove(tabId, win)
 
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
+    const panes = win.formFactor !== 'phone'
 
     // Firefox's tab menu in Firefox's groups (design language v2 §6 "Menus": a context menu that
     // runs long is regrouped to the app menu's counts – about eighteen rows, four separators at
@@ -1816,15 +1824,28 @@ export class Menus {
         click: () => this.browser.bookmarkTabs(win)
       },
       { label: 'Move Tab', submenu: moveTab },
-      {
-        label: 'Split with Current Tab',
-        enabled: canSplitWithActive,
-        click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
-      },
+      // The split rows are the desktop's and the tablet's (the phone draws no panes). Add Tab
+      // to Split View (context-menus-92, Vivaldi's row) is offered while a split is on screen
+      // and greyed when this tab cannot join it – it is one of its panes already, the split is
+      // full, its page cannot be split, or it is another window's own; without a split on
+      // screen Split with Current Tab is the way to one.
       ...when(
-        Boolean(tab.splitGroupId),
-        { label: 'Swap Panes', click: () => tabs.swapPanes(tabId, win) },
-        { label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }
+        panes,
+        {
+          label: 'Split with Current Tab',
+          enabled: canSplitWithActive,
+          click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
+        },
+        ...when(Boolean(active?.splitGroupId), {
+          label: 'Add Tab to Split View',
+          enabled: tabs.shownSplitFor(tab, win) !== null,
+          click: () => tabs.addToShownSplit(tabId, win)
+        }),
+        ...when(
+          Boolean(tab.splitGroupId),
+          { label: 'Swap Panes', click: () => tabs.swapPanes(tabId, win) },
+          { label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }
+        )
       ),
       {
         label: 'Open in New Container Tab',

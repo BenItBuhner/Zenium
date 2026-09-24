@@ -7,6 +7,7 @@ import type {
   Point,
   Settings,
   Space,
+  SplitGroup,
   SplitLayout,
   Tab,
   TabSearchCandidate,
@@ -3441,6 +3442,49 @@ export class TabManager {
     this.browser.state.afterBroadcast(() =>
       this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
     )
+  }
+
+  /**
+   * Whether a link in `tab`'s page has a pane to open in ("Open Link in Split View",
+   * context-menus-24): the tab's page can be split – a chrome page cannot – and the split it is
+   * in, if any, has room for the link's tab.
+   */
+  canSplitLink(tab: Tab): boolean {
+    if (!this.browser.pages.splittable(tab)) return false
+    const group = tab.splitGroupId ? this.model.splitGroups[tab.splitGroupId] : undefined
+    return !group || group.tabIds.length < MAX_SPLIT_TABS
+  }
+
+  /**
+   * The split shown in `win` when `tab` may join it as a pane ("Add Tab to Split View",
+   * context-menus-92), else null: the active tab is in a split with room, the tab is not one of
+   * its panes, its page can be split and it may join a split of that space (`joinable`).
+   */
+  shownSplitFor(tab: Tab, win: ZenWindow): SplitGroup | null {
+    const active = this.activeTabFor(win)
+    const group = active?.splitGroupId ? this.model.splitGroups[active.splitGroupId] : undefined
+    if (!group || group.tabIds.includes(tab.id) || group.tabIds.length >= MAX_SPLIT_TABS)
+      return null
+    if (!this.browser.pages.splittable(tab) || !this.joinable(tab, group.spaceId, win)) return null
+    return group
+  }
+
+  /**
+   * Add Tab to Split View (context-menus-92, Vivaldi's row): the tab joins the split shown in
+   * `win` as its last pane – moving into the split's space first, as a dropped tab does – and
+   * is shown, the pane the user asked for. False when there is no split it may join.
+   */
+  addToShownSplit(tabId: string, win: ZenWindow): boolean {
+    const tab = this.tab(tabId)
+    const group = tab ? this.shownSplitFor(tab, win) : null
+    if (!tab || !group) return false
+    this.bringIntoSpace(tab, group.spaceId)
+    if (!addTabToSplit(this.model, group.id, tab.id)) return false
+    this.ensureLoaded(tab.id, win)
+    this.claim(tab.id, win)
+    this.activateTab(tab.id, win)
+    this.browser.state.commit()
+    return true
   }
 
   addToSplit(groupId: string, tabId: string): void {
