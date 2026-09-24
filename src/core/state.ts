@@ -1082,6 +1082,8 @@ export class BrowserState {
           capture: null,
           // A toolbox is a session's own: the key is not written (Android's records never carry it).
           devtools: undefined,
+          // So is a wake from sleep: the leaf's number is this session's (`Tabs.load`).
+          memorySaver: undefined,
           errorCode: null,
           // A certificate proceeded past is a decision of the session, not of the tab.
           certificateError: null,

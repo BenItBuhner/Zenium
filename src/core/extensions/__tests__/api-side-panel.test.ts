@@ -43,6 +43,32 @@ describe('sidePanel argument checks', () => {
     expect(normalizePanelOptions({})).toEqual({})
   })
 
+  it("takes the extension's own absolute URL as a path, in either spelling, as Chrome resolves it", () => {
+    const id = 'abcdefghijklmnopabcdefghijklmnop'
+    // Adobe Photoshop: `path: chrome.runtime.getURL('/sidepanel.html')` on every setOptions.
+    expect(
+      normalizePanelOptions({ enabled: true, path: `https://${id}.ext.zenium.invalid/sidepanel.html` }, id)
+    ).toEqual({ enabled: true, path: 'sidepanel.html' })
+    expect(normalizePanelOptions({ path: `chrome-extension://${id}/panel.html?tab=1#top` }, id)).toEqual({
+      path: 'panel.html?tab=1#top'
+    })
+    // Another extension's page, any other origin, or the bare origin: refused as before.
+    const other = 'ponmlkjihgfedcbaponmlkjihgfedcba'
+    expect(() => normalizePanelOptions({ path: `chrome-extension://${other}/panel.html` }, id)).toThrow(
+      ERROR_INVALID_OPTIONS
+    )
+    expect(() => normalizePanelOptions({ path: 'https://x.test/panel.html' }, id)).toThrow(
+      ERROR_INVALID_OPTIONS
+    )
+    expect(() => normalizePanelOptions({ path: `chrome-extension://${id}/` }, id)).toThrow(
+      ERROR_INVALID_OPTIONS
+    )
+    // Without the caller's id an absolute URL stays refused.
+    expect(() => normalizePanelOptions({ path: `chrome-extension://${id}/panel.html` })).toThrow(
+      ERROR_INVALID_OPTIONS
+    )
+  })
+
   it('rejects absolute URLs, empty paths, bad tab ids and non-boolean enabled', () => {
     expect(() => normalizePanelOptions({ path: 'https://x.test/' })).toThrow(ERROR_INVALID_OPTIONS)
     expect(() => normalizePanelOptions({ path: '' })).toThrow(ERROR_INVALID_OPTIONS)

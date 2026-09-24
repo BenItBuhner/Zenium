@@ -185,6 +185,12 @@ const UNLOAD_CHECK_TIMEOUT_MS = 5_000
  * a page with a huge form – is left out rather than written into the profile on every commit.
  */
 const PAGE_STATE_MAX_CHARS = 64 * 1024
+/**
+ * How long End process's word on a view holds (`noteEndedByUser`): `forcefullyCrashRenderer` is
+ * followed by `render-process-gone` within the tick; a mark this old was never collected and
+ * must not colour a later crash of the page's own.
+ */
+export const ENDED_BY_USER_MS = 5_000
 
 /** A stored entry: URL and title, plus the engine's page state when it has one worth keeping. */
 function snapshotEntry(entry: Electron.NavigationEntry): NavigationSnapshotEntry {
@@ -278,6 +284,13 @@ export class ElectronTabView implements TabView {
    * handed to the core with the `did-fail-load` that follows so the interstitial can show it.
    */
   private refusedCertificate: { url: string; certificate: CertificateDetails } | null = null
+  /**
+   * When the task manager's End process told this view its renderer is about to be crashed on
+   * the user's word (`ElectronTaskHost.end` → `noteEndedByUser`): the `render-process-gone` that
+   * follows is reported as `ended`, not as the engine's `crashed`. A mark older than
+   * `ENDED_BY_USER_MS` is stale (the renderer never went) and a later real crash reads as one.
+   */
+  private endedByUserAt: number | null = null
   /**
    * A `window.open` / `target=_blank` the core may turn into a tab (`onCreatedNavigationTarget`);
    * returns the function that withdraws the announcement when it does not.
@@ -418,7 +431,9 @@ export class ElectronTabView implements TabView {
           : null
       ev.onFailLoad(code, description, url, isCertificateError(code) ? { certificate } : undefined)
     })
-    wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason, details.exitCode))
+    wc.on('render-process-gone', (_e, details) =>
+      ev.onCrashed(this.takeEndedByUser() ? 'ended' : details.reason, details.exitCode)
+    )
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
     wc.on('media-started-playing', () => ev.onMediaStateChanged(true))
     wc.on('media-paused', () => ev.onMediaStateChanged(false))
@@ -762,6 +777,22 @@ export class ElectronTabView implements TabView {
 
   stop(): void {
     this.wc.stop()
+  }
+
+  /**
+   * The task manager is about to crash this view's renderer on the user's word (End process):
+   * the `render-process-gone` that follows reads `ended` (`takeEndedByUser`), and the core's
+   * unload toast says the page was ended, not that it crashed.
+   */
+  noteEndedByUser(now: number = Date.now()): void {
+    this.endedByUserAt = now
+  }
+
+  /** Whether the renderer going away now is End process's doing; the mark is spent either way. */
+  private takeEndedByUser(now: number = Date.now()): boolean {
+    const at = this.endedByUserAt
+    this.endedByUserAt = null
+    return at !== null && now - at <= ENDED_BY_USER_MS
   }
 
   hasDocument(): boolean {
@@ -2343,6 +2374,18 @@ export class ElectronTabViewHost implements TabViewHost {
 
   viewForWebContents(wc: WebContents): ElectronTabView | undefined {
     return this.byWebContentsId.get(wc.id)
+  }
+
+  /**
+   * End process (`ElectronTaskHost.end`) is about to crash the renderer behind these web
+   * contents: when they are a tab view's, the view is told so its renderer going away reads as
+   * `ended`. False for web contents that are no tab's (an extension's page, a window's chrome).
+   */
+  noteEndedByUser(webContentsId: number): boolean {
+    const view = this.byWebContentsId.get(webContentsId)
+    if (!view) return false
+    view.noteEndedByUser()
+    return true
   }
 
   /** Every live tab view. */

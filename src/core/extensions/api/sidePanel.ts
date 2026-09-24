@@ -8,6 +8,8 @@
  * The host module owns the panel view itself (`main/platform/extensionApi/sidePanel.ts`).
  */
 
+import { extensionIdOfUrl } from '../runtime/extensionUrls'
+
 export interface PanelOptions {
   tabId?: number
   path?: string
@@ -79,24 +81,47 @@ function isInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value)
 }
 
-/** Extension-relative paths lose their leading slashes; anything else is rejected. */
-function checkPath(value: unknown): string {
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i
+
+/**
+ * Extension-relative paths lose their leading slashes. Chrome stores `path` as given and
+ * resolves it when the panel opens (`Extension::ResolveExtensionURL`: a URL resolution against
+ * the extension's origin, kept when the result is same-origin), so an extension's own absolute
+ * URL is a working path there: Adobe Photoshop's worker passes
+ * `chrome.runtime.getURL('/sidepanel.html')` to every `setOptions` (Android compat round 14,
+ * carried from round 13), and every call was refused here as "Invalid options". Given the
+ * extension's id, either spelling of its own URL (`chrome-extension://<id>/…`, the served
+ * `https://<id>.ext.zenium.invalid/…`) becomes its path with the query and fragment. A URL on
+ * any other origin, which Chrome keeps and then fails to open, is refused as before; so is an
+ * absolute URL when the caller passes no id.
+ */
+function checkPath(value: unknown, ownId?: string): string {
   if (typeof value !== 'string') throw new SidePanelError(ERROR_INVALID_OPTIONS)
-  const path = value.replace(/^\/+/, '')
-  if (path.length === 0 || /^[a-z][a-z0-9+.-]*:/i.test(path)) {
-    throw new SidePanelError(ERROR_INVALID_OPTIONS)
+  let path = value
+  if (SCHEME.test(value)) {
+    if (ownId === undefined || extensionIdOfUrl(value) !== ownId.toLowerCase()) {
+      throw new SidePanelError(ERROR_INVALID_OPTIONS)
+    }
+    const url = new URL(value)
+    path = `${url.pathname}${url.search}${url.hash}`
   }
+  path = path.replace(/^\/+/, '')
+  if (path.length === 0 || SCHEME.test(path)) throw new SidePanelError(ERROR_INVALID_OPTIONS)
   return path
 }
 
-export function normalizePanelOptions(raw: unknown): PanelOptions {
+/**
+ * `setOptions(options)`: the shape checked, the path made extension-relative. `ownId` is the
+ * calling extension's id, which lets its own absolute URL stand as a path (see [checkPath]).
+ */
+export function normalizePanelOptions(raw: unknown, ownId?: string): PanelOptions {
   if (!isRecord(raw)) throw new SidePanelError(ERROR_INVALID_OPTIONS)
   const options: PanelOptions = {}
   if (raw.tabId !== undefined) {
     if (!isInteger(raw.tabId) || raw.tabId < 0) throw new SidePanelError(ERROR_INVALID_OPTIONS)
     options.tabId = raw.tabId
   }
-  if (raw.path !== undefined) options.path = checkPath(raw.path)
+  if (raw.path !== undefined) options.path = checkPath(raw.path, ownId)
   if (raw.enabled !== undefined) {
     if (typeof raw.enabled !== 'boolean') throw new SidePanelError(ERROR_INVALID_OPTIONS)
     options.enabled = raw.enabled

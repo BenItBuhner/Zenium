@@ -1984,7 +1984,8 @@ describe('the section model', () => {
 
     // A stored default reads on the row; a site's answers list under their type and under the
     // site: under the type as item rows whose one action, Forget, runs at once (the lead's #418
-    // ruling 5), under the site reset through the permission command after a confirmation.
+    // ruling 5), under the site reset through the permission command at once too – plain, no
+    // confirmation (the lead's #431 Q1 ruling; only the bulk Reset all confirms).
     const rules = [
       { origin: 'https://meet.example', permission: 'camera', decision: 'allow' as const },
       { origin: 'https://meet.example', permission: 'microphone', decision: 'deny' as const },
@@ -2027,14 +2028,18 @@ describe('the section model', () => {
     })
     const reset = row(stored, 'sites:site:https://meet.example:reset')
     if (reset.kind !== 'action') throw new Error('not an action')
-    expect(reset.confirm?.action).toBe('Reset')
+    expect(reset).toMatchObject({ label: 'Reset site settings', button: 'Reset' })
+    expect(reset.confirm).toBeUndefined()
+    expect(reset.destructive).toBeUndefined()
+    invoke.mockClear()
     reset.onPress?.()
-    expect(invoke).toHaveBeenCalledWith('permissions.resetOrigin', {
-      origin: 'https://meet.example'
-    })
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.resetOrigin', { origin: 'https://meet.example' }]
+    ])
     const resetAll = row(stored, 'sites-reset-all')
-    expect(resetAll).toMatchObject({ kind: 'action', destructive: true })
+    expect(resetAll).toMatchObject({ kind: 'action', destructive: true, button: 'Reset all…' })
     if (resetAll.kind !== 'action') throw new Error('not an action')
+    expect(resetAll.confirm?.action).toBe('Reset all')
     resetAll.onPress?.()
     expect(invoke).toHaveBeenCalledWith('permissions.reset', undefined)
 
@@ -2197,7 +2202,9 @@ describe('the section model', () => {
     uiStore.set({ overlay: 'none', overlaySection: null })
 
     // The permissions review lists every site holding a permission, the flagged one first with
-    // why; a site's row resets it after a confirmation and the check runs again.
+    // why; a site's row is an item in the grant rows' shape whose one action, Reset, resets it
+    // at once – no confirmation (the lead's #431 Q1 ruling) – and the check runs again. The
+    // phone's sheet holds the same Reset as a plain row.
     const permissions = row(privacy, 'safety-check:permissions')
     if (permissions.kind !== 'item') throw new Error('not an item')
     expect(permissions.sheet.title).toBe('Site permissions')
@@ -2206,16 +2213,35 @@ describe('the section model', () => {
       ['docs.example', 'Location']
     ])
     const meet = row(privacy, 'safety-check:permissions:https://meet.example')
-    if (meet.kind !== 'action') throw new Error('not an action')
-    expect(meet.confirm?.action).toBe('Reset')
+    expect(meet).toMatchObject({
+      kind: 'item',
+      label: 'meet.example',
+      description: 'Camera · Not used for weeks',
+      action: { label: 'Reset' }
+    })
+    if (meet.kind !== 'item') throw new Error('not an item')
+    expect(meet.action?.destructive).toBeUndefined()
+    expect(meet.sheet.title).toBe('meet.example')
     invoke.mockClear()
-    meet.onPress?.()
+    meet.action?.onPress()
+    expect(invoke.mock.calls).toEqual([
+      ['permissions.resetOrigin', { origin: 'https://meet.example' }],
+      ['privacy.safetyCheck', undefined]
+    ])
+    const meetReset = row(privacy, 'safety-check:permissions:https://meet.example:reset')
+    if (meetReset.kind !== 'action') throw new Error('not an action')
+    expect(meetReset).toMatchObject({ label: 'Reset', button: 'Reset' })
+    expect(meetReset.confirm).toBeUndefined()
+    expect(meetReset.destructive).toBeUndefined()
+    invoke.mockClear()
+    meetReset.onPress?.()
     expect(invoke.mock.calls).toEqual([
       ['permissions.resetOrigin', { origin: 'https://meet.example' }],
       ['privacy.safetyCheck', undefined]
     ])
 
-    // The notifications review blocks a site after a confirmation.
+    // The notifications review blocks a site after a confirmation (a new Block is a decision,
+    // not a removal: the #431 ruling leaves it).
     const notifications = row(privacy, 'safety-check:notifications')
     if (notifications.kind !== 'item') throw new Error('not an item')
     const news = row(privacy, 'safety-check:notifications:https://news.example')

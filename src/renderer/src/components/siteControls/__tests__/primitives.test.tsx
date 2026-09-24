@@ -42,7 +42,8 @@ import {
  * control, its container, or the caller's element (#413 ruling 5) – and on a phone a stacked
  * footer takes the chassis's `flex: 1` off its buttons and a sheet opens on the 48 header with a
  * title, on a title block with one (§9.23; the stack over another sheet, its one scrim and the
- * focus are the chassis's, tested with it).
+ * focus are the chassis's, tested with it), and a desktop title block balances a wrapping title
+ * without a width of its own (pr-434 ruling 2).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -783,5 +784,26 @@ describe('Menulist in a busy form (§9.30)', () => {
     press(trigger)
     expect(document.querySelector('[role="listbox"]')).toBeNull()
     expect(openPopoverCount()).toBe(0)
+  })
+})
+
+describe('TitleBlock (§9.23, pr-434 ruling 2)', () => {
+  it('balances a wrapping title on the desktop block; the block keeps the host width', () => {
+    const el = render(
+      <TitleBlock
+        id="t"
+        glyph={<svg data-glyph="leaf" />}
+        title="Memory Saver put this tab to sleep"
+        description="Its memory was freed while you were away."
+      />
+    )
+    const heading = el.querySelector<HTMLElement>('h2')!
+    expect(heading.id).toBe('t')
+    expect(heading.classList.contains('text-balance')).toBe(true)
+    expect(heading.classList.contains('break-words')).toBe(true)
+    // The heading's column is the block's flexible remainder; nothing sets a width of its own.
+    expect(heading.parentElement?.className).toBe('min-w-0 flex-1')
+    expect(heading.parentElement?.style.width).toBe('')
+    expect(el.querySelector('p')?.textContent).toBe('Its memory was freed while you were away.')
   })
 })

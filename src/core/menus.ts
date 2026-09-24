@@ -41,6 +41,7 @@ import {
   type Settings,
   type Shortcut,
   type ShortcutAction,
+  type SuggestionKind,
   type SyncRemoteTab,
   type Tab
 } from '../shared/types'
@@ -1367,6 +1368,35 @@ export class Menus {
       checked: shown,
       click: () => this.browser.handleCommand(win, 'settings.update', patch)
     }
+  }
+
+  /**
+   * A removable suggestion row's menu (context-menus-115; Chrome's right-click on a row): Remove
+   * – the row's Shift+Delete, which the bar runs through the core's removes – and, on a
+   * remembered search, Delete Search History, which forgets every remembered search
+   * (`urlbar.clearSearchHistory`). The picks go back to the bar (`urlbar.suggestionAction`),
+   * whose list is the thing being edited: the core knows the row by its id alone, as the bar
+   * drew it. The desktop's; the phone's hold on a row asks with a sheet of its own.
+   */
+  showSuggestionContextMenu(
+    id: string,
+    kind: SuggestionKind,
+    win: ZenWindow,
+    anchor?: MenuAnchor
+  ): void {
+    const pick = (action: 'remove' | 'delete-search-history'): void =>
+      this.browser.emit('urlbar.suggestionAction', { id, action }, win)
+    this.popup(
+      [
+        { label: 'Remove', click: () => pick('remove') },
+        ...(kind === 'search'
+          ? [{ label: 'Delete Search History', click: () => pick('delete-search-history') }]
+          : [])
+      ],
+      win,
+      'urlbar',
+      anchor
+    )
   }
 
   /** Chrome's reload button menu (DevTools open): Normal Reload, Hard Reload, Empty Cache and Hard Reload. */
@@ -3377,6 +3407,13 @@ export class Menus {
       action: 'settings.open',
       click: () => void this.browser.pages.open('settings', undefined, win)
     }
+    // Chrome's More tools › Task manager (shortcuts-menus-121): the desktop's page tab
+    // (`zen://tasks`, Shift+Esc), the row before Developer tools as Chrome seats it.
+    const taskManager = desktop({
+      label: 'Task Manager',
+      action: 'tasks.open',
+      click: () => this.browser.actions.run('tasks.open', { sourceTabId: null, win })
+    })
     const devtools = when(caps.devtools, {
       label: 'Developer Tools',
       action: 'devtools.toggle',
@@ -3541,7 +3578,8 @@ export class Menus {
           // window rows (Name window…), Task manager and Developer tools, gives the submenu its
           // contents: an installed app's Open in <app>, Zenium's space and window actions with
           // Chrome's Name Window…, the window's layout toggles, the tablet's captures, then the
-          // resources and the developer's – the toolbox row and its dock rows (§9.29).
+          // resources, the desktop's Task Manager (Chrome's seat, before Developer tools) and
+          // the developer's – the toolbox row and its dock rows (§9.29).
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
           // The two captures are the tablet's: on the desktop they fold into Save and Share's
@@ -3563,6 +3601,7 @@ export class Menus {
             ...when(win.formFactor !== 'desktop', screenshot, captureFullPage),
             separator,
             ...resources,
+            ...taskManager,
             ...devtools,
             ...devtoolsDock
           ])

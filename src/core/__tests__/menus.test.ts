@@ -479,6 +479,7 @@ const DESKTOP_APP_MENU = [
   'More Tools > Change Theme…',
   'More Tools > -',
   'More Tools > Resources',
+  'More Tools > Task Manager',
   'More Tools > Developer Tools',
   'More Tools > Dock to Bottom',
   'More Tools > Dock to Right',
@@ -518,6 +519,7 @@ const DESKTOP_ONLY = [
   'More Tools > Compact Mode',
   'More Tools > Split View',
   'More Tools > Name Window…',
+  'More Tools > Task Manager',
   'Zoom > Fullscreen',
   'Quit'
 ]
@@ -1000,10 +1002,10 @@ describe('the app menu', () => {
     expect(everywhere).not.toContain('Take Screenshot')
     expect(everywhere).not.toContain('Capture Full Page')
     expect(desktopMenu).toContain('Save and Share > Web Capture…')
-    // More Tools: two rows and a separator fewer than the row had – eight of its own, the four
-    // dock rows after them, two separators.
+    // More Tools: two rows and a separator fewer than the row had – nine of its own (the
+    // desktop's Task Manager among them, W5-8), the four dock rows after them, two separators.
     const moreTools = item(desktop.shown(), 'More Tools').submenu!
-    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(12)
+    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(13)
     expect(separators(moreTools)).toBe(2)
     // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
     // in their own group before the resources.
@@ -1124,12 +1126,14 @@ describe('the app menu', () => {
     // capture's overlay is the desktop chrome's, so its row is too – which is why the tablet's
     // More Tools keeps Take Screenshot and Capture Full Page, the rows the desktop folded into
     // it; Name Window… names an OS title bar the tablet's one window does not have; the Tab
-    // Groups submenu (its group closing Bookmarks) is the desktop's, the tablet's saved groups
-    // being its overview's pane (TAB-16).
+    // Folders submenu (its group closing Bookmarks) is the desktop's, the tablet's saved groups
+    // being its overview's pane (TAB-16). The task manager is a page tab of the desktop layout
+    // alone (`internalPages.ts`).
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
         label !== 'More Tools > Name Window…' &&
+        label !== 'More Tools > Task Manager' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Bookmarks > Tab Folders' &&
         label !== 'Save and Share > Web Capture…'
@@ -1434,6 +1438,34 @@ describe('the app menu', () => {
     deepItem(tablet.shown(), 'Keyboard Shortcuts').click?.()
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://settings/shortcuts')
     expect(tablet.sent).not.toContain('overlay.open')
+  })
+
+  it('seats Task Manager in More Tools before Developer Tools on the desktop alone, opening the zen://tasks page tab (shortcuts-menus-121)', () => {
+    const desktop = pageHarness({ ...DESKTOP, pageTabs: true })
+    const menu = appMenu(desktop)
+    const tools = menu.filter((l) => l.startsWith('More Tools > ') && l !== 'More Tools > -')
+    expect(tools.indexOf('More Tools > Task Manager')).toBe(
+      tools.indexOf('More Tools > Developer Tools') - 1
+    )
+    expect(tools.indexOf('More Tools > Task Manager')).toBe(
+      tools.indexOf('More Tools > Resources') + 1
+    )
+    const row = deepItem(desktop.shown(), 'Task Manager')
+    // The row's action is the shortcut's (Shift+Esc), so the menu shows its keys.
+    expect(row.action).toBe('tasks.open')
+    expect(row.enabled).not.toBe(false)
+    row.click?.()
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe('zen://tasks')
+    // A second press goes back to the one task manager (a singleton page), opening no other.
+    const before = Object.keys(desktop.browser.state.model.tabs).length
+    appMenu(desktop)
+    deepItem(desktop.shown(), 'Task Manager').click?.()
+    expect(Object.keys(desktop.browser.state.model.tabs).length).toBe(before)
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe('zen://tasks')
+
+    // Not a tablet's row: the page is the desktop layout's (`internalPages.ts` layouts).
+    expect(appMenu(harness(DESKTOP, 'tablet'))).not.toContain('More Tools > Task Manager')
+    expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Task Manager')
   })
 
   it('offers Text Preferences… under Reader View while a reader page is open, on both hosts', () => {
@@ -3909,6 +3941,67 @@ describe('the history row menu', () => {
     const before = Object.keys(h.browser.state.model.tabs).length
     h.shown().find((item) => item.label === 'Open in New Tab')!.click!()
     expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The URL bar popup's suggestion row menu (context-menus-115)
+// ---------------------------------------------------------------------------
+
+describe('the suggestion row menu', () => {
+  it('offers Remove on a removable row, opening where the row’s right-click said, and Remove goes back to the bar as its pick', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', {
+      id: 'hist:https://example.com/docs',
+      kind: 'history',
+      x: 640,
+      y: 212
+    })
+    expect(labels(h.shown())).toEqual(['Remove'])
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 640, y: 212 })
+    expect(h.where()).not.toHaveProperty('keyboard')
+    h.sent.length = 0
+    h.shown()[0].click!()
+    expect(h.sent).toEqual(['urlbar.suggestionAction'])
+  })
+
+  it('a remembered search adds Delete Search History, whose pick goes back the same way; the keyboard’s anchor passes through', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', {
+      id: 'recent:https://www.google.com/search?q=cats',
+      kind: 'search',
+      x: 640,
+      y: 262,
+      keyboard: true
+    })
+    expect(labels(h.shown())).toEqual(['Remove', 'Delete Search History'])
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 640, y: 262, keyboard: true })
+    h.sent.length = 0
+    h.shown()[1].click!()
+    expect(h.sent).toEqual(['urlbar.suggestionAction'])
+    // Nothing is forgotten by the menu itself: the bar acts on the pick through the core's
+    // removes, Delete Search History being `urlbar.clearSearchHistory`.
+    const shortcuts = h.browser.omniboxShortcuts
+    shortcuts.learn('cat', {
+      url: 'https://www.google.com/search?q=cats',
+      title: 'cats',
+      kind: 'search',
+      engineId: 'google'
+    })
+    shortcuts.learn('gm', { url: 'https://mail.google.com/', title: 'Gmail', kind: 'url' })
+    expect(shortcuts.all()).toHaveLength(2)
+    h.browser.handleCommand(h.win, 'urlbar.clearSearchHistory', undefined)
+    expect(shortcuts.all().map((s) => s.kind)).toEqual(['url'])
+  })
+
+  it('the other kinds get Remove alone: a page, an extension’s row', () => {
+    const h = harness(DESKTOP)
+    for (const kind of ['url', 'omnibox'] as const) {
+      h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', { id: `${kind}:1`, kind })
+      expect(labels(h.shown())).toEqual(['Remove'])
+    }
+    // No anchor given: the host opens the menu at the pointer.
+    expect(h.where()).not.toHaveProperty('x')
   })
 })
 

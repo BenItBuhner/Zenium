@@ -161,6 +161,29 @@ describe('chrome.sidePanel on the phone: the panel document in the runtime sheet
     })
   })
 
+  it("setOptions with the extension's own URL as the path (runtime.getURL) opens that page; another extension's URL is refused", async () => {
+    const h = harness()
+    await withPanel(h)
+    // Adobe Photoshop's worker: `setOptions({ enabled: true, path: chrome.runtime.getURL('/sidepanel.html') })`.
+    const set = await call(h, 'bg1', 'sidePanel', 'setOptions', [
+      { enabled: true, path: `https://${ID}.ext.zenium.invalid/sidepanel.html` }
+    ])
+    expect(set.ok).toBe(true)
+    expect((await call(h, 'bg1', 'sidePanel', 'getOptions', [])).result).toEqual({
+      path: 'sidepanel.html',
+      enabled: true
+    })
+    await call(h, 'bg1', 'sidePanel', 'open', [{ windowId: 1 }])
+    expect(sheets(h)[0]).toMatchObject({ url: `https://${ID}.ext.zenium.invalid/sidepanel.html` })
+    expect(events(h, 'bg1', 'sidePanel.onOpened')[0].args).toEqual([
+      { path: 'sidepanel.html', windowId: 1 }
+    ])
+    const foreign = await call(h, 'bg1', 'sidePanel', 'setOptions', [
+      { path: 'chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba/panel.html' }
+    ])
+    expect(foreign.error).toBe('Invalid options')
+  })
+
   it('setOptions while the panel shows: a disabled panel closes the sheet, another popup or options sheet closes it too', async () => {
     const h = harness()
     await withPanel(h, { options_ui: { page: 'options.html' } })

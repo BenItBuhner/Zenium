@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import android.view.Choreographer
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -29,6 +30,7 @@ import app.zen.chromium.blocking.Domains
 import app.zen.chromium.blocking.HeaderStage
 import app.zen.chromium.blocking.ProfileCookieStore
 import app.zen.chromium.blocking.RedirectExecutor
+import app.zen.chromium.blocking.RelayedResponse
 import app.zen.chromium.blocking.Request
 import app.zen.chromium.blocking.ResourceType
 import app.zen.chromium.bool
@@ -74,14 +76,18 @@ import java.util.concurrent.atomic.AtomicLong
  *    the core's translator writing `ext:` rule sets into the persisted index the engine
  *    compiles, scoped to the partitions the extension runs in; this class hears the engine's
  *    decisions ([DecisionObserver]) and reports the ones an extension's rule took – and, while
- *    an extension listens for `webRequest`, every one – as `ext.request`, and substitutes the
- *    response of a redirected subresource ([RedirectExecutor], see [redirect]).
+ *    an extension listens for `webRequest`, every one – as `ext.request`, the response stage of
+ *    the media requests the engine relays for it while an extension listens for that
+ *    (`ext.observeResponses`) as `ext.response`, and substitutes the response of a redirected
+ *    subresource ([RedirectExecutor], see [redirect]).
  *
  * Protocol (the core → here), keyed by extension id where it applies: `ext.env`, `ext.open`,
  * `ext.configure`, `ext.detach`, `ext.background.start` / `stop`, `ext.popup.open` / `close`,
  * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.observeRequests`,
- * `ext.proxy.set` / `clear` (`chrome.proxy.settings` over the WebView's proxy override, [ExtensionProxy]).
- * Here → the core (host events): `ext.message`, `ext.gone`, `ext.popupClosed`, `ext.request`.
+ * `ext.observeResponses`, `ext.proxy.set` / `clear` (`chrome.proxy.settings` over the WebView's
+ * proxy override, [ExtensionProxy]).
+ * Here → the core (host events): `ext.message`, `ext.gone`, `ext.popupClosed`, `ext.request`,
+ * `ext.response`.
  */
 class Extensions(private val host: Host) {
     /** Every bridge message carries this; pages never see it (it lives in closures only). */
@@ -204,6 +210,12 @@ class Extensions(private val host: Host) {
     /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
     private val offscreens = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
+    /**
+     * `chrome.power`: the extensions holding a keep-awake request right now (`ext.power.keepAwake`),
+     * with the level each asked. The window keeps its screen on while the set is not empty;
+     * a request goes with its extension when it detaches, and with the runtime (main thread).
+     */
+    private val keepAwake = LinkedHashMap<String, String>()
     /** The user agent extension pages send (set when the first extension view is built), for the CORS proxy's requests. */
     @Volatile var userAgent: String? = null
     /** Optional host permissions granted at runtime (`chrome.permissions.request`), per extension; read on request threads. */
@@ -346,7 +358,13 @@ class Extensions(private val host: Host) {
     val origin = ORIGIN_SUFFIX
 
     /** The engine's extension seams, this runtime's (see the class comment). */
-    private val observer = DecisionObserver { tab, request, decision, elapsedNanos, cpuNanos -> onDecision(tab, request, decision, elapsedNanos, cpuNanos) }
+    private val observer = object : DecisionObserver {
+        override fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long) =
+            this@Extensions.onDecision(tab, request, decision, elapsedNanos, cpuNanos)
+
+        override fun onResponse(tab: BlockingTab, request: Request, response: RelayedResponse) =
+            this@Extensions.onResponse(tab, request, response)
+    }
     private val redirector = RedirectExecutor { tab, request, target, type -> redirect(target, request, type, tab) }
 
     /**
@@ -401,6 +419,9 @@ class Extensions(private val host: Host) {
                 reply(null)
             }
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
+            // The engine's switch (contract 7.1): the process's engine relays media requests for
+            // their response stage while it is on; this runtime hears them through [observer].
+            "ext.observeResponses" -> { host.blocking.observeResponses = args.bool("on"); reply(null) }
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
@@ -460,8 +481,35 @@ class Extensions(private val host: Host) {
                 }
             }
             "ext.system.memory" -> reply(SystemInfo.memory(host.activity))
+            "ext.power.keepAwake" -> {
+                setKeepAwake(args.str("id"), args.strOrNull("level"))
+                reply(null)
+            }
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
+    }
+
+    /**
+     * `chrome.power`: hold (`level` `system` or `display`) or release (null) the extension's
+     * keep-awake request and set the window's screen-on flag from what is held. Both levels keep
+     * the screen on: the phone has no wake lock an app may hold for a user with the screen off.
+     * The window flag is the app's own holder; WebView's fullscreen video keeps the screen on
+     * through its view's flag, which the framework ORs with this one, so neither clears the other.
+     */
+    private fun setKeepAwake(id: String, level: String?) {
+        val before = keepAwake.isNotEmpty()
+        if (level == null) keepAwake.remove(id) else keepAwake[id] = level
+        val after = keepAwake.isNotEmpty()
+        if (before == after) return
+        val window = host.activity.window
+        if (after) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Log.i(TAG, "keep awake ${if (after) "on" else "off"} (${keepAwake.keys.joinToString { it.take(8) }})")
+    }
+
+    /** Every keep-awake request released: the runtime is going, or starting from nothing. */
+    private fun releaseKeepAwake() {
+        for (id in keepAwake.keys.toList()) setKeepAwake(id, null)
     }
 
     /**
@@ -660,6 +708,7 @@ class Extensions(private val host: Host) {
         notifications.forget(id)
         pendingNotificationEvents.remove(id)
         closeAuthSheets(id)
+        setKeepAwake(id, null)
         Log.i(TAG, "detached ${id.take(8)}")
     }
 
@@ -677,7 +726,11 @@ class Extensions(private val host: Host) {
         worldSlots.clear()
         configureStats.clear()
         observeRequests = false
+        // The engine's switch is the runtime's that set it: off with the runtime that goes, when
+        // this one still owns the seams (a newer window's may have taken them over).
+        if (host.blocking.observer === observer) host.blocking.observeResponses = false
         closeAuthSheets()
+        releaseKeepAwake()
     }
 
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
@@ -1482,9 +1535,14 @@ class Extensions(private val host: Host) {
         }
         val extensionRule = decision.matchedSet?.startsWith(EXT_SET_PREFIX) == true
         if (!extensionRule && !observeRequests) return
+        // The id rides on the request: a media response relayed for this request is reported
+        // under it (onResponse, contract 7.4). A document the header stage decides again is
+        // reported again under a fresh one, as before.
+        val requestId = requestIds.getAndIncrement().toString()
+        request.observerRequestId = requestId
         val payload = json(
             "tabId" to tab.tabId,
-            "requestId" to requestIds.getAndIncrement().toString(),
+            "requestId" to requestId,
             "url" to request.url,
             "type" to type,
             "method" to request.method,
@@ -1499,6 +1557,39 @@ class Extensions(private val host: Host) {
             "cpuMicros" to cpuMicros
         )
         main.post { chromeEvent("ext.request", payload) }
+    }
+
+    /**
+     * The response stage of a media request the engine relayed for it
+     * ([DecisionObserver.onResponse]: on the intercept thread for the headers and the relay's own
+     * failures, on the thread WebView reads the body from for its end), reported as
+     * `ext.response` under the `ext.request` id [onDecision] gave the same request (contract 7.4
+     * / 7.5) – the material of the runtime's `onHeadersReceived`, `onResponseStarted`,
+     * `onBeforeRedirect`, `onCompleted` and `onErrorOccurred`. A request never reported (the
+     * switch on without `ext.observeRequests`, which the runtime never does) gets a fresh id.
+     */
+    private fun onResponse(tab: BlockingTab, request: Request, response: RelayedResponse) {
+        val requestId = request.observerRequestId ?: requestIds.getAndIncrement().toString().also { request.observerRequestId = it }
+        val headers = JSONArray()
+        for ((name, value) in response.headers) headers.put(json("name" to name, "value" to value))
+        val payload = json(
+            "tabId" to tab.tabId,
+            "requestId" to requestId,
+            "url" to request.url,
+            "type" to request.type.dnrName,
+            "method" to request.method,
+            "statusCode" to response.statusCode,
+            "statusLine" to response.statusLine,
+            "responseHeaders" to headers,
+            "at" to when (response.at) {
+                RelayedResponse.Stage.HEADERS -> "headers"
+                RelayedResponse.Stage.COMPLETE -> "complete"
+                RelayedResponse.Stage.ERROR -> "error"
+            },
+            "relayed" to true
+        )
+        response.error?.let { payload.put("error", it) }
+        main.post { chromeEvent("ext.response", payload) }
     }
 
     /**
@@ -1853,13 +1944,17 @@ class Extensions(private val host: Host) {
     fun destroy() {
         closePopup()
         closeAuthSheets()
+        releaseKeepAwake()
         for (id in backgrounds.keys.toList()) stopBackground(id)
         for (id in offscreens.keys.toList()) closeOffscreen(id)
         notifications.destroy()
         io.shutdownNow()
         // The engine outlives the window; a runtime that is gone must not be called (a newer
-        // window's runtime may already have taken the seams over).
-        if (host.blocking.observer === observer) host.blocking.observer = null
+        // window's runtime may already have taken the seams over). Its switch goes with it.
+        if (host.blocking.observer === observer) {
+            host.blocking.observeResponses = false
+            host.blocking.observer = null
+        }
         if (host.blocking.redirector === redirector) host.blocking.redirector = null
         if (host.blocking.headerStage === headerStage) host.blocking.headerStage = null
     }

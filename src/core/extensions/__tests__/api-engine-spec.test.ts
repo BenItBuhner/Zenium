@@ -70,6 +70,22 @@ describe('engineApiSpec', () => {
     )
   })
 
+  it("defines chrome.power for the permission alone, routed, with Chrome's Level enum", () => {
+    // Keep Awake (`"permissions": ["power"]`) reads `chrome.power.requestKeepAwake` in its
+    // worker's click handler; without the table entry the namespace was a TypeError there.
+    expect(Object.keys(engineApiSpec({ permissions: ['storage'], manifestVersion: 3, context: 'page' }))).not.toContain('power')
+    const spec = engineApiSpec({ permissions: ['power'], manifestVersion: 3, context: 'page' })
+    expect(spec.power.methods.requestKeepAwake).toEqual({
+      params: [{ name: 'level', type: 'string', optional: false }]
+    })
+    expect(spec.power.methods.releaseKeepAwake).toEqual({ params: [] })
+    expect(spec.power.methods.reportActivity).toEqual({ params: [] })
+    expect(spec.power.constants?.Level).toEqual({ SYSTEM: 'system', DISPLAY: 'display' })
+    expect(spec.power.permissions).toEqual(['power'])
+    expect(namespaceGranted('power', ['power'], 3)).toBe(true)
+    expect(namespaceGranted('power', [], 3)).toBe(false)
+  })
+
   it('answers namespaceGranted the way Chrome exposes namespaces', () => {
     expect(namespaceGranted('runtime', [], 3)).toBe(true)
     expect(namespaceGranted('tabs', [], 3)).toBe(true)

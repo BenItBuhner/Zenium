@@ -1,4 +1,5 @@
 import {
+  Activity,
   Download,
   FileText,
   History,
@@ -22,5 +23,6 @@ export const PAGE_GLYPHS: Readonly<Record<InternalPageGlyph, LucideIcon>> = {
   download: Download,
   scale: Scale,
   sparkles: Sparkles,
-  'file-text': FileText
+  'file-text': FileText,
+  activity: Activity
 }

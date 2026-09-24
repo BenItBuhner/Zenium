@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ArrowRight, ArrowUpLeft, Camera, Globe, Link, Mic, Pencil, Share2, X } from 'lucide-react'
 import type {
   ClipboardContent,
+  Events,
   PhoneBarLayout,
   PhoneBarPosition,
   Rect,
@@ -27,13 +28,14 @@ import { voiceSearchAvailable } from '@shared/voice'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
-import { cmd, run } from '@renderer/lib/api'
+import { cmd, onEvent, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorph'
 import { focusBackPulled, focusTakesCommit } from '@renderer/lib/omniboxFocus'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import {
   URLBAR_KEYBOARD_EVENT,
   URLBAR_LEAVE_EVENT,
@@ -41,7 +43,14 @@ import {
 } from '@renderer/lib/panes'
 import { startQrScan } from '@renderer/lib/qrScan'
 import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
-import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
+import {
+  URLBAR_SEARCHES_FORGOTTEN_EVENT,
+  closeDeleteSearchHistoryConfirm,
+  closeUrlbar,
+  openDeleteSearchHistoryConfirm,
+  uiStore,
+  type UrlbarState
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { barLayout } from '../phone/barItems'
@@ -912,6 +921,73 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   }
 
   /**
+   * Rows taken out at a menu's word (context-menus-115), the list edited as Shift+Delete edits
+   * it but for the highlight: a right-click never moved it (Chrome), so it stays on its row –
+   * unless its row is among those going, when it moves to the row that takes the place, as
+   * Shift+Delete's does, the keyboard on the going row's X coming back to the field.
+   */
+  const dropRows = (gone: ReadonlySet<string>): void => {
+    const remaining = results.filter((row) => !gone.has(row.id))
+    if (remaining.length === results.length) return
+    setResults(remaining)
+    const current = results[selected]
+    if (!current) return
+    if (!gone.has(current.id)) {
+      setSelected(remaining.findIndex((row) => row.id === current.id))
+      return
+    }
+    setAction(-1)
+    const above = results.slice(0, selected).filter((row) => !gone.has(row.id)).length
+    highlight(selectionAfterRemoval(above, remaining.length), remaining)
+  }
+
+  /**
+   * A pick in a row's native menu (`urlbar.suggestionContextMenu`, asked for by the desktop
+   * row's right-click, `rowMenu`): Remove is the row's Shift+Delete, through the core's removes;
+   * Delete Search History is §10.5's bulk case (pr-434 ruling 3) and asks first – the §9.23
+   * destructive prompt over the bar (`DeleteSearchHistoryDialog`, in the frame's dialog slot):
+   * its Delete has the core forget every remembered search and says so here
+   * (`URLBAR_SEARCHES_FORGOTTEN_EVENT`), and the removable search rows go out of the list; its
+   * Cancel changes nothing. The menu is the host's and its answer an event, so the handler is
+   * kept current through a ref, as the list is (`resultsRef`).
+   */
+  const menuAction = useRef<(pick: Events['urlbar.suggestionAction']) => void>(() => undefined)
+  const forgotten = useRef<() => void>(() => undefined)
+  useLayoutEffect(() => {
+    menuAction.current = ({ id, action }) => {
+      if (action === 'remove') {
+        const row = results.find((r) => r.id === id)
+        if (row && forget(row)) dropRows(new Set([id]))
+        return
+      }
+      void openDeleteSearchHistoryConfirm(tab?.id ?? activeTab(state)?.id ?? null)
+    }
+    forgotten.current = () =>
+      dropRows(new Set(results.filter((r) => r.kind === 'search' && r.deletable).map((r) => r.id)))
+  })
+  useEffect(() => onEvent('urlbar.suggestionAction', (pick) => menuAction.current(pick)), [])
+  useEffect(() => {
+    const onForgotten = (): void => forgotten.current()
+    window.addEventListener(URLBAR_SEARCHES_FORGOTTEN_EVENT, onForgotten)
+    return () => window.removeEventListener(URLBAR_SEARCHES_FORGOTTEN_EVENT, onForgotten)
+  }, [])
+  // The bar going under the prompt (a navigation, another surface taking over) takes the
+  // question with it: there is no list left to edit.
+  useEffect(() => () => closeDeleteSearchHistoryConfirm(), [])
+
+  /**
+   * The desktop row's right-click (context-menus-115): the host's native menu for the row,
+   * where the event says (`contextMenuAnchor`), on the rows the core marks removable and where
+   * the host's menus are native – the tablet's rows keep the X, the phone's hold asks first.
+   */
+  const rowMenu = (item: Suggestion, e: React.MouseEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    run('urlbar.suggestionContextMenu', { id: item.id, kind: item.kind, ...contextMenuAnchor(e) })
+  }
+  const rowMenus = Boolean(state.capabilities.nativeMenus)
+
+  /**
    * Tab out of the bar (omnibox-50, Chrome's Tab past the popup's last row): the bar goes away
    * as on Escape – draft kept – and the keyboard lands on the toolbar control beside the address
    * (after it forwards, before it backwards). With no toolbar row the keyboard returns to the page.
@@ -1177,6 +1253,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           // phone's trailing controls (OMN-09, OMN-14) are as they were, and its removal is a
           // hold on the row that asks first (OMN-17).
           onRemove={!sheet && removable(item) ? () => removeRow(i) : undefined}
+          onContextMenu={
+            !sheet && rowMenus && removable(item) ? (e) => rowMenu(item, e) : undefined
+          }
           onLongPress={sheet && removable(item) ? askRemoval : undefined}
           ghost={leaving ? exit.ghosts[item.id] : undefined}
           removeId={rowActionId(i, 0)}
@@ -1808,6 +1887,7 @@ function SuggestionRow({
   sheet,
   onPick,
   onRemove,
+  onContextMenu,
   removeId,
   actionFocused,
   onActionKeyDown,
@@ -1853,6 +1933,12 @@ function SuggestionRow({
    */
   onRemove?: () => void
   removeId?: string
+  /**
+   * The desktop row's right-click (context-menus-115): the host's native menu for a removable
+   * row – Remove, and Delete Search History on a remembered search. The press itself picks
+   * nothing.
+   */
+  onContextMenu?: (e: React.MouseEvent) => void
   /** The X has the keyboard (Tab reached it, omnibox-50); the row keeps its highlight. */
   actionFocused?: boolean
   onActionKeyDown?: (e: React.KeyboardEvent<HTMLElement>) => void
@@ -1874,11 +1960,12 @@ function SuggestionRow({
   const pointerProps = {
     onPointerDown: (e: React.PointerEvent) => {
       // Keep the input focused (no blur → no keyboard flicker on phones). A mouse picks on
-      // press like Firefox; a finger picks on tap so the list can still be scrolled. A row with
-      // a hold leaves the right button to it (its context menu is the hold's question).
+      // press like Firefox; a finger picks on tap so the list can still be scrolled. A right
+      // press picks nothing: its `contextmenu` follows – the desktop row's menu, or on a row
+      // with a hold the hold's question, which the hold leaves every other button to as well.
       e.preventDefault()
       if (e.pointerType === 'mouse') {
-        if (!onLongPress || e.button === 0) onPick(e)
+        if (e.button !== 2 && (!onLongPress || e.button === 0)) onPick(e)
       } else touch.current = true
     },
     onClick: (e: React.MouseEvent) => {
@@ -2017,6 +2104,7 @@ function SuggestionRow({
       data-kind={item.kind}
       data-action-focused={actionFocused || undefined}
       {...rowPointerProps}
+      onContextMenu={onContextMenu}
     >
       <div
         id={id}
