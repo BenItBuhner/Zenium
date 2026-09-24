@@ -24,6 +24,7 @@ import {
   normalizeRequestListener,
   requestFilterMatches,
   type CompiledRequestFilter,
+  type ExtraInfoSpec,
   type WebRequestEventName
 } from '@core/extensions/api/webRequest'
 import { RESOURCE_TYPES, type ResourceType } from '@core/blocking/rules'
@@ -107,6 +108,8 @@ import type { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { webViewProxyOverride } from './extensionProxy'
 import type { KeepAwakeLevel } from '@core/extensions/api/power'
 import { relayServedObservation, type ScriptRequestObservation } from './relaySelection'
+import { RequestLedger } from './extensionRequestLedger'
+import { scriptObservation, type RequestObservation } from './requestObserver'
 import type { RawCpuReading, RawMemoryReading } from '@core/extensions/api/systemInfo'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
 import type { ViewEventPayloads } from './views'
@@ -271,10 +274,15 @@ export interface ExtResponseEvent {
   relayed: true
 }
 
-/** One `webRequest` listener of one endpoint: the event and its compiled `RequestFilter`. */
+/**
+ * One `webRequest` listener of one endpoint: the event, its compiled `RequestFilter` and its
+ * `extraInfoSpec` – which decides what of a response it sees (`responseHeaders` for the headers,
+ * `extraHeaders` besides for the `set-cookie` lines, Chrome's rule since 72).
+ */
 interface RequestListener {
   event: WebRequestEventName
   filter: CompiledRequestFilter
+  extraInfoSpec: readonly ExtraInfoSpec[]
 }
 
 /**
@@ -289,7 +297,20 @@ const RESPONSE_STAGE_EVENTS: ReadonlySet<WebRequestEventName> = new Set<WebReque
   'onBeforeRedirect'
 ])
 
-/** The `details` a `webRequest` event carries here (the observational subset of Chrome's). */
+/** One response header line as Chrome's `HttpHeader` carries it here (always with a value). */
+interface ResponseHeaderLine {
+  name: string
+  value: string
+}
+
+/**
+ * The `details` a `webRequest` event carries here (the observational subset of Chrome's): the
+ * request's fields on every event, the status and headers on the response stage's, the redirect
+ * target on `onBeforeRedirect`, the error on `onErrorOccurred`. `responseHeaders` is the full
+ * list as received; what each listener sees of it is cut per its spec at delivery
+ * (`detailsFor`). `fromCache` is false on the phone (the relay and the page read the origin);
+ * `ip` is never known.
+ */
 interface RequestDetails {
   requestId: string
   url: string
@@ -302,6 +323,56 @@ interface RequestDetails {
   initiator?: string
   error?: string
   fromCache?: boolean
+  statusCode?: number
+  statusLine?: string
+  responseHeaders?: ResponseHeaderLine[]
+  redirectUrl?: string
+}
+
+/**
+ * The details as one listener sees them (the desktop's `chromeRequestDetails`, Chrome's rule):
+ * `responseHeaders` only when its spec asked for them, and the `set-cookie` lines among them
+ * only with `extraHeaders` besides.
+ */
+function detailsFor(details: RequestDetails, spec: readonly ExtraInfoSpec[]): RequestDetails {
+  if (!details.responseHeaders) return details
+  if (!spec.includes('responseHeaders')) {
+    const bare = { ...details }
+    delete bare.responseHeaders
+    return bare
+  }
+  if (spec.includes('extraHeaders')) return details
+  return {
+    ...details,
+    responseHeaders: details.responseHeaders.filter((h) => h.name.toLowerCase() !== 'set-cookie')
+  }
+}
+
+/** The `chrome.declarativeNetRequest.ResourceType` name Kotlin reported, as the `webRequest` type; `other` for one it does not know. */
+function resourceTypeNamed(name: string): ResourceType {
+  return (RESOURCE_TYPES as readonly string[]).includes(name) ? (name as ResourceType) : 'other'
+}
+
+/** The first header of the name among the lines, case-insensitively; null when none. */
+function headerValue(headers: readonly ResponseHeaderLine[], name: string): string | null {
+  const wanted = name.toLowerCase()
+  for (const header of headers) if (header.name.toLowerCase() === wanted) return header.value
+  return null
+}
+
+/** `location` resolved against the request's URL, as the engine resolves a redirect; null when it is no URL. */
+function redirectTarget(location: string, base: string): string | null {
+  try {
+    const url = new URL(location, base)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+/** Whether the status is a redirect the engine follows on its own (the relay's 3xx hop, 7.3). */
+function isRedirectStatus(statusCode: number): boolean {
+  return statusCode >= 300 && statusCode <= 399
 }
 
 /** The single window of the phone, as `tabs`/`windows` number it. */
@@ -635,6 +706,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   private observing = false
   /** `ext.observeResponses` as last sent: a response-stage `webRequest` listener exists somewhere. */
   private observingResponses = false
+  /**
+   * What the response stage needs of the request stage while it is observed: the redirect
+   * chain's ids, the requests' initiators, the page-script observer's pairing (§7, 7.10).
+   */
+  private readonly ledger = new RequestLedger()
   private subscribed = false
   private activeTabId: string | null = null
   /** The tabs of the last state snapshot and whether each is private (a closed tab is still one). */
@@ -2173,20 +2249,34 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       })
     }
     if (!this.observing) return
+    const tab = event.tabId ?? null
+    const type = resourceTypeNamed(event.type)
+    const now = this.now()
+    // While the response stage is observed the request is remembered for it (the observer's
+    // pairing, its initiator), and a redirect target continues under the hop's id (§7.3: WebView
+    // followed the redirect itself and the target came through the intercept as a new request).
+    const requestId = this.observingResponses
+      ? this.ledger.noted(
+          tab,
+          event.requestId,
+          event.url,
+          event.method,
+          type,
+          event.initiator ?? undefined,
+          now
+        )
+      : event.requestId
     const details: RequestDetails = {
-      requestId: event.requestId,
+      requestId,
       url: event.url,
       method: event.method,
       frameId: 0,
       parentFrameId: -1,
       tabId,
-      type: (RESOURCE_TYPES as readonly string[]).includes(event.type)
-        ? (event.type as ResourceType)
-        : 'other',
-      timeStamp: this.now()
+      type,
+      timeStamp: now
     }
     if (event.initiator) details.initiator = event.initiator
-    const tab = event.tabId ?? null
     this.emitRequest(tab, 'onBeforeRequest', details)
     if (event.action === 'block')
       this.emitRequest(tab, 'onErrorOccurred', {
@@ -2209,7 +2299,141 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (!isResponseEvent(event)) return null
     if (!this.observingResponses) return null
     // the extension program emits onHeadersReceived / onResponseStarted / onCompleted / onBeforeRedirect / onErrorOccurred from here (blocking-rule-interface.md §7)
+    this.emitResponseStage(event)
     return event
+  }
+
+  /**
+   * The `webRequest` events of one relayed response report (§7.5, the contract's shape for the
+   * emission): at `'headers'` `onHeadersReceived`, then – a `3xx` with a `Location` –
+   * `onBeforeRedirect` with the target resolved against the URL, the target marked in the
+   * ledger so its own request continues under this id (§7.3: WebView follows the redirect
+   * itself); or – any other status – `onResponseStarted` (the body follows at once). A `3xx`
+   * without a `Location` (a `304`) is one the relay closed too (`HeaderStage.relayMedia`, every
+   * 300..399), WebView loading the request itself unobserved: the response AS RELAYED ended
+   * there, so its `onCompleted` comes at once. At `'complete'` `onCompleted`; at `'error'`
+   * `onErrorOccurred` with the `net::ERR_*` name. `statusCode` / `statusLine` and
+   * `responseHeaders` on the events Chrome puts them on (the headers cut per listener at
+   * delivery); `fromCache` false; `ip` absent; the initiator the request stage remembered.
+   */
+  private emitResponseStage(event: ExtResponseEvent): void {
+    const tab = event.tabId ?? null
+    const chromeTabId = event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : UNKNOWN_TAB_ID
+    const requestId = this.ledger.chainIdOf(event.requestId)
+    const now = this.now()
+    const base: RequestDetails = {
+      requestId,
+      url: event.url,
+      method: event.method,
+      frameId: 0,
+      parentFrameId: -1,
+      tabId: chromeTabId,
+      type: resourceTypeNamed(event.type),
+      timeStamp: now
+    }
+    const initiator = this.ledger.initiatorOf(event.requestId)
+    if (initiator) base.initiator = initiator
+    const headers: ResponseHeaderLine[] = event.responseHeaders.map(({ name, value }) => ({
+      name,
+      value
+    }))
+    const response: RequestDetails = {
+      ...base,
+      statusCode: event.statusCode,
+      statusLine: event.statusLine,
+      responseHeaders: headers
+    }
+    switch (event.at) {
+      case 'headers': {
+        this.emitRequest(tab, 'onHeadersReceived', response)
+        const location = isRedirectStatus(event.statusCode)
+          ? headerValue(headers, 'location')
+          : null
+        const redirectUrl = location === null ? null : redirectTarget(location, event.url)
+        if (redirectUrl !== null) {
+          this.emitRequest(tab, 'onBeforeRedirect', { ...response, fromCache: false, redirectUrl })
+          this.ledger.redirected(tab, requestId, redirectUrl, now)
+          return
+        }
+        this.emitRequest(tab, 'onResponseStarted', { ...response, fromCache: false })
+        if (isRedirectStatus(event.statusCode)) {
+          this.emitRequest(tab, 'onCompleted', { ...response, fromCache: false })
+          this.ledger.ended(event.requestId)
+        }
+        return
+      }
+      case 'complete':
+        this.emitRequest(tab, 'onCompleted', { ...response, fromCache: false })
+        this.ledger.ended(event.requestId)
+        return
+      case 'error':
+        this.emitRequest(tab, 'onErrorOccurred', {
+          ...base,
+          error: event.error ?? 'net::ERR_FAILED',
+          fromCache: false
+        })
+        this.ledger.ended(event.requestId)
+        return
+    }
+  }
+
+  /**
+   * The page script's observation of a `fetch` / XHR's response stage (`ext-observation`, a
+   * `pageMessage` view event of the tab; `requestObserver.ts`, 7.10). The relay is asked FIRST
+   * ([relayServed], the shared selection): what it served has its `ext.response`, and the
+   * observation is dropped so no response is reported twice. The rest pairs with the intercept's
+   * request stage – the oldest unclaimed `onBeforeRequest` of the tab with the same URL and
+   * method (by URL and order: the stated limit) – and comes out as `onHeadersReceived` and
+   * `onResponseStarted` at `'headers'`, `onCompleted` at `'complete'`, under that id (or a fresh
+   * one of the runtime's when the intercept reported no such request – a load the engine served
+   * from its cache, or one whose observation outran its decision). The status line is composed
+   * (`HTTP/1.1 <status> <text>`: the page does not see the protocol) and the headers are the
+   * page's view of them; a redirected `fetch` is reported under the first request's id with the
+   * final URL (the page does not see the hop, and the hop's own request stage was reported as it
+   * came).
+   */
+  private onObservation(tabId: string, observation: RequestObservation): void {
+    if (!this.observingResponses) return
+    if (
+      this.relayServed({
+        tabId,
+        url: observation.url,
+        method: observation.method,
+        range: observation.range,
+        crossOrigin: observation.crossOrigin
+      })
+    )
+      return
+    const now = this.now()
+    let pair = this.ledger.observation(tabId, observation.seq)
+    if (!pair) {
+      const noted = this.ledger.claim(tabId, observation.url, observation.method, now)
+      pair = noted
+        ? { requestId: noted.requestId, type: noted.type, initiator: noted.initiator }
+        : { requestId: this.ledger.mint(), type: 'xmlhttprequest' }
+      this.ledger.observed(tabId, observation.seq, pair)
+    }
+    const details: RequestDetails = {
+      requestId: pair.requestId,
+      url: observation.finalUrl ?? observation.url,
+      method: observation.method,
+      frameId: 0,
+      parentFrameId: -1,
+      tabId: this.api.tabs.chromeIdFor(tabId),
+      type: pair.type,
+      timeStamp: now,
+      statusCode: observation.status,
+      statusLine: `HTTP/1.1 ${observation.status}${observation.statusText ? ` ${observation.statusText}` : ''}`,
+      responseHeaders: observation.headers.map(({ name, value }) => ({ name, value }))
+    }
+    if (pair.initiator) details.initiator = pair.initiator
+    if (observation.at === 'headers') {
+      this.emitRequest(tabId, 'onHeadersReceived', details)
+      this.emitRequest(tabId, 'onResponseStarted', { ...details, fromCache: false })
+      return
+    }
+    this.emitRequest(tabId, 'onCompleted', { ...details, fromCache: false })
+    this.ledger.observationEnded(tabId, observation.seq)
   }
 
   /**
@@ -2245,17 +2469,18 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       tabId: details.tabId,
       windowId: WINDOW_ID
     }
-    const matching = (endpointId: string): number[] =>
-      this.requestListenersOf(endpointId, key)
-        .filter(([, listener]) => requestFilterMatches(listener.filter, probe))
-        .map(([id]) => id)
+    const matching = (endpointId: string): Array<[number, RequestListener]> =>
+      this.requestListenersOf(endpointId, key).filter(([, listener]) =>
+        requestFilterMatches(listener.filter, probe)
+      )
+    // Each listener sees the details its `extraInfoSpec` entitles it to (`detailsFor`).
     const send = (endpointId: string): void => {
-      for (const listenerId of matching(endpointId))
+      for (const [listenerId, listener] of matching(endpointId))
         this.sendTo(endpointId, {
           t: 'event',
           ns: 'webRequest',
           name: event,
-          args: [details],
+          args: [detailsFor(details, listener.extraInfoSpec)],
           delivery: { unfiltered: false, matched: [listenerId] }
         })
     }
@@ -2350,6 +2575,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
           if (typeof p.document === 'number' && p.document > 0)
             this.dnr.document(chromeTabId, p.document)
           else this.dnr.tabNavigated(chromeTabId)
+          // The page-script observer's pending pairs were the old document's.
+          this.ledger.documentChanged(tabId)
         }
         updated({ status: 'loading', url: p.url })
         return
@@ -2384,9 +2611,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
           )
         return
       }
+      case 'pageMessage': {
+        // The page script's observer (7.10): its report of a fetch / XHR's response stage.
+        const observation = scriptObservation(payload)
+        if (observation) this.onObservation(tabId, observation)
+        return
+      }
       case 'destroyed':
         this.router.unregisterTab(tabId)
         this.webNavigation.tabRemoved(tabId)
+        this.ledger.tabRemoved(tabId)
         return
       default:
         return
@@ -2423,6 +2657,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       this.api.tabRemoved(chromeTabId)
       this.dnr.tabRemoved(chromeTabId)
       this.webNavigation.tabRemoved(id)
+      this.ledger.tabRemoved(id)
     }
     this.knownTabs = now
     // A container created or deleted: every extension's sets follow (private is not a container here).
@@ -2542,7 +2777,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
           own = new Map()
           this.requestListeners.set(endpoint.id, own)
         }
-        own.set(listenerId, { event, filter: compileRequestFilter(spec.filter) })
+        own.set(listenerId, {
+          event,
+          filter: compileRequestFilter(spec.filter),
+          extraInfoSpec: spec.extraInfoSpec
+        })
         this.requestListenersChanged(id, endpoint, event)
         return undefined
       }

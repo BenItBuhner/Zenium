@@ -1404,8 +1404,10 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     expect(
       h.runtime.onResponse(response('error', { error: 'net::ERR_ABORTED' }) as never)?.error
     ).toBe('net::ERR_ABORTED')
-    // Nothing of it became a webRequest event here: the emission is the extension program's.
-    expect(events(h, 'bg1', 'webRequest.onCompleted')).toHaveLength(0)
+    // The emission is the runtime's since round 15 (extensionResponseStage.test.ts pins each
+    // event): the end became the one onCompleted a listener asked for; no onHeadersReceived
+    // listener is registered here, so the headers report reached no one.
+    expect(events(h, 'bg1', 'webRequest.onCompleted')).toHaveLength(1)
     expect(events(h, 'bg1', 'webRequest.onHeadersReceived')).toHaveLength(0)
     // Malformed shapes are dropped: no id, an error without its name, a header without a value, not relayed.
     expect(h.runtime.onResponse(response('headers', { requestId: '' }) as never)).toBeNull()

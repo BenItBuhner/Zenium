@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fetch-fed player fixture</title>
+    <style>
+      body {
+        font: 16px system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      video {
+        display: block;
+        width: 100%;
+        max-width: 480px;
+        background: #000;
+      }
+      table {
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      td,
+      th {
+        border: 1px solid #ccc;
+        padding: 2px 6px;
+        text-align: left;
+        vertical-align: top;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Fetch-fed player fixture</h1>
+    <p>
+      A player the page feeds itself, the way a script-driven site does: the clip is read with
+      <code>fetch</code> into a blob and handed to the <code>&lt;video&gt;</code> as an object
+      URL, so the engine never loads the clip through a media element and no request of the
+      player carries <code>Range</code>. Beside it, the same clip through
+      <code>XMLHttpRequest</code>, a same-origin <code>fetch</code> WITH a <code>Range</code>
+      header (the request the phone's relay serves itself: a request observer must not report
+      it twice), the clip from the server's other origin with and without <code>Range</code> (a
+      cors-mode request carries <code>Origin</code>, which the relay leaves alone), one
+      <code>fetch</code> through a <code>302</code>, the server's JSON, and one media element
+      whose source is a <code>302</code> to the clip (the relay's redirect hop). Per load the
+      page records what it could see of the response on <code>window.__player</code>.
+    </p>
+    <video id="player" muted playsinline preload="auto"></video>
+    <p>Player: <span id="state">loading</span></p>
+    <video id="hop" muted playsinline preload="metadata" style="max-width: 160px"></video>
+    <p>Redirected element: <span id="hopState">loading</span></p>
+    <p>Loads recorded: <span id="count">0</span> of <span id="total">0</span></p>
+    <table id="loads">
+      <tr><th>load</th><th>status</th><th>visible response headers</th></tr>
+    </table>
+    <script>
+      var here = location.host
+      var other = /^localhost(:|$)/.test(here) ? 'http://10.0.2.2:8765' : 'http://localhost:8765'
+      var own = location.protocol + '//' + location.host
+      window.__player = { other: other, own: own, loads: [], done: false, expected: 0, playing: false, hopMeta: false, startedAt: Date.now() }
+      var table = document.getElementById('loads')
+      function record(load) {
+        load.at = Date.now() - window.__player.startedAt
+        window.__player.loads.push(load)
+        var tr = document.createElement('tr')
+        var cells = [load.name, load.error ? 'error: ' + load.error : String(load.status), load.names && load.names.length ? load.names.join(', ') : '(none)']
+        cells.forEach(function (c) {
+          var td = document.createElement('td')
+          td.textContent = c
+          tr.appendChild(td)
+        })
+        table.appendChild(tr)
+        document.getElementById('count').textContent = String(window.__player.loads.length)
+        if (window.__player.loads.length >= window.__player.expected) window.__player.done = true
+      }
+      function headersOf(r) {
+        var h = {}
+        r.headers.forEach(function (v, k) {
+          h[k] = v
+        })
+        return h
+      }
+      function viaFetch(name, url, init, then) {
+        window.__player.expected++
+        var range = init && init.headers && init.headers.Range ? init.headers.Range : null
+        fetch(url, Object.assign({ cache: 'no-store' }, init || {}))
+          .then(function (r) {
+            var h = headersOf(r)
+            var load = { name: name, kind: 'fetch', url: url, finalUrl: r.url, redirected: r.redirected, range: range, status: r.status, headers: h, names: Object.keys(h).sort() }
+            return r.blob().then(function (b) {
+              load.bytes = b.size
+              record(load)
+              if (then) then(b)
+            })
+          })
+          .catch(function (e) {
+            record({ name: name, kind: 'fetch', url: url, range: range, error: String((e && e.message) || e), headers: null, names: [] })
+          })
+      }
+      function viaXhr(name, url, range) {
+        window.__player.expected++
+        var x = new XMLHttpRequest()
+        x.open('GET', url)
+        x.responseType = 'arraybuffer'
+        if (range) x.setRequestHeader('Range', range)
+        x.onload = function () {
+          var h = {}
+          x.getAllResponseHeaders()
+            .trim()
+            .split(/[\r\n]+/)
+            .forEach(function (line) {
+              var i = line.indexOf(':')
+              if (i > 0) h[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim()
+            })
+          record({ name: name, kind: 'xhr', url: url, finalUrl: x.responseURL, range: range || null, status: x.status, headers: h, names: Object.keys(h).sort(), bytes: x.response ? x.response.byteLength : null })
+        }
+        x.onerror = function () {
+          record({ name: name, kind: 'xhr', url: url, range: range || null, status: x.status, error: 'network error (status ' + x.status + ')', headers: null, names: [] })
+        }
+        x.send()
+      }
+      // The player: the whole clip through fetch, then a blob URL (no request of the element's own).
+      var v = document.getElementById('player')
+      var state = document.getElementById('state')
+      v.addEventListener('playing', function () {
+        window.__player.playing = true
+        state.textContent = 'playing from a blob URL'
+      })
+      v.addEventListener('error', function () {
+        window.__player.playerError = v.error ? v.error.code + ' ' + (v.error.message || '') : 'error'
+        state.textContent = 'error: ' + window.__player.playerError
+      })
+      viaFetch('fetch-player-clip', own + '/clip.mp4?fp=player', null, function (blob) {
+        v.src = URL.createObjectURL(blob)
+        v.play().catch(function (e) {
+          state.textContent = 'play refused: ' + e.message
+        })
+      })
+      viaXhr('xhr-clip', own + '/clip.mp4?fp=xhr')
+      // Same origin, a Range header, no Origin: the relay's own (`selects` true); the page
+      // script's observer reports it and the runtime drops the report.
+      viaFetch('fetch-range-clip', own + '/clip.mp4?fp=range', { headers: { Range: 'bytes=0-65535' } })
+      viaXhr('xhr-range-clip', own + '/clip.mp4?fp=xhr-range', 'bytes=0-65535')
+      // Cross-origin cors-mode: `Origin` on the request, so never the relay's, Range or not.
+      viaFetch('fetch-xo-clip', other + '/cors/clip.mp4?fp=xo', { mode: 'cors' })
+      viaFetch('fetch-xo-range-clip', other + '/cors/clip.mp4?fp=xo-range', { mode: 'cors', headers: { Range: 'bytes=0-65535' } })
+      // Through a 302: the page sees the final answer; the intercept saw two requests.
+      viaFetch('fetch-redirect-clip', own + '/redirect?to=/clip.mp4&fp=fetch-redirect', null)
+      viaFetch('fetch-json', own + '/data.json?fp=json', null)
+      // A media element through the same 302: the relay's redirect hop.
+      var hop = document.getElementById('hop')
+      window.__player.expected++
+      var hopDone = false
+      function hopRecord(error) {
+        if (hopDone) return
+        hopDone = true
+        window.__player.hopMeta = !error
+        document.getElementById('hopState').textContent = error ? 'error: ' + error : 'metadata loaded (' + hop.duration.toFixed(1) + ' s) from ' + (hop.currentSrc || hop.src).replace(own, '')
+        record({ name: 'video-redirect-clip', kind: 'video', url: own + '/redirect?to=/clip.mp4&fp=video-redirect', status: error ? null : 'loadedmetadata', error: error || undefined, headers: null, names: [] })
+      }
+      hop.addEventListener('loadedmetadata', function () {
+        hopRecord(null)
+      })
+      hop.addEventListener('error', function () {
+        hopRecord(hop.error ? hop.error.code + ' ' + (hop.error.message || '') : 'error')
+      })
+      hop.src = own + '/redirect?to=/clip.mp4&fp=video-redirect'
+      hop.load()
+      document.getElementById('total').textContent = String(window.__player.expected)
+      // A load that never settles must not hold the record open.
+      setTimeout(function () {
+        if (!hopDone) hopRecord('no loadedmetadata within 20 s (readyState ' + hop.readyState + ')')
+        window.__player.done = true
+        window.__player.timedOut = window.__player.loads.length < window.__player.expected
+      }, 20000)
+    </script>
+  </body>
+</html>
