@@ -4585,10 +4585,10 @@
     border-bottom-right-radius: calc(var(--v2-radius-card) + 4px);
   }
   /*
-   * The browser's own share panel (Android below 14; SH-03; Chrome 152's sharing hub): the
-   * share's preview is PUI-18's header, read-only (no press fill: nothing happens on it), then
-   * two rows that scroll sideways when they overflow – the apps the user shares to, More at the
-   * end, a hairline, and Zenium's own chips. A cell is a §9.3 icon button (44, the glyph 20 at
+   * The browser's own share panel (Android below 14; SH-03; §9.38): the share's preview is
+   * PUI-18's header, read-only (no press fill: nothing happens on it), then two rows that scroll
+   * sideways when they overflow – Zenium's own chips, a hairline, and the apps the user shares
+   * to with More at the end, nearest the thumb. A cell is a §9.3 icon button (44, the glyph 20 at
    * stroke 1.75, radius 8) with its caption under (13, centred, wrapping to a second line when
    * the cell's width asks – §9.2: grow, never clamp), the cells 72 wide so the 44 boxes stand 28
    * apart, the outer ones on the 16 gutter (§9.25); a row stands as tall as its tallest cell.
@@ -4599,8 +4599,8 @@
   .zen-share-panel-preview:active {
     background: transparent;
   }
-  /* A selection's share leads with the selected text (Chrome's hub: the text first, the link to
-     the highlight under it), on two lines at most, then ellipsis; the link's line stays one. */
+  /* A selection's share leads with the selected text (Chrome's hub: the text first, the page's
+     link under it), on two lines at most, then ellipsis; the link's line stays one. */
   .zen-share-panel-preview[data-kind='text'] .zen-menu-link-title {
     display: -webkit-box;
     white-space: normal;

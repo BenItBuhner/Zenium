@@ -4,6 +4,7 @@ import { COVERED_TIMEOUT_MS, onLayoutApplied, onViewDrawn, pageViewStore } from 
 import {
   SHARE_PANEL_MORE,
   afterPageShown,
+  displayedLink,
   sharePanelChips,
   sharePanelCopy,
   sharePanelPreview
@@ -32,10 +33,10 @@ function request(over: Partial<SharePanelRequest> = {}): SharePanelRequest {
 const kinds = (r: SharePanelRequest): string[] => sharePanelChips(r).map((c) => c.kind)
 const labels = (r: SharePanelRequest): string[] => sharePanelChips(r).map((c) => c.label)
 
-describe("the share panel's chips (Chrome 152's first-party row, less Send to your devices)", () => {
-  it("gives a page's share Copy link, Long screenshot, Print and QR code, in Chrome's order", () => {
-    expect(kinds(request())).toEqual(['copy', 'screenshot', 'print', 'qr'])
-    expect(labels(request())).toEqual(['Copy link', 'Long screenshot', 'Print', 'QR code'])
+describe("the share panel's chips (the Android 14 action row's, less Send to your devices; §9.38)", () => {
+  it("gives a page's share Copy link, QR code, Long screenshot and Print, in the action row's order", () => {
+    expect(kinds(request())).toEqual(['copy', 'qr', 'screenshot', 'print'])
+    expect(labels(request())).toEqual(['Copy link', 'QR code', 'Long screenshot', 'Print'])
   })
 
   it('has every chip carry a glyph', () => {
@@ -48,11 +49,17 @@ describe("the share panel's chips (Chrome 152's first-party row, less Send to yo
     expect(kinds(request({ tabId: null }))).toEqual(['copy', 'qr'])
   })
 
-  it("hides QR code for a private tab's share, as Chrome does in incognito; the rest stays", () => {
-    expect(kinds(request({ private: true }))).toEqual(['copy', 'screenshot', 'print'])
+  it("draws every chip for a private tab's share, QR code with them: private governs what is recorded, not what is shown", () => {
+    expect(kinds(request({ private: true }))).toEqual(kinds(request()))
+    expect(labels(request({ private: true }))).toEqual([
+      'Copy link',
+      'QR code',
+      'Long screenshot',
+      'Print'
+    ])
   })
 
-  it("gives a selection's text Copy text and Long screenshot: no page to print, no link to draw", () => {
+  it("gives a selection's text Copy text and Long screenshot: the quote's page is its picture; no link to draw, no page to print", () => {
     const selection = request({ kind: 'text', text: 'a passage', url: null, title: null })
     expect(labels(selection)).toEqual(['Copy text', 'Long screenshot'])
     // A selection that came with the page's link still copies its text, and draws no code for it.
@@ -60,9 +67,10 @@ describe("the share panel's chips (Chrome 152's first-party row, less Send to yo
       'Copy text',
       'Long screenshot'
     ])
+    expect(kinds(request({ kind: 'text', text: 'a passage', tabId: null }))).toEqual(['copy'])
   })
 
-  it('gives an image Copy image and Long screenshot', () => {
+  it("gives an image Copy image alone: the subject is the picture, and Long screenshot, Print and QR code are the page's", () => {
     const image = request({
       kind: 'image',
       url: null,
@@ -70,8 +78,11 @@ describe("the share panel's chips (Chrome 152's first-party row, less Send to yo
       favicon: null,
       image: 'data:image/webp;base64,IMG'
     })
-    expect(labels(image)).toEqual(['Copy image', 'Long screenshot'])
+    expect(labels(image)).toEqual(['Copy image'])
     expect(kinds({ ...image, tabId: null })).toEqual(['copy'])
+    // Neither a link that came along nor a private tab changes the picture's one chip.
+    expect(kinds({ ...image, url: 'https://example.com/picture.png' })).toEqual(['copy'])
+    expect(kinds({ ...image, private: true })).toEqual(['copy'])
   })
 })
 
@@ -90,17 +101,39 @@ describe("the share panel's preview", () => {
     })
   })
 
-  it("leads with a selection's text and puts the link to its highlight beneath, as the host sends the two (no title, no favicon)", () => {
+  it("leads with a selection's text and puts the page's link beneath without the highlight's `#:~:text=` fragment, as the host sends the two (no title, no favicon)", () => {
     const highlight = 'https://example.com/#:~:text=a%20passage'
     expect(
       sharePanelPreview(
         request({ kind: 'text', text: 'a passage', url: highlight, title: null, favicon: null })
       )
-    ).toEqual({ title: 'a passage', detail: highlight })
+    ).toEqual({ title: 'a passage', detail: 'https://example.com/' })
     // A title that came along anyway (a host's own share) does not displace the text.
     expect(sharePanelPreview(request({ kind: 'text', text: 'a passage', url: highlight }))).toEqual(
-      { title: 'a passage', detail: highlight }
+      { title: 'a passage', detail: 'https://example.com/' }
     )
+  })
+
+  it('shows a link without its text-fragment directive and nothing else changed: the directive says how, not where, and the share keeps it', () => {
+    expect(displayedLink('https://example.com/#:~:text=a%20passage')).toBe('https://example.com/')
+    expect(displayedLink('https://example.com/a/page?q=1#:~:text=start,end&text=more')).toBe(
+      'https://example.com/a/page?q=1'
+    )
+    // A plain fragment before the directive is where, and stays.
+    expect(displayedLink('https://example.com/doc#section-2:~:text=a%20passage')).toBe(
+      'https://example.com/doc#section-2'
+    )
+    // Nothing to drop: the link as it is, `:~:` outside the fragment included.
+    expect(displayedLink('https://example.com/doc#section-2')).toBe(
+      'https://example.com/doc#section-2'
+    )
+    expect(displayedLink('https://example.com/')).toBe('https://example.com/')
+    expect(displayedLink('https://example.com/a:~:b')).toBe('https://example.com/a:~:b')
+    // The copy of a selection is its text, and a page's Copy link is the page's whole link: neither reads the displayed line.
+    expect(sharePanelCopy(request({ url: 'https://example.com/#:~:text=x' }))).toEqual({
+      text: 'https://example.com/#:~:text=x',
+      confirmation: 'Link copied'
+    })
   })
 
   it("shows a selection's text alone when the page gave no link to the highlight (not a web page)", () => {

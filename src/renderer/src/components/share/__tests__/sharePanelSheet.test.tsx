@@ -9,11 +9,12 @@ import { uiStore } from '@renderer/lib/ui'
 /*
  * The browser's own share panel (Android below 14; SH-03) rendered for real in happy-dom, its
  * sheet's spring cranked by hand: the preview's three forms – a page's title over its link
- * behind the favicon, a selection's text over the link to its highlight with no favicon, an
- * image's picture and "Image" – the apps row with More as its last cell, the chips by kind, and
- * a private tab's panel the same sheet less the QR code chip. The requests are the host's
- * (`Share.kt`: a selection comes with its text and link and neither title nor favicon; an image
- * with its picture alone).
+ * behind the favicon, a selection's text over the page's link (the highlight's `#:~:text=`
+ * fragment off the displayed line) with no favicon, an image's picture and "Image" – then the
+ * chips in the Android 14 action row's order above the hairline, the apps row with More as its
+ * last cell under it (v2 draft §9.38), the chips the subject's alone, and a private tab's panel
+ * the same sheet, QR code included. The requests are the host's (`Share.kt`: a selection comes
+ * with its text and link and neither title nor favicon; an image with its picture alone).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -203,13 +204,16 @@ describe("the share panel's sheet (SH-03)", () => {
     expect(q(`[aria-labelledby="${heading.id}"]`)).not.toBeNull()
   })
 
-  it("leads a selection's preview with the selected text, the link to its highlight beneath, and draws no favicon", () => {
+  it("leads a selection's preview with the selected text, the page's link beneath without the highlight's fragment, and draws no favicon", () => {
     show(selection())
     expect(preview().dataset.kind).toBe('text')
     expect(preview().querySelector('.zen-menu-link-favicon')).toBeNull()
     expect(preview().querySelector('.zen-menu-link-thumbnail')).toBeNull()
     expect(title()).toBe(PASSAGE)
-    expect(detail()).toBe(HIGHLIGHT)
+    expect(detail()).toBe('https://example.com/')
+    expect(panel()?.textContent).not.toContain('#:~:text=')
+    // The request in the store still carries the whole link: the share does, only the line does not.
+    expect(uiStore.get().sharePanel?.url).toBe(HIGHLIGHT)
   })
 
   it("shows a selection's text alone when it came without a link (not a web page)", () => {
@@ -249,26 +253,47 @@ describe("the share panel's sheet (SH-03)", () => {
     expect(kinds('apps')).toEqual(['more'])
   })
 
-  it("gives each share its chips: a page's four in Chrome's order, a selection's and an image's two", () => {
+  it('reads from the subject down: the preview, the chips, a hairline, then the apps row nearest the thumb (§9.38)', () => {
     show(request())
-    expect(kinds('chips')).toEqual(['copy', 'screenshot', 'print', 'qr'])
-    expect(captions('chips')).toEqual(['Copy link', 'Long screenshot', 'Print', 'QR code'])
+    const sheet = panel()!
+    const order = [
+      sheet.querySelector('.zen-share-panel-preview'),
+      sheet.querySelector('[data-row="chips"]'),
+      sheet.querySelector('.zen-sheet-sep'),
+      sheet.querySelector('[data-row="apps"]')
+    ]
+    for (const el of order) expect(el).not.toBeNull()
+    for (let i = 1; i < order.length; i++) {
+      // DOCUMENT_POSITION_FOLLOWING: the later element comes after the earlier one in the tree.
+      expect(
+        order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.toBe(0)
+    }
+    expect(sheet.querySelectorAll('.zen-sheet-sep')).toHaveLength(1)
+  })
+
+  it("gives each share its chips in the action row's order: a page's four, a selection's two, an image's one", () => {
+    show(request())
+    expect(kinds('chips')).toEqual(['copy', 'qr', 'screenshot', 'print'])
+    expect(captions('chips')).toEqual(['Copy link', 'QR code', 'Long screenshot', 'Print'])
     show(selection())
     expect(captions('chips')).toEqual(['Copy text', 'Long screenshot'])
     show(picture())
-    expect(captions('chips')).toEqual(['Copy image', 'Long screenshot'])
+    expect(captions('chips')).toEqual(['Copy image'])
   })
 
-  it("draws a private tab's panel as the same sheet – preview, apps row, More – less the QR code chip", () => {
+  it("draws a private tab's panel as the same sheet – preview, chips with QR code, apps row, More", () => {
     // The title's id is React's per mount; the markup is compared without it.
     const markup = (el: HTMLElement | null): string => el!.outerHTML.replace(/ id="[^"]*"/g, '')
     show(request())
     const publicPreview = markup(preview())
+    const publicChips = markup(q('.zen-share-panel [data-row="chips"]'))
     const publicApps = markup(q('.zen-share-panel [data-row="apps"]'))
     show(request({ private: true }))
     expect(markup(preview())).toBe(publicPreview)
+    expect(markup(q('.zen-share-panel [data-row="chips"]'))).toBe(publicChips)
     expect(markup(q('.zen-share-panel [data-row="apps"]'))).toBe(publicApps)
-    expect(kinds('chips')).toEqual(['copy', 'screenshot', 'print'])
+    expect(kinds('chips')).toEqual(['copy', 'qr', 'screenshot', 'print'])
     // Nothing marks the sheet as private: the panel has no incognito dress of its own.
     expect(panel()?.outerHTML).not.toContain('private')
   })

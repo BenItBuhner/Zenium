@@ -21,14 +21,16 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 /**
  * The browser's own share panel (Android below 14, where the system sheet has no row for the
  * sharing app's actions; SH-03), as Chrome 152's sharing hub stands in for the system sheet
- * there: a sheet on the menu's chassis with the share's preview in the header's place – the
- * favicon at 20, or the image itself at 40, the title over the link; a selection's text over
- * its link to the highlight – then the apps the user
- * shares to, ranked by Zenium's own record, More for the system sheet at the row's end, a
- * hairline, and Zenium's own chips (Chrome's order: Copy, Long screenshot, Print, QR code). The
- * host holds the share's intent under the request's id until the sheet answers
- * (`answerSharePanel`); every way out that picks nothing is the dismissal. Mounted once, above
- * whichever shell is up; the leave outlives the request (`SheetPresence`, v2 draft §11.1).
+ * there: a sheet on the menu's chassis that reads from its subject down (v2 draft §9.38) – the
+ * share's preview in the header's place (the favicon at 20, or the image itself at 40, the title
+ * over the link; a selection's text over the page's link), then Zenium's own chips in the
+ * Android 14 action row's order (Copy link, QR code, Long screenshot, Print; `sharePanelChips`),
+ * a hairline, and the apps the user shares to, ranked by Zenium's own record, More for the
+ * system sheet at the row's end – the 14 sheet's order, the ranked row nearest the thumb
+ * (Chrome's hub puts its apps first; that is Chrome's). The host holds the share's intent under
+ * the request's id until the sheet answers (`answerSharePanel`); every way out that picks
+ * nothing is the dismissal. Mounted once, above whichever shell is up; the leave outlives the
+ * request (`SheetPresence`, v2 draft §11.1).
  */
 export function SharePanelLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.sharePanel)
@@ -112,6 +114,23 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
         />
       }
     >
+      <div className="zen-share-panel-row" data-row="chips">
+        {chips.map((chip) => (
+          <button
+            key={chip.kind}
+            type="button"
+            className="zen-share-panel-cell"
+            data-kind={chip.kind}
+            onClick={() => onChip(chip)}
+          >
+            <span className="zen-v2-icon-button zen-share-panel-box" aria-hidden>
+              <chip.icon />
+            </span>
+            <span className="zen-share-panel-caption">{chip.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="zen-sheet-sep" role="presentation" />
       <div className="zen-share-panel-row" data-row="apps">
         {request.targets.map((target) => (
           <TargetCell
@@ -136,23 +155,6 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
           <span className="zen-share-panel-caption">{SHARE_PANEL_MORE.label}</span>
         </button>
       </div>
-      <div className="zen-sheet-sep" role="presentation" />
-      <div className="zen-share-panel-row" data-row="chips">
-        {chips.map((chip) => (
-          <button
-            key={chip.kind}
-            type="button"
-            className="zen-share-panel-cell"
-            data-kind={chip.kind}
-            onClick={() => onChip(chip)}
-          >
-            <span className="zen-v2-icon-button zen-share-panel-box" aria-hidden>
-              <chip.icon />
-            </span>
-            <span className="zen-share-panel-caption">{chip.label}</span>
-          </button>
-        ))}
-      </div>
     </BottomSheet>
   )
 }
@@ -162,8 +164,9 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
  * link the favicon at 20 – the globe at 69 % for a page the cache holds none for – the title
  * 15/600 over the link 13 in the deemphasised ink, one line each; for an image the picture itself
  * at 40 in the favicon's place; for a selection the selected text leads, on two lines at most,
- * the link to the highlight under it, and no favicon (Chrome's hub: the text, then the link). The
- * first line names the sheet.
+ * the page's link under it without the highlight's `#:~:text=` fragment (`displayedLink`), and no
+ * favicon – the text is its own picture (Chrome's hub: the text, then the link; §9.38). The first
+ * line names the sheet.
  */
 function Preview({
   request,
