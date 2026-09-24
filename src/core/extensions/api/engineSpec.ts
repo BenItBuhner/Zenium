@@ -442,6 +442,19 @@ export const ENGINE_SPEC: ApiSpec = {
     events: { onStateChanged: {} },
     constants: { IdleState: { ACTIVE: 'active', IDLE: 'idle', LOCKED: 'locked' } }
   },
+  // `chrome.power`: the screen kept on while an extension asks (Keep Awake relabels its action
+  // "ON" on the call and its worker has no other path). Fire-and-forget in Chrome; the host
+  // answers with nothing. `reportActivity` is a Chrome OS member the other desktops resolve
+  // quietly, as the host does.
+  power: {
+    methods: {
+      requestKeepAwake: routed(string('level')),
+      releaseKeepAwake: routed(),
+      reportActivity: routed()
+    },
+    events: {},
+    constants: { Level: { SYSTEM: 'system', DISPLAY: 'display' } }
+  },
   identity: {
     methods: {
       // No signed-in browser account: the host refuses with the shared message.
@@ -659,6 +672,7 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   sidePanel: 'sidePanel',
   userScripts: 'userScripts',
   idle: 'idle',
+  power: 'power',
   identity: 'identity',
   sessions: 'sessions',
   tabGroups: 'tabGroups',

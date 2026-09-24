@@ -30,6 +30,9 @@ import java.security.MessageDigest
  *    entries, and a unit copies a file once per group it is in: 75 million characters, whose
  *    builder – Latin-1 until the first character outside it, then twice the size – was a 150 MB
  *    allocation on a 192 MB heap, and the process died under it (compat round 13);
+ *  - a file's relative `import()` specifiers are resolved to the file's own served URL as it is
+ *    copied in ([RelativeImports]): Chrome resolves them against the content script's own URL,
+ *    a unit of ours would resolve them against the page;
  *  - every other extension's cache is untouched, and a new version starts from nothing.
  *
  * Pure string work over an injected reader, so the JVM unit tests cover it.
@@ -125,7 +128,7 @@ class UnitCompiler(
                 val sources = List(files.length()) { k ->
                     val path = files.optString(k, "")
                     if (path.startsWith(INLINE_CODE)) ExtensionScripts.Source(path.substring(INLINE_CODE.length))
-                    else source(entry, path, read)
+                    else source(entry, ext, path, read)
                         ?: ExtensionScripts.Source("console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});")
                 }
                 groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.optString("isolation", "with")))
@@ -203,10 +206,19 @@ class UnitCompiler(
         return size(path) ?: MISSING_STUB_CHARS
     }
 
-    /** A script file as the assembly takes it: held (small, soft-cached) or transient (large, released as it is copied in). */
-    private fun source(entry: ExtensionCache, path: String, read: (String) -> String?): ExtensionScripts.Source? {
+    /**
+     * A script file as the assembly takes it: held (small, soft-cached) or transient (large,
+     * released as it is copied in), its relative `import()` specifiers resolved to the file's own
+     * served URL on the way in ([RelativeImports]; the cached text stays as read, so the same file
+     * under another path or extension is not confused). The refusal estimate does not count the
+     * rewrite's few dozen characters per call; a loader's handful sits inside the estimate's room.
+     */
+    private fun source(entry: ExtensionCache, ext: String, path: String, read: (String) -> String?): ExtensionScripts.Source? {
         val text = text(entry, path, read) ?: return null
-        return if (text.length >= LARGE_SOURCE_CHARS) ExtensionScripts.Source.transient(text) else ExtensionScripts.Source(text)
+        val transient = text.length >= LARGE_SOURCE_CHARS
+        val edits = RelativeImports.edits(text, ext, path)
+        if (edits.isNotEmpty()) return RelativeImports.source(text, edits, transient)
+        return if (transient) ExtensionScripts.Source.transient(text) else ExtensionScripts.Source(text)
     }
 
     /** The file's text: from the soft cache, or read now (and cached when under [LARGE_SOURCE_CHARS]). */

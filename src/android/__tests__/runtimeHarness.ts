@@ -77,6 +77,8 @@ export class FakeKotlin implements RuntimeBridge {
     capacity: 8 * 1024 ** 3,
     availableCapacity: 3 * 1024 ** 3
   })
+  /** The keep-awake requests the fake window holds (`ext.power.keepAwake`): extension id → level. */
+  readonly keepAwake = new Map<string, string>()
   /** The offscreen documents Kotlin holds right now (`ext.offscreen.*`): extension id → page URL. */
   readonly offscreens = new Map<string, string>()
   /** The cookie jars (`ext.cookies.*`), one per container, see `FakeJar`. */
@@ -182,6 +184,8 @@ export class FakeKotlin implements RuntimeBridge {
       case 'ext.detach':
         this.backgrounds.delete(String(args.id))
         this.offscreens.delete(String(args.id))
+        // Kotlin's `detachExtension` lets the extension's keep-awake request go with it.
+        this.keepAwake.delete(String(args.id))
         return undefined
       case 'ext.expect':
         return undefined
@@ -205,6 +209,12 @@ export class FakeKotlin implements RuntimeBridge {
         return this.cpuAnswer()
       case 'ext.system.memory':
         return this.memoryAnswer()
+      case 'ext.power.keepAwake': {
+        const id = String(args.id)
+        if (args.level === null || args.level === undefined) this.keepAwake.delete(id)
+        else this.keepAwake.set(id, String(args.level))
+        return undefined
+      }
       case 'ext.observeRequests':
       case 'ext.popup.open':
       case 'ext.popup.close':
