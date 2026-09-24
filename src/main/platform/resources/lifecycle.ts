@@ -224,7 +224,12 @@ export class TabLifecycle {
       await wc.debugger.sendCommand(method, params)
       return true
     } catch (error) {
-      if (!optional) console.warn(`[zen] ${method} failed:`, (error as Error).message)
+      // A session gone under the command – this lifecycle's own detach (a hung page shown again
+      // while its renderer still owed the override), the target closed, another client taking
+      // the page – is the watcher's affair already; only a command a live session refused is
+      // worth a word.
+      const ended = wc.isDestroyed() || !wc.debugger.isAttached()
+      if (!optional && !ended) console.warn(`[zen] ${method} failed:`, (error as Error).message)
       return false
     }
   }

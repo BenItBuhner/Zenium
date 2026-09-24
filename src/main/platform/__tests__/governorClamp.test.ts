@@ -350,6 +350,7 @@ describe('ConcurrencyClamp – the CPU clamp on background pages only', () => {
   })
 
   it('a hung page: the override never answers; shown, the session goes anyway so Chromium can report the hang', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const h = harness()
     const page = h.page()
     page.dbg.hung = true
@@ -361,12 +362,34 @@ describe('ConcurrencyClamp – the CPU clamp on background pages only', () => {
     await h.settle()
     expect(page.dbg.attached).toBe(false)
     expect(page.dbg.log).toEqual(['attach', CLAMPED, 'detach'])
+    // The override the detach rejected was the lifecycle's own doing – not a failure to report.
+    expect(warn).not.toHaveBeenCalled()
     // Behind again, the renderer answering now: clamped.
     page.dbg.hung = false
     h.hide(page)
     await h.settle()
     expect(page.dbg.log.slice(-2)).toEqual(['attach', CLAMPED])
     expect(h.lifecycle.hardwareConcurrency(page.webContents)).toBe(CORES)
+    warn.mockRestore()
+  })
+
+  it('a command a live session refused is still reported', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const h = harness()
+    const page = h.page()
+    const refuse = page.dbg.sendCommand.bind(page.dbg)
+    page.dbg.sendCommand = async (method, params) => {
+      await refuse(method, params)
+      throw new Error(`'${method}' wasn't found`)
+    }
+    await h.settle()
+    expect(page.dbg.attached).toBe(true)
+    expect(h.lifecycle.hardwareConcurrency(page.webContents)).toBeNull()
+    expect(warn).toHaveBeenCalledWith(
+      '[zen] Emulation.setHardwareConcurrencyOverride failed:',
+      "'Emulation.setHardwareConcurrencyOverride' wasn't found"
+    )
+    warn.mockRestore()
   })
 
   it('a destroyed page is forgotten: nothing is sent to it', async () => {
