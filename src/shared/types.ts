@@ -1952,6 +1952,7 @@ export type ShortcutAction =
   | 'split.newEmpty'
   | 'split.nextPane'
   | 'split.prevPane'
+  | 'split.swap'
   | 'tab.copyUrl'
   | 'tab.copyUrlMarkdown'
   | 'tab.togglePin'
@@ -2422,6 +2423,15 @@ export interface Settings {
    * targets. Absent in profiles from before it existed (read as true).
    */
   splitEdgeZones: boolean
+  /**
+   * Split view's link rule (split-13, Edge's "Open links from the left pane in the right pane"):
+   * on, a plain click on a link in the first pane of a side-by-side split (vertical or grid)
+   * loads the link in the pane to its right, the left pane staying where it is – search results
+   * on the left, the article on the right. Off by default, as Edge's toggle is; a stacked
+   * (horizontal) split has no left and right and keeps its links. Absent in profiles from before
+   * it existed (read as false).
+   */
+  splitLinksToRight: boolean
   pinnedCloseBehavior: PinnedCloseBehavior
   pinnedResetOnStartup: boolean
   thirdPartyOnPinned: ThirdPartyPinnedBehavior
@@ -4376,6 +4386,14 @@ export interface Commands {
   'split.resize': { args: { groupId: string; sizes: number[] }; result: void }
   'split.newEmpty': { args: void; result: void }
   'split.addTab': { args: { groupId: string; tabId: string }; result: void }
+  /**
+   * Swap Panes (split-07): the pane of `tabId` – the active pane when omitted – trades places
+   * with the pane after it in the split's order (the last with the one before it), so a
+   * two-pane split reverses as Chrome's "Reverse position" does. Each tab keeps its size.
+   */
+  'split.swap': { args: { tabId?: string }; result: void }
+  /** The ⋯ menu of a pane's header: Swap Panes, the left pane's link rule, Un-split Tab. */
+  'split.paneMenu': { args: { tabId: string } & MenuAnchor; result: void }
   /**
    * "Choose a tab" in an empty pane (split-04): `tabId` takes the pane over from the blank tab
    * `paneTabId` shown there, which closes. False when nothing changed.

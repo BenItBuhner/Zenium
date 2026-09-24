@@ -1821,10 +1821,11 @@ export class Menus {
         enabled: canSplitWithActive,
         click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
       },
-      ...when(Boolean(tab.splitGroupId), {
-        label: 'Un-split Tab',
-        click: () => tabs.removeFromSplit(tabId, true, win)
-      }),
+      ...when(
+        Boolean(tab.splitGroupId),
+        { label: 'Swap Panes', click: () => tabs.swapPanes(tabId, win) },
+        { label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }
+      ),
       {
         label: 'Open in New Container Tab',
         enabled: !win.isPrivate,
@@ -1903,6 +1904,37 @@ export class Menus {
       closeGroup,
       [this.reopenClosedItem(win)]
     ])
+    this.popup(template, win, 'tab', anchor)
+  }
+
+  /**
+   * The ⋯ menu of a split pane's header (split-07, split-13; Edge's "More options" on the pane,
+   * Chrome's menu on the split's toolbar icon): Swap Panes – this pane trades places with the
+   * pane after it, the last with the one before it – then the left pane's link rule as a
+   * checkbox on the one setting Settings › Tabs › Split view carries (Edge keeps the toggle on
+   * the pane; here it is the setting's mirror, greyed for a stacked split, which has no left and
+   * right), then Un-split Tab, which the header's own button also does. Title Case (design
+   * language v2 §9.1); nothing here for a tab outside a split.
+   */
+  showSplitPaneMenu(tabId: string, win: ZenWindow, anchor?: MenuAnchor): void {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    const group = tab?.splitGroupId ? state.model.splitGroups[tab.splitGroupId] : undefined
+    if (!tab || !group) return
+    const linksToRight = state.settings.splitLinksToRight
+    const template: Template = [
+      { label: 'Swap Panes', action: 'split.swap', click: () => tabs.swapPanes(tabId, win) },
+      { type: 'separator' },
+      {
+        label: 'Open Links from Left Pane in Right Pane',
+        type: 'checkbox',
+        checked: linksToRight,
+        enabled: group.layout !== 'horizontal',
+        click: () => this.browser.updateSettings({ splitLinksToRight: !linksToRight }, win)
+      },
+      { type: 'separator' },
+      { label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }
+    ]
     this.popup(template, win, 'tab', anchor)
   }
 

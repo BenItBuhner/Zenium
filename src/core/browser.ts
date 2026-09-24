@@ -1169,6 +1169,8 @@ export class Browser {
       this.menus.scheduleApplicationMenu()
       // Open new tab pages follow the model (shortcuts, most visited, theme) live.
       this.newTab.push()
+      // The left pane's link rule follows the splits (a swap, a pane joining or leaving).
+      this.tabs.syncSplitLinkFlags()
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
@@ -2658,6 +2660,9 @@ export class Browser {
       case 'navigate':
         this.tabs.navigate(tabId, message.url)
         return
+      case 'split-link':
+        this.tabs.openInSplitPane(tabId, message.url)
+        return
     }
   }
 
@@ -2957,6 +2962,9 @@ export class Browser {
       'split.resize': ({ groupId, sizes }) => tabs.resizeSplit(groupId, sizes),
       'split.newEmpty': (_a, win) => tabs.newEmptySplit(win),
       'split.addTab': ({ groupId, tabId }) => tabs.addToSplit(groupId, tabId),
+      'split.swap': ({ tabId }, win) => tabs.swapPanes(tabId, win),
+      'split.paneMenu': ({ tabId, ...anchor }, win) =>
+        this.menus.showSplitPaneMenu(tabId, win, anchor),
       'split.pickTab': ({ paneTabId, tabId }, win) => tabs.pickTabForPane(paneTabId, tabId, win),
 
       'glance.open': ({ url, parentTabId, originX, originY }, win) =>
@@ -3563,6 +3571,7 @@ export class Browser {
       glance: s.glanceEnabled,
       trigger: s.glanceTrigger,
       thirdParty: s.thirdPartyOnPinned,
+      splitLinks: s.splitLinksToRight,
       appIcon: s.appIcon,
       colorScheme: s.colorScheme,
       windowSync: s.windowSync,
@@ -3688,6 +3697,7 @@ export class Browser {
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.splitEdgeZones = s.splitEdgeZones !== false
+    s.splitLinksToRight = s.splitLinksToRight === true
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
     s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false
@@ -3706,7 +3716,8 @@ export class Browser {
     if (
       before.glance !== s.glanceEnabled ||
       before.trigger !== s.glanceTrigger ||
-      before.thirdParty !== s.thirdPartyOnPinned
+      before.thirdParty !== s.thirdPartyOnPinned ||
+      before.splitLinks !== s.splitLinksToRight
     ) {
       this.tabs.broadcastPageFlags()
     }

@@ -435,6 +435,23 @@ describe('state.json v5 (new tab page)', () => {
     expect(state(fakeIo(legacyProfile(5, { settings: off }))).settings.splitEdgeZones).toBe(false)
   })
 
+  it('reads the left pane’s link rule as off unless the profile turned it on (split-13)', () => {
+    const without = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
+    delete without.splitLinksToRight
+    const older = state(fakeIo(legacyProfile(5, { settings: without as typeof DEFAULT_SETTINGS })))
+    expect(older.settings.splitLinksToRight).toBe(false)
+
+    const garbage = structuredClone(DEFAULT_SETTINGS)
+    ;(garbage as unknown as Record<string, unknown>).splitLinksToRight = 'on'
+    expect(state(fakeIo(legacyProfile(5, { settings: garbage }))).settings.splitLinksToRight).toBe(
+      false
+    )
+
+    const on = structuredClone(DEFAULT_SETTINGS)
+    on.splitLinksToRight = true
+    expect(state(fakeIo(legacyProfile(5, { settings: on }))).settings.splitLinksToRight).toBe(true)
+  })
+
   it('reads the developer tools dock, the bottom for profiles from before it and for garbage (§9.29)', () => {
     const without = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
     delete without.devtoolsDock

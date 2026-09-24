@@ -425,6 +425,26 @@ export function addTabToSplit(
 }
 
 /**
+ * Swap Panes (split-07): the panes at `a` and `b` trade places. Each tab keeps its size – a pane
+ * the user widened is as wide on its new side (Chrome's "Reverse position" inverts the ratio the
+ * same way) – where a tab dropped on a pane (`replaceTabInSplit`) takes the pane's slot and size.
+ * False when either index is not a pane of the split, or they are the same.
+ */
+export function swapSplitPanes(model: Model, groupId: string, a: number, b: number): boolean {
+  const group = model.splitGroups[groupId]
+  if (!group || a === b) return false
+  const n = group.tabIds.length
+  if (a < 0 || b < 0 || a >= n || b >= n) return false
+  const tabIds = [...group.tabIds]
+  ;[tabIds[a], tabIds[b]] = [tabIds[b], tabIds[a]]
+  const sizes = group.sizes.length === n ? [...group.sizes] : equalSizes(n)
+  ;[sizes[a], sizes[b]] = [sizes[b], sizes[a]]
+  group.tabIds = tabIds
+  group.sizes = sizes
+  return true
+}
+
+/**
  * The tab shown in a pane makes way for another (a tab dropped on the pane): the newcomer takes
  * the pane, its slot and its size, and the shown tab leaves the split but stays open. Two tabs
  * of the same split swap panes instead.

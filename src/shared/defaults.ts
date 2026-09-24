@@ -242,6 +242,7 @@ export const DEFAULT_SETTINGS: Settings = {
   glanceEnabled: true,
   glanceTrigger: 'alt',
   splitEdgeZones: true,
+  splitLinksToRight: false,
   pinnedCloseBehavior: 'reset-unload-switch',
   pinnedResetOnStartup: false,
   thirdPartyOnPinned: 'new-tab',

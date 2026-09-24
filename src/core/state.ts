@@ -639,6 +639,8 @@ export class BrowserState {
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
     // Off only when the profile says so: an older profile, or anything but a boolean, reads on.
     this.settings.splitEdgeZones = data.settings?.splitEdgeZones !== false
+    // On only when the profile says so: an older profile, or anything but a boolean, reads off.
+    this.settings.splitLinksToRight = data.settings?.splitLinksToRight === true
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }

@@ -154,6 +154,12 @@ export interface PageFlags {
   glanceTrigger: 'alt' | 'ctrl' | 'shift'
   /** How plain clicks on third-party links behave on pinned/essential tabs (null = normal tab). */
   thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
+  /**
+   * The page is the left pane of a side-by-side split with the link rule on (split-13): a plain
+   * click on a link is sent back as `split-link` for the pane to its right to load, instead of
+   * navigating here. False for every other page.
+   */
+  linksToSplitPane: boolean
 }
 
 /**
@@ -176,6 +182,8 @@ export interface PageMessage {
     | 'glance'
     | 'open-tab'
     | 'navigate'
+    /** A link clicked in the left pane of a split with the link rule on: the right pane loads `url`. */
+    | 'split-link'
     | 'media'
     | 'zap'
     | 'activation'
