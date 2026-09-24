@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ChevronRight } from 'lucide-react'
 import type { BookmarkNode, Rect } from '@shared/types'
 import { BOOKMARKS_BAR_ID, type BookmarkTree } from '@shared/bookmarks'
+import { carriesBookmark, draggedBookmarkId } from '@renderer/lib/addressDrag'
 import { run } from '@renderer/lib/api'
 import { popOrigin } from '@renderer/lib/anchor'
 import { pathForFile } from '@renderer/lib/dnd'
@@ -28,7 +29,7 @@ import {
 } from '@renderer/lib/portals'
 import { BookmarkIcon } from './BookmarkIcon'
 import { besideOrigin, layoutRect, placeBeside, rowRect } from './panelGeometry'
-import { nodeLabel } from './tree'
+import { nodeLabel, slotWithout } from './tree'
 import { HOLD_TO_OPEN_MS, type BarDropTarget } from './useBarDrag'
 
 export type BarMenuRoot =
@@ -49,8 +50,24 @@ interface Props {
   /** A bar drag's target, so the row or folder about to take the drop is marked. */
   dropTarget: BarDropTarget | null
   liftedId: string | null
+  /**
+   * The keyboard asked for the panel (Down on the chip, an arrow from the neighbour's panel), so
+   * its first row takes the focus whatever element held it when the panel mounted; unset, the
+   * chip's focus ring decides (`openedFromKeyboard`).
+   */
+  keyboard?: boolean
+  /**
+   * A private window's panel (bookmarks-43): its rows open and nothing else – no drop files a
+   * link in it, Delete on a row does nothing. The menus lose their editing rows in the core.
+   */
+  readOnly?: boolean
   /** `focusAnchor`: the keyboard closed the panel, so the chip it hung from takes focus back. */
   onClose: (opts?: { focusAnchor: boolean }) => void
+  /**
+   * Left or Right at the root level (bookmarks-19): the bar hands the panel to the neighbour
+   * chip, as a menu bar's arrows walk its menus. Without it Left closes the panel, as Backspace.
+   */
+  onStep?: (direction: -1 | 1) => void
 }
 
 /** One open panel of the cascade: the folder whose contents it lists, and them. */
@@ -93,14 +110,20 @@ type PanelTarget = Exclude<BarDropTarget, { kind: 'slot' }>
  * through the level the focus is in, a letter goes to the row it names (Chrome's mnemonics),
  * Right opens a folder's panel on its first row, Left or Backspace closes the level and lands
  * on the folder that opened it, Escape closes one level at a time and, at the root, hands the
- * chip the focus back. The chrome layer's light dismiss closes the whole cascade otherwise: a
+ * chip the focus back. At the root the panel is a menu bar's menu (bookmarks-19): Left and
+ * Right hand it to the neighbour chip through `onStep` (a folder chip's or the »'s panel opens
+ * in its place, a page chip takes the focus with the panel closed), and Up from the first row
+ * closes it onto the chip that Down opened it from. The chrome layer's light dismiss closes
+ * the whole cascade otherwise: a
  * press anywhere else (consumed, §9.20 amended), its chip's own press (which hands the chip the
  * focus), a scroll outside it, a resize, another popover; hovering another folder chip hands
  * the panel to it (`BookmarksBar` mounts a `BarMenu` per chip), which is not a close.
  *
  * A chip drag (`useBarDrag`) or a link from a page files its drop at a row, into a folder row
  * or at the end of a level (§9.4): the target row or panel is marked, and resting on a folder
- * row for `HOLD_TO_OPEN_MS` opens its panel beside, as on a chip.
+ * row for `HOLD_TO_OPEN_MS` opens its panel beside, as on a chip. A chip lifted off the bar as
+ * a link (its HTML5 drag, bookmarks-15) moves in the same way rather than being filed twice.
+ * A private window's panel takes no drop and no Delete (`readOnly`, bookmarks-43).
  */
 export function BarMenu({
   tree,
@@ -111,7 +134,10 @@ export function BarMenu({
   tabId,
   dropTarget,
   liftedId,
-  onClose
+  keyboard = false,
+  readOnly = false,
+  onClose,
+  onStep
 }: Props): JSX.Element {
   const groupRef = useRef<HTMLDivElement>(null)
   const panelEls = useRef<Array<HTMLDivElement | null>>([])
@@ -153,7 +179,7 @@ export function BarMenu({
   // path finds none pending and sets its own or none.
   const [focusWanted, setFocusWanted] = useState<FocusWanted | null>(() => ({
     depth: 0,
-    target: openedFromKeyboard() ? 'first' : 'panel'
+    target: keyboard || openedFromKeyboard() ? 'first' : 'panel'
   }))
   const onFocused = useCallback((): void => setFocusWanted(null), [])
 
@@ -252,19 +278,38 @@ export function BarMenu({
     const current = at === -1 ? undefined : level?.items[at]
     switch (e.key) {
       case 'ArrowRight':
+        // A folder row opens its level; anywhere else at the root, Right walks the bar to the
+        // next chip, as a menu bar's arrows do (bookmarks-19).
         if (current?.type === 'folder') openLevel(depth, current.id, true)
+        else if (depth === 0 && onStep) onStep(1)
         break
       case 'ArrowLeft':
+        // The level in focus goes; its folder row, one level up, takes the focus. At the root
+        // Left walks the bar to the previous chip when the bar takes the step, else closes.
+        if (depth > 0) closeTo(depth - 1, true)
+        else if (onStep) onStep(-1)
+        else onClose({ focusAnchor: true })
+        break
       case 'Backspace':
-        // The level in focus goes; its folder row, one level up, takes the focus.
         if (depth > 0) closeTo(depth - 1, true)
         else onClose({ focusAnchor: true })
         break
+      case 'ArrowUp':
+        // Up from the root's first row closes the panel and hands the chip the focus back – the
+        // way back up out of what Down opened (bookmarks-19); elsewhere it is the menu's Up.
+        if (depth === 0 && at === 0) {
+          onClose({ focusAnchor: true })
+          break
+        }
+        if (!handleMenuKey(e, rows, { mnemonics: true, tab: true })) return
+        e.stopPropagation()
+        return
       case 'Enter':
       case ' ':
         if (current) activate(depth, current, e.ctrlKey || e.metaKey, true)
         break
       case 'Delete':
+        if (readOnly) return
         if (current) run('bookmark.remove', { ids: [current.id] })
         break
       default:
@@ -304,9 +349,10 @@ export function BarMenu({
     return panelTargetFor(tree, el, y)
   }
   const onDragOver = (e: React.DragEvent): void => {
-    if (payloadKind(e.dataTransfer.types) === null) return
+    if (readOnly || payloadKind(e.dataTransfer.types) === null) return
     e.preventDefault()
-    e.dataTransfer.dropEffect = 'copy'
+    // A chip of the bar's is moved in, and badges so (bookmarks-15); a link is copied.
+    e.dataTransfer.dropEffect = carriesBookmark(e.dataTransfer.types) ? 'move' : 'copy'
     const next = externalTargetAt(e.clientX, e.clientY)
     setExternal((prev) => (sameTarget(prev, next) ? prev : next))
   }
@@ -315,19 +361,28 @@ export function BarMenu({
     setExternal(null)
   }
   const onDrop = (e: React.DragEvent): void => {
-    if (payloadKind(e.dataTransfer.types) === null) return
+    if (readOnly || payloadKind(e.dataTransfer.types) === null) return
     e.preventDefault()
     setExternal(null)
     const target = externalTargetAt(e.clientX, e.clientY)
+    if (!target) return
+    const parentId = target.kind === 'folder' ? target.folderId : target.parentId
+    const index = target.kind === 'row' ? target.index : undefined
+    // A chip of the bar's dragged into the panel (bookmarks-15) moves there, as the pointer
+    // drag moves it; the slot is counted without the chip where it is one of the level's rows
+    // (the »'s panel lists the bar's own chips).
+    const own = draggedBookmarkId(e.dataTransfer)
+    if (own) {
+      run('bookmark.move', {
+        ids: [own],
+        parentId,
+        index: index === undefined ? undefined : slotWithout(tree.children(parentId), own, index)
+      })
+      return
+    }
     const dropped = droppedBookmark(e.dataTransfer, pathForFile)
-    if (!target || !dropped) return
-    run('bookmark.create', {
-      parentId: target.kind === 'folder' ? target.folderId : target.parentId,
-      index: target.kind === 'row' ? target.index : undefined,
-      title: dropped.title,
-      url: dropped.url,
-      type: 'url'
-    })
+    if (!dropped) return
+    run('bookmark.create', { parentId, index, title: dropped.title, url: dropped.url, type: 'url' })
   }
   const shownTarget = dropTarget ?? external
 

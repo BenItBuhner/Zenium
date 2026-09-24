@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import type { Rect, UIState } from '@shared/types'
+import type { UIState } from '@shared/types'
 import {
   announce,
   announcementVoice,
@@ -27,6 +27,7 @@ import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
 import { openImportSurface } from '@renderer/lib/pages'
+import { starSeat } from '@renderer/lib/starSeat'
 import { refocusStripRow } from '@renderer/lib/tabStrip'
 import {
   configureThumbnails,
@@ -371,17 +372,10 @@ export function useMainEvents(): void {
           starredOnPhone(star)
           return
         }
-        // The bubble hangs from the pill's bottom edge, end-aligned with the star in it (v2
-        // draft §9.20); both are measured as the request arrives.
-        const chip = document.querySelector('[data-bm-star]')
-        const rect = (el: Element | null | undefined): Rect | null => {
-          const r = el?.getBoundingClientRect()
-          return r ? { x: r.left, y: r.top, width: r.width, height: r.height } : null
-        }
-        void openBookmarkChrome(
-          { starDialog: { ...star, anchor: rect(chip), pill: rect(chip?.closest('.zen-pill')) } },
-          currentActiveTabId()
-        )
+        // The bubble hangs from the pill's bottom edge, end-aligned with the star in it – or,
+        // with the star folded out of the pill, with the star's seat at the pill's end (v2 draft
+        // §9.20; `starSeat`); both are measured as the request arrives.
+        void openBookmarkChrome({ starDialog: { ...star, ...starSeat() } }, currentActiveTabId())
       }),
       onEvent('bookmark.edit', (edit) => {
         // Over the phone's bookmarks panel the request is the panel's sheet, with the panel's

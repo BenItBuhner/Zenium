@@ -363,6 +363,51 @@ describe('the bookmarks manager page tab (§10.1, §10.5)', () => {
     expect(calls('bookmark.remove')).toEqual([{ ids: ['docs', 'zen', 'news'] }])
   })
 
+  it('Ctrl+Z undoes through bookmark.undo and selects what came back; Ctrl+Shift+Z and Ctrl+Y redo through bookmark.redo (context-menus-109), a redone delete selecting nothing', async () => {
+    const el = await mountPage()
+    const selected = (): string[] =>
+      rowIds(el).filter((id) => row(el, id).hasAttribute('data-selected'))
+    invoke.mockImplementationOnce(async () => ({
+      kind: 'update',
+      token: 1,
+      ids: ['news'],
+      parentId: BOOKMARKS_BAR_ID
+    }))
+    await act(async () => key(listbox(el), 'z', { ctrlKey: true }))
+    await flush()
+    expect(calls('bookmark.undo')).toEqual([{}])
+    expect(selected()).toEqual(['news'])
+
+    invoke.mockImplementationOnce(async () => ({
+      kind: 'update',
+      token: 2,
+      ids: ['zen'],
+      parentId: BOOKMARKS_BAR_ID
+    }))
+    await act(async () => key(listbox(el), 'z', { ctrlKey: true, shiftKey: true }))
+    await flush()
+    expect(calls('bookmark.redo')).toHaveLength(1)
+    expect(selected()).toEqual(['zen'])
+
+    // Ctrl+Y is the other redo chord; a delete done again leaves the selection alone.
+    invoke.mockImplementationOnce(async () => ({
+      kind: 'remove',
+      token: 3,
+      ids: ['news'],
+      parentId: BOOKMARKS_BAR_ID
+    }))
+    await act(async () => key(listbox(el), 'y', { ctrlKey: true }))
+    await flush()
+    expect(calls('bookmark.redo')).toHaveLength(2)
+    expect(selected()).toEqual(['zen'])
+    // Ctrl+Shift+Y is nobody's chord; the search field keeps its own undo.
+    await act(async () => key(listbox(el), 'y', { ctrlKey: true, shiftKey: true }))
+    const field = el.querySelector<HTMLInputElement>('input[type="search"], input')!
+    await act(async () => key(field, 'z', { ctrlKey: true }))
+    expect(calls('bookmark.undo')).toHaveLength(1)
+    expect(calls('bookmark.redo')).toHaveLength(2)
+  })
+
   it('Ctrl-click has one meaning on every page row (§10.1): a bookmark opens behind this tab and nothing is picked; a middle click is the same; a folder is selected', async () => {
     const el = await mountPage()
     const selected = (): string[] =>

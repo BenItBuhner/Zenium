@@ -3595,15 +3595,16 @@ export interface PageDialogResponse {
 
 /**
  * A question the chrome asks about a window as a whole (window-modal): whether to close the
- * window with its tabs, or to quit Zenium with every open tab.
+ * window with its tabs, to quit Zenium with every open tab, or to open a bookmark folder's many
+ * pages at once (`open-bookmarks`: the desktop's form of Chrome's "Open all bookmarks?").
  */
 export interface WindowPrompt {
   id: string
-  kind: 'close-tabs' | 'quit'
+  kind: 'close-tabs' | 'quit' | 'open-bookmarks'
   /**
    * How many tabs close, for the warning about them ("You are about to quit with N tabs open");
    * 0 when that warning is not part of the question – a single tab, or the setting off – and the
-   * downloads alone are asked about.
+   * downloads alone are asked about. For `open-bookmarks`, how many tabs would open.
    */
   count: number
   /**
@@ -4881,6 +4882,20 @@ export interface Commands {
    */
   'bookmark.undo': {
     args: { token?: number }
+    result: {
+      kind: 'remove' | 'move' | 'update'
+      token: number
+      ids: string[]
+      parentId: string | null
+    } | null
+  }
+  /**
+   * Do the newest undone edit again (the bar menu's Redo, the manager's Ctrl+Shift+Z / Ctrl+Y):
+   * the same word as `bookmark.undo`'s, the token the edit's new one on the undo stack; null for
+   * nothing. A delete done again tells the window `bookmark.deleted` as the first one did.
+   */
+  'bookmark.redo': {
+    args: void
     result: {
       kind: 'remove' | 'move' | 'update'
       token: number
