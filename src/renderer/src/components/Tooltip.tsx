@@ -10,6 +10,7 @@ import {
   TOOLTIP_ID,
   tooltip,
   tooltipCoverHeld,
+  tooltipMayCover,
   tooltipPaneOf,
   tooltipSize,
   tooltipStore,
@@ -180,6 +181,9 @@ export function Tooltip(): JSX.Element | null {
   // pointer browses; it is let go when a tooltip fits beside the page again or none is up. A
   // tooltip the pointer put up while the page had the keyboard gives it back on release
   // (`pageHadFocus`); one on a focused control leaves the keyboard on the control (§9.22).
+  // Chrome in the views' gaps (a split pane's header, `TOOLTIP_NO_COVER_ATTR`) takes no hold:
+  // the cover would unmount the control under its own tooltip. Its tooltip shows where it
+  // misses the page and waits, hidden, where it cannot.
   const covers = placement?.coversPage ?? null
   useLayoutEffect(() => {
     if (!target) {
@@ -187,7 +191,7 @@ export function Tooltip(): JSX.Element | null {
       return
     }
     if (covers === null) return
-    if (!covers) {
+    if (!covers || !tooltipMayCover(target)) {
       releaseHold(hold)
       return
     }

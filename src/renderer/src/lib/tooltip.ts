@@ -31,6 +31,16 @@ import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from './ui'
 export const TOOLTIP_ATTR = 'data-tooltip'
 export const TOOLTIP_ID = 'zen-tooltip'
 /**
+ * Chrome drawn in the gaps between the page views – a split pane's header (SplitChrome) –
+ * carries this on its root: a tooltip for a control inside it never puts the page under its
+ * picture (`holdFloatingChrome`), because the gap chrome goes with the page when the page is
+ * hidden (ContentArea mounts SplitChrome only while the content shows), and the control would
+ * leave the DOM under its own tooltip – the tooltip going with it, the page flashing back, the
+ * control returning, and round again. Such a tooltip shows where it misses the page
+ * (`placeTooltip` takes the clear side first) and stays hidden where it cannot.
+ */
+export const TOOLTIP_NO_COVER_ATTR = 'data-tooltip-no-cover'
+/**
  * How long the pointer rests on a control before its tooltip shows: §9.31 as amended – 500 ms,
  * the platform's (Chrome's views, GTK, Windows and Firefox share the number; the draft's 600 was
  * the lead's own and is corrected).
@@ -226,6 +236,15 @@ export function tooltipPaneOf(target: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * Whether the tooltip of `target` may put the page under its picture to show over it: not for
+ * a control in the views' gaps (`TOOLTIP_NO_COVER_ATTR` on it or an ancestor), which the cover
+ * would take out of the DOM with the page.
+ */
+export function tooltipMayCover(target: HTMLElement): boolean {
+  return target.closest(`[${TOOLTIP_NO_COVER_ATTR}]`) === null
+}
+
+/**
  * §9.20's one at a time, seen from the tooltip of `target`: other chrome has the window while a
  * popover is registered with the chrome layer, while a frame dialog holds the window chrome
  * inert, or while the UI state says something else is over the page – the URL bar, a menu, an
@@ -291,9 +310,12 @@ export function tooltipSize(el: HTMLElement): Size {
  * inside, flipped above the control when there is no room below – so a tooltip in the sidebar
  * never leaves the sidebar for the page beside it. A pane too short for either side (a toolbar
  * band with the page right under it) or too narrow for the text (the compact rail) hands over
- * to the window: the same slide and flip against the window's margin, and `coversPage` says
- * whether the box then lies over the page (`page`: the content area), for the host to put the
- * page under its picture before the tooltip shows.
+ * to the window: the same slide against the window's margin, below first – flipped above when
+ * below runs out of the window, and when below would lie over the page while above misses it
+ * (a control in the gap between the page's views: a split pane's header at the top of the
+ * frame, whose tooltip above it stands on the caption band, beside the page rather than over
+ * it) – and `coversPage` says whether the box then lies over the page (`page`: the content
+ * area), for the host to put the page under its picture before the tooltip shows.
  */
 export function placeTooltip(
   anchor: Rect,
@@ -307,27 +329,38 @@ export function placeTooltip(
     if (inPane) return { box: inPane, coversPage: false }
   }
   const frame: Rect = { x: 0, y: 0, width: viewport.width, height: viewport.height }
-  const box = fitTooltip(anchor, size, frame) ?? {
-    // Neither side fits the window: below, slid up to the margin, as far as it goes.
-    side: 'below' as const,
-    left: slideLeft(anchor, size, frame),
-    top: Math.round(Math.max(POPOVER_MARGIN, viewport.height - POPOVER_MARGIN - size.height))
-  }
-  const coversPage = page !== null && intersects(box, size, page)
-  return { box, coversPage }
+  const covers = (box: TooltipBox): boolean => page !== null && intersects(box, size, page)
+  const fits = [fitBelow(anchor, size, frame), fitAbove(anchor, size, frame)].filter(
+    (box): box is TooltipBox => box !== null
+  )
+  const box = fits.find((candidate) => !covers(candidate)) ??
+    fits[0] ?? {
+      // Neither side fits the window: below, slid up to the margin, as far as it goes.
+      side: 'below' as const,
+      left: slideLeft(anchor, size, frame),
+      top: Math.round(Math.max(POPOVER_MARGIN, viewport.height - POPOVER_MARGIN - size.height))
+    }
+  return { box, coversPage: covers(box) }
+}
+
+/** Below the control when that fits the field, else above it, else nothing. */
+function fitTooltip(anchor: Rect, size: Size, field: Rect): TooltipBox | null {
+  return fitBelow(anchor, size, field) ?? fitAbove(anchor, size, field)
 }
 
 /** Whole pixels: a tooltip on a half pixel draws its hairline and its text soft. */
-function fitTooltip(anchor: Rect, size: Size, field: Rect): TooltipBox | null {
+function fitBelow(anchor: Rect, size: Size, field: Rect): TooltipBox | null {
   if (field.width - 2 * POPOVER_MARGIN < size.width) return null
-  const left = slideLeft(anchor, size, field)
   const below = anchor.y + anchor.height + TOOLTIP_GAP
-  if (below + size.height <= field.y + field.height - POPOVER_MARGIN) {
-    return { side: 'below', left, top: Math.round(below) }
-  }
+  if (below + size.height > field.y + field.height - POPOVER_MARGIN) return null
+  return { side: 'below', left: slideLeft(anchor, size, field), top: Math.round(below) }
+}
+
+function fitAbove(anchor: Rect, size: Size, field: Rect): TooltipBox | null {
+  if (field.width - 2 * POPOVER_MARGIN < size.width) return null
   const above = anchor.y - TOOLTIP_GAP - size.height
-  if (above >= field.y + POPOVER_MARGIN) return { side: 'above', left, top: Math.round(above) }
-  return null
+  if (above < field.y + POPOVER_MARGIN) return null
+  return { side: 'above', left: slideLeft(anchor, size, field), top: Math.round(above) }
 }
 
 /**

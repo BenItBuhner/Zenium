@@ -51,6 +51,12 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
         const tab = state.tabs[pane.tabId]
         if (!tab) return null
         const active = pane.tabId === activeTabId
+        // The header stands in the gap between the views and goes with the page when the page is
+        // hidden (ContentArea mounts this chrome only while the content shows): its controls'
+        // tooltips never put the page under its picture (`data-tooltip-no-cover`, lib/tooltip.ts
+        // `TOOLTIP_NO_COVER_ATTR`) – a top pane's show above the header, beside the page; a lower
+        // pane's, with a view on either side, stay hidden rather than take the header out from
+        // under the pointer.
         return (
           <div
             key={pane.tabId}
@@ -64,6 +70,7 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
               width: pane.header.width,
               height: pane.header.height
             }}
+            data-tooltip-no-cover
             onMouseDown={() => !active && run('tab.activate', { tabId: pane.tabId })}
           >
             <Favicon tab={tab} size={12} />

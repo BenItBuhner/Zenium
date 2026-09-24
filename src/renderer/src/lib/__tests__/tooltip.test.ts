@@ -10,8 +10,10 @@ import {
   TOOLTIP_DELAY,
   TOOLTIP_GAP,
   TOOLTIP_HIDDEN,
+  TOOLTIP_NO_COVER_ATTR,
   tooltipBlocked,
   TooltipController,
+  tooltipMayCover,
   tooltipPaneOf,
   tooltipSize,
   tooltipTargetOf,
@@ -123,6 +125,53 @@ describe('placeTooltip', () => {
     )
     expect(placed.box).toEqual({ side: 'below', left: 66, top: 77 })
     expect(placed.coversPage).toBe(false)
+  })
+
+  it('in the window it takes the side that misses the page: a split pane’s header at the top of the frame shows above, beside the page', () => {
+    // The pane's header (24 tall) at the top of the content area, the page's view right under
+    // it (lib/layout.ts `splitPaneRects`), the caption band above (measured 2026-09-24: the
+    // Layout button at y 82 in a 20 box, the area from y 80).
+    const area: Rect = { x: 240, y: 80, width: 1352, height: 912 }
+    const layout: Rect = { x: 859, y: 82, width: 20, height: 20 }
+    const placed = placeTooltip(layout, size, viewport, null, area)
+    expect(placed).toEqual({
+      box: { side: 'above', left: 859 + 10 - 48, top: 82 - TOOLTIP_GAP - size.height },
+      coversPage: false
+    })
+    // Below still comes first where both sides miss the page (a control under the area).
+    const under: Rect = { x: 800, y: 992 - 28 - 60, width: 28, height: 28 }
+    expect(placeTooltip(under, size, viewport, null, { ...area, height: 800 }).box.side).toBe(
+      'below'
+    )
+  })
+
+  it('with a view on either side neither is clear: below, over the page, as before', () => {
+    // A lower pane's header in a rows split: the upper pane's view above, its own below.
+    const area: Rect = { x: 240, y: 48, width: 1352, height: 944 }
+    const header: Rect = { x: 859, y: 500, width: 20, height: 20 }
+    const placed = placeTooltip(header, size, viewport, null, area)
+    expect(placed.box.side).toBe('below')
+    expect(placed.coversPage).toBe(true)
+  })
+
+  it('a control at the very top with the page under it flips above only where above fits the window', () => {
+    // 8 px margin above: 82 - 8 - 30 = 44 fits; at y 40 it would be 2, under the margin – below,
+    // over the page, and the cover.
+    const area: Rect = { x: 240, y: 40, width: 1352, height: 952 }
+    const placed = placeTooltip({ x: 859, y: 40, width: 20, height: 20 }, size, viewport, null, area)
+    expect(placed.box.side).toBe('below')
+    expect(placed.coversPage).toBe(true)
+  })
+})
+
+describe('tooltipMayCover', () => {
+  it('a control in the views’ gaps says no; any other yes', () => {
+    document.body.innerHTML = `
+      <div ${TOOLTIP_NO_COVER_ATTR}><button ${TOOLTIP_ATTR}="Layout" id="layout"></button></div>
+      <aside><button ${TOOLTIP_ATTR}="Back" id="back"></button></aside>`
+    expect(tooltipMayCover(document.getElementById('layout')!)).toBe(false)
+    expect(tooltipMayCover(document.getElementById('back')!)).toBe(true)
+    document.body.innerHTML = ''
   })
 })
 
