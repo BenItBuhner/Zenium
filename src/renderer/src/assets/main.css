@@ -4365,6 +4365,7 @@
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
     line-height: var(--v2-line-heading);
+    text-wrap: balance;
   }
   .zen-sheet-title-block p {
     margin: 0;
