@@ -6138,7 +6138,7 @@
  * components/downloads/DownloadsSheet.tsx). The sheet is the phone chassis (`BottomSheet`,
  * .zen-sheet above): its surface, scrim, grabber, the 48 header with the centred title and the
  * trailing control, the hairline once the body scrolls, the empty sentence (.zen-sheet-empty),
- * the Clear list action row (.zen-sheet-item) and the hairline before it (.zen-sheet-sep) are
+ * the Clear all action row (.zen-sheet-item, in the danger ink) and the hairline before it (.zen-sheet-sep) are
  * all the chassis's. A download is the shared `.zen-v2-row` (§9.34) with the `.zen-downloads-
  * row` modifier, unlayered beside the primitive after this block: the §9.2 two-line floor (64
  * on a phone: 12 + 20 + 20 + 12) that grows around a progress track or the Keep / Delete pair.

@@ -47,6 +47,7 @@ import { openSettings } from '@renderer/lib/pages'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { browserStore, closeOverlay } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import { ClearAllConfirm, clearableCount } from './ClearAllConfirm'
 
 /** The desktop row's file-type glyphs (`fileGlyphFor`), drawn at the phone's 20 px (§9.3). */
 const GLYPHS: Record<FileGlyph, LucideIcon> = {
@@ -82,9 +83,11 @@ const COUNTDOWN_TICK_MS = 1000
  * a transfer refused as insecure (HB-44) behind `Blocked · Insecure download` with Keep anyway
  * (while the type allows it) and Discard, the pressed one busy until the engine answers. The
  * header's trailing control opens Settings › Downloads; an action row under the list, past a
- * hairline, clears the finished rows. As the sheet opens, the finished files are checked for
- * still being on disk, so a row whose file went since reads Deleted (the desktop page does the
- * same).
+ * hairline, clears the finished rows – the list's bulk action, "Clear all" in the danger ink
+ * with its confirmation sheet (§10.5: it prompts first, on the primitive's sheet mirror, the
+ * same prompt as the page's – `ClearAllConfirm`), since this sheet is what `zen://downloads`
+ * opens as on a phone. As the sheet opens, the finished files are checked for still being on
+ * disk, so a row whose file went since reads Deleted (the desktop page does the same).
  *
  * The overlay host renders it inside the shell's content column, which is chrome that goes
  * inert under a sheet (`holdChromeInert`, lib/portals.tsx), so the sheet must not mount there:
@@ -107,6 +110,8 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
   const titleId = useId()
   /** The sheet is sliding away to hand over to another surface: leave the overlay stack to it. */
   const handoff = useRef(false)
+  /** How many rows the Clear all prompt that is up would take off the list; null while none is. */
+  const [clearing, setClearing] = useState<number | null>(null)
 
   // The system back gesture pulls the sheet down with the finger; the back button, a hardware
   // Escape and a scrim tap slide it away.
@@ -162,57 +167,69 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
   }
 
   return (
-    <BottomSheet
-      ref={sheet}
-      hosted
-      onDismissed={() => {
-        if (!handoff.current) closeOverlay()
-      }}
-      contentKey={contentKey}
-      handleLabel="Resize downloads"
-      labelledBy={titleId}
-      header={
-        <>
-          <h2 id={titleId} className="zen-sheet-title">
-            Downloads
-          </h2>
-          <button
-            type="button"
-            className="zen-sheet-header-control"
-            data-side="trailing"
-            aria-label="Downloads settings"
-            title="Downloads settings"
-            onClick={toSettings}
-          >
-            <Settings2 className="h-5 w-5" strokeWidth={1.75} />
-          </button>
-        </>
-      }
-    >
-      {items.length === 0 ? (
-        <p className="zen-sheet-empty">Files you download will appear here</p>
-      ) : (
-        <ul className="pb-2">
-          {items.map((item) => (
-            <DownloadRow key={item.id} item={item} now={now} />
-          ))}
-          {clearable && (
-            <>
-              <li aria-hidden className="zen-sheet-sep" />
-              <li>
-                <button
-                  type="button"
-                  className="zen-sheet-item"
-                  onClick={() => downloadsEngine.removeCompleted()}
-                >
-                  Clear list
-                </button>
-              </li>
-            </>
-          )}
-        </ul>
+    <>
+      <BottomSheet
+        ref={sheet}
+        hosted
+        onDismissed={() => {
+          if (!handoff.current) closeOverlay()
+        }}
+        contentKey={contentKey}
+        handleLabel="Resize downloads"
+        labelledBy={titleId}
+        header={
+          <>
+            <h2 id={titleId} className="zen-sheet-title">
+              Downloads
+            </h2>
+            <button
+              type="button"
+              className="zen-sheet-header-control"
+              data-side="trailing"
+              aria-label="Downloads settings"
+              title="Downloads settings"
+              onClick={toSettings}
+            >
+              <Settings2 className="h-5 w-5" strokeWidth={1.75} />
+            </button>
+          </>
+        }
+      >
+        {items.length === 0 ? (
+          <p className="zen-sheet-empty">Files you download will appear here</p>
+        ) : (
+          <ul className="pb-2">
+            {items.map((item) => (
+              <DownloadRow key={item.id} item={item} now={now} />
+            ))}
+            {clearable && (
+              <>
+                <li aria-hidden className="zen-sheet-sep" />
+                <li>
+                  <button
+                    type="button"
+                    className="zen-sheet-item"
+                    data-danger=""
+                    data-testid="downloads-clear-all"
+                    onClick={() => setClearing(clearableCount(items))}
+                  >
+                    Clear all
+                  </button>
+                </li>
+              </>
+            )}
+          </ul>
+        )}
+      </BottomSheet>
+      {/* The prompt stacks over this sheet in the same host (the confirm sheet recedes it). */}
+      {clearing !== null && (
+        <ClearAllConfirm
+          count={clearing}
+          close={() => setClearing(null)}
+          confirm={() => downloadsEngine.removeCompleted()}
+        />
       )}
-    </BottomSheet>
+    </>
   )
 }
 
