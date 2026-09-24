@@ -284,7 +284,8 @@
              intoExisting) and handed a repeat launch (singleTop), out of the browser's task (its own,
              empty affinity), listed in Recents under the app's name and icon; not kept across a
              reboot, as Chrome's WebappActivity is not. Not exported: only the trampoline above
-             starts it. -->
+             starts it. Its theme is the launch's splash (PWA-06, WebAppSplash.kt), which leaves
+             the window in Theme.Zen.WebApp. -->
         <activity
             android:name=".WebAppActivity"
             android:exported="false"
@@ -294,7 +295,7 @@
             android:taskAffinity=""
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.Zen.WebApp"
+            android:theme="@style/Theme.Zen.WebApp.Splash"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" />
 
         <!-- The Custom Tabs provider service other apps bind before they open a custom tab

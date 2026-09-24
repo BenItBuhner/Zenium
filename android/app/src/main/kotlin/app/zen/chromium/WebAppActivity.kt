@@ -14,12 +14,15 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -53,6 +56,12 @@ import org.json.JSONObject
  * permission and external-protocol dialogs, the file chooser, element fullscreen; with
  * `pageDialogs` the app's `alert` / `confirm` / `prompt` are the native prompt sheets. Reached only
  * through [WebAppLauncherActivity] (the tile's trampoline); never from another app's intent.
+ *
+ * A cold launch opens under the splash (PWA-06, `Theme.Zen.WebApp.Splash`): the platform's
+ * starting window, dressed at its hand-over in the app's colour and tile ([WebAppSplash]) and
+ * held by [StartupSplash] until the page's first frame ([onPagePainted]), then lifted on the
+ * browser's exit motion; the window under it wears the app's colours from its first frame
+ * ([applyScheme]).
  */
 class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolbar.Listener {
     lateinit var record: WebAppRecord
@@ -83,11 +92,18 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         private set
     private var displayScript: ScriptHandler? = null
     private var taskIcon: Bitmap? = null
+    /** The launch's splash (PWA-06): the platform's window held to the page's first frame, dressed as the app's. */
+    private lateinit var startupSplash: StartupSplash
+    private lateinit var splash: WebAppSplash
 
     /** The page (a fresh view after a renderer crash, see `TabHost.replaceCrashed`). */
     val page: TabWebView? get() = if (::host.isInitialized) host.tabs.get(TAB_ID) else null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The splash first, before super.onCreate as the library requires: the window's theme
+        // becomes Theme.Zen.WebApp (the splash theme's postSplashScreenTheme) and the platform's
+        // splash view comes to StartupSplash at the first frame, dressed and held (attach below).
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         val record = WebAppRecord.fromIntent(intent)
         val url = intent?.getStringExtra(EXTRA_URL)?.takeIf { it.isNotEmpty() } ?: record?.startUrl
@@ -103,6 +119,9 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         this.record = record
         WindowCompat.setDecorFitsSystemWindows(window, false)
         scheme = resolveScheme(record)
+        splash = WebAppSplash(this, WebAppSplash.ground(record.backgroundColor, pageColor))
+        startupSplash = StartupSplash(window, skin = splash::skin)
+        startupSplash.attach(splashScreen)
         reportedDisplay = WebAppRules.reportedDisplay(record.display, inScope = true, barsHidden = WebAppRules.immersive(record.display))
 
         shell = FrameLayout(this)
@@ -180,9 +199,12 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         swipeUpIntent = null
     )
 
+    /** The window's page colour for the scheme: under the page before it paints, and the splash's ground for an app with no `background_color`. */
+    private val pageColor: Int get() = ContextCompat.getColor(this, if (scheme.dark) R.color.v2_page_dark else R.color.v2_page_light)
+
     private fun applyScheme() {
         shell.setBackgroundColor(scheme.navigationBar)
-        pageContainer.setBackgroundColor(record.backgroundColor ?: ContextCompat.getColor(this, if (scheme.dark) R.color.v2_page_dark else R.color.v2_page_light))
+        pageContainer.setBackgroundColor(WebAppSplash.ground(record.backgroundColor, pageColor))
         window.decorView.setBackgroundColor(scheme.navigationBar)
         val controller = WindowInsetsControllerCompat(window, shell)
         controller.isAppearanceLightStatusBars = !scheme.lightToolbarForeground
@@ -204,6 +226,8 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 taskIcon = icon
                 setTaskDescription(taskDescription(record.name, icon, scheme.toolbar))
+                // The splash's icon too (PWA-06): on it now if the platform has handed it over, at the hand-over otherwise.
+                splash.setIcon(icon)
             }
         }.start()
     }
@@ -275,6 +299,27 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.visibility = View.VISIBLE
         installDisplayScript(view)
+        // The splash waits for this view's first painted document (a fresh view after a crash
+        // under a splash still up takes the wait over).
+        if (!startupSplash.hold.lifted) view.onDocumentPainted = { onPagePainted(view) }
+    }
+
+    /**
+     * The page's first document is painted (`onPageCommitVisible`, or `onPageFinished` for one
+     * whose commit never says so – an error page too): the splash lifts with the frame that
+     * shows it, as the browser's lifts with the chrome's (MainActivity.onChromeReady); the
+     * `ZenStartup` line is the demo's record of the moment.
+     */
+    private fun onPagePainted(view: TabWebView) {
+        view.postVisualStateCallback(PAGE_PAINTED_FRAME, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                if (isFinishing || isDestroyed) return
+                // The launch's mark for the platform (`Fully drawn` in the log, the vitals): the app is usable.
+                reportFullyDrawn()
+                startupSplash.ready()
+                Log.i(StartupSplash.TAG, "web app page painted: first frame; splash held ${startupSplash.heldForMs ?: -1} ms, lifted by ${startupSplash.hold.liftedBy ?: "nothing yet"}")
+            }
+        })
     }
 
     /**
@@ -438,6 +483,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
 
     override fun onDestroy() {
         displayScript?.remove()
+        if (::startupSplash.isInitialized) startupSplash.cancel()
         if (::host.isInitialized) host.destroy()
         super.onDestroy()
     }
@@ -457,5 +503,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         const val EXTRA_URL = "app.zen.chromium.extra.WEBAPP_URL"
         /** The one page's id within its TabHost. */
         const val TAB_ID = "web-app"
+        /** The one visual-state request of a launch ([onPagePainted]); the id is the callback's, nothing reads it. */
+        private const val PAGE_PAINTED_FRAME = 0x2e5aL
     }
 }

@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.View
 import android.view.Window
 import android.view.animation.LinearInterpolator
 import android.view.animation.PathInterpolator
@@ -69,9 +70,22 @@ object SplashExit {
 }
 
 /**
+ * What a window's own skin put on the platform's splash view at the hand-over (PWA-06,
+ * [WebAppSplash]): the icon view the exit motion fades first (null: the platform's own), and the
+ * tone the system bars' icons keep while the splash is held (light for a light ground).
+ */
+class SplashSkin(val iconView: View?, val lightBars: Boolean)
+
+/**
  * The cold start's splash (OS-26): the platform's starting window – the launcher's mark on the
  * brand colour, `Theme.Zen.Splash` – handed to this window at its first frame and held there
  * until the chrome's first real frame, then lifted on the exit motion.
+ *
+ * A web app's window ([WebAppActivity]) uses the same hold with a [skin]: at the hand-over the
+ * skin re-dresses the platform's view in the app's own colour and tile ([WebAppSplash]), and the
+ * page's first frame is its READY. The bars' tone for the hold and the icon the exit fades are
+ * the skin's then; with no skin they are the browser's (light icons over the indigo, the
+ * platform's icon view).
  *
  * The hold is the exit listener's, not `setKeepOnScreenCondition`'s. That one holds the window's
  * first frame back from an `OnPreDrawListener`, which would hold back the chrome WebView's draws
@@ -98,10 +112,13 @@ object SplashExit {
 class StartupSplash(
     private val window: Window,
     private val main: Handler = Handler(Looper.getMainLooper()),
-    private val animatorsEnabled: () -> Boolean = { ValueAnimator.areAnimatorsEnabled() }
+    private val animatorsEnabled: () -> Boolean = { ValueAnimator.areAnimatorsEnabled() },
+    /** A window's own dress for the platform's splash view, applied once at the hand-over (PWA-06); null for the browser's. */
+    private val skin: ((SplashScreenViewProvider) -> SplashSkin)? = null
 ) {
     val hold = SplashHold()
     private var provider: SplashScreenViewProvider? = null
+    private var skinned: SplashSkin? = null
     private var barsLight: Boolean? = null
     private var handedOverAt = 0L
     private val watchdog = Runnable {
@@ -122,7 +139,8 @@ class StartupSplash(
         // still up, so the splash's tone stays until it lifts – and the theme's is what the lift
         // restores when the chrome has asked for none by then.
         if (barsLight == null) barsLight = WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars
-        applyBars(light = false)
+        skinned = skin?.let { dress -> runCatching { dress(view) }.onFailure { Log.w(TAG, "splash: the skin failed; the platform's view stays", it) }.getOrNull() }
+        applyBars(light = skinned?.lightBars ?: false)
         if (hold.handOver()) {
             lift("ready")
             return
@@ -162,7 +180,7 @@ class StartupSplash(
             view.remove()
             return
         }
-        val icon = runCatching { view.iconView }.getOrNull()
+        val icon = skinned?.iconView ?: runCatching { view.iconView }.getOrNull()
         icon?.animate()?.alpha(0f)?.setDuration(SplashExit.ICON_FADE_MS)?.setInterpolator(SplashExit.iconCurve)?.start()
         view.view.animate()
             .alpha(0f)

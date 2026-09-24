@@ -43,9 +43,29 @@
     </style>
 
     <!-- An installed web app's window (WebAppActivity, PWA-07): the browser theme under the
-         system's own app-launch animation, as an app of its own. Its own name so the splash
-         (PWA-06) has a theme to hang its window attributes on. -->
+         system's own app-launch animation, as an app of its own; the theme the splash below
+         leaves the window in. -->
     <style name="Theme.Zen.WebApp" />
+
+    <!-- The web app's cold launch splash (PWA-06, WebAppActivity's manifest theme). The platform
+         draws the starting window from these attributes before any code of the app runs, so the
+         app's own colour and tile cannot be here (WebAppSplash puts them on the view at the
+         hand-over): a fixed ground – the web app window's page colour, light or night – and a
+         transparent icon, so no Zenium mark stands in for the app's. The bars' icons are dark
+         over the light ground (the night ground and its light icons: values-night/themes.xml,
+         the style whole, as a night qualifier replaces a style); the tone the app wants is
+         applied as the splash lifts. -->
+    <style name="Theme.Zen.WebApp.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/v2_page_light</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="postSplashScreenTheme">@style/Theme.Zen.WebApp</item>
+        <item name="android:windowSplashScreenBehavior" tools:targetApi="tiramisu">icon_preferred</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
+    </style>
 
     <!-- A phone sheet drawn natively per the v2 draft (§6): neutral panel, top radius 12, edge to
          edge under the navigation bar, scrim black .4 light / .55 dark. The 1 dp hairline is drawn
