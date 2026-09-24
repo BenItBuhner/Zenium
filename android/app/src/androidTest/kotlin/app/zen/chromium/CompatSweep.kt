@@ -5345,10 +5345,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * the plain fixture server (its log holds the TLS hellos, `net_error -107` in logcat) and
      * never loaded, so the row measured an empty page (round 15, run 36017645161: Chrono Download
      * Manager's two fixtures on both WebViews). Such names are allowed over plaintext for the row
-     * the way a user allows a site from the mode's warning page (`privacy.httpsOnlyAllowed`), the
-     * pushed flags are waited for (the tab consults them ahead of the engine's rule reload,
-     * `Blocking.applyUpgrade`), and the list goes back afterwards. Null when nothing in `urls`
-     * needs it; else the restore.
+     * the way the warning page's "always allow" does it – an `allow` under the `https-only`
+     * permission for the site (`ProtectionService.allowPlaintext(url, remember = true)` writes
+     * exactly that; the allowed sites are not a setting but derived from those permissions and
+     * the session's answers, so a `settings.update` carries nothing – the acceptance run's
+     * `landed: false` on both lanes, round 15 §5.9). The pushed flags are waited for (the tab
+     * consults them ahead of the engine's rule reload, `Blocking.applyUpgrade`), and the sites
+     * this row added are forgotten again (`protection.forgetPlaintext`, session and stored alike).
+     * Null when nothing in `urls` needs it; else the restore.
      */
     private fun allowPlaintext(urls: List<String>, factor: Double, extra: JSONObject): (() -> Unit)? {
         val names = urls.filter { it.startsWith("http://") }
@@ -5356,18 +5360,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             .filterNot { NonUniqueHost.isNonUnique(it) }
             .distinct()
         if (names.isEmpty()) return null
-        val privacy = coreSnapshot().getJSONObject("settings").getJSONObject("privacy")
-        val before = privacy.optJSONArray("httpsOnlyAllowed") ?: JSONArray()
-        val allowed = JSONArray(before.toString())
-        names.filterNot { name -> (0 until before.length()).any { before.optString(it) == name } }.forEach { allowed.put(it) }
-        coreCall("settings.update", JSONObject().put("privacy", JSONObject(privacy.toString()).put("httpsOnlyAllowed", allowed)).toString())
+        // The sites already allowed for good, so only the ones this row adds are forgotten after it.
+        val stored = runCatching { JSONArray(coreCall("permissions.listForPermission", """{"permission":"https-only"}""")) }.getOrDefault(JSONArray())
+        val storedHosts = (0 until stored.length()).mapNotNull { i ->
+            stored.optJSONObject(i)?.takeIf { it.optString("decision") == "allow" }?.optString("origin")?.let { Domains.hostnameOf(it) }
+        }
+        val added = names.filterNot { it in storedHosts }
+        for (name in added) {
+            coreCall("permissions.set", JSONObject().put("origin", "http://$name").put("permission", "https-only").put("decision", "allow").toString())
+        }
         val landed = poll(scaled(10_000, factor), 200) {
             urls.filter { it.startsWith("http://") }.all { host.privacy.flags.plaintextAllowed(it) }.takeIf { it }
         } == true
-        extra.put("plaintextAllowed", JSONObject().put("names", JSONArray(names)).put("landed", landed))
+        extra.put("plaintextAllowed", JSONObject().put("names", JSONArray(names)).put("added", JSONArray(added)).put("alreadyAllowed", JSONArray(storedHosts)).put("landed", landed))
         if (!landed) Log.w(TAG, "allowPlaintext: the flags did not carry ${names.joinToString(", ")} within the wait; the fixtures may be upgraded")
         return {
-            runCatching { coreCall("settings.update", JSONObject().put("privacy", JSONObject(privacy.toString()).put("httpsOnlyAllowed", before)).toString()) }
+            for (name in added) runCatching { coreCall("protection.forgetPlaintext", JSONObject().put("host", name).toString()) }
         }
     }
 
