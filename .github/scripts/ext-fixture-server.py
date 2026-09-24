@@ -53,6 +53,8 @@ class FixtureHandler(SimpleHTTPRequestHandler):
         '.ts': 'video/mp2t',
         '.js': 'text/javascript',
         '.mjs': 'text/javascript',
+        # `readme.md` for a Markdown viewer's content-type detection (Python's default map has no entry).
+        '.md': 'text/markdown',
     }
 
     def do_GET(self):

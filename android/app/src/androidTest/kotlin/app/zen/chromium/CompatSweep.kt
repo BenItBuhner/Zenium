@@ -2779,10 +2779,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * half of the row, the desktop's pass. The recorder half asks `tabCapture` / `desktopCapture`
      * for a stream the WebView has no source for; the worker's shape of both is recorded beside.
      */
-    private fun awesomeScreenshot(row: Row, entry: JSONObject): Grade {
+    private fun awesomeScreenshot(row: Row, entry: JSONObject): Grade = visibleCapture("Awesome Screenshot", "page-a.html?awesome")(row, entry)
+
+    /**
+     * The visible-capture flow of Awesome Screenshot's code base (its own row and the Scrolling
+     * screenshot tool's, round 16: `popup2.html` with the same `.action-item.visible` control
+     * and `edit-react.html` editor): the popup's Screenshot tab, "Capture visible part", the
+     * editor page with the capture drawn.
+     */
+    private fun visibleCapture(label: String, page: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        fixture("page-a.html?awesome", factor)
+        fixture(page, factor)
         backgroundView(row.id)?.let { extra.put("capture", captureShape(it, factor)) }
         val before = tabUrls().keys
         val popup = openPopup(row, factor)
@@ -2809,9 +2817,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         snap("${entry.optString("slug")}-annotator")
         runCatching { coreCall("extension.closePopup", "null") }
-        return Grade(
+        Grade(
             if (image.optBoolean("pass")) "P" else "F",
-            "Awesome Screenshot: popup ${if (popup == null) "did not render" else "\"Capture visible part\" ${click.toString().take(90)}"}; edit page ${if (result == null) "never opened within ${scaled(40_000, factor) / 1000} s" else "opened: ${image.toString().take(200)}"}; worker capture APIs ${extra.opt("capture")?.toString()?.take(160) ?: "unread"}",
+            "$label: popup ${if (popup == null) "did not render" else "\"Capture visible part\" ${click.toString().take(90)}"}; edit page ${if (result == null) "never opened within ${scaled(40_000, factor) / 1000} s" else "opened: ${image.toString().take(200)}"}; worker capture APIs ${extra.opt("capture")?.toString()?.take(160) ?: "unread"}",
             extra
         )
     }
@@ -6756,6 +6764,63 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("bigefpfhnfcobdlfbedofhhaibnlghod", "MEGA", "mega", core = ::megaClient),
         Row("ibnejdfjmmkpcnlpebklmnkoeoihofec", "TronLink", "tronlink", core = domMarker("TronLink's provider injected into the page world", "wallet.html?tronlink", WALLET_STANDARD.replace("__RE__", "/tronlink|tron/i").replace("__GLOBALS__", "typeof window.tronLink!=='undefined'||typeof window.tronWeb!=='undefined'"), settleMs = 30_000)),
         Row("ngceodoilcgpmkijopinlkmohnfifjfb", "Focus To-Do: Pomodoro Timer & To Do List", "focus-to-do", core = actionPage("Focus To-Do", Regex("WebContent/index\\.html"), FOCUS_TODO_APP, listOf("page-a.html?focus"))),
+        // Compat round 16: ranks 361-390 by installs (`.github/scripts/ext-compat/next30-round13.json`,
+        // compiled by round 10's method for a future desktop release round to reuse), graded with
+        // the phone's feasibility classes as rounds 4-15 graded theirs. An account or a vendor's
+        // service is `n/m` with its gate surface rendered (Simplify Copilot, iGraal, Fathom, Bitly,
+        // Jetwriter, Tasksboard's side panel, Send to Kindle, Glasp, FantasyPros, GPTZero,
+        // SellerSprite, Meet Attendance; Password Alert's warning behind a Google sign-in;
+        // RetailMeNot's widget behind a merchant page and Salesforce Inspector's button behind an
+        // org session, both read as attached); a PAC-script VPN is the WebView's limit (AdGuard VPN,
+        // Troywell); a tab-audio equalizer is `tabCapture`'s (Music Equalizer); Twitch is read live
+        // (7TV); the rest read a real effect on a fixture, in a popup or on the tab list: a tree
+        // planted in guest mode (Forest), the visible capture's editor page (Scrolling screenshot
+        // tool, Awesome Screenshot's sibling), an emoji tapped in the popup landing in the fixture's
+        // textarea (Emoji Keyboard), a game canvas in the popup (Boxel 3D) and on the action's page
+        // (Ultimate Car Driving Game), Ginger's widget on the editor, the right-click block lifted
+        // on a fixture that cancels contextmenu (Enable Right Click), AVG's panel frame after the
+        // action click, the fixture's readme.md rendered after Allow All on the options page
+        // (Markdown Viewer), the fixture reloaded on the shortest interval (Auto Refresh Page),
+        // Google's tag companion flow (Tag Assistant Companion's second store listing). Eight rows
+        // declare a `minimum_chrome_version` (Simplify, AdGuard VPN and Glasp 109; Auto Refresh
+        // Page 100; Bitly, Password Alert, RetailMeNot and Salesforce Inspector 88), all within
+        // WebView 113's. The eight largest downloads
+        // last (Scrolling screenshot tool 6.0 MB, Boxel 3D 6.6 MB, Simplify 8.4 MB, SellerSprite
+        // 9.3 MB, GPTZero 13.1 MB, Forest 14.9 MB, Emoji Keyboard 59.7 MB, Ultimate Car 62.0 MB),
+        // so a run that dies keeps the rest.
+        Row("hhdobjgopfphlmjbmnpglhfcgppchgje", "AdGuard VPN", "adguard-vpn", core = vpn("AdGuard VPN", pac = true)),
+        Row("adlpodnneegcnbophopdmhedicjbcgco", "Free VPN for Chrome - Troywell VPN", "troywell-vpn", core = vpn("Troywell VPN", pac = true, consent = true)),
+        Row("kmhkepipobnjllejbafajoemahjejdcm", "iGraal", "igraal", core = accountGate("iGraal", Regex("igraal", RegexOption.IGNORE_CASE), injects = "[id*='igraal'], [class*='igraal']", gate = "an iGraal account and a partner merchant's page (its popup signs in)")),
+        Row("nhocmlminaplaendbabmoemehbpgdemn", "Fathom AI Note Taker for Google Meet, Zoom & Teams", "fathom", core = accountGate("Fathom", Regex("fathom\\.video|accounts\\.google", RegexOption.IGNORE_CASE), gate = "a Fathom account and a meeting page (its scripts run on zoom.us and meet.google.com)")),
+        Row("kdfieneakcjfaiglcfcgkidlkmlijjnh", "AI Grammar and Spell Checker by Ginger", "ginger", core = editorAttach("ginger", "Ginger", pattern = "ginger")),
+        Row("iabeihobmhlgpkcgjiloemdbofjbdcic", "Bitly", "bitly", core = accountGate("Bitly", Regex("bitly\\.com|bit\\.ly", RegexOption.IGNORE_CASE), gate = "a Bitly account (its popup signs in before it shortens)")),
+        Row("pdnenlnelpdomajfejgapbdpmjkfpjkp", "Jetwriter AI", "jetwriter", core = accountGate("Jetwriter AI", Regex("jetwriter|accounts\\.google", RegexOption.IGNORE_CASE), injects = "cgw-writer-modal, [class*='cgw-'], [id*='cgw-']", gate = "a Jetwriter account (its buttons mount on Gmail, LinkedIn, Slack and WhatsApp pages)")),
+        Row("fedoeoceggohfajbhbadkfhgckjkieop", "Music Equalizer & Bass Booster", "music-equalizer", core = captureLimit("Music Equalizer & Bass Booster", "/equalizer|bass|treble|preset|volume|gain|hz|band|booster/i")),
+        Row("lpofefdiokgmcdnnaigddelnfamkkghi", "Desktop app for Google Tasks", "tasksboard", core = accountGate("Desktop app for Google Tasks", Regex("tasksboard|accounts\\.google", RegexOption.IGNORE_CASE), page = "sidePanel.html", gate = "a Google account (its side panel is tasksboard.com signed in)")),
+        Row("cgdjpilhipecahhcilnafpblkieebhea", "Send to Kindle for Google Chrome", "send-to-kindle", core = accountGate("Send to Kindle", Regex("amazon\\.", RegexOption.IGNORE_CASE), gate = "an Amazon account (its popup signs in before it sends)")),
+        // Its `<all_urls>` content script is a loader (`import(chrome.runtime.getURL('assets/web-helper…js'))`):
+        // round 15's class C shape (a dynamic import from the isolated world) on a CSP-less fixture.
+        Row("blillmbchncajnhkjfdnincfndboieik", "Glasp Web Highlighter", "glasp", core = accountGate("Glasp", Regex("glasp\\.co|glasp\\.ai", RegexOption.IGNORE_CASE), injects = "glasp-extension, [id*='glasp'], [class*='glasp']", gate = "a Glasp account (its highlights sync there; its sidebar toggles from the action)")),
+        Row("noondiphcddnnabmjcihcjfbhfklnnep", "Password Alert", "password-alert", core = contentAttached("Password Alert", "its warning fires when a Google password learned at accounts.google.com is typed elsewhere (consumer mode without a managed policy), which needs a Google account (not measurable here)", verdict = "n/m")),
+        Row("ofgdcdohlhjfdhbnfkikfeakhpojhpgm", "Enable Right Click for Google Chrome™", "enable-right-click", core = actionMarker("Enable Right Click", "right-click.html?rightclick", RIGHT_CLICK_ALLOWED)),
+        Row("gfbepnlhpkbgbkcebjnfhgjckibfdfkc", "FantasyPros", "fantasypros", core = accountGate("FantasyPros", Regex("fantasypros\\.com", RegexOption.IGNORE_CASE), injects = "[id*='fantasypros'], [class*='fantasypros'], [id*='fp-'], [class*='fp-']", gate = "a FantasyPros account and a league host's page (its tools mount on ESPN, Yahoo and Sleeper pages)")),
+        Row("jjfblogammkiefalfpafidabbnamoknm", "RetailMeNot", "retailmenot", core = contentAttached("RetailMeNot", "its widget shows on its merchants' pages (a list its service holds), which the fixture is not (not measurable here)", injects = "[id*='rmn'], [class*='rmn'], [id*='retailmenot'], [class*='retailmenot']", verdict = "n/m")),
+        Row("nbmoafcmbajniiapeidgficgifbfmjfo", "AVG Online Security", "avg-online-security", core = actionMarker("AVG Online Security", "page-a.html?avg", AVG_PANEL, settleMs = 30_000)),
+        Row("ckkdlimhmcjmikdlpkmbgfkaikojcbjk", "Markdown Viewer", "markdown-viewer", core = ::markdownViewer),
+        Row("lkhdihmnnmnmpibnadlgjfmalbaoenem", "Auto Refresh Page", "auto-refresh-page", core = ::autoRefreshPage),
+        Row("nenibigflkdikhamlnekfppbganmojlg", "Meet Attendance", "meet-attendance", core = accountGate("Meet Attendance", Regex("meet\\.google|accounts\\.google", RegexOption.IGNORE_CASE), gate = "a Google account in a Meet call (its script runs on meet.google.com)")),
+        Row("hpijlohoihegkfehhibggnkbjhoemldh", "Salesforce Inspector Reloaded", "salesforce-inspector", core = attachedGate("Salesforce Inspector Reloaded", "https://login.salesforce.com/", "an org session (its button draws on an org's pages only: `#insext` behind `body.sfdcBody` and its kin)")),
+        // A second store listing of Google's companion (jmekf…, 500,000) beside the listed kejbd… row: the same flow read.
+        Row("jmekfmbnaedfebfnmakmokmlfpblbfdm", "Tag Assistant Companion", "tag-assistant-2", core = ::tagAssistant),
+        Row("lppmekppnliemjclknbagdhoocikieoi", "7TV", "7tv", core = liveMarker("7TV", "https://www.twitch.tv/", SEVENTV_MOUNTED, settleMs = 45_000, mirrors = listOf("https://www.twitch.tv/directory", "https://kick.com/"))),
+        Row("mfpiaehgjbbfednooihadalhehabhcjo", "Scrolling screenshot tool & screen capture", "scrolling-screenshot", core = visibleCapture("Scrolling screenshot tool", "page-a.html?scrolling")),
+        Row("mjjgmlmpeaikcaajghilhnioimmaibon", "Boxel 3D", "boxel-3d", core = popupMarker("Boxel 3D", CANVAS_SHOWN, settleMs = 30_000)),
+        Row("pbanhockgagggenencehbnadejlgchfc", "Simplify Copilot", "simplify-copilot", core = accountGate("Simplify Copilot", Regex("simplify\\.jobs", RegexOption.IGNORE_CASE), injects = "[id*='simplify'], [class*='simplify']", gate = "a Simplify account and a job board's application form (its click autofills there)")),
+        Row("lnbmbgocenenhhhdojdielgnmeflbnfb", "SellerSprite", "sellersprite", core = accountGate("SellerSprite", Regex("sellersprite\\.com|amazon\\.", RegexOption.IGNORE_CASE), gate = "a SellerSprite account and an Amazon listing page")),
+        Row("kgobeoibakoahbfnlficpmibdbkdchap", "GPTZero", "gptzero", core = accountGate("GPTZero", Regex("gptzero\\.me", RegexOption.IGNORE_CASE), injects = "[id^='g0-'], [class*='g0-'], [id*='gptzero'], [class*='gptzero']", gate = "a GPTZero account (its popup signs in; its scans run on its service)")),
+        Row("kjacjjdnoddnpbbcjilcajfhhbdhkpgk", "Forest: stay focused, be present", "forest", core = ::forest),
+        Row("ipdjnhgkpapgippgcgkfcbpdpcgifncb", "Emoji Keyboard by JoyPixels", "emoji-keyboard", core = ::emojiKeyboard),
+        Row("aomkpefnllinimbhddlfhelelngakbbn", "Ultimate Car Driving Game", "ultimate-car", core = actionPage("Ultimate Car Driving Game", Regex("Game_Source/index\\.html"), CANVAS_SHOWN, listOf("page-a.html?game"), settleMs = 45_000)),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -6763,6 +6828,197 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // row's cleanup disables the blocker as it does any row's extension).
         Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
     )
+
+    // --- the core checks of compat round 16 (ranks 361-390 by installs) --------------------------
+
+    /**
+     * Forest without an account (its guest mode, `NoAccount` in its popup's state): the fixture
+     * settles, the popup opens, its Plant control is tapped and the popup polled for a growing
+     * tree (a `mm:ss` countdown beside its give-up control). A popup that asks for an account
+     * before a plant is `n/m`.
+     */
+    private fun forest(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?forest", factor, 2_000)
+        val popup = openPopup(row, factor)
+        val steps = JSONArray()
+        var found = JSONObject()
+        var planted = false
+        if (popup != null) {
+            SystemClock.sleep(scaled(4_000, factor))
+            extra.put("popupBefore", json(tabEval(popup, DEEP_TEXT)).optString("text").take(240))
+            planted = tapLabel("/^(plant|start|start planting|plant a tree)$/i", factor, steps, "plant")
+            val live = popupView()?.takeIf { it.context == "popup" } ?: popup
+            found = pollExpr(live, FOREST_GROWING, scaled(20_000, factor))
+            found.put("console", JSONArray(consoleOf(live).takeLast(8)))
+        }
+        extra.put("steps", steps).put("popup", found)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-planted")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val text = extra.optString("popupBefore") + " " + found.optString("text")
+        return when {
+            found.optBoolean("pass") -> Grade("P", "Forest: a tree planted from the popup in guest mode, its countdown running: ${found.toString().take(200)}", extra)
+            popup == null -> Grade("F", "Forest: popup did not render in the core check", extra)
+            !planted && LOGIN_WORDS.containsMatchIn(text) -> Grade("n/m", "Forest: its popup asks for an account before a plant (\"${text.take(100)}\"); the core needs a Forest account (not measurable here)", extra)
+            !planted -> Grade("F", "Forest: no Plant control reached in the popup (\"${extra.optString("popupBefore").take(80)}\"): ${steps.toString().take(160)}", extra)
+            else -> Grade("F", "Forest: Plant tapped and no countdown came within ${scaled(20_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Emoji Keyboard over `editor.html`: its action has no popup until its worker sets one and
+     * opens it from `onClicked` (`action.setPopup` then `action.openPopup`, or a detached window
+     * when its panel state says so), so the click comes twice when the first shows nothing; an
+     * emoji cell tapped in the popup goes to the active tab (`tabs.sendMessage({emoji})`), whose
+     * content script inserts it into the focused field: the fixture's textarea gains a non-ASCII
+     * character. The cell is tapped by the finger first, clicked by script when nothing landed.
+     */
+    private fun emojiKeyboard(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("editor.html?emoji", factor, 2_500)
+        extra.put("focus", tabEval(view, "(function(){var e=document.getElementById('editor');e.value='';e.focus();return document.activeElement===e?'focused':'not focused'})()"))
+        var popup = openPopup(row, factor)
+        if (popup == null) {
+            extra.put("secondClick", true)
+            SystemClock.sleep(scaled(1_500, factor))
+            popup = openPopup(row, factor)
+        }
+        var pick = JSONObject().put("found", false)
+        var inserted = JSONObject()
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(160))
+            pick = poll(scaled(8_000, factor), 800) { json(tabEval(popup, EMOJI_PICK.replace("__CLICK__", "false"))).takeIf { it.optBoolean("found") } } ?: json(tabEval(popup, EMOJI_PICK.replace("__CLICK__", "false")))
+            if (pick.optBoolean("found")) {
+                tabEval(view, "(function(){var e=document.getElementById('editor');e.focus();return 'ok'})()")
+                screenPoint(popup, pick)?.let { tap(it.first, it.second) }
+                inserted = pollExpr(view, EMOJI_INSERTED, scaled(6_000, factor))
+                if (!inserted.optBoolean("pass")) {
+                    popupView()?.takeIf { it.context == "popup" }?.let { extra.put("scriptClick", tabEval(it, EMOJI_PICK.replace("__CLICK__", "true")).take(160)) }
+                    inserted = pollExpr(view, EMOJI_INSERTED, scaled(8_000, factor))
+                }
+            }
+        }
+        extra.put("pick", pick).put("editor", inserted).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-emoji")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val tabs = tabUrls().values
+        return when {
+            inserted.optBoolean("pass") -> Grade("P", "Emoji Keyboard: \"${pick.optString("label")}\" tapped in the popup landed in the fixture's textarea: ${inserted.toString().take(160)}", extra)
+            popup == null && tabs.any { it.contains("popup.html") } -> Grade("F", "Emoji Keyboard: its click opened popup.html as a tab or window (its detached mode) and no emoji reached the fixture", extra)
+            popup == null -> Grade("F", "Emoji Keyboard: no popup rendered after two action clicks (its worker sets the popup from onClicked and opens it)", extra)
+            !pick.optBoolean("found") -> Grade("F", "Emoji Keyboard: popup rendered (\"${extra.optString("popupText").take(80)}\") but no emoji cell was found to tap: ${pick.toString().take(160)}", extra)
+            else -> Grade("F", "Emoji Keyboard: \"${pick.optString("label")}\" tapped and the fixture's textarea gained no emoji within ${scaled(14_000, factor) / 1000} s: ${inserted.toString().take(160)}", extra)
+        }
+    }
+
+    /**
+     * Markdown Viewer: no host is allowed by default (its origins live on its options page), so
+     * `options/index.html` opens as a tab, its "Allow All" control is tapped (a
+     * `permissions.request` for every origin, the chrome's prompt accepted), then the fixture's
+     * `readme.md` (served `text/markdown`) opens and its detector (`tabs.onUpdated` -> a
+     * `scripting.executeScript` reading `document.contentType`) injects the viewer: the rendered
+     * `#_html` with the fixture's heading in it. The origins its worker holds afterwards go into
+     * the evidence.
+     */
+    private fun markdownViewer(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val steps = JSONArray()
+        val options = createTab("chrome-extension://${row.id}/options/index.html")
+        val optionsView = waitForView(options)
+        poll(scaled(20_000, factor), 400) { if (tabEval(optionsView, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(3_000, factor))
+        extra.put("optionsText", json(tabEval(optionsView, DEEP_TEXT)).optString("text").take(200))
+        val allow = json(tabEval(optionsView, clickTarget("/^allow all$/i")))
+        steps.put("allow all: ${allow.toString().take(120)}")
+        var prompt = JSONObject()
+        if (allow.optBoolean("clicked")) {
+            tapSettled(optionsView, allow, factor)?.let { steps.put("allow all tap: $it") }
+            prompt = acceptPrompt(factor, 10_000)
+        }
+        extra.put("prompt", prompt)
+        SystemClock.sleep(scaled(1_500, factor))
+        backgroundView(row.id)?.let { extra.put("origins", probe(it, PERMISSIONS_HELD, "__zenPermissions", scaled(8_000, factor))) }
+        snap("${entry.optString("slug")}-options")
+        val (_, view) = fixture("readme.md?mdv", factor, 2_000)
+        val found = pollExpr(view, MARKDOWN_RENDERED, scaled(30_000, factor))
+        found.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        extra.put("page", found).put("steps", steps).put("contentType", tabEval(view, "document.contentType"))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-rendered")
+        return when {
+            found.optBoolean("pass") -> Grade("P", "Markdown Viewer: readme.md rendered by the viewer after Allow All (origins ${extra.optJSONObject("origins")?.optJSONArray("origins")?.toString()?.take(60) ?: "unread"}): ${found.toString().take(200)}", extra)
+            !allow.optBoolean("clicked") -> Grade("F", "Markdown Viewer: its options page shows no Allow All control (\"${extra.optString("optionsText").take(100)}\"); readme.md stayed as served: ${found.toString().take(120)}", extra)
+            else -> Grade("F", "Markdown Viewer: readme.md (${extra.optString("contentType")}) not rendered within ${scaled(30_000, factor) / 1000} s after Allow All (prompt ${prompt.toString().take(100)}; origins ${extra.optJSONObject("origins")?.toString()?.take(120) ?: "unread"}): ${found.toString().take(160)}", extra)
+        }
+    }
+
+    /**
+     * Auto Refresh Page (lkhdi…): its popup's interval radios (`#5_sec`, the shortest) and
+     * Start/Stop button, then the fixture's `performance.timeOrigin` changes on the reload its
+     * worker fires (`tabs.reload` with the cache bypassed): Easy Auto Refresh's reading of round
+     * 10, with the button clicked by script when no label tap reached it.
+     */
+    private fun autoRefreshPage(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("page-a.html?autorefresh", factor, 2_000)
+        val origin = tabEval(view, "String(performance.timeOrigin)")
+        val popup = openPopup(row, factor)
+        val steps = JSONArray()
+        var started = false
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            val live = popupView()?.takeIf { it.context == "popup" }
+            if (live != null) {
+                extra.put("popupText", json(tabEval(live, DEEP_TEXT)).optString("text").take(240))
+                steps.put("interval: " + tabEval(live, "(function(){var r=document.getElementById('5_sec')||document.querySelector('input[type=radio]');if(!r)return 'no radio';r.click();r.checked=true;r.dispatchEvent(new Event('change',{bubbles:true}));return 'picked '+(r.id||r.value)})()").take(80))
+                started = tapLabel("/^(start|start refresh)$/i", factor, steps, "start")
+                if (!started) {
+                    val byScript = popupView()?.takeIf { it.context == "popup" }?.let { tabEval(it, "(function(){var b=document.getElementById('button-start-stop')||document.querySelector('.start_button, button');if(!b)return 'no button';b.click();return 'clicked '+(b.id||b.textContent.trim().slice(0,20))})()") } ?: "no popup"
+                    steps.put("start (script): ${byScript.take(80)}")
+                    started = byScript.contains("clicked")
+                }
+                popupView()?.takeIf { it.context == "popup" }?.let { extra.put("popupAfterStart", json(tabEval(it, DEEP_TEXT)).optString("text").take(200)) }
+            }
+        }
+        extra.put("steps", steps)
+        snap("${entry.optString("slug")}-refresh-popup")
+        val reloaded = poll(scaled(30_000, factor), 1_000) {
+            val now = runCatching { tabEval(view, "String(performance.timeOrigin)") }.getOrDefault("")
+            now.takeIf { it.isNotEmpty() && it != "null" && it != origin }
+        }
+        runCatching { coreCall("extension.closePopup", "null") }
+        extra.put("timeOrigin", JSONObject().put("before", origin).put("after", reloaded ?: tabEval(view, "String(performance.timeOrigin)"))).put("tabUrl", tabUrls()[tab] ?: "")
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        val note = "steps ${steps.toString().take(220)}"
+        return when {
+            reloaded != null -> Grade("P", "Auto Refresh Page: the fixture reloaded on the shortest interval after Start (time origin $origin -> $reloaded): $note", extra)
+            popup == null -> Grade("F", "Auto Refresh Page: popup did not render in the core check: $note", extra)
+            !started -> Grade("F", "Auto Refresh Page: no Start control reached in the popup: $note", extra)
+            else -> Grade("F", "Auto Refresh Page: Start pressed and the fixture did not reload within ${scaled(30_000, factor) / 1000} s: $note", extra)
+        }
+    }
+
+    /**
+     * A live site whose attachment is the gate, not the core (Salesforce Inspector Reloaded on
+     * login.salesforce.com: its button draws on an org's pages only, behind a session):
+     * [liveAttached]'s reading with its P turned into `n/m` on `gate`, as wanteeed's and
+     * RetailMeNot's fixture attachments are.
+     */
+    private fun attachedGate(label: String, url: String, gate: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val inner = liveAttached(label, url, gate)(row, entry)
+        if (inner.verdict == "P") Grade("n/m", "${inner.note}; the core needs $gate (not measurable here)", inner.extra) else inner
+    }
 
     // --- the core checks of compat round 14 (ranks 301-330 by installs) --------------------------
 
@@ -9359,5 +9615,52 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val FOXY_SET_MODE =
             "(function(){window.__zenFoxyMode={done:false};var mode=__MODE__;try{chrome.storage.local.get(null,function(r){var pref=Object.assign({},r,{mode:mode});chrome.storage.local.set({mode:mode},function(){" +
                 "try{chrome.runtime.sendMessage({update:'setProxy',pref:pref},function(reply){window.__zenFoxyMode={done:true,mode:mode,proxies:(pref.data||[]).length,reply:reply===undefined?null:reply,err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})}catch(e){window.__zenFoxyMode={done:true,mode:mode,error:String(e&&e.message||e)}}})})}catch(e){window.__zenFoxyMode={done:true,error:String(e&&e.message||e)}}return 'setting'})()"
+
+        // --- compat round 16 ---
+
+        /** Forest's popup with a tree growing: a `mm:ss` countdown beside its give-up / growing words. */
+        private const val FOREST_GROWING =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var timer=/\\b\\d{1,2}:\\d{2}\\b/.test(t);var growing=/give up|growing|stay focused|is growing|planting|leave/i.test(t);" +
+                "return JSON.stringify({pass:timer&&growing,timer:timer,growing:growing,text:t.slice(0,200)})})()"
+
+        /** An emoji cell in Emoji Keyboard's popup: a small leaf whose text is one emoji (or a JoyPixels image); located, and clicked when `__CLICK__`. */
+        private const val EMOJI_PICK =
+            "(function(){var click=__CLICK__;var vis=function(n){var r=n.getBoundingClientRect();return r.width>8&&r.height>8&&r.width<90&&r.height<90};var re=/^(\\p{Extended_Pictographic}|\\p{Emoji_Presentation})/u;" +
+                "var els=Array.prototype.slice.call(document.querySelectorAll('button, span, li, div, a, img, i')).filter(function(n){if(!vis(n))return false;if(n.tagName==='IMG')return /emoji|joypixels|\\/png\\/|\\/svg\\//i.test(n.src||'')||re.test(n.alt||'');" +
+                "var t=(n.textContent||'').trim();if(n.children.length===0&&t.length>0&&t.length<=8&&re.test(t))return true;return n.children.length===0&&t.length===0&&/emoji|joypixels/i.test(String(n.className||''))&&getComputedStyle(n).backgroundImage!=='none'});" +
+                "var el=els[0];if(!el)return JSON.stringify({found:false,candidates:0,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)});var r=el.getBoundingClientRect();if(click)el.click();" +
+                "return JSON.stringify({found:true,clicked:click,candidates:els.length,label:(el.textContent||el.alt||el.title||el.className||'').trim().slice(0,12),tag:el.tagName.toLowerCase(),x:r.left+r.width/2,y:r.top+r.height/2})})()"
+
+        /** `editor.html`'s textarea holding a non-ASCII character (an emoji inserted by a content script). */
+        private const val EMOJI_INSERTED =
+            "(function(){var e=document.getElementById('editor');var v=e?e.value:'';return JSON.stringify({pass:/[^\\x00-\\x7F]/.test(v),length:v.length,value:v.slice(0,40),focused:document.activeElement===e})})()"
+
+        /** The permissions an extension holds (`permissions.getAll`), landed on `window.__zenPermissions`. */
+        private const val PERMISSIONS_HELD =
+            "(function(){window.__zenPermissions={done:false};try{chrome.permissions.getAll(function(p){window.__zenPermissions={done:true,origins:(p&&p.origins)||[],permissions:(p&&p.permissions)||[],err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})}catch(e){window.__zenPermissions={done:true,err:String(e&&e.message||e)}}return 'asked'})()"
+
+        /** Markdown Viewer's rendering of `readme.md`: its `#_html` mount with a heading or text in it (the served `<pre>` hidden). */
+        private const val MARKDOWN_RENDERED =
+            "(function(){var h=document.getElementById('_html');var t=(h?h.innerText:'').replace(/\\s+/g,' ').trim();var pre=document.querySelector('pre');var preShown=!!pre&&pre.getBoundingClientRect().height>0;var heading=h?h.querySelector('h1, h2'):null;" +
+                "return JSON.stringify({pass:!!h&&(!!heading||t.length>20),mounted:!!h,heading:heading?heading.textContent.trim().slice(0,40):null,preShown:preShown,contentType:document.contentType,text:t.slice(0,120)})})()"
+
+        /** `right-click.html`'s probe after the action click: a cancelable contextmenu the page's handler no longer cancels. */
+        private const val RIGHT_CLICK_ALLOWED =
+            "(function(){var p=window.__zenRightClick?window.__zenRightClick():{error:'no probe'};return JSON.stringify({pass:p.allowed===true,probe:p,state:(document.getElementById('state')||{}).textContent})})()"
+
+        /** AVG Online Security's panel after the action click: its `.aosp-class` host with the `aosp` frame in its shadow root, sized. */
+        private const val AVG_PANEL =
+            "(function(){var host=document.querySelector('.aosp-class, [class*=\"aosp\"]');var root=host&&host.shadowRoot;var frame=root?root.querySelector('iframe[name=\"aosp\"], iframe'):null;var r=frame?frame.getBoundingClientRect():{width:0,height:0};var hr=host?host.getBoundingClientRect():{width:0,height:0};" +
+                "var marks=document.querySelectorAll('[class*=\"aos-\"], [id*=\"aos-\"], [class*=\"aosp\"]').length;return JSON.stringify({pass:(!!frame&&r.width>100&&r.height>100)||(!!host&&hr.width>100&&hr.height>100),host:!!host,shadow:!!root,frame:!!frame,w:Math.round(r.width),h:Math.round(r.height),hostBox:Math.round(hr.width)+'x'+Math.round(hr.height),marks:marks})})()"
+
+        /** A game canvas rendered on the page (Boxel 3D's popup, Ultimate Car Driving Game's `Game_Source/index.html`): a sized canvas on screen. */
+        private const val CANVAS_SHOWN =
+            "(function(){var c=document.querySelector('#gameCanvas, canvas');var r=c?c.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!c&&c.width>100&&c.height>100&&r.width>60,w:c?c.width:0,h:c?c.height:0,shown:Math.round(r.width)+'x'+Math.round(r.height),canvases:document.querySelectorAll('canvas').length,text:t.slice(0,80)})})()"
+
+        /** 7TV mounted on a Twitch page: its `seventv-extension` element or stylesheet, or its site bundle among the page's scripts. */
+        private const val SEVENTV_MOUNTED =
+            "(function(){var el=document.querySelector('seventv-extension, #seventv-extension, seventv-stylesheet, #seventv-stylesheet, [id*=\"seventv\"], [class*=\"seventv\"]');var scripts=Array.prototype.slice.call(document.scripts).filter(function(s){return /seventv|7tv|lppmekppnliemjclknbagdhoocikieoi/i.test(s.src||'')}).length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!el||scripts>0,mounted:!!el,tag:el?el.tagName.toLowerCase()+(el.id?'#'+el.id:''):null,scripts:scripts,title:document.title.slice(0,60),text:t.slice(0,100)})})()"
     }
 }
