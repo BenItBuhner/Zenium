@@ -4,9 +4,13 @@ import { join, resolve } from 'node:path'
 import {
   APP_ICON_DEFAULT,
   APP_ICON_INK,
+  APP_ICON_MASK,
+  APP_ICON_PRIVATE,
   APP_ICON_VARIANTS,
+  accentFill,
   parseHex
 } from '../../../src/shared/appIcon'
+import { PRIVATE_THEME } from '../../../src/shared/theme'
 import {
   ANDROID_MANIFEST,
   ANDROID_RES,
@@ -28,6 +32,7 @@ import {
   manifestWithAliases,
   planAppIcons,
   renderIcon,
+  renderPrivateIcon,
   type OutputFile
 } from '../lib'
 
@@ -110,6 +115,59 @@ describe('renderIcon', () => {
   })
 })
 
+describe('renderPrivateIcon', () => {
+  const size = 128
+  const rgba = renderPrivateIcon(size)
+  const fill = parseHex(APP_ICON_PRIVATE.fill)
+  const ink = parseHex(APP_ICON_INK)
+  const c = size / 2
+  const m = APP_ICON_MASK
+
+  it('sits on the private theme’s purple, put through the fill rule like every accent', () => {
+    const primary = PRIVATE_THEME.colors.find((c) => c.isPrimary) ?? PRIVATE_THEME.colors[0]
+    expect(parseHex(APP_ICON_PRIVATE.accent)).toEqual(primary.c)
+    expect(APP_ICON_PRIVATE.fill).toBe(accentFill(APP_ICON_PRIVATE.accent))
+    // Mid-edge is opaque ground, the corner is cut like every variant's.
+    expect(pixel(rgba, size, c, 0)).toEqual([...fill, 255])
+    expect(pixel(rgba, size, 0, 0)[3]).toBe(0)
+  })
+
+  it('draws the mask in ink: solid at the bridge and under the eyes, open at the eyes and cuts', () => {
+    const w = size * m.halfWidth
+    const h = size * m.halfHeight
+    // The bridge between the dip and the nose notch.
+    expect(pixel(rgba, size, c, c)).toEqual([...ink, 255])
+    // The cheek under each eye.
+    const eyeX = Math.round(w * m.eye.x)
+    expect(pixel(rgba, size, c + eyeX, c + Math.round(h * 0.7))).toEqual([...ink, 255])
+    expect(pixel(rgba, size, c - eyeX, c + Math.round(h * 0.7))).toEqual([...ink, 255])
+    // The eyes are holes: ground shows through their centres.
+    const eyeY = c - Math.round(h * m.eye.rise)
+    expect(pixel(rgba, size, c + eyeX, eyeY)).toEqual([...fill, 255])
+    expect(pixel(rgba, size, c - eyeX, eyeY)).toEqual([...fill, 255])
+    // The dip at the top of the bridge and the nose notch at its bottom are cut out.
+    expect(pixel(rgba, size, c, c - Math.round(h * 0.85))).toEqual([...fill, 255])
+    expect(pixel(rgba, size, c, c + Math.round(h * 0.85))).toEqual([...fill, 255])
+    // Above the mask and beyond its ends: ground.
+    expect(pixel(rgba, size, c, c - Math.round(h * 1.3))).toEqual([...fill, 255])
+    expect(pixel(rgba, size, c + Math.round(w * 1.2), c)).toEqual([...fill, 255])
+  })
+
+  it('is not the mark: the middle of a variant’s dot is ink, the mask’s ends reach further', () => {
+    const indigo = renderIcon(APP_ICON_VARIANTS[0], size)
+    // The mark's ring passes where the mask has nothing (straight above the centre).
+    const ring = Math.round(size * 0.3 * (24 / 27.5))
+    expect(pixel(indigo, size, c, c - ring)).toEqual([...parseHex(APP_ICON_INK), 255])
+    expect(pixel(rgba, size, c, c - ring)).toEqual([...fill, 255])
+  })
+
+  it('honours the macOS inset like the variants', () => {
+    const mac = renderPrivateIcon(size, { macInset: true })
+    expect(pixel(mac, size, c, 2)[3]).toBe(0)
+    expect(pixel(rgba, size, c, 2)[3]).toBe(255)
+  })
+})
+
 describe('containers', () => {
   it('PNG round-trips through the decoder', () => {
     const rgba = renderIcon(APP_ICON_VARIANTS[2], 24)
@@ -155,6 +213,24 @@ describe('planAppIcons', () => {
       const fill = parseHex(v.fill)
       expect(pixel(icon.rgba, DESKTOP_PNG_SIZE, DESKTOP_PNG_SIZE / 2, 4)).toEqual([...fill, 255])
     }
+  })
+
+  it('produces the private windows’ icon: the PNG and the ICO, no Dock image', () => {
+    const dir = `${RUNTIME_ICON_DIR}/${APP_ICON_PRIVATE.folder}`
+    const icon = decodePng(bytes(`${dir}/icon.png`))
+    expect([icon.width, icon.height]).toEqual([DESKTOP_PNG_SIZE, DESKTOP_PNG_SIZE])
+    expect(pixel(icon.rgba, DESKTOP_PNG_SIZE, DESKTOP_PNG_SIZE / 2, 4)).toEqual([
+      ...parseHex(APP_ICON_PRIVATE.fill),
+      255
+    ])
+    expect(icoSizes(bytes(`${dir}/icon.ico`))).toEqual([...ICO_SIZES])
+    for (const [i, png] of icoImages(bytes(`${dir}/icon.ico`)).entries()) {
+      expect(decodePng(png).width).toBe(ICO_SIZES[i])
+    }
+    expect(byPath.has(`${dir}/dock.png`)).toBe(false)
+    // Not a variant: no Android launcher alias, no colour, no swatch.
+    expect(APP_ICON_VARIANTS.some((v) => (v.id as string) === APP_ICON_PRIVATE.folder)).toBe(false)
+    expect(byPath.has(`${ANDROID_RES}/mipmap-anydpi-v26/ic_launcher_private.xml`)).toBe(false)
   })
 
   it('writes electron-builder the default variant in every format', () => {

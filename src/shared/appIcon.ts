@@ -81,6 +81,34 @@ export const APP_ICON_MARK = {
 export const APP_ICON_ANDROID = { canvas: 108, ringOuter: 27.5 } as const
 
 /**
+ * The private windows' icon: the same squircle on the private theme's purple (`PRIVATE_THEME`'s
+ * primary, put through the §1.1 fill rule like every variant's accent; a test holds the two
+ * equal) carrying the private mask in the ink instead of the mark. Private windows group on a
+ * taskbar button of their own (os-56), and that button's glyph has to tell them from the
+ * browser's at 16 px – the mask is the chrome's private glyph in the icon's own language.
+ */
+export const APP_ICON_PRIVATE: { readonly folder: 'private'; accent: string; fill: string } = {
+  /** The asset folder under `resources/icons/`; the runtime keys on it, so never rename. */
+  folder: 'private',
+  accent: '#5b3fa0',
+  fill: accentFill('#5b3fa0')
+}
+
+/**
+ * The mask, a domino: a wide ellipse (its half-width and half-height in units of the squircle's
+ * side) with a dip cut into the top edge at the bridge and a notch into the bottom for the nose,
+ * and an eye cut out of each side. Every cut is an ellipse; its centre (`x` across, `y` down,
+ * `rise` up) and radii are fractions of the body's half-width / half-height.
+ */
+export const APP_ICON_MASK = {
+  halfWidth: 0.36,
+  halfHeight: 0.14,
+  bridge: { y: -1.1, rx: 0.22, ry: 0.55 },
+  nose: { y: 1.05, rx: 0.18, ry: 0.6 },
+  eye: { x: 0.5, rise: 0.05, rx: 0.22, ry: 0.36 }
+} as const
+
+/**
  * Desktop icon and swatch: a squircle filling the canvas, the mark's outer radius as a fraction
  * of the side. Corners are the chrome's `superellipse(1.3)` (design language §2) at 22.5 %.
  */

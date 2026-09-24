@@ -14,7 +14,9 @@ name: Desktop smoke (Windows, macOS, Linux installers)
 # app under – the unpacked build's first, then the installed build's refresh of the same key with
 # its own icon path – and the click that reveals the tab), its restart-registration scenario
 # (os-49: the RunOnce relaunch entry a window's session-end writes for the next sign-in, read off
-# the registry; no runner restarts) and macOS its
+# the registry; no runner restarts), its private-taskbar scenario (os-56: the second
+# AppUserModelID, relaunch command and private icon a private window's frame carries, read off
+# its shell property store; the id's class key, which the uninstall check below sees gone) and macOS its
 # default-browser scenario (Make default's setAsDefaultProtocolClient('http') call – the OS's
 # dialog that follows is the user's, so LaunchServices' handlers are read for the record only;
 # .github/smoke/README.md says which half of each is OS-confirmed). The Linux job builds the two
@@ -103,7 +105,7 @@ jobs:
           # meets the key as the leg starts: absent on the runner's first run, so the scenario
           # seeds a stale key and the build has to replace its values with its own (a launch
           # before it would already have written them, and the step would read "unchanged").
-          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark,restart-registration
+          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark,restart-registration,private-taskbar
       - name: Windows and processes left behind by the unpacked build
         if: always()
         run: |
@@ -140,7 +142,7 @@ jobs:
         # dist\win-unpacked; the silent install runs nothing) – and requires the installed build
         # to have replaced it with its own (under LOCALAPPDATA\Programs\zenium): W4-12's finding
         # 1, the refresh, recorded as the step's before → after.
-        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,restart-registration
+        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,restart-registration,private-taskbar
       - name: Windows and processes left behind by the installed build
         if: always()
         run: |

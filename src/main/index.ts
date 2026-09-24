@@ -172,6 +172,9 @@ function main(): void {
     // Windows groups taskbar buttons and toast notifications by this id; it must be the one the
     // installer stamps on the shortcuts, in development too (electron-toolkit's helper would
     // substitute the executable's path there, which no toast registration can carry).
+    // The profile a relaunch of this copy names (the RunOnce entry below, a private window's
+    // taskbar button): the resolved directory when the launch named one.
+    const userDataDir = switches.userDataDir === null ? null : app.getPath('userData')
     if (process.platform === 'win32') {
       app.setAppUserModelId(APP_USER_MODEL_ID)
       // A restart or a sign-out ends the session: Windows relaunches Zenium with its session at
@@ -181,7 +184,7 @@ function main(): void {
         execPath: process.execPath,
         isPackaged: app.isPackaged,
         appPath: app.getAppPath(),
-        userDataDir: switches.userDataDir === null ? null : app.getPath('userData'),
+        userDataDir,
         systemVersion: process.getSystemVersion()
       })
     }
@@ -191,7 +194,7 @@ function main(): void {
       // The desktop demo drivers' hold on the startup sweeps (`--hold-background-work`; a normal
       // launch never carries it): the core's `performance.releaseBackgroundWork` ends it.
       holdBackgroundWork: holdBackgroundWorkRequested(process.argv),
-      windowSwitches: windowSwitchesOf(switches)
+      windowSwitches: windowSwitchesOf(switches, userDataDir)
     })
     // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's
     // window comes up by itself, as Chrome's does; the browser windows wait for the first thing

@@ -114,6 +114,30 @@ What no runner confirms: the sign-in itself (RunOnce processed by the shell at t
 sign-in, the app up with `--restore-last-session`), and that Windows delivers `WM_ENDSESSION`
 to the window in time for the write on a real shutdown (the events are emitted, not received).
 
+## Windows private windows' taskbar group (`private-taskbar`)
+
+`private-taskbar-scenario.mjs` runs on both Windows legs for os-56. Windows groups taskbar
+buttons by AppUserModelID, so a private window's frame carries a second id – the app's with
+`.private` – with the private icon (the mask on the private purple, `resources/icons/private/`)
+and a relaunch command that opens a private window; the main process registers that id's class
+key beside the app's (`notifications.ts`), which the installer's uninstall check sees gone. The
+taskbar cannot be asked what buttons it shows, so the facts are read where Windows reads them:
+the window's shell property store (`win-taskbar.ps1`, `SHGetPropertyStoreForWindow` on every
+top-level window of the process) and the registry.
+
+| step                      | what is read                                                                                                                                                                                                                                | confirmed by                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `open-private-window`     | `window.newPrivate` from the main window's chrome: a second `BrowserWindow`, visible, titled `… (Private)`, with its frame handle                                                                                                            | the app                                 |
+| `private-window-grouped`  | that frame's `System.AppUserModel.ID` = `<app id>.private`, `RelaunchCommand` = this executable, `--user-data-dir=<this profile>`, `--private-window`, `RelaunchDisplayNameResource` = `Zenium (Private)`; the main window's frame carries no id of its own | the OS's shell                          |
+| `private-icon`            | `RelaunchIconResource` = `<…\private\icon.ico>,0`, the file on disk under the running build's directory                                                                                                                                   | the OS's shell, the file system         |
+| `class-key`               | `HKCU\Software\Classes\AppUserModelId\<app id>.private`: `DisplayName` the group's name, `IconUri` the private `icon.png` under the build's directory (polled: written after `browser.start`)                                                | the OS's registry                       |
+| `taskbar-still`           | a screenshot with both windows up – recorded, not judged (the runner's session may show no taskbar)                                                                                                                                       | –                                       |
+| `close-private-window`    | the private window closed from the main process; one window remains                                                                                                                                                                       | the app                                 |
+
+What no runner confirms: the taskbar drawing two buttons (the still shows it when the session
+has a taskbar), and a click on a pinned "Zenium (Private)" button running the relaunch command
+(the command is asserted; the shell's launch of it is not exercised).
+
 ## macOS default browser (`default-browser`)
 
 `default-browser-scenario.mjs` runs last on the macOS legs for os-07. LaunchServices asks the

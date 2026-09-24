@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads,notifications,restart-registration,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads,notifications,restart-registration,private-taskbar,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -133,6 +133,14 @@
 //                nothing; a `logoff` end registers again and the entry stands after the process
 //                is ended the way Windows ends it (taskkill); the entry is deleted and the
 //                toggle put back at the end (Windows jobs; no runner restarts)
+//   private-taskbar  Private windows on a taskbar group of their own with the private icon
+//                (os-56; private-taskbar-scenario.mjs): a private window opened from the main
+//                window's chrome carries, in its frame's shell property store, the second
+//                AppUserModelID (`<app id>.private`), a relaunch command that opens a private
+//                window of this copy on this profile, the group's name "Zenium (Private)" and
+//                the private ICO this copy ships; the main window's frame carries none of its
+//                own; the id's class key holds the name and the private PNG (Windows jobs; the
+//                taskbar itself is on the screenshot, not judged)
 //   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
@@ -145,7 +153,7 @@
 //                (macOS jobs)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore), Windows notifications and restart-registration too and macOS default-browser too;
+// restore), Windows notifications, restart-registration and private-taskbar too and macOS default-browser too;
 // the walkthrough, the crash
 // pair, clear-on-exit, the two mv3-worker legs, pip and the split pair run on Linux under Xvfb
 // only.
@@ -184,6 +192,7 @@ import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
 import { RESTART_SCENARIO, scenarioRestartRegistration } from './restart-scenario.mjs'
+import { PRIVATE_TASKBAR_SCENARIO, scenarioPrivateTaskbar } from './private-taskbar-scenario.mjs'
 import {
   COOKIE_PATH,
   FIXTURE_COOKIE,
@@ -6078,6 +6087,19 @@ async function main() {
           delay,
           log,
           ps,
+          isWin: IS_WIN
+        }),
+      [PRIVATE_TASKBAR_SCENARIO]: () =>
+        scenarioPrivateTaskbar({
+          freshProfile,
+          runScenario,
+          waitFor,
+          log,
+          grabScreen,
+          ps,
+          // The private ICO and the class key's PNG have to be this build's (under the
+          // executable's directory).
+          exe: opts.exe,
           isWin: IS_WIN
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
