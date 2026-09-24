@@ -19,6 +19,8 @@
     <!-- Custom tabs (another app's link rendered by Zenium). Menu items are Title Case (v2 §9.1). -->
     <string name="cct_close">Close</string>
     <string name="cct_menu">Menu</string>
+    <string name="cct_minimize">Minimize</string>
+    <string name="cct_minimized_card">Minimized page: %1$s</string>
     <string name="cct_secure">Secure connection</string>
     <string name="cct_share">Share…</string>
     <string name="cct_copy_link">Copy Link</string>

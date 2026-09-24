@@ -232,13 +232,16 @@
         <!-- Another app's custom tab (CustomTabActivity.kt). Its own, empty affinity keeps it out of
              the singleTask browser's task: it stacks on the caller, as Chrome's does, so closing it
              lands back in the app that opened it. Not exported: everything reaches it through
-             LinkDispatchActivity or MainActivity, which have vetted the intent. -->
+             LinkDispatchActivity or MainActivity, which have vetted the intent. Picture-in-picture
+             is the tab's Minimize (the toolbar button shrinks the tab to a floating card, as
+             Chrome's minimized custom tab does); only this activity enters it. -->
         <activity
             android:name=".CustomTabActivity"
             android:exported="false"
             android:launchMode="standard"
             android:taskAffinity=""
             android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Zen.CustomTab"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" />

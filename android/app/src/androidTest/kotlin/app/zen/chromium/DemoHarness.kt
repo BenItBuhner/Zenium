@@ -2422,6 +2422,61 @@ abstract class DemoHarness(
     /** The core's UI state (`app.getState`): tabs, spaces, settings, window. */
     protected fun coreState(): JSONObject = JSONObject(coreInvoke("app.getState"))
 
+    /**
+     * [coreInvoke] for a driver whose rows can saturate the renderer: every WebView of the process
+     * shares one renderer main thread, so an extension's background posting at the flood guard's
+     * rate queues the chrome's own script – and with it the core's answer – behind its messages
+     * (compat round 12's Trust Wallet on WebView 156 held it for 43 s while the fixed 15 s wait
+     * above ran out). A poll of `window.__demo` the chrome did not run inside [chromeJs]'s latch,
+     * or ran only after `stallMs`, is a measured stall: its duration is not charged to the wait,
+     * so `baseMs` counts the polls the chrome answered promptly, and the whole wait ends at
+     * `maxMs` whatever the chrome did. The longest poll goes to `onStall` when one stalled (a
+     * row's evidence). The result as JSON text, as [coreInvoke]; the same errors.
+     */
+    protected fun coreInvokeUnderStall(
+        name: String,
+        args: String = "null",
+        baseMs: Long = 15_000,
+        maxMs: Long = 120_000,
+        stallMs: Long = 1_000,
+        onStall: ((Long) -> Unit)? = null
+    ): String {
+        chromeJs(
+            "window.__demo=undefined;window.zen.invoke(${JSONObject.quote(name)},$args)" +
+                ".then(r=>{window.__demo=JSON.stringify(r===undefined?null:r)},e=>{window.__demo='ERR:'+(e&&e.message||e)})"
+        )
+        val started = SystemClock.uptimeMillis()
+        var deadline = started + baseMs
+        var longest = 0L
+        while (true) {
+            val now = SystemClock.uptimeMillis()
+            if (now >= deadline || now >= started + maxMs) break
+            val raw = chromeJs("window.__demo===undefined?'':window.__demo")
+            val took = SystemClock.uptimeMillis() - now
+            if (raw.isEmpty() || took >= stallMs) {
+                longest = maxOf(longest, took)
+                deadline += took
+            }
+            // "" is a chrome that did not answer the poll (its renderer busy or blocked): not an answer yet.
+            if (raw.isEmpty()) {
+                SystemClock.sleep(100)
+                continue
+            }
+            val value = (JSONTokener(raw).nextValue() as? String).orEmpty()
+            if (value.startsWith("ERR:")) {
+                if (longest > 0) onStall?.invoke(longest)
+                error("$name failed: ${value.removePrefix("ERR:")}")
+            }
+            if (value.isNotEmpty()) {
+                if (longest > 0) onStall?.invoke(longest)
+                return value
+            }
+            SystemClock.sleep(100)
+        }
+        if (longest > 0) onStall?.invoke(longest)
+        error("$name timed out after ${SystemClock.uptimeMillis() - started} ms" + (if (longest > 0) " (the chrome's longest poll took $longest ms)" else ""))
+    }
+
     /** The active tab of the active space per the core, null when there is none. */
     protected fun activeCoreTab(state: JSONObject = coreState()): JSONObject? {
         val spaces = state.getJSONArray("spaces")

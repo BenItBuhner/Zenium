@@ -2,16 +2,16 @@ import chromeCss from '../renderer/src/assets/main.css?raw'
 
 /**
  * `zen://newtab`: the document of the new tab page. It is a static shell – search box, grid,
- * the private explainer with its "Block third-party cookies" row, Customize button and the Undo
+ * the private explainer with its "Block third-party cookies" row, Customise button and the Undo
  * toast's container – that the page script
  * (`newTabPageScript.ts`, run from the host's preload) fills from `NewTabPageState`. The page
  * has no scripts of its own and no network access beyond favicons and the custom background
  * image. It draws no popover, menu or dialog (design language v2 §9.20–9.23): the tile menu is
- * the host's, the add / edit dialog and Customize are the chrome's.
+ * the host's, the add / edit dialog and Customise are the chrome's.
  *
  * Design: the page is the window showing through the frame (design language v2 §9.29, as Zen's
  * blank tab is) – the space gradient, painted by the page itself so a space switch crossfades
- * over 600 ms like the chrome, with the tiles, captions and Customize in the window's ink and
+ * over 600 ms like the chrome, with the tiles, captions and Customise in the window's ink and
  * fills, and the search field a page surface on it. The page defines no token of its own: its
  * stylesheet starts with the chrome's token blocks, taken verbatim from main.css at build time
  * (`chromeTokenCss`), then the new tab page's shared rules – the one `.zen-ntp-*` vocabulary the
@@ -91,7 +91,7 @@ export function newTabSharedCss(css: string = chromeCss): string {
  * tile, the 12 in from the corner – the desktop's numbers in §9.29) and the v1 motion timings.
  *
  * The page is the window (design language v2 §9.29): its root is `data-surface="window"`, so
- * the tiles, captions, empty sentence, explainer and Customize draw in the window's ink and
+ * the tiles, captions, empty sentence, explainer and Customise draw in the window's ink and
  * fills (`--v2-control-*` resolve to the window family); the search field and the Undo toast
  * are page surfaces on it. Over a picture the ink is white and the fills white alphas under a
  * neutral scrim. The class names are the phone page's (`NewTabPage.tsx`, #51) so the two pages
@@ -279,7 +279,7 @@ export const NEW_TAB_PAGE_STYLE = `
   .zen-v2-button:active:not(:disabled) { background: var(--v2-control-fill-hover); transform: scale(0.98); }
   .zen-v2-button:disabled { opacity: 0.4; }
   .zen-v2-button svg { width: var(--v2-icon); height: var(--v2-icon); flex: none; }
-  /* Customize (§9.29): the window-family button 12 in from the page's bottom trailing corner. */
+  /* Customise (§9.29): the window-family button 12 in from the page's bottom trailing corner. */
   .zen-customize { position: fixed; right: 12px; bottom: 12px; z-index: 4; }
 
   /* The Undo toast: a panel surface holding a 32 px control, so 40 tall (v2 §9.21). */
@@ -355,7 +355,7 @@ export function newTabPageHtml(): string {
   <p class="zen-ntp-empty" id="zen-empty" hidden>Sites you visit often will appear here</p>
   <div class="zen-grid" id="zen-grid" role="list" aria-label="Shortcuts" hidden></div>
 </main>
-<button type="button" class="zen-v2-button zen-customize" id="zen-customize" aria-haspopup="dialog">${newTabIconSvg('sliders')}<span>Customize</span></button>
+<button type="button" class="zen-v2-button zen-customize" id="zen-customize" aria-haspopup="dialog">${newTabIconSvg('sliders')}<span>Customise</span></button>
 <div class="zen-toast" id="zen-toast" role="status" data-surface="page" hidden></div>
 </body></html>`
 }

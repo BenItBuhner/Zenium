@@ -568,8 +568,10 @@ export function installWorkerScriptRescue(options: WorkerScriptRescueOptions): (
  * scripts and their libraries test for or polyfill (`window`, `document`, `localStorage`, the
  * frame tree), and the page-only schedulers a hidden page never runs (`requestAnimationFrame`).
  * Constructors (`DOMParser`, `XMLHttpRequest`, `Image`) are left visible: they are writable, a
- * polyfill replaces them, and the real ones work on the page. `Worker` and `SharedWorker` are
- * not: a service worker's global has neither, and a script branches on them (JSONVue).
+ * polyfill replaces them, and the real ones work on the page. `Worker`, `SharedWorker` and the
+ * bare `postMessage` are not: a service worker's global has none of the three, and a script
+ * branches on them (JSONVue: `typeof Worker` in its worker, `typeof postMessage` in the scripts
+ * it runs inline).
  */
 export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey>([
   'window',
@@ -598,6 +600,7 @@ export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey
   'prompt',
   'Worker',
   'SharedWorker',
+  'postMessage',
   'print',
   'open',
   'find',
@@ -839,14 +842,28 @@ export function installWorkerScopeInterfaces(target: Any): void {
     value === target ||
     value === Reflect.get(target, 'self') ||
     value === Reflect.get(target, 'globalThis')
-  const scope = function WorkerGlobalScope(): never {
-    throw new TypeError('Illegal constructor')
+  /**
+   * [ctor] with [name] as its `name` whatever the bundle calls its binding. `ext.js` is built
+   * minified (`vite.android.config.ts`, mode `ext`) and a named function expression's name does
+   * not survive that: the built `WorkerGlobalScope` read `a`, where vuex-extension-sync picks
+   * the background role by `"ServiceWorkerGlobalScope" === globalThis.constructor.name`
+   * (uVPN, compat round 12 row C3). `oneOf` below keeps its names through a computed key.
+   */
+  const named = <T extends () => never>(name: string, ctor: T): T => {
+    Object.defineProperty(ctor, 'name', { value: name, configurable: true })
+    return ctor
   }
+  const scope = named('WorkerGlobalScope', function WorkerGlobalScope(): never {
+    throw new TypeError('Illegal constructor')
+  })
   Object.setPrototypeOf(scope.prototype, EventTarget.prototype)
   Object.defineProperty(scope, Symbol.hasInstance, { value: isWorkerGlobal, configurable: true })
-  const serviceScope = function ServiceWorkerGlobalScope(): never {
-    throw new TypeError('Illegal constructor')
-  }
+  const serviceScope = named(
+    'ServiceWorkerGlobalScope',
+    function ServiceWorkerGlobalScope(): never {
+      throw new TypeError('Illegal constructor')
+    }
+  )
   Object.setPrototypeOf(serviceScope.prototype, scope.prototype)
   Object.setPrototypeOf(serviceScope, scope)
   Object.defineProperty(serviceScope, Symbol.hasInstance, {
@@ -961,7 +978,14 @@ export function installServiceWorkerGlobals(
     // `WORKER_API_AVAILABLE` picks the branch that spawns `js/workers/formatter.js` and dies
     // on the error event, where Chrome runs its inline formatter.
     Worker: undefined,
-    SharedWorker: undefined
+    SharedWorker: undefined,
+    // And no `postMessage` of its own: a `ServiceWorkerGlobalScope` posts through a client or
+    // a port, where a Window and a dedicated worker have the bare function. JSONVue's
+    // `js/workers/formatter.js` and `linter.js` branch on `typeof postMessage == "undefined"`
+    // to run inline (defining `globalThis.linter` for `background.js`) instead of as a worker
+    // body; with the page's `postMessage` in reach they took the worker branch and
+    // `background.js:133` threw `ReferenceError: linter is not defined`.
+    postMessage: undefined
   })
   installWorkerScopeInterfaces(target)
 

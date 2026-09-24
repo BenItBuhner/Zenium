@@ -215,6 +215,11 @@ vi.mock('electron', async () => {
     getVisible(): boolean {
       return this.visible
     }
+    /** The box the chrome last laid the view out in. */
+    bounds: { x: number; y: number; width: number; height: number } | null = null
+    setBounds(rect: { x: number; y: number; width: number; height: number }): void {
+      this.bounds = rect
+    }
   }
   /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
   // Every view host in the tests listens for a flip (the app has one host; the tests many).
@@ -550,16 +555,23 @@ describe('ElectronTabView and the developer tools dock', () => {
     view: ElectronTabView
     wc: DevtoolsContents
     docks: string[]
+    /** The dock each `onDevtoolsOpened` named (undefined where the host could not say). */
+    openedAt: Array<string | undefined>
     opened: () => number
     closed: () => number
   } => {
     const docks: string[] = []
+    const openedAt: Array<string | undefined> = []
     let opened = 0
     let closed = 0
     const events = new Proxy({} as TabViewEvents, {
       get: (_t, name) => {
         if (name === 'onDevtoolsDockChanged') return (dock: string): void => void docks.push(dock)
-        if (name === 'onDevtoolsOpened') return (): void => void opened++
+        if (name === 'onDevtoolsOpened')
+          return (dock?: string): void => {
+            opened++
+            openedAt.push(dock)
+          }
         if (name === 'onDevtoolsClosed') return (): void => void closed++
         return (): undefined => undefined
       }
@@ -571,7 +583,7 @@ describe('ElectronTabView and the developer tools dock', () => {
       detachedWindow
     ) as ElectronTabView
     const wc = view.webContents as unknown as DevtoolsContents
-    return { view, wc, docks, opened: () => opened, closed: () => closed }
+    return { view, wc, docks, openedAt, opened: () => opened, closed: () => closed }
   }
 
   it('opens at the remembered dock with Electron’s own mode names, and toggles closed', () => {
@@ -641,32 +653,85 @@ describe('ElectronTabView and the developer tools dock', () => {
     expect(docks).toEqual(['right', 'undocked'])
   })
 
-  it('moves an open toolbox through the frontend’s own dock controller, and reopens at the dock when the frontend cannot', async () => {
-    const { view, wc, closed } = setup()
-    view.openDevTools('toggle', 'bottom')
+  it('names the dock each view’s toolbox opened at, and the one it stands at once moved – per view, not one for all', async () => {
+    // Tab A's toolbox at the bottom, tab B's undocked: each view reports its own.
+    const a = setup()
+    const b = setup()
+    a.view.openDevTools('toggle', 'bottom')
+    b.view.openDevTools('toggle', 'undocked')
     await settle()
-    const frontend = wc.devToolsWebContents!
-    view.setDevtoolsDock('right')
+    expect(a.openedAt).toEqual(['bottom'])
+    expect(b.openedAt).toEqual(['undocked'])
+    // B's own button docks it to the left: B's reading moves, A's stands.
+    b.wc.devToolsWebContents!.emit('console-message', { message: 'zenium-devtools-dock:left' })
+    expect(b.docks).toEqual(['left'])
+    expect(a.docks).toEqual([])
+    // Closed and opened again at another dock, A names the new one.
+    a.view.openDevTools('toggle', 'bottom')
+    expect(a.closed()).toBe(1)
+    a.view.openDevTools('toggle', 'right')
     await settle()
-    const move = frontend.scripts.at(-1)!
-    expect(move).toContain('DockController')
-    expect(move).toContain('"right"')
-    expect(closed()).toBe(0)
-    expect(wc.devtoolsOpened).toHaveLength(1)
+    expect(a.openedAt).toEqual(['bottom', 'right'])
+    // The element picker opens at its dock and names it too.
+    const c = setup()
+    c.view.inspectElementAt(10, 20, 'left')
+    await settle()
+    expect(c.openedAt).toEqual(['left'])
+    // A move the menu asked for is the view's reading at once, before the frontend's read-back.
+    const d = setup()
+    d.view.openDevTools('toggle', 'bottom')
+    await settle()
+    d.view.setDevtoolsDock('right')
+    await settle()
+    // The frontend without the module: closed and reopened at the dock – the reopening names it.
+    d.wc.devToolsWebContents!.rejecting = 'DockController'
+    d.view.setDevtoolsDock('undocked')
+    await settle()
+    await settle()
+    expect(d.openedAt).toEqual(['bottom', 'undocked'])
+  })
 
-    // A frontend without the module: the toolbox is closed and reopened at the dock instead.
-    frontend.rejecting = 'DockController'
-    view.setDevtoolsDock('undocked')
-    await settle()
-    await settle()
-    expect(closed()).toBe(1)
-    expect(wc.devtoolsOpened.at(-1)).toEqual({ mode: 'undocked', activate: true })
-    expect(wc.isDevToolsOpened()).toBe(true)
+  it('moves an open toolbox through the frontend’s own dock controller, and reopens at the dock when the frontend cannot – with a line on the log naming the tab and the dock', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { view, wc, closed } = setup()
+      view.openDevTools('toggle', 'bottom')
+      await settle()
+      const frontend = wc.devToolsWebContents!
+      view.setDevtoolsDock('right')
+      await settle()
+      const move = frontend.scripts.at(-1)!
+      expect(move).toContain('DockController')
+      expect(move).toContain('"right"')
+      expect(closed()).toBe(0)
+      expect(wc.devtoolsOpened).toHaveLength(1)
+      // The happy path is silent: the frontend took the move.
+      expect(warn).not.toHaveBeenCalled()
 
-    // Nothing to move while the toolbox is closed.
-    const idle = setup()
-    idle.view.setDevtoolsDock('right')
-    expect(idle.wc.devtoolsOpened).toEqual([])
+      // A frontend without the module: the toolbox is closed and reopened at the dock instead,
+      // and the log says which tab's toolbox blinked, at which dock, and why.
+      frontend.rejecting = 'DockController'
+      view.setDevtoolsDock('undocked')
+      await settle()
+      await settle()
+      expect(closed()).toBe(1)
+      expect(wc.devtoolsOpened.at(-1)).toEqual({ mode: 'undocked', activate: true })
+      expect(wc.isDevToolsOpened()).toBe(true)
+      expect(warn).toHaveBeenCalledTimes(1)
+      const line = String(warn.mock.calls[0]![0])
+      expect(line).toContain('[zen] devtools:')
+      expect(line).toContain('tab_devtools')
+      expect(line).toContain('at undocked')
+      expect(line).toContain('module not found')
+
+      // Nothing to move while the toolbox is closed – and nothing on the log.
+      const idle = setup()
+      idle.view.setDevtoolsDock('right')
+      expect(idle.wc.devtoolsOpened).toEqual([])
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 
@@ -1241,6 +1306,161 @@ describe('ElectronTabView.snapshot', () => {
       expect(capture.encoded).toEqual([{ width: sw, height: sh, quality: 90 }])
       expect(sw * sh).toBeLessThanOrEqual(3_700_000)
     }
+  })
+
+  /*
+   * The docked toolbox's picture for the cover (§9.29, W5-5): the frontend's own `capturePage`
+   * – the whole box while the frontend has not said where the page's hole is – encoded as the
+   * page's is; nothing with no toolbox up or one undocked (a window of its own), and the page's
+   * own capture never stands in for it.
+   */
+  it('pictures a docked toolbox from its frontend, the whole box before the frontend has said where its hole is, and nothing with none docked in the frame', async () => {
+    const { view, wc } = tabView()
+    const page = fakeCapture(1200, 700)
+    Object.assign(wc, { capturePage: () => Promise.resolve(page.image) })
+    // Closed: nothing.
+    await expect(view.snapshotDevtools()).resolves.toBeNull()
+    for (const dock of ['bottom', 'right', 'left'] as const) {
+      view.openDevTools('toggle', dock)
+      const frontend = fakeCapture(1200, 1000)
+      const asked: unknown[] = []
+      Object.assign(wc.devToolsWebContents!, {
+        capturePage: (rect?: unknown) => {
+          asked.push(rect)
+          return Promise.resolve(frontend.image)
+        }
+      })
+      await expect(view.snapshotDevtools()).resolves.toBe(
+        `data:image/jpeg;base64,${Buffer.from('jpeg-1200x1000-90').toString('base64')}`
+      )
+      // No cut asked for: the view's box is not known here, let alone the hole in it.
+      expect(asked).toEqual([undefined])
+      expect(frontend.encoded).toEqual([{ width: 1200, height: 1000, quality: 90 }])
+      // The page's picture is its own capture still, untouched by the toolbox's.
+      await expect(view.snapshot()).resolves.toBe(
+        `data:image/jpeg;base64,${Buffer.from('jpeg-1200x700-90').toString('base64')}`
+      )
+      view.openDevTools('toggle', dock)
+    }
+    expect(page.encoded).toHaveLength(3)
+    // Undocked: a window of its own, nothing of it in the frame's box.
+    view.openDevTools('toggle', 'undocked')
+    Object.assign(wc.devToolsWebContents!, {
+      capturePage: () => Promise.resolve(fakeCapture(900, 600).image)
+    })
+    await expect(view.snapshotDevtools()).resolves.toBeNull()
+    // Docked again by its own button (the console read-back): pictured again.
+    await new Promise((r) => setImmediate(r))
+    wc.devToolsWebContents!.emit('console-message', { message: 'zenium-devtools-dock:bottom' })
+    await expect(view.snapshotDevtools()).resolves.toBe(
+      `data:image/jpeg;base64,${Buffer.from('jpeg-900x600-90').toString('base64')}`
+    )
+    // A frontend whose capture never comes: nothing, after the wait.
+    Object.assign(wc.devToolsWebContents!, { capturePage: () => new Promise(() => undefined) })
+    vi.useFakeTimers()
+    try {
+      const pending = view.snapshotDevtools()
+      await vi.advanceTimersByTimeAsync(600)
+      await expect(pending).resolves.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /*
+   * The cut to the toolbox's band (§9.5's budget): once the frontend has said where the page's
+   * hole is (`setInspectedPageBounds`, read back on its console), the picture is the
+   * frontend's `capturePage` of the part of the box beside the hole – under it for a bottom
+   * dock, right of it for a right dock, left of it for a left one – at the box's DIP; the page's
+   * hole, in the page's own picture already, is not pictured twice. A hole from another dock's
+   * layout makes no band, and a closed toolbox forgets its hole: the whole box again until the
+   * next frontend says.
+   */
+  it('cuts the picture to the toolbox’s band once the frontend has said where the page’s hole is, per dock, and forgets the hole with the toolbox', async () => {
+    const { view, wc } = tabView()
+    view.setBounds({ x: 0, y: 0, width: 1200, height: 1000 })
+    /** The frontend's `capturePage`, recording the rect it is asked for and painting that size. */
+    const frontendCapture = (): { asked: unknown[]; encoded: string[] } => {
+      const asked: unknown[] = []
+      const encoded: string[] = []
+      Object.assign(wc.devToolsWebContents!, {
+        capturePage: (rect?: { width: number; height: number }) => {
+          asked.push(rect)
+          const capture = rect ? fakeCapture(rect.width, rect.height) : fakeCapture(1200, 1000)
+          encoded.push(`${capture.image.getSize().width}x${capture.image.getSize().height}`)
+          return Promise.resolve(capture.image)
+        }
+      })
+      return { asked, encoded }
+    }
+    const jpeg = (w: number, h: number): string =>
+      `data:image/jpeg;base64,${Buffer.from(`jpeg-${w}x${h}-90`).toString('base64')}`
+
+    view.openDevTools('toggle', 'bottom')
+    // `devtools-opened` has followed: the host listens to the frontend's console.
+    await new Promise((r) => setImmediate(r))
+    const frontend = wc.devToolsWebContents!
+    let capture = frontendCapture()
+    // Before the frontend has said: the whole box.
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 1000))
+    expect(capture.asked).toEqual([undefined])
+    // The frontend lays the page out in the top 700 DIP: the band is the 300 under it.
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:0,0,1200,700' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 300))
+    expect(capture.asked).toEqual([{ x: 0, y: 700, width: 1200, height: 300 }])
+    // The split dragged: the band follows the last reading.
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:0,0,1200,550' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 450))
+    expect(capture.asked).toEqual([{ x: 0, y: 550, width: 1200, height: 450 }])
+
+    // Moved to the right by its own button: the bottom's hole makes no right band – the whole
+    // box until the frontend says the new hole – then the band right of the hole.
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:right' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 1000))
+    expect(capture.asked).toEqual([undefined])
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:0,0,800,1000' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(400, 1000))
+    expect(capture.asked).toEqual([{ x: 800, y: 0, width: 400, height: 1000 }])
+
+    // Moved to the left: the band left of the hole.
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:left' })
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:400,0,800,1000' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(400, 1000))
+    expect(capture.asked).toEqual([{ x: 0, y: 0, width: 400, height: 1000 }])
+
+    // The chrome lays the view out anew (the sidebar collapsed): the band is cut from the last
+    // reading against the new box – the frontend's own resize says the new hole a moment later.
+    view.setBounds({ x: 0, y: 0, width: 1500, height: 1000 })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(400, 1000))
+    expect(capture.asked).toEqual([{ x: 0, y: 0, width: 400, height: 1000 }])
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:500,0,1000,1000' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(500, 1000))
+    expect(capture.asked).toEqual([{ x: 0, y: 0, width: 500, height: 1000 }])
+
+    // Undocked: nothing of it in the frame, whatever the last hole said.
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:undocked' })
+    await expect(view.snapshotDevtools()).resolves.toBeNull()
+
+    // Closed and opened again: the hole went with the frontend – the whole box until the next
+    // frontend says where its own hole is.
+    view.openDevTools('toggle', 'bottom')
+    view.openDevTools('toggle', 'bottom')
+    await new Promise((r) => setImmediate(r))
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 1000))
+    expect(capture.asked).toEqual([undefined])
+    const reopened = wc.devToolsWebContents!
+    reopened.emit('console-message', { message: 'zenium-devtools-page-bounds:0,0,1500,600' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1500, 400))
+    expect(capture.asked).toEqual([{ x: 0, y: 600, width: 1500, height: 400 }])
   })
 })
 
