@@ -15,6 +15,16 @@
 #   SWEEP_LAST    – comma-separated extension ids to run after every other row (the driver's `last`;
 #                   uBlock Origin MV2 when unset)
 #   SWEEP_OUT     – artifact directory (default artifacts/android-ext-compat-sweep)
+#   HANG_SILENCE_S   – seconds the app's process may stand silent in logcat while the guest logs
+#                      before its stacks are taken (dump_hang below; default 300)
+#   GUEST_SILENCE_S  – seconds the guest's whole logcat may stand still, qemu up and the guest not
+#                      answering adb, before the emulator's HOST side is captured (dump_host: the
+#                      qemu process's threads and their stacks) and, on a second sample, the driver
+#                      ended so the rows before keep their reading; unset: never (the sweeps). The
+#                      same host capture then joins dump_hang. A single-row lane sets it.
+#   GFXINFO_EVERY_S  – `dumpsys gfxinfo` of the app every that many seconds into
+#                      gfxinfo-samples.txt (the render pipeline's own account up to the last
+#                      seconds before a death); unset: never
 #
 # Handshake with the driver, through files in the app's private storage (via run-as):
 #   files/ext-compat-sweep/record     – written by the driver once its warm-up is done
@@ -81,6 +91,23 @@ monitor_pid=$!
   done
 ) &
 memory_pid=$!
+
+# The app's own render statistics every GFXINFO_EVERY_S seconds (unset: never): what the pipeline
+# did in the seconds before a death that leaves the guest silent. Bounded, as a hung main thread
+# answers no dump.
+gfxinfo_pid=
+if [ "${GFXINFO_EVERY_S:-0}" -gt 0 ]; then
+  (
+    while true; do
+      {
+        echo "=== $(date +%T)"
+        timeout 30 adb shell dumpsys gfxinfo "$app_id" 2>&1 || echo "(no answer)"
+      } >> "$out/gfxinfo-samples.txt"
+      sleep "$GFXINFO_EVERY_S"
+    done
+  ) &
+  gfxinfo_pid=$!
+fi
 
 # The fixture pages, served from the runner; the emulator's host loopback is 10.0.2.2. The
 # server is http.server plus `/echo-headers` (the request headers as the server received them)
@@ -178,7 +205,10 @@ note_emulator_death() {
   if [ "$(timeout 30 adb get-state 2> /dev/null || true)" != "device" ] || [ "$(timeout 30 adb shell echo alive 2> /dev/null | tr -d '\r' || true)" != "alive" ]; then
     {
       echo "adb lost the device before the driver was done ($(date +%T))"
+      if [ -f "$out/guest-frozen" ]; then cat "$out/guest-frozen"; fi
       echo "== emulator process: $(pgrep -f qemu-system-x86_64 || echo gone)"
+      # Its host side while it still stood, when a single-row lane took it (dump_host).
+      ls "$out"/host-emulator-*.txt 2> /dev/null | sed 's|^|== host side captured: |' || true
       echo "== host monitor, last lines"
       tail -n 12 "$out/host-monitor.txt" 2> /dev/null || true
       echo "== host kernel log"
@@ -235,6 +265,61 @@ note_emulator_death() {
 # the shared workflow turns into the output the second boot keys on (the emulator itself is up).
 hang_silence_s=${HANG_SILENCE_S:-300}
 hung=0
+
+# The host side of the emulator while it is still up: the qemu process's threads (state, CPU,
+# kernel wait channel) and their user stacks – gdb when the runner has it, eu-stack otherwise,
+# the kernel stacks from /proc when neither. Round 16's two deaths under one row left this side
+# dark: in the first the guest's render thread stood in the pipe read waiting for the host
+# renderer's reply (rcCreateSyncKHR) with the guest otherwise up, in the second the guest froze
+# and qemu left three minutes later with nothing said (no crash line, no hang-detector line, no
+# host kernel line, an empty crash database), so whether a host renderer thread (ANGLE,
+# SwiftShader, libOpenglRender) or the guest's own WebView holds the row is read here. Taken
+# only under GUEST_SILENCE_S (a single-row lane); the sweeps never attach to the emulator.
+dump_host() {
+  local label=$1 file="$out/host-emulator-$1.txt" pid task
+  pid=$(pgrep -f '/qemu-system-x86_64 ' 2> /dev/null | head -n 1 || true)
+  {
+    echo "the host side of the emulator at $(date +%T) ($label)"
+    if [ -z "$pid" ]; then
+      echo "qemu-system-x86_64: no process"
+    else
+      echo "== /proc/$pid/status"
+      grep -E '^(State|VmRSS|VmSwap|Threads|voluntary_ctxt_switches|nonvoluntary_ctxt_switches)' "/proc/$pid/status" 2> /dev/null || true
+      echo "== threads: tid, %cpu, state, kernel wait channel, name"
+      ps -L -o tid=,pcpu=,stat=,wchan:32=,comm= -p "$pid" 2> /dev/null || true
+      echo "== user stacks"
+      if command -v gdb > /dev/null 2>&1; then
+        timeout 300 sudo env DEBUGINFOD_URLS= gdb -p "$pid" -batch -ex 'set pagination off' -ex 'thread apply all bt 16' 2>&1 \
+          | grep -vE '^\[New LWP|^\[Thread debugging|^Using host libthread_db|^warning: |^Reading symbols|^Download' || echo "gdb did not answer"
+      elif command -v eu-stack > /dev/null 2>&1; then
+        timeout 300 sudo eu-stack -p "$pid" 2>&1 || echo "eu-stack did not answer"
+      else
+        echo "(neither gdb nor eu-stack on the runner: the kernel stacks)"
+        for task in /proc/"$pid"/task/*; do
+          echo "-- tid ${task##*/} $(cat "$task/comm" 2> /dev/null) state=$(awk '/^State/ {print $2}' "$task/status" 2> /dev/null) wchan=$(cat "$task/wchan" 2> /dev/null) syscall=$(sudo cat "$task/syscall" 2> /dev/null | cut -d' ' -f1)"
+          sudo cat "$task/stack" 2> /dev/null || true
+        done
+      fi
+    fi
+    echo "== adb"
+    timeout 20 adb devices 2>&1 || true
+    echo "guest answers: $(timeout 20 adb shell echo alive 2> /dev/null | tr -d '\r' || echo no)"
+    echo "== host memory"
+    free -m | sed -n '1,2p'
+    echo "== host kernel log, last lines"
+    sudo dmesg 2> /dev/null | tail -n 12 || true
+    echo "== driver, last lines"
+    grep -E 'I/CompatSweep' "$out/logcat.txt" 2> /dev/null | tail -n 4 | cut -c1-240 || true
+    echo "== guest logcat, last lines"
+    tail -n 4 "$out/logcat.txt" 2> /dev/null | cut -c1-200 || true
+  } > "$file" 2>&1
+  echo "the emulator's host side written to $(basename "$file")"
+}
+guest_silence_s=${GUEST_SILENCE_S:-0}
+logcat_size=0
+logcat_still=0
+frozen_samples=0
+frozen_tick=0
 logcat_epoch() {
   # "MM-DD hh:mm:ss.mmm" (logcat -v time) to seconds; the year is the host's.
   date -d "$(date +%Y)-${1:0:5} ${1:6:12}" +%s 2> /dev/null || echo 0
@@ -275,6 +360,8 @@ dump_hang() {
   else
     echo "== adb root refused; ART's trace stays in /data/anr on the device, the driver's own dump (hang-main-thread-*.txt) is what the artifact holds" >> "$out/app-hung"
   fi
+  # The other end of a render thread's pipe wait: the host renderer, while the app still stands.
+  if [ "$guest_silence_s" -gt 0 ]; then dump_host app-hung >> "$out/app-hung" 2>&1; fi
   echo "== the app stopped so the driver ends and the second boot grades the rows left ($(date +%T))" >> "$out/app-hung"
   timeout 30 adb shell am force-stop "$app_id" || true
   echo "the app hung under the driver (the emulator itself up): see app-hung and hang-*.txt ($(date +%T))" > "$out/emulator-died"
@@ -321,7 +408,7 @@ if [ "$ready" -ne 1 ]; then
   cat "$out/instrument.txt" || true
   collect
   sleep 2
-  kill "$logcat_pid" "$monitor_pid" "$http_pid" "$memory_pid" 2> /dev/null || true
+  kill "$logcat_pid" "$monitor_pid" "$http_pid" "$memory_pid" ${gfxinfo_pid:+"$gfxinfo_pid"} 2> /dev/null || true
   fail "the sweep driver never reached its handshake"
 fi
 adb shell run-as "$app_id" touch files/ext-compat-sweep/recording
@@ -343,6 +430,37 @@ while kill -0 "$driver_pid" 2> /dev/null; do
     seen=$rows
     pull_new
   fi
+  # A guest gone silent as a whole (GUEST_SILENCE_S set): the logcat file standing still that long
+  # with qemu up and the guest not answering adb – boot 2 of round 16's before run, where the
+  # guest froze at a row's first paint and qemu stood three minutes more before it left – has the
+  # emulator's host side captured twice, 30 s apart (a stack that does not move is a hang, one
+  # that does is slowness), and the driver ended after the second so the run reaches collect
+  # and the artifact instead of the job's cap; note_emulator_death then records the loss as
+  # today. A guest that still answers adb is merely quiet, and the run goes on.
+  if [ "$guest_silence_s" -gt 0 ] && [ "$frozen_samples" -lt 2 ]; then
+    size=$(stat -c %s "$out/logcat.txt" 2> /dev/null || echo 0)
+    if [ "$size" != "$logcat_size" ]; then
+      logcat_size=$size
+      logcat_still=0
+    else
+      logcat_still=$((logcat_still + 5))
+    fi
+    if [ "$logcat_still" -ge "$guest_silence_s" ] && [ $((tick - frozen_tick)) -ge 6 ] && pgrep -f qemu-system-x86_64 > /dev/null 2>&1; then
+      frozen_tick=$tick
+      if [ "$(timeout 20 adb shell echo alive 2> /dev/null | tr -d '\r' || true)" = alive ]; then
+        echo "the guest's logcat stood still for ${logcat_still}s but the guest answers adb; carrying on ($(date +%T))"
+        logcat_still=0
+      else
+        frozen_samples=$((frozen_samples + 1))
+        echo "::warning::the guest's logcat stood still for ${logcat_still}s and the guest does not answer adb, qemu up: the emulator's host side captured (sample $frozen_samples of 2, $(date +%T))"
+        dump_host "frozen-$frozen_samples"
+        if [ "$frozen_samples" -ge 2 ]; then
+          echo "the guest frozen under the driver at $(date +%T) (the emulator's process up, the guest silent for ${logcat_still}s and not answering adb; the host side in host-emulator-frozen-*.txt): the driver ended here" > "$out/guest-frozen"
+          kill "$driver_pid" 2> /dev/null || true
+        fi
+      fi
+    fi
+  fi
   if [ $((tick % 6)) -ne 0 ]; then continue; fi
   if timeout 60 adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
   if [ "$hung" -eq 0 ]; then
@@ -357,7 +475,7 @@ while kill -0 "$driver_pid" 2> /dev/null; do
 done
 wait "$driver_pid" || true
 sleep 2
-kill "$logcat_pid" "$monitor_pid" "$http_pid" "$memory_pid" 2> /dev/null || true
+kill "$logcat_pid" "$monitor_pid" "$http_pid" "$memory_pid" ${gfxinfo_pid:+"$gfxinfo_pid"} 2> /dev/null || true
 
 note_emulator_death
 collect

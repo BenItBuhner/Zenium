@@ -20,6 +20,16 @@ name: TEMPORARY - compat round 16 sweep and frame budget trigger
 #     fixtures), for a runtime change read on its own without the whole sweep.
 #   - `[proof]` in the commit message: the two sweep jobs over the proof row alone (round 15's 5.11
 #     fixture extensions, this round's IP-literal mixed-content observation read on both WebViews).
+#   - the AdGuard VPN row (hhdobjgo…, rank 363) runs in a lane of its own on both WebViews, out of
+#     the sweeps' lists, with `[sweep]` (beside the sweeps, so a death there costs no other row) or
+#     alone with `[adguard]`: the round's two BEFORE attempts on 113 both took the lane down at the
+#     row's first painted document (boot 1: the app hung with its render thread in the pipe read
+#     waiting for the host renderer's reply, the guest up; boot 2: the guest froze at consent.html's
+#     paint and qemu stood three minutes more, then left with nothing said). The lane captures the
+#     emulator's host side while it still stands (the sweep script's GUEST_SILENCE_S: the qemu
+#     process's threads and stacks; the same inside its app-hang capture, HANG_SILENCE_S shortened),
+#     samples the app's gfxinfo, and puts the guest kernel's console in the job log (-show-kernel);
+#     whether the emulator's renderer or the guest's WebView dies under the row is read off it.
 # A sweep whose emulator went away under the driver (the shared workflow's `emulator-died`: qemu
 # gone or the guest frozen, or the runner action's SDK download coming down broken) boots once more
 # and sweeps the rows the first boot did not grade (read off the results.json the sweep script pulls
@@ -47,7 +57,7 @@ jobs:
       artifact-name: android-ext-compat-sweep
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=kjacjjdnoddnpbbcjilcajfhhbdhkpgk,pbanhockgagggenencehbnadejlgchfc,hhdobjgopfphlmjbmnpglhfcgppchgje,mfpiaehgjbbfednooihadalhehabhcjo,ipdjnhgkpapgippgcgkfcbpdpcgifncb,adlpodnneegcnbophopdmhedicjbcgco,mjjgmlmpeaikcaajghilhnioimmaibon,kmhkepipobnjllejbafajoemahjejdcm,nhocmlminaplaendbabmoemehbpgdemn,kdfieneakcjfaiglcfcgkidlkmlijjnh,iabeihobmhlgpkcgjiloemdbofjbdcic,pdnenlnelpdomajfejgapbdpmjkfpjkp,fedoeoceggohfajbhbadkfhgckjkieop,lpofefdiokgmcdnnaigddelnfamkkghi,cgdjpilhipecahhcilnafpblkieebhea,blillmbchncajnhkjfdnincfndboieik,noondiphcddnnabmjcihcjfbhfklnnep,ofgdcdohlhjfdhbnfkikfeakhpojhpgm,gfbepnlhpkbgbkcebjnfhgjckibfdfkc,kgobeoibakoahbfnlficpmibdbkdchap,jjfblogammkiefalfpafidabbnamoknm,nbmoafcmbajniiapeidgficgifbfmjfo,lnbmbgocenenhhhdojdielgnmeflbnfb,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,lkhdihmnnmnmpibnadlgjfmalbaoenem,nenibigflkdikhamlnekfppbganmojlg,aomkpefnllinimbhddlfhelelngakbbn,hpijlohoihegkfehhibggnkbjhoemldh,jmekfmbnaedfebfnmakmokmlfpblbfdm,lppmekppnliemjclknbagdhoocikieoi,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,bcocdbombenodlegijagbhdjbifpiijp,aejoelaoggembcahagimdiliamlcdmfm,nbdedfhlakcdbjeepmdkbbobcmgcbeid,ojplmecpdpgccookcobabopnaifgidhf,emalgedpdlghbkikiaeocoblajamonoh,gcknhkkoolaabfmlnjonogaaifnjlfnp,gcalenpjmijncebpfijmoaglllgpjagf,kjchkpkjpiloipaonppkmepcbhcncedo,mpiodijhokgodhhofbcjdecpffjipkle,pnjaodmkngahhkoihejjehlcdlnohgmp,igkinnldjpikoggonflimiaamlmehcig
+        SWEEP_ONLY=kjacjjdnoddnpbbcjilcajfhhbdhkpgk,pbanhockgagggenencehbnadejlgchfc,mfpiaehgjbbfednooihadalhehabhcjo,ipdjnhgkpapgippgcgkfcbpdpcgifncb,adlpodnneegcnbophopdmhedicjbcgco,mjjgmlmpeaikcaajghilhnioimmaibon,kmhkepipobnjllejbafajoemahjejdcm,nhocmlminaplaendbabmoemehbpgdemn,kdfieneakcjfaiglcfcgkidlkmlijjnh,iabeihobmhlgpkcgjiloemdbofjbdcic,pdnenlnelpdomajfejgapbdpmjkfpjkp,fedoeoceggohfajbhbadkfhgckjkieop,lpofefdiokgmcdnnaigddelnfamkkghi,cgdjpilhipecahhcilnafpblkieebhea,blillmbchncajnhkjfdnincfndboieik,noondiphcddnnabmjcihcjfbhfklnnep,ofgdcdohlhjfdhbnfkikfeakhpojhpgm,gfbepnlhpkbgbkcebjnfhgjckibfdfkc,kgobeoibakoahbfnlficpmibdbkdchap,jjfblogammkiefalfpafidabbnamoknm,nbmoafcmbajniiapeidgficgifbfmjfo,lnbmbgocenenhhhdojdielgnmeflbnfb,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,lkhdihmnnmnmpibnadlgjfmalbaoenem,nenibigflkdikhamlnekfppbganmojlg,aomkpefnllinimbhddlfhelelngakbbn,hpijlohoihegkfehhibggnkbjhoemldh,jmekfmbnaedfebfnmakmokmlfpblbfdm,lppmekppnliemjclknbagdhoocikieoi,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,bcocdbombenodlegijagbhdjbifpiijp,aejoelaoggembcahagimdiliamlcdmfm,nbdedfhlakcdbjeepmdkbbobcmgcbeid,ojplmecpdpgccookcobabopnaifgidhf,emalgedpdlghbkikiaeocoblajamonoh,gcknhkkoolaabfmlnjonogaaifnjlfnp,gcalenpjmijncebpfijmoaglllgpjagf,kjchkpkjpiloipaonppkmepcbhcncedo,mpiodijhokgodhhofbcjdecpffjipkle,pnjaodmkngahhkoihejjehlcdlnohgmp,igkinnldjpikoggonflimiaamlmehcig
         SWEEP_LAST=
       timeout-minutes: 150
 
@@ -64,7 +74,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=kjacjjdnoddnpbbcjilcajfhhbdhkpgk,pbanhockgagggenencehbnadejlgchfc,hhdobjgopfphlmjbmnpglhfcgppchgje,mfpiaehgjbbfednooihadalhehabhcjo,ipdjnhgkpapgippgcgkfcbpdpcgifncb,adlpodnneegcnbophopdmhedicjbcgco,mjjgmlmpeaikcaajghilhnioimmaibon,kmhkepipobnjllejbafajoemahjejdcm,nhocmlminaplaendbabmoemehbpgdemn,kdfieneakcjfaiglcfcgkidlkmlijjnh,iabeihobmhlgpkcgjiloemdbofjbdcic,pdnenlnelpdomajfejgapbdpmjkfpjkp,fedoeoceggohfajbhbadkfhgckjkieop,lpofefdiokgmcdnnaigddelnfamkkghi,cgdjpilhipecahhcilnafpblkieebhea,blillmbchncajnhkjfdnincfndboieik,noondiphcddnnabmjcihcjfbhfklnnep,ofgdcdohlhjfdhbnfkikfeakhpojhpgm,gfbepnlhpkbgbkcebjnfhgjckibfdfkc,kgobeoibakoahbfnlficpmibdbkdchap,jjfblogammkiefalfpafidabbnamoknm,nbmoafcmbajniiapeidgficgifbfmjfo,lnbmbgocenenhhhdojdielgnmeflbnfb,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,lkhdihmnnmnmpibnadlgjfmalbaoenem,nenibigflkdikhamlnekfppbganmojlg,aomkpefnllinimbhddlfhelelngakbbn,hpijlohoihegkfehhibggnkbjhoemldh,jmekfmbnaedfebfnmakmokmlfpblbfdm,lppmekppnliemjclknbagdhoocikieoi,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,bcocdbombenodlegijagbhdjbifpiijp,aejoelaoggembcahagimdiliamlcdmfm,nbdedfhlakcdbjeepmdkbbobcmgcbeid,ojplmecpdpgccookcobabopnaifgidhf,emalgedpdlghbkikiaeocoblajamonoh,gcknhkkoolaabfmlnjonogaaifnjlfnp,gcalenpjmijncebpfijmoaglllgpjagf,kjchkpkjpiloipaonppkmepcbhcncedo,mpiodijhokgodhhofbcjdecpffjipkle,pnjaodmkngahhkoihejjehlcdlnohgmp,igkinnldjpikoggonflimiaamlmehcig
+        SWEEP_ONLY=kjacjjdnoddnpbbcjilcajfhhbdhkpgk,pbanhockgagggenencehbnadejlgchfc,mfpiaehgjbbfednooihadalhehabhcjo,ipdjnhgkpapgippgcgkfcbpdpcgifncb,adlpodnneegcnbophopdmhedicjbcgco,mjjgmlmpeaikcaajghilhnioimmaibon,kmhkepipobnjllejbafajoemahjejdcm,nhocmlminaplaendbabmoemehbpgdemn,kdfieneakcjfaiglcfcgkidlkmlijjnh,iabeihobmhlgpkcgjiloemdbofjbdcic,pdnenlnelpdomajfejgapbdpmjkfpjkp,fedoeoceggohfajbhbadkfhgckjkieop,lpofefdiokgmcdnnaigddelnfamkkghi,cgdjpilhipecahhcilnafpblkieebhea,blillmbchncajnhkjfdnincfndboieik,noondiphcddnnabmjcihcjfbhfklnnep,ofgdcdohlhjfdhbnfkikfeakhpojhpgm,gfbepnlhpkbgbkcebjnfhgjckibfdfkc,kgobeoibakoahbfnlficpmibdbkdchap,jjfblogammkiefalfpafidabbnamoknm,nbmoafcmbajniiapeidgficgifbfmjfo,lnbmbgocenenhhhdojdielgnmeflbnfb,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,lkhdihmnnmnmpibnadlgjfmalbaoenem,nenibigflkdikhamlnekfppbganmojlg,aomkpefnllinimbhddlfhelelngakbbn,hpijlohoihegkfehhibggnkbjhoemldh,jmekfmbnaedfebfnmakmokmlfpblbfdm,lppmekppnliemjclknbagdhoocikieoi,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,bcocdbombenodlegijagbhdjbifpiijp,aejoelaoggembcahagimdiliamlcdmfm,nbdedfhlakcdbjeepmdkbbobcmgcbeid,ojplmecpdpgccookcobabopnaifgidhf,emalgedpdlghbkikiaeocoblajamonoh,gcknhkkoolaabfmlnjonogaaifnjlfnp,gcalenpjmijncebpfijmoaglllgpjagf,kjchkpkjpiloipaonppkmepcbhcncedo,mpiodijhokgodhhofbcjdecpffjipkle,pnjaodmkngahhkoihejjehlcdlnohgmp,igkinnldjpikoggonflimiaamlmehcig
         SWEEP_LAST=
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
@@ -103,7 +113,7 @@ jobs:
           DIED: ${{ needs.system-webview.outputs.emulator-died }}
           FAILED: ${{ needs.system-webview.result == 'failure' }}
           LAST_IDS: ""
-          ALL_IDS: kjacjjdnoddnpbbcjilcajfhhbdhkpgk,pbanhockgagggenencehbnadejlgchfc,hhdobjgopfphlmjbmnpglhfcgppchgje,mfpiaehgjbbfednooihadalhehabhcjo,ipdjnhgkpapgippgcgkfcbpdpcgifncb,adlpodnneegcnbophopdmhedicjbcgco,mjjgmlmpeaikcaajghilhnioimmaibon,kmhkepipobnjllejbafajoemahjejdcm,nhocmlminaplaendbabmoemehbpgdemn,kdfieneakcjfaiglcfcgkidlkmlijjnh,iabeihobmhlgpkcgjiloemdbofjbdcic,pdnenlnelpdomajfejgapbdpmjkfpjkp,fedoeoceggohfajbhbadkfhgckjkieop,lpofefdiokgmcdnnaigddelnfamkkghi,cgdjpilhipecahhcilnafpblkieebhea,blillmbchncajnhkjfdnincfndboieik,noondiphcddnnabmjcihcjfbhfklnnep,ofgdcdohlhjfdhbnfkikfeakhpojhpgm,gfbepnlhpkbgbkcebjnfhgjckibfdfkc,kgobeoibakoahbfnlficpmibdbkdchap,jjfblogammkiefalfpafidabbnamoknm,nbmoafcmbajniiapeidgficgifbfmjfo,lnbmbgocenenhhhdojdielgnmeflbnfb,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,lkhdihmnnmnmpibnadlgjfmalbaoenem,nenibigflkdikhamlnekfppbganmojlg,aomkpefnllinimbhddlfhelelngakbbn,hpijlohoihegkfehhibggnkbjhoemldh,jmekfmbnaedfebfnmakmokmlfpblbfdm,lppmekppnliemjclknbagdhoocikieoi,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,bcocdbombenodlegijagbhdjbifpiijp,aejoelaoggembcahagimdiliamlcdmfm,nbdedfhlakcdbjeepmdkbbobcmgcbeid,ojplmecpdpgccookcobabopnaifgidhf,emalgedpdlghbkikiaeocoblajamonoh,gcknhkkoolaabfmlnjonogaaifnjlfnp,gcalenpjmijncebpfijmoaglllgpjagf,kjchkpkjpiloipaonppkmepcbhcncedo,mpiodijhokgodhhofbcjdecpffjipkle,pnjaodmkngahhkoihejjehlcdlnohgmp,igkinnldjpikoggonflimiaamlmehcig
+          ALL_IDS: kjacjjdnoddnpbbcjilcajfhhbdhkpgk,pbanhockgagggenencehbnadejlgchfc,mfpiaehgjbbfednooihadalhehabhcjo,ipdjnhgkpapgippgcgkfcbpdpcgifncb,adlpodnneegcnbophopdmhedicjbcgco,mjjgmlmpeaikcaajghilhnioimmaibon,kmhkepipobnjllejbafajoemahjejdcm,nhocmlminaplaendbabmoemehbpgdemn,kdfieneakcjfaiglcfcgkidlkmlijjnh,iabeihobmhlgpkcgjiloemdbofjbdcic,pdnenlnelpdomajfejgapbdpmjkfpjkp,fedoeoceggohfajbhbadkfhgckjkieop,lpofefdiokgmcdnnaigddelnfamkkghi,cgdjpilhipecahhcilnafpblkieebhea,blillmbchncajnhkjfdnincfndboieik,noondiphcddnnabmjcihcjfbhfklnnep,ofgdcdohlhjfdhbnfkikfeakhpojhpgm,gfbepnlhpkbgbkcebjnfhgjckibfdfkc,kgobeoibakoahbfnlficpmibdbkdchap,jjfblogammkiefalfpafidabbnamoknm,nbmoafcmbajniiapeidgficgifbfmjfo,lnbmbgocenenhhhdojdielgnmeflbnfb,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,lkhdihmnnmnmpibnadlgjfmalbaoenem,nenibigflkdikhamlnekfppbganmojlg,aomkpefnllinimbhddlfhelelngakbbn,hpijlohoihegkfehhibggnkbjhoemldh,jmekfmbnaedfebfnmakmokmlfpblbfdm,lppmekppnliemjclknbagdhoocikieoi,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,bcocdbombenodlegijagbhdjbifpiijp,aejoelaoggembcahagimdiliamlcdmfm,nbdedfhlakcdbjeepmdkbbobcmgcbeid,ojplmecpdpgccookcobabopnaifgidhf,emalgedpdlghbkikiaeocoblajamonoh,gcknhkkoolaabfmlnjonogaaifnjlfnp,gcalenpjmijncebpfijmoaglllgpjagf,kjchkpkjpiloipaonppkmepcbhcncedo,mpiodijhokgodhhofbcjdecpffjipkle,pnjaodmkngahhkoihejjehlcdlnohgmp,igkinnldjpikoggonflimiaamlmehcig
         run: node .github/scripts/ext-compat-rows-left.mjs first/results.json >> "$GITHUB_OUTPUT"
       - run: cat "$GITHUB_OUTPUT"
 
@@ -142,7 +152,7 @@ jobs:
           DIED: ${{ needs.modern-webview.outputs.emulator-died }}
           FAILED: ${{ needs.modern-webview.result == 'failure' }}
           LAST_IDS: ""
-          ALL_IDS: kjacjjdnoddnpbbcjilcajfhhbdhkpgk,pbanhockgagggenencehbnadejlgchfc,hhdobjgopfphlmjbmnpglhfcgppchgje,mfpiaehgjbbfednooihadalhehabhcjo,ipdjnhgkpapgippgcgkfcbpdpcgifncb,adlpodnneegcnbophopdmhedicjbcgco,mjjgmlmpeaikcaajghilhnioimmaibon,kmhkepipobnjllejbafajoemahjejdcm,nhocmlminaplaendbabmoemehbpgdemn,kdfieneakcjfaiglcfcgkidlkmlijjnh,iabeihobmhlgpkcgjiloemdbofjbdcic,pdnenlnelpdomajfejgapbdpmjkfpjkp,fedoeoceggohfajbhbadkfhgckjkieop,lpofefdiokgmcdnnaigddelnfamkkghi,cgdjpilhipecahhcilnafpblkieebhea,blillmbchncajnhkjfdnincfndboieik,noondiphcddnnabmjcihcjfbhfklnnep,ofgdcdohlhjfdhbnfkikfeakhpojhpgm,gfbepnlhpkbgbkcebjnfhgjckibfdfkc,kgobeoibakoahbfnlficpmibdbkdchap,jjfblogammkiefalfpafidabbnamoknm,nbmoafcmbajniiapeidgficgifbfmjfo,lnbmbgocenenhhhdojdielgnmeflbnfb,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,lkhdihmnnmnmpibnadlgjfmalbaoenem,nenibigflkdikhamlnekfppbganmojlg,aomkpefnllinimbhddlfhelelngakbbn,hpijlohoihegkfehhibggnkbjhoemldh,jmekfmbnaedfebfnmakmokmlfpblbfdm,lppmekppnliemjclknbagdhoocikieoi,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,bcocdbombenodlegijagbhdjbifpiijp,aejoelaoggembcahagimdiliamlcdmfm,nbdedfhlakcdbjeepmdkbbobcmgcbeid,ojplmecpdpgccookcobabopnaifgidhf,emalgedpdlghbkikiaeocoblajamonoh,gcknhkkoolaabfmlnjonogaaifnjlfnp,gcalenpjmijncebpfijmoaglllgpjagf,kjchkpkjpiloipaonppkmepcbhcncedo,mpiodijhokgodhhofbcjdecpffjipkle,pnjaodmkngahhkoihejjehlcdlnohgmp,igkinnldjpikoggonflimiaamlmehcig
+          ALL_IDS: kjacjjdnoddnpbbcjilcajfhhbdhkpgk,pbanhockgagggenencehbnadejlgchfc,mfpiaehgjbbfednooihadalhehabhcjo,ipdjnhgkpapgippgcgkfcbpdpcgifncb,adlpodnneegcnbophopdmhedicjbcgco,mjjgmlmpeaikcaajghilhnioimmaibon,kmhkepipobnjllejbafajoemahjejdcm,nhocmlminaplaendbabmoemehbpgdemn,kdfieneakcjfaiglcfcgkidlkmlijjnh,iabeihobmhlgpkcgjiloemdbofjbdcic,pdnenlnelpdomajfejgapbdpmjkfpjkp,fedoeoceggohfajbhbadkfhgckjkieop,lpofefdiokgmcdnnaigddelnfamkkghi,cgdjpilhipecahhcilnafpblkieebhea,blillmbchncajnhkjfdnincfndboieik,noondiphcddnnabmjcihcjfbhfklnnep,ofgdcdohlhjfdhbnfkikfeakhpojhpgm,gfbepnlhpkbgbkcebjnfhgjckibfdfkc,kgobeoibakoahbfnlficpmibdbkdchap,jjfblogammkiefalfpafidabbnamoknm,nbmoafcmbajniiapeidgficgifbfmjfo,lnbmbgocenenhhhdojdielgnmeflbnfb,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,lkhdihmnnmnmpibnadlgjfmalbaoenem,nenibigflkdikhamlnekfppbganmojlg,aomkpefnllinimbhddlfhelelngakbbn,hpijlohoihegkfehhibggnkbjhoemldh,jmekfmbnaedfebfnmakmokmlfpblbfdm,lppmekppnliemjclknbagdhoocikieoi,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,bcocdbombenodlegijagbhdjbifpiijp,aejoelaoggembcahagimdiliamlcdmfm,nbdedfhlakcdbjeepmdkbbobcmgcbeid,ojplmecpdpgccookcobabopnaifgidhf,emalgedpdlghbkikiaeocoblajamonoh,gcknhkkoolaabfmlnjonogaaifnjlfnp,gcalenpjmijncebpfijmoaglllgpjagf,kjchkpkjpiloipaonppkmepcbhcncedo,mpiodijhokgodhhofbcjdecpffjipkle,pnjaodmkngahhkoihejjehlcdlnohgmp,igkinnldjpikoggonflimiaamlmehcig
         run: node .github/scripts/ext-compat-rows-left.mjs first/results.json >> "$GITHUB_OUTPUT"
       - run: cat "$GITHUB_OUTPUT"
 
@@ -174,6 +184,68 @@ jobs:
         unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
         ls -la artifacts/webview
       timeout-minutes: 150
+
+  # The AdGuard VPN row alone (see the header): its own job on each WebView, the emulator's host
+  # side captured while it stands. gdb (and elfutils' eu-stack) for the host stacks, best effort:
+  # without them the script keeps the kernel stacks from /proc.
+  adguard-system-webview:
+    if: contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[adguard]')
+    name: The AdGuard VPN row alone (the emulator's host side captured) - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-adguard
+      artifact-path: artifacts/android-ext-compat-sweep/
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      script-env: |
+        SWEEP_ONLY=hhdobjgopfphlmjbmnpglhfcgppchgje
+        SWEEP_LAST=
+        HANG_SILENCE_S=150
+        GUEST_SILENCE_S=120
+        GFXINFO_EVERY_S=10
+      setup-script: |
+        if ! timeout 300 sudo apt-get install -y --no-install-recommends gdb elfutils > /tmp/apt-gdb.txt 2>&1; then
+          (sudo apt-get update -qq && timeout 300 sudo apt-get install -y --no-install-recommends gdb elfutils) > /tmp/apt-gdb.txt 2>&1 \
+            || echo "::warning::gdb did not install; the emulator's host stacks fall back to /proc ($(tail -n 2 /tmp/apt-gdb.txt | tr '\n' ' '))"
+        fi
+        command -v gdb eu-stack || true
+      timeout-minutes: 45
+
+  adguard-modern-webview:
+    if: contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[adguard]')
+    name: The AdGuard VPN row alone (the emulator's host side captured) - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-adguard-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system -show-kernel
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=hhdobjgopfphlmjbmnpglhfcgppchgje
+        SWEEP_LAST=
+        HANG_SILENCE_S=150
+        GUEST_SILENCE_S=120
+        GFXINFO_EVERY_S=10
+      setup-script: |
+        if ! timeout 300 sudo apt-get install -y --no-install-recommends gdb elfutils > /tmp/apt-gdb.txt 2>&1; then
+          (sudo apt-get update -qq && timeout 300 sudo apt-get install -y --no-install-recommends gdb elfutils) > /tmp/apt-gdb.txt 2>&1 \
+            || echo "::warning::gdb did not install; the emulator's host stacks fall back to /proc ($(tail -n 2 /tmp/apt-gdb.txt | tr '\n' ' '))"
+        fi
+        command -v gdb eu-stack || true
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 45
 
   sniff-system-webview:
     if: contains(github.event.head_commit.message, '[sniff]')
