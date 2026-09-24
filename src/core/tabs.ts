@@ -100,6 +100,17 @@ export type { PageFlags } from './platform'
 /** Hidden pages kept awake when memory runs low (`unloadForMemoryPressure`): the recent few. */
 export const KEEP_UNDER_PRESSURE = 3
 
+/**
+ * The favicon a new bookmark takes from the tab it is made from: none from a private tab. A
+ * private window bookmarks into the profile's store as Chrome's Incognito does (bookmarks-43),
+ * but writes nothing of the visit – the favicon backfill already skips private tabs
+ * (`updateFavicon`), and the star, Ctrl+D and a tab dropped on another window's bar must not
+ * slip the icon in by the other door.
+ */
+export function bookmarkFaviconOf(tab: Tab, isPrivate: boolean): string | null {
+  return isPrivate ? null : tab.favicon
+}
+
 /** Where the keyboard goes after a tab is activated or closed (`tab.activate` / `tab.close`). */
 export interface TabFocusOptions {
   /** The keyboard stays in the chrome (the tab strip) instead of moving into the page. */
@@ -2781,7 +2792,7 @@ export class TabManager {
           index: drop.index ?? undefined,
           title: tab.customTitle ?? tab.title,
           url: tab.url,
-          favicon: tab.favicon,
+          favicon: bookmarkFaviconOf(tab, this.isPrivate(tab)),
           type: 'url'
         })
         return true
