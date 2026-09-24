@@ -107,7 +107,8 @@ class WebRequestTest {
         val tab = FakeTab(tabId = "tab-9", containerId = "work")
         run(registry, "https://cdn.example/pixel.png", tab, requestHeaders = mapOf("Accept" to "image/avif,image/webp,*/*"))
         run(registry, "https://news.example/next", tab, isMainFrame = true, requestHeaders = mapOf("Accept" to "text/html"))
-        assertEquals(2, seen.size)
+        run(registry, "https://api.example/stream?clip=2", tab, requestHeaders = mapOf("Accept" to "*/*"))
+        assertEquals(3, seen.size)
         val sub = seen[0]
         assertEquals(WebRequestEvent.ON_BEFORE_REQUEST, sub.event)
         assertEquals("https://cdn.example/pixel.png", sub.url)
@@ -129,6 +130,14 @@ class WebRequestTest {
         assertNull(main.initiator)
         assertNull(main.documentUrl)
         assertNotEquals(sub.requestId, main.requestId)
+        // A subresource nothing gives away (`Accept: */*`, no telling extension) is named as
+        // Chrome names an unknown fetch and as the emulation's `onBeforeRequest` names the same
+        // request: `xmlhttprequest`, one name for one unknown (contract 7.8); its filter mask
+        // stays the ambiguous one, so a media or script filter still sees it.
+        val unknown = seen[2]
+        assertEquals(ResourceType.XMLHTTPREQUEST, unknown.resourceType)
+        assertEquals(ResourceType.guess("https://api.example/stream?clip=2", false, "*/*"), unknown.resourceType)
+        assertNotEquals(ResourceType.OTHER, unknown.resourceType)
     }
 
     @Test

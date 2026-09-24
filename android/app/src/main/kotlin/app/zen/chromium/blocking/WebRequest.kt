@@ -72,7 +72,9 @@ data class WebRequestDetails(
     val method: String,
     /**
      * Inferred from the main-frame flag, the `Accept` header and the extension (WebView carries
-     * no type): [ResourceType.OTHER] when nothing gives it away.
+     * no type): [ResourceType.XMLHTTPREQUEST] when nothing gives it away – Chrome's type for an
+     * unknown subresource fetch, the one [ResourceType.guess] and the emulation's
+     * `onBeforeRequest` name it by (one name for one unknown; contract 7.8).
      */
     val resourceType: ResourceType,
     /** 0 for a main-frame navigation; -1 otherwise, because WebView does not say which frame asked. */
@@ -251,7 +253,7 @@ class WebRequestListeners {
             requestId = ids.incrementAndGet().toString(),
             url = url,
             method = method,
-            resourceType = known ?: ResourceType.OTHER,
+            resourceType = known ?: ResourceType.XMLHTTPREQUEST,
             frameId = if (isMainFrame) 0 else -1,
             parentFrameId = -1,
             tabId = tab.tabId,

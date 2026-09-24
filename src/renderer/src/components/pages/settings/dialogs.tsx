@@ -126,7 +126,7 @@ function RowDialog({
     case 'confirm':
       // A prompt opens nothing (§9.24), so it is never `under`: the stack's `under` is the
       // lower dialog's to wear.
-      return <ConfirmRowDialog row={row as ActionRow} close={close} />
+      return <ConfirmRowDialog row={row as ActionRow} from={request.from} close={close} />
     case 'form':
       // The one dialog whose place moves its width (§9.20: a form over another dialog is the
       // 320 notice, "place beats content"); the rest keep the form width wherever they stand.
@@ -508,20 +508,33 @@ function FieldDialog({
  * A row's confirmation (§9.23) on the program's prompt primitive (`ConfirmDialog`, W4-1): the
  * question as the title block over its one line (the confirmation's own, else the row's
  * description), Cancel and the verb – the danger verb with no primary for a destructive row,
- * the accent primary otherwise – and nothing else, at §9.20's 320 whatever it covers (§9.5: a
+ * a plain second secondary where the confirmation names `verbTone: 'plain'` (Settings › Apps'
+ * Uninstall with a window open, whose row keeps the danger ink in its ⋯ while its prompt is
+ * the primitive's third form, not the destructive one: the #435 lead check), the accent primary
+ * otherwise – and nothing else, at §9.20's 320 whatever it covers (§9.5: a
  * Remove prompt over an item's 400 dialog reads as a prompt, not a band across it; the #324
  * lead check). The keyboard is the primitive's (§9.22 as amended on #392): the container holds
  * the focus as the prompt opens, Tab enters at Cancel and Shift+Tab at the verb, Enter from the
  * container is the verb on a prompt that is not destructive and inert on one that is, Escape
  * and the scrim are Cancel. The way back (§9.5, one hop) is the row's own control – found by
  * its `data-row` as the prompt leaves, so a row re-rendered under the prompt is still found, and
- * a row the verb removed (with its item dialog, whose own return then governs) is not – on the
+ * a row the verb removed (with its item dialog, whose own return then governs) is not – or, for
+ * a prompt an item row's ⋯ opened (`SheetRequest.from`: the action row lives in the item's
+ * sheet, which the desktop does not draw), that item row's control, the ⋯ itself – on the
  * primitive's return-focus contract (`ConfirmReturnFocus`): a getter's `null` falls to the
  * opener; `false` where nowhere is meant; never Cancel. The `data-dialog` handle the stack's
  * drives and smoke read (`confirm:<row>`) rides on the root beside the primitive's
  * `data-confirm`.
  */
-function ConfirmRowDialog({ row, close }: { row: ActionRow; close(): void }): JSX.Element {
+function ConfirmRowDialog({
+  row,
+  from,
+  close
+}: {
+  row: ActionRow
+  from?: string
+  close(): void
+}): JSX.Element {
   const confirm = row.confirm!
   return (
     <ConfirmDialog
@@ -529,13 +542,14 @@ function ConfirmRowDialog({ row, close }: { row: ActionRow; close(): void }): JS
       title={confirm.title}
       description={confirm.description ?? row.description}
       action={confirm.action}
-      destructive={row.destructive}
+      destructive={row.destructive && confirm.verbTone !== 'plain'}
+      verbTone={confirm.verbTone}
       onCancel={close}
       onConfirm={() => {
         close()
         row.onPress?.()
       }}
-      returnFocus={() => rowControl(row.id)}
+      returnFocus={() => rowControl(from ?? row.id)}
       data={{ 'data-dialog': `confirm:${row.id}` }}
     />
   )

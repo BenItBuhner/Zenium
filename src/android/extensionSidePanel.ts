@@ -144,7 +144,7 @@ export class AndroidSidePanel {
 
   private setOptions(ext: AttachedExtension, raw: unknown): void {
     this.requirePermission(ext)
-    const options = checked(() => normalizePanelOptions(raw))
+    const options = checked(() => normalizePanelOptions(raw, ext.record.id))
     if (options.tabId !== undefined) this.host.tabFor(ext, options.tabId)
     this.optionsFor(ext).setOptions(options)
     this.refresh(ext)
