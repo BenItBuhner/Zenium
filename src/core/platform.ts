@@ -2550,6 +2550,12 @@ export interface TaskSample {
   extensionId: string | null
   /** The tab whose DevTools this frontend inspects, when it is a tab's (null for the chrome's own). */
   devtoolsForTabId: string | null
+  /**
+   * The window whose own chrome this renderer draws (kind `browser`, a window's web contents),
+   * by the core's window id – the row carries the window's name when the user gave it one; null
+   * for every other process.
+   */
+  windowId: string | null
   /** The engine's name for a helper ("Network Service", "Audio Service"), when it has one. */
   serviceName: string | null
   /** The working set, in bytes. */

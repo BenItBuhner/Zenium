@@ -80,9 +80,15 @@ export class TaskService {
 
   private name(sample: TaskSample): { title: string; icon: string | null } {
     switch (sample.kind) {
-      case 'browser':
-        // The main process, or a window's own chrome renderer when the host folds one in.
-        return { title: sample.serviceName ?? 'Browser', icon: null }
+      case 'browser': {
+        // The main process, or a window's own chrome renderer: "Browser window", with the name
+        // the user gave the window (Name window…) so several windows' rows tell apart.
+        const title =
+          sample.serviceName ?? (sample.windowId === null ? 'Browser' : 'Browser window')
+        const name =
+          sample.windowId === null ? null : this.browser.windows.get(sample.windowId)?.name
+        return { title: name ? `${title} – ${name}` : title, icon: null }
+      }
       case 'tab': {
         const tabs = sample.tabIds.map((id) => this.browser.state.model.tabs[id] ?? null)
         const titles = tabs.map((tab, i) =>
@@ -106,14 +112,16 @@ export class TaskService {
           : null
         return { title: tab ? `Developer Tools – ${tabTitle(tab)}` : 'Developer Tools', icon: null }
       }
+      // The coined titles are sentence case (§4), like "Browser window"; a name the engine gives a
+      // helper ("Network Service") stays as given, and "Developer Tools" is the feature's name.
       case 'gpu':
-        return { title: 'GPU Process', icon: null }
+        return { title: 'GPU process', icon: null }
       case 'utility':
-        return { title: sample.serviceName || 'Utility Process', icon: null }
+        return { title: sample.serviceName || 'Utility process', icon: null }
       case 'renderer':
         return { title: sample.serviceName || 'Renderer', icon: null }
       case 'other':
-        return { title: sample.serviceName || 'Helper Process', icon: null }
+        return { title: sample.serviceName || 'Helper process', icon: null }
     }
   }
 

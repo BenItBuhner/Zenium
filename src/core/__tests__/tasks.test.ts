@@ -10,6 +10,7 @@ function sample(part: Partial<TaskSample> & { pid: number; kind: TaskSample['kin
     tabIds: [],
     extensionId: null,
     devtoolsForTabId: null,
+    windowId: null,
     serviceName: null,
     memoryBytes: 10 * 1024 * 1024,
     privateBytes: null,
@@ -22,6 +23,11 @@ function sample(part: Partial<TaskSample> & { pid: number; kind: TaskSample['kin
 function browserWith(tabs: Record<string, Partial<Record<string, unknown>>>): Browser {
   return {
     state: { model: { tabs } },
+    // Two windows: one the user named (Name window…), one without a name.
+    windows: new Map([
+      ['win_1', { id: 'win_1', name: 'Work' }],
+      ['win_2', { id: 'win_2', name: null }]
+    ]),
     newTab: { isPreloadId: (id: string) => id.startsWith('newtab_preload') },
     extensions: {
       list: () => [
@@ -62,6 +68,7 @@ describe('TaskService', () => {
     const host = hostOf([
       sample({ pid: 300, kind: 'gpu' }),
       sample({ pid: 500, kind: 'other', serviceName: 'Zygote' }),
+      sample({ pid: 501, kind: 'other' }),
       sample({ pid: 202, kind: 'tab', tabIds: ['a', 'b'], networkBytesPerSecond: 1200 }),
       sample({ pid: 203, kind: 'tab', tabIds: ['c'] }),
       sample({ pid: 208, kind: 'tab', tabIds: ['d'] }),
@@ -76,14 +83,20 @@ describe('TaskService', () => {
       sample({ pid: 401, kind: 'utility' }),
       sample({ pid: 206, kind: 'renderer', serviceName: 'Subframe: embed.example', tabIds: ['a'] }),
       sample({ pid: 207, kind: 'renderer' }),
-      sample({ pid: 101, kind: 'browser', serviceName: 'Browser window' }),
+      // Each window's own chrome renderer: the window's name on the row when it has one, a
+      // window the core no longer has by the host's word alone.
+      sample({ pid: 101, kind: 'browser', serviceName: 'Browser window', windowId: 'win_1' }),
+      sample({ pid: 102, kind: 'browser', serviceName: 'Browser window', windowId: 'win_2' }),
+      sample({ pid: 103, kind: 'browser', windowId: 'win_gone' }),
       sample({ pid: 100, kind: 'browser', memoryBytes: 250 * 1024 * 1024, privateBytes: 1024 })
     ])
     const list = new TaskService(browserWith(tabs), host).list(42)
     expect(list.sampledAt).toBe(42)
     expect(list.tasks.map((t) => [t.pid, t.kind, t.title, t.icon, t.endable])).toEqual([
       [100, 'browser', 'Browser', null, false],
-      [101, 'browser', 'Browser window', null, false],
+      [101, 'browser', 'Browser window – Work', null, false],
+      [102, 'browser', 'Browser window', null, false],
+      [103, 'browser', 'Browser window', null, false],
       // Two tabs in one renderer share the row; the rename wins; the first tab's favicon.
       [202, 'tab', 'Alpha – news, My beta', 'data:a', true],
       // No title yet: the address, as the tab row shows it.
@@ -96,12 +109,14 @@ describe('TaskService', () => {
       [210, 'extension', 'Extension', null, true],
       [204, 'devtools', 'Developer Tools – My beta', null, true],
       [209, 'devtools', 'Developer Tools', null, true],
-      [300, 'gpu', 'GPU Process', null, true],
+      // The coined titles in sentence case (§4); the engine's "Network Service" as given.
+      [300, 'gpu', 'GPU process', null, true],
       [400, 'utility', 'Network Service', null, true],
-      [401, 'utility', 'Utility Process', null, true],
+      [401, 'utility', 'Utility process', null, true],
       [206, 'renderer', 'Subframe: embed.example', null, true],
       [207, 'renderer', 'Renderer', null, true],
-      [500, 'other', 'Zygote', null, false]
+      [500, 'other', 'Zygote', null, false],
+      [501, 'other', 'Helper process', null, false]
     ])
     const browser = list.tasks[0]!
     expect(browser.memoryBytes).toBe(250 * 1024 * 1024)

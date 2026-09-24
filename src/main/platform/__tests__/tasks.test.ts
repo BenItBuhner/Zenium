@@ -42,7 +42,8 @@ interface World {
   processes: EngineProcess[]
   all: Array<EngineContents & { crashed: number }>
   tabs: Map<number, string>
-  chromeWindows: Set<number>
+  /** Web contents id → the core's id of the window whose chrome they are. */
+  chromeWindows: Map<number, string>
   killed: number[]
   host: InstanceType<typeof ElectronTaskHost>
   tick(ms: number): void
@@ -53,7 +54,7 @@ function world(): World {
   const processes: EngineProcess[] = []
   const all: Array<EngineContents & { crashed: number }> = []
   const tabs = new Map<number, string>()
-  const chromeWindows = new Set<number>()
+  const chromeWindows = new Map<number, string>()
   const killed: number[] = []
   const engine: TaskEngine = {
     processes: () => processes,
@@ -68,7 +69,7 @@ function world(): World {
   const host = new ElectronTaskHost({
     engine,
     tabIdForWebContents: (id) => tabs.get(id),
-    isChromeWindow: (id) => chromeWindows.has(id),
+    chromeWindowId: (id) => chromeWindows.get(id) ?? null,
     now: () => now
   })
   return {
@@ -109,7 +110,7 @@ describe('the Electron task host', () => {
     // The window's chrome, two tabs sharing a renderer, a third tab of its own with a toolbox
     // open, an extension's background page and a renderer nothing claims.
     w.all.push(contents(1, 201, 'file:///chrome/index.html'))
-    w.chromeWindows.add(1)
+    w.chromeWindows.set(1, 'win_1')
     w.all.push(contents(2, 202, 'https://a.example/'))
     w.tabs.set(2, 'tab-a')
     w.all.push(contents(3, 202, 'https://a.example/two'))
@@ -128,8 +129,18 @@ describe('the Electron task host', () => {
       privateBytes: null,
       cpuPercent: 1.5
     })
-    expect(byPid.get(201)).toMatchObject({ kind: 'browser', serviceName: 'Browser window' })
-    expect(byPid.get(202)).toMatchObject({ kind: 'tab', tabIds: ['tab-a', 'tab-a2'] })
+    // The window's chrome carries the window's id, so the core can put its name on the row.
+    expect(byPid.get(201)).toMatchObject({
+      kind: 'browser',
+      serviceName: 'Browser window',
+      windowId: 'win_1'
+    })
+    expect(byPid.get(BROWSER_PID)!.windowId).toBeNull()
+    expect(byPid.get(202)).toMatchObject({
+      kind: 'tab',
+      tabIds: ['tab-a', 'tab-a2'],
+      windowId: null
+    })
     expect(byPid.get(203)).toMatchObject({ kind: 'tab', tabIds: ['tab-b'] })
     expect(byPid.get(204)).toMatchObject({ kind: 'devtools', devtoolsForTabId: 'tab-b' })
     expect(byPid.get(205)).toMatchObject({ kind: 'extension', extensionId: EXT })
@@ -182,7 +193,7 @@ describe('the Electron task host', () => {
       proc(500, 'Zygote')
     )
     const chrome = contents(1, 201, 'file:///chrome/index.html')
-    w.chromeWindows.add(1)
+    w.chromeWindows.set(1, 'win_1')
     const tab = contents(2, 202, 'https://a.example/')
     w.tabs.set(2, 'tab-a')
     w.all.push(chrome, tab)
@@ -294,9 +305,14 @@ describe('the words of a process', () => {
     expect(classify(proc(1, 'Browser'), undefined, 1).kind).toBe('browser')
     expect(classify(proc(2, 'Tab'), undefined, 1)).toMatchObject({ kind: 'renderer' })
     expect(classify(proc(3, 'GPU'), undefined, 1).kind).toBe('gpu')
+    // The coined names in sentence case (§4); the engine's own name as given.
     expect(classify(proc(4, 'Sandbox helper'), undefined, 1)).toMatchObject({
       kind: 'other',
-      serviceName: 'Sandbox Helper'
+      serviceName: 'Sandbox helper'
+    })
+    expect(classify(proc(6, 'Pepper Plugin Broker'), undefined, 1)).toMatchObject({
+      kind: 'other',
+      serviceName: 'Plugin broker'
     })
     expect(classify(proc(5, 'Unknown', { name: 'Odd' }), undefined, 1)).toMatchObject({
       kind: 'other',

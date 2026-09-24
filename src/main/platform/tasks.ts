@@ -74,8 +74,11 @@ export interface TaskEngine {
 export interface ElectronTaskHostOptions {
   /** The tab a web contents is the view of, when it is one. */
   tabIdForWebContents(id: number): string | undefined
-  /** Whether the web contents are a window's chrome (`ElectronWindowFactory.windowForWebContents`). */
-  isChromeWindow(id: number): boolean
+  /**
+   * The core's id of the window whose chrome these web contents are, when they are a window's
+   * (`ElectronWindowFactory.windowForWebContents`); null for a page, an extension's document.
+   */
+  chromeWindowId(id: number): string | null
   engine?: TaskEngine
   now?: () => number
 }
@@ -88,6 +91,8 @@ interface Placement {
   tabIds: string[]
   extensionId: string | null
   devtoolsForTabId: string | null
+  /** The window whose chrome runs here, when one does. */
+  windowId: string | null
   serviceName: string | null
 }
 
@@ -148,6 +153,7 @@ export class ElectronTaskHost implements TaskHost {
         tabIds: base.tabIds,
         extensionId: base.extensionId,
         devtoolsForTabId: base.devtoolsForTabId,
+        windowId: base.windowId,
         serviceName: base.serviceName,
         memoryBytes: Math.round(process.workingSetKb * 1024),
         privateBytes: process.privateKb === undefined ? null : Math.round(process.privateKb * 1024),
@@ -217,6 +223,7 @@ export class ElectronTaskHost implements TaskHost {
         tabIds,
         extensionId: current.extensionId ?? next.extensionId,
         devtoolsForTabId: current.devtoolsForTabId ?? next.devtoolsForTabId,
+        windowId: current.windowId ?? next.windowId,
         serviceName:
           kind === next.kind ? (next.serviceName ?? current.serviceName) : current.serviceName
       })
@@ -245,8 +252,9 @@ export class ElectronTaskHost implements TaskHost {
         put(c.osProcessId, placement('extension', { extensionId }))
         continue
       }
-      if (this.options.isChromeWindow(c.id)) {
-        put(c.osProcessId, placement('browser', { serviceName: 'Browser window' }))
+      const windowId = this.options.chromeWindowId(c.id)
+      if (windowId !== null) {
+        put(c.osProcessId, placement('browser', { serviceName: 'Browser window', windowId }))
         continue
       }
       put(c.osProcessId, placement('renderer', { serviceName: rendererName(c.url) }))
@@ -302,6 +310,7 @@ function placement(kind: TaskKind, part: Partial<Placement>): Placement {
     tabIds: part.tabIds ?? [],
     extensionId: part.extensionId ?? null,
     devtoolsForTabId: part.devtoolsForTabId ?? null,
+    windowId: part.windowId ?? null,
     serviceName: part.serviceName ?? null
   }
 }
@@ -312,14 +321,9 @@ export function classify(
   placement: Placement | undefined,
   browserPid: number
 ): Placement {
-  if (process.type === 'Browser' || process.pid === browserPid)
-    return {
-      kind: 'browser',
-      tabIds: [],
-      extensionId: null,
-      devtoolsForTabId: null,
-      serviceName: null
-    }
+  if (process.type === 'Browser' || process.pid === browserPid) return placementOf('browser', null)
+  // The coined names are sentence case (§4, like the core's "GPU process"); the engine's own
+  // (`utilityName`, `process.name`) stay as given.
   switch (process.type) {
     case 'Tab':
       return placement ?? placementOf('renderer', null)
@@ -330,18 +334,25 @@ export function classify(
     case 'Zygote':
       return placementOf('other', 'Zygote')
     case 'Sandbox helper':
-      return placementOf('other', 'Sandbox Helper')
+      return placementOf('other', 'Sandbox helper')
     case 'Pepper Plugin':
       return placementOf('other', 'Plugin')
     case 'Pepper Plugin Broker':
-      return placementOf('other', 'Plugin Broker')
+      return placementOf('other', 'Plugin broker')
     default:
       return placement ?? placementOf('other', process.name || null)
   }
 }
 
 function placementOf(kind: TaskKind, serviceName: string | null): Placement {
-  return { kind, tabIds: [], extensionId: null, devtoolsForTabId: null, serviceName }
+  return {
+    kind,
+    tabIds: [],
+    extensionId: null,
+    devtoolsForTabId: null,
+    windowId: null,
+    serviceName
+  }
 }
 
 /**
