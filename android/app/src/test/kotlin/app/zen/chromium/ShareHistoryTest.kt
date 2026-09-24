@@ -34,11 +34,11 @@ class ShareHistoryTest {
         var clock = 1_000_000L
         val store = MemoryStore()
         val history = ShareHistory(store) { clock }
-        history.record(ShareHistory.TYPE_TEXT, messages)
+        history.record(ShareHistory.TYPE_TEXT, messages, private = false)
         clock += 1_000
-        history.record(ShareHistory.TYPE_TEXT, messages)
+        history.record(ShareHistory.TYPE_TEXT, messages, private = false)
         clock += 1_000
-        history.record(ShareHistory.TYPE_TEXT, notes)
+        history.record(ShareHistory.TYPE_TEXT, notes, private = false)
         // Messages twice, notes once, mail never: that is the row.
         assertEquals(listOf(messages, notes, mail), history.rank(ShareHistory.TYPE_TEXT, given))
         assertEquals(2, history.use(ShareHistory.TYPE_TEXT, messages)?.count)
@@ -53,15 +53,15 @@ class ShareHistoryTest {
     fun tiesKeepTheGivenOrder() {
         var clock = 1_000_000L
         val history = ShareHistory(MemoryStore()) { clock }
-        history.record(ShareHistory.TYPE_TEXT, notes)
+        history.record(ShareHistory.TYPE_TEXT, notes, private = false)
         clock += 1_000
-        history.record(ShareHistory.TYPE_TEXT, mail)
+        history.record(ShareHistory.TYPE_TEXT, mail, private = false)
         // Same recent count, same all-time count: the later use wins; mail never-used stays last.
         assertEquals(listOf(mail, notes, messages), history.rank(ShareHistory.TYPE_TEXT, given))
         // Recorded at the same instant: the given order decides.
         val same = ShareHistory(MemoryStore()) { clock }
-        same.record(ShareHistory.TYPE_TEXT, notes)
-        same.record(ShareHistory.TYPE_TEXT, mail)
+        same.record(ShareHistory.TYPE_TEXT, notes, private = false)
+        same.record(ShareHistory.TYPE_TEXT, mail, private = false)
         assertEquals(listOf(mail, notes, messages), same.rank(ShareHistory.TYPE_TEXT, given))
     }
 
@@ -71,12 +71,12 @@ class ShareHistoryTest {
         val history = ShareHistory(MemoryStore()) { clock }
         // Mail was the favourite a month ago.
         repeat(5) {
-            history.record(ShareHistory.TYPE_TEXT, mail)
+            history.record(ShareHistory.TYPE_TEXT, mail, private = false)
             clock += 1_000
         }
         clock += 30 * day
         // Messages was used once this week.
-        history.record(ShareHistory.TYPE_TEXT, messages)
+        history.record(ShareHistory.TYPE_TEXT, messages, private = false)
         clock += 1_000
         assertEquals(listOf(messages, mail, notes), history.rank(ShareHistory.TYPE_TEXT, given))
         // Beyond the window the recent list no longer counts, but the all-time count still orders.
@@ -87,7 +87,7 @@ class ShareHistoryTest {
     @Test
     fun textAndImageSharesRankSeparately() {
         val history = ShareHistory(MemoryStore()) { 5_000L }
-        history.record(ShareHistory.TYPE_IMAGE, notes)
+        history.record(ShareHistory.TYPE_IMAGE, notes, private = false)
         assertEquals(given, history.rank(ShareHistory.TYPE_TEXT, given))
         assertEquals(listOf(notes, mail, messages), history.rank(ShareHistory.TYPE_IMAGE, given))
     }
@@ -97,7 +97,7 @@ class ShareHistoryTest {
         var clock = 1_000_000L
         val history = ShareHistory(MemoryStore()) { clock }
         repeat(ShareHistory.MAX_RECENT + 10) {
-            history.record(ShareHistory.TYPE_TEXT, messages)
+            history.record(ShareHistory.TYPE_TEXT, messages, private = false)
             clock += 1
         }
         val use = history.use(ShareHistory.TYPE_TEXT, messages)!!
@@ -117,7 +117,7 @@ class ShareHistoryTest {
         assertNull(history.use(ShareHistory.TYPE_TEXT, messages))
         assertEquals(given, history.rank(ShareHistory.TYPE_TEXT, given))
         // A record that stands is left as it stands: the private share neither adds to it nor touches it.
-        history.record(ShareHistory.TYPE_TEXT, notes)
+        history.record(ShareHistory.TYPE_TEXT, notes, private = false)
         clock += 1_000
         val written = store.value
         history.record(ShareHistory.TYPE_TEXT, notes, private = true)
@@ -125,8 +125,8 @@ class ShareHistoryTest {
         assertEquals(1, store.writes)
         assertEquals(written, store.value)
         assertEquals(1, history.use(ShareHistory.TYPE_TEXT, notes)?.count)
-        // The default is a record: the same call without the flag is the public tab's.
-        history.record(ShareHistory.TYPE_TEXT, notes)
+        // There is no default: the public tab's call says so, and is the one that records.
+        history.record(ShareHistory.TYPE_TEXT, notes, private = false)
         assertEquals(2, history.use(ShareHistory.TYPE_TEXT, notes)?.count)
     }
 
@@ -137,7 +137,7 @@ class ShareHistoryTest {
         val history = ShareHistory(store) { clock }
         val targets = List(ShareHistory.MAX_COMPONENTS + 5) { "com.example.app$it/.Share" }
         for (target in targets) {
-            history.record(ShareHistory.TYPE_TEXT, target)
+            history.record(ShareHistory.TYPE_TEXT, target, private = false)
             clock += 1_000
         }
         // The least recently used went, the last recorded stayed; an image share's record is its own.
@@ -147,9 +147,9 @@ class ShareHistoryTest {
         assertEquals(1, history.use(ShareHistory.TYPE_TEXT, targets.last())?.count)
         assertEquals(1, history.use(ShareHistory.TYPE_TEXT, targets[5])?.count)
         // A target used again is the most recent, and survives the next newcomer; the oldest goes instead.
-        history.record(ShareHistory.TYPE_TEXT, targets[5])
+        history.record(ShareHistory.TYPE_TEXT, targets[5], private = false)
         clock += 1_000
-        history.record(ShareHistory.TYPE_TEXT, "com.example.newcomer/.Share")
+        history.record(ShareHistory.TYPE_TEXT, "com.example.newcomer/.Share", private = false)
         assertEquals(2, history.use(ShareHistory.TYPE_TEXT, targets[5])?.count)
         assertNull(history.use(ShareHistory.TYPE_TEXT, targets[6]))
         assertEquals(ShareHistory.MAX_COMPONENTS, ShareHistory.parse(store.value)[ShareHistory.TYPE_TEXT]!!.size)
@@ -160,9 +160,9 @@ class ShareHistoryTest {
     fun forgettingAnUninstalledTargetDropsItEverywhere() {
         val store = MemoryStore()
         val history = ShareHistory(store) { 5_000L }
-        history.record(ShareHistory.TYPE_TEXT, notes)
-        history.record(ShareHistory.TYPE_IMAGE, notes)
-        history.record(ShareHistory.TYPE_TEXT, mail)
+        history.record(ShareHistory.TYPE_TEXT, notes, private = false)
+        history.record(ShareHistory.TYPE_IMAGE, notes, private = false)
+        history.record(ShareHistory.TYPE_TEXT, mail, private = false)
         history.forget(notes)
         assertNull(history.use(ShareHistory.TYPE_TEXT, notes))
         assertNull(history.use(ShareHistory.TYPE_IMAGE, notes))

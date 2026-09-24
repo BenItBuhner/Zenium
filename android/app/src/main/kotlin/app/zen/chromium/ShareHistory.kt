@@ -30,10 +30,11 @@ class ShareHistory(private val store: Store, private val now: () -> Long = Syste
 
     /**
      * The user chose `component` for a share of `type`. A private tab's share (`private`) leaves
-     * no record: nothing is read, nothing is written.
+     * no record: nothing is read, nothing is written. The flag has no default: a call site that
+     * left it off would record a private share unnoticed, so every caller says which it is.
      */
     @Synchronized
-    fun record(type: String, component: String, private: Boolean = false) {
+    fun record(type: String, component: String, private: Boolean) {
         if (private) return
         val all = load()
         val byType = all.getOrPut(type) { LinkedHashMap() }
