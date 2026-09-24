@@ -28,8 +28,11 @@
 # The recordings are read frame by frame (android-startup-frames.mjs: splash, restored picture,
 # page, blank, in that order and never a blank slot after the splash; the hot start with no
 # splash and no blank) and cut into a contact sheet each. Everything lands under DEMO_OUT:
-# per scheme <theme>/ (the seed's notes and still, the am start answers, the stills, the
-# recordings, their frame findings and tiles, the logcat), startup-findings.txt (every verdict),
+# per scheme <theme>/ (the seed's notes and still, the am start answers, the stills under the
+# round's names – android-startup-design-splash-<theme>.png, -design-restored-picture-<theme>.png,
+# -page-painted-<theme>.png, -hot-<theme>.png, the tiles android-startup-frames-cold-<theme>.png
+# and -frames-warm-<theme>.png (the hot start's: the row's warm start is the process alive) –
+# the recordings, their frame findings, the logcat), startup-findings.txt (every verdict),
 # startup-table.md (the numbers, also the job summary). STARTUP_ASSERT=true fails the run on a
 # verdict that did not hold; anything else reports only.
 #
@@ -264,7 +267,7 @@ cold_start() {
   sleep 1
   local splash_seen
   splash_seen=$(splash_windows)
-  adb exec-out screencap -p > "$dir/splash.png" || true
+  adb exec-out screencap -p > "$dir/android-startup-design-splash-$theme.png" || true
   wait "$am_pid" || true
   local answer
   answer=$(tr -d '\r' < "$dir/am-start-cold.txt")
@@ -277,12 +280,12 @@ cold_start() {
   local ready_line
   ready_line=$(wait_line "chrome ready: frame drawn" 25)
   sleep 0.7
-  adb exec-out screencap -p > "$dir/restored-picture.png" || true
+  adb exec-out screencap -p > "$dir/android-startup-design-restored-picture-$theme.png" || true
   local splash_after
   splash_after=$(splash_windows)
   wait_line "restored picture down for $tab: painted" $(( hold_ms / 1000 + 15 )) > /dev/null
   sleep 0.7
-  adb exec-out screencap -p > "$dir/painted.png" || true
+  adb exec-out screencap -p > "$dir/android-startup-page-painted-$theme.png" || true
   local stats
   stats=$(frame_stats)
   sleep 1
@@ -331,7 +334,7 @@ cold_start() {
   if [ -n "$slot" ] && command -v ffmpeg > /dev/null 2>&1; then
     local status=0
     node .github/scripts/android-startup-frames.mjs cold "$dir/startup-cold-$theme.mp4" "$slot" "${display%@*}" "$dir/cold-frames.txt" \
-      --still splash="$dir/splash.png" --still picture="$dir/restored-picture.png" --still page="$dir/painted.png" \
+      --still splash="$dir/android-startup-design-splash-$theme.png" --still picture="$dir/android-startup-design-restored-picture-$theme.png" --still page="$dir/android-startup-page-painted-$theme.png" \
       --tile "$dir/android-startup-frames-cold-$theme.png" || status=$?
     grep -E '^(PASS|FAIL):' "$dir/cold-frames.txt" | sed "s/)$/; $theme recording)/" >> "$findings" || true
     failures=$((failures + $(frame_failures "$dir/cold-frames.txt" "$status")))
@@ -358,7 +361,7 @@ hot_start() {
   answer=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$activity" 2>&1 | tr -d '\r')
   local splash_seen
   splash_seen=$(splash_windows)
-  adb exec-out screencap -p > "$dir/hot.png" || true
+  adb exec-out screencap -p > "$dir/android-startup-hot-$theme.png" || true
   sleep 1.5
   adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
   wait "$recorder_pid" || true
@@ -377,7 +380,7 @@ hot_start() {
   if [ -n "$slot" ] && command -v ffmpeg > /dev/null 2>&1; then
     local status=0
     node .github/scripts/android-startup-frames.mjs hot "$dir/startup-hot-$theme.mp4" "$slot" "${display%@*}" "$dir/hot-frames.txt" \
-      --still page="$dir/hot.png" --tile "$dir/android-startup-frames-warm-$theme.png" || status=$?
+      --still page="$dir/android-startup-hot-$theme.png" --tile "$dir/android-startup-frames-warm-$theme.png" || status=$?
     grep -E '^(PASS|FAIL):' "$dir/hot-frames.txt" | sed "s/)$/; $theme hot recording)/" >> "$findings" || true
     failures=$((failures + $(frame_failures "$dir/hot-frames.txt" "$status")))
   fi
