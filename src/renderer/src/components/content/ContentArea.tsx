@@ -89,6 +89,17 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
         ? 'object-contain object-right-top'
         : 'object-contain object-left-top'
       : 'object-cover object-top'
+  // The toolbox's own picture is anchored to the band's side of the box – the bottom for a
+  // bottom dock, the right or the left edge for a side dock – so the host's cut of the frontend
+  // to the band (its width the box's for a bottom dock, its height the box's for a side dock,
+  // `object-contain` at scale 1) lands where the band is, and a picture of the whole box, which
+  // the host hands over before the frontend has said where its hole is, fills the box the same.
+  const toolboxFit =
+    toolboxDock === 'bottom'
+      ? 'object-contain object-left-bottom'
+      : toolboxDock === 'right'
+        ? 'object-contain object-right-top'
+        : 'object-contain object-left-top'
   const glanceActive = ui.glanceActive
   const glanceTabId = state.glance?.tabId ?? null
   const glanceParentId = state.glance?.parentTabId ?? null
@@ -280,11 +291,13 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                   <>
                     {/*
                      * The toolbox docked in the box (§9.29), from the host's capture of its
-                     * frontend – the whole box, its seam in it – laid under the page's picture,
-                     * which covers the page's hole in it: a menu over a docked toolbox leaves
-                     * the toolbox in view rather than the frame's ground. Not a tracked cover:
-                     * the page view waits for the page's picture alone, so the hole is never
-                     * bare for a frame while this decodes.
+                     * frontend – cut to the toolbox's band once the frontend has said where the
+                     * page's hole is, the whole box with its seam before – laid under the page's
+                     * picture, which covers the page's hole in it: a menu over a docked toolbox
+                     * leaves the toolbox in view rather than the frame's ground. Anchored to the
+                     * band's side (toolboxFit) so either cut lands where the band is. Not a
+                     * tracked cover: the page view waits for the page's picture alone, so the
+                     * hole is never bare for a frame while this decodes.
                      */}
                     {ui.toolboxSnapshot && toolboxDocked && !group ? (
                       <img
@@ -293,7 +306,7 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                         alt=""
                         decoding="sync"
                         draggable={false}
-                        className="absolute inset-0 h-full w-full object-contain object-left-top"
+                        className={cn('absolute inset-0 h-full w-full', toolboxFit)}
                       />
                     ) : null}
                     <CoverImage

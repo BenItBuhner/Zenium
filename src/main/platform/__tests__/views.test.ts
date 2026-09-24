@@ -215,6 +215,11 @@ vi.mock('electron', async () => {
     getVisible(): boolean {
       return this.visible
     }
+    /** The box the chrome last laid the view out in. */
+    bounds: { x: number; y: number; width: number; height: number } | null = null
+    setBounds(rect: { x: number; y: number; width: number; height: number }): void {
+      this.bounds = rect
+    }
   }
   /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
   // Every view host in the tests listens for a flip (the app has one host; the tests many).
@@ -1305,10 +1310,11 @@ describe('ElectronTabView.snapshot', () => {
 
   /*
    * The docked toolbox's picture for the cover (§9.29, W5-5): the frontend's own `capturePage`
-   * – the whole box – encoded as the page's is; nothing with no toolbox up or one undocked (a
-   * window of its own), and the page's own capture never stands in for it.
+   * – the whole box while the frontend has not said where the page's hole is – encoded as the
+   * page's is; nothing with no toolbox up or one undocked (a window of its own), and the page's
+   * own capture never stands in for it.
    */
-  it('pictures a docked toolbox from its frontend, the whole box, and nothing with none docked in the frame', async () => {
+  it('pictures a docked toolbox from its frontend, the whole box before the frontend has said where its hole is, and nothing with none docked in the frame', async () => {
     const { view, wc } = tabView()
     const page = fakeCapture(1200, 700)
     Object.assign(wc, { capturePage: () => Promise.resolve(page.image) })
@@ -1317,12 +1323,18 @@ describe('ElectronTabView.snapshot', () => {
     for (const dock of ['bottom', 'right', 'left'] as const) {
       view.openDevTools('toggle', dock)
       const frontend = fakeCapture(1200, 1000)
+      const asked: unknown[] = []
       Object.assign(wc.devToolsWebContents!, {
-        capturePage: () => Promise.resolve(frontend.image)
+        capturePage: (rect?: unknown) => {
+          asked.push(rect)
+          return Promise.resolve(frontend.image)
+        }
       })
       await expect(view.snapshotDevtools()).resolves.toBe(
         `data:image/jpeg;base64,${Buffer.from('jpeg-1200x1000-90').toString('base64')}`
       )
+      // No cut asked for: the view's box is not known here, let alone the hole in it.
+      expect(asked).toEqual([undefined])
       expect(frontend.encoded).toEqual([{ width: 1200, height: 1000, quality: 90 }])
       // The page's picture is its own capture still, untouched by the toolbox's.
       await expect(view.snapshot()).resolves.toBe(
@@ -1353,6 +1365,102 @@ describe('ElectronTabView.snapshot', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  /*
+   * The cut to the toolbox's band (§9.5's budget): once the frontend has said where the page's
+   * hole is (`setInspectedPageBounds`, read back on its console), the picture is the
+   * frontend's `capturePage` of the part of the box beside the hole – under it for a bottom
+   * dock, right of it for a right dock, left of it for a left one – at the box's DIP; the page's
+   * hole, in the page's own picture already, is not pictured twice. A hole from another dock's
+   * layout makes no band, and a closed toolbox forgets its hole: the whole box again until the
+   * next frontend says.
+   */
+  it('cuts the picture to the toolbox’s band once the frontend has said where the page’s hole is, per dock, and forgets the hole with the toolbox', async () => {
+    const { view, wc } = tabView()
+    view.setBounds({ x: 0, y: 0, width: 1200, height: 1000 })
+    /** The frontend's `capturePage`, recording the rect it is asked for and painting that size. */
+    const frontendCapture = (): { asked: unknown[]; encoded: string[] } => {
+      const asked: unknown[] = []
+      const encoded: string[] = []
+      Object.assign(wc.devToolsWebContents!, {
+        capturePage: (rect?: { width: number; height: number }) => {
+          asked.push(rect)
+          const capture = rect ? fakeCapture(rect.width, rect.height) : fakeCapture(1200, 1000)
+          encoded.push(`${capture.image.getSize().width}x${capture.image.getSize().height}`)
+          return Promise.resolve(capture.image)
+        }
+      })
+      return { asked, encoded }
+    }
+    const jpeg = (w: number, h: number): string =>
+      `data:image/jpeg;base64,${Buffer.from(`jpeg-${w}x${h}-90`).toString('base64')}`
+
+    view.openDevTools('toggle', 'bottom')
+    // `devtools-opened` has followed: the host listens to the frontend's console.
+    await new Promise((r) => setImmediate(r))
+    const frontend = wc.devToolsWebContents!
+    let capture = frontendCapture()
+    // Before the frontend has said: the whole box.
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 1000))
+    expect(capture.asked).toEqual([undefined])
+    // The frontend lays the page out in the top 700 DIP: the band is the 300 under it.
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:0,0,1200,700' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 300))
+    expect(capture.asked).toEqual([{ x: 0, y: 700, width: 1200, height: 300 }])
+    // The split dragged: the band follows the last reading.
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:0,0,1200,550' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 450))
+    expect(capture.asked).toEqual([{ x: 0, y: 550, width: 1200, height: 450 }])
+
+    // Moved to the right by its own button: the bottom's hole makes no right band – the whole
+    // box until the frontend says the new hole – then the band right of the hole.
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:right' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 1000))
+    expect(capture.asked).toEqual([undefined])
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:0,0,800,1000' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(400, 1000))
+    expect(capture.asked).toEqual([{ x: 800, y: 0, width: 400, height: 1000 }])
+
+    // Moved to the left: the band left of the hole.
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:left' })
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:400,0,800,1000' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(400, 1000))
+    expect(capture.asked).toEqual([{ x: 0, y: 0, width: 400, height: 1000 }])
+
+    // The chrome lays the view out anew (the sidebar collapsed): the band is cut from the last
+    // reading against the new box – the frontend's own resize says the new hole a moment later.
+    view.setBounds({ x: 0, y: 0, width: 1500, height: 1000 })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(400, 1000))
+    expect(capture.asked).toEqual([{ x: 0, y: 0, width: 400, height: 1000 }])
+    frontend.emit('console-message', { message: 'zenium-devtools-page-bounds:500,0,1000,1000' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(500, 1000))
+    expect(capture.asked).toEqual([{ x: 0, y: 0, width: 500, height: 1000 }])
+
+    // Undocked: nothing of it in the frame, whatever the last hole said.
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:undocked' })
+    await expect(view.snapshotDevtools()).resolves.toBeNull()
+
+    // Closed and opened again: the hole went with the frontend – the whole box until the next
+    // frontend says where its own hole is.
+    view.openDevTools('toggle', 'bottom')
+    view.openDevTools('toggle', 'bottom')
+    await new Promise((r) => setImmediate(r))
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1200, 1000))
+    expect(capture.asked).toEqual([undefined])
+    const reopened = wc.devToolsWebContents!
+    reopened.emit('console-message', { message: 'zenium-devtools-page-bounds:0,0,1500,600' })
+    capture = frontendCapture()
+    await expect(view.snapshotDevtools()).resolves.toBe(jpeg(1500, 400))
+    expect(capture.asked).toEqual([{ x: 0, y: 600, width: 1500, height: 400 }])
   })
 })
 

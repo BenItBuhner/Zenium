@@ -30,9 +30,12 @@ import type {
 } from '../../shared/types'
 import {
   DEVTOOLS_DOCK_HOOK_SCRIPT,
+  DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT,
   DEVTOOLS_SEAM_SCRIPT,
+  devtoolsBandRect,
   devtoolsMoveScript,
-  dockFromConsoleMessage
+  dockFromConsoleMessage,
+  pageBoundsFromConsoleMessage
 } from './devtoolsFrontend'
 import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
@@ -293,6 +296,16 @@ export class ElectronTabView implements TabView {
    * the frame's box (`snapshotDevtools`). Null before the first opening.
    */
   private devtoolsDock: DevtoolsDock | null = null
+  /**
+   * The page's hole in a docked frontend's box, in the box's DIP – the frontend's own word
+   * (`setInspectedPageBounds`, read back through `DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT`), the rect
+   * Electron sizes the page's view to. With the box it names the toolbox's band, the part of
+   * the frontend `snapshotDevtools` pictures. Null before the frontend has said, and between
+   * toolboxes.
+   */
+  private devtoolsPageBounds: Rect | null = null
+  /** The view's box as the chrome last laid it out (`setBounds`), in DIP; null before the first. */
+  private bounds: Rect | null = null
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -415,7 +428,11 @@ export class ElectronTabView implements TabView {
       this.dressDevtools()
       ev.onDevtoolsOpened(this.devtoolsDock ?? undefined)
     })
-    wc.on('devtools-closed', () => ev.onDevtoolsClosed())
+    wc.on('devtools-closed', () => {
+      // The frontend is gone with its layout; the next one says where its hole is.
+      this.devtoolsPageBounds = null
+      ev.onDevtoolsClosed()
+    })
     wc.on('found-in-page', (_e, result) => ev.onFoundInPage(result))
     wc.on('zoom-changed', (_e, direction) => ev.onZoomChanged(direction))
     wc.on('context-menu', (_e, params) => {
@@ -872,6 +889,7 @@ export class ElectronTabView implements TabView {
   }
 
   setBounds(rect: Rect): void {
+    this.bounds = rect
     this.view.setBounds(rect)
   }
 
@@ -958,7 +976,9 @@ export class ElectronTabView implements TabView {
     frontend
       .executeJavaScript(devtoolsMoveScript(dock), true)
       .catch((error: unknown) =>
-        reopen(`the frontend refused the move: ${error instanceof Error ? error.message : String(error)}`)
+        reopen(
+          `the frontend refused the move: ${error instanceof Error ? error.message : String(error)}`
+        )
       )
   }
 
@@ -974,12 +994,18 @@ export class ElectronTabView implements TabView {
     if (!frontend || frontend.isDestroyed() || this.dressedFrontends.has(frontend)) return
     this.dressedFrontends.add(frontend)
     frontend.on('console-message', (event) => {
+      const hole = pageBoundsFromConsoleMessage(event.message)
+      if (hole) {
+        this.devtoolsPageBounds = hole
+        return
+      }
       const dock = dockFromConsoleMessage(event.message)
       if (!dock) return
       this.devtoolsDock = dock
       this.events?.onDevtoolsDockChanged?.(dock)
     })
     frontend.executeJavaScript(DEVTOOLS_DOCK_HOOK_SCRIPT, true).catch(() => undefined)
+    frontend.executeJavaScript(DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT, true).catch(() => undefined)
     frontend.executeJavaScript(DEVTOOLS_SEAM_SCRIPT, true).catch(() => undefined)
   }
 
@@ -1090,10 +1116,15 @@ export class ElectronTabView implements TabView {
 
   /**
    * The picture of the developer toolbox docked in this view's box (§9.29), for the cover to lay
-   * under the page's picture: the frontend's own `capturePage`, the whole box at its size – the
-   * toolbox's band with its seam, and the page's hole, which the page's picture goes over. Null
-   * with no toolbox up, an undocked one (a window of its own, nothing of it in the frame) or a
-   * frontend that is gone; encoded as the page's picture is (`snapshot`).
+   * under the page's picture: the frontend's own `capturePage`, cut to the toolbox's band – the
+   * part of the box beside the page's hole, the seam at its edge – where the frontend has said
+   * where its hole is (`devtoolsPageBounds`, with the view's box: `devtoolsBandRect`), the whole
+   * box otherwise. The cover anchors the picture to the band's side of the box, so the cut and
+   * the whole lay out the same; the cut keeps the pair of pictures at the box's own pixels
+   * (§9.5's budget: the page's hole is in the page's picture already – at DPR 2 a 1600 × 1000
+   * box is 6 Mpx once, not 9 with the hole pictured twice). Null with no toolbox up, an undocked
+   * one (a window of its own, nothing of it in the frame) or a frontend that is gone; encoded as
+   * the page's picture is (`snapshot`).
    */
   snapshotDevtools(): Promise<string | null> {
     const wc = this.wc
@@ -1101,7 +1132,10 @@ export class ElectronTabView implements TabView {
     if (!this.devtoolsDock || !isDockedInFrame(this.devtoolsDock)) return Promise.resolve(null)
     const frontend = wc.devToolsWebContents
     if (!frontend || frontend.isDestroyed()) return Promise.resolve(null)
-    return snapshotOf(frontend)
+    const band = this.bounds
+      ? devtoolsBandRect(this.devtoolsDock, this.devtoolsPageBounds, this.bounds)
+      : null
+    return snapshotOf(frontend, band ?? undefined)
   }
 
   /**
@@ -1712,10 +1746,15 @@ export class ElectronTabView implements TabView {
  * within `SNAPSHOT_TIMEOUT_MS`, scaled past the trigger, a JPEG data URL; null for a capture
  * that came empty, late or not at all.
  */
-async function snapshotOf(wc: WebContents): Promise<string | null> {
+/**
+ * The stand-in of `wc`'s visible area – or of `rect` alone (DIP of the view's box; a docked
+ * toolbox's band, `snapshotDevtools`) – on the terms `snapshot` documents: the 600 ms race, the
+ * §9.5 trigger and target, JPEG 90 as a data URL; null for a capture that never comes.
+ */
+async function snapshotOf(wc: WebContents, rect?: Rect): Promise<string | null> {
   try {
     const image = await Promise.race([
-      wc.capturePage(),
+      rect ? wc.capturePage(rect) : wc.capturePage(),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_TIMEOUT_MS))
     ])
     if (!image || image.isEmpty()) return null

@@ -30,15 +30,13 @@ describe('the cover under a docked toolbox (§9.29)', () => {
     expect(source).toMatch(/className=\{cn\('relative h-full w-full', coverFit\)\}/)
   })
 
-  it('lays the toolbox’s picture under the page’s, the whole box, while the tab’s toolbox is docked – an untracked cover, so the page view waits for the page’s picture alone', () => {
+  it('lays the toolbox’s picture under the page’s while the tab’s toolbox is docked – an untracked cover, so the page view waits for the page’s picture alone', () => {
     const toolbox = source.slice(source.indexOf('data-testid="toolbox-cover"'))
     expect(toolbox.length).toBeGreaterThan(0)
     expect(source).toMatch(/\{ui\.toolboxSnapshot && toolboxDocked && !group \? \(\s*<img/)
     expect(toolbox).toContain('src={ui.toolboxSnapshot}')
     expect(toolbox).toContain('decoding="sync"')
-    expect(toolbox).toMatch(
-      /className="absolute inset-0 h-full w-full object-contain object-left-top"/
-    )
+    expect(toolbox).toMatch(/className=\{cn\('absolute inset-0 h-full w-full', toolboxFit\)\}/)
     // The toolbox's picture goes before the page's in order, and the page's is positioned: it
     // paints over the toolbox's, covering the page's hole in it.
     expect(source.indexOf('data-testid="toolbox-cover"')).toBeLessThan(
@@ -48,5 +46,15 @@ describe('the cover under a docked toolbox (§9.29)', () => {
     const before = source.slice(0, source.indexOf('data-testid="toolbox-cover"'))
     const tag = before.slice(before.lastIndexOf('<'))
     expect(tag.startsWith('<img')).toBe(true)
+  })
+
+  it('anchors the toolbox’s picture to the band’s side of the box, so the host’s cut to the band and a picture of the whole box both land where the band is', () => {
+    // A bottom dock's band is the box's width and sits at its bottom; a right dock's is the
+    // box's height at its right edge; a left dock's at its left. `object-contain` keeps a
+    // band-sized picture at scale 1 (one of its sides is the box's), and a whole-box picture
+    // fills the box whichever side it is anchored to.
+    expect(source).toMatch(
+      /const toolboxFit =\s*toolboxDock === 'bottom'\s*\?\s*'object-contain object-left-bottom'\s*:\s*toolboxDock === 'right'\s*\?\s*'object-contain object-right-top'\s*:\s*'object-contain object-left-top'/
+    )
   })
 })
