@@ -41,10 +41,17 @@ export interface DeviceIdentity {
  */
 export type DeviceGrantDetails = Pick<PermissionRequestDetails, 'privateContainerId'>
 
-/** A decision changed: `origin` is null when it was a permission's default. */
+/**
+ * A decision changed: `origin` is null when it was a permission's default. `container` names
+ * the private container whose answer or device pick the change is (an answer given in private,
+ * the session's end forgetting it), so a listener keeping the regular profile's own state – the
+ * quiet mark a dismissed notification prompt leaves (`webNotifications.ts`) – can leave it be;
+ * a store-backed change carries none. In-memory only: the change is never persisted or sent.
+ */
 export interface PermissionChange {
   permission: string
   origin: string | null
+  container?: string
 }
 
 /**
@@ -290,7 +297,7 @@ export class PermissionService {
       if (i >= 0) kept[i] = { ...grant, grantedAt: kept[i].grantedAt }
       else kept.push(grant)
       this.privateDeviceGrants.set(container, kept)
-      this.notify({ permission: kind, origin })
+      this.notify({ permission: kind, origin, container })
       return
     }
     const i = this.devices.findIndex(
@@ -324,7 +331,7 @@ export class PermissionService {
       if (left.length === kept.length) return
       if (left.length > 0) this.privateDeviceGrants.set(container, left)
       else this.privateDeviceGrants.delete(container)
-      this.notify({ permission: kind, origin })
+      this.notify({ permission: kind, origin, container })
       return
     }
     const before = this.devices.length
@@ -608,23 +615,25 @@ export class PermissionService {
     const answers = this.privateDecisions.get(container) ?? new Map<string, PermissionDecision>()
     answers.set(key, decision)
     this.privateDecisions.set(container, answers)
-    // The site-information sheet of a private tab reads `resolve`, so it hears of the change too.
-    this.notify(changeFor(key))
+    // The site-information sheet of a private tab reads `resolve`, so it hears of the change too
+    // – as the private container's, so a listener minding the regular profile's state can tell.
+    this.notify(changeFor(key, container))
   }
 
   /**
    * The private session of `containerId` ended (no private window or tab is left): every answer
    * given in it is forgotten, and every device picked in it, as Chrome forgets Incognito's on its
-   * last window closing.
+   * last window closing. Every change says whose session ended (`PermissionChange.container`).
    */
   forgetContainer(containerId: string): void {
     const answers = this.privateDecisions.get(containerId)
     const grants = this.privateDeviceGrants.get(containerId)
     this.privateDecisions.delete(containerId)
     this.privateDeviceGrants.delete(containerId)
-    if (answers) for (const key of answers.keys()) this.notify(changeFor(key))
+    if (answers) for (const key of answers.keys()) this.notify(changeFor(key, containerId))
     if (grants)
-      for (const grant of grants) this.notify({ permission: grant.kind, origin: grant.origin })
+      for (const grant of grants)
+        this.notify({ permission: grant.kind, origin: grant.origin, container: containerId })
   }
 
   /** A stored allow answered a request. Private windows leave no trace in the activity either. */
@@ -650,7 +659,7 @@ export class PermissionService {
 
   reset(): void {
     const keys = Object.keys(this.decisions)
-    const grants = [...this.devices, ...this.privateGrants()]
+    const goodbyes = [...this.devices.map((g) => grantChange(g)), ...this.privateGrantChanges()]
     this.decisions = {}
     this.devices = []
     this.savedFiles.clear()
@@ -660,12 +669,18 @@ export class PermissionService {
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of keys) this.notify(changeFor(key))
-    for (const grant of grants) this.notify({ permission: grant.kind, origin: grant.origin })
+    for (const change of goodbyes) this.notify(change)
   }
 
-  /** Every device picked in a private container still open, for a reset to say goodbye to. */
-  private privateGrants(): DeviceGrant[] {
-    return [...this.privateDeviceGrants.values()].flat()
+  /**
+   * The goodbye for every device picked in a private container still open, each as its
+   * container's change, for a reset to say alongside the store's.
+   */
+  private privateGrantChanges(): PermissionChange[] {
+    const out: PermissionChange[] = []
+    for (const [container, grants] of this.privateDeviceGrants)
+      for (const grant of grants) out.push(grantChange(grant, container))
+    return out
   }
 
   /**
@@ -677,10 +692,10 @@ export class PermissionService {
     const removed = Object.keys(this.decisions).filter(
       (key) => key.slice(0, key.lastIndexOf('|')) !== DEFAULT_ORIGIN
     )
-    const grants = [...this.devices, ...this.privateGrants()]
+    const goodbyes = [...this.devices.map((g) => grantChange(g)), ...this.privateGrantChanges()]
     if (
       removed.length === 0 &&
-      grants.length === 0 &&
+      goodbyes.length === 0 &&
       this.savedFiles.size === 0 &&
       this.sessionAllows.size === 0 &&
       this.privateDecisions.size === 0
@@ -695,7 +710,7 @@ export class PermissionService {
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))
-    for (const grant of grants) this.notify({ permission: grant.kind, origin: grant.origin })
+    for (const change of goodbyes) this.notify(change)
   }
 
   // ---------------------------------------------------------------------------
@@ -913,10 +928,23 @@ function mediaRows(details?: PermissionRequestDetails): string[] {
   return rows.length > 0 ? rows : [...MEDIA_ROWS]
 }
 
-function changeFor(key: string): PermissionChange {
+/** The change a decision key names; `container` when the decision is a private container's. */
+function changeFor(key: string, container?: string): PermissionChange {
   const split = key.lastIndexOf('|')
   const origin = key.slice(0, split)
-  return { permission: key.slice(split + 1), origin: origin === DEFAULT_ORIGIN ? null : origin }
+  const change: PermissionChange = {
+    permission: key.slice(split + 1),
+    origin: origin === DEFAULT_ORIGIN ? null : origin
+  }
+  if (container !== undefined) change.container = container
+  return change
+}
+
+/** The change a device grant's coming or going is; `container` when it is a private container's. */
+function grantChange(grant: DeviceGrant, container?: string): PermissionChange {
+  const change: PermissionChange = { permission: grant.kind, origin: grant.origin }
+  if (container !== undefined) change.container = container
+  return change
 }
 
 /** The stored key for a request; qualifiers keep unrelated answers apart. */

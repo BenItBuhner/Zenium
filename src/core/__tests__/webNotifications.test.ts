@@ -7,7 +7,7 @@ import {
   quietPromptSite
 } from '../webNotifications'
 import type { Browser } from '../browser'
-import type { PermissionRequestDetails } from '../permissions'
+import type { PermissionChange, PermissionRequestDetails } from '../permissions'
 import type { PageHostMessage, WebNotificationRequest } from '../platform'
 import type { NotificationPageRequest } from '../../shared/notifications'
 import type { PermissionPrompt, PermissionPromptAnswer } from '../../shared/types'
@@ -34,7 +34,7 @@ interface Harness {
   revealed: string[]
   created: string[]
   hostShows: boolean
-  listeners: Array<(change: { permission: string; origin: string | null }) => void>
+  listeners: Array<(change: PermissionChange) => void>
   privateTabs: Set<string>
   addTab(tabId: string, url: string): FakeView
   closeTab(tabId: string): void
@@ -106,7 +106,7 @@ function harness(options: { host?: boolean } = {}): Harness {
   const browser = {
     platform: { webNotifications: host },
     permissions: {
-      subscribe: (listener: (change: { permission: string; origin: string | null }) => void) => {
+      subscribe: (listener: (change: PermissionChange) => void) => {
         listeners.push(listener)
         return () => undefined
       },
@@ -381,6 +381,42 @@ describe('WebNotificationService', () => {
         listener({ permission: 'notifications', origin: 'https://site.example' })
       expect(h.service.dismissedBefore('https://site.example/')).toBe(false)
       h.service.handle('t1', { notification: 'request', id: 'r2', gesture: true })
+      await flush()
+      expect(h.decideCalls).toHaveLength(2)
+      expect(h.prompts).toEqual([])
+    })
+
+    it('a private session’s change leaves the regular profile’s quiet mark; the site’s own rule moving by hand still clears it (#421’s delta read)', async () => {
+      h.loudAnswer = 'dismiss'
+      h.service.handle('t1', { notification: 'request', id: 'r1', gesture: true })
+      await flush()
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(true)
+      const posted = h.views.get('t1')!.posted.length
+      // An answer given in a private window, and the private session's end forgetting it
+      // (`PermissionService.forgetContainer`): the container's changes, not the regular
+      // profile's rule – the mark stays, and the site still asks quietly.
+      for (const listener of h.listeners)
+        listener({
+          permission: 'notifications',
+          origin: 'https://site.example',
+          container: 'private'
+        })
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(true)
+      // The site's pages hear their status as before: the rest of the subscriber is untouched.
+      expect(h.views.get('t1')!.posted.length).toBe(posted + 1)
+      expect(lastPosted('t1')).toMatchObject({ action: 'status', status: 'default' })
+      h.service.handle('t1', { notification: 'request', id: 'r2', gesture: true })
+      await flush()
+      expect(h.decideCalls).toHaveLength(1)
+      expect(h.prompts).toHaveLength(1)
+      expect(h.prompts[0]!.quiet).toBe(true)
+      h.answer(h.prompts[0]!.id, null)
+      await flush()
+      // The site's own rule changed by hand (a reset in Settings, the site sheet): the mark goes.
+      for (const listener of h.listeners)
+        listener({ permission: 'notifications', origin: 'https://site.example' })
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(false)
+      h.service.handle('t1', { notification: 'request', id: 'r3', gesture: true })
       await flush()
       expect(h.decideCalls).toHaveLength(2)
       expect(h.prompts).toEqual([])
