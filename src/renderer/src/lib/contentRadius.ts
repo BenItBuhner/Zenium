@@ -1,5 +1,5 @@
-import { isDockedInFrame } from '@shared/devtoolsDock'
-import type { FormFactor, UIState } from '@shared/types'
+import { isDockedInFrame, sanitizeDevtoolsDock } from '@shared/devtoolsDock'
+import type { DevtoolsDock, FormFactor, UIState } from '@shared/types'
 import { visibleTabIds } from './selectors'
 
 /** The content frame's corner radius on the desktop (design language v2 §2: the outer 10 of the pair). */
@@ -8,18 +8,37 @@ export const DESKTOP_CONTENT_RADIUS = 10
 export const PHONE_CONTENT_RADIUS = 14
 
 /**
+ * Where the toolbox on `tabId` stands, or null with none up (design language v2 §9.29). Whether
+ * one is up is the window's set (`devtoolsOpenFor`), which the core clears the moment a page's
+ * view goes; where it stands is the tab's own reading (`Tab.devtools`, the host's read-back for
+ * that view: a toolbox left docked at the bottom while another tab's was undocked is still docked
+ * at the bottom), nulled with the rest of the tab's page state a step later. Between the two a
+ * tab can carry a dock with no toolbox behind it – the set decides, the field never reports a
+ * dock on its own. A host that reports a toolbox open but no dock of its own (a record from
+ * before the field) is read at the setting, the default every toolbox opens at.
+ */
+export function devtoolsDockOf(state: UIState, tabId: string): DevtoolsDock | null {
+  const open = state.devtoolsOpenFor
+  if (!open || !open.includes(tabId)) return null
+  const fallback = state.settings.devtoolsDock ?? 'bottom'
+  const own = state.tabs?.[tabId]?.devtools
+  return own ? sanitizeDevtoolsDock(own.dock, fallback) : fallback
+}
+
+/**
  * Whether a developer toolbox stands docked inside the frame's box on a page the window shows
- * (design language v2 §9.29): the remembered dock is one of the frame's (bottom, right, left –
- * not a window of its own) and a visible tab has its tools open. The dock is the setting's, one
- * for every toolbox: a toolbox left docked while another tab's was undocked reads as undocked
- * here until it is next opened.
+ * (design language v2 §9.29): a visible tab has its tools open at one of the frame's docks
+ * (bottom, right, left – not a window of its own). Each tab's toolbox is read where it stands,
+ * so the frame follows the toolbox in front: tab A docked at the bottom and tab B's undocked,
+ * switching between them switches the frame's shape.
  */
 export function devtoolsDockedInFrame(state: UIState): boolean {
   const open = state.devtoolsOpenFor
   if (!open || open.length === 0) return false
-  if (!isDockedInFrame(state.settings.devtoolsDock ?? 'bottom')) return false
-  const visible = visibleTabIds(state)
-  return visible.some((id) => open.includes(id))
+  return visibleTabIds(state).some((id) => {
+    const dock = devtoolsDockOf(state, id)
+    return dock !== null && isDockedInFrame(dock)
+  })
 }
 
 /**

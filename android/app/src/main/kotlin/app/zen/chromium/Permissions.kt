@@ -1,10 +1,14 @@
 package app.zen.chromium
 
 import android.Manifest
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.os.Build
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
 /**
@@ -65,6 +69,32 @@ class Permissions(private val host: PageHost) {
         }
     }
 
+    private fun prefs(): SharedPreferences = host.activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private val notificationAsk = NotificationAsk(
+        askedBefore = { prefs().getBoolean(KEY_NOTIFICATIONS_ASKED, false) },
+        markAsked = { prefs().edit().putBoolean(KEY_NOTIFICATIONS_ASKED, true).apply() }
+    )
+
+    /**
+     * Android 13's `POST_NOTIFICATIONS`, the app's own right to post: ONE ask for the whole app, the
+     * first time anything wants a card up – a site's first notification grant (`WebNotifications`),
+     * the first download (`Downloads`), an extension's first card (`Extensions`) – as Chrome asks it
+     * when a site is first allowed; and never a second one, whoever asks ([NotificationAsk]): a
+     * refusal leaves Zenium's cards down until the system settings turn notifications on. Answers
+     * whether the app may post right now; below Android 13 there is no prompt and the system's
+     * switch is the answer. `then` runs on the main thread.
+     */
+    fun ensureNotificationsAllowed(then: (Boolean) -> Unit) {
+        val activity = host.activity
+        val needsPrompt = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        val allowed = NotificationManagerCompat.from(activity).areNotificationsEnabled()
+        if (notificationAsk.arrive(needsPrompt, allowed, then)) {
+            requestForApp(Manifest.permission.POST_NOTIFICATIONS) { grant -> notificationAsk.settle(grant == RuntimeGrant.GRANTED) }
+        }
+    }
+
     private fun ask(
         permission: String,
         url: String,
@@ -100,15 +130,43 @@ class Permissions(private val host: PageHost) {
         if (wanted.size == 1 && wanted[0] == PermissionRequest.RESOURCE_VIDEO_CAPTURE) permissionName = "camera"
         if (wanted.size == 1 && wanted[0] == PermissionRequest.RESOURCE_AUDIO_CAPTURE) permissionName = "microphone"
         val url = request.origin.toString().ifEmpty { view.url ?: "" }
+        val capture = captureUseOf(wanted)
         ask(permissionName, url, view.tabId, if (permissionName == "mediaKeySystem") emptyList() else mediaTypes) { allow ->
             if (!allow) {
                 request.deny()
                 return@ask
             }
             ensureRuntime(runtime) { granted ->
-                if (granted) request.grant(wanted.toTypedArray()) else request.deny()
+                if (!granted) {
+                    request.deny()
+                    return@ensureRuntime
+                }
+                request.grant(wanted.toTypedArray())
+                // The page may capture now: the "<site> is using your microphone" card and the
+                // service that keeps the capture alive behind other apps start here, while the
+                // app is in front (NOT-13; the page's own report confirms or ends it) – for the
+                // kinds whose runtime permission the app holds. A camera + microphone request
+                // the system prompt answered with the microphone alone arms the microphone: the
+                // kind Android 14 lets the service hold (the camera stream is the engine's to
+                // refuse; a report naming one all the same meets the service's own ladder).
+                val armed = held(capture)
+                if (armed.any) host.capture?.granted(view.tabId, view.url ?: url, armed, Profiles.isPrivate(view.containerId))
             }
         }
+    }
+
+    /** The kinds of `use` the app holds the runtime permission for right now. */
+    private fun held(use: CaptureUse): CaptureUse = CaptureUse(
+        camera = use.camera && holds(Manifest.permission.CAMERA),
+        microphone = use.microphone && holds(Manifest.permission.RECORD_AUDIO)
+    )
+
+    private fun holds(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(host.activity, permission) == PackageManager.PERMISSION_GRANTED
+
+    /** The page took a capture request back before it was answered: an arm it had is dropped. */
+    fun onPermissionRequestCanceled(view: TabWebView, request: PermissionRequest) {
+        if (captureUseOf(request.resources?.toList() ?: emptyList()).any) host.capture?.cancelled(view.tabId)
     }
 
     fun onGeolocation(view: TabWebView, origin: String, callback: GeolocationPermissions.Callback) {
@@ -123,6 +181,11 @@ class Permissions(private val host: PageHost) {
         }
     }
 
+    private fun captureUseOf(resources: List<String>): CaptureUse = CaptureUse(
+        camera = PermissionRequest.RESOURCE_VIDEO_CAPTURE in resources,
+        microphone = PermissionRequest.RESOURCE_AUDIO_CAPTURE in resources
+    )
+
     private fun ensureRuntime(permissions: List<String>, then: (Boolean) -> Unit) {
         val missing = permissions.filter {
             ContextCompat.checkSelfPermission(host.activity, it) != PackageManager.PERMISSION_GRANTED
@@ -135,5 +198,12 @@ class Permissions(private val host: PageHost) {
             // Location: coarse alone is still a grant.
             then(results.values.any { it } && (permissions.size > 1 || results.values.all { it }))
         }
+    }
+
+    companion object {
+        /** The install's memory of the permissions the app asked for in its own name. */
+        const val PREFS = "zenium.permissions"
+        /** Whether Android 13's notification permission was asked (once is all it gets). */
+        const val KEY_NOTIFICATIONS_ASKED = "notificationsAsked"
     }
 }

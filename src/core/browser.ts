@@ -2118,6 +2118,13 @@ export class Browser {
     else this.toast('Link handling is set in the system settings on this device.', 'info', win)
   }
 
+  /** The system's notification settings for this app (Android), where its channels are turned on and off. */
+  openNotificationSettings(win: ZenWindow): void {
+    const { shell } = this.platform
+    if (shell.openNotificationSettings) shell.openNotificationSettings()
+    else this.toast('Notifications are set in the system settings on this device.', 'info', win)
+  }
+
   /** The system's Private DNS screen (Android), where a host without its own secure DNS sends the user. */
   openPrivateDnsSettings(win: ZenWindow): void {
     const { shell } = this.platform
@@ -2720,6 +2727,7 @@ export class Browser {
       'app.quit': () => void this.requestQuit(),
       'app.share': (payload, win) => this.share(payload, win),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
+      'app.openNotificationSettings': (_a, win) => this.openNotificationSettings(win),
       // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
       'voice.start': () => this.startVoiceSearch(),
       'voice.cancel': () => this.platform.voice?.cancel(),
@@ -2985,6 +2993,7 @@ export class Browser {
         this.extensions.omniboxDeleteSuggestion(input, win),
 
       'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
+      'overlay.snapshotDevtools': ({ tabId, fresh }, win) => win.snapshotDevtools(tabId, fresh),
 
       // Tab card pictures are the host's (`ThumbnailHost`); a host without them has none to show.
       'thumbnail.configure': ({ width }) => this.platform.thumbnails?.configure(width),
@@ -3091,7 +3100,8 @@ export class Browser {
       'clipboard.peek': () => this.searchEngines.peekClipboard(),
       'clipboard.read': () => this.searchEngines.readClipboard(),
       'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
-      'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
+      'search.addEngine': ({ name, url, keyword }, win) =>
+        this.searchEngines.add(name, url, win, keyword),
       'search.updateEngine': ({ id, name, searchUrl, keyword }, win) =>
         this.searchEngines.update(id, { name, searchUrl, keyword }, win),
       'search.setEngineActive': ({ id, active }, win) =>
@@ -3655,7 +3665,7 @@ export class Browser {
         s.downloads = { ...s.downloads, ...rest }
         if (typeof askWhereToSave === 'boolean') s.askWhereToSave = askWhereToSave
       } else if (key === 'toolbarPins') {
-        // The Customize toolbar dialog writes the whole record; only known controls' folds stay.
+        // The Customise toolbar dialog writes the whole record; only known controls' folds stay.
         s.toolbarPins = sanitizeToolbarPins(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value

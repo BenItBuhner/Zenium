@@ -3,6 +3,8 @@
 // signature. Run from the repository root.
 //
 //   node .github/scripts/update-manifest.mjs build        write the manifest (and .sig when a key is set)
+//   node .github/scripts/update-manifest.mjs notes        put the release body (release-notes.mjs) into
+//                                                         the manifest's `notes` and re-sign it
 //   node .github/scripts/update-manifest.mjs keygen       print a fresh signing key pair
 //   node .github/scripts/update-manifest.mjs public-key   print the public key of UPDATE_MANIFEST_SIGNING_KEY
 //   node .github/scripts/update-manifest.mjs verify       check update-manifest.json against its .sig
@@ -15,6 +17,10 @@
 //   PUBLISHED_AT                         ISO timestamp (default: now)
 //   UPDATE_MANIFEST_SIGNING_KEY          ed25519 private key, PKCS#8 PEM (or base64 of it); optional
 //   ALLOW_INCOMPLETE                     "true" to tolerate missing packages
+// notes reads:
+//   ASSETS_DIR                           where update-manifest.json (and .sig) live (default release/assets)
+//   NOTES_FILE                           the release body as markdown (default release/notes.md)
+//   UPDATE_MANIFEST_SIGNING_KEY          required when a .sig exists: the manifest changes, so it is re-signed
 // verify reads:
 //   UPDATE_MANIFEST_PUBLIC_KEY           base64 raw public key; defaults to the one named in the .sig
 import {
@@ -182,6 +188,42 @@ function verifyCommand() {
   console.log(`OK: ${MANIFEST_FILE} is signed by ${expected}`)
 }
 
+/**
+ * The release body into the manifest, so a stable-channel app can show What's new without a
+ * second request (the beta channel reads the same text from the release list's `body`;
+ * src/shared/updates.ts takes `notes` as the whole body and cuts the `## Highlights` section
+ * itself). Runs after release-notes.mjs and before the checksums and the attestation: the
+ * manifest's bytes change here, so a signature written by `build` is replaced, and the
+ * SHA256SUMS.txt line for the manifest has to be computed afterwards.
+ */
+function notesCommand() {
+  const assetsDir = process.env.ASSETS_DIR || 'release/assets'
+  const notesFile = process.env.NOTES_FILE || 'release/notes.md'
+  const manifestPath = join(assetsDir, MANIFEST_FILE)
+  const signaturePath = join(assetsDir, SIGNATURE_FILE)
+  if (!existsSync(manifestPath)) fail(`${manifestPath} does not exist (run build first)`)
+  if (!existsSync(notesFile)) fail(`${notesFile} does not exist (run release-notes.mjs first)`)
+  const notes = readFileSync(notesFile, 'utf8').replace(/\r\n?/g, '\n').trim()
+  if (!notes) fail(`${notesFile} is empty`)
+  // Decided before anything is written: a signed manifest must leave here signed.
+  const keyText = (process.env.UPDATE_MANIFEST_SIGNING_KEY ?? '').trim()
+  if (!keyText && existsSync(signaturePath))
+    fail(
+      `${signaturePath} exists but UPDATE_MANIFEST_SIGNING_KEY is not set: the manifest would change and its signature no longer verify`
+    )
+  const key = keyText ? loadPrivateKey(keyText) : null
+
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.notes = notes
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`
+  writeFileSync(manifestPath, manifestText)
+  console.log(`Wrote the release body (${notes.length} characters) into ${manifestPath}`)
+  if (key) {
+    writeFileSync(signaturePath, `${signManifest(manifestText, key)}\n`)
+    console.log(`Re-signed with ${rawPublicKey(key)} → ${signaturePath}`)
+  }
+}
+
 async function build() {
   const tag = required('RELEASE_TAG')
   const version = required('RELEASE_VERSION')
@@ -315,6 +357,9 @@ switch (command) {
   case 'build':
     await build()
     break
+  case 'notes':
+    notesCommand()
+    break
   case 'keygen':
     keygen()
     break
@@ -325,5 +370,5 @@ switch (command) {
     verifyCommand()
     break
   default:
-    fail(`Unknown command "${command}" (build | keygen | public-key | verify)`)
+    fail(`Unknown command "${command}" (build | notes | keygen | public-key | verify)`)
 }

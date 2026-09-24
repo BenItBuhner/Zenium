@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createElement, isValidElement, type ReactNode } from 'react'
+import { createElement, isValidElement, type ComponentProps, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
@@ -9,7 +9,6 @@ import type {
   HostCapabilities,
   ImportSource,
   SafetyCheckResult,
-  SearchEngine,
   Settings,
   SyncStatus,
   Tab,
@@ -68,11 +67,13 @@ const {
   findRow,
   groupShows,
   itemMenuItems,
+  onLayout,
   optionGroups,
   rowText,
   searchRows
 } = await import('../model')
 const { FontPreview } = await import('../fontBlocks')
+const { SearchEngineForm } = await import('../blocks')
 const { familyOptions, fontSizeOptions, previewFamilies } = await import('../fontsModel')
 const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
@@ -514,6 +515,106 @@ describe('the section model', () => {
       kind: 'info',
       label: 'Default browser'
     })
+  })
+
+  it('opens What’s new and the Legal group’s Privacy notice and Terms as chrome pages, on a host with page tabs alone (SET-54, SET-55)', () => {
+    const about = section('about')
+    expect(about.groups.map((g) => [g.id, g.heading])).toEqual([
+      ['about', 'About'],
+      ['legal', 'Legal']
+    ])
+    expect(about.groups[0]!.rows.map((r) => r.id)).toEqual([
+      'version',
+      'check-updates',
+      'get-help',
+      'report-issue',
+      'default-browser',
+      'open-by-default',
+      'whats-new',
+      'engine',
+      'upstream',
+      'licences'
+    ])
+    const whatsNew = row(about, 'whats-new')
+    expect(whatsNew).toMatchObject({
+      kind: 'action',
+      label: 'What’s new',
+      description: 'The highlights of Zenium 0.3.0-test.',
+      leaves: 'chevron'
+    })
+    if (whatsNew.kind !== 'action') throw new Error('not an action row')
+    whatsNew.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('page.open', { id: 'whats-new', section: undefined })
+
+    expect(about.groups[1]!.rows.map((r) => [r.id, r.label])).toEqual([
+      ['privacy-notice', 'Privacy notice'],
+      ['terms', 'Terms']
+    ])
+    for (const id of ['privacy-notice', 'terms'] as const) {
+      const legal = row(about, id)
+      if (legal.kind !== 'action') throw new Error('not an action row')
+      expect(legal.leaves).toBe('chevron')
+      legal.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('page.open', { id, section: undefined })
+    }
+    // The landing's search finds them under About by their words.
+    expect(searchRows([about], 'privacy notice').map((h) => h.row.id)).toEqual(['privacy-notice'])
+    expect(searchRows([about], 'release notes').map((h) => h.row.id)).toEqual(['whats-new'])
+
+    // The version block (the desktop's custom row, settings-73) copies its report on a hold on a
+    // touch layout (the toast's word with it); the desktop's is text to select.
+    const version = row(about, 'version')
+    expect(version).toMatchObject({
+      kind: 'custom',
+      copy: {
+        text: expect.stringMatching(
+          /^Zenium 0\.3\.0-test( · Chromium [\d.]+)? · Android System WebView$/
+        ),
+        confirmation: 'Version copied'
+      }
+    })
+    const desktop = buildSection(
+      PAGE.sections.find((x) => x.id === 'about')!,
+      { ...context(state()).ctx, formFactor: 'desktop' }
+    )
+    expect(row(desktop, 'version')).not.toHaveProperty('copy')
+
+    // Open by default (DEF-06): the host's reading on the row, the tap leaving for the screen.
+    const openBy = row(about, 'open-by-default')
+    expect(openBy).toMatchObject({
+      kind: 'action',
+      label: 'Open by default',
+      description: 'Choose which links open in Zenium.',
+      leaves: 'external'
+    })
+    if (openBy.kind !== 'action') throw new Error('not an action row')
+    openBy.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('app.openAppLinkSettings', undefined)
+    const allowed = section(
+      'about',
+      state({ defaultBrowser: { isDefault: true, prompt: null, appLinks: 'allowed' } })
+    )
+    expect(row(allowed, 'open-by-default').description).toBe(
+      'Zenium is set to open web links from other apps.'
+    )
+    const disallowed = section(
+      'about',
+      state({ defaultBrowser: { isDefault: false, prompt: null, appLinks: 'disallowed' } })
+    )
+    expect(row(disallowed, 'open-by-default').description).toBe(
+      'Zenium is set not to open web links from other apps.'
+    )
+    // Without the screen (a desktop host) there is no row.
+    const noScreen = section(
+      'about',
+      state({ capabilities: { ...ANDROID, appLinkSettings: false } })
+    )
+    expect(findRow(noScreen.groups, 'open-by-default')).toBeNull()
+
+    // A host without page tabs has nowhere to open a chrome page: the rows stay away.
+    const noTabs = section('about', state({ capabilities: { ...ANDROID, pageTabs: false } }))
+    expect(findRow(noTabs.groups, 'whats-new')).toBeNull()
+    expect(noTabs.groups.map((g) => g.id)).toEqual(['about'])
   })
 
   it('carries #115’s Privacy and security groups (tracking-*) at Chrome’s tracking-prevention position, behind requestBlocking', () => {
@@ -1877,7 +1978,8 @@ describe('the section model', () => {
     expect(findRow(privacy.groups, 'sites-reset-all')).toBeNull()
 
     // A stored default reads on the row; a site's answers list under their type and under the
-    // site, each forgotten or reset through the permission commands after a confirmation.
+    // site: under the type as item rows whose one action, Forget, runs at once (the lead's #418
+    // ruling 5), under the site reset through the permission command after a confirmation.
     const rules = [
       { origin: 'https://meet.example', permission: 'camera', decision: 'allow' as const },
       { origin: 'https://meet.example', permission: 'microphone', decision: 'deny' as const },
@@ -1890,13 +1992,13 @@ describe('the section model', () => {
     expect(row(stored, 'sites:camera').description).toBe('Sites cannot use camera')
     const cameraSite = row(stored, 'sites:camera:https://meet.example:camera')
     expect(cameraSite).toMatchObject({
-      kind: 'action',
+      kind: 'item',
       label: 'meet.example',
-      description: 'Allowed'
+      description: 'Allowed',
+      action: { label: 'Forget' }
     })
-    if (cameraSite.kind !== 'action') throw new Error('not an action')
-    expect(cameraSite.confirm?.action).toBe('Forget')
-    cameraSite.onPress?.()
+    if (cameraSite.kind !== 'item') throw new Error('not an item')
+    cameraSite.action?.onPress()
     expect(invoke).toHaveBeenCalledWith('permissions.forget', {
       origin: 'https://meet.example',
       permission: 'camera'
@@ -2931,15 +3033,21 @@ describe('what a row does', () => {
 
     it('offers Get help, Report an issue and the licences page, where the Help menu goes', () => {
       const about = section('about')
+      // The Android rows (Open by default, What's new) and the Legal group (SET-54, SET-55) sit
+      // among them on this host; their own test is above.
       expect(allRows(about.groups).map((r) => r.id)).toEqual([
         'version',
         'check-updates',
         'get-help',
         'report-issue',
         'default-browser',
+        'open-by-default',
+        'whats-new',
         'engine',
         'upstream',
-        'licences'
+        'licences',
+        'privacy-notice',
+        'terms'
       ])
       const help = row(about, 'get-help')
       if (help.kind !== 'action') throw new Error('not an action')
@@ -3063,6 +3171,32 @@ describe('what a row does', () => {
     if (add.kind !== 'action') throw new Error('not an action')
     expect(add.form?.title).toBe('Add search engine')
     expect(allRows(search.groups).some((r) => r.id === 'search-engine:google')).toBe(false)
+    // The chassis form with Add as its verb over every engine of the profile (no `engineId`:
+    // the new engine has none); its shortcut goes to the command as the engine's `keyword`
+    // (W5-4) – typed, the engine's own; empty, the engine derives one from the name.
+    const addForm = add.form!.render(() => {})
+    if (!isValidElement<ComponentProps<typeof SearchEngineForm>>(addForm))
+      throw new Error('not an element')
+    expect(addForm.type).toBe(SearchEngineForm)
+    expect(addForm.props).toMatchObject({ action: 'Add', engines: s.searchEngines })
+    expect(addForm.props.initial).toBeUndefined()
+    expect(addForm.props.engineId).toBeUndefined()
+    addForm.props.onSubmit({
+      name: 'Wiki',
+      url: 'https://wiki.example/w?search=%s',
+      shortcut: '@wiki'
+    })
+    expect(invoke).toHaveBeenCalledWith('search.addEngine', {
+      name: 'Wiki',
+      url: 'https://wiki.example/w?search=%s',
+      keyword: '@wiki'
+    })
+    addForm.props.onSubmit({ name: 'Wiki', url: 'https://wiki.example/w?search=%s', shortcut: '' })
+    expect(invoke).toHaveBeenLastCalledWith('search.addEngine', {
+      name: 'Wiki',
+      url: 'https://wiki.example/w?search=%s',
+      keyword: ''
+    })
     // A fresh profile: the group shows its empty state.
     const fresh = section('search')
     const added = fresh.groups.find((g) => g.id === 'search-engines')!
@@ -3168,7 +3302,7 @@ describe('what a row does', () => {
       ])
     })
 
-    it('Edit is a form row over the Add form pre-filled – name, shortcut, URL – saving through search.updateEngine', () => {
+    it('Edit is a form row over the chassis’s Add / Edit form pre-filled – name, shortcut, URL – saving through search.updateEngine', () => {
       const { model } = searchOn('desktop')
       const edit = row(model, 'search-engine:custom:wiki:edit')
       if (edit.kind !== 'action') throw new Error('not an action')
@@ -3178,10 +3312,20 @@ describe('what a row does', () => {
         description: 'Put %s in the URL where the search terms go.'
       })
       const form = edit.form!.render(() => {})
-      if (!isValidElement<{ engine: SearchEngine; onSave: (edits: object) => void }>(form))
+      if (!isValidElement<ComponentProps<typeof SearchEngineForm>>(form))
         throw new Error('not an element')
-      expect(form.props.engine).toBe(wiki)
-      form.props.onSave({ name: 'Wiki 2', searchUrl: wiki.searchUrl, keyword: '@w' })
+      // #419's one form for Add and Edit: the engine's values as the fields start, Save as the
+      // verb, the profile's engines for the shortcut's uniqueness with the engine's own word
+      // excepted (`engineId`).
+      expect(form.type).toBe(SearchEngineForm)
+      expect(form.props).toMatchObject({
+        initial: { name: 'Wiki', url: wiki.searchUrl, shortcut: '@wiki' },
+        action: 'Save',
+        engineId: wiki.id
+      })
+      expect(form.props.engines).toContain(wiki)
+      // The form's `shortcut` is the command's `keyword`, its `url` the engine's `searchUrl`.
+      form.props.onSubmit({ name: 'Wiki 2', url: wiki.searchUrl, shortcut: '@w' })
       expect(invoke).toHaveBeenCalledWith('search.updateEngine', {
         id: wiki.id,
         name: 'Wiki 2',
@@ -3722,7 +3866,11 @@ describe('what a row does', () => {
   it('carries #62’s Security rows: each remembered site answer an item that forgets it, Forget all once there are two, the session’s sign-ins', () => {
     // Ungated, as the desktop pane is; empty until a site has been answered.
     const empty = section('security')
-    expect(empty.groups.map((g) => g.id)).toEqual(['security-permissions', 'security-session'])
+    expect(empty.groups.map((g) => g.id)).toEqual([
+      'security-permissions',
+      'security-notifications',
+      'security-session'
+    ])
     expect(empty.groups[0].rows).toEqual([])
     expect(empty.groups[0].empty).toBe('No site permissions remembered yet')
     expect(empty.groups.every(groupShows)).toBe(true)
@@ -3784,6 +3932,30 @@ describe('what a row does', () => {
     )
     // The Privacy category no longer lists them: they moved here.
     expect(findRow(section('privacy', s).groups, 'permissions-reset')).toBeNull()
+  })
+
+  it('carries SET-26’s Notifications row on the phone: one action leaving for the system’s notification settings', () => {
+    const security = section('security')
+    const group = security.groups.find((g) => g.id === 'security-notifications')
+    expect(group).toMatchObject({ heading: 'Notifications', layouts: ['phone'] })
+    const settings = row(security, 'notification-settings')
+    if (settings.kind !== 'action') throw new Error('not an action')
+    expect(settings).toMatchObject({ label: 'Notification settings', leaves: 'external' })
+    expect(settings.layouts).toBeUndefined()
+    settings.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('app.openNotificationSettings', undefined)
+    // The tablet and the desktop keep their notifications where the OS puts them: no row.
+    for (const layout of ['tablet', 'desktop'] as const) {
+      expect(onLayout(security.groups, layout).map((g) => g.id)).toEqual([
+        'security-permissions',
+        'security-session'
+      ])
+    }
+    expect(onLayout(security.groups, 'phone').map((g) => g.id)).toContain('security-notifications')
+    // The landing's search reaches it by what the row is about.
+    expect(searchRows([security], 'notifications').map((h) => h.row.id)).toContain(
+      'notification-settings'
+    )
   })
 
   it('the request engine’s rows run the blocking commands or patch `blocking`, and follow the master switch', () => {

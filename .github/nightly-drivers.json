@@ -749,7 +749,8 @@
       "shard": "phone-d",
       "mirrors": "android-customtabs-demo.yml",
       "dir": "customtabs-demo",
-      "estimate": 2.5
+      "estimate": 5.5,
+      "note": "Twenty-two scenes since #423 (the caller's bottom toolbar and Minimize): the demo's runs measured 197 s and 332 s (the page loads vary with the runner); the longer one, rounded up."
     },
     {
       "id": "voice",
@@ -1097,8 +1098,12 @@
       "shard": "webview",
       "mirrors": "android-media-demo.yml",
       "dir": "media-demo",
-      "timeout": 900,
-      "estimate": 5
+      "env": {
+        "DEMO_REVOKE": "android.permission.POST_NOTIFICATIONS"
+      },
+      "timeout": 1200,
+      "estimate": 8,
+      "note": "POST_NOTIFICATIONS revoked before the driver, granted back after: the quiet ask's first grant meets Android 13's prompt for real (NOT-03); the capture card and the Updates channel read from the shade (NOT-13, NOT-17)."
     },
     {
       "id": "media-ui",

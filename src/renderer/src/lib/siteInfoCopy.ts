@@ -2,10 +2,13 @@ import type { DeviceGrant, DeviceKind, Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { builtInDefault } from '@shared/contentSettings'
 import {
+  certificateErrorDetail,
+  certificateFault,
   cookieBytes,
   describeSite,
   formatBytes,
   permissionLabel,
+  refusedCertificate,
   type SiteInfoSnapshot,
   type SitePermission,
   type SiteSecurity
@@ -32,14 +35,54 @@ export type LevelId =
   | 'clear-cookies'
   | `devices:${DeviceKind}`
 
-export function security(info: SiteInfoSnapshot | null, url: string): SiteSecurity {
-  // The host's reading is of the connection under the page; an extension page has none to speak
-  // of, whatever origin the Android runtime serves it from (`describeSite` says `extension`).
+/**
+ * The connection under the page as the popover reads it: the host's reading (`info.security`,
+ * the core's `composeSiteInfo`) once it has landed, else what the tab itself can tell – a
+ * certificate the tab refused (`Tab.certificateError`) reads as not secure from the first frame,
+ * as the pill's triangle already does, never as secure for the beat the reading takes. An
+ * extension page has no connection to speak of, whatever origin the Android runtime serves it
+ * from (`describeSite` says `extension`).
+ */
+export function security(
+  info: SiteInfoSnapshot | null,
+  url: string,
+  tab?: Pick<Tab, 'certificateError'>
+): SiteSecurity {
   const site = describeSite(url)
   if (site.state === 'extension')
     return { state: 'extension', certificate: null, mixedContent: null }
   if (info) return info.security
+  const error = tab?.certificateError ?? null
+  if (site.state === 'secure' && error)
+    return {
+      state: 'insecure',
+      certificate: refusedCertificate(error),
+      mixedContent: null,
+      certificateError: error
+    }
   return { state: site.state, certificate: null, mixedContent: null }
+}
+
+/**
+ * What is wrong with the connection's certificate, in the shared module's words
+ * (`certificateFault`, Android's #382: "Certificate expired", "Certificate not trusted", …), as
+ * the phone sheet's title line names it; null while no certificate was refused. The fault and
+ * never the issuer: an invalid certificate's issuer is no credential – the Connection level's
+ * certificate rows still list it, under "Certificate that was refused". `now` tells an expired
+ * certificate from one not yet valid, for a test's fixed clock.
+ */
+export function connectionFault(s: SiteSecurity, now?: number): string | null {
+  const error = s.certificateError
+  if (!error) return null
+  return certificateFault(error.code, error.certificate, now)
+}
+
+/**
+ * The overview's Connection row value and the Connection level's headline: the certificate's
+ * fault where one was refused – in the danger ink, the caller's – else the headline.
+ */
+export function connectionValue(s: SiteSecurity): string {
+  return connectionFault(s) ?? connectionHeadline(s)
 }
 
 /** "Secure connection", "Not secure", … as the connection row and level headline say it. */
@@ -61,6 +104,8 @@ export function connectionHeadline(s: SiteSecurity): string {
 }
 
 export function connectionDetail(s: SiteSecurity): string {
+  // A refused certificate: the shared module's sentence, the phone sheet's (bypassed or refused).
+  if (s.certificateError) return certificateErrorDetail(s.certificateError)
   switch (s.state) {
     case 'secure':
       return s.mixedContent
@@ -80,13 +125,17 @@ export function connectionDetail(s: SiteSecurity): string {
 }
 
 /**
- * The title block's line: the connection, who vouched for it, and what sets this tab apart – a
- * container other than the default, or the private session.
+ * The title block's line: the connection, who vouched for it – or, where the certificate failed
+ * verification, what is wrong with it (the phone sheet's line: "Not secure · Certificate
+ * expired"; the issuer of a refused certificate is no credential) – and what sets this tab apart:
+ * a container other than the default, or the private session.
  */
 export function summaryLine(info: SiteInfoSnapshot | null, tab: Tab, state: UIState): string {
-  const s = security(info, tab.url)
+  const s = security(info, tab.url, tab)
   const parts = [connectionHeadline(s)]
-  if (s.state === 'secure' && s.certificate?.issuer) parts.push(s.certificate.issuer)
+  const fault = connectionFault(s)
+  if (fault) parts.push(fault)
+  else if (s.state === 'secure' && s.certificate?.issuer) parts.push(s.certificate.issuer)
   if (info?.isPrivate) parts.push('Private tab')
   else if (tab.containerId !== DEFAULT_CONTAINER_ID) {
     const container = state.containers.find((c) => c.id === tab.containerId)?.name

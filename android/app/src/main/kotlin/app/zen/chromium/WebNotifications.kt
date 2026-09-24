@@ -70,15 +70,13 @@ class WebNotifications(private val host: Host, private val io: Executor) {
     // --- the core's WebNotificationHost ------------------------------------------------------------
 
     /**
-     * `notification.ensureAllowed`: the app's own right to post (Android 13+ asks the user once,
-     * as Chrome does when a site is first allowed); answers whether it has it.
+     * `notification.ensureAllowed`: the app's own right to post – Android 13's permission, asked
+     * once for the whole app on a site's first grant, as Chrome does when a site is first allowed,
+     * and shared with the downloader and extensions (`Permissions.ensureNotificationsAllowed`);
+     * answers whether it has it.
      */
     fun ensureAllowed(reply: (Any?) -> Unit) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            reply(manager.areNotificationsEnabled())
-            return
-        }
-        host.permissions.requestForApp(Manifest.permission.POST_NOTIFICATIONS) { grant -> reply(grant == RuntimeGrant.GRANTED) }
+        host.permissions.ensureNotificationsAllowed { allowed -> reply(allowed) }
     }
 
     /** `notification.show`: post `args` (a `WebNotificationRequest`); answers whether it went up. */

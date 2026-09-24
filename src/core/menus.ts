@@ -2,6 +2,7 @@ import type { Browser } from './browser'
 import { surfaceMounted, type ZenWindow } from './window'
 import type {
   ChromeContextParams,
+  LinkAppTarget,
   MenuItemTemplate,
   MenuSource,
   PageContextParams,
@@ -17,6 +18,7 @@ import {
   NEW_TAB_URL,
   displayUrl,
   getDomain,
+  getHost,
   inputToUrl,
   isNavigableUrl,
   isWebPageUrl
@@ -29,6 +31,7 @@ import {
   type DownloadDeleteFileResult,
   type Folder,
   type MenuAnchor,
+  type MenuHeader,
   type MenuItemDescriptor,
   type NavigationDirection,
   type NavigationSnapshotEntry,
@@ -235,14 +238,25 @@ export class Menus {
     }, APPLICATION_MENU_DEBOUNCE_MS)
   }
 
-  private popup(template: Template, win: ZenWindow, source: MenuSource, anchor?: MenuAnchor): void {
+  private popup(
+    template: Template,
+    win: ZenWindow,
+    source: MenuSource,
+    anchor?: MenuAnchor,
+    header?: MenuHeader
+  ): void {
     const items = withAccelerators(
       tidySeparators(template),
       this.browser.state.shortcuts,
       (a) => this.browser.actions.run(a, { sourceTabId: null, win }),
       this.browser.platform.info.os
     )
-    this.browser.platform.menus.popup(items, { source, win, ...anchor })
+    this.browser.platform.menus.popup(items, {
+      source,
+      win,
+      ...anchor,
+      ...(header ? { header } : {})
+    })
   }
 
   /**
@@ -394,7 +408,65 @@ export class Menus {
       })
     }
     groups.push(developer)
-    this.popup(joinGroups(groups), win, 'page', this.pageAnchor(tabId, params, win))
+    // The phone's sheet opens a link's or an image's menu on what was held (PUI-18); the
+    // desktop's native menu and the tablet's popover carry no header.
+    const header =
+      win.formFactor === 'phone' ? this.linkHeader(tab, params, hasLink, isImage) : undefined
+    this.popup(joinGroups(groups), win, 'page', this.pageAnchor(tabId, params, win), header)
+  }
+
+  /**
+   * The phone sheet's header for a link or an image (Chrome for Android's context-menu header,
+   * PUI-18): the address held – the link's, or the image's own when there is no link – under a
+   * title: the link's text, or the address's host for a link without one. A `tel:` or `mailto:`
+   * link shows the number or the address bare, as its copy item copies it, under "Phone number"
+   * or "Email address", with its scheme for the glyph in the favicon's place. The favicon is the
+   * tab's own for a link within its site, else the last one history saw on the link's site (the
+   * favicon cache); an image is its own thumbnail.
+   */
+  private linkHeader(
+    tab: Tab,
+    params: PageContextParams,
+    hasLink: boolean,
+    isImage: boolean
+  ): MenuHeader | undefined {
+    const url = hasLink ? params.linkURL : isImage ? params.srcURL : ''
+    if (!url) return undefined
+    const scheme = url.slice(0, url.indexOf(':')).toLowerCase()
+    const linkText = params.linkText?.trim() ?? ''
+    const contact = scheme === 'tel' || scheme === 'mailto'
+    const copy = linkCopyItem(url)
+    const shown = contact ? copy.text : url
+    let title = linkText && linkText !== url && linkText !== shown ? linkText : ''
+    if (!title) {
+      if (scheme === 'tel') title = 'Phone number'
+      else if (scheme === 'mailto') title = 'Email address'
+      else title = getHost(hasLink ? url : tab.url) || (isImage ? 'Image' : 'Link')
+    }
+    const thumbnail =
+      isImage && /^(https?:|data:|blob:|file:)/i.test(params.srcURL) ? params.srcURL : null
+    return {
+      url: shown,
+      copied: copy.confirmation,
+      title,
+      favicon: thumbnail || contact ? null : this.linkFavicon(tab, url),
+      thumbnail,
+      // A number or an address is no site: the sheet draws its scheme's glyph (§9.31).
+      scheme: scheme === 'tel' || scheme === 'mailto' ? scheme : null
+    }
+  }
+
+  /** The tab's favicon for a link within its site, else what history last saw on the link's site. */
+  private linkFavicon(tab: Tab, url: string): string | null {
+    const host = getHost(url)
+      .toLowerCase()
+      .replace(/^www\./, '')
+    if (!host) return null
+    const tabHost = getHost(tab.url)
+      .toLowerCase()
+      .replace(/^www\./, '')
+    if (host === tabHost && tab.favicon) return tab.favicon
+    return this.browser.history.siteFaviconFor(url)
   }
 
   /**
@@ -491,6 +563,9 @@ export class Menus {
     const group =
       win.formFactor !== 'desktop' && tab.folderId ? state.model.folders[tab.folderId] : undefined
     // `mailto:` and `tel:` links have nowhere to open in a tab: only their copy items (Chrome).
+    // The phone hands them to the device's own apps as Chrome for Android does (PUI-22): a
+    // number to the dialer, the messaging app and the contacts form, an address to the mail app.
+    if (win.formFactor === 'phone') open.push(...this.contactLinkItems(url))
     if (navigable) {
       if (group) {
         open.push({
@@ -591,6 +666,31 @@ export class Menus {
       })
     }
     return [open, transfer]
+  }
+
+  /**
+   * Chrome for Android's items for a phone number or an email address (PUI-22): Call, Send
+   * message and Add to contacts for a `tel:` link; Send email for a `mailto:` one. Each hands
+   * the link to the device's app for it (`ShellHost.openLinkIn`); a host without those apps
+   * (the desktop, whose Chrome offers only the copy items) gets none.
+   */
+  private contactLinkItems(url: string): Template {
+    const shell = this.browser.platform.shell
+    if (!shell.openLinkIn) return []
+    const scheme = url.slice(0, url.indexOf(':')).toLowerCase()
+    const item = (label: string, target: LinkAppTarget): MenuItemTemplate => ({
+      label,
+      click: () => shell.openLinkIn?.(target, url)
+    })
+    if (scheme === 'tel') {
+      return [
+        item('Call', 'call'),
+        item('Send Message', 'message'),
+        item('Add to Contacts', 'addContact')
+      ]
+    }
+    if (scheme === 'mailto') return [item('Send Email', 'email')]
+    return []
   }
 
   private imageGroup(tab: Tab, view: TabView, params: PageContextParams, win: ZenWindow): Template {
@@ -1102,7 +1202,7 @@ export class Menus {
     return items
   }
 
-  /** The page's own actions: bookmark, save, print, screenshot, Reader View, Translate Page. */
+  /** The page's own actions: bookmark, save, print, capture, Reader View, Translate Page. */
   private pageGroup(tab: Tab, win: ZenWindow): Template {
     const { state, reader, translate } = this.browser
     const run = (
@@ -1114,6 +1214,27 @@ export class Menus {
         | 'capture.start'
     ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
+    // The captures, as the app menu has them (the #396 review's ruling 3, extended to this menu
+    // by the lead on #414): on the desktop one Web Capture… row – Edge's, whose overlay offers
+    // the visible area, the full page and an area select, so a menu that said capture three
+    // times (Take Screenshot, Capture Full Page, Capture Page…) says it once, with the chord the
+    // key table gives `capture.start` (Ctrl+Shift+S in the Chrome preset) after the label. A
+    // touch host has no overlay and keeps the two one-shot rows.
+    const captures: Template =
+      win.formFactor === 'desktop'
+        ? [{ label: 'Web Capture…', action: 'capture.start', click: () => run('capture.start') }]
+        : [
+            {
+              label: 'Take Screenshot',
+              action: 'page.screenshot',
+              click: () => run('page.screenshot')
+            },
+            {
+              label: 'Capture Full Page',
+              action: 'page.captureFullPage',
+              click: () => run('page.captureFullPage')
+            }
+          ]
     return [
       {
         label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Page',
@@ -1130,22 +1251,7 @@ export class Menus {
             }
           ]
         : []),
-      { label: 'Take Screenshot', action: 'page.screenshot', click: () => run('page.screenshot') },
-      {
-        label: 'Capture Full Page',
-        action: 'page.captureFullPage',
-        click: () => run('page.captureFullPage')
-      },
-      // Edge's Web capture row (a region of the dimmed page): the desktop's overlay alone.
-      ...(win.formFactor === 'desktop'
-        ? [
-            {
-              label: 'Capture Page…',
-              action: 'capture.start' as const,
-              click: () => run('capture.start')
-            }
-          ]
-        : []),
+      ...captures,
       {
         label: readerOpen ? 'Exit Reader View' : 'Enter Reader View',
         enabled: readerOpen || reader.canRead(tab),
@@ -3326,7 +3432,7 @@ export class Menus {
         // row is where it goes; with the button up, the button is the hub). The phone has its
         // own chip and sheet (§9.33).
         ...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win)),
-        // Forward folded off the desktop's bar (Look and Feel › Customize toolbar, settings-36)
+        // Forward folded off the desktop's bar (Look and Feel › Customise toolbar, settings-36)
         // heads the menu the same way: the row is where the button went.
         ...desktop(...this.foldedForwardRow(win, active)),
         // The tabs and windows.
@@ -3398,7 +3504,8 @@ export class Menus {
           // whose zoom is the sheet keeps it here with the other window toggles.
           // The two captures are the tablet's: on the desktop they fold into Save and Share's
           // Web Capture… (the #396 review's ruling 3), whose overlay takes the visible area and
-          // the full page both; the page context menu keeps its own capture rows on every host.
+          // the full page both; the desktop's page context menu folds its three the same way
+          // (`pageGroup`), the touch hosts' keeps the two one-shot rows.
           submenu: tidySeparators([
             ...openInApp,
             separator,
@@ -3485,7 +3592,7 @@ export class Menus {
   }
 
   /**
-   * The desktop bar's Forward button, folded into the menu when Look and Feel › Customize
+   * The desktop bar's Forward button, folded into the menu when Look and Feel › Customise
    * toolbar unpins it (`Settings.toolbarPins.forward === false`, `shared/toolbarPins.ts`):
    * the row runs what the button ran and is disabled, not dropped, on the last entry (design
    * language v2 §9.30), so the menu keeps its shape from one opening to the next. Nothing

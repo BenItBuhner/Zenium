@@ -24,6 +24,7 @@ import type {
   MenuItemTemplate,
   MenuPopupOptions,
   Platform,
+  ShellHost,
   ShortcutHost,
   SpeechHost,
   SpellcheckHost,
@@ -191,6 +192,8 @@ interface Harness {
   viewCalls: string[]
   /** What the host's clipboard says on `readText`. */
   clipboardText: { value: string }
+  /** Every `tel:` / `mailto:` hand-off the shell was asked for, as `target url`. */
+  linkApps: string[]
   /** The names of the events sent to the window's chrome, in order. */
   sent: string[]
   /** The ids of the windows whose host was asked to come forward (`WindowHost.focus`), in order. */
@@ -220,6 +223,11 @@ interface HarnessOptions {
   files?: Record<string, string>
   /** The host has a speech engine (`Platform.speech`; `capabilities.readAloud` set too): read aloud's entry points show. */
   speech?: boolean
+  /**
+   * The host hands `tel:` and `mailto:` links to the device's apps (`ShellHost.openLinkIn`,
+   * Android); absent, the shell has no dialer or mail app to speak of (the desktop).
+   */
+  linkApps?: boolean
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -241,6 +249,7 @@ function harness(
   const clipboardText = { value: '' }
   const sent: string[] = []
   const focused: string[] = []
+  const linkApps: string[] = []
   const spellcheckApplied: SpellcheckApplied[] = []
   const spellcheckHost = (): SpellcheckHost => {
     const words = new Set<string>()
@@ -315,7 +324,11 @@ function harness(
       opts.confirm === undefined ? {} : { confirm: () => Promise.resolve(opts.confirm!) }
     ),
     clipboard: stub<ClipboardHost>({ readText: () => Promise.resolve(clipboardText.value) }),
-    shell: stub(),
+    shell: stub<ShellHost>({
+      openLinkIn: opts.linkApps
+        ? (target, url) => void linkApps.push(`${target} ${url}`)
+        : undefined
+    }),
     net: stub(),
     downloads: stub(),
     sessions: stub(),
@@ -359,6 +372,7 @@ function harness(
     clipboardText,
     sent,
     focused,
+    linkApps,
     spellcheckApplied
   }
 }
@@ -1062,7 +1076,7 @@ describe('the app menu', () => {
     })
   })
 
-  describe('the folded Forward row (Look and Feel › Customize toolbar, settings-36: the button off the desktop bar)', () => {
+  describe('the folded Forward row (Look and Feel › Customise toolbar, settings-36: the button off the desktop bar)', () => {
     it('heads the desktop menu while Forward is unpinned and is gone while the bar has the button', () => {
       const h = pageHarness(DESKTOP)
       const without = appMenu(h)
@@ -1999,9 +2013,7 @@ describe('the page context menu', () => {
       'Bookmark Page',
       'Save Page As…',
       'Print…',
-      'Take Screenshot',
-      'Capture Full Page',
-      'Capture Page…',
+      'Web Capture…',
       'Enter Reader View',
       '-',
       'Boosts',
@@ -2011,11 +2023,43 @@ describe('the page context menu', () => {
     expect(item(h.items(), 'Back').enabled).toBe(false)
     expect(item(h.items(), 'Back').action).toBe('nav.back')
     expect(item(h.items(), 'Inspect Element').action).toBe('devtools.inspector')
-    // Edge's Web capture row (a region of the dimmed page) is the desktop overlay's alone.
-    expect(item(h.items(), 'Capture Page…').action).toBe('capture.start')
-    expect(pageHarness(DESKTOP, { formFactor: 'tablet' }).menu(pageParams())).not.toContain(
-      'Capture Page…'
-    )
+  })
+
+  it('says capture once on the desktop – one Web Capture… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
+    const h = pageHarness()
+    const menu = h.menu(pageParams())
+    // One row, between Print… and Reader View, where the three stood.
+    expect(menu.filter((l) => /capture|screenshot/i.test(l))).toEqual(['Web Capture…'])
+    expect(menu.indexOf('Web Capture…')).toBe(menu.indexOf('Print…') + 1)
+    expect(menu[menu.indexOf('Web Capture…') + 1]).toBe('Enter Reader View')
+    const row = item(h.items(), 'Web Capture…')
+    // Edge's row runs the overlay – the visible area, the full page and an area select are its
+    // toolbar's – and wears the Chrome preset's chord (Edge's Web capture chord).
+    expect(row.action).toBe('capture.start')
+    expect(row.accelerator).toBe('Ctrl+Shift+S')
+    expect(row.hint).toBe('Ctrl+Shift+S')
+    h.viewCalls.length = 0
+    h.sent.length = 0
+    row.click?.()
+    expect(h.sent).toContain('capture.start')
+    // The Zen preset gives Ctrl+Shift+S to Firefox's Take Screenshot: the row stands, unchorded.
+    h.browser.handleCommand(h.win, 'settings.update', { shortcutPreset: 'zen' })
+    h.menu(pageParams())
+    expect(item(h.items(), 'Web Capture…').accelerator).toBeUndefined()
+    // A tablet's page menu has no overlay to open: Take Screenshot and Capture Full Page stay,
+    // in the same seat, running their one-shot actions.
+    const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
+    const tabletMenu = tablet.menu(pageParams())
+    expect(tabletMenu).not.toContain('Web Capture…')
+    expect(tabletMenu).not.toContain('Capture Page…')
+    expect(tabletMenu.indexOf('Take Screenshot')).toBe(tabletMenu.indexOf('Print…') + 1)
+    expect(tabletMenu.indexOf('Capture Full Page')).toBe(tabletMenu.indexOf('Take Screenshot') + 1)
+    expect(item(tablet.items(), 'Take Screenshot').action).toBe('page.screenshot')
+    expect(item(tablet.items(), 'Capture Full Page').action).toBe('page.captureFullPage')
+    const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+    const phoneMenu = phone.menu(pageParams())
+    expect(phoneMenu).toContain('Take Screenshot')
+    expect(phoneMenu).not.toContain('Web Capture…')
   })
 
   it('leaves Print, View Page Source and Inspect to hosts that have them', () => {
@@ -2121,6 +2165,121 @@ describe('the page context menu', () => {
     expect(pageHarness().menu(pageParams({ linkURL: 'tel:+1-555-0100' }))[0]).toBe(
       'Copy Phone Number'
     )
+  })
+
+  it('on the phone hands a tel: link to the dialer, the messaging app and the contacts form, and a mailto: link to the mail app (PUI-22)', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone', linkApps: true })
+    expect(h.menu(pageParams({ linkURL: 'tel:+1-555-0100' }))).toEqual([
+      'Call',
+      'Send Message',
+      'Add to Contacts',
+      '-',
+      'Copy Phone Number',
+      '-',
+      'Boosts'
+    ])
+    h.click('Call')
+    h.click('Send Message')
+    h.click('Add to Contacts')
+    expect(h.linkApps).toEqual([
+      'call tel:+1-555-0100',
+      'message tel:+1-555-0100',
+      'addContact tel:+1-555-0100'
+    ])
+    const mail = h.menu(
+      pageParams({ linkURL: 'mailto:hello@example.com?subject=Hi', linkText: 'Write to us' })
+    )
+    expect(mail).toEqual(['Send Email', '-', 'Copy Email Address', 'Copy Link Text', '-', 'Boosts'])
+    h.click('Send Email')
+    expect(h.linkApps.at(-1)).toBe('email mailto:hello@example.com?subject=Hi')
+    // A phone whose host has no such apps, and every other form factor, keep Chrome desktop's
+    // copy items alone; a web link gains nothing.
+    expect(
+      pageHarness(ANDROID, { formFactor: 'phone' }).menu(
+        pageParams({ linkURL: 'tel:+1-555-0100' })
+      )[0]
+    ).toBe('Copy Phone Number')
+    expect(
+      pageHarness(ANDROID, { formFactor: 'tablet', linkApps: true }).menu(
+        pageParams({ linkURL: 'tel:+1-555-0100' })
+      )[0]
+    ).toBe('Copy Phone Number')
+    expect(h.menu(pageParams({ linkURL: 'https://example.org/next' }))).not.toContain('Call')
+  })
+
+  it('opens the phone’s link and image menus on a header naming what was held (PUI-18); the desktop’s and the tablet’s carry none', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    h.browser.tabs.tab(h.tabId)!.favicon = 'data:image/png;base64,TAB'
+    // A link within the tab's site: its text over its address, the tab's own favicon.
+    h.menu(pageParams({ linkURL: `${PAGE_URL}next`, linkText: 'Next page' }))
+    expect(h.where()?.header).toEqual({
+      url: `${PAGE_URL}next`,
+      copied: 'Link copied',
+      title: 'Next page',
+      favicon: 'data:image/png;base64,TAB',
+      thumbnail: null,
+      scheme: null
+    })
+    // A link without text names its host; another site's favicon comes from history's cache.
+    h.menu(pageParams({ linkURL: 'https://other.example/a/b' }))
+    expect(h.where()?.header).toMatchObject({
+      url: 'https://other.example/a/b',
+      title: 'other.example',
+      favicon: null
+    })
+    h.browser.history.visit('https://other.example/', 'Other', 'data:image/png;base64,OTHER')
+    h.menu(pageParams({ linkURL: 'https://www.other.example/a/b' }))
+    expect(h.where()?.header?.favicon).toBe('data:image/png;base64,OTHER')
+    // An image is its own thumbnail; a linked image keeps the link's address.
+    h.menu(pageParams({ mediaType: 'image', srcURL: 'https://example.com/a.png' }))
+    expect(h.where()?.header).toMatchObject({
+      url: 'https://example.com/a.png',
+      title: 'example.com',
+      favicon: null,
+      thumbnail: 'https://example.com/a.png',
+      scheme: null
+    })
+    h.menu(
+      pageParams({
+        linkURL: 'https://example.com/gallery',
+        mediaType: 'image',
+        srcURL: 'https://example.com/a.png'
+      })
+    )
+    expect(h.where()?.header).toMatchObject({
+      url: 'https://example.com/gallery',
+      thumbnail: 'https://example.com/a.png'
+    })
+    // A number or an address shows bare, as its copy item copies it, under the scheme's name,
+    // with the scheme for the glyph in the favicon's place (§9.31).
+    h.menu(pageParams({ linkURL: 'tel:+1-555-0100' }))
+    expect(h.where()?.header).toEqual({
+      url: '+1-555-0100',
+      copied: 'Phone number copied',
+      title: 'Phone number',
+      favicon: null,
+      thumbnail: null,
+      scheme: 'tel'
+    })
+    h.menu(pageParams({ linkURL: 'mailto:hello@example.com?subject=Hi', linkText: 'Write to us' }))
+    expect(h.where()?.header).toMatchObject({
+      url: 'hello@example.com',
+      copied: 'Email address copied',
+      title: 'Write to us',
+      favicon: null,
+      scheme: 'mailto'
+    })
+    // The plain page opens on its title; a javascript: link is no link.
+    h.menu(pageParams())
+    expect(h.where()?.header).toBeUndefined()
+    h.menu(pageParams({ linkURL: 'javascript:void(0)' }))
+    expect(h.where()?.header).toBeUndefined()
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    tablet.menu(pageParams({ linkURL: 'https://other.example/a/b' }))
+    expect(tablet.where()?.header).toBeUndefined()
+    const desktop = pageHarness()
+    desktop.menu(pageParams({ linkURL: 'https://other.example/a/b' }))
+    expect(desktop.where()?.header).toBeUndefined()
   })
 
   it('lists the image items in Chrome’s order and saves through the dialog', () => {

@@ -34,12 +34,23 @@ export const INTERNAL_ALIAS_SCHEME = 'zenium'
  * The pages registered today: Settings, History, Bookmarks and Downloads (chrome pages the
  * desktop and tablet layouts hold in a tab, the phone in its panels and sheets), the Licences
  * page (`zen://licences`, chrome://credits: a chrome page tab on every layout with page tabs,
- * with no panel form), the print preview (`zen://print`, a chrome page that is the desktop's
+ * with no panel form), the What's new page (`zen://whats-new`, the running version's release
+ * notes, from Settings › About), the two legal pages (`zen://privacy-notice`, `zen://terms`,
+ * from Settings › Legal), the print preview (`zen://print`, a chrome page that is the desktop's
  * print dialog) and the PDF viewer (`zen://pdf?id=…`, a document page on hosts whose engine
  * cannot draw a PDF). Widened as pages move onto the mechanism.
  */
 export type InternalPageId =
-  'settings' | 'history' | 'bookmarks' | 'downloads' | 'licences' | 'print' | 'pdf'
+  | 'settings'
+  | 'history'
+  | 'bookmarks'
+  | 'downloads'
+  | 'licences'
+  | 'whats-new'
+  | 'privacy-notice'
+  | 'terms'
+  | 'print'
+  | 'pdf'
 
 /**
  * How a page's tab holds its page.
@@ -60,9 +71,11 @@ export type InternalPageRender = 'chrome' | 'document'
 /**
  * The glyph a page tab shows in its favicon slot – the pill, the sidebar row, the tab strip, the
  * overview card – named for the renderer to draw (Lucide's `settings`, `history`, `star`,
- * `download`, `scale` for the Licences page); a page tab never fetches a favicon.
+ * `download`, `scale` for the Licences page, `sparkles` for What's new, `file-text` for the
+ * legal pages); a page tab never fetches a favicon.
  */
-export type InternalPageGlyph = 'settings' | 'history' | 'star' | 'download' | 'scale'
+export type InternalPageGlyph =
+  'settings' | 'history' | 'star' | 'download' | 'scale' | 'sparkles' | 'file-text'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
 export interface InternalPageSection {
@@ -335,7 +348,8 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
       'http authentication',
       'external apps',
       'protocols',
-      'permissions'
+      'permissions',
+      'notifications'
     ]
   },
   {
@@ -402,7 +416,17 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   {
     id: 'about',
     label: 'About',
-    keywords: ['version', 'default browser', 'engine', 'zen']
+    keywords: [
+      'version',
+      'default browser',
+      'engine',
+      'zen',
+      "what's new",
+      'release notes',
+      'legal',
+      'notice',
+      'terms'
+    ]
   }
 ]
 
@@ -488,6 +512,47 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     render: 'chrome',
     singleton: true,
     glyph: 'scale',
+    pill: { showStar: false },
+    splittable: false,
+    sections: []
+  },
+  /**
+   * What's new (`zen://whats-new`, SET-54; Chrome's What's new tab): the running version's
+   * release notes as the updater's check brought them (`UpdateStatus.notes`), from Settings ›
+   * About. A chrome page tab on every layout with page tabs, no panel form; one scroll of prose,
+   * no sections.
+   */
+  'whats-new': {
+    id: 'whats-new',
+    title: 'What’s new',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'sparkles',
+    pill: { showStar: false },
+    splittable: false,
+    sections: []
+  },
+  /**
+   * The legal pages (SET-55; Chrome's Privacy notice and Terms of service rows under About):
+   * `zen://privacy-notice` and `zen://terms`, from Settings › Legal. Chrome page tabs on every
+   * layout with page tabs, prose alone, no sections.
+   */
+  'privacy-notice': {
+    id: 'privacy-notice',
+    title: 'Privacy notice',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'file-text',
+    pill: { showStar: false },
+    splittable: false,
+    sections: []
+  },
+  terms: {
+    id: 'terms',
+    title: 'Terms',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'file-text',
     pill: { showStar: false },
     splittable: false,
     sections: []

@@ -464,6 +464,17 @@ export interface Tab {
    * captured.
    */
   capture?: TabCapture | null
+  /**
+   * The developer toolbox open on the tab (design language v2 §9.29), while one is: where it
+   * stands, as the host reports it – the dock it opened at (`TabViewEvents.onDevtoolsOpened`),
+   * then every move the toolbox's own buttons or the app menu's rows make
+   * (`onDevtoolsDockChanged`). Each tab's toolbox stands where it was put – tab A docked at the
+   * bottom, tab B undocked by its own button – and the frame's radius and the page's cover read
+   * the tab in front, not the one setting for every toolbox (`settings.devtoolsDock` is the
+   * default for the next opening). A session's own (not persisted); null or absent while no
+   * toolbox is up, and absent on hosts without one (Android: `capabilities.devtools` false).
+   */
+  devtools?: TabDevtools | null
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**
@@ -2089,6 +2100,15 @@ export type SidebarSide = 'left' | 'right'
  * made inside the toolbox always has its row.
  */
 export type DevtoolsDock = 'bottom' | 'right' | 'left' | 'undocked'
+/**
+ * A tab's open toolbox (`Tab.devtools`): where it stands now. Present only while the toolbox is
+ * up; the dock is the live one – the frontend's own reading through the host – and may differ
+ * from `Settings.devtoolsDock` once the user moves this toolbox alone or moves the setting for
+ * the next opening.
+ */
+export interface TabDevtools {
+  dock: DevtoolsDock
+}
 export type NewTabPosition = 'end' | 'after-current'
 /** Screen edge the phone layout docks its address bar to. */
 export type PhoneBarPosition = 'top' | 'bottom'
@@ -2263,7 +2283,7 @@ export interface NewTabPageState {
  * Actions the new tab page asks the browser for (one-way; the browser answers with state).
  * Tiles are plain links, so opening one needs no action: the page navigates like any page.
  * The page draws no popover or dialog of its own: a tile's menu, the add / edit dialog and the
- * Customize surface are the chrome's (design language v2 §9.20–9.23), asked for here.
+ * Customise surface are the chrome's (design language v2 §9.20–9.23), asked for here.
  */
 export type NewTabPageAction =
   | { type: 'ready' }
@@ -2292,7 +2312,7 @@ export type NewTabPageAction =
       y: number
       keyboard: boolean
     }
-  /** The Customize button: Settings opens on its New Tab section. */
+  /** The Customise button: Settings opens on its New Tab section. */
   | { type: 'customize' }
   /**
    * The private page's "Block third-party cookies" switch was flipped: `privacy.thirdPartyCookiesPrivate`
@@ -2313,7 +2333,7 @@ export interface Settings {
   toolbarLayout: ToolbarLayout
   /**
    * The desktop toolbar's optional controls that are folded into the app menu (Look and Feel ›
-   * Customize toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
+   * Customise toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
    * key absent reading pinned. Read by the desktop chrome's toolbar row and the desktop app
    * menu; inert on the phone and the tablet, which keep their own bars. Absent in profiles from
    * before it existed.
@@ -2643,7 +2663,16 @@ export interface DefaultBrowserStatus {
   /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */
   isDefault: boolean | null
   prompt: DefaultBrowserPrompt
+  /**
+   * Whether the system lets this app open web links from other apps (DEF-06, Android's "Open by
+   * default" screen): the link-handling switch on Android 12+, the default handler of a plain
+   * `http://` link before it. Absent until the host answered, and on hosts without the screen.
+   */
+  appLinks?: AppLinkState
 }
+
+/** `allowed`: the system hands web links to this app; `disallowed`: it is set not to; `unknown`: it could not say. */
+export type AppLinkState = 'allowed' | 'disallowed' | 'unknown'
 
 /** Where a request to become the default browser was made from. */
 export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings'
@@ -3131,6 +3160,13 @@ export interface PermissionPrompt {
   /** Whether "Allow once" (until the tab leaves the site) is offered. */
   allowOnce: boolean
   requestedAt: number
+  /**
+   * A quiet request (Chrome's quiet notification permission UI, NOT-03): a site the user
+   * dismissed before, or a request made without a gesture, asks through the bell-off glyph in
+   * the pill's slot instead of a sheet; the sheet opens from the bell. Not counted as a
+   * dismissal when it goes unanswered.
+   */
+  quiet?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -3758,9 +3794,37 @@ export interface MenuAnchor {
   keyboard?: boolean
 }
 
+/**
+ * What the phone's link and image menus open on (Chrome for Android's context-menu header,
+ * PUI-18): the address the hold landed on, a title over it – the link's text, the address's host
+ * for a link without text – and the site's favicon or, for an image, the picture itself as the
+ * thumbnail. The sheet draws it as a two-line row in the §9.16 header's place; a tap expands the
+ * address to its full length, a long-press copies it.
+ */
+export interface MenuHeader {
+  /** The address the header names; what a long-press copies. */
+  url: string
+  /** The toast's word for the copy ("Link copied", "Phone number copied"). */
+  copied: string
+  /** The line over the address: the link's text, or the address's host. */
+  title: string
+  /** The site's favicon (`data:` or remote URL); null draws the globe, or the scheme's glyph. */
+  favicon: string | null
+  /** An image's own source, drawn as the header's thumbnail in the favicon's place. */
+  thumbnail: string | null
+  /**
+   * The scheme of an address that names no site – a number, an email address – for the glyph
+   * that stands where a favicon would (§9.31: the phone for `tel:`, the envelope for `mailto:`,
+   * a kind and not a stand-in); null for a page's or an image's address.
+   */
+  scheme: 'tel' | 'mailto' | null
+}
+
 export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
+  /** The link's or image's header on the phone's sheet (PUI-18); absent, the sheet opens on its title. */
+  header?: MenuHeader
   source:
     | 'page'
     | 'tab'
@@ -3836,6 +3900,11 @@ export interface Commands {
   'app.share': { args: SharePayload; result: void }
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
+  /**
+   * The system's notification settings for this app (Android; Settings › Security ›
+   * Notifications); a toast on hosts without one.
+   */
+  'app.openNotificationSettings': { args: void; result: void }
   /**
    * Voice search (`capabilities.voiceSearch`): ask for the microphone – the runtime permission
    * prompt may show – and start the device's recogniser in the user's language. The outcome
@@ -4278,6 +4347,14 @@ export interface Commands {
    * capture a hidden page answer null.
    */
   'overlay.snapshot': { args: { tabId: string; fresh?: boolean }; result: string | null }
+  /**
+   * The picture of the developer toolbox docked in the tab's frame box (design language v2
+   * §9.29) – the frontend's own capture, the whole box at its size – for the cover to lay under
+   * the page's picture, so a menu over a docked toolbox leaves the toolbox in view rather than
+   * the frame's ground. `fresh` as `overlay.snapshot` has it. Null with no toolbox up, one
+   * undocked (a window of its own) or on a host without an in-frame toolbox (Android).
+   */
+  'overlay.snapshotDevtools': { args: { tabId: string; fresh?: boolean }; result: string | null }
 
   /**
    * Tab card thumbnails, on hosts that keep them (`Platform.thumbnails`; the Android host). The
@@ -4499,14 +4576,16 @@ export interface Commands {
   'clipboard.read': { args: void; result: ClipboardContent }
   'clipboard.markUsed': { args: void; result: void }
   /**
-   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), edit one of
-   * the user's (name, template, shortcut – empty for one derived from the name; omnibox-09),
-   * take one out of the omnibox or bring it back (`active`, settings-43; the default engine
-   * stays active), forget one the user added or a page offered, or make one the default. The
-   * shipped engines cannot be edited or removed; `search.remove` on the default falls back to
-   * the shipped default.
+   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query; `keyword` the
+   * shortcut typed in the form, `@` or not – absent or empty for one derived from the name, as
+   * before the form carried one), edit one of the user's (name, template, shortcut – empty for
+   * one derived from the name; omnibox-09), take one out of the omnibox or bring it back
+   * (`active`, settings-43; the default engine stays active), forget one the user added or a
+   * page offered, or make one the default. The shipped engines cannot be edited or removed;
+   * `search.remove` on the default falls back to the shipped default. Both forms' shortcuts
+   * are refused with `engineKeywordProblem`'s line – the one the form shows as typed.
    */
-  'search.addEngine': { args: { name: string; url: string }; result: string }
+  'search.addEngine': { args: { name: string; url: string; keyword?: string }; result: string }
   'search.updateEngine': {
     args: { id: string; name: string; searchUrl: string; keyword: string }
     result: void
