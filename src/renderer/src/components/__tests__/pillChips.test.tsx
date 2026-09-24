@@ -1125,6 +1125,87 @@ describe('desktop pill (NavRow)', () => {
     })
   })
 
+  // omnibox-43 / dnd-11: the slot is the handle the address is dragged out by, as Chrome's
+  // location icon is – an HTML5 drag carrying the link, the text and an anchor with the page's
+  // name (`lib/addressDrag.ts`), which the bookmarks bar files and a tab row navigates to.
+  describe('the address dragged out by the slot (omnibox-43)', () => {
+    const slotOf = (el: HTMLElement): HTMLElement =>
+      el.querySelector<HTMLElement>('[data-site-chip]')!
+    /** A `dragstart` on the chip with a transfer that records what the chip writes. */
+    function dragStart(chip: HTMLElement): {
+      effectAllowed: string
+      data: Map<string, string>
+      image: { el: Element; x: number; y: number } | null
+    } {
+      const record = {
+        effectAllowed: 'uninitialized',
+        data: new Map<string, string>(),
+        image: null as { el: Element; x: number; y: number } | null
+      }
+      const dt = {
+        get effectAllowed() {
+          return record.effectAllowed
+        },
+        set effectAllowed(v: string) {
+          record.effectAllowed = v
+        },
+        setData: (type: string, value: string) => void record.data.set(type, value),
+        setDragImage: (el: Element, x: number, y: number) => void (record.image = { el, x, y })
+      }
+      const ev = new Event('dragstart', { bubbles: true, cancelable: true })
+      Object.defineProperty(ev, 'dataTransfer', { value: dt })
+      act(() => void chip.dispatchEvent(ev))
+      return record
+    }
+
+    it('is draggable on a page, carrying the link, the text and an anchor named for the page, with the link card as the image', () => {
+      const named = tab(page.url, { readerable: true, title: 'Example Domain' })
+      const el = render(<NavRow state={state(named)} tab={named} compact={false} />)
+      const slot = slotOf(el)
+      expect(slot.getAttribute('draggable')).toBe('true')
+      expect(slot.getAttribute('data-drag-address')).toBe('https://example.com/some/path')
+      // The slot is still the site-information button: its click is unchanged.
+      expectChip(slot, 'Site information')
+      expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+      const drag = dragStart(slot)
+      expect(drag.effectAllowed).toBe('copyLink')
+      expect([...drag.data.keys()]).toEqual(['text/uri-list', 'text/plain', 'text/html'])
+      expect(drag.data.get('text/uri-list')).toBe('https://example.com/some/path')
+      expect(drag.data.get('text/plain')).toBe('https://example.com/some/path')
+      expect(drag.data.get('text/html')).toBe(
+        '<a href="https://example.com/some/path">Example Domain</a>'
+      )
+      // The ghost: the link card off screen, the page's name in it, the grip at its left.
+      const ghost = el.querySelector<HTMLElement>('.zen-link-ghost')!
+      expect(ghost).not.toBeNull()
+      expect(ghost.getAttribute('aria-hidden')).toBe('true')
+      // The page's icon (its letter here, no favicon) and its name on the card.
+      expect(ghost.querySelector('.zen-link-ghost-card span.truncate')?.textContent).toBe(
+        'Example Domain'
+      )
+      expect(drag.image).toEqual({ el: ghost, x: 12, y: 14 })
+      // The URL bar did not open and no site information came up on the drag.
+      expect(uiStore.get().urlbar.open).toBe(false)
+      expect(uiStore.get().siteInfoOpen).toBe(false)
+    })
+
+    it('lifts a private tab’s address too, but nothing from an empty tab or a Zenium page', () => {
+      const secret = tab(page.url, { readerable: true, containerId: PRIVATE_CONTAINER_ID })
+      const el = render(<NavRow state={state(secret)} tab={secret} compact={false} />)
+      expect(slotOf(el).getAttribute('draggable')).toBe('true')
+      const empty = tab('zen://newtab')
+      act(() => root!.render(<NavRow state={state(empty)} tab={empty} compact={false} />))
+      // An empty tab has no slot at all (#406 §G); no ghost either.
+      expect(el.querySelector('[data-site-chip]')).toBeNull()
+      expect(el.querySelector('.zen-link-ghost')).toBeNull()
+      const settings = tab('zen://settings', { title: 'Settings' })
+      act(() => root!.render(<NavRow state={state(settings)} tab={settings} compact={false} />))
+      const internal = el.querySelector<HTMLElement>('[data-site-chip]')
+      expect(internal?.hasAttribute('draggable') ?? false).toBe(false)
+      expect(el.querySelector('.zen-link-ghost')).toBeNull()
+    })
+  })
+
   it('marks Reader View pressed while the tab is in it', () => {
     const reader = tab('zen://reader?url=https%3A%2F%2Fexample.com%2F')
     const el = render(<NavRow state={state(reader)} tab={reader} compact={false} />)

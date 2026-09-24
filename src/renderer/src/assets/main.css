@@ -1794,6 +1794,35 @@
     transform: scale(0.96);
     opacity: 0.6;
   }
+  /*
+   * The address dragged out of the URL pill (omnibox-43; SidebarTop's slot, lib/addressDrag.ts).
+   * The card Chromium snapshots for the drag image: the page's icon and name on the window's
+   * solid colour at level 2 and 90 % (§9.4's lifted item), a 28 px row at the control radius,
+   * no wider than 280 – kept off screen, since the drag image is a picture of it.
+   */
+  .zen-link-ghost {
+    position: fixed;
+    left: -10000px;
+    top: 0;
+    pointer-events: none;
+  }
+  .zen-link-ghost-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    max-width: 280px;
+    padding: 0 10px;
+    border-radius: var(--v2-radius-control);
+    background-color: var(--zen-bg-solid);
+    background-image: linear-gradient(var(--v2-control-fill-hover), var(--v2-control-fill-hover));
+    box-shadow: var(--zen-shadow-2);
+    color: var(--v2-control-text);
+    font-size: 13px;
+    line-height: 20px;
+    opacity: 0.9;
+    white-space: nowrap;
+  }
   /* The insertion caret (v2 draft §9.4): 2 px accent, radius 1, on the spring between slots. */
   .zen-tab-caret {
     position: fixed;

@@ -41,6 +41,7 @@ import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
+import { addressDragOf, writeAddressDrag } from '@renderer/lib/addressDrag'
 import { run } from '@renderer/lib/api'
 import { chipPrompt } from '@renderer/lib/autofill'
 import { siteBlockingState } from '@renderer/lib/blockingUi'
@@ -50,7 +51,7 @@ import { dropStore } from '@renderer/lib/drag'
 import { PRIVATE_TAB_PLACEHOLDER, unlockPrivateTabs, useTabMasked } from '@renderer/lib/privateLock'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
-import { isPrivateWindow } from '@renderer/lib/selectors'
+import { isPrivateWindow, tabTitle } from '@renderer/lib/selectors'
 import {
   MEMORY_SAVER_LEAF_MS,
   siteChipName,
@@ -82,6 +83,7 @@ import { PillChip } from '../urlbar/PillChip'
 import { CHIP_WIDTH, fittingChips, type PillChipSpec } from '../urlbar/pillChipTiers'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
+import { Favicon } from './Favicon'
 import { isZoomed } from '../zoom/bubble'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
@@ -348,6 +350,13 @@ export function NavRow({
     !state.capabilities.pageControls &&
     isZoomed(tab, state.settings.pageControls, state.pageEnvironment)
   )
+  // The address dragged out of the pill (omnibox-43, dnd-11): the slot is the drag's handle,
+  // as Chrome's location icon is. A press that moves past Chromium's drag threshold lifts the
+  // page's link (`lib/addressDrag.ts` says what it carries); one that does not stays the slot's
+  // click. Nothing to lift from an empty tab, a Zenium page or a masked private tab. The ghost
+  // in the hand is the small link card below, drawn off screen for `setDragImage`.
+  const addressDrag = tab && !masked ? addressDragOf(tab, tabTitle(tab)) : null
+  const dragGhost = useRef<HTMLDivElement>(null)
   // The site-information slot's state (omnibox-38, §9.29): the glyph the leading chip draws in
   // place of the connection's while the page holds the camera, the microphone or the screen
   // (`Tab.capture`, folded from the frames' reports) or, at rest, while the user has a
@@ -689,6 +698,14 @@ export function NavRow({
                 data-indicator={indicator.state}
                 data-slot-state={slot?.kind ?? (maskDraws ? 'private' : 'connection')}
                 data-slot-glyph={slot?.glyph}
+                draggable={addressDrag ? true : undefined}
+                data-drag-address={addressDrag ? addressDrag.url : undefined}
+                onDragStart={(e) => {
+                  if (!addressDrag) return
+                  writeAddressDrag(e.dataTransfer, addressDrag)
+                  // The card's grip is under the pointer's left edge, as Chrome holds a link.
+                  if (dragGhost.current) e.dataTransfer.setDragImage(dragGhost.current, 12, 14)
+                }}
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--v2-control-text-deemphasized)] hover:bg-[var(--v2-control-fill-hover)] hover:text-[var(--v2-control-text)]',
                   slot?.kind === 'capture' && 'text-[var(--v2-control-text)]',
@@ -731,6 +748,17 @@ export function NavRow({
                 )}
               </PillChip>
             ) : null}
+            {tab && addressDrag && (
+              // The link card the address drag carries (§9.4's lifted item: the window's solid
+              // colour, level 2, 90 %): the page's icon and name, off screen until Chromium
+              // snapshots it as the drag image.
+              <div ref={dragGhost} className="zen-link-ghost" aria-hidden>
+                <div className="zen-link-ghost-card" data-surface="window">
+                  <Favicon tab={tab} />
+                  <span className="min-w-0 truncate">{addressDrag.title}</span>
+                </div>
+              </div>
+            )}
             {tab && isWebPage && state.capabilities.requestBlocking && (
               <BlockedChip
                 tab={tab}
