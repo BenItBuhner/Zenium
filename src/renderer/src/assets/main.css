@@ -6864,6 +6864,12 @@
     justify-content: center;
     gap: 8px;
   }
+  /*
+   * The 6 px accent dot at the 16 glyph's corner of a 28 toolbar button: the hub button's while
+   * something plays, the "⋯" button's while the hub has folded (§9.29) or an update is
+   * downloaded and waiting (shortcuts-menus-101, Chrome's dot on its ⋮) – one dot, one place,
+   * the button's name saying which.
+   */
   .zen-mhub-dot {
     position: absolute;
     top: 4px;

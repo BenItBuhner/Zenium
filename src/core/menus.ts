@@ -3340,6 +3340,9 @@ export class Menus {
     // --- The sidebar layouts: Firefox's groups (§6 "Menus"). ----------------------------------
     this.popup(
       [
+        // Chrome's "Update Google Chrome" row at the menu's head (shortcuts-menus-101): while
+        // an update is downloaded and waiting, one row that relaunches into it, over a hairline.
+        ...desktop(...this.updateReadyRow()),
         // The window's live media heads the menu while the media hub's toolbar button has
         // folded (design language v2 §9.29: the sidebar's width tier folds it at 240, and this
         // row is where it goes; with the button up, the button is the hub). The phone has its
@@ -3466,6 +3469,28 @@ export class Menus {
       'app',
       { ...anchor, keyboard: options.keyboard }
     )
+  }
+
+  /**
+   * Chrome's "Update Google Chrome" row at the head of the desktop app menu
+   * (shortcuts-menus-101): while the updater holds a downloaded update (`phase: 'ready'`), the
+   * menu opens on "Update Zenium" – Chrome's form of the row; About's row says "Relaunch to
+   * update" beside its button – whose pick relaunches into the update, the same install
+   * About's Relaunch runs (#409, `updates.install`), with a hairline under it as Chrome's row
+   * has. Nothing while an update is merely found (`available`) – Chrome shows nothing until
+   * the update has downloaded – and nothing otherwise, so the menu keeps its resting count
+   * (twenty rows, 661 px) and the row is a twenty-first only while an update is waiting; the
+   * "⋯" button wears the accent dot meanwhile (`SidebarTop`), Chrome's dot on its ⋮. The
+   * desktop's alone: the phone's flat list and the tablet keep Settings › Updates as their
+   * surface, and the updater's phases are the desktop main's to drive.
+   */
+  private updateReadyRow(): Template {
+    if (!this.browser.state.capabilities.updates) return []
+    if (this.browser.updates.status().phase !== 'ready') return []
+    return [
+      { label: 'Update Zenium', click: () => void this.browser.updates.install() },
+      { type: 'separator' }
+    ]
   }
 
   /**

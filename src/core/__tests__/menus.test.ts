@@ -550,6 +550,94 @@ describe('the app menu', () => {
     expect(separators(full.shown())).toBe(4)
   })
 
+  describe("Chrome's Update row at the menu's head (shortcuts-menus-101)", () => {
+    /** The updater driven to `phase`, a 2.0.0 release found (downloaded when `ready`). */
+    const updater = (
+      h: Harness,
+      phase: 'available' | 'ready' | 'downloading' | 'up-to-date'
+    ): void => {
+      const status = h.browser.updates.status()
+      vi.spyOn(h.browser.updates, 'status').mockReturnValue({
+        ...status,
+        phase,
+        release: {
+          version: '2.0.0',
+          tag: 'v2.0.0',
+          prerelease: false,
+          publishedAt: '2026-09-24T00:00:00Z',
+          releaseUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
+          notesUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
+          asset: null
+        },
+        downloadedPath: phase === 'ready' ? '/tmp/zenium-2.0.0.AppImage' : null
+      })
+    }
+
+    it('heads the desktop menu with Update Zenium over a hairline while an update is downloaded, and its pick relaunches into it (About’s Relaunch, #409)', () => {
+      const h = harness(DESKTOP)
+      updater(h, 'ready')
+      const install = vi.spyOn(h.browser.updates, 'install').mockResolvedValue(undefined)
+      expect(appMenu(h).slice(0, 3)).toEqual(['Update Zenium', '-', 'New Tab'])
+      // Chrome's form of the row ("Update Google Chrome"), not About's "Relaunch to update".
+      const row = h.shown()[0]
+      expect(row).toMatchObject({ label: 'Update Zenium' })
+      expect(row.enabled).not.toBe(false)
+      row.click?.()
+      expect(install).toHaveBeenCalledTimes(1)
+      // The rest of the menu is as it was: the row is one row and one hairline more.
+      expect(appMenu(h).slice(2)).toEqual(DESKTOP_APP_MENU)
+    })
+
+    it('shows nothing while an update is merely found (Chrome shows nothing on available), while it downloads, or when the build is up to date', () => {
+      for (const phase of ['available', 'downloading', 'up-to-date'] as const) {
+        const h = harness(DESKTOP)
+        updater(h, phase)
+        expect(appMenu(h), phase).toEqual(DESKTOP_APP_MENU)
+      }
+      // A host that cannot update has no row whatever the phase reads.
+      const h = harness({ ...DESKTOP, updates: false })
+      updater(h, 'ready')
+      expect(appMenu(h)).not.toContain('Update Zenium')
+    })
+
+    it("is the desktop's alone: the tablet's and the phone's menus keep their shape with an update waiting", () => {
+      const tablet = harness(ANDROID, 'tablet')
+      updater(tablet, 'ready')
+      expect(appMenu(tablet)).not.toContain('Update Zenium')
+      expect(appMenu(tablet)[0]).toBe('New Tab')
+      const phone = harness(ANDROID, 'phone')
+      updater(phone, 'ready')
+      expect(appMenu(phone)).not.toContain('Update Zenium')
+    })
+
+    it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Now Playing… row folded too, 22 / 5 (741 px) and the Update row first', () => {
+      const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
+      const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
+      appMenu(full)
+      expect(rows(full)).toHaveLength(20)
+      expect(separators(full.shown())).toBe(3)
+      updater(full, 'ready')
+      appMenu(full)
+      expect(rows(full)).toHaveLength(21)
+      expect(separators(full.shown())).toBe(4)
+      expect(rows(full)[0]).toBe('Update Zenium')
+      // Chrome's order at the head: the update, then the folded hub's row, then the tabs.
+      full.browser.state.media = [
+        { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
+      ]
+      appMenuFolded(full)
+      expect(rows(full)).toHaveLength(22)
+      expect(separators(full.shown())).toBe(5)
+      expect(topLabels(full.shown()).slice(0, 5)).toEqual([
+        'Update Zenium',
+        '-',
+        'Now Playing…',
+        '-',
+        'New Tab'
+      ])
+    })
+  })
+
   it('folds Chrome’s Save and Share into a submenu closing the page’s group, before the app’s separator: the saves, then the shares (shortcuts-menus-120)', () => {
     // A host that shares and pins shortcuts, with a page up and the install surface mounted,
     // syncing with another device: every row of the group stands – Save Page As…, Create
@@ -975,7 +1063,9 @@ describe('the app menu', () => {
     appMenu(h)
     deepItem(h.shown(), "What's New").click?.()
     expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(releaseNotesUrl('1.2.3'))
-    expect(releaseNotesUrl('1.2.3')).toBe('https://github.com/BenItBuhner/Zenium/releases/tag/v1.2.3')
+    expect(releaseNotesUrl('1.2.3')).toBe(
+      'https://github.com/BenItBuhner/Zenium/releases/tag/v1.2.3'
+    )
     // A tablet with page tabs takes the same row (the sidebar layouts share the Help submenu).
     const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
     appMenu(tablet)
