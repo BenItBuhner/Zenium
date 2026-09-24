@@ -16,13 +16,20 @@
 //   --expect <sha>  refuse to cut unless the branch tip is this commit – the one whose CI you
 //                   checked. A merge that lands between the check and the cut would otherwise
 //                   be tagged unverified (it happened: ten seconds, one release).
+//   --notes <file>  the release's hand-written highlights (markdown, "## Highlights" first): they
+//                   go into the tag's annotation, from where the Release workflow puts them at
+//                   the top of the release body and into update-manifest.json's `notes` – so a
+//                   stable-channel app's What's new page has them without a second request.
+//                   Without it the body opens on the download table until edited by hand.
 //   --yes           skip the confirmation prompt
 //
 // The Android versionCode is derived from the version (android/app/build.gradle.kts) and caps
 // major ≤ 2100, minor ≤ 99, patch ≤ 99: a bump past a ceiling is refused here with the bump to
 // use instead (after X.Y.99, `minor`), because it would otherwise build everywhere but Android.
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { androidVersionCodeProblem } from './version-limits.mjs'
 
@@ -33,6 +40,7 @@ const flags = {
   branch: 'main',
   remote: 'origin',
   expect: null,
+  notes: null,
   yes: false
 }
 let bump = null
@@ -44,6 +52,7 @@ for (let i = 0; i < args.length; i++) {
   else if (arg === '--branch') flags.branch = args[++i]
   else if (arg === '--remote') flags.remote = args[++i]
   else if (arg === '--expect') flags.expect = args[++i]
+  else if (arg === '--notes') flags.notes = args[++i]
   else if (arg.startsWith('--')) fail(`Unknown option ${arg}`)
   else if (bump === null) bump = arg
   else fail(`Unexpected argument ${arg}`)
@@ -66,6 +75,20 @@ function run(command, commandArgs) {
 }
 
 const version = () => JSON.parse(readFileSync('package.json', 'utf8')).version
+
+// The highlights are read before anything moves, so a wrong path costs nothing to undo.
+let notes = null
+if (flags.notes !== null) {
+  if (!flags.notes || !existsSync(flags.notes)) fail(`--notes ${flags.notes ?? ''}: no such file`)
+  notes = readFileSync(flags.notes, 'utf8').replace(/\r\n?/g, '\n').trim()
+  if (!notes) fail(`--notes ${flags.notes} is empty`)
+  if (!/^##\s+Highlights\s*$/im.test(notes.split('\n')[0]))
+    console.warn(`note: ${flags.notes} does not open on "## Highlights"; the heading is added on the way`)
+} else {
+  console.warn(
+    'note: no --notes <highlights.md> – the release body and the update manifest carry no Highlights until edited by hand'
+  )
+}
 
 // Preconditions: the right branch, a clean tree, in sync with the remote.
 if (git('rev-parse', '--abbrev-ref', 'HEAD') !== flags.branch)
@@ -122,7 +145,8 @@ if (flags.dryRun) {
   restore()
   console.log('Dry run: nothing was committed, tagged or pushed. Without --dry-run this would run:')
   console.log(`$ git commit -am "chore(release): ${tag}"`)
-  console.log(`$ git tag -a ${tag} -m "Zenium ${next}"`)
+  if (notes) console.log(`$ git tag -a ${tag} --cleanup=verbatim -F <"Zenium ${next}" + ${flags.notes}>`)
+  else console.log(`$ git tag -a ${tag} -m "Zenium ${next}"`)
   console.log(`$ git push ${flags.remote} ${flags.branch} refs/tags/${tag}`)
   process.exit(0)
 }
@@ -139,7 +163,19 @@ if (!flags.yes) {
 
 run('git', ['add', 'package.json', 'package-lock.json'])
 run('git', ['commit', '-m', `chore(release): ${tag}`])
-run('git', ['tag', '-a', tag, '-m', `Zenium ${next}`])
+if (notes) {
+  // The subject line, a blank line, then the highlights as the annotation body. `--cleanup=verbatim`
+  // keeps the markdown headings: git's default cleanup drops every line that starts with "#".
+  const messageFile = join(tmpdir(), `zenium-${tag}-tag-message.md`)
+  writeFileSync(messageFile, `Zenium ${next}\n\n${notes}\n`)
+  try {
+    run('git', ['tag', '-a', tag, '--cleanup=verbatim', '-F', messageFile])
+  } finally {
+    unlinkSync(messageFile)
+  }
+} else {
+  run('git', ['tag', '-a', tag, '-m', `Zenium ${next}`])
+}
 run('git', ['push', flags.remote, flags.branch, `refs/tags/${tag}`])
 
 const origin = git('remote', 'get-url', flags.remote)
