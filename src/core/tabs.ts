@@ -1253,6 +1253,7 @@ export class TabManager {
     this.browser.textFragments.cancelForTab(tabId)
     this.browser.geolocation.onTabGone(tabId)
     this.browser.readAloud.onTabGone(tabId)
+    this.browser.webNotifications.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {
@@ -1519,6 +1520,7 @@ export class TabManager {
     this.browser.security.cancelForTab(tabId)
     this.browser.devices.cancelForTab(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
+    this.browser.webNotifications.onTabGone(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
     if (this.hostGone) return
