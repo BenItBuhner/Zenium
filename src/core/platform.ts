@@ -1095,6 +1095,23 @@ export type MenuRole =
   | 'window'
   | 'help'
 
+/**
+ * The modifier keys held when a menu row was picked, where the host can tell (a native menu's
+ * click event): the back/forward stack's rows open their entry in a new tab on Ctrl+click
+ * (⌘+click on macOS), as Chrome's do (shortcuts-menus-93).
+ */
+export interface MenuClickEvent {
+  control: boolean
+  meta: boolean
+  shift: boolean
+  alt: boolean
+}
+
+/** Chrome's "open in a new tab" modifier on a click: Ctrl, or ⌘ on macOS (either is taken on every host). */
+export function opensInNewTab(event: MenuClickEvent | undefined): boolean {
+  return Boolean(event && (event.control || event.meta))
+}
+
 export interface MenuItemTemplate {
   type?: 'normal' | 'separator' | 'checkbox' | 'radio'
   label?: string
@@ -1119,7 +1136,12 @@ export interface MenuItemTemplate {
    */
   glyph?: MenuGlyph
   submenu?: MenuItemTemplate[]
-  click?: () => void
+  /**
+   * The pick. A host that knows the modifier keys held on it (Electron's native menus) passes
+   * them; a renderer-drawn menu or a phone sheet passes nothing, and a handler that does not
+   * care ignores the argument.
+   */
+  click?: (event?: MenuClickEvent) => void
   /**
    * The shortcut action the item stands for. The core fills `accelerator` from the active key
    * table, and runs the action when the item has no `click` of its own.

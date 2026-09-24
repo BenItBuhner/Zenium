@@ -95,7 +95,18 @@ export class ElectronMenus implements MenuHost {
     }
     if (item.type === 'checkbox' || item.type === 'radio') out.checked = item.checked
     if (item.role) out.role = item.role
-    if (item.click) out.click = item.click
+    if (item.click) {
+      const click = item.click
+      // The modifiers held on the pick go with it (a stack row's Ctrl+click / ⌘+click opens
+      // the entry in a new tab).
+      out.click = (_item, _window, event) =>
+        click({
+          control: Boolean(event?.ctrlKey),
+          meta: Boolean(event?.metaKey),
+          shift: Boolean(event?.shiftKey),
+          alt: Boolean(event?.altKey)
+        })
+    }
     if (item.accelerator) {
       // The chord is a hint: Zenium's own key table runs the shortcut (and the user can rebind
       // it), so the system must not also fire the item. Roles keep their registered chords –

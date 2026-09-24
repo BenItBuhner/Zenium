@@ -1,12 +1,13 @@
 import type { Browser } from './browser'
 import { surfaceMounted, type ZenWindow } from './window'
-import type {
-  ChromeContextParams,
-  LinkAppTarget,
-  MenuItemTemplate,
-  MenuSource,
-  PageContextParams,
-  TabView
+import {
+  opensInNewTab,
+  type ChromeContextParams,
+  type LinkAppTarget,
+  type MenuItemTemplate,
+  type MenuSource,
+  type PageContextParams,
+  type TabView
 } from './platform'
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
@@ -2858,7 +2859,9 @@ export class Menus {
    * The tab's back/forward stack, from a long press or right click on the back / forward
    * button: up to ten entries around the current one (forward entries on top, like Firefox),
    * the current entry checked, and "Show Full History". A menu rather than a chrome panel
-   * because on desktop only native popups draw above the page views.
+   * because on desktop only native popups draw above the page views. A row picked with Ctrl
+   * (⌘ on macOS) held opens its entry in a new background tab instead, as Chrome's rows do
+   * (shortcuts-menus-93), this tab unmoved.
    */
   showNavigationMenu(tabId: string, win: ZenWindow): void {
     const { tabs, history } = this.browser
@@ -2873,7 +2876,12 @@ export class Menus {
         type: current ? 'checkbox' : 'normal',
         checked: current || undefined,
         icon: current ? null : history.faviconFor(entry.url),
-        click: current ? undefined : () => tabs.goToIndex(tabId, i)
+        click: current
+          ? undefined
+          : (event) => {
+              if (opensInNewTab(event)) void tabs.openNavigationEntryInNewTab(tabId, i, win)
+              else tabs.goToIndex(tabId, i)
+            }
       })
     }
     this.popup(

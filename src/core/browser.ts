@@ -2780,6 +2780,9 @@ export class Browser {
       'tab.setIcon': ({ tabId, icon }) => tabs.setIcon(tabId, icon),
       'tab.addRoute': ({ tabId, spaceId }) => this.addRouteForTab(tabId, spaceId),
       'tab.altClick': ({ tabId }, win) => tabs.altClick(tabId, win),
+      'tab.backInNewTab': ({ tabId }, win) => void tabs.openNavigationStepInNewTab(tabId, -1, win),
+      'tab.forwardInNewTab': ({ tabId }, win) =>
+        void tabs.openNavigationStepInNewTab(tabId, 1, win),
       'tab.selectionContextMenu': ({ tabIds, ...anchor }, win) =>
         this.menus.showSelectionContextMenu(tabIds, win, anchor),
       'tab.duplicate': ({ tabId }, win) => void tabs.duplicate(tabId, win),

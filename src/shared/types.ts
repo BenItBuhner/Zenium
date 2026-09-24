@@ -4129,6 +4129,13 @@ export interface Commands {
   'tab.home': { args: { tabId: string }; result: void }
   'tab.back': { args: { tabId: string }; result: void }
   'tab.forward': { args: { tabId: string }; result: void }
+  /**
+   * Chrome's middle-click / Ctrl+click (⌘+click on macOS) on Back or Forward (shortcuts-menus-93):
+   * the page one step back or forward opens in a new background tab beside `tabId`, which
+   * stays where it is.
+   */
+  'tab.backInNewTab': { args: { tabId: string }; result: void }
+  'tab.forwardInNewTab': { args: { tabId: string }; result: void }
   'tab.reload': { args: { tabId: string; skipCache?: boolean }; result: void }
   'tab.stop': { args: { tabId: string }; result: void }
   'tab.toggleMute': { args: { tabId: string }; result: void }
