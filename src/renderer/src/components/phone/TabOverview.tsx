@@ -82,6 +82,7 @@ import {
   noteOverviewScroll,
   overviewUiStore,
   setOverviewSearch,
+  setOverviewSearchBack,
   setOverviewSelection,
   setOverviewSheet,
   type OverviewSheet as Sheet
@@ -530,7 +531,12 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     searchWasOpen.current = searchOpen
     if (searchOpen && !was) searchInput.current?.focus()
   }, [searchOpen])
-  useBackSurface(searchOpen ? { name: 'overview-search', onCommit: backSearch } : null)
+  // The search's back surface is the store's, pushed as the search opens (`overviewUi.ts`: it
+  // keeps its place in the stack through a shell swap); the handler is this mount's.
+  useEffect(() => {
+    setOverviewSearchBack(() => searchBack.current())
+    return () => setOverviewSearchBack(null)
+  }, [])
   // What a screen reader is told of the narrowing (TalkBack, the chrome's status region): the
   // count once the typing has paused, not per letter.
   useEffect(() => {

@@ -46,7 +46,7 @@ const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
 const { OVERVIEW_UI_OFF, overviewUiStore, resetOverviewUi } =
   await import('@renderer/lib/overviewUi')
 const { overviewColumns } = await import('@renderer/lib/layout')
-const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
+const { dispatchBackEvent, pushBackSurface, topBackSurface } = await import('@renderer/lib/back')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -576,6 +576,33 @@ describe('the overview across a shell swap (TABLET-08)', () => {
     act(() => dismissOverview())
     expect(overviewUiStore.get()).toEqual(OVERVIEW_UI_OFF)
     expect(topBackSurface()?.name).not.toBe('overview-selection')
+  })
+
+  it('keeps the search`s place in the back stack: what opened over it before the swap stays on top', async () => {
+    const state = stateOf(pages())
+    viewportStore.set(PHONE)
+    mountStage(state, false)
+    await settle()
+    act(() => byTestId('overview-search-toggle')!.click())
+    type('wiki')
+    expect(topBackSurface()?.name).toBe('overview-search')
+    // The Spaces drawer's place: a surface pushed over the search before the fold.
+    const popOver = pushBackSurface({ name: 'over-the-search', onCommit: () => undefined })
+    expect(topBackSurface()?.name).toBe('over-the-search')
+
+    await swapTo(state, true)
+    // The tablet's mount did not re-push the search above it.
+    expect(topBackSurface()?.name).toBe('over-the-search')
+    popOver()
+    // Below it the search stands, and its back is the new mount's: the query clears first.
+    expect(topBackSurface()?.name).toBe('overview-search')
+    act(() => {
+      dispatchBackEvent('commit')
+    })
+    expect(field()?.value).toBe('')
+    expect(overviewUiStore.get().search).toEqual({ open: false, query: '' })
+    expect(topBackSurface()?.name).not.toBe('overview-search')
+    expect(cellKeys()).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
   })
 
   it('a pane`s scroll is its own: the swap onto another pane comes up at the top', async () => {

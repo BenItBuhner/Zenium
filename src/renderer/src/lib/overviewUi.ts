@@ -1,4 +1,5 @@
 import type { ArchivedTabSummary } from '@shared/types'
+import { pushBackSurface } from './back'
 import type { ClosedEntrySummary } from './historyAdapter'
 import { NO_SELECTION, type OverviewSelection } from './overviewSelection'
 import type { OverviewPane } from './privateTabs'
@@ -85,6 +86,43 @@ function resolve<T>(next: Next<T>, current: T): T {
 
 export function setOverviewSearch(next: Next<OverviewSearchState>): void {
   overviewUiStore.set((s) => ({ search: resolve(next, s.search) }))
+}
+
+/**
+ * The tab search's back handler: the mounted overview's (`TabOverview`'s `backSearch`, which
+ * clears a query first and closes an empty field), set for as long as one is mounted. The
+ * surface itself is the store's, below: pushed as the search opens and popped as it closes,
+ * not by the mounted component, because a shell swap with the search up (TABLET-08) mounts a
+ * new overview, and a surface that mount re-pushed would land on top of whatever opened over
+ * the search before the swap – the Spaces drawer – so the first back after a fold would clear
+ * the query under the drawer instead of closing the drawer. With no overview mounted the
+ * surface closes the search itself.
+ */
+let searchBack: (() => void) | null = null
+
+export function setOverviewSearchBack(handler: (() => void) | null): void {
+  searchBack = handler
+}
+
+const wired = globalThis as unknown as { __zenOverviewSearchWired?: boolean }
+if (!wired.__zenOverviewSearchWired) {
+  wired.__zenOverviewSearchWired = true
+  let popSearchSurface: (() => void) | null = null
+  overviewUiStore.subscribe(() => {
+    const open = overviewUiStore.get().search.open
+    if (open && !popSearchSurface) {
+      popSearchSurface = pushBackSurface({
+        name: 'overview-search',
+        onCommit: () => {
+          if (searchBack) searchBack()
+          else setOverviewSearch(SEARCH_OFF)
+        }
+      })
+    } else if (!open && popSearchSurface) {
+      popSearchSurface()
+      popSearchSurface = null
+    }
+  })
 }
 
 export function setOverviewSelection(next: Next<KeptSelection>): void {
