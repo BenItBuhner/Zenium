@@ -652,8 +652,16 @@ describe('a stacked field row puts the field under its text (§9.12, FieldRow.fo
     expect(column.children[0]).toBe(input)
     expect(input.classList.contains('zen-v2-field')).toBe(true)
     expect(input.classList.contains('zen-settings-field-secret')).toBe(true)
-    expect(input.getAttribute('aria-label')).toBe('Google Safe Browsing API key')
     expect(column.querySelector('.zen-settings-inline-error')).toBeNull()
+    // §9.12's association for the label-above form (the #453 lead check): the visible label is
+    // the field's `<label for>`, so a click on it lands in the field and the label names the
+    // field – no `aria-label` to override the name it gives.
+    const label = text.querySelector<HTMLLabelElement>('.zen-settings-label')!
+    expect(label.tagName.toLowerCase()).toBe('label')
+    expect(input.id).not.toBe('')
+    expect(label.htmlFor).toBe(input.id)
+    expect(label.control).toBe(input)
+    expect(input.hasAttribute('aria-label')).toBe(false)
   })
 
   it('a refused commit puts §9.12’s validation line under the field, spanning the field’s box', () => {
@@ -780,8 +788,14 @@ describe('a stacked field row puts the field under its text (§9.12, FieldRow.fo
       )!
       expect(field).not.toBeNull()
       expect(field.classList.contains('zen-settings-stacked-field')).toBe(false)
-      expect(field.querySelector('input')!.classList.contains('zen-settings-field-text')).toBe(true)
+      const input = field.querySelector<HTMLInputElement>('input')!
+      expect(input.classList.contains('zen-settings-field-text')).toBe(true)
       expect(row.querySelector('.zen-settings-field-block')).toBeNull()
+      // The builder's convention for a control beside its text: `aria-label`, the label a span
+      // (the `<label for>` sweep is a later pass, the #453 lead check).
+      expect(input.getAttribute('aria-label')).toBe('Google Safe Browsing API key')
+      expect(input.id).toBe('')
+      expect(row.querySelector('.zen-settings-label')!.tagName.toLowerCase()).toBe('span')
       act(() => root?.unmount())
     }
   })

@@ -794,9 +794,13 @@ function ControlRow({
  * two) and a line of validation adds 4 + 20. No control trails the text, so nothing is seated
  * (§9.18) and the row counts no lines; it keeps `.zen-v2-row`'s own `--v2-row-pad` above and
  * below as a plain row does, `data-static` as the control row has it, and the disabled .4 the
- * same way. The phone is unchanged: its field row shows the value and opens the field sheet.
+ * same way. The label is the field's `<label for>` (§9.12's association for the label-above
+ * form; the #453 lead check): a click on the label lands in the field under it, and the label
+ * names the field in place of the inline form's `aria-label`. The phone is unchanged: its field
+ * row shows the value and opens the field sheet.
  */
 function StackedFieldRow({ row, caption }: { row: FieldRow; caption?: string }): JSX.Element {
+  const fieldId = `${useId()}-field`
   return (
     <div
       data-row={row.id}
@@ -808,8 +812,13 @@ function StackedFieldRow({ row, caption }: { row: FieldRow; caption?: string }):
       )}
     >
       <div className="zen-settings-field-block">
-        <RowText label={row.label} description={row.description} caption={caption} />
-        <InlineField row={row} stacked />
+        <RowText
+          label={row.label}
+          labelFor={fieldId}
+          description={row.description}
+          caption={caption}
+        />
+        <InlineField row={row} stacked fieldId={fieldId} />
       </div>
     </div>
   )
@@ -857,9 +866,19 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
  * (`aria-describedby`) so a reader on the field hears the error. Trailing the text (the inline
  * form) the column hugs the field's width, 160 or 96, the message capped near it; `stacked`
  * (`StackedFieldRow`) the column spans the row's content width and the field and its message
- * with it.
+ * with it. The inline field is named by `aria-label` (the builder's convention for a control
+ * beside its text); a `fieldId` says a visible `<label for>` names the field instead (the
+ * stacked row's), so the input carries the id and no `aria-label` to override it.
  */
-function InlineField({ row, stacked }: { row: FieldRow; stacked?: boolean }): JSX.Element {
+function InlineField({
+  row,
+  stacked,
+  fieldId
+}: {
+  row: FieldRow
+  stacked?: boolean
+  fieldId?: string
+}): JSX.Element {
   const errorId = `${useId()}-error`
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
@@ -892,6 +911,7 @@ function InlineField({ row, stacked }: { row: FieldRow; stacked?: boolean }): JS
   return (
     <span className={cn('zen-settings-inline-field', stacked && 'zen-settings-stacked-field')}>
       <input
+        id={fieldId}
         className={cn(
           'zen-settings-input zen-v2-field',
           row.input === 'number' ? 'zen-settings-field-number' : 'zen-settings-field-text',
@@ -902,7 +922,7 @@ function InlineField({ row, stacked }: { row: FieldRow; stacked?: boolean }): JS
         min={row.min}
         max={row.max}
         placeholder={row.placeholder}
-        aria-label={row.label}
+        aria-label={fieldId ? undefined : row.label}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
         autoCapitalize="off"
@@ -1032,21 +1052,31 @@ function PressableRow({
 /**
  * Label on the first line, the description under it at 13/69 %, at most two lines (§9.2) – in
  * a §1 status ink when the row carries a `tone` (`data-tone` on the row, the primitive's one
- * attribute; the description's rule reads it through the row).
+ * attribute; the description's rule reads it through the row). With `labelFor` the label is a
+ * `<label for>` of the control with that id (the stacked field row's, §9.12), the same class
+ * and so the same line; every style hangs on the class, so the element makes no difference.
  */
 export function RowText({
   label,
+  labelFor,
   description,
   caption
 }: {
   label: string
+  labelFor?: string
   description?: string
   caption?: string
 }): JSX.Element {
   return (
     <span className="zen-settings-row-text">
       {caption && <span className="zen-settings-caption">{caption}</span>}
-      <span className="zen-settings-label">{label}</span>
+      {labelFor ? (
+        <label className="zen-settings-label" htmlFor={labelFor}>
+          {label}
+        </label>
+      ) : (
+        <span className="zen-settings-label">{label}</span>
+      )}
       {description && <span className="zen-settings-description">{description}</span>}
     </span>
   )
