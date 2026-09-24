@@ -171,13 +171,18 @@ class MediaDemo : MediaDemoBase("services-android-media-android") {
         SystemClock.sleep(2_500)
     }
 
-    /** The pill's bell-off chip (NOT-03) as the chrome draws it: its size, name, popup semantics and ink; empty when none. */
+    /**
+     * The pill's bell-off chip (NOT-03) as the chrome draws it: its size, name, popup semantics
+     * and ink – `rest` is the slot's rest class (`zen-pill-quiet`, the 69 % ink the design gate
+     * ruled for a quiet state) and `ink` the colour it resolves to; empty when none.
+     */
     private fun readBell(): JSONObject {
         val raw = chromeJsString(
             "(function(){var c=document.querySelector('.zen-phone-pill:not(.zen-pill-ghost) [data-quiet-bell]');" +
-                "if(!c)return '';var r=c.getBoundingClientRect();" +
+                "if(!c)return '';var r=c.getBoundingClientRect();var cs=getComputedStyle(c);" +
                 "return JSON.stringify({w:Math.round(r.width),h:Math.round(r.height),label:c.getAttribute('aria-label')||''," +
-                "popup:c.getAttribute('aria-haspopup')||'',expanded:c.getAttribute('aria-expanded')||'',opacity:getComputedStyle(c).opacity})})()"
+                "popup:c.getAttribute('aria-haspopup')||'',expanded:c.getAttribute('aria-expanded')||'',opacity:cs.opacity," +
+                "rest:c.classList.contains('zen-pill-quiet'),ink:cs.color})})()"
         ) ?: ""
         return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
     }

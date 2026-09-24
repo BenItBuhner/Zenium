@@ -36,23 +36,42 @@ export function asksQuietly(gesture: boolean | undefined, dismissedBefore: boole
 }
 
 /**
- * The quiet prompt's words: Chrome's ("Notifications blocked" over "You usually block
- * notifications. To let example.com notify you, tap Allow."), Allow and Keep blocking; no
- * Allow once – a notification permission is a site's standing right or nothing.
+ * The site as the quiet prompt's description names it: the host alone – `localhost`,
+ * `news.example` – with neither the scheme nor the port (the design gate's ruling on NOT-03:
+ * the sentence names the site, the pill's host spells its address). The file site is named as
+ * every permission prompt names it (`file:///`), and an origin with no host to speak of falls
+ * back to the same spelling.
+ */
+export function quietPromptSite(origin: string): string {
+  try {
+    const host = new URL(origin).hostname
+    if (host) return host
+  } catch {
+    // Not a URL: named as the loud prompt names it.
+  }
+  return displayOrigin(origin)
+}
+
+/**
+ * The quiet prompt's words: Chrome's title ("Notifications blocked") over "You usually block
+ * notifications. To let example.com notify you, choose Allow." – the site by its host alone,
+ * and "choose", not "tap", the core's copy being every host's (the desktop's nod on NOT-03) –
+ * then Allow and Keep blocking (the product's own sentence, §9.1; not Chrome's "Continue
+ * blocking"); no Allow once – a notification permission is a site's standing right or nothing.
  */
 export function quietNotificationPrompt(
   tabId: string,
   origin: string,
   requestedAt: number
 ): PermissionPrompt {
-  const site = displayOrigin(origin)
+  const site = quietPromptSite(origin)
   return {
     id: newId('perm'),
     tabId,
     origin,
     permission: 'notifications',
     message: 'Notifications blocked',
-    detail: `You usually block notifications. To let ${site} notify you, tap Allow.`,
+    detail: `You usually block notifications. To let ${site} notify you, choose Allow.`,
     allowLabel: 'Allow',
     blockLabel: 'Keep blocking',
     allowOnce: false,

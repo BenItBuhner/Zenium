@@ -3,7 +3,8 @@ import {
   MAX_LIVE_PER_ORIGIN,
   WebNotificationService,
   asksQuietly,
-  quietNotificationPrompt
+  quietNotificationPrompt,
+  quietPromptSite
 } from '../webNotifications'
 import type { Browser } from '../browser'
 import type { PageHostMessage, WebNotificationRequest } from '../platform'
@@ -274,7 +275,7 @@ describe('WebNotificationService', () => {
         quiet: true,
         allowOnce: false,
         message: 'Notifications blocked',
-        detail: 'You usually block notifications. To let site.example notify you, tap Allow.',
+        detail: 'You usually block notifications. To let site.example notify you, choose Allow.',
         allowLabel: 'Allow',
         blockLabel: 'Keep blocking'
       })
@@ -412,8 +413,29 @@ describe('WebNotificationService', () => {
       const prompt = quietNotificationPrompt('t9', 'https://news.example:8443', 42)
       expect(prompt.quiet).toBe(true)
       expect(prompt.requestedAt).toBe(42)
-      expect(prompt.detail).toContain('news.example:8443')
+      // The description names the host alone – no scheme, no port (the design gate's nit).
+      expect(prompt.detail).toBe(
+        'You usually block notifications. To let news.example notify you, choose Allow.'
+      )
       expect(prompt.id).not.toBe(quietNotificationPrompt('t9', 'https://news.example', 42).id)
+    })
+
+    it('names the site by its host alone, whatever the scheme and port; the file site as every prompt names it', () => {
+      expect(quietPromptSite('http://localhost:18136')).toBe('localhost')
+      expect(quietPromptSite('https://www.example.com')).toBe('www.example.com')
+      expect(quietPromptSite('http://127.0.0.1:8080')).toBe('127.0.0.1')
+      expect(quietPromptSite('file://')).toBe('file:///')
+      expect(quietPromptSite('not a url')).toBe('not a url')
+      expect(quietNotificationPrompt('t1', 'http://localhost:18136', 1).detail).toBe(
+        'You usually block notifications. To let localhost notify you, choose Allow.'
+      )
+      // The buttons: the product's own words (§9.1), Allow and Keep blocking; no Allow once.
+      const prompt = quietNotificationPrompt('t1', 'http://localhost:18136', 1)
+      expect([prompt.allowLabel, prompt.blockLabel, prompt.allowOnce]).toEqual([
+        'Allow',
+        'Keep blocking',
+        false
+      ])
     })
   })
 

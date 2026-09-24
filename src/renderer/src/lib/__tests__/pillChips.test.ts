@@ -53,14 +53,15 @@ describe('pillChipFold: what each chip is to the pill at rest', () => {
     )
   })
 
-  it('the quiet notification ask is a state (NOT-03): live, in the glyph’s slot while the page waits', () => {
-    expect(pillChipFold('notifications-blocked')).toBe('live')
+  it('the quiet notification ask is the quiet state (NOT-03; §9.29 as amended): in the glyph’s slot at rest, not live', () => {
+    expect(pillChipFold('notifications-blocked')).toBe('quiet')
     const fold = foldPillChips([
       { id: 'lock', fold: 'glyph' },
-      { id: 'notifications-blocked', fold: 'live' }
+      { id: 'notifications-blocked', fold: 'quiet' }
     ])
     expect(fold.shown.map((c) => c.id)).toEqual(['notifications-blocked'])
     expect(fold.yielded.map((c) => c.id)).toEqual(['lock'])
+    expect(fold.folded).toEqual([])
     // Under a danger glyph the pill gives it the sheet's fold instead: the glyph stays.
     const danger = foldPillChips([
       { id: 'certificate-error', fold: 'glyph' },
@@ -68,6 +69,59 @@ describe('pillChipFold: what each chip is to the pill at rest', () => {
     ])
     expect(danger.shown.map((c) => c.id)).toEqual(['certificate-error'])
     expect(danger.folded.map((c) => c.id)).toEqual(['notifications-blocked'])
+  })
+})
+
+describe('foldPillChips: a quiet state sits under a live one and above the glyph (§9.29 as amended)', () => {
+  const page = [chip('lock'), chip('blocked'), chip('translate')]
+
+  it('has the slot when no state is live: the glyph gives way, the sheet’s rows are unchanged', () => {
+    const fold = foldPillChips([...page, chip('notifications-blocked')])
+    expect(ids(fold.shown)).toEqual(['notifications-blocked'])
+    expect(ids(fold.yielded)).toEqual(['lock'])
+    expect(ids(fold.folded)).toEqual(['blocked', 'translate'])
+  })
+
+  it('is the sheet’s row while a live state is up, whichever came first, and the slot’s again when it ends', () => {
+    const chips = [...page, chip('notifications-blocked'), chip('media')]
+    // The bell was up first: the media chip still takes the slot – a quiet state never outranks a live one.
+    expect(ids(foldPillChips(chips, liveArrival([], ['media'])).shown)).toEqual(['media'])
+    expect(ids(foldPillChips(chips, liveArrival([], ['media'])).folded)).toEqual([
+      'blocked',
+      'translate',
+      'notifications-blocked'
+    ])
+    // The media stops: the bell is back in the slot, the lock still yielded.
+    const after = foldPillChips([...page, chip('notifications-blocked')], liveArrival(['media'], []))
+    expect(ids(after.shown)).toEqual(['notifications-blocked'])
+    expect(ids(after.yielded)).toEqual(['lock'])
+  })
+
+  it('takes no part in the states’ record: the record is the live states’ alone', () => {
+    const chips = [...page, chip('media'), chip('notifications-blocked'), chip('save-prompt')]
+    const arrival = liveArrival([], ['media', 'save-prompt'])
+    expect(arrival).toEqual(['media', 'save-prompt'])
+    const fold = foldPillChips(chips, arrival)
+    expect(ids(fold.shown)).toEqual(['save-prompt'])
+    expect(ids(fold.folded)).toEqual(['blocked', 'translate', 'media', 'notifications-blocked'])
+  })
+
+  it('on a page without a lock (http) stands alone, nothing yielded', () => {
+    const fold = foldPillChips([chip('blocked'), chip('notifications-blocked')])
+    expect(ids(fold.shown)).toEqual(['notifications-blocked'])
+    expect(fold.yielded).toEqual([])
+    expect(ids(fold.folded)).toEqual(['blocked'])
+  })
+
+  it('two quiet states never stack: the first in the pill’s order has the slot, the other is a row', () => {
+    const fold = foldPillChips([
+      chip('lock'),
+      { id: 'quiet-a', fold: 'quiet' },
+      { id: 'quiet-b', fold: 'quiet' }
+    ])
+    expect(ids(fold.shown)).toEqual(['quiet-a'])
+    expect(ids(fold.folded)).toEqual(['quiet-b'])
+    expect(ids(fold.yielded)).toEqual(['lock'])
   })
 })
 

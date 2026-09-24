@@ -701,6 +701,25 @@ describe('parsePreviewSpec', () => {
     })
     expect(parsePreviewSpec('menu=app&prompt=camera')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('prompt=')).toEqual({ kind: 'idle' })
+    // The quiet notification ask (NOT-03): the bell in the pill; `then=` taps it for the sheet.
+    expect(parsePreviewSpec('prompt=notifications&quiet')).toEqual({
+      kind: 'permission',
+      permission: 'notifications',
+      quiet: true
+    })
+    expect(parsePreviewSpec('prompt=notifications&quiet&then=tap:Notifications%20blocked')).toEqual(
+      {
+        kind: 'permission',
+        permission: 'notifications',
+        quiet: true,
+        then: [{ kind: 'tap', text: 'Notifications blocked' }]
+      }
+    )
+    // Only a notification request asks quietly; a camera request with `quiet` asks aloud.
+    expect(parsePreviewSpec('prompt=camera&quiet')).toEqual({
+      kind: 'permission',
+      permission: 'camera'
+    })
     // The security dialogs' two `prompt=` values are theirs (#62), and come up after the bars.
     expect(parsePreviewSpec('prompt=http-auth')).toMatchObject({
       kind: 'prompt',

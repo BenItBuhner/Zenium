@@ -406,7 +406,7 @@ describe('the quiet notification ask in the pill (NOT-03)', () => {
           origin: 'https://github.com',
           permission: 'notifications',
           message: 'Notifications blocked',
-          detail: 'You usually block notifications. To let github.com notify you, tap Allow.',
+          detail: 'You usually block notifications. To let github.com notify you, choose Allow.',
           allowLabel: 'Allow',
           blockLabel: 'Keep blocking',
           allowOnce: false,
@@ -417,11 +417,11 @@ describe('the quiet notification ask in the pill (NOT-03)', () => {
     }
   }
 
-  it('is a live state chip named as Chrome names it, in the glyph’s slot: the lock gives way', () => {
+  it('is the quiet state chip named as Chrome names it, in the glyph’s slot at rest: the lock gives way', () => {
     const chips = phonePillChips(quiet(offered(state(counted))), counted, ctx)
     expect(chips.map((c) => [c.id, c.fold])).toEqual([
       ['lock', 'glyph'],
-      ['notifications-blocked', 'live'],
+      ['notifications-blocked', 'quiet'],
       ['blocked', 'sheet'],
       ['translate', 'sheet']
     ])
@@ -434,6 +434,18 @@ describe('the quiet notification ask in the pill (NOT-03)', () => {
     // Answered or withdrawn, the bell is gone and the lock is back.
     const after = foldPhonePillChips(phonePillChips(offered(state(counted)), counted, ctx))
     expect(after.shown.map((c) => c.id)).toEqual(['lock'])
+  })
+
+  it('draws the bell in the slot’s rest ink – 69 %, the secure lock’s and a stored block’s – not the full ink (the design gate on §9.29)', () => {
+    const chips = phonePillChips(quiet(state(page)), page, ctx)
+    const bell = chips.find((c) => c.id === 'notifications-blocked')!
+    const el = render(<>{bell.render!(true)}</>)
+    const button = el.querySelector<HTMLButtonElement>('[data-testid="quiet-bell"]')!
+    expect(button.classList.contains('zen-pill-quiet')).toBe(true)
+    // The same rest class the lock wears on a secure page: one ink for what rests in the slot.
+    const lock = chips.find((c) => c.id === 'lock')!
+    act(() => root!.render(<>{lock.render!(true)}</>))
+    expect(el.querySelector('[data-site-info]')?.classList.contains('zen-pill-quiet')).toBe(true)
   })
 
   it('a tap on the bell opens the quiet prompt’s sheet, from the pill and from its sheet row', () => {

@@ -212,12 +212,16 @@ export function phonePillChips(
 
   // The quiet notification ask (NOT-03; Chrome's quiet permission UI): a site the user dismissed
   // before, or a request made without a gesture, does not get a sheet over the page – the
-  // bell-off glyph takes the slot while the page's question waits (a §9.29 state, in the full
-  // ink: a pending question is to be seen, where a stored block rests at 69%), named as Chrome
-  // names it, "Notifications blocked"; its tap opens the quiet sheet (Allow / Keep blocking).
-  // Under the danger glyph – a certificate that failed, a Safe Browsing verdict – the identity
-  // in question keeps the slot (§9.29's first rule) and the bell is the sheet's row; behind a
-  // newer state it is the sheet's row too, as every state is (Bennett's one-glyph rule).
+  // bell-off glyph takes the slot while the page's question waits, named as Chrome names it,
+  // "Notifications blocked"; its tap opens the quiet sheet (Allow / Keep blocking). It is
+  // §9.29's quiet state, in the slot's REST ink – 69 %, `zen-pill-quiet`, the ink a stored block
+  // rests in – not a live one (the design gate's ruling, 2026-09-24: a quiet request is quiet,
+  // it does not call for the full ink a live capture has; the precedence, one glyph at a time,
+  // is the danger glyph, a live state, a stored block, the quiet request, the connection's
+  // glyph, and the request leaves the slot when granted). Under the danger glyph – a
+  // certificate that failed, a Safe Browsing verdict – the identity in question keeps the slot
+  // (§9.29's first rule) and the bell is the sheet's row; under a live state (Now playing, a
+  // key) it is the sheet's row too, and the slot's again when the state ends.
   const quiet = identity && !page && !extension ? quietPermissionPrompt(state, tab.id) : null
   if (quiet) {
     const open = (): void => {
@@ -242,7 +246,7 @@ export function phonePillChips(
           expanded={ctx.quietPromptOpen === true}
           data-quiet-bell
           data-testid="quiet-bell"
-          className={CHIP_CLASS}
+          className={cn(CHIP_CLASS, 'zen-pill-quiet')}
         >
           <BellOff className="h-3.5 w-3.5" />
         </PillChip>
