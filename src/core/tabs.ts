@@ -9,6 +9,7 @@ import type {
   Space,
   SplitLayout,
   Tab,
+  TabMoveResult,
   TabSearchCandidate,
   TabSection,
   WindowKind
@@ -21,6 +22,7 @@ import {
   dissolveSplitGroup,
   essentialsForSpace,
   folderOpened,
+  foldersOf,
   folderTabs,
   getSpace,
   insertTabIntoSpace,
@@ -152,6 +154,12 @@ export class TabManager {
    * clear the crash mark. The next commit of any kind consumes the entry.
    */
   private readonly crashPagePending = new Set<string>()
+  /**
+   * Tabs whose renderer the user ended from the "Page unresponsive" prompt (tabs-45): the
+   * `onCrashed` that follows reads the kill as a page ended for not responding (the crash
+   * page's `hung` words, no toast for one unloaded in the background). Consumed by that report.
+   */
+  private readonly hungExits = new Set<string>()
   /**
    * Tabs whose close, while active, returns to the opener (tabs-30): a tab opened by another
    * (`Tab.openerTabId`) joins this set, and leaves it the moment the user switches away from it,
@@ -559,9 +567,12 @@ export class TabManager {
         // and whatever permission question the previous page asked.
         if (!inPage) {
           // The document committed: the first byte is in, the throbber turns to its loading
-          // phase (tabs-41).
+          // phase (tabs-41). A renderer that commits a document answers: a hang's mark goes,
+          // and so does a pending word that the user ended it – the kill never came.
+          this.hungExits.delete(tabId)
           update((t) => {
             t.waiting = false
+            if (t.unresponsive) delete t.unresponsive
           }, true)
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
@@ -580,7 +591,15 @@ export class TabManager {
         update((t) => {
           // The sad tab keeps the crashed page's title beside its favicon, as Chrome's does.
           if (this.isSadTab(t)) return
-          t.title = title || this.titleFor(t.url)
+          const next = title || this.titleFor(t.url)
+          // A pinned tab's page changing its title while nobody is looking at it – a mail
+          // count, a new message – asks for attention (tabs-11, Chrome's dot on a pinned tab):
+          // the row's favicon wears the dot until the tab is activated. A pinned row shows no
+          // title, so the change would otherwise pass unseen; a regular row's title is its own
+          // telling.
+          if ((t.pinned || t.essential) && next !== t.title && !this.allVisibleTabIds().has(tabId))
+            t.attention = true
+          t.title = next
           if (!this.isPrivate(t)) this.browser.history.updateTitle(t.url, t.title)
         }),
       onFaviconUpdated: (favicons) =>
@@ -655,12 +674,30 @@ export class TabManager {
       onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
       onUnsafeNavigation: (url, hit) =>
         this.browser.protection.safeBrowsing.notePendingBlock(tabId, url, hit),
+      // The page stopped answering (tabs-45, Chrome's "Page unresponsive"): the row is marked
+      // and the chrome asks whether to wait or exit the page; the mark goes when the page answers
+      // again, when the user waits (`waitUnresponsive` – the next report asks again), when a
+      // navigation commits, or with the renderer. The session's own, never written to disk.
+      onUnresponsive: () =>
+        update((t) => {
+          t.unresponsive = true
+        }, true),
+      onResponsive: () =>
+        update((t) => {
+          if (t.unresponsive) delete t.unresponsive
+        }, true),
       onCrashed: (reason, exitCode, details) => {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
         if (!tab) return
         // The renderer took every frame's capture with it.
         this.clearCaptureState(tabId)
+        // The user ended the renderer from the "Page unresponsive" prompt (`exitUnresponsive`):
+        // the host reports the kill as `killed` or `crashed`, and the crash page's words are
+        // those for a page ended for not responding (ERR-15's `hung`). The prompt's mark goes
+        // with the renderer.
+        const hungExit = this.hungExits.delete(tabId)
+        if (tab.unresponsive) delete tab.unresponsive
         const title = tab.customTitle ?? tab.title
         const outOfMemory = reason === 'oom' || reason === 'memory-eviction'
         // The OS took the memory back from a page in front of the user (Android's
@@ -680,18 +717,23 @@ export class TabManager {
             ? 'the page ran out of memory'
             : ended
               ? 'the user ended the page’s process'
-              : `the page crashed (${reason})`
+              : hungExit
+                ? 'the page was ended for not responding'
+                : `the page crashed (${reason})`
           this.browser.governor.record('discard', tabId, why, title)
           this.discard(tabId)
-          this.browser.toast(
-            memory
-              ? `"${title}" ran out of memory and was unloaded.`
-              : ended
-                ? `"${title}" was ended and unloaded.`
-                : `"${title}" crashed and was unloaded.`,
-            ended ? 'info' : 'error',
-            ownerWindow()
-          )
+          // A page the user ended from the unresponsive prompt needs no word of it: the prompt was
+          // the word. One ended from the task manager says what they did, not that it crashed.
+          if (!hungExit)
+            this.browser.toast(
+              memory
+                ? `"${title}" ran out of memory and was unloaded.`
+                : ended
+                  ? `"${title}" was ended and unloaded.`
+                  : `"${title}" crashed and was unloaded.`,
+              ended ? 'info' : 'error',
+              ownerWindow()
+            )
           return
         }
         // A crash in front of the user is the sad tab (tabs-44): the crash page, for the page
@@ -704,7 +746,7 @@ export class TabManager {
         const code = crashCodeName(reason, exitCode, this.browser.platform.info.os)
         const variant: CrashPageVariant = memoryKill
           ? 'memory'
-          : reason === 'hung'
+          : reason === 'hung' || hungExit
             ? 'hung'
             : 'crash'
         update((t) => {
@@ -1292,6 +1334,10 @@ export class TabManager {
     tab.cpuThrottle = 1
     tab.loading = false
     tab.waiting = false
+    // A sleeping page has no renderer to be hung (tabs-45): the prompt's mark goes with it, and
+    // any pending word that the user ended it.
+    if (tab.unresponsive) delete tab.unresponsive
+    this.hungExits.delete(tabId)
     tab.progress = 0
     tab.audible = false
     // The toolbox went with the page (the host sends no close for a view it destroyed).
@@ -1736,6 +1782,8 @@ export class TabManager {
     const previousActive = this.tab(win.selectedTabIn(space))
     win.select(space, tab.id)
     tab.lastActiveAt = Date.now()
+    // In front now: whatever its page changed in the background has been seen (tabs-11).
+    if (tab.attention) delete tab.attention
     // A member in view is the group in use: the Tab groups pane's "last used" (TAB-16). A
     // private member's viewing leaves no trace on the regular profile's group.
     if (tab.folderId && m.folders[tab.folderId] && !this.isPrivate(tab))
@@ -2153,6 +2201,46 @@ export class TabManager {
 
   stop(tabId: string): void {
     this.view(tabId)?.stop()
+  }
+
+  /**
+   * The "Page unresponsive" prompt's Exit page (tabs-45): end the renderer of every page listed
+   * – they share it, so the first kill takes them all, and a host asked again for a renderer
+   * that is gone does nothing – and read the reports that follow as pages ended for not
+   * responding (`hungExits`). A host without `endRenderer` cannot; the mark is dropped so the
+   * prompt goes.
+   */
+  exitUnresponsive(tabIds: readonly string[]): void {
+    let changed = false
+    for (const tabId of tabIds) {
+      const tab = this.tab(tabId)
+      if (!tab?.unresponsive) continue
+      const view = this.view(tabId)
+      if (view?.endRenderer) {
+        this.hungExits.add(tabId)
+        view.endRenderer()
+      } else {
+        delete tab.unresponsive
+        changed = true
+      }
+    }
+    if (changed) this.browser.state.commitVolatile()
+  }
+
+  /**
+   * The prompt's Wait: the mark goes and the prompt with it; the host's hang monitor reports the
+   * page again should it stay unresponsive, and the chrome asks again (Chrome's dialog returns
+   * the same way).
+   */
+  waitUnresponsive(tabIds: readonly string[]): void {
+    let changed = false
+    for (const tabId of tabIds) {
+      const tab = this.tab(tabId)
+      if (!tab?.unresponsive) continue
+      delete tab.unresponsive
+      changed = true
+    }
+    if (changed) this.browser.state.commitVolatile()
   }
 
   toggleMute(tabId: string): void {
@@ -3077,19 +3165,119 @@ export class TabManager {
     return win
   }
 
-  moveActiveTabBy(delta: number, win: ZenWindow): void {
-    const tab = this.activeTabFor(win)
-    if (!tab || tab.essential) return
-    const idx = sectionIndexOf(this.model, tab)
+  /**
+   * Move a tab one row along the strip as the keyboard does (tabs-34: Ctrl+Shift+PgUp / PgDn,
+   * `tab.moveBackward` / `tab.moveForward`), `direction` being the way: past the row before it
+   * or the row after it, in the order `win`'s strip draws them – the pinned rows; each group's
+   * rows, group by group; the loose rows – and as a drag past that row would land it (`dropTab`):
+   * beside a row of its own run it swaps places with it; at the edge of a group the next row is
+   * another run's, and the tab crosses the boundary one row at a time – into the group beside it
+   * at its near end, or out of its own to the row beside it – taking that row's group
+   * (`moveToFolder`, which unfolds a collapsed group as a drop into it does) or losing its own.
+   * At the strip's ends – the first pinned row, the last loose row – nothing moves. A pinned tab
+   * stays among the pinned rows, as Chrome keeps its pinned tabs; Essentials tiles are no rows of
+   * the strip and are not moved. A pane of a split is one segment of the split's row (§9.35):
+   * moved, it passes the row beside the split's and leaves the split, as a segment dragged out
+   * of the row does. Returns where the tab now stands – its place among the tabs of the run it
+   * is in – or null when nothing moved.
+   */
+  moveTabBy(
+    tabId: string,
+    direction: -1 | 1,
+    win: ZenWindow = this.windowFor(tabId)
+  ): TabMoveResult | null {
+    const m = this.model
+    const tab = this.tab(tabId)
+    if (!tab || tab.essential) return null
+    const space = getSpace(m, tab.spaceId)
+    if (!space) return null
+    const groupOf = (t: Tab): string | null => this.groupIdOf(t)
+    const run = tab.pinned ? pinnedTabs(m, space, win.id) : this.drawnRegular(space, win.id)
+    const rows = this.rowsOf(run)
+    const from = groupOf(tab)
+    const at = rows.findIndex(
+      (row) =>
+        row.id === tabId ||
+        (Boolean(tab.splitGroupId) &&
+          row.splitGroupId === tab.splitGroupId &&
+          groupOf(row) === from)
+    )
+    const neighbour = at === -1 ? undefined : rows[at + direction]
+    if (!neighbour) return null
+    const to = groupOf(neighbour)
+    // Past a row of its own run: the far side of it. At a run's edge the next row is another
+    // run's: the near side of it – one row over the boundary, not two.
+    const after = from === to ? direction > 0 : direction < 0
     this.moveTab(
-      tab.id,
+      tabId,
       {
-        spaceId: tab.spaceId ?? undefined,
+        spaceId: space.id,
         section: tab.pinned ? 'pinned' : 'regular',
-        index: Math.max(0, idx + delta)
+        index: this.indexRelativeTo(neighbour, after, tabId)
       },
       win
     )
+    if (!tab.pinned && to !== (tab.folderId ?? null)) this.moveToFolder(tabId, to)
+    if (neighbour.splitGroupId !== tab.splitGroupId) this.leaveSplitOnDrop(tab)
+    const landed = tab.pinned
+      ? pinnedTabs(m, space, win.id)
+      : regularTabs(m, space, win.id).filter((t) => groupOf(t) === to)
+    const group = (id: string | null): TabMoveResult['from'] =>
+      id && m.folders[id] ? { folderId: id, name: m.folders[id].name } : null
+    return {
+      tabId,
+      position: landed.findIndex((t) => t.id === tabId) + 1,
+      count: landed.length,
+      from: group(from),
+      to: group(to),
+      focused: false
+    }
+  }
+
+  /**
+   * A space's regular tabs in the order `win`'s strip draws them: each group's tabs in the
+   * groups' order (`foldersOf`), then the loose ones – the renderer's `tabOrderOf` without the
+   * Essentials and the pinned rows.
+   */
+  private drawnRegular(space: Space, windowId: string): Tab[] {
+    const m = this.model
+    const regular = regularTabs(m, space, windowId)
+    const grouped = foldersOf(m, space.id).flatMap((f) =>
+      regular.filter((t) => t.folderId === f.id)
+    )
+    const loose = regular.filter((t) => !t.folderId || !m.folders[t.folderId])
+    return [...grouped, ...loose]
+  }
+
+  /** The group (folder) a regular tab's row is drawn under, if it still exists; null for a loose or pinned tab. */
+  private groupIdOf(tab: Tab): string | null {
+    return !tab.pinned && tab.folderId && this.model.folders[tab.folderId] ? tab.folderId : null
+  }
+
+  /**
+   * A run's rows as the strip draws them (`stripRows` in the renderer, list by list): a split
+   * group's panes in one list – the pinned rows, one group's rows, the loose rows – fold into
+   * one row where the first of them stands, named here by that pane; a pane whose split has no
+   * other pane in its list is a row of its own.
+   */
+  private rowsOf(run: Tab[]): Tab[] {
+    const m = this.model
+    const rows: Tab[] = []
+    const folded = new Set<string>()
+    for (const tab of run) {
+      const group = tab.splitGroupId ? m.splitGroups[tab.splitGroupId] : undefined
+      const list = this.groupIdOf(tab)
+      const panes = group
+        ? run.filter((t) => t.splitGroupId === group.id && this.groupIdOf(t) === list)
+        : []
+      if (group && panes.length > 1) {
+        const key = `${group.id}:${list ?? ''}`
+        if (folded.has(key)) continue
+        folded.add(key)
+      }
+      rows.push(tab)
+    }
+    return rows
   }
 
   moveActiveTabToEdge(edge: 'start' | 'end', win: ZenWindow): void {

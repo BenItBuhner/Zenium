@@ -13,7 +13,7 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { Favicon } from './Favicon'
+import { FaviconSeat } from './FaviconSeat'
 
 interface Props {
   essentials: Tab[]
@@ -89,6 +89,9 @@ function EssentialTile({
 }): JSX.Element {
   const selected = uiStore.use((s) => s.selectedTabIds.includes(tab.id))
   const tabIndex = useStripTabIndex(`tile:${tab.id}`, active)
+  // The tile's audio disc at its corner while the tab plays; the seat's attention dot yields to
+  // it (one disc per icon, §9.29) and comes back when the sound stops or is muted.
+  const playing = tab.audible && !tab.muted
   return (
     <div
       className="zen-essential relative"
@@ -154,9 +157,13 @@ function EssentialTile({
       {dropKey === `tab:${tab.id}:after` && (
         <span className="zen-tab-caret-grid -right-1" aria-hidden />
       )}
-      <Favicon tab={tab} size={20} />
-      {tab.audible && !tab.muted && (
-        <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--zen-accent)]" />
+      <FaviconSeat tab={tab} size={20} marked={playing} />
+      {playing && (
+        <span
+          className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--zen-accent)]"
+          data-essential-audio
+          aria-hidden
+        />
       )}
       {tab.frozen && (
         <span className="zen-frozen-dot absolute bottom-1 right-1 h-2 w-2 rounded-full" />
