@@ -201,6 +201,8 @@ describe('the count as the aside (§9.36)', () => {
           tabs: [tab('a'), tab('b'), tab('c')],
           card: (t: Tab) => createElement('div', { key: t.id }, t.title),
           onMenu: () => undefined,
+          onCloseGroup: () => undefined,
+          onDelete: () => undefined,
           columns: 2
         })
       )
