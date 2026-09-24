@@ -745,6 +745,14 @@ export class ElectronPlatform implements Platform {
         void external.request(tabId, request.externalUrl).then(callback)
         return
       }
+      // A tab page's notification request takes the core's own rule (`webNotifications.decide`,
+      // the one Android's page script reaches): a site dismissed before, or a request without a
+      // gesture behind it, asks quietly – the bell in the pill's slot – and a first gestured ask
+      // is the loud prompt; the answer of either resolves the engine's request here.
+      if (permission === 'notifications' && tabId) {
+        void this.browser.webNotifications.decide(tabId, url, undefined, request).then(callback)
+        return
+      }
       // A page locking the keyboard keeps Esc: the fullscreen hint says to hold it instead.
       if (permission === 'keyboardLock' && tabId)
         this.browser.fullscreen.keyboardLockRequested(tabId)
