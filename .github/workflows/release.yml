@@ -457,6 +457,20 @@ jobs:
           RELEASE_TAG: ${{ env.TAG }}
           RELEASE_VERSION: ${{ env.VERSION }}
           NOTES_FILE: release/notes.md
+      - name: Release notes into the manifest
+        # The body goes into update-manifest.json's `notes` (the stable channel's What's new reads
+        # it there); the manifest's bytes change, so it is re-signed and the checksums follow.
+        # The publish job repeats these two steps over its regenerated notes.
+        run: node .github/scripts/update-manifest.mjs notes
+        env:
+          NOTES_FILE: release/notes.md
+          UPDATE_MANIFEST_SIGNING_KEY: ${{ secrets.UPDATE_MANIFEST_SIGNING_KEY }}
+      - name: Checksums, final
+        working-directory: release/assets
+        run: |
+          rm -f SHA256SUMS.txt
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: Dry-run summary
         if: needs.prepare.outputs.publish != 'true'
         run: |
@@ -533,6 +547,20 @@ jobs:
           RELEASE_VERSION: ${{ env.VERSION }}
           GITHUB_TOKEN: ${{ github.token }}
           NOTES_FILE: release/notes.md
+      - name: Release notes into the manifest
+        # The finished body (highlights from the tag's annotation, the generated changelog) into
+        # update-manifest.json's `notes`, re-signed; then the checksums over the final bytes, and
+        # only then the attestation and the upload – what is published is what was attested.
+        run: node .github/scripts/update-manifest.mjs notes
+        env:
+          NOTES_FILE: release/notes.md
+          UPDATE_MANIFEST_SIGNING_KEY: ${{ secrets.UPDATE_MANIFEST_SIGNING_KEY }}
+      - name: Checksums, final
+        working-directory: release/assets
+        run: |
+          rm -f SHA256SUMS.txt
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: Attest build provenance
         uses: actions/attest@v4
         with:

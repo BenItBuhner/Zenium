@@ -4,6 +4,7 @@ import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.verify.domain.DomainVerificationManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -39,9 +40,81 @@ object DefaultBrowser {
         return if (settings.resolveActivity(context.packageManager) != null) settings else null
     }
 
+    /**
+     * What Android's "Open by default" screen is set to for this app (DEF-06; the About row's
+     * state): on Android 12+ the screen's link-handling switch, `DomainVerificationUserState
+     * .isLinkHandlingAllowed` – off, the system hands no web link to this app however the role
+     * stands; before it the screen is the app's details page, and the state is which app a plain
+     * `http://` link resolves to. `allowed`, `disallowed` or `unknown`, the words the chrome's
+     * `AppLinkState` reads. The reads happen here; the decision is [appLinkStateOf]'s.
+     */
+    fun appLinkState(context: Context): String {
+        var hasManager = false
+        var linkHandlingAllowed: Boolean? = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val manager = context.getSystemService(DomainVerificationManager::class.java)
+            hasManager = manager != null
+            linkHandlingAllowed = try {
+                manager?.getDomainVerificationUserState(context.packageName)?.isLinkHandlingAllowed
+            } catch (e: PackageManager.NameNotFoundException) {
+                null
+            }
+        }
+        return appLinkStateOf(Build.VERSION.SDK_INT, hasManager, linkHandlingAllowed, context.packageName) {
+            legacyHandler(context)
+        }
+    }
+
+    /**
+     * The decision behind [appLinkState], apart from the device's reads so the JVM can pin it:
+     * from Android 12 (`sdk` 31) the screen's switch decides – `linkHandlingAllowed` is its
+     * position as the manager read it, null when the manager knows no state for this package,
+     * which is `unknown`. A 12+ device with no manager to ask (`hasManager` false) and every
+     * earlier Android fall to the pre-12 reading, [linkStateOf] of the package `legacyHandler`
+     * resolves – a package-manager query, made only then.
+     */
+    fun appLinkStateOf(
+        sdk: Int,
+        hasManager: Boolean,
+        linkHandlingAllowed: Boolean?,
+        self: String,
+        legacyHandler: () -> String?
+    ): String {
+        if (sdk >= Build.VERSION_CODES.S && hasManager) {
+            return when (linkHandlingAllowed) {
+                null -> UNKNOWN
+                true -> ALLOWED
+                false -> DISALLOWED
+            }
+        }
+        return linkStateOf(legacyHandler(), self)
+    }
+
+    /**
+     * The pre-12 reading, decided from the package a plain web link resolves to with
+     * `MATCH_DEFAULT_ONLY`: this app – the links are ours; another – they go there; none –
+     * the system asks each time, or nothing takes them, and the screen cannot be read.
+     */
+    fun linkStateOf(resolvedPackage: String?, self: String): String = when (resolvedPackage) {
+        null -> UNKNOWN
+        self -> ALLOWED
+        else -> DISALLOWED
+    }
+
+    const val ALLOWED = "allowed"
+    const val DISALLOWED = "disallowed"
+    const val UNKNOWN = "unknown"
+
     private fun legacyIsDefault(context: Context): Boolean {
+        return legacyHandler(context) == context.packageName
+    }
+
+    /** The package a plain `http://` link goes to without asking, or null when the system would ask. */
+    private fun legacyHandler(context: Context): String? {
         val probe = Intent(Intent.ACTION_VIEW, Uri.parse("http://example.com"))
         val handler = context.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
-        return handler?.activityInfo?.packageName == context.packageName
+        // The resolver's own activity answers a link with no default: not a browser's package.
+        val pkg = handler?.activityInfo?.packageName ?: return null
+        return if (pkg == "android") null else pkg
     }
 }
