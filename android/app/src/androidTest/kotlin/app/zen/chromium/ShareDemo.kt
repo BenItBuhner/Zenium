@@ -165,28 +165,39 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             }
         }
 
-        // 4. Long screenshot: the editor with its edge handles, left by back. The capture waits
+        // 4. Long screenshot: the editor with the page's picture, left by back. The capture waits
         // for the page view to be back on the screen under the sheet's cover, then the host
         // stitches the page out of the window (a software GPU's frames): the editor gets the
-        // stitch's own budget. A miss records what came instead – the chrome's toast and
-        // whether a page view is shown at all – so the next reading has more than a timeout.
+        // stitch's own budget. The editor is read off the chrome's DOM, as ShareScreenshotDemo
+        // reads its Capture more (the sheet, then its picture); the edge handles, which the
+        // chassis draws once it has measured the sheet's rest, go on record in the DOM and the
+        // tree without being the check (SH-08's, not the panel's). A miss records what came
+        // instead – the chrome's toast and whether a page view is shown at all.
         if (reopen("Long screenshot")) {
             expect("Long screenshot dismisses the panel", tapCell(SCREENSHOT_LABEL))
             val asked = SystemClock.uptimeMillis()
-            val editor = waitFor(EDGE_LABEL, LONG_CAPTURE_WAIT_MS) != null
+            val editor = awaitTrue(LONG_CAPTURE_WAIT_MS) { chromeJs(EDITOR_SHEET_JS) == "true" }
             if (editor) {
-                finding("  the editor came ${SystemClock.uptimeMillis() - asked} ms after the touch")
+                val came = SystemClock.uptimeMillis() - asked
+                val picture = awaitTrue(10_000) { chromeJs(EDITOR_PICTURE_JS) == "true" }
+                val handles = awaitTrue(5_000) { chromeJs(EDITOR_HANDLES_JS) == "true" }
+                val edge = handles && waitFor(EDGE_LABEL, 5_000) != null
+                finding(
+                    "  the editor came $came ms after the touch; its picture is ${if (picture) "in" else "not in"}; " +
+                        "its handles are ${if (handles) "in the DOM" else "not in the DOM (the chassis has not published the sheet's rest)"}" +
+                        if (handles) ", and the tree ${if (edge) "reads" else "does not read"} '$EDGE_LABEL'" else ""
+                )
             } else {
                 val toast = chromeJsString("(document.querySelector('.zen-toast')||{}).textContent||''")
                 val page = if (pageWebView() != null) "a page view is shown" else "no page view is shown"
                 finding("  no editor after $LONG_CAPTURE_WAIT_MS ms; the chrome's toast reads '${toast ?: ""}'; $page")
             }
+            SystemClock.sleep(1_200)
+            shot("05-long-screenshot")
             expect("Long screenshot opens the screenshot editor", editor)
             if (editor) {
-                SystemClock.sleep(1_200)
-                shot("05-long-screenshot")
                 back()
-                awaitTrue(6_000) { findByLabel(EDGE_LABEL) == null }
+                awaitTrue(6_000) { chromeJs(EDITOR_SHEET_JS) != "true" }
                 SystemClock.sleep(800)
             }
         }
@@ -921,6 +932,11 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         /** The apps row: each app's component, and `more` for the cell at its end. */
         private const val APPS_JS =
             "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-share-panel [data-row=\"apps\"] [data-kind]'),function(b){return b.dataset.kind==='target'?b.dataset.component:b.dataset.kind}))"
+        // The long-screenshot editor as `LongScreenshotSheet.tsx` renders it (the selectors ShareScreenshotDemo reads too).
+        private const val EDITOR_SHEET_JS = "document.querySelector('.zen-longshot-sheet')!=null"
+        private const val EDITOR_PICTURE_JS =
+            "(function(){var i=document.querySelector('[data-testid=longshot-editor] img');return !!(i&&i.complete&&i.naturalWidth>0)})()"
+        private const val EDITOR_HANDLES_JS = "document.querySelector('[data-testid=longshot-handle-top]')!=null"
 
         // The frame bursts: a screenshot as often as the emulator gives one, at most this many, a fifth the size, eight to a row.
         private const val MAX_FRAMES = 24
