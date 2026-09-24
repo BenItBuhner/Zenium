@@ -873,11 +873,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                     Log.i(TAG, "the list of ${tab.tabId} is not restored: its page comes back as the crash page")
                     null
                 } else args.strOrNull("hostState")
-                val restored = tab?.restoreNavigation(args.arr("entries"), args.optInt("index", -1), hostState) ?: false
+                val entries = args.arr("entries")
+                val index = args.optInt("index", -1)
+                val restored = tab?.restoreNavigation(entries, index, hostState) ?: false
                 reply(json("restored" to restored))
                 // A restored list is loading its current entry; a refused one has the core load
                 // it next. Either way the crash page's word, when there is one, comes after.
-                if (tab != null) deliverRendererExit(tab.tabId)
+                if (tab != null) {
+                    // At boot, the session's tabs come back this way (their lists kept): the
+                    // restored tab's last picture over the entry the list is loading, as at
+                    // `view.load` for a tab without a list.
+                    if (restored) NavigationState.currentUrl(entries, index)?.let { restoredPictures.offer(tab, it) }
+                    deliverRendererExit(tab.tabId)
+                }
             }
             "view.reload" -> {
                 if (args.bool("ignoreCache")) tab?.clearCache(false)
