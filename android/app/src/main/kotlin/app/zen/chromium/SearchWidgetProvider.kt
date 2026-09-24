@@ -49,6 +49,18 @@ class SearchWidgetProvider : AppWidgetProvider() {
                 for (face in FACES) setOnClickPendingIntent(face.viewId, pendingIntent(context, face))
             }
 
+        /** The face's intents are launcher intents (`ACTION_MAIN`), started as a task of their own. */
+        const val INTENT_ACTION = Intent.ACTION_MAIN
+        const val INTENT_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK
+
+        /**
+         * The launcher's tokens are immutable – the launcher cannot rewrite the landing – and
+         * updated in place, so a rebuilt face (an update, a theme change) hands the launcher the
+         * current intent under the same request code rather than a second token. Pinned by
+         * `SearchWidgetTest`, as Android 12 refuses a token that says neither mutable nor immutable.
+         */
+        const val PENDING_INTENT_FLAGS = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+
         /**
          * The intent a face part fires: `MainActivity` by component, in the browser's task, with
          * the landing as its extra – what `am start -n <package>/app.zen.chromium.MainActivity
@@ -56,17 +68,12 @@ class SearchWidgetProvider : AppWidgetProvider() {
          */
         fun intent(context: Context, landing: String): Intent =
             Intent(context, MainActivity::class.java)
-                .setAction(Intent.ACTION_MAIN)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .setAction(INTENT_ACTION)
+                .addFlags(INTENT_FLAGS)
                 .putExtra(Landing.EXTRA, landing)
 
         /** The very token the launcher holds for `face`; `WidgetDemo` replays it for a cold start. */
         internal fun pendingIntent(context: Context, face: Face): PendingIntent =
-            PendingIntent.getActivity(
-                context,
-                face.requestCode,
-                intent(context, face.landing),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            PendingIntent.getActivity(context, face.requestCode, intent(context, face.landing), PENDING_INTENT_FLAGS)
     }
 }
