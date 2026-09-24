@@ -19,6 +19,7 @@ import {
   resetAnnouncer,
   startAnnouncer,
   stateAnnouncements,
+  tabMoveAnnouncement,
   tabSwitchAnnouncement,
   zoomAnnouncement
 } from '../announce'
@@ -166,6 +167,33 @@ describe('announcement text', () => {
       muteAnnouncements(before, state({ tabs: { ...before.tabs, n: tab('n', { muted: true }) } }))
     ).toEqual([])
     expect(muteAnnouncements(before, before)).toEqual([])
+  })
+
+  it('says where the keyboard put a tab, with the group it entered or left (tabs-34)', () => {
+    const moved = { tabId: 'a', position: 2, count: 5, focused: true }
+    expect(tabMoveAnnouncement({ ...moved, from: null, to: null })).toBe('Moved to position 2 of 5')
+    const research = { folderId: 'g', name: 'Research' }
+    // Inside a group: the place alone, as the row's aria-posinset has it.
+    expect(tabMoveAnnouncement({ ...moved, from: research, to: research })).toBe(
+      'Moved to position 2 of 5'
+    )
+    expect(tabMoveAnnouncement({ ...moved, from: null, to: research })).toBe(
+      'Moved to position 2 of 5 in Research'
+    )
+    expect(tabMoveAnnouncement({ ...moved, from: research, to: null })).toBe(
+      'Moved out of Research to position 2 of 5'
+    )
+    const trip = { folderId: 'k', name: 'Trip' }
+    expect(tabMoveAnnouncement({ ...moved, position: 1, count: 3, from: research, to: trip })).toBe(
+      'Moved to position 1 of 3 in Trip'
+    )
+    // A folder without a name is "the folder" – the desktop's noun (#398 F10), never "group".
+    expect(tabMoveAnnouncement({ ...moved, from: null, to: { folderId: 'k', name: '  ' } })).toBe(
+      'Moved to position 2 of 5 in the folder'
+    )
+    expect(tabMoveAnnouncement({ ...moved, from: { folderId: 'k', name: '' }, to: null })).toBe(
+      'Moved out of the folder to position 2 of 5'
+    )
   })
 
   it('reads a switch of the front tab and mute changes from two states, in the focused window only', () => {

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Rect } from '@shared/types'
+import type { Rect, Tab, UIState } from '@shared/types'
 import {
   HOVER_CARD_DELAY,
   HOVER_CARD_LEAVE_GRACE,
   HoverCardController,
   hoverCardHost,
+  hoverCardPreviews,
   placeHoverCard,
   type HoverCardState
 } from '../hoverCard'
@@ -308,6 +309,8 @@ describe('HoverCardController', () => {
     ctl.pointerEnter('a', () => box(100))
     await wait(HOVER_CARD_DELAY)
     expect(prepare).toHaveBeenCalledTimes(1)
+    // With the row's tab: the app captures the hovered page for the preview (tabs-19).
+    expect(prepare).toHaveBeenLastCalledWith('a')
     expect(store.get().tabId).toBeNull()
     ctl.pointerLeave('a')
     release()
@@ -405,5 +408,29 @@ describe('HoverCardController', () => {
       await wait(HOVER_CARD_DELAY)
       expect(store.get().tabId).toBe('a')
     })
+  })
+})
+
+describe('hoverCardPreviews (tabs-19)', () => {
+  const state = (tabs: Array<Partial<Tab> & { id: string }>, activeTabId: string): UIState =>
+    ({
+      tabs: Object.fromEntries(
+        tabs.map((t) => [t.id, { discarded: false, url: `https://${t.id}.example/`, ...t }])
+      ),
+      spaces: [{ id: 'space', tabIds: tabs.map((t) => t.id), activeTabId }],
+      activeSpaceId: 'space'
+    }) as unknown as UIState
+
+  it('previews a page in the background, never the active page (it is under the card)', () => {
+    const s = state([{ id: 'a' }, { id: 'b' }], 'a')
+    expect(hoverCardPreviews(s, 'b')).toBe(true)
+    expect(hoverCardPreviews(s, 'a')).toBe(false)
+  })
+
+  it('shows none for a sleeping tab (no view to picture), a tab it does not know, or no state', () => {
+    const s = state([{ id: 'a' }, { id: 'b', discarded: true }], 'a')
+    expect(hoverCardPreviews(s, 'b')).toBe(false)
+    expect(hoverCardPreviews(s, 'zz')).toBe(false)
+    expect(hoverCardPreviews(null, 'b')).toBe(false)
   })
 })
