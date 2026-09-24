@@ -83,6 +83,12 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
     private val callerHits: MutableList<String> = Collections.synchronizedList(ArrayList())
     /** `setSecondaryToolbarViews`' answer after the swipe up, null until the caller has sent it. */
     @Volatile private var secondaryApplied: Boolean? = null
+    /**
+     * When the caller's toasts will have left the screen (uptime): the system shows queued toasts
+     * back to back, each for its 3.5 s, so a toast enqueued while one shows starts when that one
+     * ends. The stills of the bar wait for this (a toast sits over the bar's buttons).
+     */
+    @Volatile private var toastsClearAt = 0L
     private var receiver: BroadcastReceiver? = null
 
     @Test
@@ -294,14 +300,28 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         assertTrue("the swipe up reached the caller", awaitTrue(6_000) { callerHits.contains("SWIPE_UP") })
         assertTrue("setSecondaryToolbarViews took (updateVisuals answered true)", awaitTrue(6_000) { secondaryApplied == true })
         assertTrue("the secondary toolbar grew the bar", awaitTrue(6_000) { barHeight() > before })
-        // The caller's toasts (the button's, then the swipe's; 3.5 s each, queued) sit over the
-        // bar's buttons for a while: the still waits them out.
-        SystemClock.sleep(4_000)
+        awaitCallerToastsGone()
+        SystemClock.sleep(1_200)
         Log.i(tag, "secondary toolbar: bar $before -> ${barHeight()} px = ${barDp()} dp, page ends at ${pageBottom()}, bar at ${barRect()}")
         assertBarDp("the secondary toolbar stands at the 104 dp its layout declares (56 + 48)", SECONDARY_BAR_DP)
         assertTrue("the page's viewport ends above the taller bar", pageEndsAboveBar())
         shot(name)
         beat()
+    }
+
+    /**
+     * The caller's toasts (the button's, then the swipe's) leave the bar's buttons before a still
+     * of the bar: the wait the receiver computed for its queue ([toastsClearAt]), then a look at
+     * the windows for a toast still reading the caller's line (the third run's dark still caught
+     * the swipe toast's tail under a fixed 4 s wait, the item tap and the swipe 2.7 s apart).
+     */
+    private fun awaitCallerToastsGone() {
+        val wait = toastsClearAt - SystemClock.uptimeMillis()
+        if (wait > 0) SystemClock.sleep(wait)
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        while (SystemClock.uptimeMillis() < deadline && findInWindows(null) { it.startsWith(TOAST_PREFIX) } != null) {
+            SystemClock.sleep(200)
+        }
     }
 
     /**
@@ -584,7 +604,8 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
                     else -> "Saved for later"
                 }
                 Log.i(tag, "caller received ${intent.action} for ${intent.dataString} ($what)")
-                Toast.makeText(context, "Nimbus News · $what · $where", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "$TOAST_PREFIX $what · $where", Toast.LENGTH_LONG).show()
+                toastsClearAt = maxOf(toastsClearAt, SystemClock.uptimeMillis()) + TOAST_LONG_MS + TOAST_FADE_MS
             }
         }
         val filter = IntentFilter().apply {
@@ -898,6 +919,10 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         private const val CALLER_BAR_DP = 56f
         /** cct_demo_secondary_bar.xml: the 56 dp button row over the 48 dp related-story row. */
         private const val SECONDARY_BAR_DP = 104f
+        /** The caller's toasts all open with this; `Toast.LENGTH_LONG` shows for 3.5 s, then fades. */
+        private const val TOAST_PREFIX = "Nimbus News ·"
+        private const val TOAST_LONG_MS = 3_500L
+        private const val TOAST_FADE_MS = 600L
 
         private const val READ_LABEL = "Read the story"
         private const val SAVE_LABEL = "Save for later"
