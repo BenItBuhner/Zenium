@@ -42,6 +42,10 @@ interface ScriptedBridge {
   push: (status: unknown) => void
   focused: number
   asked: number
+  /** The gesture relayed with each `requestPermission()` call, in order. */
+  requests: Array<boolean | undefined>
+  /** What the browser is told when a relay arrives (a probe for the timing of the relay). */
+  onRequest: () => void
   install: () => void
 }
 
@@ -51,6 +55,8 @@ function bridge(answers: Status[]): ScriptedBridge {
   const state: ScriptedBridge = {
     focused: 0,
     asked: 0,
+    requests: [],
+    onRequest: () => undefined,
     push: (status: unknown) => push(status),
     install: () => undefined,
     transport: {} as NotificationBridgeTransport
@@ -65,6 +71,10 @@ function bridge(answers: Status[]): ScriptedBridge {
     },
     focus: () => {
       state.focused++
+    },
+    request: (gesture) => {
+      state.requests.push(gesture)
+      state.onRequest()
     },
     installShim: (events) => installNotificationShim(events)
   }
@@ -145,5 +155,43 @@ describe('Notification.permission shim', () => {
     setUserActivation(false)
     document.dispatchEvent(new Event(NOTIFICATION_SHIM_EVENTS.focus))
     expect(b.focused).toBe(1)
+  })
+
+  it('relays the frame’s activation with each requestPermission() call, ahead of the engine’s own request', async () => {
+    const calls = fakeNotification('denied', 'denied')
+    const b = bridge(['default'])
+    b.install()
+    let requestedAtRelay = -1
+    b.onRequest = () => {
+      requestedAtRelay = calls.requested
+    }
+    await N().requestPermission()
+    expect(b.requests).toEqual([false])
+    // The browser heard of the call before the engine's request left the page.
+    expect(requestedAtRelay).toBe(0)
+    expect(calls.requested).toBe(1)
+    setUserActivation(true)
+    await N().requestPermission()
+    expect(b.requests).toEqual([false, true])
+  })
+
+  it('reads the activation in the isolated world: a page cannot claim a gesture by firing the event itself', () => {
+    fakeNotification('denied', 'denied')
+    const b = bridge(['default'])
+    b.install()
+    setUserActivation(false)
+    document.dispatchEvent(
+      new CustomEvent(NOTIFICATION_SHIM_EVENTS.request, { detail: { isActive: true } })
+    )
+    expect(b.requests).toEqual([false])
+  })
+
+  it('relays nothing for certain where the engine has no user activation to read', () => {
+    fakeNotification('denied', 'denied')
+    const b = bridge(['default'])
+    b.install()
+    Reflect.deleteProperty(navigator, 'userActivation')
+    document.dispatchEvent(new Event(NOTIFICATION_SHIM_EVENTS.request))
+    expect(b.requests).toEqual([undefined])
   })
 })
