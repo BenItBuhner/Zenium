@@ -446,6 +446,62 @@ describe('the one-field prompt (PromptDialog, §9.12 on the primitive)', () => {
     expect(d.querySelector('[data-danger]')).toBeNull()
     expect(d.hasAttribute('data-destructive')).toBe(false)
     expect(body.lastElementChild!.classList.contains('zen-confirm-dialog-footer')).toBe(true)
+    // With none of the input options the field is as it was: no inputmode, no pattern, no
+    // class beside the shared one.
+    expect(f.hasAttribute('inputmode')).toBe(false)
+    expect(f.hasAttribute('pattern')).toBe(false)
+    expect(f.className).toBe('zen-v2-field')
+  })
+
+  it('takes the input options for a field that asks for one kind of value (#418’s PIN): inputMode as the touch keyboard, pattern, autoComplete and the consumer’s class on the input beside .zen-v2-field – the field staying type=text', async () => {
+    render(
+      <Field
+        field={{
+          label: 'PIN',
+          value: '',
+          onChange: () => undefined,
+          maxLength: 6,
+          inputMode: 'numeric',
+          pattern: '[0-9]*',
+          className: 'zen-device-pairing-pin-field'
+        }}
+      />
+    )
+    await settle()
+    const f = input()
+    expect(f.type).toBe('text')
+    expect(f.getAttribute('inputmode')).toBe('numeric')
+    expect(f.inputMode).toBe('numeric')
+    expect(f.getAttribute('pattern')).toBe('[0-9]*')
+    expect(f.classList.contains('zen-v2-field')).toBe(true)
+    expect(f.classList.contains('zen-device-pairing-pin-field')).toBe(true)
+    expect(f.className).toBe('zen-v2-field zen-device-pairing-pin-field')
+    // autoComplete stays `off` unless the consumer names a token.
+    expect(f.getAttribute('autocomplete')).toBe('off')
+    expect(f.getAttribute('aria-label')).toBe('PIN')
+    expect(f.maxLength).toBe(6)
+    expect(document.activeElement).toBe(f)
+
+    // Each keyboard the attribute names is drawn as itself; `text` is the default, drawn as none.
+    for (const mode of ['decimal', 'tel', 'email', 'url'] as const) {
+      render(<Field field={{ ...fieldBase.field, inputMode: mode }} />)
+      await settle()
+      expect(input().getAttribute('inputmode'), mode).toBe(mode)
+    }
+    render(<Field field={{ ...fieldBase.field, inputMode: 'text' }} />)
+    await settle()
+    expect(input().hasAttribute('inputmode')).toBe(false)
+
+    // A consumer that wants the host's help names the autocomplete token.
+    render(<Field field={{ ...fieldBase.field, autoComplete: 'username' }} />)
+    await settle()
+    expect(input().getAttribute('autocomplete')).toBe('username')
+
+    // The options are the field's alone: the prompt's chassis, keyboard and footer are unmoved.
+    const d = prompt()!
+    expect(d.getAttribute('role')).toBe('dialog')
+    expect(d.style.width).toBe('400px')
+    expect(buttons(d).map((b) => b.textContent)).toEqual(['Cancel', 'Save'])
   })
 
   it('focuses the field as it opens – a form, not §9.22’s held container – selecting the value when asked, and answers its change', async () => {
@@ -662,7 +718,8 @@ describe('the picker (PickerDialog, a list body on the primitive)', () => {
     expect(verb.hasAttribute('aria-busy')).toBe(false)
     expect(press(d, 'Enter').defaultPrevented).toBe(true)
     expect(onConfirm).not.toHaveBeenCalled()
-    // From a row too: a row is no own-Enter control, so its Enter is the prompt's – inert here.
+    // From a bare `li` row too: a row that is not a button is no own-Enter control, so its
+    // Enter is the prompt's – inert here. (A consumer's `button` row answers its own: below.)
     expect(press(rows()[0], 'Enter').defaultPrevented).toBe(true)
     expect(onConfirm).not.toHaveBeenCalled()
     click(verb)
@@ -702,6 +759,96 @@ describe('the picker (PickerDialog, a list body on the primitive)', () => {
     click(verb)
     expect(press(d, 'Enter').defaultPrevented).toBe(true)
     expect(onConfirm).toHaveBeenCalledTimes(3)
+  })
+
+  it('a row that is a button (role radio or option) is the consumer’s control and answers its own Enter – the hook steps aside (the lead’s #418 ruling 3): on an unpicked row it picks, on the picked row it is the verb; Enter from the container stays the prompt’s', async () => {
+    /*
+     * The consumers' shape (services' `DeviceChooserDialog`, the desktop's `ScreenPicker`):
+     * `<button role="radio">` rows whose own keydown picks on Enter when unpicked and connects
+     * when picked – so the prompt must leave the key to them, as `OWN_ENTER` names a button.
+     */
+    const onConfirm = vi.fn()
+    const rowEnter = vi.fn()
+    function Radios({
+      picked,
+      onPick
+    }: {
+      picked: string | null
+      onPick: (id: string) => void
+    }): JSX.Element {
+      return (
+        <div role="radiogroup" aria-label="Devices" data-radios>
+          {['Arduino Uno', 'Keyboard'].map((device, i) => (
+            <button
+              key={device}
+              type="button"
+              role="radio"
+              aria-checked={picked === device}
+              tabIndex={(picked ? picked === device : i === 0) ? 0 : -1}
+              data-device={device}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                rowEnter(device)
+                e.preventDefault()
+                if (picked === device) onConfirm()
+                else onPick(device)
+              }}
+            >
+              {device}
+            </button>
+          ))}
+        </div>
+      )
+    }
+    function Chooser(): JSX.Element {
+      const [picked, setPicked] = useState<string | null>(null)
+      return (
+        <FrameDialogHost frame>
+          <PickerDialog
+            {...pickBase}
+            disabled={picked === null}
+            onConfirm={onConfirm}
+            body={<Radios picked={picked} onPick={setPicked} />}
+          />
+        </FrameDialogHost>
+      )
+    }
+    render(<Chooser />)
+    await settle()
+    const d = picker()!
+    const radio = (device: string): HTMLButtonElement =>
+      d.querySelector<HTMLButtonElement>(`[role="radio"][data-device="${device}"]`)!
+    const verb = d.querySelector<HTMLButtonElement>('[data-action="confirm"]')!
+    expect(verb.getAttribute('aria-disabled')).toBe('true')
+
+    // Enter on an unpicked row: the row's own – it picks, and the prompt confirms nothing.
+    act(() => radio('Arduino Uno').focus())
+    const first = press(radio('Arduino Uno'), 'Enter')
+    expect(rowEnter).toHaveBeenCalledWith('Arduino Uno')
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(radio('Arduino Uno').getAttribute('aria-checked')).toBe('true')
+    expect(verb.hasAttribute('aria-disabled')).toBe(false)
+    // The key was the row's to prevent, not the hook's: a row that leaves it alone sees it
+    // reach the browser – no `preventDefault` of the prompt's on a button row.
+    expect(first.defaultPrevented).toBe(true)
+    const bare = document.createElement('button')
+    bare.type = 'button'
+    bare.setAttribute('role', 'option')
+    d.querySelector('[data-radios]')!.appendChild(bare)
+    expect(press(bare, 'Enter').defaultPrevented).toBe(false)
+    expect(onConfirm).not.toHaveBeenCalled()
+    bare.remove()
+
+    // Enter on the picked row: the row's own again – the verb, once, through the row.
+    press(radio('Arduino Uno'), 'Enter')
+    expect(rowEnter).toHaveBeenCalledTimes(2)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+
+    // Enter from the container is the prompt's: the verb once a pick has enabled it.
+    act(() => d.focus())
+    expect(press(d, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).toHaveBeenCalledTimes(2)
+    expect(rowEnter).toHaveBeenCalledTimes(2)
   })
 
   it('over another dialog it is the 320 notice even with its list (§9.5: place beats content), holds the focus on its own container, Escape is one hop – its Cancel, not the dialog’s under it – and the keyboard returns to that dialog’s control', async () => {
@@ -744,6 +891,101 @@ describe('the picker (PickerDialog, a list body on the primitive)', () => {
     pressEscape()
     expect(onLowerEscape).toHaveBeenCalledTimes(1)
     expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('over a page dialog that covers itself (`inert`, as the settings dialogs do) it leaves that dialog inert while it stands – its control refuses the focus, its Escape is not reached – and Escape is one hop: Cancel, then the keyboard back on that control as the cover lifts a render later, never on body (W5-3 (d))', async () => {
+    const onLowerEscape = vi.fn()
+    /** A page dialog on the host that covers itself while its picker stands. */
+    function ItemDialog({
+      covered,
+      children
+    }: {
+      covered: boolean
+      children?: ReactNode
+    }): JSX.Element {
+      useFrameDialog({})
+      useEscape(onLowerEscape)
+      return (
+        <div role="dialog" tabIndex={-1} data-dialog="item" inert={covered || undefined}>
+          {children}
+        </div>
+      )
+    }
+    const cancels = vi.fn()
+    function Stack(): JSX.Element {
+      const [open, setOpen] = useState(false)
+      const [covered, setCovered] = useState(false)
+      return (
+        <FrameDialogHost frame>
+          <ItemDialog covered={covered}>
+            <button
+              data-action="connect"
+              onClick={() => {
+                setOpen(true)
+                setCovered(true)
+              }}
+            >
+              Connect a device
+            </button>
+            <button data-action="uncover" onClick={() => setCovered(false)}>
+              uncover
+            </button>
+          </ItemDialog>
+          {open && (
+            <PickerDialog
+              {...pickBase}
+              onCancel={() => {
+                cancels()
+                setOpen(false)
+              }}
+            />
+          )}
+        </FrameDialogHost>
+      )
+    }
+    render(<Stack />)
+    await settle()
+    const item = document.querySelector<HTMLElement>('[data-dialog="item"]')!
+    const opener = item.querySelector<HTMLButtonElement>('[data-action="connect"]')!
+    refusingUnderInert(opener)
+    act(() => opener.focus())
+    expect(document.activeElement).toBe(opener)
+    click(opener)
+    await settle()
+    const d = picker()!
+    // The picker holds its own container; the dialog under it is inert – covered, later in the
+    // one slot – and nothing in it takes the focus while the picker stands.
+    expect(document.activeElement).toBe(d)
+    expect(item.hasAttribute('inert')).toBe(true)
+    expect(d.previousElementSibling).toBe(item)
+    expect(d.style.width).toBe('320px')
+    act(() => opener.focus())
+    expect(document.activeElement).toBe(d)
+    // Tab from the container enters the picker's list (the row the consumer made tabbable, as
+    // the test above has it) and never the dialog under it.
+    expect(press(d, 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(rows()[0])
+    expect(d.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement!.closest('[data-dialog="item"]')).toBeNull()
+    // Escape is one hop: the picker's Cancel, not the covered dialog's Escape.
+    pressEscape()
+    await settle()
+    expect(cancels).toHaveBeenCalledTimes(1)
+    expect(onLowerEscape).not.toHaveBeenCalled()
+    expect(picker()).toBeNull()
+    // The cover is still on as the picker's cleanup runs: the opener refuses, and the focus is
+    // not left on body for good – the return waits for the inert to lift.
+    expect(item.hasAttribute('inert')).toBe(true)
+    expect(document.activeElement).not.toBe(opener)
+    click(item.querySelector('[data-action="uncover"]'))
+    await settle()
+    expect(item.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement).toBe(opener)
+    expect(document.activeElement).not.toBe(document.body)
+    // With the picker gone and the cover off, Escape is the dialog's under it again.
+    pressEscape()
+    expect(onLowerEscape).toHaveBeenCalledTimes(1)
+    expect(cancels).toHaveBeenCalledTimes(1)
   })
 
   it('Escape, a press on the scrim and Cancel are Cancel, and none of them is Connect', async () => {

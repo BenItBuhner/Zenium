@@ -555,8 +555,9 @@
  * body's specificity: the row primitive's own unlayered `width: 100%` (`.zen-v2-row`, later in
  * this file, one class) beat a one-class rule here by order while the negative margin still
  * applied – the row ran from the left border to 32 short of the right (pr-392 A1). The prompt's
- * ring rules are the chassis's: none on the container that holds the focus
- * (`[role='alertdialog'][tabindex='-1']` above), the shared v2 ring on its controls.
+ * ring rules are the chassis's: none on the container that holds the focus (the
+ * `[role='dialog'][tabindex='-1']` / `[role='alertdialog'][tabindex='-1']` rule above – a prompt
+ * with a field or a list is a `dialog`), the shared v2 ring on its controls.
  */
 .zen-confirm-dialog {
   display: flex;
@@ -5534,7 +5535,11 @@
     line-height: var(--v2-line-body);
     text-align: center;
   }
-  /* The glyph sits on the first text line, (line − glyph) / 2 below its top (§9.2). */
+  /*
+   * The glyph sits on the first text line, (line − glyph) / 2 below its top (§9.2), in the
+   * row's ink (§10.4: a leading glyph is full ink like the name it introduces); a record whose
+   * file is gone dims it to .4 (`FileTypeGlyph`'s `gone`, DownloadParts.tsx).
+   */
   .zen-dl-glyph {
     display: flex;
     flex-shrink: 0;
@@ -5544,7 +5549,7 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
-    color: var(--v2-text-deemphasized);
+    color: var(--v2-text);
   }
   .zen-dl-row-text {
     display: flex;
@@ -12094,8 +12099,9 @@
 /*
  * The tree (§10.5, §9.22): 34 px rows edge to edge in the column, each level 16 further in (the
  * row's own inline padding) – the 20 twisty round a 16 chevron that turns down while the branch
- * is open, the 16 folder glyph in the deemphasised ink 4 after it (the bar's chips' folder), the
- * name 15/400 12 after that; the shown folder on `--v2-nav-active` with the 3 px accent bar down
+ * is open, the 16 folder glyph in the row's ink 4 after it (the bar's chips' folder; a leading
+ * glyph is full ink like its label, §10.4), the name 15/400 12 after that; the shown folder on
+ * `--v2-nav-active` with the 3 px accent bar down
  * the column's edge, as the Settings nav's open category; a folder a drag hovers takes the
  * drop-into ring. The ring of the one tab stop stands inside the column's clip.
  */
@@ -12177,7 +12183,7 @@
   height: var(--v2-icon);
   flex-shrink: 0;
   stroke-width: var(--v2-icon-stroke);
-  color: var(--v2-text-deemphasized);
+  color: var(--v2-text);
 }
 .zen-bm-tree-label {
   min-width: 0;
@@ -12278,12 +12284,20 @@
 .zen-bm-row[data-lifted] {
   opacity: 0.4;
 }
+/*
+ * The row's folder is its subject and takes the row's ink (§10.4); the globe stands in for a
+ * favicon the page offered none of and draws at 69%, §10.4's one exception, so it reads as the
+ * absence it is beside the real favicons around it. Each takes the token, not the bar's opacity.
+ */
 .zen-bm-row-glyph.zen-bm-glyph-folder,
 .zen-bm-row-glyph.zen-bm-glyph-globe {
   border-radius: 0;
   stroke-width: var(--v2-icon-stroke);
-  color: var(--v2-text-deemphasized);
+  color: var(--v2-text);
   opacity: 1;
+}
+.zen-bm-row-glyph.zen-bm-glyph-globe {
+  color: var(--v2-text-deemphasized);
 }
 .zen-bm-row-rename {
   display: flex;
@@ -13123,6 +13137,14 @@
   .zen-omnibox-row-icon {
     width: var(--v2-icon);
     height: var(--v2-icon);
+    color: var(--v2-text);
+  }
+  /*
+   * A kind's glyph – the magnifier, the clock, the star, the tab, a page's registry glyph – is
+   * the row's subject in the row's ink (§10.4). The globe alone stands in for a favicon the
+   * address offered none of and draws at 69%, §10.4's one exception (Chrome's grey globe).
+   */
+  .zen-omnibox-row-icon.zen-omnibox-row-globe {
     color: var(--v2-text-deemphasized);
   }
   .zen-omnibox-row-title {
