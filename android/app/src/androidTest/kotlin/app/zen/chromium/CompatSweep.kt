@@ -105,6 +105,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /** An action click that opened the extension's popup for the tab (Smarty's per-tab `setPopup`). */
     private class PopupHit(var text: String)
 
+    /**
+     * UI an action click drew into the page that accessibility reads and no selector finds
+     * (`accountGate`'s watch, round 15): the labels new to the page's tree since the click.
+     */
+    private class InjectedSeen(var labels: List<String>)
+
+    /** The labels [now] shows that [base] did not (both `seenInView` readings). */
+    private fun newLabels(base: JSONObject, now: JSONObject): List<String> {
+        fun labels(seen: JSONObject) = seen.optJSONArray("labels")?.let { l -> (0 until l.length()).map { l.optString(it) } } ?: emptyList()
+        val had = labels(base).toSet()
+        return labels(now).filter { it !in had }
+    }
+
     /** One row of the table: the store id, the name, a slug for the screenshots, the store when not the Chrome Web Store, and the core check. */
     private inner class Row(
         val id: String,
@@ -1433,14 +1446,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             SystemClock.sleep(600)
         }
         if (how == "none" && onScreen("$label: the synthetic selection")) {
-            tabEval(view, "(function(){var el=document.getElementById('phrase');var r=document.createRange();r.selectNodeContents(el);var s=getSelection();s.removeAllRanges();s.addRange(r);var rect=el.getBoundingClientRect();el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,clientX:rect.right-1,clientY:rect.top+rect.height/2,button:0}));return 'ok'})()")
+            // The range is anchored in the phrase's text node, as a mouse drag's selection is:
+            // Translate for Chrome reads the selection only when its anchorNode is a text node
+            // (round 15; a range over the element's contents anchors at the element and read
+            // as no selection).
+            tabEval(view, "(function(){var el=document.getElementById('phrase');var r=document.createRange();var n=el.firstChild;while(n&&n.nodeType!==3)n=n.nextSibling;if(n){r.setStart(n,0);r.setEnd(n,n.length)}else r.selectNodeContents(el);var s=getSelection();s.removeAllRanges();s.addRange(r);var rect=el.getBoundingClientRect();el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,clientX:rect.right-1,clientY:rect.top+rect.height/2,button:0}));return 'ok'})()")
             found = pollExpr(view, buttonProbe, 8_000)
             extra.put("afterSyntheticMouseup", found)
             if (found.optBoolean("pass")) how = "synthetic mouseup"
         }
         var bubbleFound = JSONObject()
         if (how != "none") {
-            tabEval(view, "(function(){var b=document.querySelector(${JSONObject.quote(button)});if(b)b.click();return 'ok'})()")
+            // The button is pressed as a mouse presses it, mousedown and mouseup then click:
+            // Translate for Chrome opens its translator on the icon's mouseup (round 15).
+            tabEval(view, "(function(){var b=document.querySelector(${JSONObject.quote(button)});if(!b)return 'none';var r=b.getBoundingClientRect();var o={bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,button:0};b.dispatchEvent(new MouseEvent('mousedown',o));b.dispatchEvent(new MouseEvent('mouseup',o));b.click();return 'ok'})()")
             bubbleFound = pollExpr(view, "(function(){var host=document.querySelector(${JSONObject.quote(bubble)});var text=host?((host.shadowRoot&&host.shadowRoot.textContent)||host.textContent||''):'';return JSON.stringify({pass:!!host&&text.trim().length>0,bubble:!!host,text:text.replace(/\\s+/g,' ').trim().slice(0,160)})})()", 10_000)
             extra.put("bubble", bubbleFound)
         }
@@ -1696,7 +1715,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * install (Online Security's `tabs.update(id, {active: true})` on its setup tab), opens the
      * row's own page as a tab (NordPass's app page, signed out), injects its UI into the page
      * (`injects`, Read&Write's `gw-toolbar`, which its content script shows on the worker's
-     * `tabs.sendMessage`), or the row's own page (`page`, Claude's side panel document, which the
+     * `tabs.sendMessage`; UI in a closed shadow root under a hashed id, Karma's, is read as
+     * labels new to the page's accessibility tree since the click), or the row's own page (`page`, Claude's side panel document, which the
      * phone has no panel to host: opened as a tab) shows its sign-in, or the click runs the
      * provider's sign-in through `identity.launchWebAuthFlow`, whose sheet is up with the
      * provider's page (Read&Write: its toolbar mounts hidden and Texthelp's IdP asks for a
@@ -1735,6 +1755,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 val before = tabUrls()
                 val activeBefore = activeCoreTab(coreSnapshot())?.optString("id")
                 val since = StepEvidence(row)
+                // The page as accessibility reads it before the click: UI a row mounts in a closed
+                // shadow root under a hashed id (Karma's root, round 15) matches no selector, so
+                // labels new to the tree after the click are its second witness.
+                val seenBefore = if (injects != null) seenInView(view) else null
                 // A popup the click opens for this tab alone (Smarty: no default popup; its worker
                 // sets `sidebar.html` per tab with `action.setPopup({tabId})` once its content
                 // script has reported the page, so the first click can land before the popup is
@@ -1758,6 +1782,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                             if (rendered(sheet) || text.isNotBlank()) PanelHit(text) else seenInView(sheet).takeIf(::shownDespiteEmptyDom)?.let { PanelHit(text, it) }
                         }
                         ?: injects?.let { selector -> json(tabEval(view, INJECTED_UI.replace("__SELECTOR__", JSONObject.quote(selector)))).takeIf { it.optBoolean("pass") } }
+                        ?: seenBefore?.let { base -> newLabels(base, seenInView(view)).takeIf { it.size >= 2 }?.let { InjectedSeen(it) } }
                 }
                 coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
                 var hit: Any? = poll(scaled(20_000, factor), 500, watch)
@@ -1769,9 +1794,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 @Suppress("UNCHECKED_CAST")
                 val landed = hit as? Map.Entry<String, String>
                 val injected = hit as? JSONObject
+                val injectedSeen = hit as? InjectedSeen
                 val authSheet = hit as? AuthSheet
                 val popupHit = hit as? PopupHit
                 val panelHit = hit as? PanelHit
+                if (injectedSeen != null) {
+                    // The tree settled: every label new since the baseline, and the node counts.
+                    SystemClock.sleep(scaled(2_000, factor))
+                    val seen = seenInView(view)
+                    injectedSeen.labels = newLabels(seenBefore!!, seen)
+                    extra.put("injectedSeen", JSONObject().put("labels", JSONArray(injectedSeen.labels)).put("nodesBefore", seenBefore.optInt("nodes")).put("nodesAfter", seen.optInt("nodes")))
+                    snap("${entry.optString("slug")}-injected")
+                }
                 if (popupHit != null) {
                     SystemClock.sleep(scaled(2_000, factor))
                     popupView()?.takeIf { it.context == "popup" }?.let { popupHit.text = json(tabEval(it, DEEP_TEXT)).optString("text") }
@@ -1813,6 +1847,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 if (hit == null && injects != null) {
                     val miss = INJECTION_MISS.replace("__SELECTOR__", JSONObject.quote(injects))
                     extra.put("pageAfterClick", json(tabEval(view, miss)))
+                    extra.put("seenBeforeClick", seenBefore).put("seenAfterClick", seenInView(view))
                     // On an isolated-worlds WebView the content scripts' globals live in the
                     // extension's world; the DOM is shared.
                     if (worlds) worldEval(view, row.id, miss)?.let { extra.put("worldAfterClick", json(it)) }
@@ -1849,7 +1884,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
                 since.record(extra, "atEnd")
                 // The gate met in the worker (its console line), when the click showed nothing.
-                val logged = if (landed == null && injected == null && gateLog != null) backgroundView(row.id)?.let { bg -> consoleOf(bg).lastOrNull { gateLog.containsMatchIn(it) } } else null
+                val logged = if (landed == null && injected == null && injectedSeen == null && gateLog != null) backgroundView(row.id)?.let { bg -> consoleOf(bg).lastOrNull { gateLog.containsMatchIn(it) } } else null
                 logged?.let { extra.put("gateLog", it.take(300)) }
                 val how = when {
                     landed == null || landed.key !in before -> "opened"
@@ -1867,6 +1902,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     }
                     injected != null ->
                         Grade("n/m", "$label: the action click injected its <${injected.optString("tag")}> (${injected.optInt("w")}x${injected.optInt("h")} css px, \"${injected.optString("text").take(80)}\") into the page; the tools need $gate (not measurable here)", extra)
+                    injectedSeen != null ->
+                        Grade("n/m", "$label: the action click drew its UI into the page, read by accessibility (${injectedSeen.labels.size} labels new to the tree: \"${injectedSeen.labels.joinToString(" ").take(80)}\"; no element of it in the document – a closed shadow root); the tools need $gate (not measurable here)", extra)
                     popupHit != null ->
                         Grade("n/m", "$label: the action click opened its popup for the tab${if (extra.optBoolean("secondClick")) " on the second click" else ""} (\"${popupHit.text.replace(Regex("\\s+"), " ").trim().take(80)}\"); the core needs $gate (not measurable here)", extra)
                     panelHit != null -> {
@@ -6739,7 +6776,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * RSS Feed Reader: its content script reads the page's `<link rel="alternate">` feeds and
      * the worker counts them on the action's badge; the popup over the page offers the feed by
      * its title. Over `feed.html` (one RSS link to `feed.xml`, "Zenium fixture feed"): a badge
-     * count of one or more, or the popup naming the feed, is the pass.
+     * count of one or more, or the popup naming the feed, is the pass. A popup that opens on
+     * its account prompt first (RSS Feed Reader's "Create an account / Log in / Continue without
+     * account", round 15) is taken past it on its own no-account control, and read again.
      */
     private fun feedDetector(label: String, page: String, feedTitle: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -6750,8 +6789,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val popup = openPopup(row, factor)
         var found = JSONObject()
         if (popup != null) {
-            found = pollExpr(popup, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:${JSONObject.quote(feedTitle)}.split(' ').every(function(w){return text.toLowerCase().indexOf(w.toLowerCase())>=0})||/feed\\.xml|1 feed|feeds? (found|detected|on this page)/i.test(text),text:"), scaled(20_000, factor))
-            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+            val names = DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:${JSONObject.quote(feedTitle)}.split(' ').every(function(w){return text.toLowerCase().indexOf(w.toLowerCase())>=0})||/feed\\.xml|1 feed|feeds? (found|detected|on this page)/i.test(text),text:")
+            found = pollExpr(popup, names, scaled(20_000, factor))
+            if (!found.optBoolean("pass") && Regex("without (an )?account|skip|continue", RegexOption.IGNORE_CASE).containsMatchIn(found.optString("text"))) {
+                val steps = JSONArray()
+                if (tapLabel("/^(continue without( an)? account|skip( for now)?|continue)$/i", factor, steps, "no-account")) {
+                    popupView()?.takeIf { it.context == "popup" }?.let { live -> found = pollExpr(live, names, scaled(20_000, factor)) }
+                }
+                extra.put("accountPrompt", steps)
+            }
+            popupView()?.takeIf { it.context == "popup" }?.let { live -> found.put("console", JSONArray(consoleOf(live).takeLast(10))) }
         }
         extra.put("popup", found)
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
@@ -8458,11 +8505,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var r=window.__popupResult||'';var toast=document.getElementById('pb-toast-main')||document.querySelector('[id^=\"pb-toast\"], [class*=\"pb-toast\"], iframe[src*=\"bkkbcggnhapdmkeljlodobbkopceiche\"]');" +
                 "var src=String(window.open);var native=/\\[native code\\]/.test(src);var orig=typeof window.originalOpenFunction;" +
                 "return JSON.stringify({pass:r==='fake'||!!toast,result:r,toast:!!toast,toastTag:toast?(toast.tagName+' '+(toast.id||'')).trim():'',scriptInPage:!native||orig==='function',openIsNative:native,log:(window.__popupLog||[]).slice(-3)})})()"
-        /** An image downloader's list: how many images it shows and how many of them are the gallery fixture's `photo-N.png` (through open shadow roots). */
+        /**
+         * An image downloader's list: how many images it shows and how many of them are the
+         * gallery fixture's `photo-N.png` (through open shadow roots), by URL or – a list that
+         * shows what it fetched as blobs (ImageAssistant's extractor, round 15) – by the
+         * fixture's picture size, 320 by 240 decoded.
+         */
         private const val IMAGE_LIST_REPORT =
-            "(function(){var imgs=[];var walk=function(root){var all=root.querySelectorAll('img, [style*=\"background-image\"]');for(var i=0;i<all.length;i++){var e=all[i];var s=e.currentSrc||e.src||(e.style&&e.style.backgroundImage)||'';imgs.push(String(s));if(e.shadowRoot)walk(e.shadowRoot)}var rest=root.querySelectorAll('*');for(var j=0;j<rest.length;j++){if(rest[j].shadowRoot)walk(rest[j].shadowRoot)}};if(document.documentElement)walk(document.documentElement);" +
-                "var photos=imgs.filter(function(s){return /photo-\\d\\.png/.test(s)}).length;var text=document.body?document.body.innerText.replace(/\\s+/g,' ').trim():'';" +
-                "return JSON.stringify({pass:photos>=4,photos:photos,images:imgs.length,text:text.slice(0,160),title:document.title.slice(0,40)})})()"
+            "(function(){var imgs=[];var sized=0;var walk=function(root){var all=root.querySelectorAll('img, [style*=\"background-image\"]');for(var i=0;i<all.length;i++){var e=all[i];var s=e.currentSrc||e.src||(e.style&&e.style.backgroundImage)||'';imgs.push(String(s));if(e.tagName==='IMG'&&e.naturalWidth===320&&e.naturalHeight===240)sized++;if(e.shadowRoot)walk(e.shadowRoot)}var rest=root.querySelectorAll('*');for(var j=0;j<rest.length;j++){if(rest[j].shadowRoot)walk(rest[j].shadowRoot)}};if(document.documentElement)walk(document.documentElement);" +
+                "var byUrl=imgs.filter(function(s){return /photo-\\d\\.png/.test(s)}).length;var photos=Math.max(byUrl,sized);var text=document.body?document.body.innerText.replace(/\\s+/g,' ').trim():'';" +
+                "return JSON.stringify({pass:photos>=4,photos:photos,byUrl:byUrl,bySize:sized,images:imgs.length,text:text.slice(0,160),title:document.title.slice(0,40)})})()"
         /** The body's computed background as a colour and its relative luminance (white 1.0), with a count of the page's foreign elements. */
         private const val LUMINANCE_REPORT =
             "(function(){var bg=getComputedStyle(document.body).backgroundColor;var html=getComputedStyle(document.documentElement).backgroundColor;var pick=function(c){var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/.exec(c||'');if(!m)return null;if(m[4]!==undefined&&parseFloat(m[4])===0)return null;var f=function(v){v=parseInt(v,10)/255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)};return 0.2126*f(m[1])+0.7152*f(m[2])+0.0722*f(m[3])};" +

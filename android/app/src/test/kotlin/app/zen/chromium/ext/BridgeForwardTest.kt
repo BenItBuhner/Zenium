@@ -333,6 +333,41 @@ class BridgeForwardTest {
     }
 
     @Test
+    fun `a startup burst of growing storage writes is held whole at the defaults and drains by the frame budget`() {
+        val guard = guard()
+        sink.keepTexts = true
+        // Translate for Chrome's worker (compat round 15): one task writes `localeNames` once
+        // per locale, the object grown by one locale each time – 130 writes of 0.6 K to 80 K
+        // chars, 5.3 M chars in all, the last the complete one. Chrome keeps every write; a
+        // refusal of the biggest would leave the stored object short.
+        val locale = "x".repeat(620)
+        var total = 0L
+        for (id in 1..130) {
+            val text = call(id, "storage", "set", """{"localeNames":"${locale.repeat(id)}"}""")
+            total += text.length
+            offer(guard, text)
+        }
+        assertTrue("burst of $total chars", total in 5_000_000L..5_600_000L)
+        // The first frame's bucket took the smallest writes at once; the rest wait, none refused.
+        assertEquals(0L, guard.refused)
+        assertEquals(0L, guard.dropped)
+        assertTrue("forwarded at once: ${guard.forwarded}", guard.forwarded in 1L..20L)
+        assertEquals(130 - guard.forwarded.toInt(), guard.pendingCount)
+        assertTrue(guard.pendingChars > 5_000_000L)
+        assertTrue(replies.isEmpty())
+        assertTrue(sink.warnings.isEmpty())
+        var ticks = 0
+        while (guard.pendingCount > 0 && ticks < 200) {
+            frames.tick()
+            ticks++
+        }
+        assertEquals(0, guard.pendingCount)
+        assertEquals(130L, guard.forwarded)
+        assertEquals((1..130).toList(), forwardedIds())
+        assertTrue("drained over $ticks frames", ticks in 60..100)
+    }
+
+    @Test
     fun `a call that is not in the engine's shape is nobody's action state`() {
         val guard = guard()
         sink.keepTexts = true
