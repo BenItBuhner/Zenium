@@ -569,6 +569,14 @@ export interface TabViewEvents {
    * it: the throbber then waits from `onStartLoading` to the commit.
    */
   onStartNavigation?(url: string, sameDocument: boolean): void
+  /**
+   * The main-frame navigation under way was redirected by the server from `fromUrl` to `toUrl`
+   * (Electron's `did-redirect-navigation`, Android's `shouldOverrideUrlLoading` with
+   * `isRedirect`), before it commits: the core keeps the hops and records them with the commit
+   * as one redirect chain (history-23). Hosts that cannot tell need not call it: the visit is
+   * then the landing alone.
+   */
+  onRedirected?(fromUrl: string, toUrl: string): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
   /**
