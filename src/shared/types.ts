@@ -2059,6 +2059,11 @@ export type ShortcutAction =
   | 'devtools.inspector'
   | 'devtools.console'
   | 'devtools.browserConsole'
+  /**
+   * Chrome's task manager (Shift+Esc; More Tools › Task Manager): the `zen://tasks` page tab –
+   * every process with its memory and CPU, End process (`core/tasks.ts`); desktop layouts only.
+   */
+  | 'tasks.open'
   | 'settings.open'
   | 'addons.open'
   | 'boost.new'
@@ -2929,6 +2934,58 @@ export interface GovernorAction {
   /** Tab title at the time of the action (tabs may be gone by the time the UI renders it). */
   title: string
   reason: string
+}
+
+// ---------------------------------------------------------------------------
+// The task manager (`zen://tasks`, Chrome's Shift+Esc; `core/tasks.ts`)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a process in the task manager runs, as Chrome's task manager tells its tasks apart and
+ * as Electron's `ProcessMetric.type` lets a host tell them: the browser process itself; a tab's
+ * renderer – one process per tab, or one for several tabs when the engine puts same-site
+ * documents together; an extension's host (its background page or service worker, its popups
+ * and pages); a DevTools frontend (the toolbox of one tab); the GPU process; a utility process
+ * (the network service, audio, storage – Electron names the service); a renderer the browser
+ * attributes to none of its tabs (a chrome window's own document, a new tab page loading ahead
+ * of its tab); and anything else Electron reports (a zygote, a sandbox helper).
+ */
+export type TaskKind =
+  'browser' | 'tab' | 'extension' | 'devtools' | 'gpu' | 'utility' | 'renderer' | 'other'
+
+/** One task-manager row: a process and what it runs, as of the list's `sampledAt`. */
+export interface TaskInfo {
+  /** The OS process id: the row's key, and what `tasks.end` names. */
+  pid: number
+  kind: TaskKind
+  /**
+   * The row's title, the core's words: the tab's title (the titles joined when tabs share the
+   * process), the extension's name, the utility's service ("Network service"), "GPU process",
+   * "Browser"; the description under it is the kind and the pid, drawn by the page.
+   */
+  title: string
+  /** The row's picture: the tab's favicon, the extension's icon; null for the kind's glyph. */
+  icon: string | null
+  /** The tabs the process serves (kind `tab`), or the one a `devtools` frontend inspects. */
+  tabIds: readonly string[]
+  /** The extension the process hosts (kind `extension`), by its id. */
+  extensionId: string | null
+  /** The process's working set in bytes (Chrome's "Memory footprint"). */
+  memoryBytes: number
+  /** Private (unshared) bytes where the platform reports them (Windows); null elsewhere. */
+  privateBytes: number | null
+  /** CPU use since the last sample as a percentage of one core (Chrome's CPU column; may pass 100). */
+  cpuPercent: number
+  /** Bytes received per second since the last sample, where the host counts them; null where it does not. */
+  networkBytesPerSecond: number | null
+  /** Whether End process may act on it: never the browser process. */
+  endable: boolean
+}
+
+/** The task manager's list: every process, sampled at `sampledAt` (`Date.now()` on the host). */
+export interface TaskList {
+  sampledAt: number
+  tasks: TaskInfo[]
 }
 
 export interface ResourceSnapshot {
@@ -4470,6 +4527,25 @@ export interface Commands {
   'resources.trim': { args: void; result: void }
   /** Restart the browser so changed startup switches take effect. */
   'resources.relaunch': { args: void; result: void }
+
+  // ---- The task manager (`zen://tasks`, `core/tasks.ts`) --------------------------------------
+  /**
+   * Every process the app runs right now, as the task manager page lists them (`TaskList`):
+   * the browser process, each tab's renderer named by its tab(s), each extension's host by the
+   * extension's name, the DevTools frontends, the GPU and the utility processes, with memory,
+   * CPU and – where the host counts it – network. Sampled on each call (the page asks every
+   * 1–2 s while it is visible): a host without a `TaskHost` answers an empty list, which the
+   * page shows as its one-sentence empty state.
+   */
+  'tasks.list': { args: void; result: TaskList }
+  /**
+   * End the process `pid` (Chrome's End process): a tab's renderer is crashed in place
+   * (`forcefullyCrashRenderer`, so the tab shows its crashed page and reloads on the user's
+   * word), an extension's or a helper process is killed. The browser process is refused, as is
+   * a pid that is not in the last list; the chrome asks first (a §9.23 destructive prompt). True
+   * when the process was told to go.
+   */
+  'tasks.end': { args: { pid: number }; result: boolean }
 
   'settings.update': { args: Partial<Settings>; result: void }
   'shortcuts.update': { args: { id: string; binding: KeyBinding | null }; result: void }

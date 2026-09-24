@@ -16,6 +16,7 @@ import {
 } from '../pageDebugger'
 import {
   ElectronTabViewHost,
+  ENDED_BY_USER_MS,
   fullPageCut,
   protocolClip,
   pageViewportFrom,
@@ -299,6 +300,54 @@ describe('ElectronTabViewHost', () => {
 
     expect(host.tabIdForWebContents(wc)).toBeUndefined()
     expect(host.viewForWebContents(wc)).toBeUndefined()
+  })
+
+  it('reports a renderer End process crashed as `ended`, once, and a crash of the page’s own as the engine says', () => {
+    vi.useFakeTimers()
+    try {
+      const host = new ElectronTabViewHost(sessions)
+      const reasons: Array<[string, number | undefined]> = []
+      const events = new Proxy({} as TabViewEvents, {
+        get: (_t, name) =>
+          name === 'onCrashed'
+            ? (reason: string, exitCode?: number) => reasons.push([reason, exitCode])
+            : () => undefined
+      })
+      const view = host.createView(
+        { id: 'tab_ended', containerId: 'default' } as Tab,
+        events,
+        detachedWindow
+      )
+      const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
+      const gone = (reason: string, exitCode: number): void => {
+        wc.emit('render-process-gone', {}, { reason, exitCode })
+      }
+
+      // The page's own crash: the engine's word, untouched.
+      gone('crashed', 11)
+      expect(reasons).toEqual([['crashed', 11]])
+
+      // The task manager's End process: the view is told first, and the crash that follows
+      // reads `ended`; the mark is spent by it, so the next crash is the page's own again.
+      expect(host.noteEndedByUser(wc.id)).toBe(true)
+      gone('crashed', 5)
+      gone('crashed', 5)
+      expect(reasons.slice(1)).toEqual([
+        ['ended', 5],
+        ['crashed', 5]
+      ])
+
+      // A mark never collected goes stale: a crash minutes later is not the user's doing.
+      host.noteEndedByUser(wc.id)
+      vi.advanceTimersByTime(ENDED_BY_USER_MS + 1)
+      gone('killed', 9)
+      expect(reasons.at(-1)).toEqual(['killed', 9])
+
+      // Web contents that are no tab view's have nothing to mark.
+      expect(host.noteEndedByUser(wc.id + 1000)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

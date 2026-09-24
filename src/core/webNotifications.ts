@@ -30,9 +30,21 @@ export const MAX_LIVE_PER_ORIGIN = 20
  * this session. A quiet request is not a sheet over the page; it is the bell-off glyph in the
  * pill's slot, and the sheet opens from the bell. `gesture` undefined (an engine that cannot
  * say, an older page script) counts as gestured: nothing is quieted on a guess.
+ *
+ * `sameOriginNavigation` is Chrome's carve-out from the gesture rule
+ * (`kPermissionsGestureGatedPromptsExcludeSameOriginNavigations`): a request without a gesture
+ * is not quieted when the tab's current document was reached by a same-origin navigation from
+ * its previous one – the user came to this page from the site's own page, and a site that asks
+ * on the second page it shows asks aloud; a fresh tab's first page, or a page reached from
+ * another site, gets the bell. The dismissed-before path is untouched by it: a site dismissed
+ * before asks quietly however its page was reached.
  */
-export function asksQuietly(gesture: boolean | undefined, dismissedBefore: boolean): boolean {
-  return gesture === false || dismissedBefore
+export function asksQuietly(
+  gesture: boolean | undefined,
+  dismissedBefore: boolean,
+  sameOriginNavigation = false
+): boolean {
+  return (gesture === false && !sameOriginNavigation) || dismissedBefore
 }
 
 /**
@@ -101,6 +113,16 @@ export class WebNotificationService {
   private readonly dismissedSites = new Set<string>()
   /** The quiet prompt up for a tab, by tab: a second quiet request while one is up joins it. */
   private readonly quietPending = new Map<string, Promise<boolean>>()
+  /**
+   * The carve-out's record (`asksQuietly`'s `sameOriginNavigation`): the site of each tab's
+   * current document (`permissionSite`; null for a page that is no site), and the tabs whose
+   * current document was reached by a same-origin navigation from the previous one. Chrome
+   * reads the same off the tab's navigation entries; the core keeps no previous committed URL,
+   * so this service keeps the tab's last site itself – fed by the tabs' navigation event
+   * (`onNavigated`), cleared with the tab's view (`onTabGone`).
+   */
+  private readonly lastSite = new Map<string, string | null>()
+  private readonly sameOriginArrival = new Set<string>()
 
   constructor(private readonly browser: Browser) {
     // A site's permission withdrawn (Settings, the site sheet, a reset): its notifications and
@@ -129,6 +151,37 @@ export class WebNotificationService {
   dismissedBefore(url: string): boolean {
     const origin = permissionSite(url)
     return origin !== null && this.dismissedSites.has(origin)
+  }
+
+  /**
+   * A tab's document committed at `url` (`Browser.onNavigated`): the carve-out's record moves
+   * on – the new document arrived by a same-origin navigation when its site is the previous
+   * document's (a reload counts, as it does in Chrome), by another when it is not, or when the
+   * tab had no document before (a fresh tab's first page). An in-page navigation (a fragment,
+   * `pushState`) leaves the document, and the record, where they are.
+   */
+  onNavigated(tabId: string, url: string, inPage: boolean): void {
+    if (inPage) return
+    const site = permissionSite(url)
+    const previous = this.lastSite.get(tabId)
+    if (site !== null && previous === site) this.sameOriginArrival.add(tabId)
+    else this.sameOriginArrival.delete(tabId)
+    this.lastSite.set(tabId, site)
+  }
+
+  /** The tab's view is gone: its record with it. */
+  onTabGone(tabId: string): void {
+    this.lastSite.delete(tabId)
+    this.sameOriginArrival.delete(tabId)
+  }
+
+  /**
+   * Whether the current document of `tabId`, of `origin`, was reached by a same-origin
+   * navigation from its previous one – `asksQuietly`'s carve-out. The origin is checked against
+   * the record, so a page the navigation event never reported is not excused on a stale mark.
+   */
+  arrivedSameOrigin(tabId: string, origin: string): boolean {
+    return this.sameOriginArrival.has(tabId) && this.lastSite.get(tabId) === origin
   }
 
   /** What `Notification.permission` reads in the page of `tabId` at `url`. */
@@ -189,10 +242,12 @@ export class WebNotificationService {
     } else {
       const standing = this.browser.permissions.resolve('notifications', url, { tabId })
       // A question still open asks quietly (NOT-03) when the request has no gesture behind it
-      // or the site was dismissed before: the bell in the pill's slot, not a sheet. A site with
-      // an answer, or a loud request, goes through the permission service as every request does.
+      // (and the page was not reached from the site's own previous page: the carve-out) or the
+      // site was dismissed before: the bell in the pill's slot, not a sheet. A site with an
+      // answer, or a loud request, goes through the permission service as every request does.
       const allowed =
-        standing === 'ask' && asksQuietly(gesture, this.dismissedSites.has(origin))
+        standing === 'ask' &&
+        asksQuietly(gesture, this.dismissedSites.has(origin), this.arrivedSameOrigin(tabId, origin))
           ? await this.requestQuietly(tabId, url, origin)
           : await this.browser.permissions.decide('notifications', url, { tabId })
       // The site was allowed: the app's own posting right (Android 13+) is asked for now, so the
