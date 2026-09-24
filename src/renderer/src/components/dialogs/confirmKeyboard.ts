@@ -6,9 +6,10 @@ import { wrapTab } from '@renderer/lib/popover'
  * The confirmation prompt's keyboard (§9.22 as amended by the design lead on #392), beside the
  * primitive it was written for (`ConfirmDialog.tsx`) rather than in it: one implementation of
  * the contract for the primitive's own root and for any other held container – a popover's
- * level (`siteControls/SiteInfoPopover.tsx`), the phone's confirmation sheet – in a file of its
- * own so the primitive's exports stay its components (react-refresh's rule for a component
- * file) and a host takes the hook without the dialog.
+ * confirm level (`siteControls/SiteInfoPopover.tsx`), the phone site-information sheet's
+ * (`siteinfo/SiteInfoSheet.tsx`) – in a file of its own so the primitive's exports stay its
+ * components (react-refresh's rule for a component file) and a host takes the hook without the
+ * dialog.
  */
 
 /**
@@ -65,10 +66,14 @@ export interface ConfirmKeyboard {
  * after the mount (a container rendered later, under a condition of its own) is NOT re-bound
  * to, and a container found by `container` is the one found then; every host today has its
  * element at mount – the primitive's root, a level's container, a sheet's body – and one that
- * would not must toggle `enabled` (or `tab`) to bind again. The one implementation: the
- * primitive holds its root with it (`ConfirmDialog.tsx`), the site-information popover's
- * confirm levels their container, and the phone's `ConfirmSheet` takes it in place of its own
- * copy of the rule.
+ * would not must toggle `enabled` (or `tab`) to bind again. The hosts: the primitive holds its
+ * root with it (`ConfirmDialog.tsx`), the desktop site-information popover's confirm levels
+ * their container (`siteControls/SiteInfoPopover.tsx`), and the phone site-information sheet's
+ * confirmation levels theirs (`siteinfo/SiteInfoSheet.tsx`, `tab: false` under the chassis's
+ * wrap), and the Settings' phone `ConfirmSheet` (`pages/settings/sheets.tsx`) its body's
+ * chassis dialog – `container` and `enabled` above are shaped for it (the body to
+ * `closest('[role="dialog"]')`, off under another sheet, `tab: false`), in place of the copy
+ * of the rule it kept before this hook existed.
  */
 export function useConfirmKeyboard(
   ref: RefObject<HTMLElement | null>,

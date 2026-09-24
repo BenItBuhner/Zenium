@@ -10,8 +10,13 @@ import {
 } from 'electron'
 import type { Browser } from '../../core/browser'
 import type { DeviceChooserHandle } from '../../core/deviceChooser'
-import type { DeviceIdentity } from '../../core/permissions'
-import type { DeviceCandidate, DeviceChooser, DeviceKind } from '../../shared/types'
+import type { DeviceGrantDetails, DeviceIdentity } from '../../core/permissions'
+import {
+  PRIVATE_CONTAINER_ID,
+  type DeviceCandidate,
+  type DeviceChooser,
+  type DeviceKind
+} from '../../shared/types'
 import type { ElectronTabViewHost } from './views'
 
 /**
@@ -38,17 +43,30 @@ interface LiveRequest {
   settled: boolean
 }
 
-/** The least the host needs of the core to serve a chooser (the whole browser in production). */
-export type DeviceHostBrowser = Pick<Browser, 'devices' | 'permissions'>
+/**
+ * The least the host needs of the core to serve a chooser (the whole browser in production):
+ * `tabs` for the container a Bluetooth request's tab is in, the event being per `WebContents`.
+ */
+export type DeviceHostBrowser = Pick<Browser, 'devices' | 'permissions' | 'tabs'>
 
 /** The least the host needs of the view host: which tab a page is. */
 export type DeviceHostViews = Pick<ElectronTabViewHost, 'tabIdForWebContents' | 'onViewCreated'>
 
 /**
+ * A grant's provenance for the core: a private session names its container, so a device picked
+ * in a private window is granted to that session alone (`permissionRequestDetails` says the same
+ * of a prompt's answer); any other container is a regular, stored grant.
+ */
+export function deviceGrantDetails(containerId: string | undefined): DeviceGrantDetails {
+  return containerId === PRIVATE_CONTAINER_ID ? { privateContainerId: containerId } : {}
+}
+
+/**
  * The device choosers of WebUSB, Web Serial and WebHID for one session (Electron's
  * `select-*-device` events; the `*-added` / `*-removed` events keep the open list live), the
  * per-device grants (`setDevicePermissionHandler` reads the core's store, `*-revoked` prunes it)
- * and the protected USB classes.
+ * and the protected USB classes. `containerId` is the session's container: a pick in the private
+ * session is granted for that session only and never written (`deviceGrantDetails`).
  *
  * Electron asks the session's permission CHECK handler (`usb`, `serial`, `hid`) before it
  * enumerates at all – `PermissionService.check` answers "may the site open a chooser?" there, so
@@ -60,9 +78,11 @@ export function attachDeviceHandlers(
   browser: DeviceHostBrowser,
   views: DeviceHostViews,
   ses: Session,
-  os: string = process.platform
+  os: string = process.platform,
+  containerId?: string
 ): void {
   const hint: DeviceChooser['hint'] = os === 'linux' ? 'linux-udev' : 'none'
+  const grantDetails = deviceGrantDetails(containerId)
   const live = new Map<string, LiveRequest>()
   const key = (kind: DeviceKind, wc: WebContents | null): string => `${kind}|${wc?.id ?? 'none'}`
 
@@ -95,7 +115,7 @@ export function attachDeviceHandlers(
       if (live.get(k) === request) live.delete(k)
       if (deviceId !== null) {
         const identity = identities.get(deviceId)
-        if (identity) browser.permissions.grantDevice(kind, origin, identity)
+        if (identity) browser.permissions.grantDevice(kind, origin, identity, grantDetails)
       }
       request.answer(deviceId)
     })
@@ -138,7 +158,12 @@ export function attachDeviceHandlers(
   })
   ses.on('hid-device-revoked', (_event, details) => {
     if (details.origin)
-      browser.permissions.forgetDevice('hid', details.origin, hidIdentity(details.device))
+      browser.permissions.forgetDevice(
+        'hid',
+        details.origin,
+        hidIdentity(details.device),
+        grantDetails
+      )
   })
 
   // ---- WebUSB ---------------------------------------------------------------------------
@@ -165,7 +190,12 @@ export function attachDeviceHandlers(
   })
   ses.on('usb-device-revoked', (_event, details) => {
     if (details.origin)
-      browser.permissions.forgetDevice('usb', details.origin, usbIdentity(details.device))
+      browser.permissions.forgetDevice(
+        'usb',
+        details.origin,
+        usbIdentity(details.device),
+        grantDetails
+      )
   })
   ses.setUSBProtectedClassesHandler(() => [...USB_PROTECTED_CLASSES])
 
@@ -192,7 +222,12 @@ export function attachDeviceHandlers(
   })
   ses.on('serial-port-revoked', (_event, details) => {
     if (details.origin)
-      browser.permissions.forgetDevice('serial', details.origin, serialIdentity(details.port))
+      browser.permissions.forgetDevice(
+        'serial',
+        details.origin,
+        serialIdentity(details.port),
+        grantDetails
+      )
   })
 
   // ---- Grants ---------------------------------------------------------------------------
@@ -203,7 +238,12 @@ export function attachDeviceHandlers(
         : details.deviceType === 'usb'
           ? usbIdentity(details.device as USBDevice)
           : serialIdentity(details.device as SerialPort)
-    return browser.permissions.hasDeviceGrant(details.deviceType, details.origin, identity)
+    return browser.permissions.hasDeviceGrant(
+      details.deviceType,
+      details.origin,
+      identity,
+      grantDetails
+    )
   })
 
   // ---- Bluetooth pairing ----------------------------------------------------------------
@@ -228,7 +268,9 @@ export function attachDeviceHandlers(
  * range, the page's request fails by itself). The first emission opens the chooser, the later
  * ones keep its list live, and the latest callback carries the answer. Electron has no
  * permission hook for Bluetooth, so a blocked site is refused here, and a pick is recorded as a
- * grant for the rows (the engine asks again on the next `requestDevice()`, as Chrome does).
+ * grant for the rows (the engine asks again on the next `requestDevice()`, as Chrome does). The
+ * event carries no session, so the container – a private tab's pick lasts its session only –
+ * is the tab's.
  */
 export function attachBluetoothChooser(
   browser: DeviceHostBrowser,
@@ -250,6 +292,7 @@ export function attachBluetoothChooser(
     }
     const origin = wc.getURL()
     const tabId = views.tabIdForWebContents(wc) ?? null
+    const grantDetails = deviceGrantDetails(browser.tabs.tab(tabId)?.containerId)
     const handle = browser.devices.open('bluetooth', candidates, { origin, tabId, scanning: true })
     if (handle.id === null) {
       answer(null)
@@ -267,7 +310,7 @@ export function attachBluetoothChooser(
       if (request === current) request = null
       if (deviceId !== null) {
         const identity = identities.get(deviceId)
-        if (identity) browser.permissions.grantDevice('bluetooth', origin, identity)
+        if (identity) browser.permissions.grantDevice('bluetooth', origin, identity, grantDetails)
       }
       current.answer(deviceId)
     })

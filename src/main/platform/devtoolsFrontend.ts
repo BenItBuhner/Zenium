@@ -1,4 +1,4 @@
-import type { DevtoolsDock } from '../../shared/types'
+import type { DevtoolsDock, Rect } from '../../shared/types'
 import { DEVTOOLS_DOCKS } from '../../shared/devtoolsDock'
 
 /**
@@ -95,6 +95,97 @@ export function dockFromConsoleMessage(message: string): DevtoolsDock | null {
   if (!message.startsWith(DEVTOOLS_DOCK_MESSAGE_PREFIX)) return null
   const word = message.slice(DEVTOOLS_DOCK_MESSAGE_PREFIX.length).trim()
   return (DEVTOOLS_DOCKS as readonly string[]).includes(word) ? (word as DevtoolsDock) : null
+}
+
+/**
+ * The frontend's word on the console when the page's hole in its box moves:
+ * `zenium-devtools-page-bounds:<x>,<y>,<width>,<height>`, in DIP of the frontend's box.
+ */
+export const DEVTOOLS_PAGE_BOUNDS_MESSAGE_PREFIX = 'zenium-devtools-page-bounds:'
+
+/**
+ * Reading the page's hole back. A docked frontend lays the inspected page out in the hole its
+ * placeholder widget leaves and tells the embedder where with
+ * `InspectorFrontendHost.setInspectedPageBounds` – the DIP rect Electron sizes the page's view
+ * to (`InspectedPagePlaceholder.dipPageRect`: the placeholder's box times the frontend's own
+ * zoom), on every layout: the opening, a dock change, a drag of the split, a resize. A wrapper
+ * on that method says each rect on the console, where the host listens; from the hole and the
+ * box the host knows the toolbox's band – the part of the frontend the cover's picture needs
+ * (`snapshotDevtools`), a third of the box at the default split rather than the whole of it
+ * (design language v2 §9.5's budget). The rect laid out before the hook was in place is asked
+ * for again through the placeholder's own `update()` – the plain one: the forced one sends a
+ * height one off for Lighthouse's sake – and, without the module, through the root view's
+ * resize, which reaches the same `update`. Without either the host pictures the whole box.
+ */
+export const DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT = `(() => {
+  const host = InspectorFrontendHost
+  if (host.__zeniumPageBoundsHook) return 'already'
+  const orig = host.setInspectedPageBounds
+  host.setInspectedPageBounds = function (bounds) {
+    try {
+      console.log(${JSON.stringify(DEVTOOLS_PAGE_BOUNDS_MESSAGE_PREFIX)} + [bounds.x, bounds.y, bounds.width, bounds.height].join(','))
+    } catch (e) {}
+    return orig.call(this, bounds)
+  }
+  host.__zeniumPageBoundsHook = true
+  import('./ui/legacy/legacy.js')
+    .then((legacy) => legacy.InspectedPagePlaceholder.InspectedPagePlaceholder.instance().update())
+    .catch(() => window.dispatchEvent(new Event('resize')))
+  return 'hooked'
+})()`
+
+/**
+ * The page's hole a frontend console line reports, or null for any other line (the frontend's
+ * own logging, a rect that is not one).
+ */
+export function pageBoundsFromConsoleMessage(message: string): Rect | null {
+  if (!message.startsWith(DEVTOOLS_PAGE_BOUNDS_MESSAGE_PREFIX)) return null
+  const parts = message.slice(DEVTOOLS_PAGE_BOUNDS_MESSAGE_PREFIX.length).trim().split(',')
+  if (parts.length !== 4) return null
+  const [x, y, width, height] = parts.map((p) => Number(p))
+  if (![x, y, width, height].every((n) => Number.isFinite(n))) return null
+  if (width <= 0 || height <= 0 || x < 0 || y < 0) return null
+  return { x, y, width, height }
+}
+
+/**
+ * The toolbox's band in a docked frontend's box – what stands beside the page's hole, the seam
+ * at its edge: below the hole for a bottom dock, right of it for a right dock, left of it for a
+ * left dock – in the box's DIP, for the frontend's `capturePage(rect)`. Null where the reading
+ * makes no band: an undocked toolbox, a hole that does not stand at the box's edge as the dock
+ * has it (a layout mid-change, a report from another dock), or no hole at all – the host then
+ * pictures the whole box, which the cover lays out the same way.
+ */
+export function devtoolsBandRect(
+  dock: DevtoolsDock | null,
+  hole: Rect | null,
+  box: { width: number; height: number }
+): Rect | null {
+  if (!dock || !hole || box.width <= 0 || box.height <= 0) return null
+  const within =
+    hole.x >= 0 &&
+    hole.y >= 0 &&
+    hole.x + hole.width <= box.width &&
+    hole.y + hole.height <= box.height
+  if (!within) return null
+  switch (dock) {
+    case 'bottom': {
+      const top = hole.y + hole.height
+      if (hole.y !== 0 || top >= box.height) return null
+      return { x: 0, y: top, width: box.width, height: box.height - top }
+    }
+    case 'right': {
+      const left = hole.x + hole.width
+      if (hole.x !== 0 || left >= box.width) return null
+      return { x: left, y: 0, width: box.width - left, height: box.height }
+    }
+    case 'left': {
+      if (hole.x <= 0) return null
+      return { x: 0, y: 0, width: hole.x, height: box.height }
+    }
+    default:
+      return null
+  }
 }
 
 /**

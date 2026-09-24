@@ -140,6 +140,40 @@ describe('chrome surfaces over the content', () => {
     }
   })
 
+  it.each([
+    ['the compact sidebar’s edge reveal', 'compactHover'],
+    ['the hidden toolbar’s reveal', 'toolbarHover']
+  ] as const)(
+    '%s leaves the page’s picture under it undimmed, like the rail’s flyout: a hover reveal of chrome is not a dialog (#411 ruling 4, §9.20)',
+    (_name, flag) => {
+      uiStore.set({ [flag]: true })
+      try {
+        // The reveal stands over the page's picture (the flag is `pageHidden`'s), covers no
+        // content of its own and, alone, draws no dim.
+        expect(pageHidden(idle())).toBe(true)
+        expect(overlayCoversContent(idle())).toBe(false)
+        expect(panelAloneOverContent(idle())).toBe(true)
+        // A panel opened from the revealed chrome – the hover card off a tab row, site
+        // information from the revealed toolbar's pill – keeps the page undimmed.
+        uiStore.set({ hoverCard: { ...idle().hoverCard, tabId: 't1' } })
+        expect(panelAloneOverContent(idle())).toBe(true)
+        uiStore.set({ hoverCard: { ...idle().hoverCard, tabId: null }, siteInfoOpen: true })
+        expect(panelAloneOverContent(idle())).toBe(true)
+        uiStore.set({ siteInfoOpen: false })
+        // Both reveals out at once (the sidebar's edge and the toolbar's): still no dim.
+        uiStore.set({ compactHover: true, toolbarHover: true })
+        expect(panelAloneOverContent(idle())).toBe(true)
+        // Out over Settings or a dialog it is not alone: their dim stays.
+        uiStore.set({ overlay: 'settings' })
+        expect(panelAloneOverContent(idle())).toBe(false)
+        uiStore.set({ overlay: 'none', clearBrowsingDataOpen: true })
+        expect(panelAloneOverContent(idle())).toBe(false)
+      } finally {
+        uiStore.set({ compactHover: false, toolbarHover: false, clearBrowsingDataOpen: false })
+      }
+    }
+  )
+
   it('a menu the renderer draws – the desktop app menu under ⋯ – leaves the page under it undimmed (§6 "Menus", §9.20)', () => {
     const menu = { id: 'm1', source: 'app' as const, items: [], x: null, y: null }
     uiStore.set({ menu })

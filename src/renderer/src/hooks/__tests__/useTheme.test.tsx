@@ -463,6 +463,35 @@ describe('the frame radius the theme writes (v2 §2, §9.29)', () => {
     rerender(withDevtools([], 'bottom'))
     expect(radius()).toBe('10px')
   })
+
+  it('follows the toolbox in the tab in front: tab A docked at the bottom, tab B undocked, switching tabs switches the frame’s shape', () => {
+    formFactor = 'desktop'
+    /** Both toolboxes up, each where its own view reported it; the setting says undocked. */
+    const perTab = (active: 'r1' | 'x1'): UIState => {
+      const base = withDevtools(['r1', 'x1'], 'undocked')
+      return {
+        ...base,
+        spaces: [{ ...base.spaces[0]!, activeTabId: active }],
+        tabs: {
+          r1: { ...base.tabs.r1!, devtools: { dock: 'bottom' } },
+          x1: { ...base.tabs.x1!, devtools: { dock: 'undocked' } }
+        }
+      }
+    }
+    render(perTab('r1'))
+    expect(radius()).toBe('0px')
+    rerender(perTab('x1'))
+    expect(radius()).toBe('10px')
+    rerender(perTab('r1'))
+    expect(radius()).toBe('0px')
+    // A's own button undocks it: whole again, whatever the setting.
+    const loose = perTab('r1')
+    rerender({
+      ...loose,
+      tabs: { ...loose.tabs, r1: { ...loose.tabs.r1!, devtools: { dock: 'undocked' } } }
+    })
+    expect(radius()).toBe('10px')
+  })
 })
 
 describe('the private theme the phone blends to', () => {

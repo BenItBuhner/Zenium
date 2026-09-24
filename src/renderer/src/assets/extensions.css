@@ -231,10 +231,14 @@
     align-items: flex-start;
     gap: 12px;
   }
+  /*
+   * The lead is full ink like the label it introduces (§10.4: §9.29 deemphasises supplementary
+   * text only, never .7); a stand-in for a picture the row has none of draws its own 69%.
+   */
   .zen-v2-row-lead {
     flex-shrink: 0;
     margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
-    color: var(--v2-text-deemphasized);
+    color: var(--v2-text);
   }
   .zen-v2-row-lead.lucide,
   .zen-v2-row-lead .lucide {
@@ -608,7 +612,7 @@
   }
   /*
    * The details level's Errors card: each line's leading glyph takes the §1 ink of its level
-   * (the row primitive's lead is deemphasised otherwise), its message clamps to two lines then
+   * (the row primitive's lead is the text ink otherwise), its message clamps to two lines then
    * an ellipsis (§9.2; a log line can be long), and "Clear errors" sits in a §9.11 desktop
    * footer – hugging, end-aligned, 32 tall – 12 under the rows as the Permissions card's caption
    * is.

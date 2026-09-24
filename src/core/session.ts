@@ -51,6 +51,8 @@ export function closedTabEntry(
       discarded: true,
       loading: false,
       audible: false,
+      // The toolbox went with the page: a session's own, never in the entry.
+      devtools: undefined,
       // Reopened by the user later, not by the app that once sent the URL.
       fromIntent: false
     },

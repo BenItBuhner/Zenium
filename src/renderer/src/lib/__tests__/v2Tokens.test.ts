@@ -1014,6 +1014,39 @@ describe('the v2 primitives (§9.34)', () => {
     expect(rule('.zen-phone-field:focus-within')).toMatch(/outline: 2px solid var\(--v2-ring\)/)
   })
 
+  it('give the pairing PIN its digits’ look on a class of the prompt’s (#425’s `className` slot), no rule reaching into the field by its label', () => {
+    // The Bluetooth `providePin` prompt (devices/DeviceChooserDialog.tsx) hands `PromptField`
+    // `inputMode: 'numeric'`, `pattern: '[0-9]*'` and `className: 'zen-device-pairing-field'`;
+    // the class carries the value's look – tabular digits, letter-spaced so six read as six – and
+    // nothing of the field's box, which is the primitive's. The rule main.css once aimed at the
+    // primitive from outside (`.zen-confirm-dialog[data-pairing-kind='providePin']
+    // .zen-v2-field[aria-label='PIN']`) is gone, and so is the `data-pairing-kind` handle it hung
+    // on (the prompt's root carries the primitive's `data-confirm` alone): no stylesheet names
+    // either, so the field's name can change without its look.
+    expect(bare.match(/\.zen-device-pairing-field \{/g)).toHaveLength(1)
+    expect(block('.zen-device-pairing-field').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  font-variant-numeric: tabular-nums;',
+      '  letter-spacing: 0.25em;'
+    ])
+    expect(nesting(ruleAt('.zen-device-pairing-field'))).toBe(0)
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => f.endsWith('.css'))) {
+      const text = readFileSync(join(root, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      expect(text, `${file} reaches into the pairing prompt's field`).not.toMatch(
+        /data-pairing-kind|\.zen-v2-field\[aria-label/
+      )
+    }
+    const prompt = readFileSync(
+      fileURLToPath(new URL('../../components/devices/DeviceChooserDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+    expect(prompt).toMatch(
+      /inputMode: 'numeric',\n\s*pattern: '\[0-9\]\*',\n\s*className: 'zen-device-pairing-field'/
+    )
+  })
+
   it('gate the row’s hover fill, press fill and pointer cursor on [data-static], as part of the one row rule', () => {
     // The static row (§9.34) is the row primitive with `data-static`: the attribute is read in
     // exactly three places, all in the row's own rule set – the static rule, and the `:not()` of
@@ -1201,6 +1234,23 @@ describe('the v2 primitives (§9.34)', () => {
       // column (every row fills it), a lone status row's glyph trails (§9.33).
       expect(bare).not.toContain(`.zen-settings-row[data-tone='${tone}'] .zen-settings-leading`)
     }
+  })
+
+  it('hand the phone row’s glyph the text token the desktop lead names (§10.4; the twin of #425’s lead-slot pin)', () => {
+    // The desktop row anatomy's lead (`.zen-v2-row-lead`, extensions.css) is pinned at
+    // `--v2-text` by the W5-3 audit below (#425), with no stylesheet softening the slot. This is
+    // the phone twin the lead's #418 ruling 4 matched it to: the phone row (`.zen-sheet-item`)
+    // colours itself with the same token and its glyph rule (`.zen-sheet-item-glyph`) sets no
+    // colour of its own, so the glyph inherits it – the two hosts' leading glyphs read one token.
+    const declarations = (text: string, selector: string): string[] => {
+      const at = text.indexOf(`\n  ${selector} {`)
+      expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+      return text.slice(at, text.indexOf('\n  }', at)).match(/^ {4}[a-z-]+:[^;]+;/gm) ?? []
+    }
+    expect(declarations(css, '.zen-sheet-item')).toContain('    color: var(--v2-text);')
+    expect(declarations(css, '.zen-sheet-item-glyph')).not.toContainEqual(
+      expect.stringMatching(/^ {4}color:/)
+    )
   })
 
   it('draw an inline link as text with a 40 % underline, the accent on hover and focus-visible (§9.10): one unlayered rule, the old forms gone', () => {
@@ -1829,5 +1879,152 @@ describe('the system font size above the default (§4 / §9.2, A11Y-05)', () => 
         `${token}: min(900, calc(${base} + var(--zen-font-weight-adjustment)));`
       )
     expect(css).toContain('font-weight: min(900, calc(700 + var(--zen-font-weight-adjustment)));')
+  })
+})
+
+describe('the leading glyph’s ink (§10.4; the W5-3 audit)', () => {
+  /** A renderer source or stylesheet by its path under `src/renderer/src`. */
+  const read = (path: string): string =>
+    readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8')
+  const strip = (source: string): string => source.replace(/\/\*[\s\S]*?\*\//g, '')
+  /**
+   * Where the first rule whose whole selector is `selector` opens in `source` (its comments
+   * stripped so prose cannot match): at any indent, and not a line continuing a selector list.
+   */
+  const ruleIndex = (source: string, selector: string): number => {
+    const at = strip(source).search(
+      new RegExp(`(^|(?<!,)\\n)[ \\t]*${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{`)
+    )
+    expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+    return at
+  }
+  /** The declarations of that rule, each trimmed. */
+  const declarations = (source: string, selector: string): string[] => {
+    const text = strip(source)
+    const open = text.indexOf('{', ruleIndex(source, selector))
+    return (text.slice(open + 1, text.indexOf('}', open)).match(/[a-z-]+:[^;]+;/g) ?? []).map((d) =>
+      d.trim()
+    )
+  }
+  const extensions = read('assets/extensions.css')
+  const autofill = read('assets/autofill.css')
+
+  it('draws the shared row primitive’s lead slot in the text ink – every consumer’s leading glyph with it', () => {
+    // §10.4: a leading glyph is full ink like the label it introduces; §9.29 deemphasises
+    // supplementary text only, never .7. The one rule in extensions.css is the primitive's
+    // (device rows, the share and blocked-popups rows, the extension surfaces' `V2Row`).
+    expect(declarations(extensions, '.zen-v2-row-lead')).toEqual([
+      'flex-shrink: 0;',
+      'margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);',
+      'color: var(--v2-text);'
+    ])
+    expect(extensions.match(/\n {2}\.zen-v2-row-lead \{/g)).toHaveLength(1)
+    // No stylesheet softens the slot again: a `.zen-v2-row-lead` rule anywhere names a status
+    // ink (the row's tone, the errors card's level) or the text ink, never the deemphasised one.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => f.endsWith('.css'))) {
+      const text = readFileSync(join(root, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const rule of text.matchAll(/[^{}]*\.zen-v2-row-lead[^{]*\{([^}]*)\}/g))
+        expect(rule[1], `${file} softens the lead slot`).not.toMatch(/text-deemphasized/)
+    }
+  })
+
+  it('draws the downloads glyph in the row’s ink, a gone record’s glyph dimmed to .4 as before', () => {
+    // The bubble's and the page's rows share `.zen-dl-glyph`; the record whose file is gone
+    // takes `opacity-40` on the glyph in `FileTypeGlyph` (DownloadParts.tsx) – the token untouched.
+    expect(declarations(css, '.zen-dl-glyph')).toContain('color: var(--v2-text);')
+    expect(declarations(css, '.zen-dl-glyph')).not.toContain('color: var(--v2-text-deemphasized);')
+    expect(read('components/downloads/DownloadParts.tsx')).toMatch(
+      /className=\{cn\('zen-dl-glyph', gone && 'opacity-40'\)\}/
+    )
+  })
+
+  it('draws the omnibox row’s kind glyph in the row’s ink and the stand-in globe alone at 69%', () => {
+    // The slot's rule is the text ink; the globe – a `url` row with no favicon to show – takes
+    // the deemphasised token through its own class, §10.4's one exception (Chrome's grey
+    // globe), and the clock, the star, the magnifier and a page's registry glyph do not.
+    expect(declarations(css, '.zen-omnibox-row-icon')).toEqual([
+      'width: var(--v2-icon);',
+      'height: var(--v2-icon);',
+      'color: var(--v2-text);'
+    ])
+    expect(declarations(css, '.zen-omnibox-row-icon.zen-omnibox-row-globe')).toEqual([
+      'color: var(--v2-text-deemphasized);'
+    ])
+    const urlbar = read('components/urlbar/Urlbar.tsx')
+    expect(urlbar).toMatch(/const standIn = !favicon && !page && item\.kind === 'url'/)
+    expect(urlbar).toMatch(/standIn && 'zen-omnibox-row-globe'/)
+    expect(urlbar).not.toMatch(/deemphasised ink \(`V2_GLYPH`\)/)
+  })
+
+  it('draws a bookmark folder at full ink wherever it leads, the stand-in globe at 69%', () => {
+    // `BookmarkIcon` (the bar's chips, a folder menu's rows, the drag ghost): the folder carries
+    // no opacity – a folder is the row's subject – and the globe the stand-in's 69%, not the
+    // 50 it had. The manager's rows restate both in the page's tokens: one rule inks both
+    // glyphs with the text token, and the globe's own rule after it takes the deemphasised one.
+    const icon = read('components/bookmarks/BookmarkIcon.tsx')
+    expect(icon).toMatch(/<Folder className=\{cn\('zen-bm-glyph-folder', className\)\}/)
+    expect(icon).toMatch(/className=\{cn\('zen-bm-glyph-globe opacity-\[0\.69\]', className\)\}/)
+    expect(icon).not.toMatch(/opacity-(50|70)/)
+    const both = '.zen-bm-row-glyph.zen-bm-glyph-folder,\n.zen-bm-row-glyph.zen-bm-glyph-globe'
+    expect(declarations(css, both)).toEqual([
+      'border-radius: 0;',
+      'stroke-width: var(--v2-icon-stroke);',
+      'color: var(--v2-text);',
+      'opacity: 1;'
+    ])
+    expect(declarations(css, '.zen-bm-row-glyph.zen-bm-glyph-globe')).toEqual([
+      'color: var(--v2-text-deemphasized);'
+    ])
+    expect(ruleIndex(css, '.zen-bm-row-glyph.zen-bm-glyph-globe')).toBeGreaterThan(
+      ruleIndex(css, both)
+    )
+    // The folder column's glyph (§10.5's nav rows) and the ⋮ menu's row glyphs: the row's ink.
+    expect(declarations(css, '.zen-bm-tree-glyph')).toContain('color: var(--v2-text);')
+    expect(declarations(css, '.zen-bm-tree-glyph')).not.toContain(
+      'color: var(--v2-text-deemphasized);'
+    )
+    expect(read('components/pages/bookmarks/BookmarkManager.tsx')).toMatch(
+      /<span className="flex h-4 w-4 items-center justify-center">\{icon\}<\/span>/
+    )
+  })
+
+  it('draws the history page’s window row glyph in the row’s ink and keeps the favicon stand-in at 69%', () => {
+    // A closed window is the row's subject – a page tab's registry glyph in the slot, §10.1 –
+    // while the globe for a page that offered no favicon stays the stand-in.
+    const history = read('components/pages/history/HistoryPage.tsx')
+    expect(history).toMatch(/<AppWindow className="zen-page-row-favicon zen-page-row-glyph" \/>/)
+    expect(history).not.toMatch(/AppWindow className="[^"]*zen-page-row-favicon-fallback/)
+    expect(declarations(css, '.zen-page-row-glyph')).toContain('color: var(--v2-text);')
+    expect(declarations(css, '.zen-page-row-favicon-fallback')).toContain(
+      'color: var(--v2-text-deemphasized);'
+    )
+  })
+
+  it('draws the autofill row’s kind glyph in the row’s ink, the disabled row one ink at .4', () => {
+    expect(declarations(autofill, '.zen-v2-af-row-icon')).toContain('color: var(--v2-text);')
+    expect(declarations(autofill, '.zen-v2-af-row-icon')).not.toContain(
+      'color: var(--v2-text-deemphasized);'
+    )
+    expect(declarations(autofill, '.zen-v2-af-row:disabled')).toEqual(['opacity: 0.4;'])
+  })
+
+  it('draws the extensions panel’s Manage row glyph in the row’s ink', () => {
+    const panel = read('components/extensions/ToolbarActions.tsx')
+    expect(panel).toMatch(/<SlidersHorizontal aria-hidden \/>/)
+    expect(panel).not.toMatch(/SlidersHorizontal className="zen-v2-deemphasized"/)
+  })
+
+  it('keeps the stand-ins for a picture a row has none of at 69% (§10.4’s one exception)', () => {
+    // The history menu's globe, the extension icon's puzzle: each a stand-in, each the
+    // surface's deemphasised token, untouched by the audit.
+    expect(declarations(css, '.zen-histmenu-favicon-fallback')).toContain(
+      'color: var(--v2-text-deemphasized);'
+    )
+    expect(declarations(extensions, '.zen-ext-icon-glyph')).toContain(
+      'color: var(--v2-control-text-deemphasized);'
+    )
   })
 })

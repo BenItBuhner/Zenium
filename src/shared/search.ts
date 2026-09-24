@@ -200,13 +200,17 @@ function uniqueEngineId(prefix: string, name: string, existing: readonly SearchE
 }
 
 /**
- * The engine a Settings > Search form adds: its name and template, a keyword and glyph derived
- * from the name, no suggestions (a hand-typed engine offers no suggest endpoint).
+ * The engine a Settings > Search form adds: its name and template, the shortcut the form typed
+ * (`keyword`, `@` or not, normalised as `editedSearchEngine` keeps an edit's) or – left empty,
+ * or not given – one derived from the name, a glyph derived from the name, no suggestions (a
+ * hand-typed engine offers no suggest endpoint). A typed word another engine answers to is the
+ * caller's to refuse first (`engineKeywordProblem`); this takes it as it is.
  */
 export function customSearchEngine(
   name: string,
   url: string,
-  existing: readonly SearchEngine[]
+  existing: readonly SearchEngine[],
+  keyword = ''
 ): SearchEngine {
   const cleanName = name.trim().slice(0, MAX_ENGINE_NAME)
   return {
@@ -214,7 +218,7 @@ export function customSearchEngine(
     name: cleanName,
     searchUrl: url.trim(),
     suggestUrl: null,
-    keyword: uniqueEngineKeyword(cleanName, existing),
+    keyword: normalizeEngineKeyword(keyword) ?? uniqueEngineKeyword(cleanName, existing),
     glyph: engineGlyph(cleanName),
     source: 'custom',
     favicon: null
@@ -243,8 +247,10 @@ export function normalizeEngineKeyword(input: string): string | null {
 
 /**
  * Why `input` cannot be the shortcut of the engine `engineId`, or null when it can – or when it
- * is empty, and the shortcut derived from the name stands in (`editedSearchEngine`): spaces or
- * length, one of Zenium's own scopes (`@tabs`), or a word another engine already answers to.
+ * is empty, and the shortcut derived from the name stands in (`editedSearchEngine`): a bare `@`
+ * (a word missing), spaces or length, one of Zenium's own scopes (`@tabs`), or a word another
+ * engine already answers to. An engine being added has no id yet: given one no engine has (the
+ * empty string – `sanitizeSearchEngine` keeps none), every engine's word is another's.
  */
 export function engineKeywordProblem(
   input: string,
@@ -253,6 +259,8 @@ export function engineKeywordProblem(
 ): string | null {
   const word = input.trim()
   if (!word) return null
+  // The `@` alone fails the normalising the same way a long word does; it is not a long word.
+  if (word === '@') return 'Type a word after the @'
   const keyword = normalizeEngineKeyword(word)
   if (!keyword)
     return /\s/.test(word) ? 'A shortcut is one word, with no spaces' : 'The shortcut is too long'

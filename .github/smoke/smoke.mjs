@@ -3917,12 +3917,15 @@ async function scenarioWalkthrough() {
       await page.first().waitFor({ state: 'visible', timeout: 10000 })
       await s.settle()
       await s.chrome.locator('.zen-settings-nav-item', { hasText: 'Search' }).first().click()
-      // An engine to open a dialog on: the "Add search engine" form dialog adds one.
+      // An engine to open a dialog on: the "Add search engine" form dialog adds one – its three
+      // fields, the shortcut between the name and the URL (W4-10; it may be left empty when
+      // adding, and a typed one is checked), the button held until the name and the URL are in.
       await s.chrome.locator('[data-row="add-search-engine"] button').first().click()
       const form = s.chrome.locator('[data-dialog="form:add-search-engine"]')
       await form.waitFor({ state: 'visible', timeout: 5000 })
       const name = 'Smoke Search'
       await form.locator('#search-engine-name').fill(name)
+      await form.locator('#search-engine-shortcut').fill('@smoke')
       await form.locator('#search-engine-url').fill('https://example.com/search?q=%s')
       await form.getByRole('button', { name: 'Add', exact: true }).click()
       await form.waitFor({ state: 'hidden', timeout: 5000 })
@@ -6030,6 +6033,9 @@ async function main() {
           ps,
           fixture: bootSite,
           label: opts.label,
+          // The class key's IconUri has to be this build's (under the executable's directory),
+          // not what the leg before or the seed left in it.
+          exe: opts.exe,
           // The installed build's shortcuts carry the AUMID (the installer's WinShell); the
           // unpacked build has none and rides on the class key it registers for itself.
           expectShortcuts: IS_WIN && opts.label === 'installed',

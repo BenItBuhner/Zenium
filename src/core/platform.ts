@@ -602,13 +602,19 @@ export interface TabViewEvents {
   onRequestsBlocked(count: number): void
   onEnterHtmlFullscreen(): void
   onLeaveHtmlFullscreen(): void
-  onDevtoolsOpened(): void
+  /**
+   * The toolbox is up, at `dock` where the host knows it (the dock it opened the toolbox at;
+   * `Tab.devtools` takes it, and the frame's radius follows this tab's toolbox rather than the
+   * setting). A host that cannot say leaves it out and the core reads the setting's dock.
+   */
+  onDevtoolsOpened(dock?: DevtoolsDock): void
   onDevtoolsClosed(): void
   /**
    * The user moved the toolbox from inside it (its own dock buttons: bottom, right, left,
-   * undocked); the core remembers the dock as it remembers the app menu's choice (design
-   * language v2 §9.29: "the user's last choice remembered"). Hosts that cannot read the
-   * toolbox's dock need not call it.
+   * undocked), or the host moved it for the app menu's rows; the core notes where this tab's
+   * toolbox stands (`Tab.devtools`) and remembers the dock as it remembers the app menu's
+   * choice (design language v2 §9.29: "the user's last choice remembered"). Hosts that cannot
+   * read the toolbox's dock need not call it.
    */
   onDevtoolsDockChanged?(dock: DevtoolsDock): void
   onFoundInPage(result: FindResultInfo): void
@@ -825,6 +831,12 @@ export interface TabView {
   savePage(suggestedName: string): Promise<string | null>
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
   snapshot(): Promise<string | null>
+  /**
+   * The picture of a developer toolbox docked in the view's box (design language v2 §9.29), the
+   * whole box at its size, for the cover to lay under the page's picture while a menu is up;
+   * null with no toolbox docked there. Hosts without an in-frame toolbox leave it out.
+   */
+  snapshotDevtools?(): Promise<string | null>
   /**
    * Full-resolution PNG saved to the downloads location; resolves with the saved path. The
    * visible area, or with `fullPage` the whole document beyond the viewport (hosts that cannot

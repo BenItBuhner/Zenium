@@ -1199,7 +1199,7 @@ export class Menus {
     return items
   }
 
-  /** The page's own actions: bookmark, save, print, screenshot, Reader View, Translate Page. */
+  /** The page's own actions: bookmark, save, print, capture, Reader View, Translate Page. */
   private pageGroup(tab: Tab, win: ZenWindow): Template {
     const { state, reader, translate } = this.browser
     const run = (
@@ -1211,6 +1211,27 @@ export class Menus {
         | 'capture.start'
     ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
+    // The captures, as the app menu has them (the #396 review's ruling 3, extended to this menu
+    // by the lead on #414): on the desktop one Web Capture… row – Edge's, whose overlay offers
+    // the visible area, the full page and an area select, so a menu that said capture three
+    // times (Take Screenshot, Capture Full Page, Capture Page…) says it once, with the chord the
+    // key table gives `capture.start` (Ctrl+Shift+S in the Chrome preset) after the label. A
+    // touch host has no overlay and keeps the two one-shot rows.
+    const captures: Template =
+      win.formFactor === 'desktop'
+        ? [{ label: 'Web Capture…', action: 'capture.start', click: () => run('capture.start') }]
+        : [
+            {
+              label: 'Take Screenshot',
+              action: 'page.screenshot',
+              click: () => run('page.screenshot')
+            },
+            {
+              label: 'Capture Full Page',
+              action: 'page.captureFullPage',
+              click: () => run('page.captureFullPage')
+            }
+          ]
     return [
       {
         label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Page',
@@ -1227,22 +1248,7 @@ export class Menus {
             }
           ]
         : []),
-      { label: 'Take Screenshot', action: 'page.screenshot', click: () => run('page.screenshot') },
-      {
-        label: 'Capture Full Page',
-        action: 'page.captureFullPage',
-        click: () => run('page.captureFullPage')
-      },
-      // Edge's Web capture row (a region of the dimmed page): the desktop's overlay alone.
-      ...(win.formFactor === 'desktop'
-        ? [
-            {
-              label: 'Capture Page…',
-              action: 'capture.start' as const,
-              click: () => run('capture.start')
-            }
-          ]
-        : []),
+      ...captures,
       {
         label: readerOpen ? 'Exit Reader View' : 'Enter Reader View',
         enabled: readerOpen || reader.canRead(tab),
@@ -3423,7 +3429,7 @@ export class Menus {
         // row is where it goes; with the button up, the button is the hub). The phone has its
         // own chip and sheet (§9.33).
         ...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win)),
-        // Forward folded off the desktop's bar (Look and Feel › Customize toolbar, settings-36)
+        // Forward folded off the desktop's bar (Look and Feel › Customise toolbar, settings-36)
         // heads the menu the same way: the row is where the button went.
         ...desktop(...this.foldedForwardRow(win, active)),
         // The tabs and windows.
@@ -3495,7 +3501,8 @@ export class Menus {
           // whose zoom is the sheet keeps it here with the other window toggles.
           // The two captures are the tablet's: on the desktop they fold into Save and Share's
           // Web Capture… (the #396 review's ruling 3), whose overlay takes the visible area and
-          // the full page both; the page context menu keeps its own capture rows on every host.
+          // the full page both; the desktop's page context menu folds its three the same way
+          // (`pageGroup`), the touch hosts' keeps the two one-shot rows.
           submenu: tidySeparators([
             ...openInApp,
             separator,
@@ -3582,7 +3589,7 @@ export class Menus {
   }
 
   /**
-   * The desktop bar's Forward button, folded into the menu when Look and Feel › Customize
+   * The desktop bar's Forward button, folded into the menu when Look and Feel › Customise
    * toolbar unpins it (`Settings.toolbarPins.forward === false`, `shared/toolbarPins.ts`):
    * the row runs what the button ran and is disabled, not dropped, on the last entry (design
    * language v2 §9.30), so the menu keeps its shape from one opening to the next. Nothing

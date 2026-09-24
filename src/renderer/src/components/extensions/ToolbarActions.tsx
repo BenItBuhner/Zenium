@@ -254,7 +254,7 @@ function ExtensionsPanel({
               void openOverlay('addons', activeTab(state)?.id ?? null)
             }}
           >
-            <SlidersHorizontal className="zen-v2-deemphasized" />
+            <SlidersHorizontal aria-hidden />
             <span className="min-w-0 flex-1 truncate">Manage Extensions</span>
           </button>
         </div>

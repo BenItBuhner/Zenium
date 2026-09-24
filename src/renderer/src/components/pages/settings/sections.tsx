@@ -177,7 +177,6 @@ import { AboutVersionBlock } from './AboutVersionBlock'
 import { CustomizeToolbarForm } from './CustomizeToolbarForm'
 import { extensionsGroups } from './extensions'
 import { LayoutCards } from './LayoutCards'
-import { SearchEngineEditForm } from './SearchEngineEditForm'
 import {
   choice,
   onLayout,
@@ -2773,9 +2772,17 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           form: {
             title: 'Add search engine',
             description: 'Put %s in the URL where the search terms go.',
+            // The form's shortcut goes to the command as the engine's `keyword` (W5-4): a typed
+            // word – checked against every engine of the profile (`engines`, no `engineId`) as
+            // the Edit form's is, and refused by the core with the same line – is the engine's;
+            // left empty, the engine derives one from the name (`customSearchEngine`).
             render: (close) => (
               <SearchEngineForm
-                onAdd={(name, url) => cmd('search.addEngine', { name, url })}
+                action="Add"
+                engines={state.searchEngines}
+                onSubmit={({ name, url, shortcut }) =>
+                  cmd('search.addEngine', { name, url, keyword: shortcut })
+                }
                 close={close}
               />
             )
@@ -2835,11 +2842,19 @@ function searchEngineItem(
       form: {
         title: 'Edit search engine',
         description: 'Put %s in the URL where the search terms go.',
+        // The Add form (`SearchEngineForm`, the chassis's one Add / Edit form) pre-filled from
+        // the engine, Save as its verb; the shortcut is checked by the shared keyword rule
+        // against the profile's other engines (`engineId` excepts the engine's own word) and
+        // goes to the command as the engine's `keyword`, `@` or not – the core normalises it.
         render: (close) => (
-          <SearchEngineEditForm
-            engine={e}
+          <SearchEngineForm
+            initial={{ name: e.name, url: e.searchUrl, shortcut: e.keyword }}
+            action="Save"
             engines={state.searchEngines}
-            onSave={(edits) => cmd('search.updateEngine', { id: e.id, ...edits })}
+            engineId={e.id}
+            onSubmit={({ name, url, shortcut }) =>
+              cmd('search.updateEngine', { id: e.id, name, searchUrl: url, keyword: shortcut })
+            }
             close={close}
           />
         )
