@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NewTabPageAction, NewTabPageState } from '../types'
 import { PRIVATE_COOKIES, newTabPageHtml } from '../newTabPage'
 import { installNewTabPage, type NewTabTransport } from '../newTabPageScript'
@@ -348,5 +348,37 @@ describe('zen://newtab: the toast\'s "Restore default shortcuts" link', () => {
     })
     expect(h.sent.some((a) => a.type === 'restore-default-shortcuts')).toBe(false)
     expect(toast().hidden).toBe(true)
+  })
+
+  it('a drag that reorders the shortcuts sends the new order and raises no toast (Chrome raises none; a move is undone by dragging back)', () => {
+    // The drag's frames are taken by hand: every slot measures alike in happy-dom, so the
+    // nearest slot to a moved tile is the first, and the drop settles on its spring frame by
+    // frame until the script commits the order.
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+    try {
+      const { h } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
+      const link = document.querySelector<HTMLElement>(
+        '.zen-tile[data-id="s2"] a.zen-v2-shortcut'
+      ) as HTMLElement
+      const pointer = (type: string, clientX: number): boolean =>
+        link.dispatchEvent(
+          new PointerEvent(type, { bubbles: true, button: 0, pointerId: 1, clientX, clientY: 0 })
+        )
+      pointer('pointerdown', 0)
+      pointer('pointermove', 12)
+      pointer('pointerup', 12)
+      let now = performance.now()
+      for (let i = 0; frames.length && i < 1000; i++) {
+        now += 16
+        ;(frames.shift() as FrameRequestCallback)(now)
+      }
+      expect(h.sent.at(-1)).toEqual({ type: 'reorder-shortcuts', ids: ['s2', 's1'] })
+      expect(toast().hidden).toBe(true)
+      expect(buttons()).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

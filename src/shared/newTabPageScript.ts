@@ -630,7 +630,7 @@ class NewTabPage {
 
   /**
    * The toast (v2 §9.21, §9.33: 8 s while it offers Undo): a sentence, Undo, and – after a
-   * change to the grid – Chrome's "Restore default shortcuts" link (NTP-22), which puts the grid
+   * removal from the grid – Chrome's "Restore default shortcuts" link (NTP-22), which puts the grid
    * back to a fresh profile's (the most visited mode, no pins, no removed sites) and offers its
    * own Undo in turn, so no confirmation stands before it (§10.5).
    */
@@ -933,12 +933,9 @@ class NewTabPage {
       const byId = new Map(this.tiles.map((t) => [t.id, t]))
       this.tiles = order.map((id) => byId.get(id)).filter((t): t is Tile => Boolean(t))
       this.focusIndex = drag.to
+      // No toast for a move (Chrome raises none): a tile dropped in the wrong slot is dragged
+      // back; the toast is the removal's, where the tile is gone from under the pointer.
       this.transport.send({ type: 'reorder-shortcuts', ids: order })
-      // A move is undone by asking for the order it left; the browser's push redraws the grid.
-      const before = drag.ids
-      this.showToast('Shortcut moved', () =>
-        this.transport.send({ type: 'reorder-shortcuts', ids: before })
-      )
     }
     this.renderGrid()
     this.setFocusIndex(this.focusIndex, false)
