@@ -315,10 +315,11 @@
     {
       "id": "share",
       "class": "ShareDemo",
-      "shard": "phone-b",
+      "shard": "phone-e",
       "mirrors": "android-share-demo.yml",
       "dir": "share-demo",
-      "estimate": 2.5
+      "estimate": 2.5,
+      "note": "On phone-e since the accessibility pass 2 grew a11y-chrome to 14.5 with #422's widget driver already on phone-b (70 of 68 together): the plain driver that fit phone-e's room (63.5 before it, 66 with it; phone-b 67.5)."
     },
     {
       "id": "share-api33",
@@ -358,14 +359,14 @@
     {
       "id": "appicon",
       "class": "AppIconDemo",
-      "shard": "phone-b",
+      "shard": "phone-a",
       "mirrors": "android-appicon-demo.yml",
       "dir": "appicon-demo",
       "env": {
         "DEMO_THEME": "light"
       },
       "estimate": 1.5,
-      "note": "The workflow runs light and dark; the nightly runs light."
+      "note": "The workflow runs light and dark; the nightly runs light. On phone-a since the accessibility pass 2's group actions scene grew a11y-chrome to 15 (phone-b 68 of 68 with it here; 66.5 without, phone-a 66.5 with it)."
     },
     {
       "id": "pdf-viewer-ui",
@@ -503,8 +504,8 @@
         "DEMO_INSTRUMENT_FLAGS": "--no-hidden-api-checks"
       },
       "timeout": 1500,
-      "estimate": 11.5,
-      "note": "Every scene but the private one (that scene needs the multi-profile WebView: the webview shard's a11y-chrome-private). Last on the shard: TalkBack and the font scale are put back by the runner's reset in any case."
+      "estimate": 15,
+      "note": "Every scene but the private one (that scene needs the multi-profile WebView: the webview shard's a11y-chrome-private), the accessibility pass 2 scenes among them (the menu's list pose under touch exploration and at font scale 1.3, the sheet labels against the two-line rule, a group card's actions as a reader reaches them, the announcements, the hidden page layers, the name audit). Last on the shard: TalkBack, touch exploration and the font scale are put back by the runner's reset in any case."
     },
     {
       "id": "fonts-languages-ui",

@@ -28,6 +28,7 @@ import { DISPLAY_MODE_CHANNEL } from '../../shared/displayMode'
 import { SCREEN_CAPTURE_INTENT_CHANNEL } from '../../shared/screenCapture'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
+  NOTIFICATION_REQUEST_CHANNEL,
   type NotificationPermissionStatus
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
@@ -91,6 +92,11 @@ import { applyAppIcon, iconPngPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
 import { ElectronShortcuts } from './shortcuts'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
+import {
+  NotificationRequestRelay,
+  decideNotificationRequest,
+  relayedFrom
+} from './notificationRequests'
 import { createPasswordsHost } from './passwords'
 import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webauthn'
 import { attachBluetoothChoosers, attachDeviceHandlers } from './devices'
@@ -253,6 +259,8 @@ export class ElectronPlatform implements Platform {
       this.browser?.toast(mediaRefusedMessage(kind), 'error')
     }
   })
+  /** The gesture behind each page's `Notification.requestPermission()`, relayed by its preload. */
+  private readonly notificationRequests = new NotificationRequestRelay()
 
   constructor(
     private readonly userDataDir: string,
@@ -745,6 +753,24 @@ export class ElectronPlatform implements Platform {
         void external.request(tabId, request.externalUrl).then(callback)
         return
       }
+      // A tab page's notification request takes the core's own rule (`webNotifications.decide`,
+      // the one Android's page script reaches): a site dismissed before, or a request without a
+      // gesture behind it, asks quietly – the bell in the pill's slot – and a first gestured ask
+      // is the loud prompt; the answer of either resolves the engine's request here. The gesture
+      // is the page bridge's word, relayed ahead of the engine's request and matched to it
+      // (`notificationRequests.ts`).
+      if (permission === 'notifications' && tabId && webContents) {
+        void decideNotificationRequest(
+          this.browser.webNotifications,
+          this.notificationRequests,
+          webContents.id,
+          tabId,
+          url,
+          details.isMainFrame,
+          request
+        ).then(callback)
+        return
+      }
       // A page locking the keyboard keeps Esc: the fullscreen hint says to hold it instead.
       if (permission === 'keyboardLock' && tabId)
         this.browser.fullscreen.keyboardLockRequested(tabId)
@@ -854,6 +880,18 @@ export class ElectronPlatform implements Platform {
       const url = event.senderFrame?.url ?? event.sender.getURL()
       event.returnValue = statusOf(url, event.sender)
     })
+    // The page bridge's word on a `requestPermission()` call – the gesture behind it – ahead of
+    // the engine's own request, for the permission request handler to match (`attachPermissions`).
+    ipcMain.on(NOTIFICATION_REQUEST_CHANNEL, (event, gesture: unknown) => {
+      if (!this.views.viewForWebContents(event.sender)) return
+      this.notificationRequests.note(event.sender.id, {
+        gesture: typeof gesture === 'boolean' ? gesture : undefined,
+        ...relayedFrom(event.senderFrame, event.sender.getURL())
+      })
+    })
+    this.views.onViewCreated((view) =>
+      view.webContents.once('destroyed', () => this.notificationRequests.forget(view.webContentsId))
+    )
     permissions.subscribe((change) => {
       if (contentSettingId(change.permission) !== 'notifications') return
       for (const view of this.views.all()) {

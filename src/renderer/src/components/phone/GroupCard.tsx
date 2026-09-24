@@ -2,6 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { Folder, Tab } from '@shared/types'
+import { accessibilityStore } from '@renderer/lib/accessibilityState'
 import { run } from '@renderer/lib/api'
 import { groupColorVars } from '@renderer/lib/groups'
 import { CELL_ATTR, layoutAnimations } from '@renderer/lib/motion/flip'
@@ -12,6 +13,7 @@ import { cn } from '@renderer/lib/utils'
 import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
 import { departStore } from './departureStore'
+import { groupCardControls } from './groupActions'
 import { groupHeaderHeight } from './groupCardHeader'
 import { liftStore } from './useCardLift'
 import { useLongPress } from './useLongPress'
@@ -23,7 +25,11 @@ interface Props {
   folder: Folder
   tabs: Tab[]
   card: (tab: Tab) => JSX.Element
+  /** The header held: the group's hold sheet (`GroupSheet`) opens. */
   onMenu: (folder: Folder) => void
+  /** Close Group and Delete Group, the sheet's two that reach past the card (`groupActions`). */
+  onCloseGroup: (folder: Folder) => void
+  onDelete: (folder: Folder) => void
   /** Columns of the overview grid: a group of two or more spans them all and lays out in as many. */
   columns: number
   /**
@@ -60,6 +66,8 @@ export function GroupCard({
   tabs,
   card,
   onMenu,
+  onCloseGroup,
+  onDelete,
   columns,
   forming,
   dissolving = false,
@@ -72,6 +80,7 @@ export function GroupCard({
   const collapsed = folder.collapsed
   const key = `group:${folder.id}`
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
+  const touchExploring = accessibilityStore.use((s) => s.touchExploration)
   const targeted = liftStore.use(
     (s) =>
       s.phase === 'dragging' &&
@@ -293,6 +302,14 @@ export function GroupCard({
           style={{ transform: collapsed ? 'rotate(-90deg)' : 'none' }}
         />
       </div>
+      {touchExploring && !dissolving && (
+        <GroupCardControls
+          folder={folder}
+          count={count}
+          onCloseGroup={onCloseGroup}
+          onDelete={onDelete}
+        />
+      )}
       <div
         ref={bodyRef}
         className="grid gap-3"
@@ -305,6 +322,50 @@ export function GroupCard({
       >
         {tabs.map(card)}
       </div>
+    </div>
+  )
+}
+
+/**
+ * The group's actions as controls a reader reaches (A11Y-10), drawn under touch exploration
+ * alone: the hold sheet's rows – Rename, Ungroup, Close Group, Delete Group (`groupCardControls`;
+ * the fold is the header's own tap and its `aria-expanded`) – by the same names, next after the
+ * header in the reading order and out of sight (`sr-only`: a one-pixel box, not `display: none`,
+ * so the tree has them). The hold that opens the sheet is a gesture TalkBack passes through to
+ * the page (double-tap and hold), not an action the WebView exposes: Chromium's bridge
+ * advertises no `ACTION_LONG_CLICK` and ARIA has no custom-action vocabulary, so TalkBack's
+ * actions menu on the header lists Collapse / Expand and nothing of the sheet's; these controls
+ * put the sheet's rows within a swipe of the header. Without touch exploration nothing is drawn:
+ * a keyboard's Tab would stop on controls it cannot see.
+ */
+function GroupCardControls({
+  folder,
+  count,
+  onCloseGroup,
+  onDelete
+}: {
+  folder: Folder
+  count: number
+  onCloseGroup: (folder: Folder) => void
+  onDelete: (folder: Folder) => void
+}): JSX.Element {
+  const controls = groupCardControls(folder, count, {
+    closeGroup: onCloseGroup,
+    deleteGroup: onDelete
+  })
+  return (
+    <div className="relative" data-testid="group-card-controls">
+      {controls.map((action) => (
+        <button
+          key={action.id}
+          type="button"
+          className="sr-only"
+          data-group-action={action.id}
+          onClick={action.run}
+        >
+          {action.label}
+        </button>
+      ))}
     </div>
   )
 }

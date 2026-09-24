@@ -126,10 +126,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private val touchExplorationListener = AccessibilityManager.TouchExplorationStateChangeListener { enabled ->
         Log.d(TAG, "touch exploration ${if (enabled) "on: the bar stays put" else "off: the bar may hide on scroll again"}")
         chrome.barTouchExploration(enabled)
+        // The menu's list variant (A11Y-04) hears the same change with the font scale beside it.
+        chrome.hostEvent("accessibility", accessibilityState())
     }
 
     /** An accessibility service explores the screen by touch right now (TalkBack). */
     val touchExploration: Boolean get() = accessibility?.isTouchExplorationEnabled == true
+
+    /**
+     * Touch exploration and the system font scale as one payload (`AccessibilityState`): in the
+     * boot payload, and again as the `accessibility` host event on either's change.
+     */
+    fun accessibilityState(): JSONObject =
+        AccessibilityState.payload(touchExploration, activity.resources.configuration.fontScale)
 
     init {
         focusHandoff.wireChrome(chrome)
@@ -643,6 +652,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "readAloud" to readAloud.available,
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
                 "touchExploration" to touchExploration,
+                // The same flag with the font scale, the menu's list variant's state (A11Y-04);
+                // changes follow as `accessibility` host events.
+                "accessibility" to accessibilityState(),
                 // The device's connectivity at boot; changes follow as `connectivity` host events.
                 "online" to connectivity.online,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).
@@ -1462,6 +1474,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (view.parent == null) root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         // Last among the siblings at 0 too, for a reader of the order (the harness's veil watch).
         view.bringToFront()
+        // What the veil hides from the eye it hides from a screen reader too: the chrome's tree
+        // under it is the frame before the lock – a private page's title in the bar, its card in
+        // the overview – until the masked frame; the veil itself is no stop (A11Y-03). The
+        // private page views went with the arming ([onPrivateLockArmed], [TabHost.setVisible]).
+        chrome.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         Log.d(TAG, "private lock veil raised")
         if (lockVeil.windowVisible) main.postDelayed(veilDeadline, LockVeil.DEADLINE_MS)
     }
@@ -1477,6 +1494,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val view = veilView?.takeIf { it.parent != null } ?: return
         main.removeCallbacks(veilDeadline)
         root.removeView(view)
+        // The chrome under it is the masked one (or the released one) now: read again.
+        chrome.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
         Log.d(TAG, "private lock veil lowered: $why")
     }
 
@@ -1961,6 +1980,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // the lock cover is up – then it is the core's to bring back, not the release's.
         if (privateLock.forget(tabId)) refreshGuard()
         val ticket = pageVisibility.request(tabId, visible) ?: return
+        // What covers the page is up in the chrome already: out of a screen reader's tree from
+        // the ask, not from the frame the hide waits for (A11Y-03, [TabHost.hideRequested]).
+        tabs.hideRequested(tabId)
         // A page on its way off the screen has its card picture taken while it is still there. The
         // chrome may have just captured its cover for the same frame: the copy is shared, and a
         // fresh cover stands as the picture ([TabWebView.captureThumbnail]).

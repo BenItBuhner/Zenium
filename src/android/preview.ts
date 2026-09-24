@@ -407,6 +407,9 @@ export function createPreviewBridge(): NativeBridge {
   const textZoom = Number(params.get('textZoom')) || fontScale
   const fontWeightAdjustment = params.get('boldText') === '1' ? 300 : 0
   emulateTextZoom(textZoom)
+  // `?touchExploration=1` stands in for a service exploring by touch (TalkBack): the phone
+  // menu's icon row poses as its labelled list (A11Y-04), the bar that hides on scroll stays.
+  const touchExploration = params.get('touchExploration') === '1'
   // `?platform=linux|win32|darwin` makes the chrome report a desktop OS, so a capture taken at
   // the desktop form factor shows the desktop's platform-bound rows (the Default Browser
   // section, file URLs, the engine's name) rather than Android's. Capabilities stay the
@@ -623,6 +626,7 @@ export function createPreviewBridge(): NativeBridge {
       // A screen lock as the vault has one: `vault=none` is a device without (the lock switch
       // disabled, SET-17); a spec's `screenlock=` overrides it (previewStates.ts).
       screenLock: vaultMode !== 'none',
+      touchExploration,
       environment: {
         largeScreen: false,
         pointerAndKeyboard: false,

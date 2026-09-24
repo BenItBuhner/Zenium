@@ -13,6 +13,7 @@ import {
   Phone
 } from 'lucide-react'
 import type { MenuDescriptor, MenuGlyph, MenuHeader, MenuItemDescriptor } from '@shared/types'
+import { useMenuAsList } from '@renderer/lib/accessibilityState'
 import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
@@ -105,6 +106,12 @@ interface MenuNav {
  * type and radius, sections told apart by spacing alone, a title row like the drawer's. Picking
  * a row slides the sheet away first, so the host never snapshots the menu when it dims the page
  * for whatever the row opens.
+ *
+ * The icon row's two poses (A11Y-04): six icon buttons across one row at rest; under touch
+ * exploration (TalkBack) or at large text (`lib/accessibilityState.ts`) the same items as a
+ * list of §10.3 rows, the glyph leading and the label the visible text, so every action is
+ * one full-width stop with its name under the finger and its label in the enlarged type. The
+ * pose follows the state live while the sheet stands.
  */
 function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })
@@ -114,6 +121,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
     () => groupItems(path.length ? (path[path.length - 1].submenu ?? []) : menu.items),
     [path, menu.items]
   )
+  const iconsAsList = useMenuAsList()
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
 
@@ -169,11 +177,16 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       >
         {groups.map((group, index) =>
           isIconRow(group) ? (
-            <ul key={index} className="zen-menu-icon-row" aria-label="Page actions">
+            <ul
+              key={index}
+              className={iconsAsList ? 'zen-menu-icon-list' : 'zen-menu-icon-row'}
+              aria-label="Page actions"
+            >
               {group.map((item) => (
-                <li key={item.id} className="flex">
+                <li key={item.id} className={iconsAsList ? undefined : 'flex'}>
                   <IconRowButton
                     item={item}
+                    list={iconsAsList}
                     onPick={() => sheet.current?.dismiss(() => pickMenuItem(item.id))}
                   />
                 </li>
@@ -303,6 +316,13 @@ function LinkHeader({ header, titleId }: { header: MenuHeader; titleId: string }
  * fill; disabled at .4, §9.30) named by the item's label (§9.22), drawing the glyph the core
  * named. Picking it slides the sheet away and then runs the item, as a text row does.
  *
+ * As a `list` row (A11Y-04) the same item is a §10.3 sheet row: the glyph in the 20 leading
+ * slot at the gutter, the label as the row's visible text 12 after it (the labels aligned at
+ * 48, as the site-information sheet's rows), the row's full width the target and its height the
+ * line box's (it grows with the text). The name is the label either way – written for the
+ * glyph button, read from the text for the row – so what Voice Access hears matches what the
+ * eye reads, and `data-glyph` / `data-filled` say the same in both poses.
+ *
  * The star is the row's one stateful glyph (`StarGlyph`, shared with the bar's Bookmark):
  * `checked` is the page's bookmark. A press on an unfilled star fills it at once, on the fill's
  * spring, as the sheet starts to leave – the core saves the bookmark once the sheet is gone
@@ -311,13 +331,41 @@ function LinkHeader({ header, titleId }: { header: MenuHeader; titleId: string }
  */
 function IconRowButton({
   item,
-  onPick
+  onPick,
+  list = false
 }: {
   item: MenuItemDescriptor
   onPick: () => void
+  list?: boolean
 }): JSX.Element {
   const star = item.glyph === 'star'
   const [filled, setFilled] = useState(item.checked)
+  const glyph =
+    item.glyph === 'star' ? (
+      <StarGlyph filled={filled} />
+    ) : (
+      <MenuGlyphView glyph={item.glyph ?? 'info'} />
+    )
+  const pick = (): void => {
+    if (star && !filled) setFilled(true)
+    onPick()
+  }
+  if (list)
+    return (
+      <button
+        type="button"
+        className="zen-sheet-item"
+        disabled={!item.enabled}
+        data-glyph={item.glyph}
+        data-filled={star ? filled : undefined}
+        onClick={pick}
+      >
+        <span className="zen-sheet-item-glyph" aria-hidden>
+          {glyph}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      </button>
+    )
   return (
     <button
       type="button"
@@ -326,16 +374,9 @@ function IconRowButton({
       aria-label={item.label}
       data-glyph={item.glyph}
       data-filled={star ? filled : undefined}
-      onClick={() => {
-        if (star && !filled) setFilled(true)
-        onPick()
-      }}
+      onClick={pick}
     >
-      {item.glyph === 'star' ? (
-        <StarGlyph filled={filled} />
-      ) : (
-        <MenuGlyphView glyph={item.glyph ?? 'info'} />
-      )}
+      {glyph}
     </button>
   )
 }

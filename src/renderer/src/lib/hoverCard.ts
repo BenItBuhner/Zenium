@@ -1,5 +1,5 @@
 import { internalPageAliasUrl, isInternalPageUrl } from '@shared/internalPages'
-import type { Rect } from '@shared/types'
+import type { Rect, UIState } from '@shared/types'
 import {
   BLANK_URL,
   displayHost,
@@ -17,6 +17,7 @@ import {
   toRect
 } from './portals'
 import { activeTab } from './selectors'
+import { captureThumbnail } from './thumbnails'
 import {
   browserStore,
   captureActiveTab,
@@ -29,8 +30,9 @@ import {
 
 /**
  * The tab hover card (design-language-v2-draft §9.20, Chrome's tab hover card): a 320 wide
- * popover beside the sidebar with the row's full title and host, shown once the pointer has
- * rested on a row for `HOVER_CARD_DELAY`, or at once when keyboard focus lands on a row. One at
+ * popover beside the sidebar with the row's full title and host – and, for a page in the
+ * background, a preview of it above them (tabs-19) – shown once the pointer has rested on a
+ * row for `HOVER_CARD_DELAY`, or at once when keyboard focus lands on a row. One at
  * a time: while a card is up, moving to another row moves the card there without the wait,
  * the way Chrome's does. It never takes the pointer and goes away on any press, a drag, a
  * scroll of the list, Escape, the window losing focus, or the pointer leaving the rows.
@@ -72,8 +74,11 @@ export interface RowMeasure {
 type Measure = () => RowMeasure | null
 
 export interface HoverCardOptions {
-  /** Runs before a card shows (the app captures the page there); the card waits for it. */
-  prepare?: () => Promise<unknown>
+  /**
+   * Runs before a card shows, with the row's tab (the app captures the active page there, and
+   * the hovered page for the card's preview); the card waits for it.
+   */
+  prepare?: (tabId: string) => Promise<unknown>
   /**
    * Whether other chrome has the window right now – a popover, a menu, a dialog, an overlay:
    * no card shows while it says so (checked when the pointer arrives, when focus lands, and
@@ -97,7 +102,7 @@ export class HoverCardController {
   private pending: string | null = null
   /** Bumped by every cancel, so a capture that ends after one shows nothing. */
   private seq = 0
-  private readonly prepare: () => Promise<unknown>
+  private readonly prepare: (tabId: string) => Promise<unknown>
   private readonly blocked: () => boolean
   private readonly delay: number
   private readonly grace: number
@@ -194,7 +199,7 @@ export class HoverCardController {
     }
     const seq = ++this.seq
     this.pending = tabId
-    void this.prepare().then(
+    void this.prepare(tabId).then(
       () => {
         if (seq !== this.seq) return
         this.pending = null
@@ -244,11 +249,27 @@ export function chromeBusy(): boolean {
 }
 
 /**
+ * Whether the card for `tabId` previews the page (tabs-19): a tab that is not the active one
+ * (the active page is under the card itself) and has a live view to picture – a sleeping tab
+ * has none and shows none. The masked private row never gets a card at all (`TabItem`).
+ */
+export function hoverCardPreviews(state: UIState | null, tabId: string): boolean {
+  const tab = state?.tabs[tabId]
+  if (!tab || tab.discarded) return false
+  return activeTab(state)?.id !== tabId
+}
+
+/**
  * The app's controller. The card lives in the UI state so the content frame knows chrome
  * covers the page (`overlayCoversContent`), the active page is captured before it shows, and
  * the capture is let go once it is down and nothing else needs it. Hiding the page takes the
  * keyboard from it; the core gives it back with the layout that shows the page again (see
  * `applyLayout` in core/window.ts), so the card never has to ask.
+ *
+ * The hovered page is captured beside it for the card's preview (tabs-19), asked for fresh:
+ * its view is hidden, and Electron paints a hidden view on request (`window.snapshot(tabId,
+ * fresh)`); the two captures run together, so the card waits for the slower and not the sum.
+ * A host that cannot picture a hidden page answers null and the card shows no preview.
  */
 export const hoverCard = new HoverCardController(
   {
@@ -259,9 +280,13 @@ export const hoverCard = new HoverCardController(
     }
   },
   {
-    prepare: () => {
+    prepare: (tabId) => {
       const state = browserStore.get().state
-      return captureActiveTab(state ? (activeTab(state)?.id ?? null) : null)
+      const cover = captureActiveTab(state ? (activeTab(state)?.id ?? null) : null)
+      const preview = hoverCardPreviews(state, tabId)
+        ? captureThumbnail(tabId, { fresh: true })
+        : Promise.resolve(null)
+      return Promise.all([cover, preview])
     },
     blocked: chromeBusy
   }

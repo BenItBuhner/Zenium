@@ -377,6 +377,17 @@ export function hasClearable(items: readonly DownloadItem[]): boolean {
   return items.some((i) => !isActiveDownload(i))
 }
 
+/** How many rows "Clear all" takes off the list: every record that is not a transfer still running. */
+export function clearableCount(items: readonly DownloadItem[]): number {
+  return items.filter((i) => !isActiveDownload(i)).length
+}
+
+/**
+ * The "Clear all" prompt's name on its root (`components/downloads/ClearAllConfirm.tsx`):
+ * `data-confirm` on the desktop's dialog, the sheet's register name on the phone.
+ */
+export const CLEAR_ALL_PROMPT = 'downloads:clear-all'
+
 // ---------------------------------------------------------------------------
 // File-type glyph
 // ---------------------------------------------------------------------------

@@ -320,6 +320,11 @@ export interface UiState {
   credentialLeakOpen: boolean
   /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
   pageDialogOpen: boolean
+  /**
+   * The "Page unresponsive" prompt (tabs-45, `dialogs/UnresponsiveDialog.tsx`) is up over the
+   * picture of a page whose renderer stopped answering: a frame dialog, so it dims.
+   */
+  unresponsivePromptOpen: boolean
   /** A page's `getDisplayMedia` picker ("Choose what to share") is up (the page waits for it). */
   screenPickerOpen: boolean
   /**
@@ -622,6 +627,7 @@ export const uiStore = createStore<UiState>(
     securityPromptOpen: false,
     credentialLeakOpen: false,
     pageDialogOpen: false,
+    unresponsivePromptOpen: false,
     screenPickerOpen: false,
     deviceChooserOpen: false,
     windowPromptOpen: false,
@@ -1197,6 +1203,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.credentialLeakOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
+    !ui.unresponsivePromptOpen &&
     !ui.screenPickerOpen &&
     !ui.deviceChooserOpen &&
     !ui.windowPromptOpen &&
@@ -1266,6 +1273,7 @@ export function invalidateSnapshot(): void {
     !ui.credentialLeakOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
+    !ui.unresponsivePromptOpen &&
     !ui.screenPickerOpen &&
     !ui.deviceChooserOpen &&
     !ui.windowPromptOpen &&
@@ -2029,6 +2037,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.credentialLeakOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
+    ui.unresponsivePromptOpen ||
     ui.screenPickerOpen ||
     ui.deviceChooserOpen ||
     ui.windowPromptOpen ||

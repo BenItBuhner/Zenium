@@ -370,6 +370,13 @@ export interface BootInfo {
    */
   touchExploration?: boolean
   /**
+   * The accessibility state the chrome's variants read (A11Y-04; `AccessibilityState.kt`):
+   * touch exploration and the system font scale together, as the `accessibility` host event
+   * carries them afterwards. Absent in old hosts and in the preview host, which are read through
+   * `touchExploration` and `environment.fontScale` instead (`lib/accessibilityState.ts`).
+   */
+  accessibility?: HostEventPayloads['accessibility']
+  /**
    * The device has a screen lock (or an enrolled biometric) to verify the user with
    * (`Reauth.available`, `BiometricManager.canAuthenticate`): Settings' "Lock private tabs when
    * you leave Zenium" is enabled (`lib/privateLock.ts`). Changes come as `private.lock`. Absent
@@ -716,6 +723,14 @@ export interface HostEventPayloads {
    * the switch.
    */
   'private.lock': { locked: boolean; screenLock: boolean }
+  /**
+   * The device's accessibility state changed (A11Y-04; `AccessibilityState.kt`): an
+   * accessibility service started or stopped exploring by touch (TalkBack; the
+   * `AccessibilityManager` listener in `Host.kt`), or the system font scale moved (the
+   * configuration change in `MainActivity`). The chrome's alone (`lib/accessibilityState.ts`,
+   * routed in `boot.ts`): the phone menu's icon row becomes a labelled list under either.
+   */
+  accessibility: { touchExploration: boolean; fontScale: number }
 }
 
 /**
