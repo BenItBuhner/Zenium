@@ -1,12 +1,16 @@
 package app.zen.chromium
 
+import androidx.browser.customtabs.CustomTabsIntent
+
 /**
- * Where a caller's custom buttons go. A `CustomTabsIntent` may carry one button as
- * `EXTRA_ACTION_BUTTON_BUNDLE` and a list of them as `EXTRA_TOOLBAR_ITEMS`; each list entry names
- * an id (`KEY_ID`, default [TOP_BAR_ID]). Chrome's rule, kept here: the id [TOP_BAR_ID] means the
- * top toolbar's action slot, any other id means the bottom toolbar; duplicate ids are dropped, the
- * bottom bar holds at most [MAX_BOTTOM] (`CustomTabsIntent.getMaxToolbarItems()`). Pure, so the
- * placement has a JVM test; the bitmaps and intents are read by `CustomTabConfig`.
+ * Where a caller's custom buttons go, and what a click on its RemoteViews reports. A
+ * `CustomTabsIntent` may carry one button as `EXTRA_ACTION_BUTTON_BUNDLE` and a list of them as
+ * `EXTRA_TOOLBAR_ITEMS`; each list entry names an id (`KEY_ID`, default [TOP_BAR_ID]). Chrome's
+ * rule, kept here: the id [TOP_BAR_ID] means the top toolbar's action slot, any other id means the
+ * bottom toolbar; duplicate ids are dropped, the bottom bar holds at most [MAX_BOTTOM]
+ * (`CustomTabsIntent.getMaxToolbarItems()`). Pure (the library's names are constants), so the
+ * placement and the click's extra have JVM tests; the bitmaps and intents are read by
+ * `CustomTabConfig`.
  */
 object CustomTabButtons {
     /** `CustomTabsIntent.TOOLBAR_ACTION_BUTTON_ID`. */
@@ -52,4 +56,13 @@ object CustomTabButtons {
         for (id in ids) if (id > 0 && id !in out) out.add(id)
         return out
     }
+
+    /**
+     * What a click on one of the [clickTargets] tells the caller: the extra
+     * `EXTRA_REMOTEVIEWS_CLICKED_ID` carrying the clicked view's id, on the caller's
+     * `EXTRA_REMOTEVIEWS_PENDINGINTENT` with the page's URL as its data, as Chrome's
+     * `CustomTabBottomBarDelegate` sends it. The extra's name and its value, for the activity to
+     * put on the intent.
+     */
+    fun remoteViewClick(id: Int): Pair<String, Int> = CustomTabsIntent.EXTRA_REMOTEVIEWS_CLICKED_ID to id
 }

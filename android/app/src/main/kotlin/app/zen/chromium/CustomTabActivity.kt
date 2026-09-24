@@ -309,7 +309,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
 
     override fun onRemoteViewClick(id: Int) {
         val intent = remoteClickIntent ?: return
-        sendToCaller(intent, Intent().putExtra(CustomTabsIntent.EXTRA_REMOTEVIEWS_CLICKED_ID, id))
+        val (extra, clicked) = CustomTabButtons.remoteViewClick(id)
+        sendToCaller(intent, Intent().putExtra(extra, clicked))
     }
 
     override fun onBottomButton(button: CustomTabConfig.ActionButton) = sendToCaller(button.intent)

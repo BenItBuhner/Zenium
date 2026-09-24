@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.view.MotionEvent
+import android.view.ViewGroup
 import app.zen.chromium.CustomTabBottomBarRules.InterceptStep
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,6 +14,15 @@ class CustomTabBottomBarRulesTest {
         assertEquals(48 + 98, CustomTabBottomBarRules.pageBottomMargin(48, 98, true))
         assertEquals(48, CustomTabBottomBarRules.pageBottomMargin(48, 98, false))
         assertEquals(98 + 48, CustomTabBottomBarRules.hiddenTranslation(98, 48))
+    }
+
+    @Test
+    fun theCallersRootStandsAtTheHeightItsLayoutDeclares() {
+        // The demo's bar: 56 dp at density 1.75 declared, over two 44 dp buttons that would wrap to 77.
+        assertEquals(98, CustomTabBottomBarRules.remoteRootHeight(98))
+        assertEquals(ViewGroup.LayoutParams.MATCH_PARENT, CustomTabBottomBarRules.remoteRootHeight(ViewGroup.LayoutParams.MATCH_PARENT))
+        // A root the inflater gave no params wraps its children.
+        assertEquals(ViewGroup.LayoutParams.WRAP_CONTENT, CustomTabBottomBarRules.remoteRootHeight(null))
     }
 
     @Test

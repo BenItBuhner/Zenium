@@ -35,6 +35,14 @@ class CustomTabButtonsTest {
     }
 
     @Test
+    fun aRemoteViewsClickReportsItsIdInTheClickedIdExtra() {
+        // Chrome's `CustomTabBottomBarDelegate`: the clicked view's id rides in this extra, by this
+        // name, on the caller's `EXTRA_REMOTEVIEWS_PENDINGINTENT`; a caller reads nothing else.
+        assertEquals("android.support.customtabs.extra.EXTRA_REMOTEVIEWS_CLICKED_ID" to 12, CustomTabButtons.remoteViewClick(12))
+        assertEquals(CustomTabsIntent.EXTRA_REMOTEVIEWS_CLICKED_ID to 0x7f0a0033, CustomTabButtons.remoteViewClick(0x7f0a0033))
+    }
+
+    @Test
     fun theExtrasZeniumReadsAreTheLibrarys() {
         // The provider reads the caller's extras by the library's names; a renamed constant would
         // silently turn the bottom toolbar off, so the names are pinned here.

@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.view.MotionEvent
+import android.view.ViewGroup
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.tanh
@@ -34,6 +35,14 @@ object CustomTabBottomBarRules {
 
     /** How far down the bar slides when hidden: its full extent, inset padding included. */
     fun hiddenTranslation(barHeight: Int, inset: Int): Int = barHeight + inset
+
+    /**
+     * The height the caller's root takes in the bar's slot, from the one its layout declares
+     * (the inflater generated its params against the slot; null when it gave none): the declared
+     * height, as Chrome adds the inflated view – a 56 dp bar stands 56 dp rather than wrapping to
+     * its 44 dp buttons; a root without a declaration wraps its children.
+     */
+    fun remoteRootHeight(declaredPx: Int?): Int = declaredPx ?: ViewGroup.LayoutParams.WRAP_CONTENT
 
     /**
      * The bar's upward offset while a finger drags it: one-to-one at first, then a rubber band

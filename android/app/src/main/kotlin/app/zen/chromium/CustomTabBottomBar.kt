@@ -146,10 +146,13 @@ class CustomTabBottomBar(
             for (id in remote.clickableIds) {
                 view.findViewById<View>(id)?.setOnClickListener { listener.onRemoteViewClick(id) }
             }
-            // The caller's root keeps the size it declared (its layout params were generated
-            // against the slot by the inflater), as Chrome adds the inflated view; a 56 dp bar
-            // stays 56 dp rather than shrinking to its buttons.
-            val params = view.layoutParams ?: LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            // The caller's root keeps the height its layout declares, as Chrome adds the inflated
+            // view; the rule that writes it is CustomTabBottomBarRules.remoteRootHeight (a 56 dp
+            // bar stays 56 dp rather than shrinking to its buttons). Its other params – the
+            // inflater's, generated against the slot – stand as they are.
+            val declared = view.layoutParams
+            val params = declared ?: LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            params.height = CustomTabBottomBarRules.remoteRootHeight(declared?.height)
             remoteSlot.addView(view, params)
         }
         buttonsRow.visibility = if (remoteSlot.childCount > 0 || buttonsRow.childCount == 0) View.GONE else View.VISIBLE
