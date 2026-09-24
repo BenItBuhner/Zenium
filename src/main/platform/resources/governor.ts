@@ -17,6 +17,7 @@ import type { Browser } from '../../../core/browser'
 import type { ZenWindow } from '../../../core/window'
 import { TabLifecycle } from './lifecycle'
 import { ConcurrencyClamp } from './clamp'
+import { hostMetrics } from './hostMetrics'
 import { LoadScheduler } from '../../../core/resources/scheduler'
 import {
   MAX_RECENT_ACTIONS,
@@ -197,6 +198,7 @@ export class ResourceGovernor implements Governor {
     this.timer = null
     this.scheduler.clear()
     this.clamp.stop()
+    hostMetrics.forget('governor')
     for (const cleanup of this.cleanups.splice(0)) cleanup()
   }
 
@@ -424,7 +426,9 @@ export class ResourceGovernor implements Governor {
   private collect(force: boolean): PlannerInput {
     const { state } = this.browser
     const now = Date.now()
-    const processes: ProcessSample[] = app.getAppMetrics().map((m) => ({
+    // Through the shared sampler: the CPU share is over the governor's own window, however
+    // often the task manager page reads the engine meanwhile (`hostMetrics.ts`).
+    const processes: ProcessSample[] = hostMetrics.sample('governor').map((m) => ({
       pid: m.pid,
       type: m.type as ProcessKind,
       memoryMb: m.memory.workingSetSize / 1024,
