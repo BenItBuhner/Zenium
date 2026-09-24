@@ -402,6 +402,25 @@ describe('ReadAloudService', () => {
       expect(h.views.get('t1')!.insertedOrigins).toEqual(['author'])
     })
 
+    it('inserts the highlight sheet at author origin: Blink paints ::highlight() from author sheets only', async () => {
+      h.addTab('t1', PAGE)
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [{ text: 'Hello world.' }])
+      await started
+      const view = h.views.get('t1')!
+      // The sheet is nothing but `::highlight()` rules – the kind a user-origin sheet registers
+      // and never paints (Chromium 152) – so the reader asks for author, in so many words.
+      expect(view.inserted).toHaveLength(1)
+      expect(view.inserted[0]).toMatch(/^::highlight\(/)
+      expect(view.inserted[0]).toContain('::highlight(zenium-read-word)')
+      expect(view.insertedOrigins).toEqual(['author'])
+      // And takes the same sheet out again by its key when the session ends.
+      h.service.stop()
+      await flush()
+      expect(view.removed).toEqual(['css1'])
+    })
+
     it('falls back to the translate engine’s detection, then the UI language, for an untagged document', async () => {
       h.translate.source = 'fr'
       h.addTab('t1', PAGE)

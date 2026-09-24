@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { READ_ALOUD_HIGHLIGHT_CSS } from '../../../shared/readAloud'
 import type { Tab } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
 import { cssOriginFor, hasHighlightRule } from '../extensionApi/cssOrigin'
@@ -80,6 +81,11 @@ describe('cssOriginFor', () => {
     expect(cssOriginFor(PLAIN_CSS, 'author')).toBe('author')
     expect(cssOriginFor(HIGHLIGHT_CSS, 'author')).toBe('author')
   })
+
+  it('reads read aloud’s own sheet as one that must go in as author – the origin the reader asks for', () => {
+    expect(hasHighlightRule(READ_ALOUD_HIGHLIGHT_CSS)).toBe(true)
+    expect(cssOriginFor(READ_ALOUD_HIGHLIGHT_CSS, 'user')).toBe('author')
+  })
 })
 
 describe("tabs.insertCSS's cascade origin", () => {
@@ -91,7 +97,7 @@ describe("tabs.insertCSS's cascade origin", () => {
     expect(w.inserted[1]!.css).toBe(HIGHLIGHT_CSS)
   })
 
-  it("inserts as author by default, as Chrome does, and removeCSS still finds the sheet by its text", async () => {
+  it('inserts as author by default, as Chrome does, and removeCSS still finds the sheet by its text', async () => {
     const w = world()
     await w.tabs.handlers.insertCSS(w.ctx, undefined, { code: HIGHLIGHT_CSS })
     expect(w.inserted.map((i) => i.options.cssOrigin)).toEqual(['author'])
