@@ -6809,9 +6809,16 @@ async function main() {
           grabScreen,
           sh,
           osascript,
+          ps,
           exe: opts.exe,
           outDir,
-          isMac: IS_MAC
+          // Windows: the installed build is the one the installer registered; the registration
+          // has to point at this executable. The OS build decides which Settings page the
+          // request opens.
+          label: opts.label,
+          osRelease: os.release(),
+          isMac: IS_MAC,
+          isWin: IS_WIN
         })
     }[name]
     if (!run) {

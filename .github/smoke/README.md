@@ -56,8 +56,10 @@ still name the ProgID, and the `AppUserModelId` class key the running app writes
 the unpacked build left it) has to be gone with it – `installer.nsh`'s `customUnInstall`
 deletes it (`registrationLeftovers` in `installed-uninstall.json`, read until gone, up to 10 s,
 never once; `registrationLeftoverRounds` says how many reads). Either list non-empty fails its
-step in `desktop-smoke.yml` with the lines. The user's own http/https choice (`UserChoice`) is
-Windows's and is neither written nor read.
+step in `desktop-smoke.yml` with the lines. `-Action registration -Exe <exe> -Stage <name>` reads
+the same set back for a build under test without judging it (the `default-browser` scenario
+below does), and with it the per-user `http`/`https` classes and the user's own choice
+(`UserChoice`) – Windows's, read for the record only and never written.
 
 ## Windows notifications (`notifications`)
 
@@ -111,6 +113,29 @@ request `true` (gates), and a second scan records whether a claim put another di
 meant not to). `mac-facts.sh` prints the same `LSHandlers` before and after the run and,
 after it, LaunchServices' own record of the bundle (`lsregister -dump`: what the dialog names
 the app from) and the unified log's LaunchServices lines.
+
+## Windows default browser (`default-browser`)
+
+The same scenario runs last on both Windows legs for ci-08's registry read (its LaunchServices
+steps skip there). Since Windows 8 only the user picks a default browser, in Settings › Apps ›
+Default apps, so the app claims no scheme on Windows: `defaultBrowser.request` reads the shell's
+association, then whether the installer's `RegisteredApplications\Zenium` entry is there (what
+Settings lists the app from), and opens the app's own Default apps page for the user to press
+"Set default" (`src/main/platform/defaultBrowser.ts`, `windowsRequest`) –
+`app.setAsDefaultProtocolClient` would write `HKCU\Software\Classes\http\shell\open\command`, a
+class the user's choice overrides and the uninstaller does not know. Each step says who confirms
+it:
+
+| step                          | reads                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | confirmed by                         |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `registration-before`         | `win-install.ps1 -Action registration`: `RegisteredApplications\Zenium`, the `StartMenuInternet` client and its `Capabilities`, the `ZeniumHTML` ProgID – complete and pointing at the executable under test for the installed build (gates), recorded for the unpacked one (not registered: its leg runs before the install); the per-user `http`/`https` classes and the user's `UserChoice` as they stand; the state's `defaultBrowser.isDefault` (the core's read at start)                                                                           | the OS's registry                    |
+| `make-default-opens-settings` | `defaultBrowser.request` (the Settings row's source) with `app.setAsDefaultProtocolClient` / `removeAsDefaultProtocolClient` and `shell.openExternal` wrapped in the main process: registered, the deep link `ms-settings:defaultapps?registeredAppUser=Zenium` is opened first (the plain `ms-settings:defaultapps` only after the OS refused it; Windows 10 gets the plain page alone) and the request waits for the user's choice; not registered, nothing is opened and the request resolves `false` at once; no scheme is claimed either way (gates) | the app's path up to the OS's window |
+| `os-settings-page`            | three seconds after the open: the screen, the `SystemSettings` processes and their window title (`win-session.ps1 -Action processes -ProcessName SystemSettings`) – recorded – then Settings closed (`-Action kill`) so nothing is left for the legs after                                                                                                                                                                                                                                                                                                | the OS (recorded)                    |
+| `registry-after`              | the registration again – intact for the installed build (gates); `HKCU\Software\Classes\http\shell\open\command` and `https`: neither may name the executable (the class only a `setAsDefaultProtocolClient` call would have left; gates); the user's choice again, for the record; the state's `defaultBrowser.isDefault` false unless the user's choice names `ZeniumHTML` for both schemes – on the runners it never does, so `true` would mean the status reads a class write rather than the choice (gates)                                          | the OS's registry, the app's status  |
+
+What no runner confirms: the user's "Set default" press in Settings (no runner presses it, so
+`awaitChoice`'s poll and the `true` it resolves on the yes stay unexercised), and whether the
+deep link lands on Zenium's page rather than the list (the screenshot shows what came up).
 
 ## Teardown
 
