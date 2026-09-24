@@ -819,7 +819,8 @@ const zenSession: AgentTool = {
         action: { type: 'string', enum: [...SESSION_ACTIONS] },
         closeTabs: {
           type: 'boolean',
-          description: 'end: close your groups and their tabs (default: leave them as orphaned groups)'
+          description:
+            'end: close your groups and their tabs (default: leave them as orphaned groups)'
         },
         name: { type: 'string', description: 'rename: your new name' }
       },
@@ -1182,7 +1183,8 @@ const browserTabs: AgentTool = {
     if (!rawAction) {
       // A bare {url} means "open it"; nothing at all means "list".
       if (str(args, 'url')) args = { ...args, action: 'new' }
-      else if (pick(args, 'groupId') !== undefined) args = { ...args, action: 'list', scope: 'group' }
+      else if (pick(args, 'groupId') !== undefined)
+        args = { ...args, action: 'list', scope: 'group' }
       else return text(`Your tabs – id "title" url [flags]:\n${listOwnTabs(ctx)}`)
     }
     const action = TAB_ACTION_ALIASES[(str(args, 'action') ?? 'list').toLowerCase().trim()]
@@ -1210,7 +1212,10 @@ const browserTabs: AgentTool = {
         return text(listGroupTabs(ctx, group))
       }
       if (scope !== 'own' && scope !== 'mine' && scope !== 'yours')
-        throw new RpcError(-32602, `scope must be "own", "group" or "all" (got ${JSON.stringify(scope)})`)
+        throw new RpcError(
+          -32602,
+          `scope must be "own", "group" or "all" (got ${JSON.stringify(scope)})`
+        )
       return text(own())
     }
     if (action === 'new') {
@@ -1230,7 +1235,9 @@ const browserTabs: AgentTool = {
       } else if (spaceId) {
         const space =
           ctx.browser.state.model.spaces.find((sp) => sp.id === spaceId) ??
-          ctx.browser.state.model.spaces.find((sp) => sp.name.toLowerCase() === spaceId.toLowerCase())
+          ctx.browser.state.model.spaces.find(
+            (sp) => sp.name.toLowerCase() === spaceId.toLowerCase()
+          )
         if (!space)
           throw new RpcError(
             -32602,
@@ -1344,7 +1351,12 @@ const browserTabs: AgentTool = {
         ? ctx.agents.groupsOf(s).find((g) => g.name.toLowerCase() === name.toLowerCase())
         : undefined
       const group =
-        existing ?? ctx.agents.createGroup(s, name ?? `${s.name} · ${s.id.slice(-4)} · ${ctx.agents.groupsOf(s).length + 1}`, ctx.agents.agentsSpace().id)
+        existing ??
+        ctx.agents.createGroup(
+          s,
+          name ?? `${s.name} · ${s.id.slice(-4)} · ${ctx.agents.groupsOf(s).length + 1}`,
+          ctx.agents.agentsSpace().id
+        )
       for (const t of members) ctx.agents.moveToGroup(s, t, group)
       return text(
         `${existing ? 'Added' : 'Created group'} ${JSON.stringify(group.name)} (${group.id}) ${existing ? 'got' : 'with'} ${members.length} tab${members.length === 1 ? '' : 's'}: ${members.map((t) => t.id).join(', ')}. (Deprecated alias of zen_groups create + browser_tabs move.)\n\n${own()}`

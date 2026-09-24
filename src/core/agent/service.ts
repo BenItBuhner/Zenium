@@ -608,11 +608,7 @@ export class AgentService implements SessionStore, McpHandlers {
     return AGENT_TOOLS.filter((t) => allow || !t.scripting).map((t) => t.definition)
   }
 
-  callTool(
-    session: McpSession,
-    name: string,
-    args: Record<string, unknown>
-  ): Promise<ToolResult> {
+  callTool(session: McpSession, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const s = this.requireApproved(session)
     const tool = AGENT_TOOLS.find((t) => t.definition.name === name)
     if (!tool) return Promise.resolve(textError(`Unknown tool ${name}`))
@@ -698,7 +694,8 @@ export class AgentService implements SessionStore, McpHandlers {
         uri: 'zenium://status',
         name: 'status',
         title: 'Browser status',
-        description: 'You, your groups and tabs, the other agents, the spaces and the server, as JSON',
+        description:
+          'You, your groups and tabs, the other agents, the spaces and the server, as JSON',
         mimeType: 'application/json'
       },
       {
@@ -1125,7 +1122,8 @@ export class AgentService implements SessionStore, McpHandlers {
         -32602,
         `${named.length} groups are called ${JSON.stringify(wanted)} (${named.map((f) => f.id).join(', ')}) – use the id`
       )
-    const folder = m.folders[wanted] ?? Object.values(m.folders).find((f) => f.id.startsWith(wanted))
+    const folder =
+      m.folders[wanted] ?? Object.values(m.folders).find((f) => f.id.startsWith(wanted))
     if (folder) {
       const o = this.groupOwner(folder.id)
       if (o && o.id !== s.id)
@@ -1173,7 +1171,10 @@ export class AgentService implements SessionStore, McpHandlers {
     if (!folder) throw new RpcError(-32002, `Unknown group "${wanted}". ${list()}`)
     const o = this.groupOwner(folder.id)
     if (o && o.id === s.id)
-      throw new RpcError(-32602, `Group ${folder.id} ${JSON.stringify(folder.name)} is already yours.`)
+      throw new RpcError(
+        -32602,
+        `Group ${folder.id} ${JSON.stringify(folder.name)} is already yours.`
+      )
     if (o)
       throw new RpcError(
         UNAUTHORIZED,
