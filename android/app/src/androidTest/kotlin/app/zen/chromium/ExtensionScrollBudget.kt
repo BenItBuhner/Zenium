@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
  * work; and the emptied page scrolled again at the end (`ext-scroll-0-again`, reported against
  * the first): the recipe's own drift over the run, so a ratio can be told from the emulator
  * warming or tiring. Two scenes at the end (compat round 15) scroll the fixture's fetch-heavy
- * twin (`scroll-fetch.html`, a fetch every 50 ms) with nothing attached (`ext-scroll-fetch-0`,
+ * twin (`scroll.html?fetch`, a fetch every 50 ms) with nothing attached (`ext-scroll-fetch-0`,
  * against the empty scroll) and with a response-stage listener probe attached
  * (`ext-scroll-fetch-observer`, against the fetch scene: what the page-script observer of the
  * page's own requests adds to a scroll frame).
@@ -174,8 +174,9 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         scene(SCENE_3, THREE, baseline = SCENE_0)
         scene(SCENE_6, SIX, baseline = SCENE_0)
         scene(SCENE_0_AGAIN, emptySet(), baseline = SCENE_0)
-        // Round 15: the fetch-heavy twin of the fixture (`scroll-fetch.html`: the same page with a
-        // same-origin fetch every 50 ms from load on), scrolled with no extension attached and
+        // Round 15: the fetch-heavy twin of the fixture (`scroll.html?fetch`: the same document,
+        // its fetch stream – a same-origin fetch every 50 ms from load on – switched on by the
+        // query, so any server of the pages serves it), scrolled with no extension attached and
         // then with the response-stage listener probe attached – one listener on every
         // `webRequest` response-stage event with `responseHeaders`, which turns the runtime's
         // page-script observer of the page's own requests on. The first scene against the empty
@@ -682,7 +683,8 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         const val SCENE_0_AGAIN = "ext-scroll-0-again"
         const val SCENE_FETCH_0 = "ext-scroll-fetch-0"
         const val SCENE_FETCH_OBSERVER = "ext-scroll-fetch-observer"
-        private const val FETCH_FIXTURE = "$BASE/scroll-fetch.html"
+        /** The fixture's fetch-heavy twin: the same document, its `scroll-fetch.js` switched on by the query (a fetch every 50 ms from load on). */
+        private const val FETCH_FIXTURE = "$BASE/scroll.html?fetch"
         /** The response-stage listener probe (round 15): an id of the store's shape that no store has. */
         const val OBSERVER_ID = "hlpahlpahlpahlpahlpahlpahlpahlpa"
         private const val OBSERVER_MANIFEST =
