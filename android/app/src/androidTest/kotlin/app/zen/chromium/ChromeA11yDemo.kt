@@ -793,7 +793,10 @@ class ChromeA11yDemo : DemoHarness(
                 val touched = touchTapLabel(reloadRow)
                 val closed = touched && awaitSurface(up = false, timeoutMs = 8_000)
                 expect("a real touch on the list's '$reloadRow' row runs it and the sheet leaves (touched $touched)", closed)
-                SystemClock.sleep(1_500)
+                // The reload the touch started must finish before the names compare: mid-load the
+                // row reads Stop where the rest read Reload.
+                awaitChrome(10_000) { activeCoreTab()?.optBoolean("loading") == false }
+                SystemClock.sleep(1_000)
             }
             // The flag cleared with the sheet up: the pose flips back live.
             if (openMenuSheet()) {
@@ -1155,7 +1158,15 @@ class ChromeA11yDemo : DemoHarness(
 
     /** The WebView nodes of a real size in the window, in tree order, none entered (a document under one carries the same class). */
     private fun webViewNodes(): List<AccessibilityNodeInfo> {
-        val root = ui.rootInActiveWindow ?: return emptyList()
+        // Right after a service-flag change the root can be null for a moment while the
+        // connection re-registers; a short wait, not an empty answer.
+        var root = ui.rootInActiveWindow
+        var waited = 0
+        while (root == null && waited++ < 15) {
+            SystemClock.sleep(200)
+            root = ui.rootInActiveWindow
+        }
+        if (root == null) return emptyList()
         val found = ArrayList<AccessibilityNodeInfo>()
         var visited = 0
         fun visit(node: AccessibilityNodeInfo) {
@@ -2881,7 +2892,7 @@ class ChromeA11yDemo : DemoHarness(
               return JSON.stringify(Array.prototype.map.call(list.querySelectorAll('button'), function (b) {
                 var r = b.getBoundingClientRect();
                 var glyph = b.querySelector('.zen-sheet-item-glyph');
-                var label = b.querySelector('span:not(.zen-sheet-item-glyph)');
+                var label = b.querySelector(':scope > span:not(.zen-sheet-item-glyph)');
                 return {
                   name: (b.textContent || '').replace(/\s+/g, ' ').trim(),
                   glyph: b.getAttribute('data-glyph'),
