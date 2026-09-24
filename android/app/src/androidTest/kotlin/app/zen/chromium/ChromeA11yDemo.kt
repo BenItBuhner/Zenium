@@ -29,6 +29,9 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.lang.reflect.Method
 import java.util.Calendar
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -51,6 +54,13 @@ import kotlin.math.roundToInt
  * and 2.0 (`settings put system font_scale`) with the chrome re-measured at each – the bar's
  * buttons and the pill hold their 44, the rows grow from their line box – and stills of the same
  * surfaces as the design captures, then back to 1.0, and the bold-text setting once.
+ *
+ * The accessibility pass 2 scenes sit between the zoom panel and the font scale: the app menu's
+ * icon row as a labelled list under touch exploration (A11Y-04, [menuListScene]; and at font
+ * scale 1.3 inside [measureScale]), the tab switch and load-complete announcements caught as
+ * `TYPE_ANNOUNCEMENT` events with the accessibility focus held still (A11Y-02, [announceScene]),
+ * the hidden page layers' flags and their absence from the reader's tree (A11Y-03,
+ * [layersScene]), and the spoken names against the visible text (A11Y-10, [namesScene]).
  *
  * TalkBack itself is not the proof: the emulator has no audio, and the API 34 Google APIs image
  * may or may not carry it. When `com.google.android.marvin.talkback` is installed the last scene
@@ -183,6 +193,10 @@ class ChromeA11yDemo : DemoHarness(
         scene("bookmarks") { bookmarksScene() }
         scene("find") { findScene() }
         scene("zoom") { zoomScene() }
+        scene("menu list") { menuListScene() }
+        scene("announce") { announceScene() }
+        scene("layers") { layersScene() }
+        scene("names") { namesScene() }
         scene("font scale") { fontScaleScene() }
         scene("talkback") { talkBackScene() }
         writeReport()
@@ -655,6 +669,9 @@ class ChromeA11yDemo : DemoHarness(
     /** The app menu: a named dialog, its handle, its rows in order; ends on the Settings row so the next scene starts in Settings. */
     private fun menuScene() {
         if (!openMenuSheet()) return
+        // The icon row's names in the row pose, the contract the list pose is held to (menuListScene).
+        iconRowNames = iconRowNamesNow()
+        finding("  the icon row (${menuPose()} pose): $iconRowNames")
         audit(
             "menu",
             listOf(
@@ -686,6 +703,498 @@ class ChromeA11yDemo : DemoHarness(
             return
         }
         expect("Settings opens as a tab", awaitChrome(10_000) { settingsTabActive() })
+    }
+
+    // --- accessibility pass 2 (A11Y-04, A11Y-02, A11Y-03, A11Y-10) -------------------------------
+
+    /** The icon row's names in the row pose, read off the DOM as the menu scene had the sheet up: the list pose's contract. */
+    private var iconRowNames: List<String> = emptyList()
+
+    /**
+     * The phone menu's icon row as a labelled list under touch exploration (A11Y-04). The driver
+     * asks for touch exploration as TalkBack does – `FLAG_REQUEST_TOUCH_EXPLORATION_MODE` on
+     * UiAutomation's service info; the manager's `isTouchExplorationEnabled` turns on
+     * system-wide and the host's listener sends the chrome the `accessibility` event – and the
+     * menu opens with §10.3 rows in the icon row's place: the same items by the same names as the
+     * icon buttons (the contract `MenuIconRowDemo` reads), the glyph leading and hidden from the
+     * reader, each row the sheet's width and at least 44 tall at the default size, every row a
+     * named Button in the tree; the rows' names against their text (A11Y-10); a still light and
+     * dark. A real touch on a row runs its item (Reload closes the sheet), and the flag cleared
+     * while the sheet is up flips the pose back to the row live, off the same event. Injected
+     * touches reach the app as touches under touch exploration (they enter below the
+     * accessibility input filter, [filterSwipe]'s reason to hand swipes to it directly).
+     */
+    private fun menuListScene() {
+        if (!ensureExample()) return
+        if (iconRowNames.isEmpty() && openMenuSheet()) {
+            iconRowNames = iconRowNamesNow()
+            finding("  the icon row's names read now (the menu scene left none): $iconRowNames")
+            dismiss()
+            awaitSurface(up = false, timeoutMs = 6_000)
+        }
+        expect("the icon row's names are known to hold the list to (${iconRowNames.size}: $iconRowNames)", iconRowNames.size >= 4)
+        val manager = app.getSystemService(AccessibilityManager::class.java)
+        val before = manager.isTouchExplorationEnabled
+        setTouchExploration(true)
+        var talkBackOn = false
+        try {
+            var on = awaitChrome(6_000) { manager.isTouchExplorationEnabled }
+            var how = "UiAutomation's FLAG_REQUEST_TOUCH_EXPLORATION_MODE"
+            if (!on && talkBackInstalled()) {
+                // The flag alone did not take on this image: TalkBack asks for the mode instead,
+                // the way a user's device has it on (the talkback scene's route).
+                note("UiAutomation's touch exploration request alone did not turn the mode on within 6 s; TalkBack switched on for the menu list scene")
+                enableTalkBack()
+                bringToFront()
+                talkBackOn = true
+                how = "TalkBack"
+                on = awaitChrome(10_000) { manager.isTouchExplorationEnabled }
+            }
+            val heard = awaitChrome(6_000) { chromeAccessibilityState().optBoolean("touchExploration") }
+            finding("  touch exploration by $how: manager ${manager.isTouchExplorationEnabled} (was $before); the chrome's state ${chromeAccessibilityState()}")
+            expect("touch exploration is on system-wide for the scene (by $how)", on)
+            expect("the chrome hears touch exploration through the `accessibility` host event", heard)
+            if (!openMenuSheet()) return
+            val pose = awaitPose("list")
+            expect("under touch exploration the menu's icon row is the list pose ('$pose')", pose == "list")
+            val names = iconRowNamesNow()
+            finding("  the list's names: $names")
+            expect("the list carries the row's items by the same names, in order ($names vs $iconRowNames)", names.isNotEmpty() && names == iconRowNames)
+            val rows = runCatching { JSONArray(chromeValue(LIST_ROWS_JS)) }.getOrDefault(JSONArray())
+            finding("  the list's rows (CSS px): $rows")
+            var tall = rows.length() > 0
+            var glyphLeading = rows.length() > 0
+            var wide = rows.length() > 0
+            for (i in 0 until rows.length()) {
+                val row = rows.getJSONObject(i)
+                if (row.optDouble("h") < 44 - 0.5) tall = false
+                if (row.optDouble("glyphLeft", -1.0) < 0 || row.optDouble("glyphLeft") >= row.optDouble("labelLeft") || !row.optBoolean("glyphHidden")) glyphLeading = false
+                if (row.optDouble("w") < 0.8 * row.optDouble("sheetW")) wide = false
+            }
+            expect("every row of the list is at least 44 tall (§10.3 at the default size)", tall)
+            expect("the glyph leads the label in every row and is hidden from the reader (aria-hidden)", glyphLeading)
+            expect("a row runs the sheet's width (the target is the row, not a 44 box)", wide)
+            nameAudit("menu-list")
+            audit("menu-list", listOf(Want(MENU_HANDLE_LABEL, "Button")) + iconRowNames.map { Want(it, "Button") })
+            dismiss()
+            awaitSurface(up = false, timeoutMs = 6_000)
+            dark {
+                if (openMenuSheet()) {
+                    expect("the list pose holds in dark ('${awaitPose("list")}')", menuPose() == "list")
+                    SystemClock.sleep(800)
+                    snap("menu-list-dark")
+                    dismiss()
+                    awaitSurface(up = false, timeoutMs = 6_000)
+                }
+            }
+            // A real touch on a row runs its item, as a touch on the icon button does.
+            if (openMenuSheet()) {
+                val reloadRow = iconRowNames.firstOrNull { it == "Reload" || it == "Stop" } ?: iconRowNames.last()
+                val touched = touchTapLabel(reloadRow)
+                val closed = touched && awaitSurface(up = false, timeoutMs = 8_000)
+                expect("a real touch on the list's '$reloadRow' row runs it and the sheet leaves (touched $touched)", closed)
+                SystemClock.sleep(1_500)
+            }
+            // The flag cleared with the sheet up: the pose flips back live.
+            if (openMenuSheet()) {
+                setTouchExploration(false)
+                if (talkBackOn) {
+                    disableTalkBack()
+                    talkBackOn = false
+                    bringToFront()
+                }
+                val off = awaitChrome(6_000) { !manager.isTouchExplorationEnabled }
+                val flipped = awaitPose("row")
+                finding("  touch exploration cleared with the sheet up: manager off $off; the pose '$flipped'; the chrome's state ${chromeAccessibilityState()}")
+                expect("with touch exploration gone the sheet's icon row is the row of icon buttons again, live ('$flipped')", flipped == "row")
+                expect("the row's names are the list's ($iconRowNames)", iconRowNamesNow() == iconRowNames)
+                snap("menu-row-after-list")
+                dismiss()
+                awaitSurface(up = false, timeoutMs = 6_000)
+            }
+        } finally {
+            setTouchExploration(false)
+            if (talkBackOn) {
+                disableTalkBack()
+                bringToFront()
+            }
+            SystemClock.sleep(500)
+        }
+    }
+
+    /**
+     * Announcements without moving the focus (A11Y-02): the tab that comes to the front is
+     * spoken as "<title>, tab N of M" and the front tab's load finishing as "<title> loaded",
+     * through the chrome's `role="status"` region, which Chromium's Android bridge speaks as a
+     * `TYPE_ANNOUNCEMENT` event (`announceLiveRegionText`, the mechanism the toast scene caught)
+     * – the event `View.announceForAccessibility` sent before API 35 deprecated it for live
+     * regions – while the accessibility focus stays where it was (on the bar's Menu here) and
+     * nothing is said twice (the toasts' and banners' regions are their own). The events since
+     * the focus was placed are written to `a11y-chrome-announcements.txt`.
+     */
+    private fun announceScene() {
+        if (!ensureExample()) return
+        val menu = awaitNode(6_000) { it == MENU_LABEL }
+        if (menu == null) {
+            fail("the bar's Menu button is not in the tree to hold the accessibility focus")
+            return
+        }
+        val focused = menu.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+        SystemClock.sleep(1_000)
+        val tabs = coreState().getJSONObject("tabs")
+        val target = when {
+            tabs.has("tab_alpha") -> "tab_alpha"
+            else -> tabs.keys().asSequence().firstOrNull { it != activeCoreTab()?.optString("id") } ?: return fail("no second tab to switch to")
+        }
+        val title = tabs.getJSONObject(target).optString("title").ifBlank { tabs.getJSONObject(target).optString("url") }
+        synchronized(events) { events.setLength(0) }
+        clearAnnouncements()
+        // 1. A tab switch: "<title>, tab N of M", the name first as the overview's cards read.
+        activateTab(target)
+        val switched = awaitAnnouncement(8_000) { TAB_SWITCH.matches(it) }
+        finding("  tab.activate $target → announcements ${announcementsSeen()}")
+        expect("the switch is announced as '<title>, tab N of M' (${quote(switched.orEmpty())})", switched != null && switched.startsWith("$title, tab "))
+        // A tab that wakes on activation finishes a load of its own; that is said once it lands,
+        // and the reload below is counted from a quiet chrome.
+        awaitChrome(10_000) { activeCoreTab()?.optBoolean("loading") == false }
+        SystemClock.sleep(2_000)
+        val afterSwitch = announcementsSeen()
+        expect("the switch is said once, nothing rides along but a waking tab's own load (${afterSwitch})", afterSwitch.count { TAB_SWITCH.matches(it) } == 1 && afterSwitch.all { TAB_SWITCH.matches(it) || it.endsWith(" loaded") })
+        // 2. The front tab's load finishing: "<title> loaded".
+        clearAnnouncements()
+        coreInvoke("tab.reload", "{\"tabId\":${JSONObject.quote(target)}}")
+        val loaded = awaitAnnouncement(10_000) { it.endsWith(" loaded") }
+        SystemClock.sleep(1_500)
+        finding("  tab.reload $target → announcements ${announcementsSeen()}")
+        expect("the front tab's load finishing is announced as '<title> loaded' (${quote(loaded.orEmpty())})", loaded != null && loaded.startsWith(title) && loaded.endsWith(" loaded"))
+        expect("the load's end is said once (${announcementsSeen()})", announcementsSeen().count { it.endsWith(" loaded") } == 1)
+        // 3. The focus stayed where it was.
+        val focusEvents = synchronized(events) { events.lines().filter { it.contains("TYPE_VIEW_ACCESSIBILITY_FOCUSED") } }
+        val still = findNode { it == MENU_LABEL }?.isAccessibilityFocused == true
+        finding("  accessibility focus on Menu: placed $focused, still there $still; focus events since: ${focusEvents.size}")
+        expect("the announcements moved no focus (Menu still holds the accessibility focus, ${focusEvents.size} focus events)", still && focusEvents.isEmpty())
+        findNode { it == MENU_LABEL }?.performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
+        File(out, "a11y-chrome-announcements.txt").writeText(
+            buildString {
+                appendLine("# Announcements without moving the focus (A11Y-02)")
+                appendLine("# The accessibility events since the focus was placed on the bar's Menu: uptime ms, type, package, class, description, text.")
+                appendLine("# A TYPE_ANNOUNCEMENT is what TalkBack speaks; its text is the chrome's status region's (Chromium's announceLiveRegionText).")
+                appendLine("tab switch: ${quote(switched.orEmpty())}")
+                appendLine("load complete: ${quote(loaded.orEmpty())}")
+                appendLine("focus on Menu held: $still; focus events: ${focusEvents.size}")
+                appendLine()
+                synchronized(events) { append(events) }
+            }
+        )
+        snap("announce")
+    }
+
+    /**
+     * Hidden page layers out of the screen reader's tree (A11Y-03). At rest the front page's view
+     * is `IMPORTANT_FOR_ACCESSIBILITY_AUTO`, visible and traversed after the chrome
+     * (`accessibilityTraversalAfter = R.id.zen_chrome`), and the reader's tree – read as TalkBack
+     * reads it, without UiAutomation's `FLAG_INCLUDE_NOT_IMPORTANT_VIEWS` – has two WebViews of a
+     * real size, the chrome first, with the page's own controls under the page's node (TalkBack
+     * reads them through the WebView's own tree: the chrome adds nothing). As the chrome covers
+     * the page – the app menu's sheet over its scrim, the overview – the view is
+     * `NO_HIDE_DESCENDANTS` from the frame the chrome asks it hidden and `GONE` from the frame
+     * the hide lands (`PageVisibility` waits for the chrome's frame), never `GONE` and readable,
+     * and the tree has one WebView, the chrome's; the cover gone, the page is `AUTO` and visible
+     * again. The private lock's veil hides the chrome's own tree the same way (`Host.raiseVeil`;
+     * the private tabs under it are `GONE` already) and needs the multi-profile WebView the
+     * `private` job has: code-verified here. The page node's `traversalAfter` is written down as
+     * Chromium hands it over (`WebContentsAccessibilityImpl.createNodeForHost` copies the bounds,
+     * parent, visibility, enabled, package and class of the view, not its id or traversal hints;
+     * the framework's child order, full-window views first, puts the chrome before the page in
+     * any case): a finding, not a claim.
+     */
+    private fun layersScene() {
+        if (!ensureExample()) return
+        val tabId = activeCoreTab()?.optString("id").orEmpty()
+        if (tabId.isBlank()) {
+            fail("no active tab to read the page view of")
+            return
+        }
+        val rest = layerOf(tabId)
+        finding("  at rest the page view ($tabId): $rest")
+        expect("at rest the page view is IMPORTANT_FOR_ACCESSIBILITY_AUTO and visible ($rest)", rest != null && rest.importance == View.IMPORTANT_FOR_ACCESSIBILITY_AUTO && !rest.gone)
+        expect("the page view is traversed after the chrome (accessibilityTraversalAfter = R.id.zen_chrome)", rest?.traversalAfter == R.id.zen_chrome)
+        val anchors = pageValue(tabId, "document.querySelectorAll('a[href]').length").toIntOrNull() ?: -1
+        withoutNotImportantViews {
+            val nodes = webViewNodes()
+            finding("  the reader's tree at rest: ${describeWebViews(nodes)}")
+            expect("at rest the reader's tree has two WebViews of a real size, the chrome first (${nodes.size})", nodes.size == 2 && chromeFirst(nodes))
+            val page = nodes.getOrNull(1)
+            if (page != null) {
+                val after = page.traversalAfter
+                finding("  the page node's traversalAfter as Chromium hands it over: ${after?.let { describe(it) } ?: "none (createNodeForHost copies no traversal hint; the framework's order puts the chrome first)"}")
+                val control = firstUnder(page) { label(it).isNotBlank() && it.isClickable }
+                val text = firstUnder(page) { label(it).isNotBlank() }
+                finding("  under the page's node: a control ${control?.let { describe(it) } ?: "none"}; text ${text?.let { quote(label(it)) } ?: "none"}; the page's DOM has $anchors link(s)")
+                expect("the page's content is read through the WebView's own tree (text under the page node: ${quote(text?.let { label(it) }.orEmpty())})", text != null)
+                if (anchors > 0) expect("the page's controls are read through the WebView's own tree (a clickable node under the page node: ${quote(control?.let { label(it) }.orEmpty())})", control != null)
+            }
+        }
+        coverProbe("menu", tabId) { openMenuSheet() }
+        coverProbe("overview", tabId) { openOverview() }
+        finding("  the private lock's veil: Host.raiseVeil sets the chrome IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS and lowerVeil AUTO again (the private tabs under it are GONE already); it needs the private job's multi-profile WebView: code-verified")
+    }
+
+    /**
+     * A cover over the page (`open`): the page view's flags sampled every 10 ms from before the
+     * touch that opens it – the first sample read hidden (`NO_HIDE_DESCENDANTS`), the first read
+     * `GONE`, the hide's deferral between them – then the reader's tree without the page, a
+     * still, the cover dismissed and the page's flags back at rest.
+     */
+    private fun coverProbe(cover: String, tabId: String, open: () -> Boolean) {
+        val samples = ArrayList<Pair<Long, Layer>>()
+        val start = SystemClock.uptimeMillis()
+        val stop = AtomicBoolean(false)
+        val poller = Thread {
+            while (!stop.get()) {
+                layerOf(tabId)?.let { synchronized(samples) { samples += (SystemClock.uptimeMillis() - start) to it } }
+                SystemClock.sleep(10)
+            }
+        }
+        poller.start()
+        val opened = try {
+            open()
+        } finally {
+            SystemClock.sleep(1_000)
+            stop.set(true)
+            poller.join(3_000)
+        }
+        if (!opened) {
+            fail("[layers $cover] the cover did not open")
+            return
+        }
+        val taken = synchronized(samples) { ArrayList(samples) }
+        val hiddenAt = taken.firstOrNull { it.second.hidden }?.first
+        val goneAt = taken.firstOrNull { it.second.gone }?.first
+        val leak = taken.firstOrNull { it.second.gone && !it.second.hidden }
+        val window = taken.count { it.second.hidden && !it.second.gone }
+        val last = taken.lastOrNull()?.second
+        finding("  [$cover] ${taken.size} samples: hidden from +$hiddenAt ms, GONE from +$goneAt ms ($window sample(s) in the deferral, hidden and still visible); last $last")
+        expect("[$cover] the page view ends hidden from the reader and GONE under the cover ($last)", last != null && last.hidden && last.gone)
+        expect("[$cover] the page is never GONE and readable, and hidden no later than it is GONE (hidden +$hiddenAt, GONE +$goneAt)", leak == null && hiddenAt != null && goneAt != null && hiddenAt <= goneAt)
+        withoutNotImportantViews {
+            val nodes = webViewNodes()
+            finding("  [$cover] the reader's tree under the cover: ${describeWebViews(nodes)}")
+            expect("[$cover] the reader's tree has one WebView of a real size, the chrome's: the page is absent (${nodes.size})", nodes.size == 1)
+            dumpTree("layers-$cover", walk())
+        }
+        snap("layers-$cover")
+        dismiss()
+        if (cover == "overview") awaitChrome(8_000) { !overviewOpen() } else awaitSurface(up = false, timeoutMs = 6_000)
+        val back = awaitChrome(6_000) { layerOf(tabId)?.let { !it.hidden && !it.gone } == true }
+        finding("  [$cover] dismissed: the page view ${layerOf(tabId)}")
+        expect("[$cover] the cover gone, the page view is AUTO and visible again ($back)", back)
+        withoutNotImportantViews {
+            val nodes = webViewNodes()
+            expect("[$cover] the reader's tree has the page again, after the chrome (${describeWebViews(nodes)})", nodes.size == 2 && chromeFirst(nodes))
+        }
+    }
+
+    /**
+     * Spoken labels against visible text (A11Y-10), on the live chrome: every control a voice or
+     * switch user would act on – the bar's buttons and the pill, the overview's cards, header and
+     * group rows, the app menu's rows and icon buttons – is named, and one that shows text
+     * carries its leading text in its name, the word a Voice Access user says ("tap Reload"); a
+     * glyph alone is named by its `aria-label`. The rule the renderer's tests run
+     * (`lib/a11yNames.ts`, `phoneNames.test.tsx`), asked of the DOM here.
+     */
+    private fun namesScene() {
+        if (!ensureExample()) return
+        nameAudit("bar")
+        if (openOverview()) {
+            nameAudit("overview")
+            dismiss()
+            awaitChrome(8_000) { !overviewOpen() }
+        }
+        if (openMenuSheet()) {
+            nameAudit("menu-${menuPose()}")
+            dismiss()
+            awaitSurface(up = false, timeoutMs = 6_000)
+        }
+    }
+
+    /** The name audit ([NAMES_JS]) of the chrome as it stands, written down; a finding short of the rule fails the scene. */
+    private fun nameAudit(surface: String) {
+        val json = runCatching { JSONObject(chromeValue(NAMES_JS)) }.getOrNull()
+        val short = json?.optJSONArray("findings") ?: JSONArray()
+        val lines = List(short.length()) { short.optString(it) }
+        val controls = json?.optInt("controls") ?: -1
+        finding("  [$surface] $controls controls read, ${lines.size} short of the rule${if (lines.isEmpty()) "" else ": " + lines.joinToString("; ")}")
+        expect("[$surface] every control is named and one showing text carries it in its name ($controls controls, ${lines.size} short)", controls > 0 && lines.isEmpty())
+    }
+
+    /** The icon row's names in order: the buttons' `aria-label`s in the row pose, the rows' text in the list pose; empty with no menu up. */
+    private fun iconRowNamesNow(): List<String> {
+        val json = runCatching { JSONArray(chromeValue(ICON_NAMES_JS)) }.getOrNull() ?: return emptyList()
+        return List(json.length()) { json.optString(it) }
+    }
+
+    /** `list`, `row` or `none`: which pose the menu's icon row is in, off the DOM. */
+    private fun menuPose(): String =
+        chromeValue("document.querySelector('.zen-menu-icon-list')?'list':(document.querySelector('.zen-menu-icon-row')?'row':'none')")
+
+    /** The pose once it reads `want` (the host event and a render between), or whatever it reads after 6 s. */
+    private fun awaitPose(want: String): String {
+        awaitChrome(6_000) { menuPose() == want }
+        return menuPose()
+    }
+
+    /** The chrome's accessibility state store (`accessibility-state`: touchExploration, fontScale), as the renderer holds it. */
+    private fun chromeAccessibilityState(): JSONObject =
+        runCatching { JSONObject(chromeValue("JSON.stringify(((window.__zenStores||{})['accessibility-state']||{get:function(){return {}}}).get())")) }.getOrDefault(JSONObject())
+
+    /** Touch exploration requested (or not) by UiAutomation's service: the manager's flag system-wide, the host's listener behind it. */
+    private fun setTouchExploration(on: Boolean) {
+        val info = ui.serviceInfo
+        info.flags = if (on) info.flags or AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE
+        else info.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE.inv()
+        ui.serviceInfo = info
+    }
+
+    /**
+     * `block` with the chrome dark – the system's night mode and the colour scheme setting both,
+     * as `MenuIconRowDemo` does – and light again after (the seed's scheme is light).
+     */
+    private fun dark(block: () -> Unit) {
+        shell("cmd uimode night yes")
+        coreInvoke("settings.update", "{\"colorScheme\":\"dark\"}")
+        val went = awaitChrome(8_000) { chromeValue("document.documentElement.dataset.theme||''") == "dark" }
+        if (!went) note("the chrome did not report data-theme dark within 8 s; the dark still is what it showed")
+        SystemClock.sleep(1_500)
+        try {
+            block()
+        } finally {
+            coreInvoke("settings.update", "{\"colorScheme\":\"light\"}")
+            shell("cmd uimode night no")
+            awaitChrome(8_000) { chromeValue("document.documentElement.dataset.theme||''") == "light" }
+            SystemClock.sleep(1_000)
+        }
+    }
+
+    /** A page view's accessibility flags and visibility as the framework holds them, read on the main thread. */
+    private class Layer(val importance: Int, val visibility: Int, val traversalAfter: Int) {
+        val hidden: Boolean get() = importance == View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        val gone: Boolean get() = visibility != View.VISIBLE
+        override fun toString(): String {
+            val mode = when (importance) {
+                View.IMPORTANT_FOR_ACCESSIBILITY_AUTO -> "AUTO"
+                View.IMPORTANT_FOR_ACCESSIBILITY_YES -> "YES"
+                View.IMPORTANT_FOR_ACCESSIBILITY_NO -> "NO"
+                View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS -> "NO_HIDE_DESCENDANTS"
+                else -> "$importance"
+            }
+            val shown = when (visibility) {
+                View.VISIBLE -> "VISIBLE"
+                View.INVISIBLE -> "INVISIBLE"
+                View.GONE -> "GONE"
+                else -> "$visibility"
+            }
+            return "importantForAccessibility=$mode visibility=$shown traversalAfter=${if (traversalAfter == View.NO_ID) "none" else if (traversalAfter == R.id.zen_chrome) "R.id.zen_chrome" else "0x${Integer.toHexString(traversalAfter)}"}"
+        }
+    }
+
+    private fun layerOf(tabId: String): Layer? {
+        var layer: Layer? = null
+        instrumentation.runOnMainSync {
+            val view = (activity as? MainActivity)?.host?.tabs?.get(tabId) ?: return@runOnMainSync
+            layer = Layer(view.importantForAccessibility, view.visibility, view.accessibilityTraversalAfter)
+        }
+        return layer
+    }
+
+    /** A value off the page's own document (the tab's WebView), as [chromeValue] reads the chrome's. */
+    private fun pageValue(tabId: String, code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = (activity as? MainActivity)?.host?.tabs?.get(tabId)
+            if (view == null) {
+                latch.countDown()
+            } else {
+                view.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        return runCatching { JSONTokener(result).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
+    }
+
+    /**
+     * `block` with the tree read as TalkBack reads it: UiAutomation's
+     * `FLAG_INCLUDE_NOT_IMPORTANT_VIEWS` (the harness's default, [DemoHarness.runDemo]) off, so a
+     * view that is not important for accessibility – `NO_HIDE_DESCENDANTS` and everything under
+     * it – is left out as the framework leaves it out for a service without the flag; the flag
+     * back after, the client's node cache dropped at each change.
+     */
+    private fun <T> withoutNotImportantViews(block: () -> T): T {
+        val info = ui.serviceInfo
+        val had = info.flags and AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS != 0
+        info.flags = info.flags and AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS.inv()
+        ui.serviceInfo = info
+        dropTreeCache()
+        SystemClock.sleep(600)
+        try {
+            return block()
+        } finally {
+            if (had) {
+                val again = ui.serviceInfo
+                again.flags = again.flags or AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+                ui.serviceInfo = again
+                dropTreeCache()
+                SystemClock.sleep(400)
+            }
+        }
+    }
+
+    /** The WebView nodes of a real size in the window, in tree order, none entered (a document under one carries the same class). */
+    private fun webViewNodes(): List<AccessibilityNodeInfo> {
+        val root = ui.rootInActiveWindow ?: return emptyList()
+        val found = ArrayList<AccessibilityNodeInfo>()
+        var visited = 0
+        fun visit(node: AccessibilityNodeInfo) {
+            if (++visited > WALK_LIMIT) return
+            if (node.className?.toString() == WEBVIEW_CLASS || isChromeWebView(node)) {
+                val b = Rect().also { node.getBoundsInScreen(it) }
+                if (b.width() >= 100 && b.height() >= 100) found += node
+                return
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let { visit(it) }
+        }
+        visit(root)
+        return found
+    }
+
+    private fun describeWebViews(nodes: List<AccessibilityNodeInfo>): String =
+        "${nodes.size} WebView node(s) of a real size: " + nodes.joinToString("; ") { node ->
+            val b = Rect().also { node.getBoundsInScreen(it) }
+            "id=${node.viewIdResourceName ?: "none"} ${b.toShortString()} children=${node.childCount}"
+        }.ifBlank { "none" }
+
+    /** The chrome's node first: the full-window view before the inset page (the framework orders children by place, the larger first). */
+    private fun chromeFirst(nodes: List<AccessibilityNodeInfo>): Boolean {
+        if (nodes.size < 2) return false
+        val first = Rect().also { nodes[0].getBoundsInScreen(it) }
+        val second = Rect().also { nodes[1].getBoundsInScreen(it) }
+        return isChromeWebView(nodes[0]) || first.width() * first.height() >= second.width() * second.height()
+    }
+
+    /** The first node under `root` (depth first, the walk limit) that `accept`s, or null. */
+    private fun firstUnder(root: AccessibilityNodeInfo, accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        var visited = 0
+        fun visit(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            if (++visited > WALK_LIMIT) return null
+            if (node != root && accept(node)) return node
+            for (i in 0 until node.childCount) node.getChild(i)?.let { child -> visit(child)?.let { return it } }
+            return null
+        }
+        return visit(root)
     }
 
     /**
@@ -864,7 +1373,7 @@ class ChromeA11yDemo : DemoHarness(
      * Then the bold-text setting once. Leaves the system as found.
      */
     private fun fontScaleScene() {
-        measureScale("100")
+        measureScale("100", 1.0)
         // A mark on the chrome's document before the first change: a configuration change re-zooms
         // the WebView's text in place (`fontScale` in `configChanges`, `applyTextScale` writes
         // `textZoom`), so the same document – with its mark – is there after each.
@@ -878,7 +1387,7 @@ class ChromeA11yDemo : DemoHarness(
             val kept = chromeValue("document.documentElement.dataset.a11yMarker||''")
             expect("font_scale $scale re-zoomed the chrome in place, no reload (the mark '$marker' is still on the document: '$kept')", kept == marker)
             SystemClock.sleep(2_000)
-            measureScale(zoom)
+            measureScale(zoom, scale.toDouble())
             // Bold text with the large scale (both settings at once): the weights read 700 / 900.
             if (scale == "2.0") boldText(zoom)
             lastZoom = zoom
@@ -932,8 +1441,12 @@ class ChromeA11yDemo : DemoHarness(
     /** The group badge's horizontal spill (scrollWidth - clientWidth) read at zoom 100, the later zooms' measure. */
     private var badgeSpillAt100: Double? = null
 
-    /** The bar, Settings, the omnibox, the overview and the menu sheet at the current text zoom, measured and photographed. */
-    private fun measureScale(zoom: String) {
+    /**
+     * The bar, Settings, the omnibox, the overview and the menu sheet at the current text zoom,
+     * measured and photographed; `fontScale` is the system setting behind the zoom, which the
+     * menu's icon row pose is held to (A11Y-04: the list from 1.3, `LARGE_TEXT_FONT_SCALE`).
+     */
+    private fun measureScale(zoom: String, fontScale: Double) {
         val label = "scale-$zoom"
         val factor = (zoom.toIntOrNull() ?: 100) / 100.0
         clearChrome()
@@ -1062,15 +1575,44 @@ class ChromeA11yDemo : DemoHarness(
             dismiss()
             awaitChrome(8_000) { !overviewOpen() }
         }
-        // 5. A sheet: the app menu.
+        // 5. A sheet: the app menu – and its icon row's pose (A11Y-04): the list of §10.3 rows from
+        // the large-text line (font scale 1.3), the row of icon buttons below it, off the font
+        // scale the host sends the chrome with the configuration change.
         if (openMenuSheet()) {
             val row = bounds("New Tab")
             finding("  [$label] menu row ${row?.let { sz(it) }} (line box ${20 * factor} + 24)")
             expect("[$label] a menu row grows from the line box", row != null && abs(dp(row.height()) - (20 * factor + 24)) <= 2.5)
+            val state = chromeAccessibilityState()
+            val wantList = Math.round(fontScale * 100) >= 130
+            val pose = awaitPose(if (wantList) "list" else "row")
+            finding("  [$label] the chrome's accessibility state $state; the icon row's pose '$pose' (font scale $fontScale wants ${if (wantList) "the list" else "the row"})")
+            expect("[$label] the chrome's accessibility state carries the system font scale $fontScale (${state.opt("fontScale")})", abs(state.optDouble("fontScale", 0.0) - fontScale) < 0.01)
+            expect("[$label] at font scale $fontScale the menu's icon row is the ${if (wantList) "list" else "row"} pose ('$pose')", pose == if (wantList) "list" else "row")
+            if (wantList) {
+                val names = iconRowNamesNow()
+                expect("[$label] the list carries the row's items by the same names ($names vs $iconRowNames)", names.isNotEmpty() && (iconRowNames.isEmpty() || names == iconRowNames))
+                val rows = runCatching { JSONArray(chromeValue(LIST_ROWS_JS)) }.getOrDefault(JSONArray())
+                val heights = List(rows.length()) { rows.getJSONObject(it).optDouble("h") }
+                finding("  [$label] the list's rows: $heights tall (line box ${20 * factor} + 24 = ${20 * factor + 24})")
+                expect("[$label] the list's rows grow from the line box like every row ($heights vs ${20 * factor + 24})", heights.isNotEmpty() && heights.all { abs(it - (20 * factor + 24)) <= 0.5 })
+                nameAudit("$label-menu-list")
+            }
             overflowCheck(label, "menu")
-            snap("$label-sheet")
+            snap(if (wantList) "$label-menu-list" else "$label-sheet")
             dismiss()
             awaitSurface(up = false, timeoutMs = 6_000)
+            // The large-text list in dark, once: the lead's gate is on the pose, light and dark.
+            if (wantList && abs(fontScale - 1.3) < 0.01) {
+                dark {
+                    if (openMenuSheet()) {
+                        expect("[$label] the list pose holds in dark ('${awaitPose("list")}')", menuPose() == "list")
+                        SystemClock.sleep(800)
+                        snap("$label-menu-list-dark")
+                        dismiss()
+                        awaitSurface(up = false, timeoutMs = 6_000)
+                    }
+                }
+            }
         }
         clearChrome()
     }
@@ -2310,6 +2852,116 @@ class ChromeA11yDemo : DemoHarness(
         const val PRIVATE_TITLE = "You're browsing privately"
         /** `--v2-control` text buttons (§9.11 / §9.33) and a prompt's actions: 40 tall by design, not 44. */
         val TEXT_BUTTONS_40 = setOf("Undo", "Reset", "Share", "Copy link", "Edit", "Make default", "Install", "Add", "Cancel", "Block", "Show")
+        /** The phone's tab-switch announcement: the name first, then the place (`tabSwitchAnnouncement`, `lib/announce.ts`). */
+        val TAB_SWITCH = Regex("^.+, tab \\d+ of \\d+$")
+
+        /** The menu's icon row's names in order: the buttons' `aria-label`s in the row pose, the rows' text in the list pose; '' with neither up. */
+        val ICON_NAMES_JS = """
+            (function () {
+              var norm = function (s) { return (s || '').replace(/\s+/g, ' ').trim(); };
+              var group = document.querySelector('.zen-menu-icon-list') || document.querySelector('.zen-menu-icon-row');
+              if (!group) return '';
+              return JSON.stringify(Array.prototype.map.call(group.querySelectorAll('button'), function (b) {
+                return norm(b.getAttribute('aria-label')) || norm(b.textContent);
+              }));
+            })()
+        """.trimIndent()
+
+        /**
+         * The list pose's rows (A11Y-04): each row's text, box (CSS px), the sheet's width, the
+         * glyph's and the label's left edges (the glyph leads) and whether the glyph is hidden
+         * from the reader; '' without the list.
+         */
+        val LIST_ROWS_JS = """
+            (function () {
+              var list = document.querySelector('.zen-menu-icon-list');
+              if (!list) return '';
+              var sheet = list.closest('[role="dialog"]') || list.parentElement;
+              var sheetW = sheet.getBoundingClientRect().width;
+              return JSON.stringify(Array.prototype.map.call(list.querySelectorAll('button'), function (b) {
+                var r = b.getBoundingClientRect();
+                var glyph = b.querySelector('.zen-sheet-item-glyph');
+                var label = b.querySelector('span:not(.zen-sheet-item-glyph)');
+                return {
+                  name: (b.textContent || '').replace(/\s+/g, ' ').trim(),
+                  glyph: b.getAttribute('data-glyph'),
+                  w: r.width, h: r.height, sheetW: sheetW,
+                  glyphLeft: glyph ? glyph.getBoundingClientRect().left : -1,
+                  labelLeft: label ? label.getBoundingClientRect().left : -1,
+                  glyphHidden: !!(glyph && glyph.getAttribute('aria-hidden') === 'true')
+                };
+              }));
+            })()
+        """.trimIndent()
+
+        /**
+         * The name audit of `lib/a11yNames.ts` in the chrome's own words (A11Y-10): every control
+         * a reader is given (not under `aria-hidden`, laid out) is named – `aria-label`,
+         * `aria-labelledby`, a field's label or placeholder, the content, `title` – and a control
+         * that shows text carries its leading piece in its name, letter case aside. The controls
+         * counted and the lines short of the rule.
+         */
+        val NAMES_JS = """
+            (function () {
+              var SEL = 'button, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="checkbox"], [role="switch"], [role="radio"], [role="option"], [role="link"], a[href], input:not([type="hidden"]), select, textarea';
+              var norm = function (s) { return (s || '').replace(/\s+/g, ' ').trim(); };
+              var pieces = function (el) {
+                var out = [];
+                var visit = function (node) {
+                  if (node.nodeType === 3) { var t = norm(node.nodeValue); if (t && out.indexOf(t) < 0) out.push(t); return; }
+                  if (node.nodeType !== 1) return;
+                  if (node.getAttribute('aria-hidden') === 'true') return;
+                  if (node.tagName === 'IMG') { var a = norm(node.getAttribute('alt')); if (a && out.indexOf(a) < 0) out.push(a); return; }
+                  for (var i = 0; i < node.childNodes.length; i++) visit(node.childNodes[i]);
+                };
+                for (var i = 0; i < el.childNodes.length; i++) visit(el.childNodes[i]);
+                return out;
+              };
+              var name = function (el) {
+                var label = norm(el.getAttribute('aria-label'));
+                if (label) return label;
+                var by = el.getAttribute('aria-labelledby');
+                if (by) {
+                  var t = by.split(/\s+/).map(function (id) { var e = document.getElementById(id); return e ? norm(e.textContent) : ''; }).filter(Boolean).join(' ');
+                  if (t) return t;
+                }
+                if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) {
+                  var labels = el.labels ? Array.prototype.map.call(el.labels, function (l) { return norm(l.textContent); }).filter(Boolean).join(' ') : '';
+                  if (labels) return labels;
+                  var p = norm(el.getAttribute('placeholder'));
+                  if (p) return p;
+                }
+                var content = pieces(el).join(' ');
+                if (content) return content;
+                return norm(el.getAttribute('title'));
+              };
+              var where = function (el) {
+                var w = el.tagName.toLowerCase();
+                var role = el.getAttribute('role');
+                if (role) w += '[role=' + role + ']';
+                var classes = (typeof el.className === 'string' ? el.className : '').split(/\s+/).filter(function (c) { return c.indexOf('zen-') === 0; }).slice(0, 2);
+                if (classes.length) w += '.' + classes.join('.');
+                var l = el.getAttribute('aria-label'); if (l) w += '[aria-label=' + l + ']';
+                return w;
+              };
+              var all = document.querySelectorAll(SEL);
+              var findings = [];
+              var counted = 0;
+              for (var i = 0; i < all.length; i++) {
+                var el = all[i];
+                if (el.closest('[aria-hidden="true"]')) continue;
+                var r = el.getBoundingClientRect();
+                if (r.width < 1 || r.height < 1) continue;
+                counted++;
+                var n = name(el);
+                var p = pieces(el);
+                var lead = p[0] || '';
+                if (!n) findings.push(where(el) + ": no accessible name (shows '" + p.join(' ') + "')");
+                else if (lead && n.toLowerCase().indexOf(lead.toLowerCase()) < 0) findings.push(where(el) + ": named '" + n + "', shows '" + p.join(' ') + "'");
+              }
+              return JSON.stringify({ controls: counted, findings: findings });
+            })()
+        """.trimIndent()
 
         /** The toast card as the DOM has it: role, live region, text, its buttons' labels and boxes (CSS px). */
         val TOAST_JS = """
