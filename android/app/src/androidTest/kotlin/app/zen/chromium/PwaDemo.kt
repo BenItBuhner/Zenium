@@ -1,13 +1,17 @@
 package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -22,7 +26,8 @@ import java.io.File
  * install sheet built from the manifest (tile, name, origin, description, the screenshot strip),
  * its Add handing the request to the launcher's own pin dialog, the launcher's confirmation
  * toasting "Added Sketch to Home screen" with Open; the menu then reading "Open Sketch" inside
- * the app; and, from the Home screen, the pinned tile opening the app's URL in Zenium.
+ * the app; and, from the Home screen, the pinned tile opening the app in its own window
+ * ([WebAppActivity]: the manifest declares `standalone`; [WebAppDemo] records that window).
  *
  * The pages come from a loopback server inside this process ([DemoServer]): `/notes.html` has no
  * manifest, `/app/` declares one whose icon and screenshots are the preview host's demo app
@@ -244,6 +249,11 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
 
     // --- 5. the tile on the Home screen ---------------------------------------------------------------
 
+    /**
+     * The tile opens the app in its own window ([WebAppActivity], PWA-07: the manifest declares
+     * `standalone`); [WebAppDemo] records that window's claims. Here: the window came up on the
+     * app's URL, toolbar-less.
+     */
     private fun homeScreenTile(f: Finger, pinned: Boolean) {
         finding("\nHome screen tile")
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
@@ -255,14 +265,35 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
             f.tap(tile.exactCenterX(), tile.exactCenterY())
         } else {
             // Nothing to tap: come back the way the tile would, so the recording ends on the app.
-            openLink(APP_URL)
+            app.startActivity(Shortcuts.launchIntent(app, APP_URL, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
         val front = awaitForeground(10_000)
-        awaitActiveUrl(APP_URL, 12_000)
+        val window = awaitWebAppWindow(12_000)
         SystemClock.sleep(2_500)
         shot("10-opened-from-tile")
-        val url = activeCoreTab()?.optString("url")
-        finding("${verdict(front && url == APP_URL)} Zenium is in front on the app's URL ($url)")
+        val url = window?.let { w -> onMain { w.page?.url } }
+        val toolbar = window?.let { w -> onMain { w.toolbar.visibility == View.VISIBLE } }
+        finding("${verdict(front && url == APP_URL && toolbar == false)} the app's own window is in front on the app's URL, toolbar-less ($url, toolbar ${toolbar ?: "no window"})")
+    }
+
+    /** The app's own window, once one is resumed (the driver shares Zenium's process). */
+    private fun awaitWebAppWindow(timeoutMs: Long): WebAppActivity? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val found = onMain {
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<WebAppActivity>().firstOrNull()
+            }
+            if (found != null) return found
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    private fun <T> onMain(block: () -> T): T {
+        var result: T? = null
+        instrumentation.runOnMainSync { result = block() }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
 
     /** The shortcut's icon on the launcher's workspace, looking one page to each side when needed. */
