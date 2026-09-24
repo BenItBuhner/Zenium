@@ -377,6 +377,52 @@ describe('WebAppService', () => {
     expect(h.unpins).toEqual([MANIFEST_ID])
   })
 
+  it('lists the installed apps with how many of their windows stand open (`installed`, the snapshot’s `webApps`): the record with its count – one as installing opened the window, none while that window is closing, two with a second launch – and nothing once uninstalled', async () => {
+    const h = harness({ desktop: true })
+    expect(h.service.installed()).toEqual([])
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    h.tab.url = 'https://elsewhere.example/'
+    h.service.onPinned(h.pins[0].id, { icon: 'file:///icons/sketch.png' })
+    // Installing on desktop opened the app's window: the record, whole, with the one window.
+    expect(h.appWindows).toHaveLength(1)
+    const record = h.service.pinnedById(MANIFEST_ID)!
+    expect(h.service.installed()).toEqual([{ ...record, windows: 1 }])
+    expect(h.service.installed()[0]).toMatchObject({
+      id: MANIFEST_ID,
+      name: 'Sketch',
+      icon: 'file:///icons/sketch.png',
+      windows: 1
+    })
+    // A window on its way out is not counted – what `launch` does not bring forward either –
+    // so the launch that opens a second window leaves the count at one, and two stand open once
+    // the first is not closing after all.
+    const first = h.appWindows[0].win as unknown as { isClosing: boolean }
+    first.isClosing = true
+    expect(h.service.installed()[0].windows).toBe(0)
+    h.service.launch(MANIFEST_ID, h.win)
+    expect(h.appWindows).toHaveLength(2)
+    expect(h.service.installed()[0].windows).toBe(1)
+    first.isClosing = false
+    expect(h.service.installed()[0].windows).toBe(2)
+    // The count is the snapshot's, not the record's: the stored record carries none.
+    expect('windows' in record).toBe(false)
+    // Uninstalled: no record, so no entry – the closing windows are no one's.
+    await h.service.uninstall(MANIFEST_ID)
+    expect(h.service.installed()).toEqual([])
+  })
+
+  it('counts no windows on a one-window host, whose apps open as tabs', async () => {
+    const h = harness()
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    h.service.onPinned(h.pins[0].id)
+    h.tab.url = 'https://elsewhere.example/'
+    h.service.launch(MANIFEST_ID, h.win)
+    expect(h.createdTabs).toEqual([{ url: DOCUMENT_URL }])
+    expect(h.service.installed().map((a) => [a.id, a.windows])).toEqual([[MANIFEST_ID, 0]])
+  })
+
   it('swiping the banner away starts the cooldown; a timeout does not', () => {
     const h = harness()
     postManifest(h)

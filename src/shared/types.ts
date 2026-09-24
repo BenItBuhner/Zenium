@@ -28,7 +28,7 @@ import type {
   SiteDataStatus
 } from './siteData'
 import type { InternalPageId, InternalPageQuery } from './internalPages'
-import type { InstallSurface, WebAppInfo } from './webApp'
+import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
@@ -3663,6 +3663,12 @@ export interface UIState {
   /** The extension side panel this window shows beside the page, if one is open for its tab. */
   sidePanel: SidePanelInfo | null
   mods: Mod[]
+  /**
+   * The web apps installed on this host (`WebAppService.installed`), in the order they were
+   * installed, each with how many of its windows stand open: Settings › Apps lists, opens and
+   * uninstalls them (shortcuts-menus-138), asking first when a window would close (§9.23; #435).
+   */
+  webApps: InstalledWebApp[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]
@@ -3844,6 +3850,20 @@ export interface CommandDescriptor {
  */
 export type MenuGlyph = 'forward' | 'home' | 'star' | 'download' | 'info' | 'reload' | 'stop'
 
+/**
+ * A tab group's mark before a row's label (the app menu's Tab Folders submenu, where every row
+ * is a saved group; shortcuts-menus-111): the one group glyph (`GroupGlyph`, design language
+ * v2 §9.37) drawn from the group's colour and its own icon – the 10 ring at a 2 stroke for a
+ * SAVED group, the 10 dot for an open one – in the favicon's 16 box, so the row reads as the
+ * sidebar's header and the strip's chip do. A native menu host has no such glyph and draws
+ * the row as text.
+ */
+export interface MenuGroupMark {
+  color: FolderColor | null
+  icon: string
+  saved: boolean
+}
+
 export interface MenuItemDescriptor {
   id: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -3852,6 +3872,8 @@ export interface MenuItemDescriptor {
   checked: boolean
   /** A favicon (`data:` or remote URL) the renderer may show before the label. */
   icon?: string | null
+  /** A tab group's mark in the glyph slot (the Tab Folders submenu's rows). */
+  group?: MenuGroupMark
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */
   danger?: boolean

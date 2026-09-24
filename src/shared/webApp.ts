@@ -85,6 +85,17 @@ export interface PinnedWebApp {
   bounds?: Rect | null
 }
 
+/**
+ * An installed app as the UI snapshot lists it (`UIState.webApps`): the record, and how many
+ * windows of the app stand open on this host – what an uninstall closes with the launcher and
+ * the record. Settings › Apps asks before it acts when the count is above zero (§9.23's notice:
+ * "Uninstall <app>? Its open window closes."; the #435 lead check) and acts at once when it is
+ * not. A host whose apps open as tabs (Android) counts none.
+ */
+export interface InstalledWebApp extends PinnedWebApp {
+  windows: number
+}
+
 /** How often and when a user came back to an app – the input to the ambient prompt. */
 export interface EngagementRecord {
   /** Distinct visits (at least `MIN_VISIT_GAP_MS` apart). */

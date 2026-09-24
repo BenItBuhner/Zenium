@@ -506,6 +506,18 @@ describe('the macOS menu bar', () => {
     expect(overlays).toHaveLength(1)
     expect(overlays[0]!.payload).toEqual({ kind: 'settings', section: 'shortcuts' })
   })
+
+  it("orders Help as the app menu's Help submenu does, less About Zenium, which is the application menu's role: What's New over the hairline, then Zenium Help, Keyboard Shortcuts, Report an Issue…", () => {
+    const h = harness()
+    expect(submenu(last(h), 'Help').map((i) => (i.type === 'separator' ? '-' : i.label))).toEqual([
+      "What's New",
+      '-',
+      'Zenium Help',
+      'Keyboard Shortcuts',
+      'Report an Issue…'
+    ])
+    expect(item(submenu(last(h), 'Zenium'), 'About Zenium').role).toBe('about')
+  })
 })
 
 describe('menuSignature', () => {

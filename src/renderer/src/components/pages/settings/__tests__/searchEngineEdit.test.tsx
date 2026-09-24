@@ -108,6 +108,7 @@ function state(): UIState {
     boosts: [],
     extensions: [],
     mods: [],
+    webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
     updates: emptyUpdateStatus('0.4.27-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),

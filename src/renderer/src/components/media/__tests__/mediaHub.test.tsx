@@ -588,6 +588,37 @@ describe('the hub from the app menu (§9.29)', () => {
     expect(css).not.toMatch(/\.zen-mhub-dot \{[^}]*--v2-accent/)
   })
 
+  it('an update downloaded and waiting lights the same dot on ⋯ – Chrome’s dot on its ⋮ – and names it, taking the one dot over the hub’s while both would show (shortcuts-menus-101)', () => {
+    const at = (state: UIState, phase: 'ready' | 'available'): UIState =>
+      ({ ...state, updates: { phase } }) as unknown as UIState
+    render(<NavRow state={at(rowState([]), 'ready')} tab={music} compact={false} />)
+    const menu = q('[data-zen-app-menu-button]')!
+    expect(dots()).toEqual(['menu'])
+    expect(menu.querySelector('[data-testid="update-ready-dot"]')).not.toBeNull()
+    expect(menu.getAttribute('aria-label')).toBe(
+      `${menu.getAttribute('data-tooltip')}, update ready`
+    )
+    // Found but not downloaded: nothing on the button, as Chrome shows nothing on `available`.
+    render(<NavRow state={at(rowState([]), 'available')} tab={music} compact={false} />)
+    expect(dots()).toEqual([])
+    expect(menu.getAttribute('aria-label')).toBe(menu.getAttribute('data-tooltip'))
+    // Media playing with the hub button up: the button keeps its disc, ⋯ wears the update's.
+    render(<NavRow state={at(rowState([track()]), 'ready')} tab={music} compact={false} />)
+    expect(dots()).toEqual(['hub', 'menu'])
+    // Folded (the 240 sidebar), both waiting: one dot on ⋯, the update's, and its name.
+    withRowObserver(() => {
+      render(
+        <NavRow key="folded" state={at(rowState([track()]), 'ready')} tab={music} compact={false} />
+      )
+      sidebarDraggedTo(240)
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(dots()).toEqual(['menu'])
+      expect(q('[data-zen-app-menu-button]')!.getAttribute('aria-label')).toBe(
+        `${q('[data-zen-app-menu-button]')!.getAttribute('data-tooltip')}, update ready`
+      )
+    })
+  })
+
   it('re-reads the fold as the button comes and goes with the media, no resize needed', () => {
     render(<NavRow state={rowState([])} tab={music} compact={false} />)
     const menu = q('[data-zen-app-menu-button]')!

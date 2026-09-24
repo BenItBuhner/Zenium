@@ -27,6 +27,7 @@ import type {
   LongCapture,
   LongCaptureCrop,
   MenuGlyph,
+  MenuGroupMark,
   MenuHeader,
   NavigationSnapshot,
   NewTabPageAction,
@@ -859,6 +860,15 @@ export interface TabView {
    * a person's input would: `isTrusted`, user activation, pop-ups and autoplay allowed.
    */
   sendInput?(event: AgentInputEvent): Promise<void>
+  /**
+   * Whether the page's renderer takes real input yet: it has presented its first frame, or its
+   * document is one the engine never holds back. Chromium defers a new http(s) page's commits
+   * until its first contentful paint (paint holding) and drops presses and keys meanwhile with a
+   * "handled" ack, so a placed but unpainted view swallows a click without a trace; the core
+   * waits for this before `sendInput`. Hosts that cannot tell leave it out (the core then sends
+   * as soon as the view is on screen); an answer the host is unsure of should be true.
+   */
+  hasPainted?(): Promise<boolean>
   /** Run script in a world the page cannot observe (Electron's isolated world). */
   executeIsolatedJavaScript?(code: string): Promise<unknown>
   /**
@@ -1082,6 +1092,12 @@ export interface MenuItemTemplate {
    * (recently closed entries, `chrome.contextMenus` items).
    */
   icon?: string | null
+  /**
+   * A tab group's mark before the label of a renderer-drawn menu's row (the app menu's Tab
+   * Groups submenu, shortcuts-menus-111): the chrome draws the one group glyph from the group's
+   * colour and icon, the ring for a saved group. Native menu hosts draw the row as text.
+   */
+  group?: MenuGroupMark
   /**
    * An icon-row item of a renderer-drawn menu (the phone app menu's first group, design language
    * v2 §9.3): the chrome draws the glyph in a 44 px button named by `label`. Native menu hosts
