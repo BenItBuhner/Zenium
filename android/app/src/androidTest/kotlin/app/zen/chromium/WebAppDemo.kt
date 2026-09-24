@@ -361,8 +361,31 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         shot("frames-launch-$THEME")
         beat()
         describeWindow(opened, "standalone (relaunched)", THEME_COLOR, expectToolbar = false, expectBarsHidden = false, expectMode = "standalone")
+        // A fresh task: finishWebApps() removed the earlier one before this launch, so this is
+        // the label read back on the task the launch made, not a task resumed.
         val task = ownTask(opened)
-        check("the relaunch reused the app's task (${task?.taskDescription?.label})", task != null && task.taskDescription?.label == TILE_LABEL)
+        check("the launch made the app's task, labelled '$TILE_LABEL' (${task?.taskDescription?.label})", task != null && task.taskDescription?.label == TILE_LABEL)
+        // The tile tapped while the app is up: `singleTop` in the `intoExisting` document task
+        // brings the window that is up forward rather than opening a second (Chrome's
+        // `WebappLauncherActivity` pose, `WebappActivity` `singleTop`) – the same instance, one
+        // task, the page kept.
+        val tasksBefore = appTasks().count { it.baseIntent.component?.className == WebAppActivity::class.java.name }
+        val urlBefore = pageUrl(opened)
+        val again = shellCommandWithin("su 0 ${amStartCommand(intent)}", 12_000)
+        val againRoute = if (again != null && again.contains("Status:")) {
+            again.lines().filter { it.contains("Status") || it.contains("LaunchState") || it.contains("Warning") }.joinToString(" | ")
+        } else {
+            app.startActivity(Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "from the app's own uid: Context.startActivity"
+        }
+        val resumed = awaitTrue(8_000) { webApp() === opened }
+        SystemClock.sleep(1_000)
+        val tasksAfter = appTasks().count { it.baseIntent.component?.className == WebAppActivity::class.java.name }
+        finding("relaunched while up ($againRoute): WebAppActivity tasks $tasksBefore -> $tasksAfter, page ${pageUrl(opened)}")
+        check(
+            "the relaunch while up resumed the window that was up: the same instance in front, one task, the page kept ($urlBefore)",
+            resumed && tasksBefore == 1 && tasksAfter == 1 && pageUrl(opened) == urlBefore
+        )
         finishWebApps()
     }
 
@@ -810,7 +833,10 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         "/mini/" to ("text/html; charset=utf-8" to appPage("Notebook", "#f3efe4", "A notebook declaring minimal-ui: on a phone it opens like a standalone app.", "/mini/manifest.webmanifest").toByteArray()),
         "/mini/manifest.webmanifest" to ("application/manifest+json" to manifest("/mini/", "Notebook", "Notebook", "minimal-ui", "#5b3fa3", "#f3efe4").toByteArray()),
         "/full/" to ("text/html; charset=utf-8" to appPage("Canvas", "#101820", "A canvas declaring fullscreen: both bars hide.", "/full/manifest.webmanifest", ink = "#fbfbfe").toByteArray()),
-        "/full/manifest.webmanifest" to ("application/manifest+json" to manifest("/full/", "Canvas", "Canvas", "fullscreen", "#101820", "#101820").toByteArray()),
+        // theme_color apart from the page's ground: the strip a display cutout keeps in the
+        // fullscreen still must read as the strip, not as more page (the pair before this took
+        // both at #101820 and could not show the band).
+        "/full/manifest.webmanifest" to ("application/manifest+json" to manifest("/full/", "Canvas", "Canvas", "fullscreen", "#c2410c", "#101820").toByteArray()),
         "/webapp/icon.svg" to ("image/svg+xml" to asset("webapp/icon.svg")),
         "/webapp/icon-192.png" to ("image/png" to asset("webapp/icon-192.png")),
         "/webapp/shot-canvas.svg" to ("image/svg+xml" to asset("webapp/shot-canvas.svg")),
@@ -831,7 +857,9 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         private const val THEME_COLOR = 0xff2f6f8f.toInt()
         private const val BACKGROUND_COLOR = 0xffe8f1f5.toInt()
         private const val MINI_THEME = 0xff5b3fa3.toInt()
-        private const val FULL_THEME = 0xff101820.toInt()
+        /** The fullscreen fixture's theme_color, apart from its `#101820` page so a cutout's strip shows as one. */
+        private const val FULL_THEME = 0xffc2410c.toInt()
+        private const val FULL_BACKGROUND = 0xff101820.toInt()
 
         private const val ADD_ITEM = "Add to Home Screen"
         private const val TILE_LABEL = "Sketch"
@@ -853,7 +881,7 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         /** The records the installs write (WebAppRecordTest pins them against the request); the fixtures launch with them. */
         private val SKETCH = WebAppRecord(APP_ID, TILE_LABEL, APP_URL, SCOPE, WebAppRules.Display.STANDALONE, THEME_COLOR, BACKGROUND_COLOR)
         private val MINI = WebAppRecord(MINI_URL, "Notebook", MINI_URL, MINI_URL, WebAppRules.Display.MINIMAL_UI, MINI_THEME, 0xfff3efe4.toInt())
-        private val FULL = WebAppRecord(FULL_URL, "Canvas", FULL_URL, FULL_URL, WebAppRules.Display.FULLSCREEN, FULL_THEME, FULL_THEME)
+        private val FULL = WebAppRecord(FULL_URL, "Canvas", FULL_URL, FULL_URL, WebAppRules.Display.FULLSCREEN, FULL_THEME, FULL_BACKGROUND)
 
         private const val PAGE_STATE_JS = "location.pathname + ':' + document.readyState"
 

@@ -260,12 +260,17 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         SystemClock.sleep(3_500)
         val tile = if (pinned) findTile() else null
         shot("09-home-screen-tile")
-        finding("${verdict(tile != null)} the '$TILE_LABEL' tile is on the Home screen")
-        if (tile != null) {
+        // The pin's failure is this line's: with no tile the window below is opened from the
+        // intent the install writes (the record the manifest gives), so its claims are still
+        // read, under a finding that names the route; a record-less intent would land in the
+        // browser and fail the window's line for the pin's fault.
+        finding("${verdict(tile != null)} the '$TILE_LABEL' tile is on the Home screen${if (pinned) "" else " (the pin step failed above)"}")
+        val route = if (tile != null) {
             f.tap(tile.exactCenterX(), tile.exactCenterY())
+            "from the tile"
         } else {
-            // Nothing to tap: come back the way the tile would, so the recording ends on the app.
-            app.startActivity(Shortcuts.launchIntent(app, APP_URL, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            app.startActivity(Shortcuts.launchIntent(app, APP_URL, INSTALLED).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "from the install's intent (no tile to tap)"
         }
         val front = awaitForeground(10_000)
         val window = awaitWebAppWindow(12_000)
@@ -273,7 +278,7 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         shot("10-opened-from-tile")
         val url = window?.let { w -> onMain { w.page?.url } }
         val toolbar = window?.let { w -> onMain { w.toolbar.visibility == View.VISIBLE } }
-        finding("${verdict(front && url == APP_URL && toolbar == false)} the app's own window is in front on the app's URL, toolbar-less ($url, toolbar ${toolbar ?: "no window"})")
+        finding("${verdict(front && url == APP_URL && toolbar == false)} the app's own window is in front on the app's URL, toolbar-less, opened $route ($url, toolbar ${toolbar ?: "no window"})")
     }
 
     /** The app's own window, once one is resumed (the driver shares Zenium's process). */
@@ -452,6 +457,8 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         private const val TILE_LABEL = "Sketch"
         /** The launcher's pin dialog accepts on one of these (Launcher3 says "Add automatically"). */
         private val PIN_ACCEPT_LABELS = listOf("Add automatically", "Add to Home screen", "Add to home screen", "Add")
+        /** The record the install writes for the manifest below (WebAppDemo's SKETCH is the same app). */
+        private val INSTALLED = WebAppRecord(APP_ID, TILE_LABEL, APP_URL, APP_URL, WebAppRules.Display.STANDALONE, 0xff2f6f8f.toInt(), 0xffe8f1f5.toInt())
 
         private val APP_PAGE = """
             <!doctype html><html><head><meta charset=utf-8>
