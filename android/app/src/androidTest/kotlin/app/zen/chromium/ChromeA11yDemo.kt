@@ -344,7 +344,16 @@ class ChromeA11yDemo : DemoHarness(
         closeField()
     }
 
-    /** The clipboard row's Show under a finger: the option then reads the link it held, its Show gone (#208). */
+    /**
+     * The clipboard row's Show under a finger: the option then reads the link it held, its Show
+     * gone (#208). The touch is read back before it is judged: one that brought NOTHING within
+     * [CLIP_REVEAL_MS] – the row still reading Show, no link revealed – goes in once more, the
+     * button read afresh ([CLIP_SHOW_TAPS] fingers in all; the shape of `tapMenuButton`'s second
+     * finger: the third run of #440's demo lost this scene to a tap inside Show's bounds under a
+     * run of second-long frames while the recipe's GMS updated behind the app, nothing came of
+     * it). A touch that took Show away without the link is a product reading and gets no second
+     * finger; the findings say when a second went in.
+     */
     private fun clipboardRowScene() {
         val row = walk().firstOrNull { it.control && it.label.contains("you copied") }
         if (row == null) {
@@ -352,11 +361,16 @@ class ChromeA11yDemo : DemoHarness(
             return
         }
         finding("  [omnibox-header] clipboard row: ${describe(row.node)}")
-        if (!touchTapLabel("Show")) {
-            fail("[omnibox-header] no touch landed on the clipboard row's Show")
-            return
+        var revealed: AccessibilityNodeInfo? = null
+        for (attempt in 1..CLIP_SHOW_TAPS) {
+            if (!touchTapLabel("Show")) {
+                fail("[omnibox-header] no touch landed on the clipboard row's Show (finger $attempt)")
+                return
+            }
+            revealed = awaitNode(CLIP_REVEAL_MS) { it.startsWith(CLIP_URL) }
+            if (revealed != null || attempt == CLIP_SHOW_TAPS || findNode { it == "Show" } == null) break
+            finding("  [omnibox-header] (nothing came of finger $attempt on Show within $CLIP_REVEAL_MS ms – the row still reads Show; the button read afresh and the finger in again)")
         }
-        val revealed = awaitNode(6_000) { it.startsWith(CLIP_URL) }
         expect("[omnibox-header] Show reveals the link on the clipboard in the row: '${revealed?.let { label(it) }}'", revealed != null)
         expect("[omnibox-header] the revealed row's Show is gone", awaitChrome(3_000) { findNode { it == "Show" } == null })
         snap("omnibox-clipboard")
@@ -1815,9 +1829,9 @@ class ChromeA11yDemo : DemoHarness(
      * `-webkit-box` – and its row grows from one line's box plus 24 to two lines' where the label
      * takes the second; nothing is cut; at scale 1 the labels are one line with wrapping off.
      * Which labels take the second line is written down with the widest label's text width
-     * against its room: on this phone none of the app menu's does at any scale (the widest,
-     * Listen to This Page, is well inside its room at 2.0), so the rule's proof is the computed
-     * style on every label and the rows' heights, the stills the rows whole.
+     * against its room: on this phone none of the app menu's does at any scale (run 3: every
+     * label one line at 2.0, the rows 60), so the rule's proof is the computed style on every
+     * label and the rows' heights, the stills the rows whole.
      */
     private fun sheetLabelsCheck(label: String, factor: Double) {
         val read = runCatching { JSONObject(chromeValue(SHEET_LABELS_JS)) }.getOrNull()
@@ -3095,6 +3109,9 @@ class ChromeA11yDemo : DemoHarness(
         const val TALKBACK_SERVICE = "$TALKBACK_PACKAGE/$TALKBACK_PACKAGE.TalkBackService"
         /** The link put on the clipboard for #208's row (`seedClipboard`). */
         const val CLIP_URL = "https://example.com/clipboard"
+        /** How long a finger on the clipboard row's Show is given to reveal the link, and how many fingers go in before the scene is judged (`clipboardRowScene`). */
+        const val CLIP_REVEAL_MS = 6_000L
+        const val CLIP_SHOW_TAPS = 2
         /** The https page the audit table describes the bar on (the seed's `tab_example`). */
         const val EXAMPLE_URL = "https://example.com/"
         const val MENU_NEW_PRIVATE = "New Private Tab"
@@ -3148,10 +3165,11 @@ class ChromeA11yDemo : DemoHarness(
          * Every row label of the open sheet (`.zen-sheet-item > .truncate`: the list pose's rows
          * and the rows of text alike) against §4's two-line rule (`:root[data-text-scale] …`,
          * main.css): the root's step, and per label its text, the row's height, the lines it
-         * takes (its box over its line height), the room it has, the width its text would take on
-         * one line (measured with wrapping off for the moment of the read), whether anything is
-         * cut (a box shorter than its content, the clamp's ellipsis) and the computed display,
-         * white-space and line clamp; '' without a sheet.
+         * takes (its box over its line height), the room it has, the width its text takes on one
+         * line (a Range over its contents with wrapping off for the moment of the read: the box's
+         * scrollWidth never reads under the box, so it said 379 for every label of run 3),
+         * whether anything is cut (a box shorter than its content, the clamp's ellipsis) and the
+         * computed display, white-space and line clamp; '' without a sheet.
          */
         val SHEET_LABELS_JS = """
             (function () {
@@ -3165,7 +3183,10 @@ class ChromeA11yDemo : DemoHarness(
                 var rect = label.getBoundingClientRect();
                 var was = label.style.whiteSpace;
                 label.style.whiteSpace = 'nowrap';
-                var textW = label.scrollWidth;
+                var range = document.createRange();
+                range.selectNodeContents(label);
+                var textW = range.getBoundingClientRect().width;
+                range.detach();
                 label.style.whiteSpace = was;
                 return {
                   name: (label.textContent || '').replace(/\s+/g, ' ').trim(),
