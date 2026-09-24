@@ -256,7 +256,12 @@ function pageWebPreferences(session?: Session): WebPreferences {
     autoplayPolicy: 'document-user-activation-required',
     backgroundThrottling: true,
     scrollBounce: true,
-    enableWebSQL: false
+    enableWebSQL: false,
+    // A link dropped on the page navigates it, as Chrome's content area does (dnd-13: a
+    // bookmark off the bar, the address out of another window's pill): Blink loads the dragged
+    // URL only where the page left the drop alone, so a page that takes drops itself keeps
+    // them. Electron's default is off; the view's `will-navigate` still refuses zen:// from a page.
+    navigateOnDragDrop: true
   }
 }
 
