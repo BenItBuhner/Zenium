@@ -45,17 +45,20 @@ import kotlin.math.roundToInt
  * Below Android 14 the browser's share panel stands in for the system sheet (SH-03, Chrome 152's
  * sharing hub): the app menu's Share… opens the panel (its open recorded frame by frame, its
  * long tasks on the chrome's clock), the preview reads the page's title and URL, the chips are
- * Copy link, Long screenshot, Print and QR code in Chrome's order and each does its thing (the
- * clipboard holds the URL, the code dialog, the screenshot editor, the print dialog), the apps
- * row lists the fixture share target of the instrumentation APK (ShareTargetActivity, "Nimbus
- * Notes") and a tap sends it the intent direct – its window reads the URL back – and is
- * recorded, so that after a second share it leads the row; More opens the system chooser; back
- * dismisses the panel; a selection's share (the toolbar's Share as the host sends it: the
- * selected text leads the preview on two lines, the link to its highlight beneath, Copy text
- * and Long screenshot the chips) and an image's (a planted picture's long-press menu → Share
- * Image…: the picture itself in the preview, Copy image and Long screenshot); the three panels
- * in dark; and a private tab's share, which records nothing (where the image's WebView supports
- * private tabs). Findings land in `share-findings.txt`
+ * Copy link, QR code, Long screenshot, Print in the Android 14 action row's order (§9.38; one
+ * order for one object on both paths) and each does its thing (the clipboard holds the URL, the
+ * code dialog, the screenshot editor, the print dialog), the chips row stands above the hairline
+ * and the apps row under it nearest the thumb, the apps row lists the fixture share target of
+ * the instrumentation APK (ShareTargetActivity, "Nimbus Notes") and a tap sends it the intent
+ * direct – its window reads the URL back – and is recorded, so that after a second share it
+ * leads the row; More opens the system chooser; back dismisses the panel; a selection's share
+ * (the toolbar's Share as the host sends it: the selected text leads the preview on two lines,
+ * the page's link beneath with the highlight's `#:~:text=` directive left off the displayed line
+ * – the share keeps it, as the fixture reads back – Copy text and Long screenshot the chips) and
+ * an image's (a planted picture's long-press menu → Share Image…: the picture itself in the
+ * preview, Copy image the one chip); the three panels in dark; and a private tab's share, whose
+ * panel draws every chip, QR code with them, and which records nothing (where the image's
+ * WebView supports private tabs). Findings land in `share-findings.txt`
  * (one PASS or FAIL per claim), the frame sheets in `share-frames-open-{light,dark}.png`; a
  * failed check fails the run. On both branches the recording and the stills (`share-*.png`) are
  * the evidence for the eye.
@@ -128,7 +131,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             finding("  no panel came up: the panel's checks cannot run")
             return
         }
-        SystemClock.sleep(1_200)
+        awaitPanelRest()
         shot("02-share-panel-light")
         val title = panelString(TITLE_JS)
         val url = panelString(URL_JS)
@@ -138,8 +141,9 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         val chips = panelList(CHIP_KINDS_JS)
         val chipLabels = panelList(CHIP_LABELS_JS)
         finding("  chips: $chips, reading $chipLabels")
-        expect("the chips are Copy link, Long screenshot, Print, QR code, in Chrome's order", chips == listOf("copy", "screenshot", "print", "qr"))
-        expect("the chips read Copy link, Long screenshot, Print, QR code", chipLabels == listOf("Copy link", "Long screenshot", "Print", "QR code"))
+        expect("the chips are Copy link, QR code, Long screenshot, Print, in the Android 14 action row's order", chips == PAGE_CHIPS)
+        expect("the chips read Copy link, QR code, Long screenshot, Print", chipLabels == listOf("Copy link", "QR code", "Long screenshot", "Print"))
+        expectRowsFromTheSubjectDown("")
         var apps = panelList(APPS_JS)
         finding("  apps row: $apps")
         expect("the apps row lists the fixture share target", apps.any { it == fixture })
@@ -282,8 +286,9 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         val dark = openPanel(frames = "dark")
         expect("the panel opens on the dark scheme", dark)
         if (dark) {
-            SystemClock.sleep(1_200)
+            awaitPanelRest()
             shot("10-share-panel-dark")
+            expectRowsFromTheSubjectDown(" (dark)")
             back()
             awaitTrue(6_000) { !panelUp() }
         }
@@ -292,8 +297,26 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         coreInvoke("settings.update", "{\"colorScheme\":\"light\"}")
         SystemClock.sleep(1_500)
 
-        // 12. A private tab's share: the same panel without QR code, and nothing recorded.
+        // 12. A private tab's share: the same panel, every chip drawn, and nothing recorded.
         privateScene(fixture)
+    }
+
+    /**
+     * The sheet reads from its subject down (§9.38): the preview, then the chips row, then the
+     * hairline, then the ranked apps row nearest the thumb – in the DOM and on the screen, the
+     * chips row's bottom above the apps row's top.
+     */
+    private fun expectRowsFromTheSubjectDown(suffix: String) {
+        val rows = runCatching { JSONArray(panelString(ROWS_JS)) }.getOrNull()
+        val names = rows?.let { r -> (0 until r.length()).map { r.optJSONObject(it)?.optString("row").orEmpty() } }.orEmpty()
+        val tops = rows?.let { r -> (0 until r.length()).map { r.optJSONObject(it)?.optDouble("top") ?: Double.NaN } }.orEmpty()
+        val bottoms = rows?.let { r -> (0 until r.length()).map { r.optJSONObject(it)?.optDouble("bottom") ?: Double.NaN } }.orEmpty()
+        finding("  rows from the subject down: $names, tops $tops")
+        expect("the rows are the preview, the chips, the hairline, the apps, in that order$suffix", names == listOf("preview", "chips", "sep", "apps"))
+        expect(
+            "the chips row stands above the hairline and the apps row under it, nearest the thumb$suffix",
+            names.size == 4 && bottoms[0] <= tops[1] + 1 && bottoms[1] <= tops[2] + 1 && bottoms[2] <= tops[3] + 1
+        )
     }
 
     /**
@@ -303,8 +326,11 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
      * item (`SelectionToolbar.action`; SelectionDemo drives the system's toolbar itself, SH-10) –
      * so the core's `shareSelection` reads the selection back for the link to its highlight and
      * shares the text with it, and the host puts the panel up for the two. The preview leads with
-     * the text, on two lines at most, the link beneath and no favicon; the chips are Copy text and
-     * Long screenshot; Copy text puts the selection on the clipboard (light only: once is the check).
+     * the text, on two lines at most, the page's link beneath with the highlight's `#:~:text=`
+     * directive left off the displayed line (§9.38; `displayedLink`), and no favicon; the chips
+     * are Copy text and Long screenshot. Light: Copy text puts the selection on the clipboard.
+     * Dark: the share to the fixture, whose window reads the text back with the whole highlight
+     * link under it – what is shared keeps the directive the line leaves off.
      */
     private fun selectionScene(scheme: String) {
         finding("== a selection's share ($scheme)")
@@ -318,7 +344,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         val lines = panelString(TITLE_LINES_JS)
         finding("  preview: first line '${title.take(80)}${if (title.length > 80) "…" else ""}' (${title.length} characters), second line '$url'; the first line's box: $lines")
         expect("the preview leads with the selected text ($scheme)", title == selected.trim())
-        expect("the link to the highlight is the line beneath ($scheme)", url.startsWith("$PAGE_URL#:~:text="))
+        expect("the page's link is the line beneath, the highlight's #:~:text= left off it ($scheme)", url == PAGE_URL)
         expect("a selection's preview has no favicon ($scheme)", chromeJs(FAVICON_JS) == "false")
         val box = runCatching { JSONObject(lines) }.getOrNull()
         if (box != null) {
@@ -348,8 +374,14 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             expect("Copy text puts the selected text on the clipboard", clip == selected.trim())
             awaitClipboardOverlayGone(copiedAt)
         } else {
-            back()
-            awaitTrue(6_000) { !panelUp() }
+            // The displayed line leaves the directive off; the share keeps it. The fixture's window
+            // reads the intent's text back: the selection, and under it the link to its highlight.
+            expect("the selection's share to the app dismisses the panel", tapTarget(fixtureComponent()))
+            val received = awaitFixture()
+            finding("  the app received: '${received?.take(120)}${if ((received?.length ?: 0) > 120) "…" else ""}'")
+            expect("the app received the selected text", received?.contains(selected.trim()) == true)
+            expect("the shared link keeps the highlight's #:~:text= directive", received?.contains("$PAGE_URL#:~:text=") == true)
+            finishFixture()
         }
         SystemClock.sleep(800)
     }
@@ -360,7 +392,8 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
      * on it for the chrome's image menu and a touch on Share Image… – the core's `app.share`
      * with the image's address, which the host fetches into its cache and puts on the panel with
      * a small copy of itself as the preview. The preview is the picture and "Image" (the core
-     * sends no title for one), nothing beneath; the chips are Copy image and Long screenshot.
+     * sends no title for one), nothing beneath; the one chip is Copy image – the chips are the
+     * subject's, and the subject is the picture, not the page it sits on (§9.38).
      */
     private fun imageScene(scheme: String) {
         finding("== an image's share ($scheme)")
@@ -380,7 +413,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         val chipLabels = panelList(CHIP_LABELS_JS)
         val apps = panelList(APPS_JS)
         finding("  chips: $chips, reading $chipLabels; apps row: $apps")
-        expect("an image's chips are Copy image and Long screenshot ($scheme)", chips == listOf("copy", "screenshot") && chipLabels == listOf("Copy image", "Long screenshot"))
+        expect("an image's one chip is Copy image ($scheme)", chips == listOf("copy") && chipLabels == listOf("Copy image"))
         expect("More ends the image's apps row ($scheme)", apps.lastOrNull() == MORE_KIND)
         back()
         awaitTrue(6_000) { !panelUp() }
@@ -471,7 +504,11 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
     }
 
-    /** A private tab on the page, its share to the fixture; N/A where the image's WebView has no private tabs. */
+    /**
+     * A private tab on the page, its share to the fixture: the panel is the public tab's panel –
+     * every chip, QR code with them; private governs what is recorded, not what is shown (§9.38)
+     * – and the share leaves no record. N/A where the image's WebView has no private tabs.
+     */
     private fun privateScene(fixture: String) {
         val tabId = coreInvoke("tab.newPrivate", "{\"url\":${JSONObject.quote(PAGE_URL)}}")
         if (tabId == "null") {
@@ -486,10 +523,10 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         SystemClock.sleep(3_000)
         val before = historyRecord()
         if (openPanel()) {
-            SystemClock.sleep(1_200)
+            awaitPanelRest()
             val chips = panelList(CHIP_KINDS_JS)
             finding("  private panel chips: $chips")
-            expect("the private tab's panel has no QR code chip", chips == listOf("copy", "screenshot", "print"))
+            expect("the private tab's panel draws every chip, QR code with them", chips == PAGE_CHIPS)
             shot("11-private-panel")
             expect("the private tab's share dismisses the panel", tapTarget(fixture))
             expect("the app received the private tab's share", awaitFixture()?.contains(PAGE_URL) == true)
@@ -1139,6 +1176,12 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         private const val SELECT_PARAGRAPH_JS =
             "(function(){var p=document.querySelector('p');if(!p)return '';var s=getSelection();s.removeAllRanges();" +
                 "var r=document.createRange();r.selectNodeContents(p);s.addRange(r);return String(s)})()"
+        /** The sheet's parts in document order with their boxes: the preview, the chips row, the hairline (`sep`), the apps row (§9.38's order, from the subject down). */
+        private const val ROWS_JS =
+            "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-share-panel .zen-share-panel-preview,.zen-share-panel [data-row],.zen-share-panel .zen-sheet-sep'),function(e){" +
+                "var r=e.getBoundingClientRect();return {row:e.dataset.row||(e.classList.contains('zen-sheet-sep')?'sep':'preview'),top:Math.round(r.top),bottom:Math.round(r.bottom)}}))"
+        /** A page's chips, in the Android 14 action row's order (`Share.browserActions`, `sharePanelChips`). */
+        private val PAGE_CHIPS = listOf("copy", "qr", "screenshot", "print")
         private const val CHIP_KINDS_JS =
             "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-share-panel [data-row=\"chips\"] [data-kind]'),function(b){return b.dataset.kind}))"
         private const val CHIP_LABELS_JS =
