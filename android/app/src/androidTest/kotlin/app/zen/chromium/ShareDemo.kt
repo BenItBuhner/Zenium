@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.Rect
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -32,8 +33,11 @@ import kotlin.math.roundToInt
  * Drives sharing out of and into the phone chrome so the `android-share-demo` workflow can record
  * it on an emulator. The browser's own share forks on the Android version (SH-02, SH-03):
  *
- * On Android 14 and later the system sheet stands (SH-02): Share from the app menu and from a
- * link's long-press menu (the system chooser with the page's title and preview), a `mailto:`, a
+ * On Android 14 and later the system sheet stands (SH-02): Share from the app menu (the system
+ * chooser with the page's title and preview, and Zenium's own row in it – Copy link, QR code,
+ * Long screenshot, Print, read off the chooser's tree in that order, the panel's chips below 14 –
+ * whose Long screenshot under a finger closes the sheet and opens the chrome's long-screenshot
+ * editor over the page, as the panel's chip does) and from a link's long-press menu, a `mailto:`, a
  * `tel:` and an `intent://` link held behind the confirm sheet (the intent's web fallback loads
  * when nothing can open it), then the share target: a text carrying a URL, a plain text and an
  * `ACTION_WEB_SEARCH`, each sent through `am start` the way `adb shell` does, with DuckDuckGo as
@@ -142,7 +146,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         val chipLabels = panelList(CHIP_LABELS_JS)
         finding("  chips: $chips, reading $chipLabels")
         expect("the chips are Copy link, QR code, Long screenshot, Print, in the Android 14 action row's order", chips == PAGE_CHIPS)
-        expect("the chips read Copy link, QR code, Long screenshot, Print", chipLabels == listOf("Copy link", "QR code", "Long screenshot", "Print"))
+        expect("the chips read Copy link, QR code, Long screenshot, Print", chipLabels == ROW_LABELS)
         expectRowsFromTheSubjectDown("")
         var apps = panelList(APPS_JS)
         finding("  apps row: $apps")
@@ -910,6 +914,7 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
                 expect("the app menu's Share… opens the system sheet, no panel in the chrome (SH-02)", !panelUp())
                 SystemClock.sleep(4_000)
                 shot("02-share-chooser")
+                systemSheetRow()
             } else {
                 Log.w(tag, "no chooser for Share… under a finger")
                 expect("the app menu's Share… opens the system sheet (SH-02)", false)
@@ -995,6 +1000,71 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         webSearch("zenium browser share target")
         SystemClock.sleep(7_000)
         shot("12-web-search-duckduckgo")
+    }
+
+    /**
+     * Zenium's own row in the chooser (SH-02, `Share.browserRow`), with the chooser in front: the
+     * four buttons read off its tree, left to right – Copy link, QR code, Long screenshot, Print,
+     * the panel's chips below 14 in the panel's order (§9.38) and no "Screenshot" of the viewport
+     * among them – then Long screenshot under a finger: the sheet closes, the host relays the tap
+     * once it has (`Share.onBrowserAction`), and the chrome's long-screenshot editor (SH-08) opens
+     * over the page, as the panel's chip opens it; back leaves it. The editor is read off the
+     * chrome's DOM as the panel's scene reads it; a miss records what came instead. Leaves the
+     * chooser closed either way (the caller's [dismiss] finds nothing of it left).
+     */
+    private fun systemSheetRow() {
+        val chooser = ui.rootInActiveWindow?.packageName?.toString()
+        val row: List<Pair<String, Rect>> = ROW_LABELS.mapNotNull { label -> findByLabel(label)?.let { label to it } }
+        val labels = row.map { it.first }
+        val lefts = row.map { it.second.left }
+        val viewportShot = findByLabel(VIEWPORT_SHOT_LABEL) != null
+        finding(
+            "  the chooser ($chooser) reads $labels at x=$lefts" +
+                "; '$VIEWPORT_SHOT_LABEL' ${if (viewportShot) "is" else "is not"} in the row"
+        )
+        expect(
+            "the sheet's row reads Copy link, QR code, Long screenshot, Print, left to right (SH-02)",
+            labels == ROW_LABELS && lefts.zipWithNext().all { (a, b) -> a < b }
+        )
+        expect(
+            "the row's third action is Long screenshot, the panel's chip, not the viewport's Screenshot",
+            labels.getOrNull(2) == SCREENSHOT_LABEL && !viewportShot
+        )
+
+        // The tap: a real touch on the chooser's button. The sheet closing is the touch's mark;
+        // the accessibility click stands in when the touch does not take (the run fails on it
+        // regardless, the recording goes on).
+        val asked = SystemClock.uptimeMillis()
+        val closed = touchTapLabelExpecting(SCREENSHOT_LABEL, "the sheet has closed", timeoutMs = 8_000) {
+            ui.rootInActiveWindow?.packageName?.toString() == app.packageName
+        }
+        if (!closed) {
+            Log.w(tag, "the row's Long screenshot under a finger did not close the sheet; an accessibility click")
+            clickByLabel(SCREENSHOT_LABEL)
+        }
+        val editor = awaitTrue(LONG_CAPTURE_WAIT_MS) { chromeJs(EDITOR_SHEET_JS) == "true" }
+        if (editor) {
+            val came = SystemClock.uptimeMillis() - asked
+            val picture = awaitTrue(10_000) { chromeJs(EDITOR_PICTURE_JS) == "true" }
+            val handles = awaitTrue(5_000) { chromeJs(EDITOR_HANDLES_JS) == "true" }
+            finding(
+                "  the editor came $came ms after the touch on the row; its picture is ${if (picture) "in" else "not in"}; " +
+                    "its handles are ${if (handles) "in the DOM" else "not in the DOM"}"
+            )
+        } else {
+            val toast = chromeJsString("(document.querySelector('.zen-toast')||{}).textContent||''")
+            val page = if (pageWebView() != null) "a page view is shown" else "no page view is shown"
+            val top = ui.rootInActiveWindow?.packageName?.toString()
+            finding("  no editor after $LONG_CAPTURE_WAIT_MS ms; the chrome's toast reads '${toast ?: ""}'; $page; the active window is $top's")
+        }
+        SystemClock.sleep(1_200)
+        shot("02-long-screenshot-editor")
+        expect("the row's Long screenshot opens the long-screenshot editor over the page (SH-02)", editor)
+        if (editor) {
+            back()
+            awaitTrue(6_000) { chromeJs(EDITOR_SHEET_JS) != "true" }
+            SystemClock.sleep(800)
+        }
     }
 
     // --- moves -----------------------------------------------------------------------------------
@@ -1140,6 +1210,13 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         private const val SCREENSHOT_LABEL = "Long screenshot"
         private const val PRINT_LABEL = "Print"
         private const val QR_LABEL = "QR code"
+        /** The core's viewport shot's word (SH-07), which the sheet's row no longer offers. */
+        private const val VIEWPORT_SHOT_LABEL = "Screenshot"
+        /**
+         * The one row on both paths (§9.38): Zenium's buttons in Android 14's share sheet
+         * (`Share.browserRow`) and the share panel's chips below 14 (`sharePanelChips`), in order.
+         */
+        private val ROW_LABELS = listOf(COPY_LABEL, QR_LABEL, SCREENSHOT_LABEL, PRINT_LABEL)
         private const val MORE_LABEL = "More"
         private const val MORE_KIND = "more"
         private const val QR_TITLE = "Scan to open"
@@ -1180,7 +1257,7 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         private const val ROWS_JS =
             "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-share-panel .zen-share-panel-preview,.zen-share-panel [data-row],.zen-share-panel .zen-sheet-sep'),function(e){" +
                 "var r=e.getBoundingClientRect();return {row:e.dataset.row||(e.classList.contains('zen-sheet-sep')?'sep':'preview'),top:Math.round(r.top),bottom:Math.round(r.bottom)}}))"
-        /** A page's chips, in the Android 14 action row's order (`Share.browserActions`, `sharePanelChips`). */
+        /** A page's chips by kind, in the Android 14 action row's order ([ROW_LABELS]; `Share.browserRow`, `sharePanelChips`). */
         private val PAGE_CHIPS = listOf("copy", "qr", "screenshot", "print")
         private const val CHIP_KINDS_JS =
             "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-share-panel [data-row=\"chips\"] [data-kind]'),function(b){return b.dataset.kind}))"
