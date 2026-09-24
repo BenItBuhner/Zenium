@@ -513,6 +513,7 @@ export class Browser {
       sync: this.sync.status(),
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
+      agentSkills: this.agents.skillStatus(),
       updates: this.updates.status(),
       passwords: this.passwords.status(),
       defaultBrowser: this.defaultBrowser.status(),
@@ -3500,6 +3501,9 @@ export class Browser {
       'agent.releaseTab': ({ tabId }) => this.agents.releaseTab(tabId),
       'agent.forget': ({ name }) => this.agents.forget(name),
       'agent.regenerateToken': () => this.agents.regenerateToken(),
+      'agent.installSkill': ({ targets }) => this.agents.installSkill(targets),
+      'agent.uninstallSkill': ({ targets }) => this.agents.uninstallSkill(targets),
+      'agent.refreshSkill': () => this.agents.refreshSkill(),
 
       'updates.check': () => this.updates.check({ manual: true }),
       'updates.download': () => this.updates.download(),

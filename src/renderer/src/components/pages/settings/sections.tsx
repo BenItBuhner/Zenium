@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
-import { Check, CreditCard, Fingerprint, MapPin } from 'lucide-react'
+import { Check, CircleAlert, CreditCard, Fingerprint, MapPin } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
+  AgentSkillStatus,
   AppLinkState,
   BookmarksBarMode,
   ColorScheme,
@@ -4304,6 +4305,7 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
       ]
     })
   }
+  if (state.capabilities.agentSkills) groups.push(agentSkillGroup(state.agentSkills))
   groups.push(
     {
       id: 'behaviour',
@@ -4414,6 +4416,83 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
     })
   }
   return groups
+}
+
+/**
+ * Settings › AI Agents › Agent skill (desktop hosts, `capabilities.agentSkills`): the
+ * `zenium-browser` Agent Skill – the file that teaches a coding agent to drive this browser
+ * politely – installed into each detected agent's global skills folder from a switch per
+ * agent, or all at once; a status row above them. The rows say "agent", never the developer's
+ * "harness" (the #460 gate). The status row's error state trails §10.4's 16 status glyph in the
+ * danger ink through the row's one `tone`; its neutral states stay bare. Remove everywhere asks
+ * nothing and wears no danger ink (§10.5 as amended on #450): the files are Zenium's copies, an
+ * edited one is spared by the installer's own rule, and Install brings them back in one click.
+ * No modal: the group is the nudge.
+ */
+function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
+  const detected = skills.targets.filter((t) => t.detected)
+  const installed = detected.filter((t) => t.installed)
+  const allInstalled = detected.length > 0 && installed.length === detected.length
+  const status = skills.error
+    ? skills.error
+    : detected.length === 0
+      ? 'No coding agent found on this computer'
+      : installed.length === 0
+        ? 'Not installed'
+        : `Installed for ${installed.length} of ${detected.length} agents found · version ${installed[0].installedVersion ?? skills.version}`
+  const rows: SettingsRow[] = [
+    {
+      kind: 'info',
+      id: 'skill-status',
+      label: 'zenium-browser skill',
+      description: status,
+      tone: skills.error ? 'danger' : undefined,
+      trailing: skills.error ? (
+        <CircleAlert className="zen-settings-trailing-glyph" aria-hidden="true" />
+      ) : undefined,
+      keywords: ['skill', 'claude code', 'cursor', 'codex', 'opencode', 'gemini cli', 'copilot']
+    },
+    ...detected.map((t): SettingsRow => ({
+      kind: 'switch',
+      id: `skill:${t.id}`,
+      label: t.label,
+      description: t.note ?? t.dir,
+      tone: t.note ? 'warn' : undefined,
+      keywords: ['skill', t.dir],
+      checked: t.installed,
+      onChange: (v) => run(v ? 'agent.installSkill' : 'agent.uninstallSkill', { targets: [t.id] })
+    })),
+    allInstalled
+      ? {
+          kind: 'action',
+          id: 'skill-all',
+          label: 'Remove everywhere',
+          description: 'Takes Zenium’s copy out of each folder above; a copy you edited stays.',
+          button: 'Remove',
+          onPress: () => run('agent.uninstallSkill', {})
+        }
+      : {
+          kind: 'action',
+          id: 'skill-all',
+          label: 'Install for every agent found',
+          description:
+            detected.length === 0
+              ? 'Install Claude Code, Cursor, Codex, Gemini CLI, Copilot CLI or OpenCode first, then check again.'
+              : 'Writes the skill into each folder above and keeps it current when Zenium updates.',
+          button: detected.length === 0 ? 'Check again' : 'Install',
+          onPress: () =>
+            detected.length === 0
+              ? run('agent.refreshSkill', undefined)
+              : run('agent.installSkill', {})
+        }
+  ]
+  return {
+    id: 'skill',
+    heading: 'Agent skill',
+    description:
+      'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs. Zenium keeps a copy in each agent’s skills folder.',
+    rows
+  }
 }
 
 // ---------------------------------------------------------------------------
