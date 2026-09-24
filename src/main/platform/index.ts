@@ -300,7 +300,8 @@ export class ElectronPlatform implements Platform {
         const wc = webContents.fromId(id)
         return wc ? this.views.tabIdForWebContents(wc) : undefined
       },
-      chromeWindowId: (id) => this.windows.windowForWebContents(id)?.id ?? null
+      chromeWindowId: (id) => this.windows.windowForWebContents(id)?.id ?? null,
+      markEndedByUser: (id) => this.views.noteEndedByUser(id)
     })
     this.screenCapture = new ElectronScreenCapture(this.views, () => this.browser.screenCapture)
     this.shareSheet = new ElectronShareSheet(

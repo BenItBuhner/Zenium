@@ -45,6 +45,8 @@ interface World {
   /** Web contents id → the core's id of the window whose chrome they are. */
   chromeWindows: Map<number, string>
   killed: number[]
+  /** What End process told the tab views before each crash, in order with the crashes. */
+  events: string[]
   host: InstanceType<typeof ElectronTaskHost>
   tick(ms: number): void
 }
@@ -56,6 +58,7 @@ function world(): World {
   const tabs = new Map<number, string>()
   const chromeWindows = new Map<number, string>()
   const killed: number[] = []
+  const events: string[] = []
   const engine: TaskEngine = {
     processes: () => processes,
     contents: () => all,
@@ -70,6 +73,9 @@ function world(): World {
     engine,
     tabIdForWebContents: (id) => tabs.get(id),
     chromeWindowId: (id) => chromeWindows.get(id) ?? null,
+    markEndedByUser: (id) => {
+      events.push(`ended ${id}`)
+    },
     now: () => now
   })
   return {
@@ -78,6 +84,7 @@ function world(): World {
     tabs,
     chromeWindows,
     killed,
+    events,
     host,
     tick: (ms: number) => {
       now += ms
@@ -196,15 +203,32 @@ describe('the Electron task host', () => {
     w.chromeWindows.set(1, 'win_1')
     const tab = contents(2, 202, 'https://a.example/')
     w.tabs.set(2, 'tab-a')
-    w.all.push(chrome, tab)
+    // A second tab in the same renderer: both views hear the word before the one crash.
+    const sibling = contents(3, 202, 'https://a.example/two')
+    w.tabs.set(3, 'tab-a2')
+    sibling.crash = () => {
+      sibling.crashed++
+      w.events.push('crash 3')
+    }
+    tab.crash = () => {
+      tab.crashed++
+      w.events.push('crash 2')
+    }
+    w.all.push(chrome, tab, sibling)
     w.host.sample()
 
     expect(w.host.end(202)).toBe(true)
     expect(tab.crashed).toBe(1)
+    expect(sibling.crashed).toBe(1)
+    // Each view is marked as the user's ending BEFORE its renderer is crashed, so the
+    // `render-process-gone` that follows reads `ended` (the core's toast) rather than `crashed`.
+    expect(w.events).toEqual(['ended 2', 'crash 2', 'ended 3', 'crash 3'])
     expect(w.killed).toEqual([])
 
+    // A helper is killed, no view to tell.
     expect(w.host.end(300)).toBe(true)
     expect(w.killed).toEqual([300])
+    expect(w.events).toHaveLength(4)
 
     // The browser process and a window's chrome are the app; zygotes are the engine's plumbing.
     expect(w.host.end(BROWSER_PID)).toBe(false)

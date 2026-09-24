@@ -79,6 +79,12 @@ export interface ElectronTaskHostOptions {
    * (`ElectronWindowFactory.windowForWebContents`); null for a page, an extension's document.
    */
   chromeWindowId(id: number): string | null
+  /**
+   * Word to the tab views that the user is ending this web contents' renderer (End process), sent
+   * before the crash so the view reports the renderer gone as `ended`, not `crashed`, and the core
+   * says so (`tabs.ts`'s toast). A web contents that is no tab's is simply not a view.
+   */
+  markEndedByUser?(id: number): void
   engine?: TaskEngine
   now?: () => number
 }
@@ -172,12 +178,15 @@ export class ElectronTaskHost implements TaskHost {
     if (kind === undefined || kind === 'browser' || kind === 'other') return false
     if (pid === this.engine.browserPid()) return false
     // Crash the renderer in place where a web contents runs in it: the tab keeps its row and
-    // its crashed page, an extension's pages come back on their next open.
+    // its crashed page, an extension's pages come back on their next open. Each tab view in the
+    // process is told first that this is the user's doing, so its renderer going away reads as
+    // `ended` (the core's toast says so), not as a crash of the page's own.
     const hosted = this.engine.contents().filter((c) => c.osProcessId === pid)
     if (hosted.length) {
       let crashed = false
       for (const contents of hosted) {
         try {
+          this.options.markEndedByUser?.(contents.id)
           contents.crash()
           crashed = true
         } catch {

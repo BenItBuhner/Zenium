@@ -455,11 +455,14 @@ export interface KeyEventInput extends KeyInput {
 }
 
 /**
- * Why a page's renderer went away: Electron's `render-process-gone` reasons, and two the Android
- * host adds for a renderer the OS or the user ended (`RenderProcessGoneDetail`, `RendererExit.kt`):
- * `oom-kill`, the system killed the renderer for memory while the page was in front (the page's
- * fault or not; `oom` is a page's own heap running out), and `hung`, the user chose Exit page on
- * an unresponsive page and the browser ended its renderer.
+ * Why a page's renderer went away: Electron's `render-process-gone` reasons, and three the hosts
+ * add for a renderer the OS or the user ended: `oom-kill`, the system killed the renderer for
+ * memory while the page was in front (the page's fault or not; `oom` is a page's own heap running
+ * out) and `hung`, the user chose Exit page on an unresponsive page and the browser ended its
+ * renderer (the Android host's, `RenderProcessGoneDetail`, `RendererExit.kt`); `ended`, the user
+ * ended the renderer from the task manager (End process, `TaskHost.end`) – the host marks the
+ * page view before it crashes the renderer, so the core says "ended", not "crashed", of a page
+ * the user just confirmed ending.
  */
 export type CrashReason =
   | 'clean-exit'
@@ -469,6 +472,7 @@ export type CrashReason =
   | 'oom'
   | 'oom-kill'
   | 'hung'
+  | 'ended'
   | 'launch-failed'
   | 'integrity-failure'
   | 'memory-eviction'
