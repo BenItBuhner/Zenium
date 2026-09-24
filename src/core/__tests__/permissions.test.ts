@@ -685,16 +685,35 @@ describe('PermissionService: private windows leave no trace', () => {
     expect(io.writes).toHaveLength(writes)
   })
 
-  it('the site-information sheet hears of private answers and of the session ending', async () => {
+  it('the site-information sheet hears of private answers and of the session ending, each as the container’s change', async () => {
     const p = new PermissionService(fakeIo(), prompts(true))
     const changes: PermissionChange[] = []
     p.subscribe((change) => changes.push(change))
+    const origin = permissionSite(PAGE)
+    // A private answer's change names its container (`PermissionChange.container`), so a
+    // listener minding the regular profile's own state – the quiet mark a dismissed
+    // notification prompt leaves – can tell it from the profile's rule moving.
     await p.decide('geolocation', PAGE, PRIVATE)
-    expect(changes).toEqual([{ permission: 'geolocation', origin: permissionSite(PAGE) }])
+    expect(changes).toEqual([{ permission: 'geolocation', origin, container: 'private' }])
+    // The session's end forgets the answer: the same container's change.
     p.forgetContainer('private')
     expect(changes).toHaveLength(2)
+    expect(changes[1]).toEqual({ permission: 'geolocation', origin, container: 'private' })
     p.forgetContainer('private')
     expect(changes).toHaveLength(2)
+    // A regular window's answer is the store's, and so is a rule set or forgotten by hand: no
+    // container on either.
+    expect(await p.decide('geolocation', PAGE, { tabId: 'tab_r' })).toBe(true)
+    expect(changes).toHaveLength(3)
+    expect(changes[2]).toEqual({ permission: 'geolocation', origin })
+    expect(changes[2]).not.toHaveProperty('container')
+    p.forgetRule(origin!, 'geolocation')
+    expect(changes).toHaveLength(4)
+    expect(changes[3]).toEqual({ permission: 'geolocation', origin })
+    expect(changes[3]).not.toHaveProperty('container')
+    // "Always allow" from a private tab: the container's too.
+    p.remember('popups', PAGE, 'allow', PRIVATE)
+    expect(changes[4]).toEqual({ permission: 'popups', origin, container: 'private' })
   })
 
   const SITE = 'https://app.example'
@@ -735,17 +754,23 @@ describe('PermissionService: private windows leave no trace', () => {
     const p = new PermissionService(io, prompts(true), () => 5)
     const changes: PermissionChange[] = []
     p.subscribe((change) => changes.push(change))
+    // A private pick's change names its container, as a private answer's does.
     p.grantDevice('hid', SITE, MOUSE, IN_PRIVATE)
-    expect(changes).toEqual([{ permission: 'hid', origin: SITE }])
+    expect(changes).toEqual([{ permission: 'hid', origin: SITE, container: 'private' }])
     p.forgetContainer('private')
     expect(changes).toHaveLength(2)
+    expect(changes[1]).toEqual({ permission: 'hid', origin: SITE, container: 'private' })
     expect(p.hasDeviceGrant('hid', SITE, MOUSE, IN_PRIVATE)).toBe(false)
     p.forgetContainer('private')
     expect(changes).toHaveLength(2)
     await settle()
     expect(io.writes).toEqual([])
-    // The regular profile's connection stands in private too (the store is read first).
+    // The regular profile's connection stands in private too (the store is read first); its
+    // change is the store's, with no container.
     p.grantDevice('hid', SITE, MOUSE)
+    expect(changes).toHaveLength(3)
+    expect(changes[2]).toEqual({ permission: 'hid', origin: SITE })
+    expect(changes[2]).not.toHaveProperty('container')
     await settle()
     expect(io.writes).toHaveLength(1)
     expect(JSON.parse(io.writes[0]).devices).toEqual([
@@ -766,22 +791,34 @@ describe('PermissionService: private windows leave no trace', () => {
     expect(io.writes).toHaveLength(1)
     p.grantDevice('hid', SITE, PAD, IN_PRIVATE)
     p.grantDevice('usb', SITE, STICK, IN_PRIVATE)
+    const changes: PermissionChange[] = []
+    p.subscribe((change) => changes.push(change))
     p.forgetDevice('hid', SITE, MOUSE, IN_PRIVATE)
     // The stored grant is not the private session's to take away.
     expect(p.hasDeviceGrant('hid', SITE, MOUSE)).toBe(true)
     expect(p.hasDeviceGrant('hid', SITE, MOUSE, IN_PRIVATE)).toBe(true)
+    expect(changes).toEqual([])
+    // A private page's forget() is the container's change.
     p.forgetDevice('hid', SITE, PAD, IN_PRIVATE)
     expect(p.hasDeviceGrant('hid', SITE, PAD, IN_PRIVATE)).toBe(false)
     expect(p.hasDeviceGrant('usb', SITE, STICK, IN_PRIVATE)).toBe(true)
+    expect(changes).toEqual([{ permission: 'hid', origin: SITE, container: 'private' }])
     // A regular forget of the kind leaves the private session's grant where it is.
     p.forgetDevice('usb', SITE)
     expect(p.hasDeviceGrant('usb', SITE, STICK, IN_PRIVATE)).toBe(true)
+    expect(changes).toHaveLength(1)
     await settle()
     expect(io.writes).toHaveLength(1)
     expect(JSON.parse(io.writes[0]).devices).toHaveLength(1)
-    // Clear browsing data's "Site settings" takes the private session's connections too.
+    // Clear browsing data's "Site settings" takes the private session's connections too: the
+    // store's goodbye without a container, the private session's with its own.
     p.resetSites()
     expect(p.hasDeviceGrant('usb', SITE, STICK, IN_PRIVATE)).toBe(false)
     expect(p.hasDeviceGrant('hid', SITE, MOUSE)).toBe(false)
+    expect(changes.slice(1)).toEqual([
+      { permission: 'hid', origin: SITE },
+      { permission: 'usb', origin: SITE, container: 'private' }
+    ])
+    expect(changes[1]).not.toHaveProperty('container')
   })
 })
