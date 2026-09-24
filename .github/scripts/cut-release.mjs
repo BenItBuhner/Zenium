@@ -83,7 +83,9 @@ if (flags.notes !== null) {
   notes = readFileSync(flags.notes, 'utf8').replace(/\r\n?/g, '\n').trim()
   if (!notes) fail(`--notes ${flags.notes} is empty`)
   if (!/^##\s+Highlights\s*$/im.test(notes.split('\n')[0]))
-    console.warn(`note: ${flags.notes} does not open on "## Highlights"; the heading is added on the way`)
+    console.warn(
+      `note: ${flags.notes} does not open on "## Highlights"; the heading is added on the way`
+    )
 } else {
   console.warn(
     'note: no --notes <highlights.md> – the release body and the update manifest carry no Highlights until edited by hand'
@@ -145,7 +147,8 @@ if (flags.dryRun) {
   restore()
   console.log('Dry run: nothing was committed, tagged or pushed. Without --dry-run this would run:')
   console.log(`$ git commit -am "chore(release): ${tag}"`)
-  if (notes) console.log(`$ git tag -a ${tag} --cleanup=verbatim -F <"Zenium ${next}" + ${flags.notes}>`)
+  if (notes)
+    console.log(`$ git tag -a ${tag} --cleanup=verbatim -F <"Zenium ${next}" + ${flags.notes}>`)
   else console.log(`$ git tag -a ${tag} -m "Zenium ${next}"`)
   console.log(`$ git push ${flags.remote} ${flags.branch} refs/tags/${tag}`)
   process.exit(0)

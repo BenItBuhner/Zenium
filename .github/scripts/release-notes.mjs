@@ -455,7 +455,8 @@ const updating = [
 const previous = previousTag()
 const changes = await generatedNotes(previous)
 const highlights = tagHighlights()
-if (highlights) console.log(`Highlights from the ${tag} annotation (${highlights.length} characters)`)
+if (highlights)
+  console.log(`Highlights from the ${tag} annotation (${highlights.length} characters)`)
 else console.log(`No annotation body on ${tag}: the notes open on the download table`)
 
 const notes = [
