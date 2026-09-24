@@ -85,8 +85,27 @@ export const stageStore = createStore<StageState>(
   'stage'
 )
 
-/** Finger travel (px) that opens the overview completely. */
+/**
+ * The tablet's overview layer publishes its height here for as long as it is mounted
+ * (`TabOverview`'s measure pass): on the tablet the finger's travel IS the layer's, so the
+ * layer's foot moves exactly as far as the finger and no farther – §11's 1:1 (equal
+ * displacement, as the bar band's and the field's ride), the gate's ruling on §9.36's drag.
+ * `null` off the tablet: the phone's pull keeps the bar's own gain below.
+ */
+let tabletOverviewTravel: number | null = null
+
+export function setTabletOverviewTravel(px: number | null): void {
+  tabletOverviewTravel = px !== null && px > 0 ? px : null
+}
+
+/**
+ * Finger travel (px) that opens the overview completely. On the phone the pull's measure is the
+ * thumb's reach, not the layer's travel – a thumb pulling from the bar's edge reaches about a
+ * third of the screen (§9.36) – so 42 % of the content frame's height, 220 at the least; on the
+ * tablet the layer's own height, published above, so the layer follows the finger 1:1.
+ */
 export function overviewTravel(): number {
+  if (tabletOverviewTravel !== null) return tabletOverviewTravel
   const height = contentAreaStore.get().area?.height ?? window.innerHeight
   return Math.max(220, Math.round(height * 0.42))
 }
@@ -302,18 +321,26 @@ function endTabSwitch(): void {
 
 let overviewDragStart = 0
 let cancelOverviewCommit: (() => void) | null = null
+/**
+ * The travel the running settle set off over: its frames map back to 0…1 with the same figure.
+ * Read afresh per frame it would re-scale a flight the travel changed under – the tabs button's
+ * tap from closed starts the spring before the tablet's layer has mounted and published its
+ * height, and the phone's figure read over the tablet's would land the spring short of 1 and
+ * close the overview it was opening.
+ */
+let springTravel = 1
 
 const overviewSpring = new SpringAnimation(
   SPRING_GENTLE,
   (x) => {
     const overview = stageStore.get().overview
     if (overview.phase !== 'settling') return
-    stageStore.set({ overview: { ...overview, progress: x / overviewTravel() } })
+    stageStore.set({ overview: { ...overview, progress: x / springTravel } })
   },
   (x) => {
     const overview = stageStore.get().overview
     if (overview.phase !== 'settling') return
-    if (Math.round(x / overviewTravel()) >= 1) {
+    if (Math.round(x / springTravel) >= 1) {
       stageStore.set({ overview: { ...overview, phase: 'open', progress: 1 } })
     } else {
       finishOverviewClose()
@@ -362,7 +389,7 @@ export function catchOverview(): boolean {
   const { x } = overviewSpring.stop()
   cancelOverviewCommit?.()
   cancelOverviewCommit = null
-  const progress = x / overviewTravel()
+  const progress = x / springTravel
   overviewDragStart = progress
   stageStore.set({ overview: { ...overview, phase: 'dragging', progress } })
   return true
@@ -393,9 +420,9 @@ export function releaseOverview(velocity: number): void {
 
 function settleOverview(target: 0 | 1, velocity = 0): void {
   const overview = stageStore.get().overview
-  const travel = overviewTravel()
+  springTravel = overviewTravel()
   stageStore.set({ overview: { ...overview, phase: 'settling', target } })
-  overviewSpring.start(overview.progress * travel, velocity, target * travel)
+  overviewSpring.start(overview.progress * springTravel, velocity, target * springTravel)
 }
 
 /** Open the overview with the spring (the tabs button). */

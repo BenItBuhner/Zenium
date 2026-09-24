@@ -44,7 +44,8 @@ const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, claimMessageCards, contentAreaStore, uiStore } =
   await import('@renderer/lib/ui')
-const { dismissOverview, stageStore } = await import('@renderer/lib/gestures/stage')
+const { beginOverviewDrag, dismissOverview, dragOverview, overviewTravel, stageStore } =
+  await import('@renderer/lib/gestures/stage')
 const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
 const { OVERVIEW_UI_OFF, overviewUiStore, resetOverviewUi } =
   await import('@renderer/lib/overviewUi')
@@ -764,6 +765,47 @@ describe('the tablet switcher comes down from the toolbar`s edge over the page (
     overview({ progress: 0.1 })
     expect(layer().style.transform).toBe(descent(0.1))
     expect(parseFloat(layer().style.transform.slice('translateY('.length))).toBeLessThan(-0.8 * 744)
+  })
+
+  it('the pull is 1:1 on the tablet: the layer`s height is the finger`s travel, so 200 px of finger is 200 px of layer; the phone`s gain is back once the layer goes (§11, §9.36)', () => {
+    const state = stateOf(pages())
+    pageOff('ex')
+    // Off the tablet the travel is the phone's – the thumb's reach, 42 % of the frame's 744.
+    const phoneTravel = Math.max(220, Math.round(0.42 * AREA.height))
+    expect(overviewTravel()).toBe(phoneTravel)
+    overview({ phase: 'dragging', progress: 0, heroTabId: 'ex', target: 1 })
+    mountStage(state, true)
+    // Mounted, the layer publishes its own height (744 here) as the travel.
+    expect(overviewTravel()).toBe(744)
+    const foot = (): number => 744 + parseFloat(layer().style.transform.slice('translateY('.length))
+    expect(foot()).toBe(0)
+    // The finger moves 200 px: the layer's foot stands 200 px below the toolbar's edge.
+    act(() => {
+      beginOverviewDrag(state)
+      dragOverview(200)
+    })
+    expect(stageStore.get().overview.progress).toBeCloseTo(200 / 744, 9)
+    expect(foot()).toBeCloseTo(200, 6)
+    // And 500: the foot 500 down – as far as the finger, no farther.
+    act(() => dragOverview(500))
+    expect(foot()).toBeCloseTo(500, 6)
+    // The layer gone (the overview closed, or the phone's shell): the phone's figure again.
+    act(() => ensureRoot().render(null))
+    expect(overviewTravel()).toBe(phoneTravel)
+  })
+
+  it('the phone`s mount publishes no travel: its pull keeps the bar`s gain', () => {
+    viewportStore.set(PHONE)
+    const state = stateOf(pages())
+    const phoneTravel = Math.max(220, Math.round(0.42 * AREA.height))
+    overview({ phase: 'dragging', progress: 0, heroTabId: 'ex', target: 1 })
+    mountStage(state, false)
+    expect(overviewTravel()).toBe(phoneTravel)
+    act(() => {
+      beginOverviewDrag(state)
+      dragOverview(200)
+    })
+    expect(stageStore.get().overview.progress).toBeCloseTo(200 / phoneTravel, 9)
   })
 
   it('the active card is drawn in its slot through the descent and the close – nothing flies into it; the phone`s stays hidden until its hero lands', () => {

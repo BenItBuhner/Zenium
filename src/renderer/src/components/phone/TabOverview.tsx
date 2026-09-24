@@ -36,6 +36,7 @@ import type { DropOutcome } from '@renderer/lib/gestures/dropTarget'
 import {
   closeOverview,
   overviewInteractive,
+  setTabletOverviewTravel,
   stageStore,
   type OverviewState
 } from '@renderer/lib/gestures/stage'
@@ -1517,7 +1518,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // the grid's own commits (a query's keystroke, a card picked, the scroll's measure), which
   // the morph effect below runs on – it has no deps, so each of them would have forced a
   // layout for three reads. The slide is a transform alone, so the writer needs no read per
-  // frame, and the box the slide's transform never moves is what is measured.
+  // frame, and the box the slide's transform never moves is what is measured. The height is
+  // also the pull's travel on the tablet (§11's 1:1, the gate's ruling on §9.36's drag): the
+  // stage reads the finger's displacement over it, so the layer's foot moves exactly as far as
+  // the finger – published for the layer's stay, and the phone's own gain is back when it goes.
   const slideTravel = useRef(0)
   useLayoutEffect(() => {
     if (!tablet) {
@@ -1526,6 +1530,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     }
     slideTravel.current = rootRef.current?.offsetHeight ?? 0
     alignBackdrop(rootRef.current, boxRef.current)
+    setTabletOverviewTravel(slideTravel.current)
+    return () => setTabletOverviewTravel(null)
   }, [tablet, area.x, area.y, area.width, area.height])
   useLayoutEffect(() => {
     const contentRadius =
@@ -1538,8 +1544,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     // The tablet's entrance (MOT-04, v2 §9.36): the layer comes DOWN from the toolbar's edge
     // over the page – the overview is pulled down from the toolbar, and a surface arrives from
     // where it lives (§11), the same way on a tap as under the finger's pull – its travel the
-    // box's height, on the same 0…1 the phone's morph reads (the spring's, or the pull's, which
-    // it follows downward 1:1), so the page's still stands where the page is under it the whole
+    // box's height, on the same 0…1 the phone's morph reads (the spring's, or the pull's: the
+    // finger's displacement over this same height, so the foot moves as far as the finger, 1:1
+    // – §11's input rule), so the page's still stands where the page is under it the whole
     // way and the sidebar fades beneath it; the dismissal is the same writer run back up. At 0
     // the layer stands a full height above its rest, clipped by the box, so the page shows
     // whole; under reduced motion the slide is the phone's fade at scale 1 (§11.3).
