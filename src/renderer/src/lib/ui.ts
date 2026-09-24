@@ -386,6 +386,12 @@ export interface UiState {
    * pages goes. `keyboard`: the folder's header had the keyboard, so Cancel hands it back there.
    */
   folderDeleteConfirm: { folderId: string; keyboard: boolean } | null
+  /**
+   * "Delete search history?" (the desktop omnibox row menu's Delete Search History; §10.5's
+   * bulk case, pr-434 ruling 3): a §9.23 destructive frame dialog over the open bar and the
+   * page's picture, asked before every remembered search goes.
+   */
+  deleteSearchHistoryOpen: boolean
   /** A folder panel of the bookmarks bar hangs over the page. */
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
@@ -623,6 +629,7 @@ export const uiStore = createStore<UiState>(
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
     folderDeleteConfirm: null,
+    deleteSearchHistoryOpen: false,
     barMenuOpen: false,
     permissionPromptOpen: false,
     quietPromptId: null,
@@ -1205,6 +1212,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui)
   )
 }
@@ -1272,6 +1280,7 @@ export function invalidateSnapshot(): void {
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui) &&
     ui.frameDialogCover === 0
   ) {
@@ -2002,6 +2011,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
     ui.folderDeleteConfirm !== null ||
+    ui.deleteSearchHistoryOpen ||
     // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
   )
@@ -2095,6 +2105,52 @@ export function closeFolderDeleteConfirm(toChrome = false): void {
   uiStore.set({ folderDeleteConfirm: null })
   invalidateSnapshot()
   if (!toChrome) returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The Delete Search History confirmation over the page (desktop)
+// ---------------------------------------------------------------------------
+
+/**
+ * Window event the "Delete search history?" prompt sends as its Delete is answered: the open
+ * URL bar takes the remembered searches' rows out of its list – the core has forgotten them
+ * (`urlbar.clearSearchHistory`).
+ */
+export const URLBAR_SEARCHES_FORGOTTEN_EVENT = 'zen-urlbar-searches-forgotten'
+
+/**
+ * "Delete search history?" from a suggestion row's native menu (context-menus-115; §10.5's bulk
+ * case, pr-434 ruling 3): a frame dialog (design language v2 §9.23, §9.5) over the open bar and
+ * the active page's picture – the bar's own capture, already held – through TabDialogs'
+ * `FrameDialogHost`. The bar stays up under it, inert with the frame while the prompt stands.
+ */
+export async function openDeleteSearchHistoryConfirm(activeTabId: string | null): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ deleteSearchHistoryOpen: true })
+}
+
+/**
+ * Put the prompt away. The keyboard stays in the chrome while the bar is up
+ * (`returnFocusToPage` asks for the page's only once no chrome surface has it); the prompt's
+ * own return (§9.5, one hop down) hands it to the bar's field.
+ */
+export function closeDeleteSearchHistoryConfirm(): void {
+  if (!uiStore.get().deleteSearchHistoryOpen) return
+  uiStore.set({ deleteSearchHistoryOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The prompt's Delete: the core forgets every remembered search (`urlbar.clearSearchHistory`),
+ * the open bar hears of it and drops their rows (`URLBAR_SEARCHES_FORGOTTEN_EVENT`), and the
+ * prompt goes.
+ */
+export function confirmDeleteSearchHistory(): void {
+  run('urlbar.clearSearchHistory', undefined)
+  window.dispatchEvent(new CustomEvent(URLBAR_SEARCHES_FORGOTTEN_EVENT))
+  closeDeleteSearchHistoryConfirm()
 }
 
 // ---------------------------------------------------------------------------

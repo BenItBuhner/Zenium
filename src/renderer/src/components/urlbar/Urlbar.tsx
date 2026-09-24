@@ -43,7 +43,14 @@ import {
 } from '@renderer/lib/panes'
 import { startQrScan } from '@renderer/lib/qrScan'
 import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
-import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
+import {
+  URLBAR_SEARCHES_FORGOTTEN_EVENT,
+  closeDeleteSearchHistoryConfirm,
+  closeUrlbar,
+  openDeleteSearchHistoryConfirm,
+  uiStore,
+  type UrlbarState
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { barLayout } from '../phone/barItems'
@@ -937,11 +944,15 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   /**
    * A pick in a row's native menu (`urlbar.suggestionContextMenu`, asked for by the desktop
    * row's right-click, `rowMenu`): Remove is the row's Shift+Delete, through the core's removes;
-   * Delete Search History has the core forget every remembered search and takes their rows –
-   * the removable search rows – out of the list. The menu is the host's and its answer an
-   * event, so the handler is kept current through a ref, as the list is (`resultsRef`).
+   * Delete Search History is §10.5's bulk case (pr-434 ruling 3) and asks first – the §9.23
+   * destructive prompt over the bar (`DeleteSearchHistoryDialog`, in the frame's dialog slot):
+   * its Delete has the core forget every remembered search and says so here
+   * (`URLBAR_SEARCHES_FORGOTTEN_EVENT`), and the removable search rows go out of the list; its
+   * Cancel changes nothing. The menu is the host's and its answer an event, so the handler is
+   * kept current through a ref, as the list is (`resultsRef`).
    */
   const menuAction = useRef<(pick: Events['urlbar.suggestionAction']) => void>(() => undefined)
+  const forgotten = useRef<() => void>(() => undefined)
   useLayoutEffect(() => {
     menuAction.current = ({ id, action }) => {
       if (action === 'remove') {
@@ -949,11 +960,20 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
         if (row && forget(row)) dropRows(new Set([id]))
         return
       }
-      run('urlbar.clearSearchHistory', undefined)
-      dropRows(new Set(results.filter((r) => r.kind === 'search' && r.deletable).map((r) => r.id)))
+      void openDeleteSearchHistoryConfirm(tab?.id ?? activeTab(state)?.id ?? null)
     }
+    forgotten.current = () =>
+      dropRows(new Set(results.filter((r) => r.kind === 'search' && r.deletable).map((r) => r.id)))
   })
   useEffect(() => onEvent('urlbar.suggestionAction', (pick) => menuAction.current(pick)), [])
+  useEffect(() => {
+    const onForgotten = (): void => forgotten.current()
+    window.addEventListener(URLBAR_SEARCHES_FORGOTTEN_EVENT, onForgotten)
+    return () => window.removeEventListener(URLBAR_SEARCHES_FORGOTTEN_EVENT, onForgotten)
+  }, [])
+  // The bar going under the prompt (a navigation, another surface taking over) takes the
+  // question with it: there is no list left to edit.
+  useEffect(() => () => closeDeleteSearchHistoryConfirm(), [])
 
   /**
    * The desktop row's right-click (context-menus-115): the host's native menu for the row,

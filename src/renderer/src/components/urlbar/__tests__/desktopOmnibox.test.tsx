@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, createElement, type ReactElement } from 'react'
+import { Fragment, act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { HostCapabilities, Suggestion, Tab, UIState } from '@shared/types'
 import type { UrlbarState } from '@renderer/lib/ui'
@@ -37,6 +37,8 @@ Object.assign(window, { zen: { invoke, on } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { Urlbar } = await import('../Urlbar')
+const { DeleteSearchHistoryDialog } = await import('../DeleteSearchHistoryDialog')
+const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { uiStore } = await import('@renderer/lib/ui')
 const { pageTookKeyboard } = await import('@renderer/lib/panes')
 
@@ -241,7 +243,7 @@ async function press(
 beforeEach(() => {
   invoke.mockClear()
   suggestions = () => []
-  uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
+  uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true }, deleteSearchHistoryOpen: false }))
 })
 
 afterEach(() => {
@@ -492,6 +494,54 @@ describe('a row\u2019s native menu (context-menus-115)', () => {
     })
   }
 
+  /**
+   * The frame's dialog host beside the bar, with the "Delete search history?" prompt as
+   * TabDialogs mounts it from the `deleteSearchHistoryOpen` cover flag
+   * (components/urlbar/DeleteSearchHistoryDialog.tsx).
+   */
+  function Prompts(): ReactElement {
+    const open = uiStore.use((s) => s.deleteSearchHistoryOpen)
+    return createElement(
+      FrameDialogHost,
+      { frame: true },
+      open ? createElement(DeleteSearchHistoryDialog) : null
+    )
+  }
+  const withPrompt = (bar: ReactElement): ReactElement =>
+    createElement(Fragment, null, bar, createElement(Prompts))
+  const prompt = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>(
+      '[data-confirm="delete-search-history"]:not([data-leaving])'
+    )
+  const promptButton = (action: 'cancel' | 'confirm'): HTMLButtonElement =>
+    prompt()!.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!
+  /** The prompt's wait for the page's picture done and the prompt up. */
+  async function promptUp(): Promise<HTMLElement> {
+    await act(async () => {
+      await vi.waitFor(() => expect(prompt()).not.toBeNull())
+    })
+    return prompt()!
+  }
+  async function click(el: Element): Promise<void> {
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+  }
+  /**
+   * The prompt's way out ends (the host keeps its panel through the §9.5 pop in reverse and
+   * drops it on `animationend`): the frame's `inert` lifts and the keyboard, waiting on it
+   * (lib/popover.ts `returnFocusTo`), comes back.
+   */
+  async function left(): Promise<void> {
+    await act(async () => {
+      for (const panel of document.querySelectorAll('.zen-frame-dialogs-slot > [data-leaving]'))
+        panel.dispatchEvent(new Event('animationend'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
   it('a right-click on a removable row asks the host for the row\u2019s menu at the pointer, the press itself picking nothing; a bookmark row gets none', async () => {
     suggestions = (q) => (q ? [history(1), bookmark(1)] : [])
     const el = await render(native())
@@ -586,34 +636,130 @@ describe('a row\u2019s native menu (context-menus-115)', () => {
     expect(commands()).not.toContain('history.delete')
   })
 
-  it('Delete Search History, offered on a remembered search, forgets every remembered search and drops their rows; the engine\u2019s own suggestions and the pages stay', async () => {
+  it('Delete Search History, offered on a remembered search, asks first (§10.5, pr-434 ruling 3): the §9.23 destructive prompt over the bar; its Delete forgets every remembered search and drops their rows – the engine\u2019s own suggestions and the pages stay – and the field takes the keyboard back', async () => {
     suggestions = (q) =>
       q ? [search(1), search(2), search(3, { deletable: undefined }), history(1)] : []
-    const el = await render(native())
+    const el = await render(withPrompt(native()))
     await typeAndList(el, 'qu', 4)
     for (let i = 0; i < 4; i += 1) await key(input(el), 'ArrowDown')
     expect(selectedRow(el)?.textContent).toContain('Page 1')
     await rightClick(rows(el)[0])
     expect(menuAsks().at(-1)).toMatchObject({ id: 'search:query 1', kind: 'search' })
     await picked('search:query 1', 'delete-search-history')
+    const d = await promptUp()
+    // The question first: nothing forgotten yet, the list as it was, the bar up under the prompt.
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(titles(el)).toEqual(['query 1', 'query 2', 'query 3', 'Page 1'])
+    expect(uiStore.get().urlbar.open).toBe(true)
+    expect(uiStore.get().deleteSearchHistoryOpen).toBe(true)
+    // The §9.23 confirmation in its destructive form: the question with the trash glyph, the
+    // one paragraph, Cancel and Delete in the danger ink, no primary (§6).
+    expect(d.getAttribute('role')).toBe('alertdialog')
+    expect(d.dataset.destructive).toBe('true')
+    const title = d.querySelector('.zen-v2-title-block-title')!
+    expect(title.textContent).toBe('Delete search history?')
+    expect(title.querySelector('svg.lucide-trash-2')).not.toBeNull()
+    expect(d.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
+      'Every search Zenium remembered for the address bar is forgotten. Your browsing history stays.'
+    )
+    expect(promptButton('cancel').textContent).toBe('Cancel')
+    expect(promptButton('confirm').textContent).toBe('Delete')
+    expect(promptButton('confirm').hasAttribute('data-danger')).toBe(true)
+    expect(d.querySelector('[data-primary]')).toBeNull()
+    // The container holds the keyboard (§9.22 as amended); Enter from it answers nothing.
+    expect(document.activeElement).toBe(d)
+    await key(d, 'Enter')
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(prompt()).toBe(d)
+    // Delete: the core forgets, the remembered searches' rows go, the highlight keeps its row,
+    // the prompt leaves and the keyboard comes back to the field.
+    await click(promptButton('confirm'))
     expect(commands()).toContain('urlbar.clearSearchHistory')
     expect(commands()).not.toContain('urlbar.forgetShortcut')
+    expect(uiStore.get().deleteSearchHistoryOpen).toBe(false)
+    expect(prompt()).toBeNull()
     expect(titles(el)).toEqual(['query 3', 'Page 1'])
     expect(selectedRow(el)?.textContent).toContain('Page 1')
     expect(input(el).value).toBe('example.com/1')
+    expect(uiStore.get().urlbar.open).toBe(true)
+    // The bar stands inert with the frame through the prompt's way out (§9.5); the field takes
+    // the keyboard as the exit ends and the inert lifts – not the page (`focus.content`).
+    expect(document.activeElement).not.toBe(input(el))
+    await left()
+    expect(document.activeElement).toBe(input(el))
+    expect(commands()).not.toContain('focus.content')
   })
 
   it('Delete Search History with the highlight on a remembered search moves it to the row that takes the place', async () => {
     suggestions = (q) => (q ? [history(1), search(1), search(2), history(2)] : [])
-    const el = await render(native())
+    const el = await render(withPrompt(native()))
     await typeAndList(el, 'qu', 4)
     await key(input(el), 'ArrowDown')
     await key(input(el), 'ArrowDown')
     expect(selectedRow(el)?.textContent).toContain('query 1')
     await picked('search:query 1', 'delete-search-history')
+    await promptUp()
+    await click(promptButton('confirm'))
     expect(titles(el)).toEqual(['Page 1', 'Page 2'])
     expect(selectedRow(el)?.textContent).toContain('Page 2')
     expect(input(el).value).toBe('example.com/2')
+    await left()
+    expect(document.activeElement).toBe(input(el))
+  })
+
+  it('the prompt\u2019s Cancel, Escape and scrim forget nothing: the list stands, the bar stays up and the field takes the keyboard back', async () => {
+    suggestions = (q) => (q ? [search(1), search(2), history(1)] : [])
+    const el = await render(withPrompt(native()))
+    await typeAndList(el, 'qu', 3)
+    await picked('search:query 1', 'delete-search-history')
+    await promptUp()
+    await click(promptButton('cancel'))
+    expect(prompt()).toBeNull()
+    expect(uiStore.get().deleteSearchHistoryOpen).toBe(false)
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(titles(el)).toEqual(['query 1', 'query 2', 'Page 1'])
+    expect(uiStore.get().urlbar.open).toBe(true)
+    await left()
+    expect(document.activeElement).toBe(input(el))
+
+    await picked('search:query 2', 'delete-search-history')
+    await promptUp()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(prompt()).toBeNull()
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(titles(el)).toEqual(['query 1', 'query 2', 'Page 1'])
+    expect(uiStore.get().urlbar.open).toBe(true)
+    await left()
+    expect(document.activeElement).toBe(input(el))
+
+    await picked('search:query 1', 'delete-search-history')
+    await promptUp()
+    await act(async () => {
+      document
+        .querySelector('.zen-frame-scrim')!
+        .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
+      await Promise.resolve()
+    })
+    expect(prompt()).toBeNull()
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(titles(el)).toEqual(['query 1', 'query 2', 'Page 1'])
+    await left()
+    expect(document.activeElement).toBe(input(el))
+    expect(commands()).not.toContain('focus.content')
+  })
+
+  it('the bar going under the prompt takes the question with it', async () => {
+    suggestions = (q) => (q ? [search(1), history(1)] : [])
+    const el = await render(withPrompt(native()))
+    await typeAndList(el, 'qu', 2)
+    await picked('search:query 1', 'delete-search-history')
+    await promptUp()
+    act(() => root?.unmount())
+    expect(uiStore.get().deleteSearchHistoryOpen).toBe(false)
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
   })
 })
 
