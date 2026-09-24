@@ -2771,9 +2771,16 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           form: {
             title: 'Add search engine',
             description: 'Put %s in the URL where the search terms go.',
+            // `search.addEngine` takes the name and the template; the engine derives the
+            // shortcut from the name (`customSearchEngine`) until the command carries one –
+            // which is why the form's Shortcut may be left empty when adding: a typed word is
+            // checked (against every engine of the profile – `engines`, no `engineId` – as the
+            // Edit form's is), and not yet sent.
             render: (close) => (
               <SearchEngineForm
-                onAdd={(name, url) => cmd('search.addEngine', { name, url })}
+                action="Add"
+                engines={state.searchEngines}
+                onSubmit={({ name, url }) => cmd('search.addEngine', { name, url })}
                 close={close}
               />
             )
