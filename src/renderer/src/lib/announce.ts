@@ -155,13 +155,14 @@ export function zoomAnnouncement(factor: number): string {
 
 /**
  * Where the keyboard put a tab (tabs-34, `tab.moved`): its place among the tabs of the run it
- * is in now – "Moved to position 2 of 5" – and the group it entered ("… in Research") or left
- * for the loose rows ("Moved out of Research to position 4 of 6"); a group without a name is
- * "the group". The place alone for a move inside a run, as the row's `aria-posinset` has it.
+ * is in now – "Moved to position 2 of 5" – and the folder it entered ("… in Research") or left
+ * for the loose rows ("Moved out of Research to position 4 of 6"); a folder without a name is
+ * "the folder" – the desktop's noun for a tab group (#398 F10). The place alone for a move
+ * inside a run, as the row's `aria-posinset` has it.
  */
 export function tabMoveAnnouncement(moved: TabMoveResult): string {
   const place = `position ${moved.position} of ${moved.count}`
-  const nameOf = (group: { name: string }): string => group.name.trim() || 'the group'
+  const nameOf = (folder: { name: string }): string => folder.name.trim() || 'the folder'
   if (moved.to && moved.to.folderId !== moved.from?.folderId)
     return `Moved to ${place} in ${nameOf(moved.to)}`
   if (moved.from && !moved.to) return `Moved out of ${nameOf(moved.from)} to ${place}`

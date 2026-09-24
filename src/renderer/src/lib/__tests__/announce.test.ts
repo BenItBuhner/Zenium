@@ -187,9 +187,12 @@ describe('announcement text', () => {
     expect(tabMoveAnnouncement({ ...moved, position: 1, count: 3, from: research, to: trip })).toBe(
       'Moved to position 1 of 3 in Trip'
     )
-    // A group without a name is "the group".
+    // A folder without a name is "the folder" – the desktop's noun (#398 F10), never "group".
     expect(tabMoveAnnouncement({ ...moved, from: null, to: { folderId: 'k', name: '  ' } })).toBe(
-      'Moved to position 2 of 5 in the group'
+      'Moved to position 2 of 5 in the folder'
+    )
+    expect(tabMoveAnnouncement({ ...moved, from: { folderId: 'k', name: '' }, to: null })).toBe(
+      'Moved out of the folder to position 2 of 5'
     )
   })
 
