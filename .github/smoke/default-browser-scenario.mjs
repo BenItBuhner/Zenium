@@ -64,9 +64,11 @@
 //                              registered, nothing is opened and the request resolves false at
 //                              once; no scheme is claimed either way – the app's path up to the
 //                              OS's Settings window
-//   os-settings-page           the screen as Settings would be on it and the SystemSettings
-//                              processes – the OS's half, recorded; then Settings closed so that
-//                              nothing is left for the legs after
+//   os-settings-page           a page call the OS has not answered yet is waited on (the arm64
+//                              runner is slow to launch Settings); then the screen as Settings
+//                              would be on it and the SystemSettings processes – the OS's half,
+//                              recorded; then Settings closed so that nothing is left for the
+//                              legs after
 //   registry-after             the registration again – intact for the installed build – with
 //                              the http and https classes: neither may name the executable (the
 //                              class a setAsDefaultProtocolClient would have left); the user's
@@ -1289,7 +1291,26 @@ export async function scenarioDefaultBrowser(h) {
 
     await s.step('os-settings-page', async () => {
       if (!isWin) return winSkip
-      const taken = opens.filter((o) => o.settled && !o.error)
+      const t0 = Date.now()
+      // ShellExecute answers once Settings is launching; the arm64 runner takes its time over
+      // that (past the request step's wait), so a call still open is waited on here.
+      let settledAfterMs = null
+      if (opens.some((o) => !o.settled)) {
+        await waitFor(
+          async () => {
+            opens = await openCalls()
+            return opens.every((o) => o.settled) ? true : null
+          },
+          30000,
+          'the Settings page calls settled',
+          500
+        )
+          .then(() => {
+            settledAfterMs = Date.now() - t0
+          })
+          .catch(() => undefined)
+      }
+      const taken = opens.filter((o) => !o.error)
       if (!taken.length) {
         return {
           note: registered
@@ -1320,13 +1341,14 @@ export async function scenarioDefaultBrowser(h) {
       )
       const detail = {
         screen: screen.file,
-        opened: taken.map((o) => o.url),
+        opened: taken.map((o) => `${o.url} → ${o.settled ? 'opened' : 'opening'}`),
+        settledAfterMs,
         processes,
         closed: closed.stdout || closed.stderr || closed.error || `exit ${closed.status}`
       }
       const title = processes?.processes?.find((p) => p.mainWindowTitle)?.mainWindowTitle
       log(
-        `${DEFAULT_BROWSER_SCENARIO}: Settings ${processes?.count ? `on screen (${processes.count} ${WINDOWS_SETTINGS_PROCESS} process(es)${title ? `, "${title}"` : ''})` : 'not seen as a process'}; ${detail.closed}`
+        `${DEFAULT_BROWSER_SCENARIO}: ${detail.opened.join(', ')}${settledAfterMs !== null ? ` after ${settledAfterMs} ms more` : ''}; Settings ${processes?.count ? `on screen (${processes.count} ${WINDOWS_SETTINGS_PROCESS} process(es)${title ? `, "${title}"` : ''})` : 'not seen as a process'}; ${detail.closed}`
       )
       out.windows = {
         ...out.windows,
