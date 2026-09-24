@@ -248,6 +248,7 @@ function state(
     },
     permissionRules: [],
     permissionDefaults: {},
+    deviceGrants: [],
     lastSafetyCheck: null,
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),

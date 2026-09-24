@@ -4,6 +4,7 @@ import { transformSync } from 'esbuild'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { licencesPlugin } from './scripts/licences'
 import { pdfViewerAssetMime } from './src/shared/pdfPage'
 import { isPreviewPdfVariant, PREVIEW_PDF_SLOW_MS, previewPdf } from './src/android/previewPdf'
 
@@ -269,7 +270,17 @@ export default defineConfig(({ mode }) => {
     root: resolve('src/android'),
     base: './',
     resolve: { alias: aliases },
-    plugins: [react(), tailwindcss(), previewPages(), previewFetch(), previewPdfViewer()],
+    // The open-source licences list (`virtual:zenium-licences`, Settings › About), collected
+    // from the installed tree at build time: the chrome's bundle carries the shared tree's
+    // packages, Electron left out (the device's WebView is the engine).
+    plugins: [
+      react(),
+      tailwindcss(),
+      previewPages(),
+      previewFetch(),
+      previewPdfViewer(),
+      licencesPlugin({ electron: false })
+    ],
     build: {
       outDir: resolve('android/app/src/main/assets/www'),
       emptyOutDir: true,

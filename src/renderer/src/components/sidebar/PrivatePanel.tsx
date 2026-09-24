@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { VenetianMask } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -8,12 +8,15 @@ import { SlideMotion } from '@renderer/lib/motion/slide'
 import { privateLockStore, usePrivateMasked } from '@renderer/lib/privateLock'
 import { privateTabsOf } from '@renderer/lib/privateTabs'
 import { activeTab, rowKey, stripRows } from '@renderer/lib/selectors'
+import { STRIP_FADE } from '@renderer/lib/tabStripLayout'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { PrivateLockCover } from '../phone/PrivateLockCover'
+import { watchGutter } from './listGutter'
 import { ENTER_BATCH, ListMotionContext } from './listMotion'
 import { NewTabButton, StripRowItem } from './SpacePanel'
 import { TabSet } from './TabSet'
+import { useActiveRowInView } from './useActiveRowInView'
 
 interface Props {
   state: UIState
@@ -43,19 +46,24 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
   const locked = privateLockStore.use((s) => s.locked)
   // Masked while the lock stands or is lifting: the rows are placeholders, out of reach.
   const masked = usePrivateMasked()
-  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  // The list's edge fades are the strip's (§9.37: 24), the space panel's.
+  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y', size: STRIP_FADE })
 
   // The rows' motion, the space panel's (`SpacePanel`): one per list, keyed by its scroller so
   // lib/drag.ts finds it from a row.
   const [motion] = useState(() => new SlideMotion('y', { enter: true, batch: ENTER_BATCH }))
   useEffect(() => () => motion.dispose(), [motion])
+  const scrollerEl = useRef<HTMLDivElement | null>(null)
   const scroller = useCallback(
     (el: HTMLDivElement | null) => {
+      scrollerEl.current = el
       const teardown = fade(el)
       motion.setScroller(el)
       if (el) listMotions.set(el, motion)
+      const gutter = el ? watchGutter(el) : null
       return () => {
         if (typeof teardown === 'function') teardown()
+        gutter?.()
         motion.setScroller(null)
       }
     },
@@ -65,48 +73,60 @@ export function PrivatePanel({ state, compact }: Props): JSX.Element {
   useLayoutEffect(() => {
     motion.flip(uiStore.get().drag?.tabId ?? null, true)
   }, [motion, orderKey])
+  // The active row comes into view on activation (BUG-008), the space panel's rule; the pose is
+  // in view whenever it stands.
+  useActiveRowInView(scrollerEl, motion, activeTabId, true)
 
   return (
     <ListMotionContext.Provider value={motion}>
       <PrivateHeader count={tabs.length} compact={compact} />
       <div className="relative min-h-0 flex-1">
+        {/* The list's column, the space panel's (tabs-28): the rows' scroller, then outside it
+            the foot with New Private Tab, so the row stays in view however long the list. Under
+            the veil the column is out of reach until the cover lifts (the overview's Private
+            pane's rule) – the list and its New Private Tab together; the rows read the
+            placeholder meanwhile, for a reader that reaches one all the same. */}
         <div
-          ref={scroller}
-          data-tab-scroller
-          data-active="true"
-          className="flex h-full flex-col overflow-y-auto overflow-x-hidden px-2 pb-1"
-          // Under the veil the list is out of reach until the cover lifts (the overview's
-          // Private pane's rule); the rows read the placeholder meanwhile, for a reader that
-          // reaches one all the same.
+          className="flex h-full flex-col"
+          data-tab-panel
           inert={masked || undefined}
           aria-hidden={masked || undefined}
         >
-          {/* One tablist, vertical (a11y-07, a11y-31); New Private Tab is the strip's next
-              control after it. */}
           <div
-            className="flex flex-col gap-0.5"
-            role="tablist"
-            aria-orientation="vertical"
-            aria-label="Private tabs"
-            data-tab-list="private"
+            ref={scroller}
+            data-tab-scroller
+            data-active="true"
+            className="flex min-h-0 shrink flex-col overflow-y-auto overflow-x-hidden px-2"
           >
-            <TabSet tabs={tabs}>
-              {stripRows(tabs, state.splitGroups).map((row) => (
-                <StripRowItem
-                  key={rowKey(row)}
-                  row={row}
-                  activeTabId={activeTabId}
-                  compact={compact}
-                />
-              ))}
-            </TabSet>
+            {/* One tablist, vertical (a11y-07, a11y-31); New Private Tab is the strip's next
+                control after it. */}
+            <div
+              className="flex flex-col gap-0.5"
+              role="tablist"
+              aria-orientation="vertical"
+              aria-label="Private tabs"
+              data-tab-list="private"
+            >
+              <TabSet tabs={tabs}>
+                {stripRows(tabs, state.splitGroups).map((row) => (
+                  <StripRowItem
+                    key={rowKey(row)}
+                    row={row}
+                    activeTabId={activeTabId}
+                    compact={compact}
+                  />
+                ))}
+              </TabSet>
+            </div>
           </div>
-          <NewTabButton
-            compact={compact}
-            spaced={tabs.length > 0}
-            dropInto={false}
-            pane="private"
-          />
+          <div className="zen-list-foot flex shrink-0 grow flex-col pb-1" data-strip-foot>
+            <NewTabButton
+              compact={compact}
+              spaced={tabs.length > 0}
+              dropInto={false}
+              pane="private"
+            />
+          </div>
         </div>
         <PrivateLockCover shown={locked} variant="veil" />
       </div>

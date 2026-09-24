@@ -4,6 +4,7 @@ import type { SplitGroup, Tab } from '@shared/types'
 import { cn } from '@renderer/lib/utils'
 import { useListMotion } from './listMotion'
 import { TabItem } from './TabItem'
+import { useRailFlyoutOut } from './useRailFlyout'
 
 interface Props {
   group: SplitGroup
@@ -33,7 +34,10 @@ interface Props {
  * tabs. No frame in the expanded sidebar, no layout glyph, no chip in the pill – the layout is on
  * screen in the panes, and the active pane's 2 px accent outline in the content marks the pane.
  * In the 56 px icon rail the group stacks in a column with 16 × 1 hairlines and a 2 px inset
- * outline. The row is the list's slot: `lib/drag.ts` reorders it as one item under the anchor's
+ * outline – and keeps the column while the rail's flyout is out (`useRailFlyoutOut`, tabs-03):
+ * the rows around it take their expanded form beside the rail without a change of height, and
+ * a column turned into a row would move every row under it under the pointer that opened the
+ * flyout. The row is the list's slot: `lib/drag.ts` reorders it as one item under the anchor's
  * id, and a segment dragged out of it leaves the split (the core, `dropTab`).
  */
 export function SplitGroupRow({
@@ -54,15 +58,18 @@ export function SplitGroupRow({
     [motion, anchor.id]
   )
   const active = tabs.some((t) => t.id === activeTabId)
+  const railOut = useRailFlyoutOut()
+  const column = compact || railOut
   return (
     <div
       ref={attach}
-      className={cn('zen-split-row', compact && 'zen-split-row-column', indent && 'ml-5')}
+      className={cn('zen-split-row', column && 'zen-split-row-column', indent && 'ml-5')}
       role="presentation"
       data-split-row={group.id}
       data-split-layout={group.layout}
       data-tab-id={anchor.id}
       data-active={active}
+      data-indent={indent || undefined}
       data-testid="split-row"
     >
       {tabs.map((tab, i) => (
@@ -71,7 +78,7 @@ export function SplitGroupRow({
           <TabItem
             tab={tab}
             active={tab.id === activeTabId}
-            compact={compact}
+            compact={column}
             parent={parent}
             segment={{ index: i, count: tabs.length }}
           />

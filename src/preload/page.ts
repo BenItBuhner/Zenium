@@ -21,7 +21,11 @@ import {
   installScreenCaptureBridge,
   installScreenCaptureShim
 } from '../shared/screenCapture'
-import { installCaptureReporter, installCaptureShim } from '../shared/captureState'
+import {
+  installCaptureReporter,
+  installCaptureShim,
+  installDeviceShim
+} from '../shared/captureState'
 import { installEditingFocusReporter } from '../shared/editingFocus'
 import { installShareBridge, installShareShim } from '../shared/share'
 import { installTextFragmentScript } from '../shared/textFragmentScript'
@@ -121,8 +125,9 @@ if (location.protocol === 'https:' || location.protocol === 'http:') {
       }
     }
   })
-  // The tab's alert indicator (tabs-43), from every frame: the main-world shim counts the live
-  // camera / microphone / display tracks, this world watches picture-in-picture, and each change
+  // The tab's alert indicator (tabs-43), from every frame: the main-world shims count the live
+  // camera / microphone / display tracks and the open device sessions (USB, HID, serial,
+  // Bluetooth, an immersive XR session), this world watches picture-in-picture, and each change
   // goes to the browser as one `capture-state` message under the frame's own id.
   installCaptureReporter({
     send,
@@ -131,6 +136,13 @@ if (location.protocol === 'https:' || location.protocol === 'http:') {
         contextBridge.executeInMainWorld({ func: installCaptureShim, args: [eventName] })
       } catch (error) {
         console.warn('[zen] capture shim unavailable:', (error as Error).message)
+      }
+    },
+    installDeviceShim: (eventName) => {
+      try {
+        contextBridge.executeInMainWorld({ func: installDeviceShim, args: [eventName] })
+      } catch (error) {
+        console.warn('[zen] device shim unavailable:', (error as Error).message)
       }
     }
   })

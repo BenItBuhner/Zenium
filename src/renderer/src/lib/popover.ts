@@ -44,19 +44,40 @@ export function openedFromKeyboard(): boolean {
   return document.activeElement?.matches(':focus-visible') ?? false
 }
 
-/** Focusable descendants in tab order, as Tab would visit them. */
+/**
+ * What Tab never reaches, on the control or on any ancestor of it: a `hidden` subtree (a pane
+ * of a level that is away, `display: none`), one hidden from assistive technology (the pane on
+ * its way out), or an inert one (a sheet under another). A control inside any of them is no
+ * wrap point: the browser skips it, and `focus()` on it would land nowhere.
+ */
+const UNREACHABLE = '[hidden], [aria-hidden="true"], [inert]'
+
+/**
+ * A container that holds the focus by design (§9.22): a dialog's root, `tabIndex -1`, the
+ * element the keyboard is sent to and cannot reach by Tab, on which the chassis draws no ring
+ * (main.css's one shared no-ring rule reads the same mark). Parked there the keyboard is at no
+ * control. Inside a larger root – a dialog of its own that is a level of a sheet or popover, the
+ * confirmation level (§10.4) – Tab enters it at its own first control and Shift+Tab at its last,
+ * rather than at the ends of the root around it.
+ */
+export const HELD = '[role="dialog"][tabindex="-1"], [role="alertdialog"][tabindex="-1"]'
+
+/** Focusable descendants in tab order, as Tab would visit them: none under what it never reaches. */
 export function focusableIn(root: HTMLElement): HTMLElement[] {
   const selector =
     'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
   return [...root.querySelectorAll<HTMLElement>(selector)].filter(
-    (el) => !el.hidden && el.getAttribute('aria-hidden') !== 'true' && el.tabIndex >= 0
+    (el) => el.tabIndex >= 0 && el.closest(UNREACHABLE) === null
   )
 }
 
 /**
  * Tab wraps inside `root` while a popover, dialog or sheet is open (§9.22): a press at the last
  * focusable goes to the first, Shift+Tab at the first to the last, and one from outside the root
- * enters it at the end the key heads for. A step within the root is the browser's; with nothing
+ * or from the root itself enters it at the end the key heads for – from a held container inside
+ * the root (`HELD`: a level that is a dialog of its own) at that container's own end, so a
+ * confirmation level's Tab reaches Cancel and then the verb before the sheet's grabber
+ * (§10.4), and Shift+Tab the verb. A step within the root is the browser's; with nothing
  * focusable inside, the key does nothing.
  */
 export function wrapTab(root: HTMLElement, e: KeyboardEvent): void {
@@ -69,8 +90,16 @@ export function wrapTab(root: HTMLElement, e: KeyboardEvent): void {
   const current = document.activeElement
   const index = current instanceof HTMLElement ? items.indexOf(current) : -1
   let next: HTMLElement | undefined
-  if (index === -1 || !root.contains(current)) next = e.shiftKey ? items.at(-1) : items[0]
-  else if (e.shiftKey && index === 0) next = items.at(-1)
+  if (index === -1) {
+    const held =
+      current instanceof HTMLElement &&
+      current !== root &&
+      root.contains(current) &&
+      current.matches(HELD)
+        ? focusableIn(current)
+        : []
+    next = (e.shiftKey ? held.at(-1) : held[0]) ?? (e.shiftKey ? items.at(-1) : items[0])
+  } else if (e.shiftKey && index === 0) next = items.at(-1)
   else if (!e.shiftKey && index === items.length - 1) next = items[0]
   if (!next) return
   e.preventDefault()

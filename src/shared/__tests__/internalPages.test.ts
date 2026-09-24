@@ -32,6 +32,7 @@ describe('the page registry', () => {
       'history',
       'bookmarks',
       'downloads',
+      'licences',
       'whats-new',
       'privacy-notice',
       'terms',
@@ -101,6 +102,24 @@ describe('the page registry', () => {
         sections: []
       })
     }
+  })
+
+  it('registers Licences as a singleton chrome page tab of every layout with page tabs, no panel form (settings-73)', () => {
+    expect(INTERNAL_PAGES.licences).toMatchObject({
+      id: 'licences',
+      title: 'Licences',
+      render: 'chrome',
+      singleton: true,
+      glyph: 'scale',
+      pill: { showStar: false },
+      splittable: false,
+      sections: []
+    })
+    // No overlay and no layouts: a tab wherever the host draws page tabs, the phone included.
+    expect(INTERNAL_PAGES.licences.overlay).toBeUndefined()
+    expect(INTERNAL_PAGES.licences.layouts).toBeUndefined()
+    expect(pageOpensAsTab(INTERNAL_PAGES.licences, { pageTabs: true }, 'phone')).toBe(true)
+    expect(pageOpensAsTab(INTERNAL_PAGES.licences, { pageTabs: false }, 'desktop')).toBe(false)
   })
 
   it('registers What’s new and the two legal pages as singleton chrome page tabs of every layout with page tabs, no panel form (SET-54, SET-55)', () => {

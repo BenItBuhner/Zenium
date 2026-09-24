@@ -24,6 +24,7 @@ import {
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   overlayCoversContent,
+  pageHidden,
   panelAloneOverContent,
   uiStore,
   type UiState
@@ -117,6 +118,26 @@ describe('chrome surfaces over the content', () => {
     // Over Settings the popover is not alone: the overlay dims.
     uiStore.set({ overlay: 'settings' })
     expect(panelAloneOverContent(idle())).toBe(false)
+  })
+
+  it('the collapsed rail’s flyout leaves the page’s picture under it undimmed: the sidebar beside the page, not a dialog over it (§9.20)', () => {
+    uiStore.set({ railFlyout: true })
+    try {
+      expect(pageHidden(idle())).toBe(true)
+      expect(overlayCoversContent(idle())).toBe(false)
+      expect(panelAloneOverContent(idle())).toBe(true)
+      // The hover card off one of its rows is a panel too: still no dim.
+      uiStore.set({ hoverCard: { ...idle().hoverCard, tabId: 't1' } })
+      expect(panelAloneOverContent(idle())).toBe(true)
+      uiStore.set({ hoverCard: { ...idle().hoverCard, tabId: null } })
+      // Out over Settings or a dialog it is not alone: their dim stays.
+      uiStore.set({ overlay: 'settings' })
+      expect(panelAloneOverContent(idle())).toBe(false)
+      uiStore.set({ overlay: 'none', clearBrowsingDataOpen: true })
+      expect(panelAloneOverContent(idle())).toBe(false)
+    } finally {
+      uiStore.set({ railFlyout: false, clearBrowsingDataOpen: false })
+    }
   })
 
   it('a menu the renderer draws – the desktop app menu under ⋯ – leaves the page under it undimmed (§6 "Menus", §9.20)', () => {

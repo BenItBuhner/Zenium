@@ -75,7 +75,7 @@ export function DragLayer({ state, drag }: { state: UIState; drag: DragState }):
             style={{ width: drag.width, height: drag.height }}
           >
             {icon}
-            <span className="zen-tab-title min-w-0 flex-1 truncate">{title}</span>
+            <span className="zen-tab-title min-w-0 flex-1">{title}</span>
           </div>
         )}
       </div>

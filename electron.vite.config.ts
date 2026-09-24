@@ -1,5 +1,6 @@
 import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
+import { licencesPlugin } from './scripts/licences'
 import { singleFilePreloads } from './scripts/single-file-preloads'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -44,7 +45,9 @@ export default defineConfig({
         '@core': resolve('src/core')
       }
     },
-    plugins: [react(), tailwindcss()],
+    // The open-source licences list (`virtual:zenium-licences`, Settings › About), collected
+    // from the installed tree at build time; the desktop's carries Electron itself.
+    plugins: [react(), tailwindcss(), licencesPlugin({ electron: true })],
     server: {
       port: 41733,
       strictPort: true

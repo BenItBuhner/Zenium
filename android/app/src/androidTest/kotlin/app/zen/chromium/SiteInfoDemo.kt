@@ -11,15 +11,21 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
+import android.view.KeyCharacterMap
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.json.JSONObject
+import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.max
 
 /**
@@ -27,13 +33,16 @@ import kotlin.math.max
  * can record it on an emulator: seeds a profile with two real sites (Google active, Bing next)
  * and a couple of remembered permission decisions, launches the app, lets the page settle, then
  * opens the sheet from the site icon in the address pill, pushes each level – the connection, the
- * cookies (expanded and scrolled, then cleared through the confirmation sheet stacked on top) and
- * the permissions, where the Location grant is reset – pops back with the system back gesture,
- * drags the sheet away by its grabber, and finishes on the tab overview and Settings so the sheet
- * can be compared with its neighbours in the same colour scheme (`-e theme light|dark`). Every
- * press inside the sheet is a real touch; the run asserts what those on the sheet's own rows did
- * (a level pushed in, the cookies cleared through the stacked confirm – the rule in DemoHarness),
- * and what the chrome does with the rest is what the recording shows.
+ * cookies (expanded and scrolled, then cleared through the "Clear cookies?" confirmation, a level
+ * of the sheet one in from the row: §10.4, the design lead's ruling on W5-17) and the
+ * permissions, where the Location grant is reset – pops back with the system back gesture, drags
+ * the sheet away by its grabber, and finishes on the tab overview and Settings so the sheet can be
+ * compared with its neighbours in the same colour scheme (`-e theme light|dark`). Every press
+ * inside the sheet is a real touch; the run asserts what those on the sheet's own rows did (a
+ * level pushed in, the cookies cleared through the confirm level – the rule in DemoHarness), and
+ * what the chrome does with the rest is what the recording shows. The confirm level's keyboard
+ * contract (§9.22 as §10.4 applies it) is driven once with injected key events, the document's
+ * focus read through the chrome's bridge, and asserted the same way.
  *
  * Handshake with the workflow (files under the app's `files/siteinfo-demo/`), as in GestureDemo:
  * `record` once the warm-up is done, wait for `recording`, `done` when the sequence is over.
@@ -68,8 +77,9 @@ class SiteInfoDemo {
         handshake()
         demo()
         Log.i(TAG, "done")
-        if (touchFaults.isNotEmpty()) {
-            throw AssertionError("${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}")
+        val faults = touchFaults.map { "touch: $it" } + keyFaults.map { "keyboard: $it" }
+        if (faults.isNotEmpty()) {
+            throw AssertionError("${touchFaults.size} touch(es) did not take, ${keyFaults.size} key(s) went wrong: ${faults.joinToString("; ")}")
         }
     }
 
@@ -79,6 +89,14 @@ class SiteInfoDemo {
     private fun touchFault(message: String) {
         Log.e(TAG, "TOUCH FAULT: $message")
         touchFaults += message
+    }
+
+    /** The keys of the confirm level's contract the chrome answered wrongly; [record] fails on them too. */
+    private val keyFaults = ArrayList<String>()
+
+    private fun keyFault(message: String) {
+        Log.e(TAG, "KEY FAULT: $message")
+        keyFaults += message
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -178,7 +196,7 @@ class SiteInfoDemo {
         }
 
         // 3. Cookies and site data: expand the sheet, scroll the list, then clear the cookies
-        //    through the confirmation sheet that stacks on top.
+        //    through the "Clear cookies?" confirmation – a level of the sheet, one in from the row.
         if (tapUntil(f, "Cookies and site data", BACK_LABEL)) {
             SystemClock.sleep(1_800)
             shot("03-cookies")
@@ -194,13 +212,15 @@ class SiteInfoDemo {
             if (tapUntil(f, "Clear cookies", "Confirm clear cookies")) {
                 SystemClock.sleep(1_200)
                 shot("05-clear-cookies-confirm")
-                // The stacked confirm's injected touch, its result asserted. The confirm leaves
-                // first (a fall through to the scrim closes it too) and the level beneath, inert
-                // under it and so out of the tree, comes back with its header: only then does the
-                // danger row's absence mean the jar was cleared (it leaves with the last cookie,
-                // §9.11, read again through Kotlin, so a wait rather than a fixed time). The row
-                // still there means the touch did not take: the cookies were kept.
-                if (tapLabel(f, "Confirm clear cookies")) {
+                // The level's keyboard contract first, ending with Escape back on the row; then
+                // the level again by a real touch, and its verb by another, the result asserted.
+                // The level pops first and the cookies level, hidden under it and so out of the
+                // tree, comes back with its header: only then does the danger row's absence mean
+                // the jar was cleared (it leaves with the last cookie, §9.11, read again through
+                // Kotlin, so a wait rather than a fixed time). The row still there means the
+                // touch did not take: the cookies were kept.
+                confirmKeyboard(f)
+                if (tapUntil(f, "Clear cookies", "Confirm clear cookies") && tapLabel(f, "Confirm clear cookies")) {
                     awaitGone("Confirm clear cookies", 10_000)
                     if (!awaitLabel(BACK_LABEL, 6_000)) {
                         touchFault("the cookies level did not come back into the tree after the confirm")
@@ -269,6 +289,108 @@ class SiteInfoDemo {
         val deadline = SystemClock.uptimeMillis() + 10_000
         while (findByLabel(GRIP_LABEL) == null && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(250)
         Log.i(TAG, if (findByLabel(GRIP_LABEL) != null) "sheet is up" else "sheet never appeared")
+    }
+
+    /**
+     * The confirm level's keyboard contract (§9.22 as §10.4 applies it to a level; W5-17 seed 55),
+     * with the level up from a real touch on the Clear cookies row: the level's container holds
+     * the focus on entry and no verb is preselected; Enter from it is inert – the question is
+     * destructive, so no default – and the level stands; Tab reaches Cancel, then the danger verb
+     * (the shot with the ring on it); Shift+Tab steps back to Cancel; Escape is one hop back to
+     * the row that asked, which takes the keyboard again. The keys go in as a hardware keyboard's
+     * (`pressKey`); the document's focus is read through the chrome's bridge (`focused`), the
+     * tree's labels as everywhere else. Every wrong answer is a key fault the run fails on once
+     * the recording is done; a level Escape did not pop is cancelled by touch so the run goes on.
+     */
+    private fun confirmKeyboard(f: Finger) {
+        awaitRest()
+        val entry = focused()
+        if (entry?.optString("level") != "clear-cookies" || entry.optString("tag") != "SECTION") {
+            keyFault("on entry the focus is not the confirm level's container but $entry")
+        }
+        pressKey(KeyEvent.KEYCODE_ENTER)
+        SystemClock.sleep(700)
+        if (findByLabel("Confirm clear cookies") == null) {
+            keyFault("Enter from the container answered the destructive question: the level went")
+        } else if (focused()?.optString("tag") != "SECTION") {
+            keyFault("Enter moved the focus off the container to ${focused()}")
+        }
+        pressKey(KeyEvent.KEYCODE_TAB)
+        val first = focused()
+        if (first?.optString("action") != "cancel") keyFault("Tab from the container did not reach Cancel but $first")
+        pressKey(KeyEvent.KEYCODE_TAB)
+        val second = focused()
+        if (second?.optString("action") != "confirm") keyFault("Tab from Cancel did not reach the verb but $second")
+        SystemClock.sleep(600)
+        shot("05b-confirm-verb-focused")
+        pressKey(KeyEvent.KEYCODE_TAB, shift = true)
+        val back = focused()
+        if (back?.optString("action") != "cancel") keyFault("Shift+Tab from the verb did not return to Cancel but $back")
+        pressKey(KeyEvent.KEYCODE_ESCAPE)
+        if (!awaitGone("Confirm clear cookies", 6_000)) {
+            keyFault("Escape did not pop the confirm level")
+            tapLabel(f, "Cancel")
+            awaitGone("Confirm clear cookies", 6_000)
+        } else if (!awaitLabel(BACK_LABEL, 6_000)) {
+            keyFault("the cookies level did not come back into the tree after Escape")
+        } else {
+            val home = focused()
+            if (home?.optString("level") != "cookies" || home.optString("text")?.startsWith("Clear cookies") != true) {
+                keyFault("Escape did not return the keyboard to the Clear cookies row but to $home")
+            }
+        }
+        awaitRest()
+    }
+
+    /**
+     * The chrome document's active element: the level it stands in (`data-level` of the nearest
+     * pane), its tag, its `data-action` (a confirm level's Cancel or verb), its name and its text;
+     * null when nothing has the focus or the chrome did not answer.
+     */
+    private fun focused(): JSONObject? {
+        val raw = chromeJs(
+            "(function(){var e=document.activeElement;if(!e||e===document.body)return null;var p=e.closest('[data-level]');" +
+                "return JSON.stringify({level:p?p.getAttribute('data-level'):null,tag:e.tagName,action:e.getAttribute('data-action'),role:e.getAttribute('role')," +
+                "label:e.getAttribute('aria-label'),text:(e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40)})})()"
+        )
+        val text = runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String ?: return null
+        return runCatching { JSONObject(text) }.getOrNull()
+    }
+
+    /** Evaluate in the chrome WebView; the raw JSON-encoded result ("" when it never answered). */
+    private fun chromeJs(code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val chrome = (activity as? MainActivity)?.host?.chrome
+            if (chrome == null) {
+                latch.countDown()
+            } else {
+                chrome.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        return result
+    }
+
+    /** A key as a hardware keyboard sends it, down then up, Shift held round it when asked. */
+    private fun pressKey(keyCode: Int, shift: Boolean = false) {
+        val meta = if (shift) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0
+        if (shift) injectKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SHIFT_LEFT, meta)
+        injectKey(KeyEvent.ACTION_DOWN, keyCode, meta)
+        injectKey(KeyEvent.ACTION_UP, keyCode, meta)
+        if (shift) injectKey(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_SHIFT_LEFT, 0)
+        SystemClock.sleep(400)
+    }
+
+    private fun injectKey(action: Int, keyCode: Int, meta: Int) {
+        val now = SystemClock.uptimeMillis()
+        val event = KeyEvent(now, now, action, keyCode, 0, meta, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD)
+        if (!ui.injectInputEvent(event, true)) Log.w(TAG, "the ${KeyEvent.keyCodeToString(keyCode)} ${if (action == KeyEvent.ACTION_DOWN) "down" else "up"} was not injected")
+        SystemClock.sleep(30)
     }
 
     /** The site icon sits at the start of the pill; the accessibility tree knows it by its label. */

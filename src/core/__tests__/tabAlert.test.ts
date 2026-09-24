@@ -122,7 +122,17 @@ const PAGE = 'https://meet.example/call'
 
 const report = (
   id: string,
-  over: Partial<{ camera: boolean; microphone: boolean; display: boolean; pip: boolean }>
+  over: Partial<{
+    camera: boolean
+    microphone: boolean
+    display: boolean
+    pip: boolean
+    bluetooth: boolean
+    usb: boolean
+    hid: boolean
+    serial: boolean
+    vr: boolean
+  }>
 ): unknown => ({ id, camera: false, microphone: false, display: false, pip: false, ...over })
 
 function openPage(f: Fixture): { tab: Tab; view: Recorded } {
@@ -179,6 +189,34 @@ describe('the tab alert from the frames’ capture reports', () => {
     send(report('share', {}))
     expect(f.browser.tabs.tab(tab.id)!.alert).toBe('pip')
     send(report('player', {}))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBeNull()
+  })
+
+  it('slots a device session where Chrome does – below a capture, above picture-in-picture – and clears it with the document (tabs-43)', () => {
+    const f = fixture()
+    const { tab, view } = openPage(f)
+    const send = (capture: unknown): void =>
+      view.events.onPageMessage({ type: 'capture-state', capture })
+    send(report('player', { pip: true }))
+    send(report('top', { usb: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('usb')
+    send(report('top', { usb: true, bluetooth: true, serial: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('bluetooth')
+    send(report('share', { display: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('capturing')
+    send(report('share', {}))
+    send(report('top', { hid: true, vr: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('hid')
+    send(report('top', { vr: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('pip')
+    send(report('player', {}))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('vr')
+    // A reporter older than the device fields (no such keys) reads as none of them.
+    send({ id: 'top', camera: false, microphone: false, display: false, pip: false })
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBeNull()
+    send(report('top', { serial: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('serial')
+    view.events.onNavigated('https://meet.example/lobby', false)
     expect(f.browser.tabs.tab(tab.id)!.alert).toBeNull()
   })
 

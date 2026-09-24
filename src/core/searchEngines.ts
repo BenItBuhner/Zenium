@@ -10,9 +10,13 @@ import {
   MAX_OPENSEARCH_BYTES,
   customSearchEngine,
   discoveredSearchEngine,
+  editedSearchEngine,
+  engineKeywordProblem,
   parseOpenSearchDescription,
   rememberDiscoveredEngine,
-  searchTemplateProblem
+  searchTemplateProblem,
+  withSearchEngineActive,
+  type SearchEngineEdits
 } from '../shared/search'
 import { isProbablyUrl } from '../shared/url'
 
@@ -130,6 +134,40 @@ export class SearchEngineService {
       win
     )
     return engine.id
+  }
+
+  /**
+   * Edit one of the user's engines (omnibox-09): the name, the `%s` template and the shortcut
+   * (`@` or not; empty for one derived from the name). Rejects with the reason the form shows;
+   * the shipped engines are not the user's to edit.
+   */
+  update(id: string, edits: SearchEngineEdits, win: ZenWindow): void {
+    const state = this.browser.state
+    const user = state.settings.searchEngines ?? []
+    const engine = user.find((e) => e.id === id)
+    if (!engine) throw new Error('The engine is not one of yours to edit')
+    const cleanName = edits.name.trim()
+    if (!cleanName) throw new Error('Enter a name')
+    const problem =
+      searchTemplateProblem(edits.searchUrl) ??
+      engineKeywordProblem(edits.keyword, id, state.searchEngines)
+    if (problem) throw new Error(problem)
+    const next = editedSearchEngine(engine, edits, state.searchEngines)
+    this.browser.updateSettings({ searchEngines: user.map((e) => (e.id === id ? next : e)) }, win)
+  }
+
+  /**
+   * Take one of the user's engines out of the omnibox, or bring it back (settings-43): a
+   * deactivated engine stays listed under Inactive and answers to no shortcut. The default
+   * engine stays active – searches go to it – so deactivating it is refused.
+   */
+  setActive(id: string, active: boolean, win: ZenWindow): void {
+    const state = this.browser.state
+    const user = state.settings.searchEngines ?? []
+    if (!user.some((e) => e.id === id)) return
+    if (!active && id === state.settings.searchEngineId)
+      throw new Error('The default search engine stays active')
+    this.browser.updateSettings({ searchEngines: withSearchEngineActive(user, id, active) }, win)
   }
 
   /**
