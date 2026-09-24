@@ -24,6 +24,7 @@ export type AnyAction =
   | 'resources.open'
   | 'passwords.open'
   | 'translate.open'
+  | 'search.manageEngines'
 
 export interface ActionContext {
   /** Tab whose web contents produced the key event (null for the chrome). */
@@ -313,6 +314,11 @@ export class Actions {
         return
       case 'settings.open':
         this.browser.pages.open('settings', undefined, win)
+        return
+      // Chrome's "Manage search engines" action: Settings › Search, the page the pill menu's
+      // Manage Search Engines… row opens (omnibox-39).
+      case 'search.manageEngines':
+        this.browser.pages.open('settings', 'search', win)
         return
       case 'addons.open':
         return this.browser.emit('overlay.open', { kind: 'addons' }, win)

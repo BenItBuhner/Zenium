@@ -3713,6 +3713,7 @@ export interface CommandDescriptor {
     | 'resources.open'
     | 'passwords.open'
     | 'translate.open'
+    | 'search.manageEngines'
   /** The host capability the command needs; not offered where it is false. */
   requires?: keyof HostCapabilities
   /** The layouts the command does something in; absent means all of them. */
