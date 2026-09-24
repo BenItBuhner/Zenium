@@ -901,6 +901,71 @@ describe('desktop pill (NavRow)', () => {
       expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(0)
       await dismiss()
     })
+
+    // §9.29 as amended on #428 (the lead's ruling 2): the press changes the fill, never the
+    // message – a certificate error's triangle keeps the danger ink on the pressed fill while
+    // its popover is up, where the lock and the mask take the pressed full ink. The chip's
+    // classes go through `twMerge`, where the last text colour wins: the danger class must
+    // survive the pressed anchor's.
+    it('holds the danger tier’s ink under the press: the triangle stays in the danger ink on the pressed fill while its popover is up; the lock and the mask take the pressed ink', async () => {
+      const hasPressedFill = (chip: HTMLElement): boolean =>
+        chip.className.split(/\s+/).includes('bg-[var(--v2-control-fill-hover)]')
+      const broken = tab(page.url, {
+        readerable: true,
+        certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+      })
+      const el = render(<NavRow state={state(broken)} tab={broken} compact={false} />)
+      const slot = slotOf(el)
+      expect(glyphOf(slot).classList.contains('lucide-triangle-alert')).toBe(true)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+      expect(hasPressedFill(slot)).toBe(false)
+
+      await openFromChip(slot)
+      expect(siteInfoStore.get().openedBy).toBe('site')
+      expect(slot.getAttribute('aria-expanded')).toBe('true')
+      // The pressed fill comes on; the message does not change: the danger ink, once, and no
+      // full-ink class beside it for the fill's sake.
+      expect(hasPressedFill(slot)).toBe(true)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+      expect(restOpacity(slot)).toEqual([])
+      await dismiss()
+      expect(hasPressedFill(slot)).toBe(false)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+
+      // The connection glyph under the press, as before: the lock at the pressed full ink.
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-lock')).toBe(true)
+      await openFromChip(slot)
+      expect(hasPressedFill(slot)).toBe(true)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+      await dismiss()
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+
+      // The mask under the press, as before: the pressed full ink (it is identity, not danger).
+      const secret = tab(page.url, { readerable: true, containerId: PRIVATE_CONTAINER_ID })
+      act(() => root!.render(<NavRow state={state(secret)} tab={secret} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-venetian-mask')).toBe(true)
+      await openFromChip(slot)
+      expect(hasPressedFill(slot)).toBe(true)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+      await dismiss()
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+
+      // The danger tier over the mask, pressed: still the danger ink – the tier, not the tab.
+      const brokenSecret = tab(page.url, {
+        readerable: true,
+        containerId: PRIVATE_CONTAINER_ID,
+        certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+      })
+      act(() =>
+        root!.render(<NavRow state={state(brokenSecret)} tab={brokenSecret} compact={false} />)
+      )
+      expect(glyphOf(slot).classList.contains('lucide-triangle-alert')).toBe(true)
+      await openFromChip(slot)
+      expect(hasPressedFill(slot)).toBe(true)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+      await dismiss()
+    })
   })
 
   it('marks Reader View pressed while the tab is in it', () => {

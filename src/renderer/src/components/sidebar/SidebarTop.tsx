@@ -640,7 +640,10 @@ export function NavRow({
               // state that must be seen; no coloured mark – the tab row's dot already says
               // recording), the danger ink for a certificate error, and full ink on the window
               // fill under the pointer or while the popover it opened is up (the pressed anchor,
-              // §9.20) – no opacity stacked on the token's own alpha.
+              // §9.20) – no opacity stacked on the token's own alpha. The danger tier holds its
+              // ink under the press (§9.29 as amended on #428: the press changes the fill, never
+              // the message), so its class is merged last – the pressed fill comes on, the
+              // triangle stays in the danger ink; the lock and the mask take the pressed ink.
               <PillChip
                 label={siteChipName(slot)}
                 title={
@@ -659,8 +662,8 @@ export function NavRow({
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--v2-control-text-deemphasized)] hover:bg-[var(--v2-control-fill-hover)] hover:text-[var(--v2-control-text)]',
                   slot?.kind === 'capture' && 'text-[var(--v2-control-text)]',
-                  indicator.state === 'certificate-error' && 'text-[var(--v2-danger)]',
-                  siteAnchored && 'bg-[var(--v2-control-fill-hover)] text-[var(--v2-control-text)]'
+                  siteAnchored && 'bg-[var(--v2-control-fill-hover)] text-[var(--v2-control-text)]',
+                  indicator.state === 'certificate-error' && 'text-[var(--v2-danger)]'
                 )}
                 onActivate={(e) => {
                   const chip = e.currentTarget
