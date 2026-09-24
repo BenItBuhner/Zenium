@@ -317,6 +317,8 @@ describe('tabs from other devices', () => {
     const lists = b.engine.tabsFromDevices()
     expect(lists).toHaveLength(1)
     expect(lists[0]).toMatchObject({ deviceId: aId, deviceName: 'Desk (Linux)' })
+    // The kind rides on A's announcement, not on its tabs document; A's harness host names none.
+    expect(lists[0].deviceKind).toBeUndefined()
     expect(lists[0].tabs.map((t) => t.url)).toEqual(
       expect.arrayContaining(['https://a.example/one', 'https://a.example/two'])
     )

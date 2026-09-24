@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { FOLDER_LOST_MESSAGE } from '../engine'
-import { README_NAME, SYNC_DIR_NAME, isDeviceFileName } from '../transport'
-import { device, folderFiles, published, setup, teardown, unlockVault } from './harness'
+import { README_NAME, SYNC_DIR_NAME, isDeviceFileName, parseDeviceFile } from '../transport'
+import {
+  type Device,
+  device,
+  folderFiles,
+  published,
+  setup,
+  teardown,
+  unlockVault
+} from './harness'
 
 afterEach(teardown)
 
@@ -231,6 +239,59 @@ describe('two engines on one folder', () => {
     await setup(b, '/drive', 'not the same passphrase')
     expect(b.toasts).toEqual(['That passphrase does not match the data in this folder.'])
     expect(b.engine.status().enabled).toBe(false)
+  }, 30_000)
+
+  it('announces what each device is in its file, in the clear, and reads the kind off the others’ (services pass 4)', async () => {
+    const a = device('Desk (Linux)', { kind: 'desktop' })
+    const b = device('Pixel 9', { kind: 'phone' })
+    const c = device('Old build')
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await setup(c)
+    await c.engine.confirmMerge(true)
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+
+    // The kind is in the announcement (readable without the key, like the name), not the envelope.
+    const files = [...folderFiles('/drive')].filter(([name]) => isDeviceFileName(name))
+    const parsed = files.map(([, text]) => parseDeviceFile(text)!)
+    expect(parsed.map((f) => [f.deviceName, f.kind]).sort()).toEqual([
+      ['Desk (Linux)', 'desktop'],
+      ['Old build', undefined],
+      ['Pixel 9', 'phone']
+    ])
+    expect(files.find(([, text]) => text.includes('Old build'))![1]).not.toContain('"kind"')
+
+    // Each device's list of the others carries the kind where it was announced.
+    const rows = (d: Device): Array<[string, string | undefined]> =>
+      d.engine
+        .status()
+        .devices.map((row) => [row.name, row.kind] as [string, string | undefined])
+        .sort()
+    expect(rows(a)).toEqual([
+      ['Old build', undefined],
+      ['Pixel 9', 'phone']
+    ])
+    expect(rows(b)).toEqual([
+      ['Desk (Linux)', 'desktop'],
+      ['Old build', undefined]
+    ])
+    expect(rows(c)).toEqual([
+      ['Desk (Linux)', 'desktop'],
+      ['Pixel 9', 'phone']
+    ])
+    // The list survives a restart of the engine with the kind on it.
+    b.engine.flushSync()
+    const again = device('Pixel 9', { kind: 'phone', io: b.io })
+    expect(rows(again)).toEqual(rows(b))
+
+    // A file naming a kind this build does not know reads as no kind.
+    expect(
+      parseDeviceFile(
+        JSON.stringify({ ...JSON.parse(files[0][1]), deviceId: 'x', kind: 'wearable' })
+      )?.kind
+    ).toBeUndefined()
   }, 30_000)
 
   it('reports a lost folder in the status and recovers when the user points at it again', async () => {

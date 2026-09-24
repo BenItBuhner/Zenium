@@ -102,6 +102,43 @@ describe('the wire shape', () => {
     ])
   })
 
+  it('carries a redirect chain’s flags (history-23) and reads an entry without them as before', () => {
+    const entries = entriesFromEvent(
+      {
+        type: 'added',
+        visits: [
+          { url: 'https://sho.rt/x', at: 7, transition: 'typed', redirectSource: true },
+          {
+            url: 'https://a.example/',
+            at: 7,
+            transition: 'redirect',
+            redirectedFrom: ['https://sho.rt/x']
+          },
+          { url: 'https://b.example/', at: 8, transition: 'link', redirectedFrom: [] }
+        ]
+      },
+      NOW
+    )
+    expect(entries).toEqual([
+      {
+        type: 'visit',
+        visit: { url: 'https://sho.rt/x', at: 7, transition: 'typed', redirectSource: true }
+      },
+      {
+        type: 'visit',
+        visit: {
+          url: 'https://a.example/',
+          at: 7,
+          transition: 'redirect',
+          redirectedFrom: ['https://sho.rt/x']
+        }
+      },
+      { type: 'visit', visit: { url: 'https://b.example/', at: 8 } }
+    ])
+    expect(isEntry({ type: 'visit', visit: { url: 'https://a.example/', at: 1 } })).toBe(true)
+    expect(isEntry(entries[0])).toBe(true)
+  })
+
   it('reads a page from another device, dropping garbage entries and refusing garbage pages', () => {
     expect(readHistoryPage(null)).toBeNull()
     expect(readHistoryPage({ v: 2, seq: 0, entries: [] })).toBeNull()

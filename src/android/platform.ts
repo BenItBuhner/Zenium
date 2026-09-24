@@ -1310,7 +1310,11 @@ export class AndroidPlatform implements Platform {
     this.bootEnvironment = boot.environment ?? null
     this.io = io
     this.newTabBackground = new AndroidNewTabBackground(this.io)
-    this.sync = new AndroidSyncHost(bridge, boot.deviceModel ?? '')
+    this.sync = new AndroidSyncHost(
+      bridge,
+      boot.deviceModel ?? '',
+      boot.environment?.largeScreen === true
+    )
     this.connectivity = new AndroidConnectivity(boot.online !== false)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
