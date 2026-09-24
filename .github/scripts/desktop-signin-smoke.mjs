@@ -16,19 +16,27 @@
  *     document runs the page preload (its `chrome.app` is there too).
  *
  * The pop-up needs a user gesture: the core's pop-up blocker allows `window.open` only within a
- * few seconds of trusted input on the page. The gesture is a real one – `browser_click`, which is
- * `webContents.sendInputEvent` at the button's coordinates when the page is on screen – sent only
- * once the tab's view is visible and laid out (the chrome renderer places tab views with its
- * first layout report, which a cold runner delivers late; before it the click would degrade to a
- * synthetic DOM click that arms nothing), and verified by the page itself (`event.isTrusted`).
- * When the click still did not arrive as trusted input and `xdotool` is available, the pointer
- * is driven through X instead, calibrated by a mousemove the page reports. A degraded click is
- * logged whole – the tool's second line names the cause (`input: synthetic – …`) – and when the
- * cause names chrome covering the page it is dismissed (Escape) before the pointer goes in; the
- * synthetic click has run the button's handler by then, so the page's flags are reset first,
- * and a click the page did not report as trusted is retried once after a fresh mousemove, with
- * what the page saw (`__clickTrusted`'s value, the element at the button's centre, the view's
- * geometry, the tab listing) in the log either way.
+ * few seconds of trusted input on the page. The gesture under test is the agent's `browser_click`
+ * – trusted input (the DevTools protocol's `Input.dispatchMouseEvent` at the button) when the
+ * tool finds the page on screen and painted, a synthetic DOM click otherwise, said so in the
+ * tool's second line (`input: synthetic – …`) – and the page is the judge: `event.isTrusted` in
+ * the button's click handler is true, false, or still null when no click reached the button.
+ *
+ * The click is sent once the tab's view is visible and laid out (the chrome renderer places tab
+ * views with its first layout report, late on a cold runner) AND the page has painted a first
+ * frame. The second wait is the lesson of W5-H: Chromium holds a new page's first paint back
+ * until it has content or 500 ms of frames have gone by, and while it does the renderer drops
+ * every press – the agent's and a real one through X alike – with a "handled" ack; the 500 ms
+ * only run in frames, and on a cold runner without a GPU the display compositor takes seconds to
+ * come up. A click sent before the paint vanished: `browser_click` said "Clicked", the button's
+ * handler never ran, `__clickTrusted` stayed null. The product now waits for the paint too
+ * (`routeInput` → `TabView.hasPainted`); the harness waits so the check is about the click.
+ *
+ * When `browser_click`'s click did not arrive trusted and `xdotool` is there, a real pointer is
+ * driven through X to the button as a logged reference – does the renderer take any press at
+ * all? – which never changes the verdict; `--gesture xdotool` makes the X click the gesture
+ * instead. The log carries what the page saw either way: `__clickTrusted`'s value, the events
+ * the renderer received, the element at the button's centre, the view's geometry.
  *
  * Usage: node .github/scripts/desktop-signin-smoke.mjs [path/to/zenium] [--out <dir>]
  *        [--gesture mcp|xdotool]
@@ -56,7 +64,8 @@ const outDir =
   option('--out') ?? (process.env.SMOKE_OUT ? join(process.env.SMOKE_OUT, 'signin') : null)
 const gestureMode = option('--gesture') ?? 'mcp'
 const AGENT_PORT = 41739
-const ON_SCREEN_TIMEOUT_MS = 45_000
+/** The page on screen and painted has this long, together, before the gesture is sent anyway. */
+const READY_TIMEOUT_MS = 45_000
 const POPUP_TIMEOUT_MS = 8_000
 
 const lines = []
@@ -95,8 +104,25 @@ const site = createServer((req, res) => {
     window.__popupMessage = null;
     window.__clickTrusted = null;
     window.__lastMove = null;
+    window.__moveCount = 0;
+    // A capture-phase trace of every discrete pointer/mouse event the renderer received, with
+    // isTrusted, coordinates and target: tells nothing arrived from a coordinate miss.
+    window.__events = [];
     addEventListener('message', (e) => { window.__popupMessage = e.data });
-    addEventListener('mousemove', (e) => { window.__lastMove = { screenX: e.screenX, screenY: e.screenY, clientX: e.clientX, clientY: e.clientY, trusted: e.isTrusted } }, true);
+    addEventListener('mousemove', (e) => { window.__moveCount++; window.__lastMove = { screenX: e.screenX, screenY: e.screenY, clientX: e.clientX, clientY: e.clientY, trusted: e.isTrusted } }, true);
+    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click']) {
+      addEventListener(type, (e) => {
+        if (window.__events.length < 100) {
+          const el = document.elementFromPoint(e.clientX, e.clientY);
+          window.__events.push({
+            t: Math.round(performance.now()), type: e.type, trusted: e.isTrusted,
+            x: e.clientX, y: e.clientY, button: e.button,
+            tgt: e.target ? (e.target.id || e.target.tagName) : null,
+            at: el ? (el.id || el.tagName) : null
+          });
+        }
+      }, true);
+    }
     document.getElementById('open').addEventListener('click', (e) => {
       window.__clickTrusted = e.isTrusted;
       window.__popup = window.open('/popup', 'smoke', 'width=400,height=300');
@@ -206,9 +232,8 @@ async function evaluate(expression, tabId) {
   const out = await tool('browser_evaluate', tabId ? { expression, tabId } : { expression })
   return JSON.parse(out.slice(out.indexOf('\n') + 1))
 }
-/** Polls `expression` in the page until it is truthy; the value, or null after `timeoutMs`. */
-async function waitFor(expression, timeoutMs) {
-  const until = Date.now() + timeoutMs
+/** Polls `expression` in the page until it is truthy; the value, or null at `until`. */
+async function waitFor(expression, until) {
   for (;;) {
     const value = await evaluate(expression).catch(() => null)
     if (value) return value
@@ -217,21 +242,41 @@ async function waitFor(expression, timeoutMs) {
   }
 }
 
-// --- gestures --------------------------------------------------------------------------------
+// --- readiness -------------------------------------------------------------------------------
 
 const ON_SCREEN_EXPRESSION = `document.visibilityState === 'visible' && innerWidth > 0 && innerHeight > 0 && ({ w: innerWidth, h: innerHeight })`
+/**
+ * The page's paint-timing entries (`first-paint`, `first-contentful-paint`, each at its time
+ * since the navigation started): any one means a frame of the page has been presented, so its
+ * renderer's commits flow and it takes presses. None means the renderer has not put a frame on
+ * screen yet – and drops every press it gets.
+ */
+const PAINTED_EXPRESSION = `(() => { const p = performance.getEntriesByType('paint'); return p.length > 0 && p.map((e) => e.name + '@' + Math.round(e.startTime) + 'ms') })()`
+/** What the page saw and where it is, for the log of a click that did not arrive trusted. */
+const PAGE_STATE_EXPRESSION = `(() => {
+  const b = document.getElementById('open').getBoundingClientRect()
+  const el = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)
+  return {
+    clickTrusted: window.__clickTrusted,
+    events: window.__events, moves: window.__moveCount, lastMove: window.__lastMove,
+    atCentre: el ? el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') : null,
+    paint: performance.getEntriesByType('paint').map((e) => e.name + '@' + Math.round(e.startTime) + 'ms'),
+    view: { sx: screenX, sy: screenY, ow: outerWidth, oh: outerHeight, iw: innerWidth, ih: innerHeight, dpr: devicePixelRatio },
+    focus: document.hasFocus(), vis: document.visibilityState
+  }
+})()`
 
 /**
- * Waits for the tab's view to be visible and laid out. The chrome renderer places tab views with
- * its layout reports, and hides them under chrome that covers the page (the URL bar overlay a
- * blank first tab opens, for one), so a page that stays hidden for a while is nudged through X
- * when `xdotool` is there: Escape closes such an overlay, and so does a click into the window.
+ * Waits until `until` for the tab's view to be visible and laid out. The chrome renderer places
+ * tab views with its layout reports, and hides them under chrome that covers the page (the URL
+ * bar overlay a blank first tab opens, for one), so a page that stays hidden for a while is
+ * nudged through X when `xdotool` is there: Escape closes such an overlay, and so does a click
+ * into the window.
  */
-async function waitOnScreen() {
-  const until = Date.now() + ON_SCREEN_TIMEOUT_MS
+async function waitOnScreen(until) {
   let nudges = 0
   for (;;) {
-    const shown = await waitFor(ON_SCREEN_EXPRESSION, 5000)
+    const shown = await waitFor(ON_SCREEN_EXPRESSION, Math.min(until, Date.now() + 5000))
     if (shown) return shown
     if (Date.now() > until) return null
     if (!process.env.DISPLAY || !has('xdotool')) continue
@@ -260,29 +305,43 @@ async function waitOnScreen() {
   }
 }
 
+// --- gestures --------------------------------------------------------------------------------
+
 /**
- * The MCP click: trusted OS-level input (`webContents.sendInputEvent` at the button) when the
- * page is on screen; the tool degrades to a synthetic DOM click otherwise, which the page tells
- * apart through `isTrusted`. The result's first line is the tool's headline, logged as before;
- * when the input was synthetic its second line names the cause (`input: synthetic – …`, the
- * core's `routeInput` note), and the result is then logged whole – that line is the diagnosis,
- * and main's boot smoke degraded twice with only the headline in the log. Returns whether the
- * page saw trusted input and, when it did not, the chrome the cause names as covering the page
- * (for `clickThroughXdotool` to dismiss), or null when it names none.
+ * The gesture under test. `browser_click` sends trusted input – CDP `Input.dispatchMouseEvent`
+ * at the button – when the tool's `routeInput` finds the page on screen and painted, and a
+ * synthetic DOM click otherwise, saying so in its second line (`input: synthetic – <cause>, so
+ * the event …`). The tool cannot see a press the renderer drops (CDP acknowledges it as
+ * handled), so the page judges: `window.__clickTrusted` is true after a trusted click, false
+ * after a synthetic one, null when no click reached the button at all. Returns the verdict, the
+ * tool's cause when it degraded, and whether that cause names chrome covering the page (for the
+ * X reference to dismiss); a click the page did not report as trusted is logged with everything
+ * the page saw.
  */
 async function clickThroughMcp() {
   const out = await tool('browser_click', { target: 'text=open' })
   const [headline, ...rest] = out.split('\n')
   log(`browser_click: ${headline}`)
+  // The tool's note lines (`input: …`) always; the rest of its result (the page's URL, title,
+  // viewport and snapshot) only for a click that did not arrive trusted.
+  for (const line of rest) if (line.startsWith('input:')) log(`  ${line}`)
   const value = await evaluate('window.__clickTrusted')
-  if (value === true) return { trusted: true, cover: null }
-  for (const line of rest) log(`  ${line}`)
-  log(`  window.__clickTrusted after browser_click: ${JSON.stringify(value)}`)
-  const cause = rest
-    .map((line) => /^input: synthetic – (.*), so the event/.exec(line)?.[1])
-    .find(Boolean)
+  const cause =
+    rest.map((line) => /^input: synthetic – (.*), so the event/.exec(line)?.[1]).find(Boolean) ??
+    null
   const cover = cause && /covers|in front|on screen/.test(cause) ? cause : null
-  return { trusted: false, cover }
+  if (value === true)
+    return { trusted: true, verdict: 'browser_click: the click reached the button trusted', cover }
+  for (const line of rest) if (!line.startsWith('input:')) log(`  ${line}`)
+  const seen = await evaluate(PAGE_STATE_EXPRESSION).catch((error) => String(error))
+  log(`  the page after browser_click: ${JSON.stringify(seen)}`)
+  const verdict =
+    value === false
+      ? `browser_click sent a synthetic DOM click (isTrusted false)${cause ? `: ${cause}` : ' without saying so'}`
+      : cause
+        ? `browser_click degraded to a synthetic click (${cause}), and not even that reached the button (window.__clickTrusted ${JSON.stringify(value)})`
+        : `browser_click reported a trusted click, but no click reached the button (window.__clickTrusted ${JSON.stringify(value)}: the renderer dropped the press)`
+  return { trusted: false, verdict, cover }
 }
 
 /** The page's view: its screen position, the button's centre in it, and what it can see of itself. */
@@ -307,14 +366,13 @@ const VIEW_EXPRESSION = `(() => {
  * Escape – the URL bar overlay closes on it one stage at a time (its popup, then the bar; the
  * chrome's transient surfaces likewise) – then the probes again, up to three rounds, a trusted
  * mousemove reaching the page being the truth (the page's own `visibilityState` stays
- * `visible` under the chrome's picture of it). The synthetic click has run the button's handler
- * by then (`isTrusted` false, `window.open` blocked), so the page's flags are reset before the
- * pointer's click, or its answer would be the synthetic click's. A click the page does not
- * report as trusted is retried once after a fresh mousemove (away a few pixels, then back onto
- * the point, `--sync` both, so a motion event precedes the button press), and the log says what
- * the page saw after each: `__clickTrusted`'s value (null – no click reached the button; false –
- * the synthetic click's value survived), the element at the button's centre, the view's geometry
- * and the last trusted mousemove, the X pointer's window, the tab listing.
+ * `visible` under the chrome's picture of it). The page's flags are reset before the pointer's
+ * click, or its answer would be the MCP click's. A click the page does not report as trusted is
+ * retried once after a fresh mousemove (away a few pixels, then back onto the point, `--sync`
+ * both, so a motion event precedes the button press), and the log says what the page saw after
+ * each: `__clickTrusted`'s value (null – no click reached the button; false – a synthetic
+ * click's value), the element at the button's centre, the view's geometry and the last trusted
+ * mousemove, the X pointer's position, the tab listing. Returns whether a click arrived trusted.
  */
 async function clickThroughXdotool(cover) {
   const display = process.env.DISPLAY
@@ -343,11 +401,11 @@ async function clickThroughXdotool(cover) {
       const x = Math.round(geometry.sx + geometry.ow * fx)
       const y = Math.round(geometry.sy + geometry.oh * fy)
       xdotool('mousemove', '--sync', String(x), String(y))
-      const move = await waitFor('window.__lastMove', 1200)
+      const move = await waitFor('window.__lastMove', Date.now() + 1200)
       if (move && move.trusted) {
         const origin = { x: move.screenX - move.clientX, y: move.screenY - move.clientY }
         log(
-          `xdotool: pointer at (${x}, ${y}) reached the page; view origin (${origin.x}, ${origin.y})`
+          `xdotool: pointer at (${x}, ${y}) reached the page; view origin (${origin.x}, ${origin.y}) (${xdotool('getmouselocation')})`
         )
         return origin
       }
@@ -396,7 +454,7 @@ async function clickThroughXdotool(cover) {
       ? `(${after.lastMove.screenX}, ${after.lastMove.screenY}) → client (${after.lastMove.clientX}, ${after.lastMove.clientY}), view origin (${after.lastMove.screenX - after.lastMove.clientX}, ${after.lastMove.screenY - after.lastMove.clientY})`
       : 'none'
     log(
-      `xdotool: window.__clickTrusted after the click: ${JSON.stringify(after.trusted)} (null: no click reached the button; false: the synthetic click's value); at the button's centre: ${after.atCentre}; view ${after.iw}x${after.ih} at window ${after.sx},${after.sy} ${after.ow}x${after.oh}, ${after.vis}, focus ${after.focus}; last trusted mousemove ${moved}; pointer ${xdotool('getmouselocation')}`
+      `xdotool: window.__clickTrusted after the click: ${JSON.stringify(after.trusted)} (null: no click reached the button; false: a synthetic click's value); at the button's centre: ${after.atCentre}; view ${after.iw}x${after.ih} at window ${after.sx},${after.sy} ${after.ow}x${after.oh}, ${after.vis}, focus ${after.focus}; last trusted mousemove ${moved}; pointer ${xdotool('getmouselocation')}`
     )
     log(`xdotool: ${await tabsListing()}`)
   }
@@ -450,7 +508,7 @@ try {
   })
   await tool('zen_mode', { mode: 'foreground' })
   await tool('browser_navigate', { url: siteUrl })
-  await waitFor(`document.readyState === 'complete'`, 15_000)
+  await waitFor(`document.readyState === 'complete'`, Date.now() + 15_000)
 
   const page = await evaluate(`({
     ua: navigator.userAgent,
@@ -501,39 +559,49 @@ try {
   )
   check('document request user agent equals navigator.userAgent', h['user-agent'] === page.ua)
 
-  // The pop-up: a gesture on a page that is on screen, then the blocker's answer.
-  const onScreenAt = Date.now()
-  const onScreen = await waitOnScreen()
+  // The pop-up: a gesture on a page that is on screen and painted, then the blocker's answer.
+  const readyAt = Date.now()
+  const until = readyAt + READY_TIMEOUT_MS
+  const onScreen = await waitOnScreen(until)
   check(
     'page is on screen (view visible and laid out)',
     Boolean(onScreen),
     onScreen
-      ? `${onScreen.w}x${onScreen.h} after ${Date.now() - onScreenAt} ms`
-      : `still hidden after ${ON_SCREEN_TIMEOUT_MS} ms; ${await tabsListing()}`
+      ? `${onScreen.w}x${onScreen.h} after ${Date.now() - readyAt} ms`
+      : `still hidden after ${READY_TIMEOUT_MS} ms; ${await tabsListing()}`
   )
-  let gesture = 'none'
-  let trusted = false
-  let cover = null
-  if (gestureMode !== 'xdotool') {
-    const mcp = await clickThroughMcp()
-    trusted = mcp.trusted
-    cover = mcp.cover
-    gesture = trusted
-      ? 'browser_click (sendInputEvent)'
-      : 'browser_click degraded to a synthetic click'
-  }
-  if (!trusted) {
-    if (await clickThroughXdotool(cover)) {
-      trusted = true
-      gesture = gestureMode === 'xdotool' ? 'xdotool' : `${gesture}; xdotool`
-    } else if (gestureMode === 'xdotool') gesture = 'xdotool failed'
-  }
-  check('the gesture reached the page as trusted input', trusted, gesture)
+  const paintedAt = Date.now()
+  const painted = await waitFor(PAINTED_EXPRESSION, until)
+  check(
+    'page has painted its first frame (a paint-timing entry)',
+    Boolean(painted),
+    painted
+      ? `${painted.join(', ')}; seen ${Date.now() - paintedAt} ms after the view was on screen, ${Date.now() - startedAt} ms after launch`
+      : `no paint entry after ${Date.now() - readyAt} ms: the renderer has put no frame on screen (a display compositor that never came up?), and drops every press meanwhile`
+  )
+
+  let gesture
+  if (gestureMode === 'xdotool') {
+    const reached = await clickThroughXdotool(null)
+    gesture = {
+      trusted: reached,
+      verdict: reached
+        ? 'xdotool: the X click reached the button trusted'
+        : 'xdotool: no X click reached the button trusted'
+    }
+  } else gesture = await clickThroughMcp()
+  check(
+    gestureMode === 'xdotool'
+      ? 'the X click reached the page as trusted input'
+      : 'browser_click reached the page as trusted input',
+    gesture.trusted,
+    gesture.verdict
+  )
 
   const popup =
     (await waitFor(
       `window.__popupMessage && ({ message: window.__popupMessage, handle: Boolean(window.__popup), closed: window.__popup ? window.__popup.closed : null })`,
-      POPUP_TIMEOUT_MS
+      Date.now() + POPUP_TIMEOUT_MS
     )) ??
     (await evaluate(
       `({ message: window.__popupMessage, handle: Boolean(window.__popup), closed: window.__popup ? window.__popup.closed : null })`
@@ -549,6 +617,19 @@ try {
     popup.message?.chromeApp === 'object',
     `chrome.app in popup: ${popup.message?.chromeApp}`
   )
+  if (!gesture.trusted && gestureMode !== 'xdotool') {
+    // A reference, after the checks so it cannot colour them: does a real pointer's press at the
+    // button reach the page now? Yes, with a trusted `browser_click` that arrived nowhere, tells
+    // a dispatch gone astray; no tells a renderer deaf to every press (its first frame still to
+    // come). Never the verdict.
+    log('reference: a real X click at the button (logged only; the verdict above stands)')
+    const reached = await clickThroughXdotool(gesture.cover)
+    log(
+      reached
+        ? 'reference: the X click reached the button trusted – the renderer takes real presses now'
+        : 'reference: the X click did not reach the button either – the renderer drops every press'
+    )
+  }
   const jsErrors = appLog.split('\n').filter((l) => /Uncaught|TypeError|ReferenceError/.test(l))
   check('no JavaScript errors in the browser log', jsErrors.length === 0, jsErrors.join(' | '))
   exitCode = failures.length === 0 ? 0 : 1

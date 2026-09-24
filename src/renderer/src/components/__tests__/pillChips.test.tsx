@@ -9,6 +9,7 @@ import {
   type AutofillPrompt,
   type BookmarkNode,
   type MediaState,
+  type PermissionPrompt,
   type Space,
   type Tab,
   type UIState
@@ -32,8 +33,10 @@ const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
 const { TOOLBAR_STROKE } = await import('../v2/controls')
-const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
+const { browserStore, closeMemorySaverBubble, openUrlbar, uiStore } =
+  await import('@renderer/lib/ui')
 const { closeSiteInfo, openSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { MEMORY_SAVER_LEAF_MS } = await import('@renderer/lib/siteChips')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 const { DEFAULT_PAGE_CONTROLS } = await import('@shared/pageControls')
 
@@ -191,7 +194,13 @@ function expectChip(el: HTMLElement, label: string): void {
 }
 
 beforeEach(() => {
-  uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null, blockedPopupsPanel: null })
+  uiStore.set({
+    siteInfoOpen: false,
+    overlay: 'none',
+    starDialog: null,
+    blockedPopupsPanel: null,
+    memorySaverBubble: null
+  })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   siteInfoStore.set({ tabId: null, anchor: null, level: 'overview', openedBy: null })
   invoke.mockClear()
@@ -965,6 +974,436 @@ describe('desktop pill (NavRow)', () => {
       expect(hasPressedFill(slot)).toBe(true)
       expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
       await dismiss()
+    })
+
+    // omnibox-40 / tabs-40: Chrome's Memory Saver chip as the slot's glyph – the leaf for ten
+    // seconds after a tab the core slept wakes (`Tab.memorySaver`, written by `Tabs.load`),
+    // below a standing block and above the connection glyph or the private mask; its click
+    // opens the Memory Saver bubble, not the site information.
+    describe('the Memory Saver leaf (omnibox-40)', () => {
+      const woken = (patch: Partial<Tab> = {}, wokeAt = Date.now()): Tab =>
+        tab(page.url, { readerable: true, memorySaver: { savedMb: 312, wokeAt }, ...patch })
+      const hasPressedFill = (chip: HTMLElement): boolean =>
+        chip.className.split(/\s+/).includes('bg-[var(--v2-control-fill-hover)]')
+
+      it('draws the leaf for a tab just woken from sleep at the slot’s one size and rest ink, named with the number the discard recorded', () => {
+        const el = render(<NavRow state={state(woken())} tab={woken()} compact={false} />)
+        const slot = slotOf(el)
+        expectChip(slot, 'Site information · Memory Saver freed up 312 MB')
+        expect(slot.getAttribute('data-slot-state')).toBe('memory-saver')
+        expect(slot.getAttribute('data-slot-glyph')).toBe('leaf')
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        expect(slot.querySelectorAll('svg')).toHaveLength(1)
+        expect(slot.getAttribute('data-tooltip')).toBe('Memory Saver freed up 312 MB')
+        expect(slot.hasAttribute('title')).toBe(false)
+        expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        // §9.19's 16 in the 24 box at the row's stroke: the address's room is unchanged.
+        expectSlotGlyph(glyphOf(slot))
+        expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+        // A notice, not a live state: the slot's 69 % rest ink, the token once (§9.29).
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+        expect(restOpacity(slot)).toEqual([])
+        expect(hasPressedFill(slot)).toBe(false)
+        // Never a second chip for it.
+        expect(chipLabels(el).filter((l) => l?.includes('Memory Saver'))).toHaveLength(1)
+        // A tab that never slept this session, or one whose record the core cleared: no leaf.
+        act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(el.querySelector('svg.lucide-leaf')).toBeNull()
+      })
+
+      it('stands below a standing block and above the connection glyph and the private mask; a capture and a certificate error take the slot over it', () => {
+        // Over the mask: a private tab that woke shows the leaf, the mask gone from the box.
+        const secret = woken({ containerId: PRIVATE_CONTAINER_ID })
+        const el = render(<NavRow state={state(secret)} tab={secret} compact={false} />)
+        const slot = slotOf(el)
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('memory-saver')
+        expect(el.querySelector('svg.lucide-venetian-mask')).toBeNull()
+        expect(slot.querySelectorAll('svg')).toHaveLength(1)
+        // Under a standing block: the user's decision over the passing notice.
+        act(() =>
+          root!.render(
+            <NavRow state={withRules(woken(), [deny('camera')])} tab={woken()} compact={false} />
+          )
+        )
+        expect(glyphOf(slot).classList.contains('lucide-camera-off')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('blocked')
+        expect(slot.getAttribute('aria-label')).toBe('Site information · Camera blocked')
+        // Under a live capture.
+        const call = woken({ capture: { camera: true, microphone: false, display: false } })
+        act(() => root!.render(<NavRow state={state(call)} tab={call} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-camera')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('capture')
+        // Under the danger tier: the triangle in the danger ink, the leaf's name gone with it.
+        const broken = woken({
+          certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+        })
+        act(() => root!.render(<NavRow state={state(broken)} tab={broken} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-triangle-alert')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(slot.getAttribute('aria-label')).toBe('Site information')
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+        expect(el.querySelector('svg.lucide-leaf')).toBeNull()
+        // The states end: the leaf returns while its ten seconds run, in the same box.
+        act(() => root!.render(<NavRow state={state(woken())} tab={woken()} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      })
+
+      it('leaves the slot on its own ten seconds after the wake, the connection’s glyph back in the box', async () => {
+        // A wake most of the window ago: the leaf still up, its clock armed for what is left.
+        const late = woken({}, Date.now() - MEMORY_SAVER_LEAF_MS + 40)
+        const el = render(<NavRow state={state(late)} tab={late} compact={false} />)
+        const slot = slotOf(el)
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        // The clock runs out: nothing else changed – no new state, no re-render from outside.
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+        })
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(glyphOf(slot).classList.contains('lucide-lock')).toBe(true)
+        expect(slot.getAttribute('aria-label')).toBe('Site information')
+        expect(el.querySelector('svg.lucide-leaf')).toBeNull()
+        // A wake older than the window at the mount says nothing at all.
+        const stale = woken({}, Date.now() - MEMORY_SAVER_LEAF_MS - 1)
+        act(() => root!.render(<NavRow state={state(stale)} tab={stale} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      })
+
+      it('opens the Memory Saver bubble on a click – not the site information – with the slot as its pressed anchor, and holds the leaf for as long as the bubble is up', async () => {
+        const el = render(<NavRow state={state(woken())} tab={woken()} compact={false} />)
+        const slot = slotOf(el)
+        slot.focus()
+        await act(async () => {
+          slot.click()
+          await vi.waitFor(() => expect(uiStore.get().memorySaverBubble).toEqual({ tabId: 't1' }))
+        })
+        // The site information stayed shut; the chrome took the keyboard for the bubble.
+        expect(uiStore.get().siteInfoOpen).toBe(false)
+        expect(siteInfoStore.get().tabId).toBeNull()
+        expect(commands()).toContain('focus.chrome')
+        // The pressed anchor (§9.20): the window fill at full ink, `aria-expanded` on.
+        expect(slot.getAttribute('aria-expanded')).toBe('true')
+        expect(hasPressedFill(slot)).toBe(true)
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        // The ten seconds pass while the bubble is up: the leaf stays for it.
+        const held = woken({}, Date.now() - MEMORY_SAVER_LEAF_MS - 5_000)
+        act(() => root!.render(<NavRow state={state(held)} tab={held} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('memory-saver')
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        // A second press on the anchor opens nothing new (the layer's light dismiss closes it).
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().memorySaverBubble).toEqual({ tabId: 't1' })
+        // The bubble goes: the leaf's window is long over, so the connection glyph returns.
+        act(() => closeMemorySaverBubble({ keepFocus: true }))
+        expect(uiStore.get().memorySaverBubble).toBeNull()
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        expect(hasPressedFill(slot)).toBe(false)
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      })
+
+      it('puts the bubble away when a state takes the slot over the leaf', async () => {
+        const el = render(<NavRow state={state(woken())} tab={woken()} compact={false} />)
+        const slot = slotOf(el)
+        await act(async () => {
+          slot.click()
+          await vi.waitFor(() => expect(uiStore.get().memorySaverBubble).toEqual({ tabId: 't1' }))
+        })
+        // A capture starts on the page: the camera takes the slot, and the leaf's bubble goes
+        // with the leaf.
+        const call = woken({ capture: { camera: true, microphone: false, display: false } })
+        act(() => root!.render(<NavRow state={state(call)} tab={call} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('capture')
+        expect(uiStore.get().memorySaverBubble).toBeNull()
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+      })
+    })
+
+    // NOT-03 / omnibox-38: a quiet notification request asks through the slot – the crossed-out
+    // bell at rest, its bubble opening from the bell alone (`quietPromptId`), never on its own.
+    describe('the quiet notification request’s bell (NOT-03)', () => {
+      const quietAsk = (id = 'perm-q1', tabId = 't1'): PermissionPrompt => ({
+        id,
+        tabId,
+        origin: 'https://example.com',
+        permission: 'notifications',
+        message: 'Notifications blocked',
+        detail: 'You usually block notifications. To let example.com notify you, choose Allow.',
+        allowLabel: 'Allow',
+        blockLabel: 'Keep blocking',
+        allowOnce: false,
+        requestedAt: 0,
+        quiet: true
+      })
+      /** The state with the prompts pending, the tab's quiet ask among them. */
+      const asking = (t: Tab, prompts: PermissionPrompt[] = [quietAsk()]): UIState => ({
+        ...state(t),
+        permissionPrompts: prompts
+      })
+      const hasPressedFill = (chip: HTMLElement): boolean =>
+        chip.className.split(/\s+/).includes('bg-[var(--v2-control-fill-hover)]')
+
+      afterEach(() => {
+        uiStore.set({ quietPromptId: null })
+      })
+
+      it('draws the crossed-out bell at the slot’s one size and rest ink, named as Chrome names it, and no bubble on its own', () => {
+        const el = render(<NavRow state={asking(page)} tab={page} compact={false} />)
+        const slot = slotOf(el)
+        expectChip(slot, 'Site information · Notifications blocked')
+        expect(slot.getAttribute('data-slot-state')).toBe('quiet')
+        expect(slot.getAttribute('data-slot-glyph')).toBe('notifications-off')
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        expect(slot.querySelectorAll('svg')).toHaveLength(1)
+        expect(slot.getAttribute('data-tooltip')).toBe('Notifications blocked')
+        expect(slot.hasAttribute('title')).toBe(false)
+        expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        // §9.19's 16 in the 24 box at the row's stroke: the address's room is unchanged.
+        expectSlotGlyph(glyphOf(slot))
+        expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+        // A question, not a live state: the slot's 69 % rest ink, the token once (§9.29).
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+        expect(restOpacity(slot)).toEqual([])
+        expect(hasPressedFill(slot)).toBe(false)
+        // Nothing opened by itself: the bell waits for the user.
+        expect(uiStore.get().quietPromptId).toBeNull()
+        // Never a second chip for it.
+        expect(chipLabels(el).filter((l) => l?.includes('Notifications'))).toHaveLength(1)
+        // A loud ask on the tab, or another tab's quiet one, is no bell: the connection's glyph.
+        act(() =>
+          root!.render(
+            <NavRow
+              state={asking(page, [{ ...quietAsk(), quiet: undefined }, quietAsk('perm-q2', 't2')])}
+              tab={page}
+              compact={false}
+            />
+          )
+        )
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(el.querySelector('svg.lucide-bell-off')).toBeNull()
+      })
+
+      it('stands above the leaf and the private mask, below a standing block; a capture and a certificate error take the slot over it', () => {
+        // Over the leaf: a question waiting on the user beats a passing notice.
+        const woken = tab(page.url, {
+          readerable: true,
+          memorySaver: { savedMb: 312, wokeAt: Date.now() }
+        })
+        const el = render(<NavRow state={asking(woken)} tab={woken} compact={false} />)
+        const slot = slotOf(el)
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('quiet')
+        expect(el.querySelector('svg.lucide-leaf')).toBeNull()
+        // Over the mask: a private tab's quiet ask shows the bell, the mask gone from the box.
+        const secret = tab(page.url, { readerable: true, containerId: PRIVATE_CONTAINER_ID })
+        act(() => root!.render(<NavRow state={asking(secret)} tab={secret} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        expect(el.querySelector('svg.lucide-venetian-mask')).toBeNull()
+        expect(slot.querySelectorAll('svg')).toHaveLength(1)
+        // Under a standing block of another permission: the user's decision over the question.
+        act(() =>
+          root!.render(
+            <NavRow
+              state={{ ...asking(page), permissionRules: [deny('camera')] }}
+              tab={page}
+              compact={false}
+            />
+          )
+        )
+        expect(glyphOf(slot).classList.contains('lucide-camera-off')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('blocked')
+        expect(slot.getAttribute('aria-label')).toBe('Site information · Camera blocked')
+        // Under a live capture.
+        const call = using({ camera: false, microphone: true, display: false })
+        act(() => root!.render(<NavRow state={asking(call)} tab={call} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-mic')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('capture')
+        // Under the danger tier: the triangle in the danger ink, the bell's name gone with it.
+        const broken = tab(page.url, {
+          readerable: true,
+          certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+        })
+        act(() => root!.render(<NavRow state={asking(broken)} tab={broken} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-triangle-alert')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+        expect(el.querySelector('svg.lucide-bell-off')).toBeNull()
+        // The states end: the bell returns, the question still waiting, in the same box.
+        act(() => root!.render(<NavRow state={asking(page)} tab={page} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      })
+
+      it('opens the quiet prompt on a click – not the site information – with the slot as its pressed anchor; a second press opens nothing new', async () => {
+        const el = render(<NavRow state={asking(page)} tab={page} compact={false} />)
+        const slot = slotOf(el)
+        slot.focus()
+        await act(async () => {
+          slot.click()
+        })
+        // The bell's prompt is the one to show (`PermissionPrompts` draws it); site information
+        // stayed shut.
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        expect(uiStore.get().siteInfoOpen).toBe(false)
+        expect(siteInfoStore.get().tabId).toBeNull()
+        // The pressed anchor (§9.20): the window fill at full ink, `aria-expanded` on, the bell
+        // still the glyph.
+        expect(slot.getAttribute('aria-expanded')).toBe('true')
+        expect(hasPressedFill(slot)).toBe(true)
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+        expect(glyphOf(slot).classList.contains('lucide-bell-off')).toBe(true)
+        // A second press on the anchor opens nothing new (the layer's light dismiss closes it).
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        // The bubble put away without a word (Escape, a press outside): the bell stays, at rest.
+        act(() => uiStore.set({ quietPromptId: null }))
+        expect(slot.getAttribute('data-slot-state')).toBe('quiet')
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        expect(hasPressedFill(slot)).toBe(false)
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+        // Nothing went to the core: a quiet prompt is never dismissed from here.
+        expect(commands()).not.toContain('permissions.respond')
+      })
+
+      it('puts the bubble away when a state takes the slot over the bell, or another tab comes forward', async () => {
+        const el = render(<NavRow state={asking(page)} tab={page} compact={false} />)
+        const slot = slotOf(el)
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        // The camera starts on the page: the capture takes the slot, and the bell's bubble goes
+        // with the bell – the question is still pending, so the bell returns when the state ends.
+        const call = using({ camera: true, microphone: false, display: false })
+        act(() => root!.render(<NavRow state={asking(call)} tab={call} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('capture')
+        expect(uiStore.get().quietPromptId).toBeNull()
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        act(() => root!.render(<NavRow state={asking(page)} tab={page} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('quiet')
+        expect(uiStore.get().quietPromptId).toBeNull()
+        // Opened again, then another tab in front: the bubble hung from this tab's bell.
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        const other = tab('https://other.example/', { id: 't2' })
+        act(() =>
+          root!.render(
+            <NavRow
+              state={{
+                ...asking(other),
+                tabs: { t1: page, t2: other },
+                spaces: [{ ...space, tabIds: ['t1', 't2'], activeTabId: 't2' }]
+              }}
+              tab={other}
+              compact={false}
+            />
+          )
+        )
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(uiStore.get().quietPromptId).toBeNull()
+        // The prompt answered or withdrawn while its bubble was up: the flag goes too (the
+        // bubble's own effect; the slot's one sees the bell gone).
+        act(() => root!.render(<NavRow state={asking(page)} tab={page} compact={false} />))
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().quietPromptId).toBe('perm-q1')
+        act(() => root!.render(<NavRow state={asking(page, [])} tab={page} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(uiStore.get().quietPromptId).toBeNull()
+      })
+    })
+  })
+
+  // omnibox-43 / dnd-11: the slot is the handle the address is dragged out by, as Chrome's
+  // location icon is – an HTML5 drag carrying the link, the text and an anchor with the page's
+  // name (`lib/addressDrag.ts`), which the bookmarks bar files and a tab row navigates to.
+  describe('the address dragged out by the slot (omnibox-43)', () => {
+    const slotOf = (el: HTMLElement): HTMLElement =>
+      el.querySelector<HTMLElement>('[data-site-chip]')!
+    /** A `dragstart` on the chip with a transfer that records what the chip writes. */
+    function dragStart(chip: HTMLElement): {
+      effectAllowed: string
+      data: Map<string, string>
+      image: { el: Element; x: number; y: number } | null
+    } {
+      const record = {
+        effectAllowed: 'uninitialized',
+        data: new Map<string, string>(),
+        image: null as { el: Element; x: number; y: number } | null
+      }
+      const dt = {
+        get effectAllowed() {
+          return record.effectAllowed
+        },
+        set effectAllowed(v: string) {
+          record.effectAllowed = v
+        },
+        setData: (type: string, value: string) => void record.data.set(type, value),
+        setDragImage: (el: Element, x: number, y: number) => void (record.image = { el, x, y })
+      }
+      const ev = new Event('dragstart', { bubbles: true, cancelable: true })
+      Object.defineProperty(ev, 'dataTransfer', { value: dt })
+      act(() => void chip.dispatchEvent(ev))
+      return record
+    }
+
+    it('is draggable on a page, carrying the link, the text and an anchor named for the page, with the link card as the image', () => {
+      const named = tab(page.url, { readerable: true, title: 'Example Domain' })
+      const el = render(<NavRow state={state(named)} tab={named} compact={false} />)
+      const slot = slotOf(el)
+      expect(slot.getAttribute('draggable')).toBe('true')
+      expect(slot.getAttribute('data-drag-address')).toBe('https://example.com/some/path')
+      // The slot is still the site-information button: its click is unchanged.
+      expectChip(slot, 'Site information')
+      expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+      const drag = dragStart(slot)
+      expect(drag.effectAllowed).toBe('copyLink')
+      expect([...drag.data.keys()]).toEqual(['text/uri-list', 'text/plain', 'text/html'])
+      expect(drag.data.get('text/uri-list')).toBe('https://example.com/some/path')
+      expect(drag.data.get('text/plain')).toBe('https://example.com/some/path')
+      expect(drag.data.get('text/html')).toBe(
+        '<a href="https://example.com/some/path">Example Domain</a>'
+      )
+      // The ghost: the link card off screen, the page's name in it, the grip at its left.
+      const ghost = el.querySelector<HTMLElement>('.zen-link-ghost')!
+      expect(ghost).not.toBeNull()
+      expect(ghost.getAttribute('aria-hidden')).toBe('true')
+      // The page's icon (its letter here, no favicon) and its name on the card.
+      expect(ghost.querySelector('.zen-link-ghost-card span.truncate')?.textContent).toBe(
+        'Example Domain'
+      )
+      expect(drag.image).toEqual({ el: ghost, x: 12, y: 14 })
+      // The URL bar did not open and no site information came up on the drag.
+      expect(uiStore.get().urlbar.open).toBe(false)
+      expect(uiStore.get().siteInfoOpen).toBe(false)
+    })
+
+    it('lifts a private tab’s address too, but nothing from an empty tab or a Zenium page', () => {
+      const secret = tab(page.url, { readerable: true, containerId: PRIVATE_CONTAINER_ID })
+      const el = render(<NavRow state={state(secret)} tab={secret} compact={false} />)
+      expect(slotOf(el).getAttribute('draggable')).toBe('true')
+      const empty = tab('zen://newtab')
+      act(() => root!.render(<NavRow state={state(empty)} tab={empty} compact={false} />))
+      // An empty tab has no slot at all (#406 §G); no ghost either.
+      expect(el.querySelector('[data-site-chip]')).toBeNull()
+      expect(el.querySelector('.zen-link-ghost')).toBeNull()
+      const settings = tab('zen://settings', { title: 'Settings' })
+      act(() => root!.render(<NavRow state={state(settings)} tab={settings} compact={false} />))
+      const internal = el.querySelector<HTMLElement>('[data-site-chip]')
+      expect(internal?.hasAttribute('draggable') ?? false).toBe(false)
+      expect(el.querySelector('.zen-link-ghost')).toBeNull()
     })
   })
 

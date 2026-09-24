@@ -218,6 +218,7 @@ function state(
     extensions: [],
     extensionUpdates: { lastCheckedAt: null, checking: false },
     mods: [],
+    webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),

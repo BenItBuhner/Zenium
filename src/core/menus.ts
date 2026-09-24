@@ -41,6 +41,7 @@ import {
   type Settings,
   type Shortcut,
   type ShortcutAction,
+  type SuggestionKind,
   type SyncRemoteTab,
   type Tab
 } from '../shared/types'
@@ -1367,6 +1368,35 @@ export class Menus {
       checked: shown,
       click: () => this.browser.handleCommand(win, 'settings.update', patch)
     }
+  }
+
+  /**
+   * A removable suggestion row's menu (context-menus-115; Chrome's right-click on a row): Remove
+   * – the row's Shift+Delete, which the bar runs through the core's removes – and, on a
+   * remembered search, Delete Search History, which forgets every remembered search
+   * (`urlbar.clearSearchHistory`). The picks go back to the bar (`urlbar.suggestionAction`),
+   * whose list is the thing being edited: the core knows the row by its id alone, as the bar
+   * drew it. The desktop's; the phone's hold on a row asks with a sheet of its own.
+   */
+  showSuggestionContextMenu(
+    id: string,
+    kind: SuggestionKind,
+    win: ZenWindow,
+    anchor?: MenuAnchor
+  ): void {
+    const pick = (action: 'remove' | 'delete-search-history'): void =>
+      this.browser.emit('urlbar.suggestionAction', { id, action }, win)
+    this.popup(
+      [
+        { label: 'Remove', click: () => pick('remove') },
+        ...(kind === 'search'
+          ? [{ label: 'Delete Search History', click: () => pick('delete-search-history') }]
+          : [])
+      ],
+      win,
+      'urlbar',
+      anchor
+    )
   }
 
   /** Chrome's reload button menu (DevTools open): Normal Reload, Hard Reload, Empty Cache and Hard Reload. */
@@ -3143,7 +3173,21 @@ export class Menus {
         {
           label: 'Export Bookmarks…',
           click: () => void this.browser.exportBookmarks(win)
-        }
+        },
+        // Chrome's Tab groups ▸ (shortcuts-menus-111) as "Tab Folders": the saved groups by name
+        // with their mark, seated as the submenu's last group – Chrome's own seat for a list
+        // beside the bookmarks (Reading list ▸ in Bookmarks and lists ▸), not its top-level row:
+        // a twenty-first row gives 692 at rest and 732 folded against the 718 of room on 800 px,
+        // the numbers #396 turned down, where this submenu has the room (258 for its seven rows).
+        // The noun is the desktop's Folder on every row (#398 F10; the #435 lead check), "Tab"
+        // telling them from the bookmark folders above; the touch hosts keep Chrome Android's
+        // Group – their pane is the overview's (TAB-16). A `local` window has no synced space.
+        ...desktop(
+          ...when(!local, separator, {
+            label: 'Tab Folders',
+            submenu: this.tabGroupsSubmenu(win)
+          })
+        )
       ]
     }
     /** The History page (Ctrl+H): the phone's row, the head of the sidebar layouts' submenu. */
@@ -3267,6 +3311,16 @@ export class Menus {
     // The sidebar layouts split the phone's pair: the install row is a save, Open in <app> a
     // window action.
     const createShortcut = sidebar(...this.installItems(active, win))
+    // Edge's Apps › Manage apps under the install row (shortcuts-menus-138): Settings › Apps,
+    // the installed apps by name with Open and Uninstall. The list's row, not the page's: it
+    // stands whatever the page shows, on a host that pins launchers (`webApps.supported`); the
+    // desktop's alone, the section being the desktop OSes' (Android's apps are the launcher's).
+    const manageApps = desktop(
+      ...when(this.browser.webApps.supported, {
+        label: 'Manage Apps',
+        click: () => void this.browser.pages.open('settings', 'apps', win)
+      })
+    )
     const openInApp = sidebar(...this.openAppItems(active, win))
     const print = when(caps.print, {
       label: 'Print…',
@@ -3335,11 +3389,31 @@ export class Menus {
       label: 'Keyboard Shortcuts',
       click: () => void this.browser.pages.open('settings', 'shortcuts', win)
     }
+    // Chrome's Help › About: the About page (Settings › About – the version, the update row,
+    // the legal pages' rows), where the row was a disabled version line before
+    // (shortcuts-menus-152). The phone's flat list keeps its version line (`about`).
+    const aboutPage: MenuItemTemplate = {
+      label: 'About Zenium',
+      click: () => void this.browser.pages.open('settings', 'about', win)
+    }
+    // Chrome's Help › What's New: the running version's release notes (`UpdateService.openWhatsNew`
+    // – the `zen://whats-new` page tab where the host has it, else the release on GitHub).
+    const whatsNew: MenuItemTemplate = {
+      label: "What's New",
+      click: () => this.browser.updates.openWhatsNew(win)
+    }
     const settings: MenuItemTemplate = {
       label: 'Settings',
       action: 'settings.open',
       click: () => void this.browser.pages.open('settings', undefined, win)
     }
+    // Chrome's More tools › Task manager (shortcuts-menus-121): the desktop's page tab
+    // (`zen://tasks`, Shift+Esc), the row before Developer tools as Chrome seats it.
+    const taskManager = desktop({
+      label: 'Task Manager',
+      action: 'tasks.open',
+      click: () => this.browser.actions.run('tasks.open', { sourceTabId: null, win })
+    })
     const devtools = when(caps.devtools, {
       label: 'Developer Tools',
       action: 'devtools.toggle',
@@ -3427,6 +3501,9 @@ export class Menus {
     // --- The sidebar layouts: Firefox's groups (§6 "Menus"). ----------------------------------
     this.popup(
       [
+        // Chrome's "Update Google Chrome" row at the menu's head (shortcuts-menus-101): while
+        // an update is downloaded and waiting, one row that relaunches into it, over a hairline.
+        ...desktop(...this.updateReadyRow()),
         // The window's live media heads the menu while the media hub's toolbar button has
         // folded (design language v2 §9.29: the sidebar's width tier folds it at 240, and this
         // row is where it goes; with the button up, the button is the hub). The phone has its
@@ -3476,14 +3553,16 @@ export class Menus {
         // folded into a submenu as Chrome folds it (the #396 review's ruling 1): the saves first
         // – Save Page As…, the install row (Create Shortcut…, or Install <app>…), Web Capture…
         // between the save and the print where Edge's menu keeps it, Print… – then the shares,
-        // Share… and Send to Your Devices. No Cast row: Zenium has no cast target. Folded, the
-        // top level keeps #299's count whatever the host gates – twenty rows and three
+        // Share… and Send to Your Devices. No Cast row: Zenium has no cast target. Manage Apps
+        // rides under the install row as Edge's Apps pairs them (shortcuts-menus-138). Folded,
+        // the top level keeps #299's count whatever the host gates – twenty rows and three
         // separators on the Linux build, 661 px – and stands whole on an 800 px window (§6).
         {
           label: 'Save and Share',
           submenu: [
             savePageAs,
             ...createShortcut,
+            ...manageApps,
             ...webCapture,
             ...print,
             ...share,
@@ -3499,7 +3578,8 @@ export class Menus {
           // window rows (Name window…), Task manager and Developer tools, gives the submenu its
           // contents: an installed app's Open in <app>, Zenium's space and window actions with
           // Chrome's Name Window…, the window's layout toggles, the tablet's captures, then the
-          // resources and the developer's – the toolbox row and its dock rows (§9.29).
+          // resources, the desktop's Task Manager (Chrome's seat, before Developer tools) and
+          // the developer's – the toolbox row and its dock rows (§9.29).
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
           // The two captures are the tablet's: on the desktop they fold into Save and Share's
@@ -3521,26 +3601,31 @@ export class Menus {
             ...when(win.formFactor !== 'desktop', screenshot, captureFullPage),
             separator,
             ...resources,
+            ...taskManager,
             ...devtools,
             ...devtoolsDock
           ])
         },
         {
           label: 'Help',
-          // The menu bar's Help menu (macOS), with the About row that closed the menu before.
+          // Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About, What's New,
+          // the help centre, Report an Issue… – with Zenium's Keyboard Shortcuts beside its
+          // help row. Two groups behind one hairline: this build (its About page, its release
+          // notes), then the help. The legal pages are About's rows, not Help's (Chrome's Help
+          // has none).
           submenu: [
+            aboutPage,
+            whatsNew,
+            separator,
             {
               label: 'Zenium Help',
               click: () => this.browser.platform.shell.openExternal(HELP_URL)
             },
             keyboardShortcuts,
-            separator,
             {
               label: 'Report an Issue…',
               click: () => this.browser.platform.shell.openExternal(ISSUES_URL)
-            },
-            separator,
-            about
+            }
           ]
         },
         ...quit
@@ -3549,6 +3634,56 @@ export class Menus {
       'app',
       { ...anchor, keyboard: options.keyboard }
     )
+  }
+
+  /**
+   * Chrome's "Update Google Chrome" row at the head of the desktop app menu
+   * (shortcuts-menus-101): while the updater holds a downloaded update (`phase: 'ready'`), the
+   * menu opens on "Update Zenium" – Chrome's form of the row; About's row says "Relaunch to
+   * update" beside its button – whose pick relaunches into the update, the same install
+   * About's Relaunch runs (#409, `updates.install`), with a hairline under it as Chrome's row
+   * has. Nothing while an update is merely found (`available`) – Chrome shows nothing until
+   * the update has downloaded – and nothing otherwise, so the menu keeps its resting count
+   * (twenty rows, 661 px) and the row is a twenty-first only while an update is waiting; the
+   * "⋯" button wears the accent dot meanwhile (`SidebarTop`), Chrome's dot on its ⋮. The
+   * desktop's alone: the phone's flat list and the tablet keep Settings › Updates as their
+   * surface, and the updater's phases are the desktop main's to drive.
+   */
+  private updateReadyRow(): Template {
+    if (!this.browser.state.capabilities.updates) return []
+    if (this.browser.updates.status().phase !== 'ready') return []
+    return [
+      { label: 'Update Zenium', click: () => void this.browser.updates.install() },
+      { type: 'separator' }
+    ]
+  }
+
+  /**
+   * Chrome's Tab groups submenu – "Tab Folders" on the desktop (shortcuts-menus-111;
+   * `IDS_SAVED_TAB_GROUPS_MENU`): the SAVED groups of the synced spaces – a folder whose tabs
+   * closed and whose pages are kept (TAB-16, `isSavedFolder`) – one row each, named by the group
+   * and marked by the one group glyph (`group`: the ring of its colour, or the folder's own icon;
+   * §9.37, #360's pair), the most recently used first as the Tab groups pane orders them
+   * (`groupRows`), the name breaking ties. A row's pick opens the group in this window – its
+   * pages back as its tabs at the end of their space, the first made active, the window switched
+   * to the space where it is another (`Browser.openFolder`). A blank or private window's local
+   * space has no saved group (its tabs keep no pages): the row is left out of its menu. With
+   * nothing saved, §9.17's empty state: "No saved tab folders" as the note row (the History
+   * submenu's "No recently closed tabs" form) – the desktop's noun is Folder (#398 F10; the touch
+   * hosts keep Group). An open group is the sidebar's, not this list's: Chrome's lists the rest.
+   */
+  private tabGroupsSubmenu(win: ZenWindow): Template {
+    const m = this.browser.state.model
+    const synced = new Set(m.spaces.map((space) => space.id))
+    const saved = Object.values(m.folders)
+      .filter((folder) => synced.has(folder.spaceId) && isSavedFolder(m, folder))
+      .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0) || a.name.localeCompare(b.name))
+    if (saved.length === 0) return [{ label: 'No saved tab folders', enabled: false, note: true }]
+    return saved.map((folder) => ({
+      label: folder.name,
+      group: { color: folder.color ?? null, icon: folder.icon, saved: true },
+      click: () => void this.browser.openFolder(folder.id, win)
+    }))
   }
 
   /**

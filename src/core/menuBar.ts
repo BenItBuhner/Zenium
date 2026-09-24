@@ -370,13 +370,18 @@ export function applicationMenu(browser: Browser): Template {
     ]
   }
 
+  // The app menu's Help submenu (`Menus.showAppMenu`) in the one order, less About Zenium, which
+  // is the application menu's (the host's role, as Chrome's on macOS): this build's group – its
+  // release notes – over the hairline, then the help (shortcuts-menus-152). The two surfaces
+  // read the same, so the eye that learned one finds the other.
   const help: MenuItemTemplate = {
     label: 'Help',
     role: 'help',
     submenu: [
+      { label: "What's New", click: withWindow((w) => browser.updates.openWhatsNew(w), true) },
+      { type: 'separator' },
       { label: 'Zenium Help', click: () => browser.platform.shell.openExternal(HELP_URL) },
       { label: 'Keyboard Shortcuts', click: settings('shortcuts') },
-      { type: 'separator' },
       { label: 'Report an Issue…', click: () => browser.platform.shell.openExternal(ISSUES_URL) }
     ]
   }

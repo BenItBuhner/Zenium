@@ -209,6 +209,16 @@ export class OmniboxShortcutsService {
     if (this.shortcuts.length !== before) this.persist()
   }
 
+  /**
+   * Forget every remembered search, whatever was typed for it (the suggestion menu's Delete
+   * Search History, context-menus-115); the destinations stay.
+   */
+  forgetSearches(): void {
+    const before = this.shortcuts.length
+    this.shortcuts = this.shortcuts.filter((s) => s.kind !== 'search')
+    if (this.shortcuts.length !== before) this.persist()
+  }
+
   /** Forget the shortcuts last used in `[fromMs, toMs)` (Clear browsing data for a range). */
   forgetRange(fromMs: number, toMs: number): void {
     const before = this.shortcuts.length

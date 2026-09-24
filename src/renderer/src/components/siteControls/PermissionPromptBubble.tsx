@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Activity,
   Bell,
+  BellOff,
   Bluetooth,
   Camera,
   Cable,
@@ -37,6 +38,7 @@ import {
 } from '@renderer/lib/security'
 import { uiStore } from '@renderer/lib/ui'
 import { V2_GLYPH, V2Button } from '../v2/controls'
+import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
 import { siteChip, siteChipRects, usePhone } from '@renderer/lib/surfaces'
 import { DesktopPopover, Footer, TitleBlock, V2Sheet, type SheetApi } from './primitives'
 
@@ -81,13 +83,23 @@ const GLYPHS: Record<string, LucideIcon> = {
  * (`permissions.respond`), which remembers Allow and Block for the site, keeps Allow once for the
  * tab, and refuses a dismissed request this once: Escape, a press outside and the system back
  * gesture dismiss. The answered prompt leaves on the spring before the next one comes in.
+ *
+ * A quiet notification prompt (`PermissionPrompt.quiet`, NOT-03) asks through the pill's slot
+ * instead: the bell-off glyph stands there (`lib/siteChips.ts`, §9.29) and the surface – the
+ * sheet on a phone, the same 400 popover on the desktop – opens only from a press on the bell
+ * (`quietPromptId`), so it is a surface the user opened: the keyboard lands in its held
+ * container (§9.22), no button armed – Enter from there is Allow, the primary, Tab reaches
+ * Keep blocking then Allow – and Escape hands it back to the bell. Closing it without a word
+ * (Escape, an outside press, the sheet pulled down) folds it back into the bell and is no
+ * answer: the bell stays up, the core hears nothing – a quiet prompt is only answered or
+ * withdrawn by the page leaving.
  */
 export function PermissionPrompts({ state }: { state: UIState }): JSX.Element | null {
   const phone = usePhone()
-  // A quiet notification prompt (NOT-03) is the pill's bell on a phone, and a sheet only once
-  // the bell was tapped for it; the desktop shows every prompt in turn.
+  // A quiet notification prompt (NOT-03) is the pill's bell on every host, and a surface only
+  // once the bell was pressed for it; a loud prompt behind it is not held up.
   const quietOpenId = uiStore.use((s) => s.quietPromptId)
-  const current = currentPermissionPrompt(state, phone ? { quietOpenId } : {})
+  const current = currentPermissionPrompt(state, { quietOpenId })
   // The quiet prompt the bell opened was answered or withdrawn: the flag goes with it.
   useEffect(() => {
     if (quietOpenId !== null && !state.permissionPrompts.some((p) => p.id === quietOpenId))
@@ -123,17 +135,24 @@ interface SurfaceProps {
  * The page's views hide under chrome surfaces; its snapshot stands in while the prompt is up.
  * The surface shows once the picture is there (or the short wait for it is over) and answers
  * once; how it is dismissed – Escape, a press outside, the sheet pulled down or the system back
- * gesture – is the surface's business, and each of those ends in `respond('dismiss')`.
+ * gesture – is the surface's business, and each of those ends in `respond('dismiss')` – or, on
+ * a quiet prompt, in `putAway`: the surface folds back into the bell and the core hears nothing
+ * (NOT-03). `left(byKey)` is told how the surface went, for where the keyboard goes after: a
+ * quiet bubble Escape closed hands it to the bell it hung from rather than the page (§9.22).
  */
 function usePrompt(prompt: PermissionPrompt): {
   ready: boolean
   /** The prompt went unanswered ("not now"): the popover folds back into its chip. */
   dismissed: boolean
   respond: (answer: PermissionPromptAnswer) => void
+  /** The quiet prompt's surface closed without a word: the bell stays up for it. */
+  putAway: () => void
+  left: (byKey: boolean) => void
 } {
   const [ready, setReady] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const answered = useRef(false)
+  const keepFocus = useRef(false)
   useEffect(() => {
     let gone = false
     void openPermissionPrompt(prompt.tabId).then(() => {
@@ -142,7 +161,7 @@ function usePrompt(prompt: PermissionPrompt): {
     })
     return () => {
       gone = true
-      closePermissionPrompt()
+      closePermissionPrompt({ keepFocus: keepFocus.current })
     }
   }, [prompt.tabId])
   const respond = useCallback(
@@ -154,12 +173,27 @@ function usePrompt(prompt: PermissionPrompt): {
     },
     [prompt.id]
   )
-  return { ready, dismissed, respond }
+  const putAway = useCallback((): void => {
+    if (answered.current) return
+    answered.current = true
+    setDismissed(true)
+    closeQuietPrompt()
+  }, [])
+  const left = useCallback(
+    (byKey: boolean): void => {
+      keepFocus.current = byKey && prompt.quiet === true
+    },
+    [prompt.quiet]
+  )
+  return { ready, dismissed, respond, putAway, left }
 }
 
 function glyphFor(prompt: PermissionPrompt): JSX.Element {
-  const Glyph =
-    GLYPHS[prompt.permission] ?? GLYPHS[contentSettingId(prompt.permission)] ?? ShieldCheck
+  // The quiet prompt's title is "Notifications blocked": the crossed-out bell the slot showed it
+  // by leads the title block, not the bell of a loud ask (NOT-03).
+  const Glyph = prompt.quiet
+    ? BellOff
+    : (GLYPHS[prompt.permission] ?? GLYPHS[contentSettingId(prompt.permission)] ?? ShieldCheck)
   return <Glyph className={V2_GLYPH} aria-hidden />
 }
 
@@ -168,7 +202,7 @@ function detailLines(prompt: PermissionPrompt): string[] {
 }
 
 function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element | null {
-  const { ready, dismissed, respond } = usePrompt(prompt)
+  const { ready, dismissed, respond, putAway, left } = usePrompt(prompt)
   const [rects, setRects] = useState(siteChipRects)
   // The bubble follows the pill through a window resize rather than leaving (`follow`): the
   // page is still waiting for its answer.
@@ -178,13 +212,45 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
   }, [ready])
-  const dismiss = useCallback(() => respond('dismiss'), [respond])
+  // Escape, an outside press, a scroll away: "not now" on a loud prompt, which the core hears as
+  // a dismissal; on a quiet one the bubble is only put away – the bell stays up (NOT-03).
+  const quiet = prompt.quiet === true
+  const dismiss = useCallback(
+    () => (quiet ? putAway() : respond('dismiss')),
+    [quiet, putAway, respond]
+  )
+  const closed = useCallback(
+    (byKey: boolean) => {
+      left(byKey)
+      onClosed()
+    },
+    [left, onClosed]
+  )
   const titleId = `permission-prompt-${prompt.id}`
+  // The quiet bubble is a surface the user opened from the bell, and holds its container as the
+  // confirmation prompt does (§9.22): the keyboard is parked on the popover's root, no button
+  // armed, and from there Enter is the primary – Allow – while Tab reaches Keep blocking then
+  // Allow (the popover wraps Tab itself, `tab: false`); Escape is `usePopover`'s, and hands the
+  // keyboard back to the bell. The root is found up from the body as the listener is placed
+  // (`confirmKeyboard.ts`), once the bubble has painted (`enabled` on `ready`): the popover
+  // renders nothing before the page's picture is in place, so a listener bound at mount would
+  // find no root. The loud prompt takes no default: a page raised it, and a key the user did
+  // not aim at it must not grant.
+  const body = useRef<HTMLDivElement>(null)
+  useConfirmKeyboard(body, {
+    destructive: false,
+    confirm: () => respond('allow'),
+    enabled: quiet && ready,
+    tab: false,
+    container: (el) => el.closest<HTMLElement>('[role="dialog"]')
+  })
   if (!ready) return null
   const lines = detailLines(prompt)
   // Beside its chip the prompt is a notice: no focus on open, and its "not now" folds it back
   // into the chip (§9.20, §9.22). With the pill hidden it is the only affordance: it takes the
-  // container and leaves on the spring as any popover.
+  // container and leaves on the spring as any popover. The quiet prompt's bubble the user
+  // opened from the bell takes the container too (above), folding back into the bell when put
+  // away.
   const chip = rects.anchor !== null
   return (
     <DesktopPopover
@@ -194,17 +260,18 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
       labelledBy={titleId}
       closing={closing}
       collapse={chip && dismissed}
-      onClosed={onClosed}
+      onClosed={closed}
       onDismiss={dismiss}
-      focus={chip ? 'none' : 'container'}
+      focus={chip && !quiet ? 'none' : 'container'}
       follow
       anchorElement={siteChip}
       data-testid="permission-prompt"
       data-permission={prompt.permission}
       data-chip={chip ? '' : undefined}
+      data-quiet={quiet ? 'true' : undefined}
     >
       {() => (
-        <>
+        <div ref={body} className="contents">
           <TitleBlock
             id={titleId}
             glyph={glyphFor(prompt)}
@@ -228,7 +295,7 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
               {prompt.allowLabel}
             </V2Button>
           </Footer>
-        </>
+        </div>
       )}
     </DesktopPopover>
   )
