@@ -381,6 +381,41 @@ describe("the bar item menu's rows (context-menus-109)", () => {
     expect(rows).not.toContain('Redo')
   })
 
+  it("the empty strip's menu carries Undo and Redo too, after Paste and before Add, enabled as a chip's are", () => {
+    const f = fixture()
+    const a = page(f, 'A', 'https://a.test/')
+    // The bar's one chip deleted: the strip's menu is where its Undo is found.
+    f.browser.handleCommand(f.win, 'bookmark.remove', { ids: [a] })
+    expect(f.browser.bookmarks.get(a)).toBeNull()
+    let rows = menuFor(f, [])
+    expect(rows).toEqual([
+      'Paste',
+      '-',
+      'Undo',
+      'Redo',
+      '-',
+      'Add Page…',
+      'Add Folder…',
+      '-',
+      'Show Bookmarks Bar',
+      'Bookmark Manager'
+    ])
+    expect(item(f.shown(), 'Undo').enabled).toBe(true)
+    expect(item(f.shown(), 'Redo').enabled).toBe(false)
+    item(f.shown(), 'Undo').click!()
+    expect(f.browser.bookmarks.get(a)).not.toBeNull()
+    menuFor(f, [])
+    expect(item(f.shown(), 'Undo').enabled).toBe(false)
+    expect(item(f.shown(), 'Redo').enabled).toBe(true)
+
+    // Not the manager's, not the phone's.
+    expect(menuFor(f, [], 'manager')).not.toContain('Undo')
+    f.browser.handleCommand(f.win, 'window.formFactor', { formFactor: 'phone' })
+    rows = menuFor(f, [])
+    expect(rows).not.toContain('Undo')
+    expect(rows).not.toContain('Redo')
+  })
+
   it('a delete done again through Redo (or bookmark.redo) tells the window as the first did, so the toast comes back with Undo', () => {
     const f = fixture()
     const a = page(f)

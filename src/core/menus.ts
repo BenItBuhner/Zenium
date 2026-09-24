@@ -2533,28 +2533,30 @@ export class Menus {
           }
         )
       )
-      // Chrome's Undo / Redo of the last bookmark edit (context-menus-109), the bar's rows for
-      // #357's undo stack; each enabled while it has a step to take.
-      if (bar) {
-        const { bookmarkUndo } = this.browser
-        template.push(
-          ...edit(
-            ...desktop(
-              { type: 'separator' },
-              {
-                label: 'Undo',
-                enabled: bookmarkUndo.depth > 0,
-                click: () => void this.browser.undoBookmarkEdit()
-              },
-              {
-                label: 'Redo',
-                enabled: bookmarkUndo.redoDepth > 0,
-                click: () => void this.browser.redoBookmarkEdit(win)
-              }
-            )
+    }
+    // Chrome's Undo / Redo of the last bookmark edit (context-menus-109), the bar's rows for
+    // #357's undo stack, on a chip's menu and on the empty strip's alike – once the bar's last
+    // chip is deleted, the strip is where its Undo is found; each enabled while it has a step
+    // to take.
+    if (bar) {
+      const { bookmarkUndo } = this.browser
+      template.push(
+        ...edit(
+          ...desktop(
+            { type: 'separator' },
+            {
+              label: 'Undo',
+              enabled: bookmarkUndo.depth > 0,
+              click: () => void this.browser.undoBookmarkEdit()
+            },
+            {
+              label: 'Redo',
+              enabled: bookmarkUndo.redoDepth > 0,
+              click: () => void this.browser.redoBookmarkEdit(win)
+            }
           )
         )
-      }
+      )
     }
     template.push(
       ...edit(
