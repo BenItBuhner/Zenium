@@ -910,7 +910,7 @@ describe('the AI Agents › Agent skill group', () => {
     // Two lines at 664 (§10.5): the etiquette in a sentence, the folder in another – no product
     // list, the rows name the agents found.
     expect(skill(model)?.description).toBe(
-      'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs, tidied up at the end. Zenium keeps a copy in each agent’s skills folder.'
+      'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs. Zenium keeps a copy in each agent’s skills folder.'
     )
     expect(
       build(status, { ...ELECTRON, agentSkills: false }).groups.map((g) => g.id)
@@ -1059,6 +1059,43 @@ describe('the AI Agents › Agent skill group', () => {
       'A copy Zenium did not install is there; installing replaces it'
     )
     expect(claude.tone).toBe('warn')
+  })
+
+  it('leads with one agent’s failure on the status line while the others stay in, checked', () => {
+    const sentence =
+      'Could not install: something else is in the way at ~/.codex/skills/zenium-browser'
+    const group = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        error: sentence,
+        targets: [
+          target('claude', 'Claude Code', true, true),
+          target('cursor', 'Cursor', true, true),
+          { ...target('codex', 'Codex', true, false), note: sentence }
+        ]
+      })
+    )!
+    const status = group.rows[0]
+    if (status.kind !== 'info') throw new Error('not an info row')
+    // The same sentence twice: the danger line with its glyph leads, the row it is about
+    // carries it in the warn tone in place of the path.
+    expect(status.description).toBe(sentence)
+    expect(status.tone).toBe('danger')
+    expect(isValidElement(status.trailing)).toBe(true)
+    const codex = findRow([group], 'skill:codex')!
+    expect(codex.kind === 'switch' && codex.checked).toBe(false)
+    expect(codex.description).toBe(sentence)
+    expect(codex.tone).toBe('warn')
+    for (const id of ['skill:claude', 'skill:cursor']) {
+      const row = findRow([group], id)!
+      expect(row.kind === 'switch' && row.checked).toBe(true)
+      expect(row.description).toBe(`~/.${id.slice('skill:'.length)}/skills/zenium-browser`)
+      expect(row.tone).toBeUndefined()
+    }
+    // Not every agent has it, so the bulk action still installs.
+    expect(findRow([group], 'skill-all')?.label).toBe('Install for every agent found')
+    for (const text of [status.description, codex.description])
+      for (const leak of ['.tmp', '/home/', '/tmp/', 'EACCES:']) expect(text).not.toContain(leak)
   })
 
   it('names no harness in what it shows', () => {
