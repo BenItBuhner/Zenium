@@ -89,7 +89,7 @@ import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
 import type { TextFragmentHostMessage } from '../shared/textFragmentScript'
 import type { FocusEdge, FocusEdgeHostMessage } from '../shared/focusEdge'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
-import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
+import type { RawWebAppManifest, ShortcutIconKind, WebAppDisplay } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
@@ -2233,6 +2233,18 @@ export interface ShortcutRequest {
   background: string
   /** The `any` icon's own background when the manifest names one (fills the safe zone edges). */
   iconBackground: string | null
+  /**
+   * The manifest's display mode; a host that opens `standalone` / `fullscreen` / `minimal-ui`
+   * apps in a window (activity) of their own reads it from here. Absent (and for `browser`)
+   * the shortcut opens a tab.
+   */
+  display?: WebAppDisplay
+  /** The manifest's absolute scope; navigations outside it leave the app's window. */
+  scope?: string
+  /** The manifest's `theme_color` as `#rrggbb`, for the window's system bars and Recents entry. */
+  themeColor?: string | null
+  /** The manifest's `background_color` as `#rrggbb`, the window's colour before the page paints. */
+  backgroundColor?: string | null
 }
 
 /**

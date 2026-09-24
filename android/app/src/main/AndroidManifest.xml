@@ -265,6 +265,37 @@
             android:theme="@style/Theme.Zen.CustomTab"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" />
 
+        <!-- An installed web app's tile lands here (WebAppLauncherActivity.kt): gone before it
+             draws, it opens the app's window in the app's own task, or – a tile pinned before the
+             window existed, a `browser` app – the page as a tab of the browser, as before. Not
+             exported: the system starts a pinned shortcut under its creator's uid, so the tile
+             reaches it and another app's intent does not (Chrome's SecureWebAppLauncher). -->
+        <activity
+            android:name=".WebAppLauncherActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <!-- An installed web app's window (WebAppActivity.kt, PWA-07): one task per app, found again
+             by the launch intent's data (`zen-webapp://<shortcut id>`, documentLaunchMode
+             intoExisting) and handed a repeat launch (singleTop), out of the browser's task (its own,
+             empty affinity), listed in Recents under the app's name and icon; not kept across a
+             reboot, as Chrome's WebappActivity is not. Not exported: only the trampoline above
+             starts it. -->
+        <activity
+            android:name=".WebAppActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:documentLaunchMode="intoExisting"
+            android:persistableMode="persistNever"
+            android:taskAffinity=""
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Zen.WebApp"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" />
+
         <!-- The Custom Tabs provider service other apps bind before they open a custom tab
              (CustomTabsConnectionService.kt): warmup, sessions, likely URLs. -->
         <service
