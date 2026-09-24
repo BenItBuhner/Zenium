@@ -35,7 +35,7 @@ Zenium is the user's own browser. The user browses in it while you work, and oth
 - Notices. When the user or another agent closes or moves one of your tabs, the next result starts with a line like `Notice: tab tab_... "Title" was closed by the user.` Read it, re-list your tabs, and adapt. Never assume a tab still exists after a notice; never retry the same call blindly.
 - Unexpected results (wrong page, missing element, unknown tab): `browser_tabs list`, then `browser_snapshot` on the tab you meant. Do not guess ids and do not open a second copy of a page you already have.
 - Every error message names what would have worked (valid actions, open tabs, how to get a ref). Follow it.
-- Clean up. When the task is done, `zen_session {"action":"end","closeTabs":true}` - unless the user wants to keep the results on screen, then end without `closeTabs` (your group stays as an orphaned folder the user can read).
+- Clean up. When the task is done, `zen_session {"action":"end","closeTabs":true}` - unless the user wants to keep the results on screen, then end without `closeTabs` (your groups stay as orphaned folders the user can read).
 - Long tasks and reconnects. If your connection drops, your group is not destroyed: it becomes orphaned. After reconnecting, `zen_groups {"action":"list","scope":"all"}`, find your old group (`[orphaned, was "<name>"]`), then `zen_groups {"action":"adopt","groupId":"folder_..."}` and re-list its tabs. Do not open the pages again.
 - One call at a time. Your calls are serialised per session; sending several in parallel gains nothing.
 
@@ -69,7 +69,7 @@ Who you are and what is in the browser: your name, session id, mode and foregrou
 Your session.
 
 - `{"action":"status"}` - same as `zen_status`.
-- `{"action":"end","closeTabs":true}` - close your groups and their tabs, end the session. Without `closeTabs` the tabs stay as an orphaned group.
+- `{"action":"end","closeTabs":true}` - close your groups and their tabs, end the session. Without `closeTabs` your groups stay open as orphaned groups; a later session takes one back with `zen_groups {"action":"adopt","groupId":"..."}`.
 - `{"action":"rename","name":"Research: invoices"}` - the label the user sees in the sidebar and on your cursor.
 - Example: `zen_session {"action":"end","closeTabs":true}`
 - Pitfall: ending is not optional. A session left open keeps its tabs claimed for a long time.
@@ -78,8 +78,8 @@ Your session.
 
 Your tab groups (Zenium tab folders).
 
-- `{"action":"list"}` - your groups; `"scope":"all"` also shows other agents' groups (names only) and orphaned ones.
-- `{"action":"create","name":"<task>"}` - a new group in the shared Agents space; returns `groupId`. `"space":"own"` creates a private space named after you; `"space":"<spaceId>"` uses an existing space.
+- `{"action":"list"}` - your groups with their tabs; `"scope":"all"` lists every agent group with its tabs and its owner (`[yours]`, `[owned by "<name>"]`, or `[orphaned, was "<name>"]` for a group whose agent left), then the user's folders as headers only (name, id, tab count - theirs, not yours to use).
+- `{"action":"create","name":"<task>"}` - a new group in the shared Agents space; returns `groupId`. `"space":"own"` creates a private space named after you; `"space":"<spaceId>"` (id or name) uses an existing space: the Agents space or a space an agent made needs nothing, the user's spaces need `allowForeign: true`.
 - `{"action":"rename","groupId":"folder_...","name":"..."}`
 - `{"action":"close","groupId":"folder_..."}` - closes every tab in it and removes the folder. Own groups only.
 - `{"action":"adopt","groupId":"folder_..."}` - take over an orphaned group (its owner session is gone) after a reconnect.
@@ -91,7 +91,7 @@ Your tab groups (Zenium tab folders).
 Zenium spaces (workspaces).
 
 - `{"action":"list"}`, `{"action":"create","name":"...","icon":"..."}`.
-- `{"action":"switch","spaceId":"..."}` changes what the user sees; it needs the foreground lease and is refused otherwise.
+- `{"action":"switch","spaceId":"..."}` changes what the user sees; it needs foreground mode and the screen lease, and is refused in background mode or while another agent holds the screen (active within 20 s).
 - Example: `zen_spaces {"action":"list"}`
 - Pitfall: you rarely need this. Your groups already keep your tabs apart from the user's. Do not switch the user's space to look at your own tabs; snapshots work on background tabs.
 
@@ -116,11 +116,11 @@ Tab management inside your groups.
 
 - `{"action":"list"}` - your tabs (id, title, url, group). `"scope":"group","groupId":"folder_..."` for one group; `"scope":"all"` for everything, with `[user's active tab]`, `[owned by <agent>]` and `[orphaned]` flags.
 - `{"action":"new","url":"https://example.com"}` - opens a tab in your home group and returns its `tabId`; `"groupId"` picks another of your groups; `"background":true` keeps it off the user's screen even in foreground mode.
-- `{"action":"close","tabId":"tab_..."}` - your tab only.
-- `{"action":"move","tabId":"tab_...","groupId":"folder_..."}` - between your groups; `"index"` reorders within one (1 = first).
+- `{"action":"close","tabId":"tab_..."}` - your tab only (the user's only with `allowForeign`, and only when the user asked).
+- `{"action":"move","tabId":"tab_...","groupId":"folder_..."}` - between your groups; `"index"` reorders within one (1 = first). `allowForeign` does not apply to `move`: a tab that is not yours cannot be moved into your groups (that would make it yours); an orphaned group is taken over whole with `adopt`.
 - `select` is deprecated: there is no current tab; pass `tabId` to every page tool instead. `group` / `ungroup` are aliases of `zen_groups create` plus `move`.
 - Example: `browser_tabs {"action":"new","url":"https://example.com","background":true}`
-- Pitfalls: `tabId` is one id, not a comma-joined list. Never `close` a tab you did not open. `spaceId` on `new` opens in the user's space and needs `allowForeign`; use `groupId` instead.
+- Pitfalls: `tabId` is one id, not a comma-joined list. Never `close` a tab you did not open. `spaceId` on `new` naming one of the user's spaces needs `allowForeign`, and the tab it opens sits outside your groups, so it is not yours (every later call on it needs `allowForeign` too); `groupId` is the way.
 
 ### browser_navigate
 
