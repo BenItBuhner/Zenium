@@ -187,6 +187,13 @@ vi.mock('electron', async () => {
     getTitle(): string {
       return ''
     }
+    /** The page's address (`getURL`); a test navigates by setting it. */
+    url = ''
+    getURL(): string {
+      return this.url
+    }
+    /** The page's session, for the tests that look something up by it. */
+    session: object = {}
     getZoomFactor(): number {
       return 1
     }
@@ -315,7 +322,14 @@ async function guestWebContents(): Promise<Electron.WebContents> {
   return view.webContents
 }
 
-const sessions = { get: () => ({}) } as unknown as SessionManager
+/** The session manager as the host uses it: one session for every container, hooks kept. */
+const sessionHooks: Array<(ses: object, containerId: string) => void> = []
+const sessions = {
+  get: () => ({}),
+  configure: (hook: (ses: object, containerId: string) => void) => {
+    sessionHooks.push(hook)
+  }
+} as unknown as SessionManager
 const detachedWindow = { win: { isDestroyed: () => true } } as unknown as WindowHost
 const noEvents = new Proxy({} as TabViewEvents, { get: () => () => undefined })
 
@@ -982,6 +996,87 @@ describe('Zenium’s hang monitor on a page with a session (tabs-45)', () => {
     await vi.advanceTimersByTimeAsync(HUNG_AT * 2)
     expect(evaluations(page)).toHaveLength(1)
     expect(words).toEqual([])
+  })
+})
+
+/**
+ * The site-information card's certificate comes from the session's own verification of the
+ * page's host (`siteCertificates.ts`), read by the page's URL – never from a DevTools session,
+ * which Electron's Security domain answers with nothing.
+ */
+describe('ElectronTabView.certificate', () => {
+  interface HttpsPage {
+    url: string
+    session: object
+    debugger: { log: string[] }
+    close(): void
+  }
+  /** A session as `setCertificateVerifyProc` sees it, with the handshake it is asked about. */
+  class FakeVerifyingSession {
+    proc: ((request: unknown, callback: (verdict: number) => void) => void) | null = null
+    readonly verdicts: number[] = []
+    setCertificateVerifyProc(
+      proc: (request: unknown, callback: (verdict: number) => void) => void
+    ): void {
+      this.proc = proc
+    }
+    verified(hostname: string, issuer: string): void {
+      const cert = {
+        data: '',
+        subjectName: hostname,
+        issuerName: 'R11',
+        subject: { commonName: hostname, organizations: [] },
+        issuer: { commonName: 'R11', organizations: [issuer] },
+        validStart: 1_700_000_000,
+        validExpiry: 1_707_000_000
+      }
+      this.proc?.({ hostname, certificate: cert, validatedCertificate: cert, errorCode: 0 }, (v) =>
+        this.verdicts.push(v)
+      )
+    }
+  }
+  const setup = (): { view: ElectronTabView; page: HttpsPage; handshake: FakeVerifyingSession } => {
+    sessionHooks.length = 0
+    const host = new ElectronTabViewHost(sessions)
+    // The host hooks every session as it is made; the manager runs the hook for this one.
+    const handshake = new FakeVerifyingSession()
+    for (const hook of sessionHooks) hook(handshake, 'default')
+    const view = host.createView(
+      { id: 'tab_https', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    const page = view.webContents as unknown as HttpsPage
+    page.session = handshake
+    return { view, page, handshake }
+  }
+
+  it('reads the certificate the session verified for the page’s host, leaving the verdict to Chromium and the page’s debugger alone', async () => {
+    const { view, page, handshake } = setup()
+    expect(handshake.proc).not.toBeNull()
+    handshake.verified('www.example.com', "Let's Encrypt")
+    expect(handshake.verdicts).toEqual([-3])
+    page.url = 'https://www.example.com/account'
+    await expect(view.certificate()).resolves.toEqual({
+      subject: 'www.example.com',
+      issuer: "Let's Encrypt",
+      validFrom: 1_700_000_000_000,
+      validTo: 1_707_000_000_000,
+      protocol: null
+    })
+    expect(page.debugger.log).toEqual([])
+  })
+
+  it('has nothing for an http page, a host no handshake named, or a page that is gone', async () => {
+    const { view, page, handshake } = setup()
+    handshake.verified('www.example.com', "Let's Encrypt")
+    page.url = 'http://www.example.com/'
+    await expect(view.certificate()).resolves.toBeNull()
+    page.url = 'https://other.example/'
+    await expect(view.certificate()).resolves.toBeNull()
+    page.url = 'https://www.example.com/'
+    page.close()
+    await expect(view.certificate()).resolves.toBeNull()
   })
 })
 

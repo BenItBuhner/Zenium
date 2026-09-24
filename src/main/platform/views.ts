@@ -70,6 +70,7 @@ import { standinScale } from '../../shared/pageStandin'
 import { clientSide, imageDimensions, type PageViewport } from '../../shared/capture'
 import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
 import { HangMonitor } from './hangMonitor'
+import { SiteCertificates } from './siteCertificates'
 import type { PdfRenderOptions } from '../../shared/print'
 import type {
   AgentCapture,
@@ -1898,51 +1899,15 @@ export class ElectronTabView implements TabView {
   }
 
   /**
-   * The certificate behind the page, from the DevTools protocol's Security domain (enabling it
-   * reports the current state at once). Null when the page is not https or the debugger is
-   * taken (DevTools open).
+   * The certificate behind the page: the one its session verified for the page's host
+   * (`SiteCertificates`; Electron emits nothing on the DevTools protocol's Security domain, so
+   * a session on the page has nothing to ask). Null when the page is not https, or no
+   * handshake of the session's has named or covered its host.
    */
-  async certificate(): Promise<SiteCertificate | null> {
+  certificate(): Promise<SiteCertificate | null> {
     const wc = this.wc
-    if (wc.isDestroyed() || !wc.getURL().startsWith('https:')) return null
-    const dbg = wc.debugger
-    const attachedHere = !dbg.isAttached()
-    try {
-      if (attachedHere) dbg.attach('1.3')
-      const state = await new Promise<SecurityStateParams | null>((resolve) => {
-        const done = (value: SecurityStateParams | null): void => {
-          clearTimeout(timer)
-          dbg.off('message', onMessage)
-          resolve(value)
-        }
-        const onMessage = (_e: Electron.Event, method: string, params: unknown): void => {
-          if (method === 'Security.visibleSecurityStateChanged') done(params as SecurityStateParams)
-        }
-        const timer = setTimeout(() => done(null), 1500)
-        dbg.on('message', onMessage)
-        dbg.sendCommand('Security.enable').catch(() => done(null))
-      })
-      await dbg.sendCommand('Security.disable').catch(() => undefined)
-      const cert = state?.visibleSecurityState?.certificateSecurityState
-      if (!cert) return null
-      return {
-        subject: cert.subjectName ?? '',
-        issuer: cert.issuer ?? '',
-        validFrom: typeof cert.validFrom === 'number' ? cert.validFrom * 1000 : null,
-        validTo: typeof cert.validTo === 'number' ? cert.validTo * 1000 : null,
-        protocol: cert.protocol ?? null
-      }
-    } catch {
-      return null
-    } finally {
-      if (attachedHere) {
-        try {
-          dbg.detach()
-        } catch {
-          /* already detached */
-        }
-      }
-    }
+    if (wc.isDestroyed()) return Promise.resolve(null)
+    return Promise.resolve(this.owner.certificates.lookup(wc.session, wc.getURL()))
   }
 
   /**
@@ -2230,20 +2195,6 @@ export function visibleAreaClip(
   return { x: 0, y: 0, width, height }
 }
 
-/** The parts of `Security.visibleSecurityStateChanged` the site-information sheet uses. */
-interface SecurityStateParams {
-  visibleSecurityState?: {
-    securityState?: string
-    certificateSecurityState?: {
-      protocol?: string
-      subjectName?: string
-      issuer?: string
-      validFrom?: number
-      validTo?: number
-    }
-  }
-}
-
 /** Electron runs `contextIsolation` preloads in world 999. */
 const ISOLATED_WORLD_ID = 999
 
@@ -2456,11 +2407,14 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
   /** Windows whose focus the pages' hang monitors follow (`watchFocus`). */
   private readonly focusWatched = new WeakSet<BrowserWindow>()
+  /** The certificates the sessions verified, by host, for the site-information card (`certificate`). */
+  readonly certificates = new SiteCertificates()
 
   constructor(
     private readonly sessions: SessionManager,
     readonly downloads: SaveAsDownloads | null = null
   ) {
+    sessions.configure((ses) => this.certificates.watch(ses))
     // Dark theme for sites acts only while the chrome is dark: a scheme flip (the OS, the
     // Appearance setting) turns every page's override on or off.
     nativeTheme.on('updated', () => {
