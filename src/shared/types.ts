@@ -464,6 +464,17 @@ export interface Tab {
    * captured.
    */
   capture?: TabCapture | null
+  /**
+   * The developer toolbox open on the tab (design language v2 §9.29), while one is: where it
+   * stands, as the host reports it – the dock it opened at (`TabViewEvents.onDevtoolsOpened`),
+   * then every move the toolbox's own buttons or the app menu's rows make
+   * (`onDevtoolsDockChanged`). Each tab's toolbox stands where it was put – tab A docked at the
+   * bottom, tab B undocked by its own button – and the frame's radius and the page's cover read
+   * the tab in front, not the one setting for every toolbox (`settings.devtoolsDock` is the
+   * default for the next opening). A session's own (not persisted); null or absent while no
+   * toolbox is up, and absent on hosts without one (Android: `capabilities.devtools` false).
+   */
+  devtools?: TabDevtools | null
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**
@@ -2089,6 +2100,15 @@ export type SidebarSide = 'left' | 'right'
  * made inside the toolbox always has its row.
  */
 export type DevtoolsDock = 'bottom' | 'right' | 'left' | 'undocked'
+/**
+ * A tab's open toolbox (`Tab.devtools`): where it stands now. Present only while the toolbox is
+ * up; the dock is the live one – the frontend's own reading through the host – and may differ
+ * from `Settings.devtoolsDock` once the user moves this toolbox alone or moves the setting for
+ * the next opening.
+ */
+export interface TabDevtools {
+  dock: DevtoolsDock
+}
 export type NewTabPosition = 'end' | 'after-current'
 /** Screen edge the phone layout docks its address bar to. */
 export type PhoneBarPosition = 'top' | 'bottom'
@@ -4285,6 +4305,14 @@ export interface Commands {
    * capture a hidden page answer null.
    */
   'overlay.snapshot': { args: { tabId: string; fresh?: boolean }; result: string | null }
+  /**
+   * The picture of the developer toolbox docked in the tab's frame box (design language v2
+   * §9.29) – the frontend's own capture, the whole box at its size – for the cover to lay under
+   * the page's picture, so a menu over a docked toolbox leaves the toolbox in view rather than
+   * the frame's ground. `fresh` as `overlay.snapshot` has it. Null with no toolbox up, one
+   * undocked (a window of its own) or on a host without an in-frame toolbox (Android).
+   */
+  'overlay.snapshotDevtools': { args: { tabId: string; fresh?: boolean }; result: string | null }
 
   /**
    * Tab card thumbnails, on hosts that keep them (`Platform.thumbnails`; the Android host). The
