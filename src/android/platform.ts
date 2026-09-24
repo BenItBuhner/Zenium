@@ -1,4 +1,5 @@
 import type {
+  AppLinkState,
   DownloadItem,
   EventName,
   Events,
@@ -72,6 +73,7 @@ import type {
   SystemAutofillStatus,
   ThumbnailHost,
   UpdateHost,
+  UpdateNotice,
   WebNotificationHost,
   WindowHost,
   WindowHostFactory
@@ -661,6 +663,8 @@ export interface HostEventPayloads {
   'media.pip': { tabId: string; active: boolean; dismissed?: boolean }
   /** A tap on the media notification: the session's tab comes to the front (`MediaSessions.kt`). */
   'media.reveal': { tabId: string }
+  /** A tap on the "is using your microphone" card: the capturing tab comes to the front (`CaptureNotifications.kt`, NOT-13). */
+  'capture.reveal': { tabId: string }
   /**
    * The shade's tap (`click`) or swipe (`close`) on a page's notification, or its quiet
    * replacement by a later one with the same tag (`WebNotifications.kt`); `url` is the page's,
@@ -789,6 +793,15 @@ class AndroidUpdateHost implements UpdateHost {
     if (!this.token) return
     this.cancelled = true
     this.bridge.send('update.cancel', { token: this.token })
+  }
+
+  /**
+   * The shade's card on the Updates channel (`UpdateNotifications.kt`, NOT-17): "Update
+   * available" once a release is found, "Update ready" once its APK is downloaded, taken down
+   * when neither stands. A tap opens Settings › Updates through the `zenium://` deep link.
+   */
+  notify(notice: UpdateNotice | null): void {
+    this.bridge.send('update.notify', { notice })
   }
 
   onProgress(payload: HostEventPayloads['update.progress']): void {
@@ -1328,6 +1341,10 @@ export class AndroidPlatform implements Platform {
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
       openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
+      openNotificationSettings: () => bridge.send('app.openNotificationSettings'),
+      // The link menu's Call / Send message / Add to contacts / Send email (PUI-22): the
+      // dialer, the messaging app, the contacts form and the mail app, by intent in Kotlin.
+      openLinkIn: (target, url) => bridge.send(`link.${target}`, { url }),
       openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings'),
       openKeyboardSettings: () => bridge.send('app.openKeyboardSettings')
     }
@@ -1455,6 +1472,9 @@ export class AndroidPlatform implements Platform {
       setAppIcon: (id) => bridge.send('app.setIcon', { id }),
       // Kotlin reads the browser role (RoleManager on Android 10+, the http handler before that).
       isDefaultBrowser: () => bridge.call<boolean | null>('app.isDefaultBrowser'),
+      // The "Open by default" screen's state (DEF-06): the link-handling switch on Android 12+
+      // (DomainVerificationManager), the http handler before that.
+      appLinkState: () => bridge.call<AppLinkState | null>('app.appLinkState'),
       // Resolves when the role dialog / default-apps screen hands control back to the app.
       requestDefaultBrowser: () => bridge.call<boolean | null>('app.requestDefaultBrowser')
     }
@@ -1981,6 +2001,11 @@ export class AndroidPlatform implements Platform {
       }
       case 'media.reveal': {
         const p = payload as Partial<HostEventPayloads['media.reveal']>
+        if (typeof p.tabId === 'string') browser.revealTab(p.tabId)
+        return
+      }
+      case 'capture.reveal': {
+        const p = payload as Partial<HostEventPayloads['capture.reveal']>
         if (typeof p.tabId === 'string') browser.revealTab(p.tabId)
         return
       }

@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AppLinkState,
   AppWindowInfo,
   CertificateDetails,
   ClipboardPeekKind,
@@ -27,6 +28,7 @@ import type {
   LongCaptureCrop,
   MenuGlyph,
   MenuGroupMark,
+  MenuHeader,
   NavigationSnapshot,
   NewTabPageAction,
   NewTabPageCommand,
@@ -1146,6 +1148,9 @@ export type MenuSource =
   | 'urlbar'
   | 'translate'
 
+/** The apps a `tel:` or `mailto:` link's menu items hand the link to (`ShellHost.openLinkIn`). */
+export type LinkAppTarget = 'call' | 'message' | 'addContact' | 'email'
+
 export interface MenuPopupOptions {
   source: MenuSource
   win: ZenWindow
@@ -1157,6 +1162,11 @@ export interface MenuPopupOptions {
   y?: number
   /** Opened by the keyboard: the first item starts selected so the arrow keys take over at once. */
   keyboard?: boolean
+  /**
+   * The link's or image's header (PUI-18) for the phone's sheet: the renderer-drawn host carries
+   * it to the sheet; hosts with native menus have no header to draw and leave it be.
+   */
+  header?: MenuHeader
 }
 
 export interface MenuHost {
@@ -1283,6 +1293,18 @@ export interface ShellHost {
   share?(payload: SharePayload): Promise<ShareOutcome | void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
+  /**
+   * A phone number's or an email address's own apps (Chrome for Android's link items, PUI-22):
+   * the dialer with the number filled in (`call`), a new text to it (`message`), the contacts
+   * app's new-contact form (`addContact`), a new mail to the address (`email`). `url` is the
+   * link's `tel:` or `mailto:` URL as it stands. Hosts without those apps leave it out.
+   */
+  openLinkIn?(target: LinkAppTarget, url: string): void
+  /**
+   * The OS screen for this app's notifications (Android's per-app notification settings, where
+   * each channel is turned on or off); hosts whose notifications the OS does not manage leave it out.
+   */
+  openNotificationSettings?(): void
   /**
    * The OS screen where encrypted DNS is set for every app (Android's Private DNS); for hosts
    * without a resolver of their own (`capabilities.secureDns` false).
@@ -1621,6 +1643,14 @@ export interface AppHost {
    */
   isDefaultBrowser(): Promise<boolean | null>
   /**
+   * What the OS screen for which links open in this app (`ShellHost.openAppLinkSettings`) is
+   * set to (DEF-06): whether the system hands web links from other apps to this app – Android
+   * 12+'s link-handling switch (`DomainVerificationManager`), the default handler of a plain
+   * `http://` link before it. Read with the role at start and on every return to the
+   * foreground; hosts without the screen leave it out.
+   */
+  appLinkState?(): Promise<AppLinkState | null>
+  /**
    * Ask the system to make this app the default browser (`app.requestDefaultBrowser`): the role
    * dialog on Android 10+, which answers with the outcome; the default-apps settings screen on
    * Android 8–9, which resolves null once the user comes back so the core reads the role again.
@@ -1949,6 +1979,19 @@ export interface UpdateHost {
   /** Apply the downloaded update: restart into it, or hand the file to the system installer. */
   install(release: UpdateRelease, downloadedPath: string | null): Promise<void>
   cancel(): void
+  /**
+   * The host's standing word on an update outside the chrome (Android's shade, NOT-17): the
+   * release found (`available`), the one downloaded and waiting to be applied (`ready`), or null
+   * when there is nothing to say – idle, checking, up to date, downloading, an error. Told once
+   * per edge, not per progress tick. Optional: a host without a shade leaves it out.
+   */
+  notify?(notice: UpdateNotice | null): void
+}
+
+/** What the host's shade says of an update: which edge, and the release's version. */
+export interface UpdateNotice {
+  kind: 'available' | 'ready'
+  version: string
 }
 
 // ---------------------------------------------------------------------------

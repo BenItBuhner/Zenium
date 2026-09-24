@@ -3,14 +3,17 @@ import type { HttpAuthPrompt, PermissionPrompt, PermissionRule, Tab, UIState } f
 import { uiStore } from '../ui'
 import {
   blockedPopupsOf,
+  closeQuietPrompt,
   closeSecurityPrompt,
   currentPermissionPrompt,
   currentSecurityPrompt,
   describePermissionRule,
   httpAuthSpace,
+  openQuietPrompt,
   openSecurityPrompt,
   originOf,
   popupsAllowedFor,
+  quietPermissionPrompt,
   siteLabel
 } from '../security'
 
@@ -199,6 +202,34 @@ describe('currentPermissionPrompt', () => {
       ]
     })
     expect(currentPermissionPrompt(s)).toBe(null)
+  })
+
+  it('a quiet prompt waits in the bell on the phone until the bell names it; the desktop shows it in turn', () => {
+    const quiet: PermissionPrompt = { ...prompt('q1', 't1'), permission: 'notifications', quiet: true }
+    const s = state({ tabs: { t1: tab }, permissionPrompts: [quiet, prompt('q2', 't1')] })
+    expect(currentPermissionPrompt(s, { quietOpenId: null })?.id).toBe('q2')
+    expect(currentPermissionPrompt(s, { quietOpenId: 'q1' })?.id).toBe('q1')
+    expect(currentPermissionPrompt(s)?.id).toBe('q1')
+    expect(
+      currentPermissionPrompt(state({ tabs: { t1: tab }, permissionPrompts: [quiet] }), {
+        quietOpenId: null
+      })
+    ).toBe(null)
+  })
+
+  it('finds the tab’s quiet prompt for the bell, and the bell opens and closes it through the ui store', () => {
+    const quiet: PermissionPrompt = { ...prompt('q1', 't1'), permission: 'notifications', quiet: true }
+    const s = state({ tabs: { t1: tab }, permissionPrompts: [prompt('q0', 't1'), quiet] })
+    expect(quietPermissionPrompt(s, 't1')?.id).toBe('q1')
+    expect(quietPermissionPrompt(s, 't2')).toBe(null)
+    expect(quietPermissionPrompt({ ...s, permissionPrompts: undefined } as unknown as UIState, 't1')).toBe(
+      null
+    )
+
+    openQuietPrompt('q1')
+    expect(uiStore.get().quietPromptId).toBe('q1')
+    closeQuietPrompt()
+    expect(uiStore.get().quietPromptId).toBe(null)
   })
 })
 

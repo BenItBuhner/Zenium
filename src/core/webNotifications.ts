@@ -5,7 +5,9 @@ import {
   type NotificationPageRequest,
   type NotificationPermissionStatus
 } from '../shared/notifications'
-import { permissionSite } from './permissions'
+import type { PermissionPrompt } from '../shared/types'
+import { newId } from '../shared/ids'
+import { displayOrigin, permissionSite } from './permissions'
 import type { WebNotificationRequest } from './platform'
 import type { Browser } from './browser'
 
@@ -23,6 +25,62 @@ interface LiveNotification {
 export const MAX_LIVE_PER_ORIGIN = 20
 
 /**
+ * Whether a site's request asks quietly (Chrome's quiet notification permission UI, NOT-03):
+ * one made without a user gesture, or one from a site whose prompt the user dismissed before in
+ * this session. A quiet request is not a sheet over the page; it is the bell-off glyph in the
+ * pill's slot, and the sheet opens from the bell. `gesture` undefined (an engine that cannot
+ * say, an older page script) counts as gestured: nothing is quieted on a guess.
+ */
+export function asksQuietly(gesture: boolean | undefined, dismissedBefore: boolean): boolean {
+  return gesture === false || dismissedBefore
+}
+
+/**
+ * The site as the quiet prompt's description names it: the host alone – `localhost`,
+ * `news.example` – with neither the scheme nor the port (the design gate's ruling on NOT-03:
+ * the sentence names the site, the pill's host spells its address). The file site is named as
+ * every permission prompt names it (`file:///`), and an origin with no host to speak of falls
+ * back to the same spelling.
+ */
+export function quietPromptSite(origin: string): string {
+  try {
+    const host = new URL(origin).hostname
+    if (host) return host
+  } catch {
+    // Not a URL: named as the loud prompt names it.
+  }
+  return displayOrigin(origin)
+}
+
+/**
+ * The quiet prompt's words: Chrome's title ("Notifications blocked") over "You usually block
+ * notifications. To let example.com notify you, choose Allow." – the site by its host alone,
+ * and "choose", not "tap", the core's copy being every host's (the desktop's nod on NOT-03) –
+ * then Allow and Keep blocking (the product's own sentence, §9.1; not Chrome's "Continue
+ * blocking"); no Allow once – a notification permission is a site's standing right or nothing.
+ */
+export function quietNotificationPrompt(
+  tabId: string,
+  origin: string,
+  requestedAt: number
+): PermissionPrompt {
+  const site = quietPromptSite(origin)
+  return {
+    id: newId('perm'),
+    tabId,
+    origin,
+    permission: 'notifications',
+    message: 'Notifications blocked',
+    detail: `You usually block notifications. To let ${site} notify you, choose Allow.`,
+    allowLabel: 'Allow',
+    blockLabel: 'Keep blocking',
+    allowOnce: false,
+    requestedAt,
+    quiet: true
+  }
+}
+
+/**
  * Web Notifications on a host whose engine hides `Notification` from pages (the Android
  * WebView): the page script's polyfill posts what a page asks, the core answers from the
  * shared permission model – the `notifications` content setting, prompted through the same
@@ -35,18 +93,42 @@ export const MAX_LIVE_PER_ORIGIN = 20
  */
 export class WebNotificationService {
   private readonly live = new Map<string, LiveNotification>()
+  /**
+   * The sites whose notification prompt the user dismissed this session – "not now" – which
+   * ask quietly from then on (Chrome's rule); a site answered Allow or Block leaves the set,
+   * its question closed either way. Session memory, as the core's own dismissal count is.
+   */
+  private readonly dismissedSites = new Set<string>()
+  /** The quiet prompt up for a tab, by tab: a second quiet request while one is up joins it. */
+  private readonly quietPending = new Map<string, Promise<boolean>>()
 
   constructor(private readonly browser: Browser) {
     // A site's permission withdrawn (Settings, the site sheet, a reset): its notifications and
-    // its channel go, and the pages of the site learn their new status.
+    // its channel go, and the pages of the site learn their new status. A rule changed by hand
+    // is a fresh start for the site's question too: the quiet mark a dismissal left goes with
+    // it, so a site reset in Settings asks aloud again, not quietly for the rest of the session.
     browser.permissions.subscribe((change) => {
       if (change.permission !== 'notifications') return
       if (change.origin !== null) {
+        this.dismissedSites.delete(change.origin)
         const decision = browser.permissions.resolve('notifications', change.origin)
         if (decision !== 'allow') this.forgetOrigin(change.origin)
       }
       this.pushStatuses(change.origin)
     })
+    // The prompts' answers, for the quiet rule: a dismissed notification prompt marks its site;
+    // Allow or Block clears the mark. A withdrawn prompt (null) says nothing of the user.
+    browser.permissionPrompts.onAnswered((prompt, answer) => {
+      if (prompt.permission !== 'notifications' || prompt.quiet) return
+      if (answer === 'dismiss') this.dismissedSites.add(prompt.origin)
+      else if (answer === 'allow' || answer === 'block') this.dismissedSites.delete(prompt.origin)
+    })
+  }
+
+  /** Whether the site of `url` asks quietly now: its prompt was dismissed before this session. */
+  dismissedBefore(url: string): boolean {
+    const origin = permissionSite(url)
+    return origin !== null && this.dismissedSites.has(origin)
   }
 
   /** What `Notification.permission` reads in the page of `tabId` at `url`. */
@@ -73,7 +155,12 @@ export class WebNotificationService {
         })
         return
       case 'request':
-        void this.request(tabId, url, typeof request.id === 'string' ? request.id : null)
+        void this.request(
+          tabId,
+          url,
+          typeof request.id === 'string' ? request.id : null,
+          typeof request.gesture === 'boolean' ? request.gesture : undefined
+        )
         return
       case 'show':
         void this.show(tabId, url, request)
@@ -88,13 +175,26 @@ export class WebNotificationService {
     }
   }
 
-  private async request(tabId: string, url: string, requestId: string | null): Promise<void> {
+  private async request(
+    tabId: string,
+    url: string,
+    requestId: string | null,
+    gesture: boolean | undefined
+  ): Promise<void> {
     const tab = this.browser.tabs.tab(tabId)
+    const origin = permissionSite(url)
     let status: NotificationPermissionStatus
-    if (!tab || this.browser.tabs.isPrivate(tab) || !permissionSite(url)) {
+    if (!tab || this.browser.tabs.isPrivate(tab) || !origin) {
       status = 'denied'
     } else {
-      const allowed = await this.browser.permissions.decide('notifications', url, { tabId })
+      const standing = this.browser.permissions.resolve('notifications', url, { tabId })
+      // A question still open asks quietly (NOT-03) when the request has no gesture behind it
+      // or the site was dismissed before: the bell in the pill's slot, not a sheet. A site with
+      // an answer, or a loud request, goes through the permission service as every request does.
+      const allowed =
+        standing === 'ask' && asksQuietly(gesture, this.dismissedSites.has(origin))
+          ? await this.requestQuietly(tabId, url, origin)
+          : await this.browser.permissions.decide('notifications', url, { tabId })
       // The site was allowed: the app's own posting right (Android 13+) is asked for now, so the
       // page's first notification is not the one to trip over the system prompt.
       if (allowed) await this.browser.platform.webNotifications?.ensureAllowed()
@@ -103,6 +203,38 @@ export class WebNotificationService {
     const message: NotificationHostMessage = { type: 'notification', action: 'result', status }
     if (requestId) message.id = requestId
     this.post(tabId, message)
+  }
+
+  /**
+   * The quiet ask: a `quiet` prompt in the chrome's queue – the pill shows it as the bell-off
+   * glyph and opens its sheet from there – answered Allow (remembered for the site) or Keep
+   * blocking (remembered as a block), or withdrawn when the page navigates away; a sheet closed
+   * without a word leaves the bell up, so nothing here counts as a dismissal. One per tab at a
+   * time: requests while it is up share its answer.
+   */
+  private requestQuietly(tabId: string, url: string, origin: string): Promise<boolean> {
+    const pending = this.quietPending.get(tabId)
+    if (pending) return pending
+    const prompt = quietNotificationPrompt(tabId, origin, Date.now())
+    const asked = this.browser.permissionPrompts
+      .show(prompt)
+      .then((answer) => {
+        if (answer === 'allow') {
+          this.dismissedSites.delete(origin)
+          this.browser.permissions.remember('notifications', url, 'allow', { tabId })
+          return true
+        }
+        if (answer === 'block') {
+          this.dismissedSites.delete(origin)
+          this.browser.permissions.remember('notifications', url, 'deny', { tabId })
+        }
+        return false
+      })
+      .finally(() => {
+        this.quietPending.delete(tabId)
+      })
+    this.quietPending.set(tabId, asked)
+    return asked
   }
 
   private async show(tabId: string, url: string, request: NotificationPageRequest): Promise<void> {
