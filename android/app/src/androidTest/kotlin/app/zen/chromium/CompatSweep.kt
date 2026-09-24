@@ -5233,15 +5233,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * sweep's own whose worker installs one session rule at start, `urlFilter: '*'` over every
      * resource type – and the core check sideloads the second fixture, whose options page
      * (`open_in_tab`) carries its own stylesheet, script and image and asks the fixture server
-     * for one image. Read, in order: the rule from the blocker's worker (`getSessionRules` 1) and
-     * on the web (a fixture page opened in a tab lands on the Zenium blocked page: the rule is in
-     * force); the options page opened in a tab, its document rendered, its own subresources
-     * loaded (the stylesheet applied, the script run, the image drawn) while the web image errors
-     * (`Blocking.intercept`'s 403 for a web request from an extension page); then the rule
-     * removed and the page reloaded, the web image loads (the block was the rule's). `P` on the
+     * for one `fetch` and one image. Read, in order: the rule from the blocker's worker
+     * (`getSessionRules` 1) and on the web (a fixture page opened in a tab lands on the Zenium
+     * blocked page: the rule is in force); the options page opened in a tab, its document
+     * rendered, its own subresources loaded (the stylesheet applied, the script run, the image
+     * drawn) while the web fetch fails (`Blocking.intercept`'s 403 for a web request from an
+     * extension page, a `TypeError` to a cross-origin fetch); then the rule removed and the page
+     * reloaded, the fetch answers 200 (the failure was the rule's). The web image is read and
+     * recorded, not graded: its host is an IP literal, and Blink blocks optionally-blockable
+     * mixed content on IP-literal hosts whatever the embedder's mixed-content mode, so it errs
+     * with or without the rule (the `PARTIAL` of the first reading, run 36030613491). `P` on the
      * rule in force and the page as described; `F` where the page did not open (a navigation to
      * the extension origin blocked as before #448), a subresource of its own did not load, or the
-     * web image loaded under the rule (the exemption too wide); `n/m` where the second fixture did
+     * web fetch answered under the rule (the exemption too wide); `PARTIAL` where the fetch failed
+     * under the rule and did not answer 200 without it either; `n/m` where the second fixture did
      * not install. Both fixtures are the sweep's, disabled and left as any row's at the end.
      */
     private fun ownPagesExempt(row: Row, entry: JSONObject): Grade {
@@ -5318,11 +5323,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         val ruleOn = rule.isNull("error") && rule.optInt("session", 0) >= 1
         val ownLoaded = report != null && report.optBoolean("script") && report.optBoolean("css") && report.optString("ownImage") == "loaded"
-        val webImage = report?.optString("webImage") ?: "not read"
+        val webFetch = report?.optString("webFetch") ?: "not read"
+        // A web request from the page refused: the intercept's 403 (no CORS headers on it, so a
+        // cross-origin fetch sees a TypeError) or any answer that is not the file.
+        val webFetchBlocked = webFetch.startsWith("error:") || (webFetch.startsWith("status ") && webFetch != "status 200")
+        val controlFetch = control?.optString("webFetch") ?: "not read"
         val note = "session rules ${rule.optInt("session", -1)}${rule.optString("error").takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: ""}; " +
             "a fixture page in a tab under the rule: \"${webTitle ?: "no view"}\"; the options page ${if (optionsTab != null) "opened in a tab" else "did not open in a tab"}" +
-            (report?.let { ": stylesheet ${if (it.optBoolean("css")) "applied" else "missing"}, script ${if (it.optBoolean("script")) "run" else "not run"}, own image ${it.optString("ownImage")}, web image ${it.optString("webImage")}" } ?: "") +
-            (control?.let { "; the rule removed and the page reloaded: web image ${it.optString("webImage")}" } ?: (removed?.optString("error")?.takeIf { it.isNotEmpty() }?.let { "; the rule's removal: $it" } ?: ""))
+            (report?.let { ": stylesheet ${if (it.optBoolean("css")) "applied" else "missing"}, script ${if (it.optBoolean("script")) "run" else "not run"}, own image ${it.optString("ownImage")}, web fetch ${it.optString("webFetch")}, web image ${it.optString("webImage")} (an IP-literal host: mixed content the engine blocks whatever the mode, not graded)" } ?: "") +
+            (control?.let { "; the rule removed and the page reloaded: web fetch ${it.optString("webFetch")}, web image ${it.optString("webImage")}" } ?: (removed?.optString("error")?.takeIf { it.isNotEmpty() }?.let { "; the rule's removal: $it" } ?: ""))
         return when {
             page.ext == null -> Grade("n/m", "the second fixture did not install (${page.note}); $note", extra)
             !ruleOn -> Grade("F", "the blocker's session rule is not in force: $note", extra)
@@ -5330,10 +5339,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             optionsTab == null -> Grade("F", "the options page did not open in a tab under the rule (a navigation to the extension's own origin blocked, or nothing opened): $note", extra)
             report == null -> Grade("F", "the options page opened but its script never reported (the document or its script did not load under the rule): $note", extra)
             !ownLoaded -> Grade("F", "a subresource of the extension's own did not load under the rule: $note", extra)
-            webImage != "error" -> Grade("F", "the web image ${webImage} from the extension page under the block-everything rule: the rule did not reach the page's web request: $note", extra)
-            // The web image erred under the rule; that it loads without the rule is what makes the error the rule's.
-            control?.optString("webImage") != "loaded" -> Grade("PARTIAL", "the extension's own page loaded whole under a rule that blocks every request, and its web image erred – but the image did not load without the rule either (${control?.optString("webImage") ?: "the control not read"}), so the error is not told from the lane's own handling of the page's plain-http image: $note", extra)
-            else -> Grade("P", "the extension's own page loaded whole under a rule that blocks every request, and its web request was blocked (the same image loaded once the rule was removed): $note", extra)
+            !webFetchBlocked -> Grade("F", "the web fetch from the extension page under the block-everything rule answered ${webFetch}: the rule did not reach the page's web request: $note", extra)
+            // The fetch failed under the rule; that it answers without the rule is what makes the failure the rule's.
+            controlFetch != "status 200" -> Grade("PARTIAL", "the extension's own page loaded whole under a rule that blocks every request, and its web fetch failed – but the fetch did not answer without the rule either ($controlFetch), so the failure is not told from the lane's own: $note", extra)
+            else -> Grade("P", "the extension's own page loaded whole under a rule that blocks every request, and its web request was blocked (the same fetch answered 200 once the rule was removed): $note", extra)
         }
     }
 
@@ -8345,25 +8354,32 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
         /**
          * The #448 proof's page owner ([ownPagesExempt]): an options page in a tab with its own
-         * stylesheet, script and image, and one image from the fixture server; the script reports
-         * each load on `window.__zenProof`.
+         * stylesheet, script and image, one `fetch` of the fixture server (its `/cors/` route, so
+         * the answer is readable across origins) and one image from it; the script reports each
+         * load on `window.__zenProof`. The fetch is the web request the proof grades: an image on
+         * an IP-literal host is mixed content Blink blocks whatever the embedder's mode (its
+         * optionally-blockable branch reads `!strict_mode && !is_ip_address`), so the image's error
+         * says nothing about the rule, while a `fetch` is blockable content the tab's
+         * `MIXED_CONTENT_ALWAYS_ALLOW` for extension documents lets through.
          */
         private const val PROOF_PAGE_NAME = "Zenium compat proof: own pages"
         private val PROOF_PAGE_ID = fixtureId(PROOF_PAGE_NAME)
         private val PROOF_PAGE_FILES: Map<String, String> = mapOf(
-            "manifest.json" to """{"manifest_version":3,"name":"$PROOF_PAGE_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: an extension page with its own subresources and one web image.","options_ui":{"page":"options.html","open_in_tab":true}}""",
+            "manifest.json" to """{"manifest_version":3,"name":"$PROOF_PAGE_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: an extension page with its own subresources, one web fetch and one web image.","options_ui":{"page":"options.html","open_in_tab":true}}""",
             "options.html" to
                 "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Zenium compat proof: own pages</title>" +
                 "<link rel=\"stylesheet\" href=\"options.css\"><script src=\"options.js\" defer></script></head>" +
                 "<body><h1>An extension's own page under a rule that blocks every request</h1><p id=\"status\">reading\u2026</p><div id=\"images\"></div></body></html>",
             "options.css" to "body{font:16px system-ui,sans-serif;margin:24px;background:#eef;color:#123}h1{font-size:20px}img{display:block;margin:8px 0;width:64px;height:64px;border:1px solid #89a}",
             "options.js" to
-                "(function(){var p=window.__zenProof={done:false,script:true,css:false,ownImage:'pending',webImage:'pending',webUrl:null,error:null};\n" +
-                "function settle(){if(p.ownImage==='pending'||p.webImage==='pending')return;p.css=getComputedStyle(document.body).backgroundColor==='rgb(238, 238, 255)';p.done=true;" +
-                "document.getElementById('status').textContent='own image '+p.ownImage+', web image '+p.webImage+', stylesheet '+(p.css?'applied':'missing')}\n" +
+                "(function(){var p=window.__zenProof={done:false,script:true,css:false,ownImage:'pending',webFetch:'pending',webFetchUrl:null,webImage:'pending',webUrl:null,error:null};\n" +
+                "function settle(){if(p.ownImage==='pending'||p.webFetch==='pending'||p.webImage==='pending')return;p.css=getComputedStyle(document.body).backgroundColor==='rgb(238, 238, 255)';p.done=true;" +
+                "document.getElementById('status').textContent='own image '+p.ownImage+', web fetch '+p.webFetch+', web image '+p.webImage+', stylesheet '+(p.css?'applied':'missing')}\n" +
                 "function img(src,key){var i=document.createElement('img');i.alt=key;i.onload=function(){p[key]='loaded';settle()};i.onerror=function(){p[key]='error';settle()};i.src=src;document.getElementById('images').appendChild(i)}\n" +
                 "img('own.svg?t='+Date.now(),'ownImage');p.webUrl='$BASE/pixel.png?proof='+Date.now();img(p.webUrl,'webImage');\n" +
-                "setTimeout(function(){if(!p.done){if(p.ownImage==='pending')p.ownImage='timeout';if(p.webImage==='pending')p.webImage='timeout';settle()}},15000)})();\n",
+                "p.webFetchUrl='$BASE/cors/pixel.png?proof='+Date.now();\n" +
+                "try{fetch(p.webFetchUrl,{cache:'no-store'}).then(function(r){p.webFetch='status '+r.status;settle()},function(e){p.webFetch='error: '+String(e&&e.message||e);settle()})}catch(e){p.webFetch='threw: '+String(e&&e.message||e);settle()}\n" +
+                "setTimeout(function(){if(!p.done){if(p.ownImage==='pending')p.ownImage='timeout';if(p.webFetch==='pending')p.webFetch='timeout';if(p.webImage==='pending')p.webImage='timeout';settle()}},15000)})();\n",
             "own.svg" to "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#3a6\"/><circle cx=\"32\" cy=\"32\" r=\"18\" fill=\"#fff\"/></svg>"
         )
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
