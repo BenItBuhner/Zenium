@@ -870,7 +870,9 @@ function RecentlyClosed({
               {selecting && <span className="zen-page-row-check" aria-hidden />}
               <span className="zen-page-row-lead" aria-hidden>
                 {entry.kind === 'window' ? (
-                  <AppWindow className="zen-page-row-favicon zen-page-row-favicon-fallback" />
+                  // The window is the row's subject, not a stand-in for a favicon: the row's
+                  // ink, as a page tab's registry glyph in the slot (§10.4).
+                  <AppWindow className="zen-page-row-favicon zen-page-row-glyph" />
                 ) : (
                   <FaviconImage src={entry.favicon} url={entry.url} />
                 )}

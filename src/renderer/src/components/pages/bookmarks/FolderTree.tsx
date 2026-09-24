@@ -32,8 +32,9 @@ const INDENT = 16
 /**
  * The manager's folder column (v2 §10.5, the Settings nav's rows): folders only, the roots
  * first, each row 34 tall edge to edge in the column – a 20 twisty round a 16 chevron that turns
- * down while the folder is open, the 16 folder glyph in the deemphasised ink (the bar's chips'
- * folder), the name 15/400 – the shown folder on `--v2-nav-active` with the 3 px accent bar
+ * down while the folder is open, the 16 folder glyph in the row's ink (the bar's chips' folder;
+ * a leading glyph is full ink like its label, §10.4), the name 15/400 – the shown folder on
+ * `--v2-nav-active` with the 3 px accent bar
  * down the column's edge, a folder a drag hovers with the drop-into outline (§9.4). The
  * ancestors of the shown folder stay open so it is always in view.
  *
