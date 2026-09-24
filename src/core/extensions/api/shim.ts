@@ -638,6 +638,8 @@ export function installExtensionApi(
     /** Filter set id → its `UrlFilter`s, for deliveries the host could not match (`EventDelivery.url`). */
     filters: Map<number, Record<string, unknown>[]>
     pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery; after?: After }>
+    /** Delivers `pending` to the listeners in a task of its own (once per batch). */
+    drain: () => void
     nativeDelivers: boolean
     /** With `nativeDelivers`: which host deliveries the engine already made (dropped here). */
     nativeHandles: (args: unknown[]) => boolean
@@ -789,6 +791,7 @@ export function installExtensionApi(
       listeners,
       filters: new Map(),
       pending: [],
+      drain: () => scheduleDrain(),
       nativeDelivers: options.nativeDelivers && Boolean(native),
       nativeHandles: options.nativeHandles ?? (() => true)
     }
@@ -807,6 +810,32 @@ export function installExtensionApi(
       nativeProxies.set(fn, proxy)
       return proxy
     }
+    // Events that arrived before any listener existed reach the listeners in a task of their
+    // own, once the script that registers them has run: Chrome dispatches a worker's wake-up
+    // event after the worker's evaluation, so every listener the script adds at its top level
+    // sees it, and none is called from inside its own `addListener`, before the module state its
+    // body reads exists (Rabby's alarm listeners read a store its async boot fills later).
+    let drainScheduled = false
+    const scheduleDrain = (): void => {
+      if (drainScheduled || record.pending.length === 0) return
+      drainScheduled = true
+      setTimeout(() => {
+        drainScheduled = false
+        if (listeners.size === 0) return
+        const now = Date.now()
+        const queued = record.pending.splice(0)
+        for (const item of queued) {
+          if (now - item.at > PENDING_TTL) continue
+          const results: unknown[] = []
+          for (const [fn, filterId] of [...listeners]) {
+            // A filtered listener registered after the host matched receives what the host
+            // addressed to everyone, and what it sent with the URL when it could not match.
+            if (wants(record, filterId, item.delivery)) callListener(fn, item.args, results)
+          }
+          item.after?.(results)
+        }
+      }, 0)
+    }
     const object: EventObject = {
       addListener(fn: unknown, ...rest: unknown[]): void {
         if (!isFunction(fn) || listeners.has(fn)) return
@@ -822,20 +851,7 @@ export function installExtensionApi(
           listeners.set(fn, null)
           if (first) host.notify('listen', { event: fullName })
         }
-        if (record.pending.length > 0) {
-          const now = Date.now()
-          const queued = record.pending.splice(0)
-          const filterId = listeners.get(fn) ?? null
-          for (const item of queued) {
-            if (now - item.at > PENDING_TTL) continue
-            // A filtered listener registered after the host matched receives what the host
-            // addressed to everyone, and what it sent with the URL when it could not match.
-            if (!wants(record, filterId, item.delivery)) continue
-            const results: unknown[] = []
-            callListener(fn, item.args, results)
-            item.after?.(results)
-          }
-        }
+        scheduleDrain()
       },
       removeListener(fn: unknown): void {
         if (!isFunction(fn)) return
@@ -893,7 +909,7 @@ export function installExtensionApi(
     if (!record) return
     // The engine already fired this one at our listeners; a second delivery would duplicate it.
     if (record.nativeDelivers && record.nativeHandles(args)) return
-    if (record.listeners.size > 0) {
+    if (record.listeners.size > 0 && record.pending.length === 0) {
       const results: unknown[] = []
       for (const [fn, filterId] of [...record.listeners]) {
         if (wants(record, filterId, delivery)) callListener(fn, args, results)
@@ -901,6 +917,7 @@ export function installExtensionApi(
       after?.(results)
       return
     }
+    // No listener yet, or earlier deliveries still wait for their task: queue behind them.
     const now = Date.now()
     record.pending = record.pending.filter((p) => now - p.at <= PENDING_TTL)
     if (record.pending.length < 50) {
@@ -909,6 +926,7 @@ export function installExtensionApi(
       if (after) item.after = after
       record.pending.push(item)
     }
+    if (record.listeners.size > 0) record.drain()
   }
 
   /**
