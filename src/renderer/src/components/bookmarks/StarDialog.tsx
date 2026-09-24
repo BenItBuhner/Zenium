@@ -5,7 +5,6 @@ import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import {
   ChromePortal,
-  POPOVER_MARGIN,
   POPOVER_WIDTH,
   placePopover,
   popoverStyle,
@@ -15,6 +14,7 @@ import {
 } from '@renderer/lib/portals'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { isPrivateWindow } from '@renderer/lib/selectors'
+import { starSeat, type StarSeat } from '@renderer/lib/starSeat'
 import { browserStore, closeBookmarkChrome } from '@renderer/lib/ui'
 import { V2Button, V2Field, V2FormField, V2TitleBlock } from '../extensions/v2'
 import { FolderField } from './FolderField'
@@ -26,7 +26,11 @@ export interface StarTarget {
   tabId: string
   nodeId: string
   created: boolean
-  /** The star chip the bubble hangs from; null when the pill is not on screen. */
+  /**
+   * What the bubble hangs from: the star chip, or its seat at the pill's end with the star
+   * folded away, or the ⋯ with no pill on screen (`starSeat`); null when the request arrived
+   * with nothing measured, and the dialog measures the seat itself.
+   */
   anchor: Rect | null
   /** The address pill the chip sits in: the bubble's top edge is the pill's bottom edge. */
   pill: Rect | null
@@ -245,15 +249,10 @@ function StarBubble({
     </>
   )
 
-  // With no pill on screen (compact mode) the bubble stands in the window's top trailing corner.
-  const viewport = viewportSize()
-  const anchor = star.anchor ?? {
-    x: viewport.width - POPOVER_MARGIN - 28,
-    y: 28,
-    width: 28,
-    height: 28
-  }
-  const box = placePopover(anchor, star.pill ?? anchor, viewport, WIDTH)
+  // Hung from the star, or from the star's seat at the pill's end with the star folded away – a
+  // request that arrived with no anchor measured takes the seat as it stands now (`starSeat`).
+  const seat: StarSeat = star.anchor ? { anchor: star.anchor, pill: star.pill } : starSeat()
+  const box = placePopover(seat.anchor, seat.pill ?? seat.anchor, viewportSize(), WIDTH)
 
   return (
     <ChromePortal>
