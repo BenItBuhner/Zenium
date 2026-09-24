@@ -574,7 +574,15 @@ export class TabManager {
         update((t) => {
           // The sad tab keeps the crashed page's title beside its favicon, as Chrome's does.
           if (this.isSadTab(t)) return
-          t.title = title || this.titleFor(t.url)
+          const next = title || this.titleFor(t.url)
+          // A pinned tab's page changing its title while nobody is looking at it – a mail
+          // count, a new message – asks for attention (tabs-11, Chrome's dot on a pinned tab):
+          // the row's favicon wears the dot until the tab is activated. A pinned row shows no
+          // title, so the change would otherwise pass unseen; a regular row's title is its own
+          // telling.
+          if ((t.pinned || t.essential) && next !== t.title && !this.allVisibleTabIds().has(tabId))
+            t.attention = true
+          t.title = next
           if (!this.isPrivate(t)) this.browser.history.updateTitle(t.url, t.title)
         }),
       onFaviconUpdated: (favicons) =>
@@ -1717,6 +1725,8 @@ export class TabManager {
     const previousActive = this.tab(win.selectedTabIn(space))
     win.select(space, tab.id)
     tab.lastActiveAt = Date.now()
+    // In front now: whatever its page changed in the background has been seen (tabs-11).
+    if (tab.attention) delete tab.attention
     // A member in view is the group in use: the Tab groups pane's "last used" (TAB-16). A
     // private member's viewing leaves no trace on the regular profile's group.
     if (tab.folderId && m.folders[tab.folderId] && !this.isPrivate(tab))

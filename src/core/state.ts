@@ -1079,6 +1079,8 @@ export class BrowserState {
           capture: null,
           // A toolbox is a session's own: the key is not written (Android's records never carry it).
           devtools: undefined,
+          // A pinned tab's attention dot is the session's too: seen or not, a restart clears it.
+          attention: undefined,
           errorCode: null,
           // A certificate proceeded past is a decision of the session, not of the tab.
           certificateError: null,

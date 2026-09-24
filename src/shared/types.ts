@@ -475,6 +475,15 @@ export interface Tab {
    * toolbox is up, and absent on hosts without one (Android: `capabilities.devtools` false).
    */
   devtools?: TabDevtools | null
+  /**
+   * A pinned or essential tab whose page changed its title while the tab was not in front
+   * (tabs-11, Chrome's attention indicator on a pinned tab – a mail count, a new message): the
+   * row's favicon wears an accent dot until the tab is activated. Set by the core on the page's
+   * title update (`TabViewEvents.onTitleUpdated`), cleared by `activateTab`; a session's own
+   * (not persisted). Absent on regular tabs and on records older than the field. The desktop's
+   * pinned row and Essentials tile draw it; the phone's chrome reads it or not as it likes.
+   */
+  attention?: true
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**

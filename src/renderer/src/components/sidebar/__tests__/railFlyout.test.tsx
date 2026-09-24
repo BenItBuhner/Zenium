@@ -447,7 +447,7 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     // The glyph where the compact row centred it; the title at the panel row's 10, after the
     // row's 9 gap.
     const glyph = rule(
-      '.zen-rail-flyout[data-flyout-rows]\n    .zen-tab:not(.zen-split-seg)\n    > :is(.zen-tab-favicon, .zen-group-row-glyph),\n  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-new-tab] > svg'
+      '.zen-rail-flyout[data-flyout-rows]\n    .zen-tab:not(.zen-split-seg)\n    > :is(.zen-tab-favicon, .zen-favicon-seat, .zen-group-row-glyph),\n  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-new-tab] > svg'
     )
     expect(glyph).toContain('margin-left: var(--zen-glyph-lead)')
     expect(glyph).toContain(

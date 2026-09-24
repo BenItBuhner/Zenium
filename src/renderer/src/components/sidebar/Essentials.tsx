@@ -13,7 +13,7 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { Favicon } from './Favicon'
+import { FaviconSeat } from './FaviconSeat'
 
 interface Props {
   essentials: Tab[]
@@ -154,7 +154,7 @@ function EssentialTile({
       {dropKey === `tab:${tab.id}:after` && (
         <span className="zen-tab-caret-grid -right-1" aria-hidden />
       )}
-      <Favicon tab={tab} size={20} />
+      <FaviconSeat tab={tab} size={20} />
       {tab.audible && !tab.muted && (
         <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--zen-accent)]" />
       )}

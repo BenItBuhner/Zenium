@@ -46,6 +46,7 @@ import { cn } from '@renderer/lib/utils'
 import { useTabTouch } from '../tablet/useTabTouch'
 import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon } from './Favicon'
+import { FaviconSeat } from './FaviconSeat'
 import { useListMotion } from './listMotion'
 import { useStripAxis } from './stripAxis'
 import { useTabPosition } from './TabSet'
@@ -366,6 +367,9 @@ export function TabItem({
       {masked ? (
         // The private marker in the favicon's slot (§9.19), at the stand-in's 69% (§10.4).
         <VenetianMask className="zen-tab-favicon h-4 w-4 shrink-0 opacity-[0.69]" aria-hidden />
+      ) : tab.pinned || tab.essential ? (
+        // A pinned row's favicon sits in a seat that can wear the attention dot (tabs-11).
+        <FaviconSeat tab={tab} />
       ) : (
         <Favicon tab={tab} />
       )}

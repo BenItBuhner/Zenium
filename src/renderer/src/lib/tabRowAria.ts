@@ -26,8 +26,9 @@ const ALERT_STATE: Record<TabAlert, string> = {
  * The states a row announces, one short word each, what the user cannot otherwise see first:
  * an alert (recording, sharing, a device session – Bluetooth device, USB device, HID device,
  * serial port – picture-in-picture, VR headset), the audio (muted, else playing), the page's
- * sleep (sleeping, else the governor's frozen or throttled), and last that it is pinned. A row
- * under the private lock announces nothing of the page (`masked`).
+ * sleep (sleeping, else the governor's frozen or throttled), a pinned row's attention dot
+ * (updated in the background, tabs-11), and last that it is pinned. A row under the private
+ * lock announces nothing of the page (`masked`).
  */
 export function tabRowStates(tab: Tab, alert: TabAlert | null, masked = false): string[] {
   if (masked) return []
@@ -35,6 +36,7 @@ export function tabRowStates(tab: Tab, alert: TabAlert | null, masked = false): 
   if (alert) states.push(ALERT_STATE[alert])
   if (tab.muted) states.push('muted')
   else if (tab.audible) states.push('playing')
+  if (tab.attention) states.push('updated in the background')
   if (tab.discarded) states.push('sleeping')
   else if (tab.frozen) states.push('frozen')
   else if (tab.cpuThrottle > 1) states.push('throttled')
