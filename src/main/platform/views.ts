@@ -69,6 +69,7 @@ import { defer } from '../../core/platform'
 import { standinScale } from '../../shared/pageStandin'
 import { clientSide, imageDimensions, type PageViewport } from '../../shared/capture'
 import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
+import { HangMonitor } from './hangMonitor'
 import type { PdfRenderOptions } from '../../shared/print'
 import type {
   AgentCapture,
@@ -362,6 +363,26 @@ export class ElectronTabView implements TabView {
   /** Live font changes in flight, one after the other. */
   private fontsTurn: Promise<void> = Promise.resolve()
 
+  /**
+   * Zenium's hang monitor for this page (tabs-45), on duty while the page carries a DevTools
+   * session – Chromium reports no hang for such a page (`hangMonitor.ts` says why) – and stands
+   * on screen in a focused window (`refreshHangWatch`). Its words and Chromium's own
+   * `unresponsive`/`responsive` go through one relay (`relayHang`).
+   */
+  private readonly hangMonitor = new HangMonitor({
+    probe: () => this.hangProbe(),
+    eligible: () => this.hangWatchable(),
+    onHang: (hung) => this.relayHang(hung)
+  })
+  /** Whether a hang of this page's renderer stands reported to the core (`relayHang`). */
+  private hangRelayed = false
+  /**
+   * The session's client paused the renderer at a breakpoint (`Debugger.paused` on the shared
+   * session: an extension's `chrome.debugger`); no answer is due from a paused page, so the
+   * hang monitor stands down until `Debugger.resumed`.
+   */
+  private pausedByDebugger = false
+
   constructor(
     readonly view: WebContentsView,
     private readonly owner: ElectronTabViewHost
@@ -370,7 +391,14 @@ export class ElectronTabView implements TabView {
     this.webContentsId = this.wc.id
     this.view.setVisible(false)
     // A hold of this view's outlives the session (`sessionDetached`).
-    this.wc.debugger?.on?.('detach', () => this.sessionDetached())
+    this.wc.debugger?.on?.('detach', () => {
+      this.pausedByDebugger = false
+      this.sessionDetached()
+    })
+    this.wc.debugger?.on?.('message', (_e, method: string) => {
+      if (method === 'Debugger.paused') this.pausedByDebugger = true
+      else if (method === 'Debugger.resumed') this.pausedByDebugger = false
+    })
     this.wc.on('blur', () => {
       this.keyboardAsked = false
       const win = this.win
@@ -447,14 +475,20 @@ export class ElectronTabView implements TabView {
           : null
       ev.onFailLoad(code, description, url, isCertificateError(code) ? { certificate } : undefined)
     })
-    wc.on('render-process-gone', (_e, details) =>
+    wc.on('render-process-gone', (_e, details) => {
+      // The hang went with the renderer (the core drops its mark with `onCrashed`); the monitor
+      // starts afresh for the renderer the page is reloaded into.
+      this.hangRelayed = false
+      this.hangMonitor.reset()
       ev.onCrashed(this.takeEndedByUser() ? 'ended' : details.reason, details.exitCode)
-    )
-    // Chromium's hang monitor speaks for the contents whose input went unanswered (tabs-45); the
-    // pages sharing that renderer hang with it, so the host tells the core of every one of them,
-    // as Chrome's "Pages unresponsive" lists them – and of every one answering again.
-    wc.on('unresponsive', () => this.owner.rendererHung(this, true))
-    wc.on('responsive', () => this.owner.rendererHung(this, false))
+    })
+    // Chromium's hang monitor speaks for the contents whose input went unanswered (tabs-45) –
+    // for a page with no DevTools session on it; Zenium's own (`hangMonitor`) for one with –
+    // and both through one relay. The pages sharing that renderer hang with it, so the host
+    // tells the core of every one of them, as Chrome's "Pages unresponsive" lists them – and of
+    // every one answering again.
+    wc.on('unresponsive', () => this.relayHang(true))
+    wc.on('responsive', () => this.relayHang(false))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
     wc.on('media-started-playing', () => ev.onMediaStateChanged(true))
     wc.on('media-paused', () => ev.onMediaStateChanged(false))
@@ -536,6 +570,7 @@ export class ElectronTabView implements TabView {
     // By the time this fires `this.view.webContents` no longer returns the object (Electron drops
     // the view's reference before emitting), which is why the captured `wc` is used throughout.
     wc.on('destroyed', () => {
+      this.hangMonitor.dispose()
       ev.onDestroyed()
       this.owner.forget(id)
     })
@@ -827,6 +862,74 @@ export class ElectronTabView implements TabView {
     else this.events.onResponsive?.()
   }
 
+  /**
+   * One relay for the two monitors' words on this page's renderer: Chromium's, for a page with
+   * no DevTools session (`unresponsive`/`responsive`), and Zenium's (`hangMonitor`), for a page
+   * with one – never both at once, since each speaks only where the other does not. A hang is
+   * passed on every time it is said: said again after Chromium's delay it is the prompt back
+   * after Wait, and the core's mark takes a repeat as it stands. `responsive` answers a hang
+   * reported; without one it is Chromium's word on a hang it never reported (a session was on
+   * the page when its input went unanswered), and nothing to the core.
+   */
+  private relayHang(hung: boolean): void {
+    if (this.wc.isDestroyed()) return
+    if (!hung && !this.hangRelayed) return
+    this.hangRelayed = hung
+    this.owner.rendererHung(this, hung)
+  }
+
+  /**
+   * Whether Zenium's hang monitor is the one to speak for this page right now: it carries a
+   * DevTools session (with none, Chromium reports the hang itself) that is not paused at a
+   * breakpoint, and no toolbox is open on it – the toolbox's user pauses the page at will, a
+   * breakpoint is no hang, and Chrome shows no prompt for a page under DevTools either.
+   */
+  private hangWatchable(): boolean {
+    const wc = this.wc
+    if (wc.isDestroyed() || this.pausedByDebugger) return false
+    return wc.debugger.isAttached() && !wc.isDevToolsOpened()
+  }
+
+  /**
+   * The monitor's probe: the cheapest thing the renderer's main thread must answer. Over the
+   * page's session when it is Zenium's – `Runtime.evaluate` of a literal, by value, enables no
+   * domain and leaves nothing attached to the page's contexts – and through the main frame's
+   * own `executeJavaScript` (a literal: nothing of the page's is read or written) when the
+   * session is an extension's, whose agent state is not ours to touch. The frame's call, not
+   * `webContents.executeJavaScript`: that one waits for the page to stop loading first, and a
+   * slow load is no hang. A hung renderer answers neither; the monitor's timeout is the
+   * detector.
+   */
+  private hangProbe(): Promise<unknown> {
+    const wc = this.wc
+    if (wc.isDestroyed()) return Promise.reject(new Error('The page is gone'))
+    const dbg = wc.debugger
+    if (dbg.isAttached() && !hasForeignDebuggerOwner(wc.id))
+      return dbg.sendCommand('Runtime.evaluate', { expression: '1', returnByValue: true })
+    return wc.mainFrame.executeJavaScript('1')
+  }
+
+  /**
+   * Whether the hang monitor watches this page: on screen in a focused window – Chromium
+   * reports no hang for a page that does not show, and the prompt belongs to the window
+   * looking at the page. Read again on every flip of either (`setVisible`, the window's
+   * focus, `attachTo`).
+   */
+  private refreshHangWatch(): void {
+    const win = this.win
+    this.hangMonitor.setActive(this.visible && win !== null && win.isFocused())
+  }
+
+  /** Whether the view is a child of `win` (its window's focus is this page's to follow). */
+  inWindow(win: BrowserWindow): boolean {
+    return this.win === win
+  }
+
+  /** The window this view is in gained or lost the focus (`ElectronTabViewHost.watchFocus`). */
+  windowFocusChanged(): void {
+    this.refreshHangWatch()
+  }
+
   /** The OS process of this page's renderer, for the pages that share it; null when it has none. */
   rendererProcess(): number | null {
     return this.rendererPid()
@@ -967,13 +1070,16 @@ export class ElectronTabView implements TabView {
     const win = this.win
     if (!win) return
     this.owner.watchKeyboard(win)
+    this.owner.watchFocus(win)
     win.contentView.addChildView(this.view)
+    this.refreshHangWatch()
   }
 
   detach(): void {
     const win = this.win
     if (win) win.contentView.removeChildView(this.view)
     this.host = null
+    this.refreshHangWatch()
   }
 
   setBounds(rect: Rect): void {
@@ -994,7 +1100,10 @@ export class ElectronTabView implements TabView {
     const flipped = this.visible !== visible
     this.visible = visible
     this.view.setVisible(visible)
-    if (flipped) this.owner.visibilityChanged(this)
+    if (flipped) {
+      this.refreshHangWatch()
+      this.owner.visibilityChanged(this)
+    }
   }
 
   isVisible(): boolean {
@@ -2345,6 +2454,8 @@ export class ElectronTabViewHost implements TabViewHost {
   /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
   private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
+  /** Windows whose focus the pages' hang monitors follow (`watchFocus`). */
+  private readonly focusWatched = new WeakSet<BrowserWindow>()
 
   constructor(
     private readonly sessions: SessionManager,
@@ -2383,6 +2494,23 @@ export class ElectronTabViewHost implements TabViewHost {
     if (this.keyboardWatched.has(win)) return
     this.keyboardWatched.add(win)
     win.webContents.on('blur', () => this.keyboardLeft(win, win.webContents))
+  }
+
+  /**
+   * Follow the window's focus for the hang monitors of the pages in it (one listener per window,
+   * whatever the number of pages): a page is watched for a hang only while its window is the
+   * focused one, the prompt being that window's.
+   */
+  watchFocus(win: BrowserWindow): void {
+    if (this.focusWatched.has(win)) return
+    this.focusWatched.add(win)
+    const refresh = (): void => {
+      for (const view of this.byWebContentsId.values()) {
+        if (view.inWindow(win)) view.windowFocusChanged()
+      }
+    }
+    win.on('focus', refresh)
+    win.on('blur', refresh)
   }
 
   keyboardLeft(win: BrowserWindow, contents: WebContents): void {

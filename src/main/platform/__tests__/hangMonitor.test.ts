@@ -281,29 +281,54 @@ describe('HangMonitor', () => {
     monitor.dispose()
   })
 
-  it('reset (the renderer gone) drops the hang without a word, and the stale probe’s outcome counts for nothing', async () => {
+  it('a miss landing while the page is not eligible (the session away for a moment) is nobody’s: the count starts afresh from it', async () => {
+    const page = new FakePage()
+    const monitor = new HangMonitor(page)
+    monitor.setActive(true)
+    await advance(HANG_PING_MS + HANG_PROBE_TIMEOUT_MS)
+    expect(page.probes).toHaveLength(2)
+    // The session goes and is back within the second probe's time (a hold re-attaching).
+    page.eligibleNow = false
+    await advance(HANG_PROBE_TIMEOUT_MS)
+    const missed = Date.now()
+    page.eligibleNow = true
+    expect(page.words).toEqual([])
+    // Asked again at the idle pace; reported a full delay of misses after the one that was nobody's.
+    await advance(HUNG_AT - SECOND)
+    expect(page.words).toEqual([])
+    await advance(SECOND)
+    expect(page.words).toEqual([[true, missed + HUNG_AT]])
+    monitor.dispose()
+  })
+
+  it('reset (the renderer gone) drops the hang without a word, and whatever the old renderer’s probes come back with counts for nothing', async () => {
     const page = new FakePage()
     const monitor = new HangMonitor(page)
     monitor.setActive(true)
     await advance(HUNG_AT + SECOND)
     expect(monitor.isHung).toBe(true)
-    const stale = page.probes.length
+    const old = page.probes.length
+    const gone = Date.now()
     monitor.reset()
     expect(monitor.isHung).toBe(false)
     expect(page.words).toHaveLength(1)
-    // The stale probe's timeout passes: no miss counted; the new renderer is asked afresh.
+    // The probe out at the reset runs out: no miss counted; the new renderer is asked afresh.
     await advance(HANG_PROBE_TIMEOUT_MS)
     expect(page.words).toHaveLength(1)
-    expect(page.probes.length).toBe(stale + 1)
-    // The stale probe answering is no word either …
-    page.probes[stale - 1]!.answer()
+    expect(page.probes.length).toBe(old + 1)
+    // The old renderer's probes answering – the one out at the reset, the ones written off
+    // before it – is no word, and no answer moving the new count either …
+    for (const probe of page.probes.slice(0, old)) probe.answer()
     await advance(0)
     expect(page.words).toHaveLength(1)
-    // … and the new count needs a full delay of misses.
-    await advance(HANG_PROBE_TIMEOUT_MS)
+    // … which needs a full delay of misses from the reset.
+    await advance(gone + HUNG_AT - Date.now() - SECOND)
     expect(page.words).toHaveLength(1)
-    await advance(HANG_PROBE_TIMEOUT_MS)
-    expect(page.words).toHaveLength(2)
+    await advance(SECOND)
+    expect(page.words).toEqual([
+      [true, HUNG_AT],
+      [true, gone + HUNG_AT]
+    ])
     monitor.dispose()
   })
 

@@ -63,8 +63,8 @@ export interface HangMonitorPage {
 interface Probe {
   /** Settled one way: answered, or written off at its timeout. */
   done: boolean
-  /** Sent to a renderer since gone (`reset`) or a page since dropped (`dispose`): whatever comes back is nothing. */
-  stale: boolean
+  /** The renderer it went to (`HangMonitor.renderer`): whatever comes back from one since gone is nothing. */
+  renderer: number
   cancelTimeout: () => void
 }
 
@@ -76,6 +76,8 @@ export class HangMonitor {
   private lastAnswerAt: number
   private lastReportAt = 0
   private disposed = false
+  /** Which renderer the probes go to, counted up as one goes (`reset`). */
+  private renderer = 0
   /** The scheduled ping's cancel; null when none is due. */
   private cancelPing: (() => void) | null = null
   /** The unexpired probe in flight; null between probes. */
@@ -117,14 +119,15 @@ export class HangMonitor {
 
   /**
    * The renderer is gone (crashed, ended): no hang stands, nothing is said – the core drops its
-   * mark with the renderer – and a probe still out is stale. The watch goes on for the renderer
-   * to come (the page in front is reloaded into a new one).
+   * mark with the renderer – and every probe sent to it, out or written off, is nothing now.
+   * The watch goes on for the renderer to come (the page in front is reloaded into a new one).
    */
   reset(): void {
     if (this.disposed) return
     this.hung = false
     this.misses = 0
     this.lastAnswerAt = this.clock.now()
+    this.renderer += 1
     this.writeOff()
     this.unschedule()
     if (this.active) this.schedule(HANG_PING_MS)
@@ -141,7 +144,6 @@ export class HangMonitor {
     const probe = this.probe
     if (!probe) return
     probe.done = true
-    probe.stale = true
     probe.cancelTimeout()
     this.probe = null
   }
@@ -176,7 +178,7 @@ export class HangMonitor {
   }
 
   private send(): void {
-    const probe: Probe = { done: false, stale: false, cancelTimeout: () => undefined }
+    const probe: Probe = { done: false, renderer: this.renderer, cancelTimeout: () => undefined }
     this.probe = probe
     let asked: Promise<unknown>
     try {
@@ -193,7 +195,7 @@ export class HangMonitor {
 
   /** The renderer answered – in time, or late after the probe was written off: it moves. */
   private answered(probe: Probe): void {
-    if (this.disposed || probe.stale) return
+    if (this.disposed || probe.renderer !== this.renderer) return
     if (probe.done && this.probe !== null) {
       // A written-off probe answering while a newer one is out: the newer one's own answer, or
       // miss, carries the loop on – but the renderer did just move.
@@ -239,7 +241,13 @@ export class HangMonitor {
       this.ping()
       return
     }
-    // A hang reported, the page since hidden or its session gone: asked on, at the idle pace.
+    if (this.active) {
+      // On screen but not this monitor's to judge at the moment (the session gone, the toolbox
+      // open): the miss is nobody's, and the count starts afresh when it is on duty again.
+      this.misses = 0
+      this.lastAnswerAt = now
+    }
+    // Off screen with a hang reported, or not on duty: asked on at the idle pace.
     this.schedule(HANG_PING_MS)
   }
 
