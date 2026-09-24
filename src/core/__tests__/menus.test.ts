@@ -461,6 +461,7 @@ const DESKTOP_APP_MENU = [
   'More Tools > Change Theme…',
   'More Tools > -',
   'More Tools > Resources',
+  'More Tools > Task Manager',
   'More Tools > Developer Tools',
   'More Tools > Dock to Bottom',
   'More Tools > Dock to Right',
@@ -500,6 +501,7 @@ const DESKTOP_ONLY = [
   'More Tools > Compact Mode',
   'More Tools > Split View',
   'More Tools > Name Window…',
+  'More Tools > Task Manager',
   'Zoom > Fullscreen',
   'Quit'
 ]
@@ -759,10 +761,10 @@ describe('the app menu', () => {
     expect(everywhere).not.toContain('Take Screenshot')
     expect(everywhere).not.toContain('Capture Full Page')
     expect(desktopMenu).toContain('Save and Share > Web Capture…')
-    // More Tools: two rows and a separator fewer than the row had – eight of its own, the four
-    // dock rows after them, two separators.
+    // More Tools: two rows and a separator fewer than the row had – nine of its own (the
+    // desktop's Task Manager among them, W5-8), the four dock rows after them, two separators.
     const moreTools = item(desktop.shown(), 'More Tools').submenu!
-    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(12)
+    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(13)
     expect(separators(moreTools)).toBe(2)
     // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
     // in their own group before the resources.
@@ -878,10 +880,12 @@ describe('the app menu', () => {
     // capture's overlay is the desktop chrome's, so its row is too – which is why the tablet's
     // More Tools keeps Take Screenshot and Capture Full Page, the rows the desktop folded into
     // it; Name Window… names an OS title bar the tablet's one window does not have.
+    // The task manager is a page tab of the desktop layout alone (`internalPages.ts`).
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
         label !== 'More Tools > Name Window…' &&
+        label !== 'More Tools > Task Manager' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Save and Share > Web Capture…'
     )
@@ -1146,6 +1150,34 @@ describe('the app menu', () => {
     deepItem(tablet.shown(), 'Keyboard Shortcuts').click?.()
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://settings/shortcuts')
     expect(tablet.sent).not.toContain('overlay.open')
+  })
+
+  it('seats Task Manager in More Tools before Developer Tools on the desktop alone, opening the zen://tasks page tab (shortcuts-menus-121)', () => {
+    const desktop = pageHarness({ ...DESKTOP, pageTabs: true })
+    const menu = appMenu(desktop)
+    const tools = menu.filter((l) => l.startsWith('More Tools > ') && l !== 'More Tools > -')
+    expect(tools.indexOf('More Tools > Task Manager')).toBe(
+      tools.indexOf('More Tools > Developer Tools') - 1
+    )
+    expect(tools.indexOf('More Tools > Task Manager')).toBe(
+      tools.indexOf('More Tools > Resources') + 1
+    )
+    const row = deepItem(desktop.shown(), 'Task Manager')
+    // The row's action is the shortcut's (Shift+Esc), so the menu shows its keys.
+    expect(row.action).toBe('tasks.open')
+    expect(row.enabled).not.toBe(false)
+    row.click?.()
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe('zen://tasks')
+    // A second press goes back to the one task manager (a singleton page), opening no other.
+    const before = Object.keys(desktop.browser.state.model.tabs).length
+    appMenu(desktop)
+    deepItem(desktop.shown(), 'Task Manager').click?.()
+    expect(Object.keys(desktop.browser.state.model.tabs).length).toBe(before)
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe('zen://tasks')
+
+    // Not a tablet's row: the page is the desktop layout's (`internalPages.ts` layouts).
+    expect(appMenu(harness(DESKTOP, 'tablet'))).not.toContain('More Tools > Task Manager')
+    expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Task Manager')
   })
 
   it('offers Text Preferences… under Reader View while a reader page is open, on both hosts', () => {
