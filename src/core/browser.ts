@@ -1576,8 +1576,10 @@ export class Browser {
   }
 
   /**
-   * The pages below the given nodes, each once; 15 or more ask first (Chrome), and only pages
-   * that do open count as used.
+   * The pages below the given nodes, each once; 15 or more ask first (Chrome's
+   * `OPEN_ALL_PROMPT_AT`), and only pages that do open count as used. The desktop asks with its
+   * §9.23 confirmation over the window (`WindowPrompts`, as "Close N tabs?" is asked); the
+   * phone and the tablet keep the host's own dialog.
    */
   private async bookmarkUrlsToOpen(ids: readonly string[], win: ZenWindow): Promise<string[]> {
     const seen = new Set<string>()
@@ -1590,7 +1592,13 @@ export class Browser {
       }
     }
     const prompt = openAllPrompt(nodes.length)
-    if (prompt && !(await this.platform.dialogs.confirm(prompt, win))) return []
+    if (prompt) {
+      const agreed =
+        win.formFactor === 'desktop'
+          ? await this.windowPrompts.ask(win, 'open-bookmarks', nodes.length)
+          : await this.platform.dialogs.confirm(prompt, win)
+      if (!agreed) return []
+    }
     nodes.forEach((node) => this.bookmarks.touch(node.id))
     return nodes.map((node) => node.url ?? '')
   }
@@ -1614,6 +1622,36 @@ export class Browser {
   async openBookmarks(ids: readonly string[], win: ZenWindow): Promise<void> {
     const urls = await this.bookmarkUrlsToOpen(ids, win)
     urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, win))
+  }
+
+  /**
+   * Chrome's "Open all in new tab group" (bookmarks-41): the bookmark folder's pages open as
+   * the tabs of a new tab folder named after it, in the window's space (a private window's own
+   * space: a private group there, as any folder its tabs make), wearing the next free colour as
+   * every new group. The folder model has no saved-or-plain choice to make at birth – a folder
+   * is open while it holds live regular tabs and becomes a saved one, its pages kept, when the
+   * last of them closes (`saveFolderOnLastClose`) – so this makes an open folder that lives on
+   * like any other. The name is given, so no editor opens (unlike "Add tab to new group"); the
+   * threshold's question is asked before anything is made, and a "no" makes no folder.
+   */
+  async openBookmarksInFolder(id: string, win: ZenWindow): Promise<void> {
+    const node = this.bookmarks.get(id)
+    if (!node || node.type !== 'folder') return
+    const urls = await this.bookmarkUrlsToOpen([id], win)
+    if (urls.length === 0) return
+    // A blank or private window's own space when it has one, as `createTab` places its tabs.
+    const space = win.activeSpace()
+    const folder = createFolder(
+      this.state.model,
+      space.id,
+      node.title || 'New Folder',
+      '📁',
+      nextFolderColor(this.state.model, space.id)
+    )
+    urls.forEach((url, i) =>
+      this.tabs.createTab({ url, active: i === 0, spaceId: space.id, folderId: folder.id }, win)
+    )
+    this.state.commit()
   }
 
   /**

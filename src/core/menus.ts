@@ -2406,6 +2406,8 @@ export class Menus {
     const urls = bookmarkUrlCount(bookmarks.tree, ids)
     const editable = nodes.length > 0 && nodes.every((n) => !isBookmarkRoot(n.id))
     const bar = surface === 'bar'
+    /** The desktop's rows alone (W5-11): the phone's bookmark menu is untouched by them. */
+    const desktop = (...items: Template): Template => (win.formFactor === 'desktop' ? items : [])
     const template: Template = []
     if (single?.type === 'url') {
       template.push({
@@ -2443,6 +2445,18 @@ export class Menus {
             enabled: urls > 0 && !win.isPrivate,
             click: () => this.browser.openBookmarksInWindow(ids, true, win)
           }
+        )
+      }
+      // Chrome's "Open all (N) in new tab group" (bookmarks-41), under the desktop's noun for a
+      // group: a folder's pages as the tabs of a new tab folder named after it. A folder alone
+      // has a name to give the group; a mixed selection has none.
+      if (single?.type === 'folder') {
+        template.push(
+          ...desktop({
+            label: `Open All (${urls}) in New Tab Folder`,
+            enabled: urls > 0,
+            click: () => this.browser.openBookmarksInFolder(single.id, win)
+          })
         )
       }
     }
