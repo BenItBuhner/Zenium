@@ -5,14 +5,16 @@
 
 /**
  * The states the walkthrough snapshots, in order; one baseline file per state under `aria/`.
- * The first five are surfaces at rest (`web-capture` W4-4's overlay); the last four (a11y pass
- * 2, W4-6) are the chrome's accessibility wiring the snapshot alone does not show, so each
- * carries facts under it ({@link formatAriaFacts}): `dialog-cover` the inert chrome and frame
- * behind the hosted dialog
- * (a11y-32), `tooltip-focus` the tooltip a toolbar control shows on keyboard focus and the
- * `aria-describedby` that ties it to the control (a11y-26), `tab-row` the tab rows' places in
- * their list and the states a reader hears – muted, pinned, sleeping (a11y-31), `find-status`
- * the find bar's own live region reading the count in words (a11y-35).
+ * The first five are surfaces at rest (`web-capture` W4-4's overlay); the last five (a11y pass
+ * 2, W4-6; `tab-rename` pass 3, W5-1) are the chrome's accessibility wiring the snapshot alone
+ * does not show, so each carries facts under it ({@link formatAriaFacts}): `dialog-cover` the
+ * inert chrome and frame behind the hosted dialog (a11y-32), `tooltip-focus` the tooltip a
+ * toolbar control shows on keyboard focus and the `aria-describedby` that ties it to the control
+ * (a11y-26), `tab-row` the tab rows' places in their list and the states a reader hears – muted,
+ * pinned, sleeping (a11y-31), `tab-rename` the row's rename field open: a textbox beside the
+ * tablist with the keyboard, no textbox inside any tab, axe's `nested-interactive` with nothing
+ * to find (a11y-31), `find-status` the find bar's own live region reading the count in words
+ * (a11y-35).
  */
 export const ARIA_STATES = [
   'resting-window',
@@ -23,6 +25,7 @@ export const ARIA_STATES = [
   'dialog-cover',
   'tooltip-focus',
   'tab-row',
+  'tab-rename',
   'find-status'
 ]
 

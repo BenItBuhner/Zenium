@@ -406,7 +406,7 @@ function TabRow({
           <Favicon tab={source} size={16} />
         </span>
         <span className="zen-v2-row-text">
-          <span className="zen-v2-label truncate" title={tab.title}>
+          <span className="zen-v2-label truncate" data-tooltip={tab.title}>
             <Highlighted text={tab.title || hostText} ranges={tab.title ? title : host} />
           </span>
           {hostText && (
@@ -425,7 +425,7 @@ function TabRow({
       {tab.windowLabel && (
         <span
           className="zen-tab-search-glyph inline-flex"
-          title={`In another window: ${tab.windowLabel}`}
+          data-tooltip={`In another window: ${tab.windowLabel}`}
           aria-hidden
         >
           <AppWindow className={V2_GLYPH} />
@@ -436,7 +436,7 @@ function TabRow({
           type="button"
           className="zen-v2-icon-button zen-tab-search-close"
           aria-label="Close tab"
-          title="Close tab"
+          data-tooltip="Close tab"
           // Tab from the field reaches the selected row's button alone (§9.22): the arrows pick
           // the row, Tab its control, Enter presses it.
           tabIndex={selected ? 0 : -1}
@@ -496,7 +496,7 @@ function ClosedRow({
           )}
         </span>
         <span className="zen-v2-row-text">
-          <span className="zen-v2-label truncate" title={entry.title}>
+          <span className="zen-v2-label truncate" data-tooltip={entry.title}>
             <Highlighted text={entry.title || hostText} ranges={entry.title ? title : []} />
           </span>
           {hostText && (

@@ -12,9 +12,25 @@
     <string name="paste_and_go">Paste and go</string>
     <string name="paste_and_search">Paste and search</string>
 
-    <!-- The launcher's long-press shortcut (res/xml/shortcuts.xml). -->
+    <!-- The launcher's long-press shortcuts (src/main/shortcuts/shortcuts.xml): New tab, New private
+         tab, Search, Scan QR code – each landing the app straight in its state (Landing.kt). -->
+    <string name="shortcut_new_tab_short">New tab</string>
+    <string name="shortcut_new_tab_long">New tab in Zenium</string>
     <string name="shortcut_private_short">New private tab</string>
     <string name="shortcut_private_long">New private tab in Zenium</string>
+    <string name="shortcut_search_short">Search</string>
+    <string name="shortcut_search_long">Search with Zenium</string>
+    <string name="shortcut_scan_short">Scan QR code</string>
+    <string name="shortcut_scan_long">Scan a QR code with Zenium</string>
+
+    <!-- The Home-screen search widget (SearchWidgetProvider, res/layout/widget_search.xml; WID-01).
+         The hint is the omnibox's own; the mic's and the mask's names are the accessible names the
+         drivers read (WidgetDemo). -->
+    <string name="widget_search_label">Zenium search</string>
+    <string name="widget_search_description">Search or enter an address, search with your voice, or open a new private tab</string>
+    <string name="widget_search_hint">Search or enter address</string>
+    <string name="widget_search_mic">Search with your voice</string>
+    <string name="widget_search_private">New private tab</string>
 
     <!-- Custom tabs (another app's link rendered by Zenium). Menu items are Title Case (v2 §9.1). -->
     <string name="cct_close">Close</string>

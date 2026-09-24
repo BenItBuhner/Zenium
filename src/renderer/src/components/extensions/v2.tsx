@@ -57,10 +57,16 @@ export function V2Button({
   )
 }
 
-/** main.css's `.zen-v2-icon-button` (§9.3): 28 with a 16 glyph, 44 / 20 on a phone; the label is the tooltip too. */
+/**
+ * main.css's `.zen-v2-icon-button` (§9.3): 28 with a 16 glyph, 44 / 20 on a phone. The label is
+ * the name and, unless `title` gives a shorter hint, the tooltip – the chrome's (`data-tooltip`,
+ * shown by the desktop shell's host; §9.31's one vocabulary), never the toolkit's `title`. The
+ * `title` prop is that hint only: it reaches no DOM attribute.
+ */
 export function V2IconButton({
   icon: Icon,
   label,
+  title,
   className,
   ...props
 }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
@@ -71,7 +77,7 @@ export function V2IconButton({
     <button
       type="button"
       className={cn('zen-v2-icon-button', className)}
-      title={props.title ?? label}
+      data-tooltip={title ?? label}
       aria-label={label}
       {...props}
     >

@@ -393,6 +393,34 @@ describe('the document side', () => {
     expect(focusPane({ move: 'next', from: 'chrome' })).toBe('page')
     expect(document.querySelectorAll(`[${KEYBOARD_FOCUS_ATTR}]`)).toHaveLength(0)
   })
+
+  it('the mark goes with the next pointer press anywhere – on the landed control itself too, where the focus stays (§1: the ring answers the keyboard)', () => {
+    mount(CHROME)
+    const reload = byId('reload')
+    expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(true)
+    // A press on the focused control: no blur, the mark goes all the same (a click's focus is
+    // the mouse's, and Chromium's own `:focus-visible` would leave with it). Capture phase, so
+    // a control that stops the event's propagation cannot keep its mark.
+    reload.addEventListener('pointerdown', (e) => e.stopPropagation())
+    reload.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
+    expect(document.activeElement).toBe(reload)
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(false)
+    // The dropped mark's blur listener is gone with it: a later chord marks afresh and a blur
+    // clears once, nothing left behind on the control.
+    expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(true)
+    reload.blur()
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(false)
+    // A press elsewhere after a blur-cleared mark leaves the document's listener count sane: a
+    // fresh landing, then a press on the body, clears it and nothing else.
+    expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
+    document.body.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' })
+    )
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(false)
+    expect(document.querySelectorAll(`[${KEYBOARD_FOCUS_ATTR}]`)).toHaveLength(0)
+  })
 })
 
 // ---------------------------------------------------------------------------

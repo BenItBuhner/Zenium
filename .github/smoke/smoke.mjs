@@ -2235,8 +2235,9 @@ async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
  * moderate and minor ones are reported in the step's detail and tolerated. The states are the
  * resting window, the open app menu, the open URL bar and a hosted Settings dialog, and (a11y
  * pass 2, W4-6) the cover behind that dialog, a toolbar control's tooltip on keyboard focus, the
- * tab rows' places and states, and the find bar's status region – these four with the facts
- * the snapshot leaves out written under it (aria.mjs `withAriaFacts`, `readFacts` below).
+ * tab rows' places and states, (pass 3, W5-1) the rename field open beside its row, and the
+ * find bar's status region – these five with the facts the snapshot leaves out written under it
+ * (aria.mjs `withAriaFacts`, `readFacts` below).
  */
 class AriaAudit {
   constructor(session, { origin }) {
@@ -3060,15 +3061,16 @@ async function scenarioWalkthrough() {
     })
 
     await s.step('accessibility', async () => {
-      // The chrome's accessibility tree and axe's verdict in nine states (ci-13; the roles of
+      // The chrome's accessibility tree and axe's verdict in ten states (ci-13; the roles of
       // a11y-02): what a screen reader gets of the window at rest – the sidebar's landmarks, the
       // toolbar, the tablists with the two fixture tabs, the active one selected – of the app
       // menu, of the URL bar over the active tab, of a hosted dialog with the chrome inert
       // around it, and of the Web capture overlay over the page; then (a11y pass 2, W4-6) the
       // cover behind that dialog, a toolbar control's tooltip on keyboard focus, the tab rows'
-      // places and states (and the rename field's focus, a fact only a real browser holds), and
-      // the find bar's status region. Each snapshot is compared with its baseline under
-      // .github/smoke/aria/ (`AriaAudit`); every state also runs axe over the whole document.
+      // places and states, the rename field open beside its row with the keyboard (a11y pass 3,
+      // W5-1; a fact only a real browser holds), and the find bar's status region. Each snapshot
+      // is compared with its baseline under .github/smoke/aria/ (`AriaAudit`); every state also
+      // runs axe over the whole document.
       await s.reset()
       const audit = new AriaAudit(s, { origin: bootSite.origin })
       const rowsBefore = await s.sidebarTabCount()
@@ -3207,7 +3209,11 @@ async function scenarioWalkthrough() {
         // chrome layer and takes the keyboard as it opens – a second click on the active row
         // within 400 ms opens it; Escape drops the edit and hands the keyboard back to the row.
         // Its focus is a real-browser fact the unit tests cannot hold (jsdom grants focus under
-        // `visibility: hidden`; Chromium refuses it), which is why the smoke reads it.
+        // `visibility: hidden`; Chromium refuses it), which is why the smoke reads it. With the
+        // field open (a11y pass 3, W5-1) the tablist is read and axe runs over the document: the
+        // active row's tree holds no textbox – its title stands aside for the field, its Close
+        // button stays – the field is a named textbox with the keyboard, and no `[role="tab"]`
+        // holds an `input` (the `none` line), so `nested-interactive` has nothing to find.
         const activeRow = tablist.locator('[role="tab"][aria-selected="true"]').first()
         await activeRow.dblclick()
         await renameField.waitFor({ state: 'visible', timeout: 5000 })
@@ -3216,6 +3222,17 @@ async function scenarioWalkthrough() {
             (await renameField.evaluate((el) => document.activeElement === el)) ? true : null,
           3000,
           'the keyboard in the rename field'
+        )
+        await audit.state('tab-rename', tablist, () =>
+          audit.readFacts(
+            s.chrome,
+            [
+              '[role="tablist"] [role="tab"][aria-selected="true"]',
+              '.zen-tab-rename input',
+              '[role="tab"] input'
+            ],
+            ['aria-posinset', 'aria-setsize']
+          )
         )
         await s.press('Escape')
         await renameField.waitFor({ state: 'detached', timeout: 5000 })
@@ -5488,7 +5505,7 @@ const ZEN_FEATURE_MODS = IS_MAC ? 'Meta+Control' : 'Control+Alt'
 const SPLIT_VERTICAL_COMBO = `${ZEN_FEATURE_MODS}+v`
 const UNSPLIT_COMBO = `${ZEN_FEATURE_MODS}+u`
 // The un-split button on a pane's header strip (SplitChrome.tsx), by its title.
-const UNSPLIT_BUTTON = 'button[title^="Un-split this tab"]'
+const UNSPLIT_BUTTON = 'button[data-tooltip^="Un-split this tab"]'
 // A vertical split's divider (SplitChrome.tsx Gutter): the chrome's one element with the class.
 const GUTTER = '.cursor-col-resize'
 // The sidebar row a split's tabs share (SplitGroupRow.tsx).
