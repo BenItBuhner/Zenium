@@ -81,13 +81,18 @@ const TOKENS = {
 
 /**
  * A sheet of the tokens and main.css's own seat rules, so happy-dom applies to the rendered row
- * what the product's stylesheet would; removed by the caller.
+ * what the product's stylesheet would; removed by the caller. `reset` adds every row's
+ * `--zen-settings-control-box: initial` ahead of the rows that name theirs, as main.css has it:
+ * only for the test of that rule, since happy-dom substitutes the keyword itself where a browser
+ * reads the guaranteed-invalid value and takes `var()`'s fallback – the line the other tests
+ * expect.
  */
-function seatSheet(family: keyof typeof TOKENS): HTMLStyleElement {
+function seatSheet(family: keyof typeof TOKENS, reset = false): HTMLStyleElement {
   const css = stylesheet()
   const sheet = document.createElement('style')
   sheet.textContent = [
     `:root { ${TOKENS[family]} }`,
+    reset ? `.zen-settings-row { ${declarations(css, ['.zen-settings-row'])} }` : '',
     `.zen-settings-control-row { ${declarations(css, ['.zen-settings-control-row'])} }`,
     `.zen-settings-menu-row { ${declarations(css, ['.zen-settings-menu-row'])} }`,
     `${ROW} { ${declarations(css, [ROW])} }`,
@@ -523,5 +528,45 @@ describe('a control never leaves its row’s box (the lead’s #391 ruling 4)', 
     expect(afterOneLine).toBe(8)
     expect(afterThreeLine).toBe(48)
     expect(Math.min(afterOneLine, afterThreeLine)).toBe(8)
+  })
+
+  it('(e) a plain row inside a control row’s box reads no control box of its host: the token is each row’s own', () => {
+    // The token is a custom property and inherits; the stylesheet resets it on every row before
+    // the rows that name a control set theirs, so a row nested in a control row's box – a list
+    // in a control's popover – seats its label on its own line, not on the host's 32.
+    const css = stylesheet()
+    expect(declarations(css, ['.zen-settings-row'])).toBe('--zen-settings-control-box: initial;')
+    expect(css.indexOf('.zen-settings-row {')).toBeLessThan(css.indexOf('.zen-settings-control-row {'))
+    expect(css.indexOf('.zen-settings-row {')).toBeLessThan(css.indexOf('.zen-settings-menu-row {'))
+    laidOut(3)
+    const sheet = seatSheet('desktop', true)
+    try {
+      // A stand-in host: a control row's box with the plain row rendered inside it, and a
+      // control row of its own beside it.
+      const h = render(
+        <>
+          <div data-testid="host" className="zen-settings-row zen-settings-control-row zen-v2-row">
+            <RowView row={suggest} ctx={ctx} variant="phone" />
+          </div>
+          <RowView row={level} ctx={ctx} variant="desktop" />
+        </>
+      )
+      const hostRow = h.querySelector<HTMLElement>('[data-testid="host"]')!
+      expect(property(hostRow, '--zen-settings-control-box')).toBe('32px')
+      const row = hostRow.querySelector<HTMLElement>('[data-row="search-suggestions"]')!
+      expect(row.getAttribute('data-lines')).toBe('3')
+      expect(row.classList.contains('zen-settings-control-row')).toBe(false)
+      // Not the host's 32: the row's own word is the guaranteed-invalid value, which a browser
+      // resolves to `var()`'s fallback, the line (happy-dom reports the keyword itself).
+      const trailing = row.querySelector<HTMLElement>(':scope > .zen-settings-trailing')!
+      expect(property(row, '--zen-settings-label-box')).not.toBe('32px')
+      expect(style(trailing).height).not.toBe('32px')
+      // The control rows themselves still name theirs after the reset (the order above).
+      const control = h.querySelector<HTMLElement>('[data-row="tracking-level"]')!
+      expect(property(control, '--zen-settings-control-box')).toBe('32px')
+      expect(property(control, '--zen-settings-label-box')).toBe('32px')
+    } finally {
+      sheet.remove()
+    }
   })
 })

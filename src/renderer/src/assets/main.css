@@ -11377,7 +11377,17 @@
  *   the whole row its label;
  * - an inline field (§9.12) is the one short field the desktop keeps beside its label: 96 for a
  *   number, 160 at most for text; its validation message takes the line under the field.
+ *
+ * A row's control box is its own word, never its host's: the token inherits like every custom
+ * property, so a plain row inside a control row's box – a nested list, a row in a control's
+ * popover – would read the host's 32 and grow its label's line to it (the lead's #391 note).
+ * Every row starts from nothing (`initial` is the guaranteed-invalid value, so §9.18's
+ * `var(--zen-settings-control-box, …)` takes its fallback, the line) and the two rows below
+ * that hold a control name theirs after it, same specificity, later in the sheet.
  */
+.zen-settings-row {
+  --zen-settings-control-box: initial;
+}
 .zen-settings-control-row {
   --zen-settings-control-box: var(--v2-control);
   min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
