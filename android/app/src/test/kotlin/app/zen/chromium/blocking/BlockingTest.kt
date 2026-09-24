@@ -1,5 +1,6 @@
 package app.zen.chromium.blocking
 
+import app.zen.chromium.ext.ExtensionUrls
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -237,6 +238,79 @@ class BlockingTest {
         val work = FakeTab(containerId = "work")
         assertTrue(Blocking.evaluate(scoped, work, "https://ads.example/a.js", false, null, "GET") is Verdict.Empty)
         assertEquals(Decision.Action.BLOCK, Blocking.decideNavigation(scoped, FakeTab(), "https://ads.example/").action)
+    }
+
+    @Test
+    fun `an extension's own page passes before any rule, in either spelling, and the policy is never asked (contract note 1_11)`() {
+        // A snapshot that blocks everything it is asked about: a user rule with no condition, and a
+        // filter-list line for the served origin's very words.
+        val everything = EngineSnapshot(
+            listOf(
+                RuleSetInfo.parse(
+                    JSONObject("""{"id":"user","source":"user","priority":10,"enabled":true,"rules":[{"id":1,"action":{"type":"block"}}]}""")
+                )!!
+            ),
+            TextEngine.parse(listOf("||ext.zenium.invalid^\$all"))
+        )
+        val tab = FakeTab()
+        val policy = FakePolicy()
+        val id = "b".repeat(32)
+        val chrome = "chrome-extension://$id/options.html?tab=2#top"
+        val served = "https://$id.ext.zenium.invalid/options.html?tab=2#top"
+        for (url in listOf(chrome, served)) {
+            assertSame(url, Verdict.Pass, Blocking.evaluate(everything, tab, url, true, "text/html", "GET", policy))
+            assertSame(url, Verdict.Pass, Blocking.evaluate(everything, tab, url, false, "text/html", "GET", policy))
+            assertSame(url, Verdict.Pass, Blocking.evaluate(everything, tab, url, false, "*/*", "GET", policy))
+            assertEquals(url, Decision.Action.ALLOW, Blocking.decideNavigation(everything, tab, url).action)
+        }
+        assertEquals(0, tab.blocked)
+        assertTrue(tab.documentsBlocked.isEmpty())
+        assertTrue(policy.asked.isEmpty())
+        // The same snapshot still blocks the web – a request an extension page makes included: only
+        // the request's URL is read...
+        tab.documentUrl = chrome
+        assertTrue(Blocking.evaluate(everything, tab, "https://api.example/data.json", false, "*/*", "GET", policy) is Verdict.Empty)
+        tab.documentUrl = served
+        assertTrue(Blocking.evaluate(everything, tab, "https://api.example/data.json", false, "*/*", "GET", policy) is Verdict.Empty)
+        assertEquals(2, tab.blocked)
+        // ...and a look-alike host is a web host: the id grammar, not the suffix's words, names the origin.
+        for (url in listOf(
+            "https://ext.zenium.invalid/options.html",
+            "https://abc.ext.zenium.invalid/options.html",
+            "https://${"z".repeat(32)}.ext.zenium.invalid/options.html",
+            "https://$id.ext.zenium.invalid.attacker.example/options.html",
+            "https://evil.example/$id.ext.zenium.invalid/options.html"
+        )) {
+            assertEquals(url, Decision.Action.BLOCK, Blocking.decideNavigation(everything, tab, url).action)
+        }
+        // The listed document's question is asked of a web host, never of the served origin.
+        assertTrue(Blocking.evaluate(everything, tab, "https://listed.example/landing", true, "text/html", "GET", policy) is Verdict.Empty)
+        assertEquals(listOf("https://listed.example/landing"), policy.asked)
+    }
+
+    @Test
+    fun `a redirect whose target is an extension page still fires - the target is not what is exempt`() {
+        val id = "c".repeat(32)
+        val installer = EngineSnapshot(
+            listOf(
+                RuleSetInfo.parse(
+                    JSONObject(
+                        """{"id":"ext:stylus:static:usercss","source":"dnr","priority":2999,"enabled":true,"rules":[
+                            {"id":1,"action":{"type":"redirect","redirect":{"url":"chrome-extension://$id/install.html"}},"condition":{"urlFilter":"||install.example^","resourceTypes":["main_frame"]}}
+                        ]}"""
+                    )
+                )!!
+            ),
+            null
+        )
+        val tab = FakeTab()
+        val moved = Blocking.evaluate(installer, tab, "https://install.example/theme.user.css", true, "text/html", "GET")
+        assertTrue(moved is Verdict.Empty)
+        assertEquals(listOf("chrome-extension://$id/install.html"), tab.redirects)
+        assertEquals(Decision.Action.REDIRECT, Blocking.decideNavigation(installer, tab, "https://install.example/theme.user.css").action)
+        // The page the tab then loads – in the spelling the WebView can load – is the exempt one.
+        assertSame(Verdict.Pass, Blocking.evaluate(installer, tab, ExtensionUrls.toServed(tab.redirects[0]), true, "text/html", "GET"))
+        assertEquals(Decision.Action.ALLOW, Blocking.decideNavigation(installer, tab, ExtensionUrls.toServed(tab.redirects[0])).action)
     }
 
     @Test

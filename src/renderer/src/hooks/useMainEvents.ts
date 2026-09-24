@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import {
   announce,
+  announcementVoice,
+  loadCompleteAnnouncement,
   startAnnouncer,
   tabMoveAnnouncement,
   zoomAnnouncement
@@ -96,8 +98,9 @@ export function useMainEvents(): void {
     const offs = [
       // The downloads button and bubble follow the engine's list and the `downloads.reveal` event.
       startDownloadsUi(),
-      // The status region hears of the tab that came to the front and of tabs muted or unmuted.
-      startAnnouncer(),
+      // The status region hears of the tab that came to the front and of tabs muted or unmuted;
+      // in the phone's voice (name first, as its overview cards read) and of a load finishing.
+      startAnnouncer(() => announcementVoice(viewportStore.get().formFactor)),
       onEvent('urlbar.toggle', ({ mode, text }) => {
         const ui = uiStore.get()
         if (ui.urlbar.open && ui.urlbar.mode === mode && text === undefined) {
@@ -256,6 +259,19 @@ export function useMainEvents(): void {
       // open URL bar keeps its field and takes the keyboard back, as does a field marked
       // `KEEPS_KEYBOARD_ATTR` (lib/panes.ts).
       onEvent('focus.page', ({ tabId }) => void pageTookKeyboard(tabId)),
+      // The front tab's load finished (A11Y-02): the phone's reader hears "<name> loaded" through
+      // the status region, the focus where it was. The core's event, not the state's diff – a
+      // fast load's start and stop reach the chrome as one snapshot.
+      onEvent('tab.loaded', ({ tabId }) => {
+        const state: UIState | null = browserStore.get().state
+        if (!state) return
+        const words = loadCompleteAnnouncement(
+          state,
+          tabId,
+          announcementVoice(viewportStore.get().formFactor)
+        )
+        if (words) announce(words)
+      }),
       onEvent('zoom.changed', ({ tabId, factor }) => {
         // Chrome's bubble, for the page on screen. The host with the page-controls sheet
         // (Android) shows the zoom there instead. Either way the reader hears the new level.

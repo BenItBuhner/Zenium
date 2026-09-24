@@ -5760,6 +5760,16 @@ export interface Events {
    */
   'focus.page': { tabId: string }
   /**
+   * A load the model saw start on `tabId` finished (`did-stop-loading` with the tab's `loading`
+   * on): the phone's screen reader hears "<name> loaded" (A11Y-02; `lib/announce.ts`). Sent
+   * once the state broadcast that turned `loading` off has gone out, so the window holds the
+   * page's title, and as a fact of its own because the finish cannot be read off the state's
+   * snapshots: a start and its stop in one tick (a reload off the loopback, a cached page)
+   * coalesce into one broadcast that never shows `loading` on. A stop without a start (a
+   * same-document navigation's) is no load and sends nothing.
+   */
+  'tab.loaded': { tabId: string }
+  /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`
    * the site the factor is remembered for, null for a page that zooms on its own.
