@@ -777,6 +777,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.destroy" -> {
                 val tabId = args.str("tabId")
                 tabs.destroy(tabId)
+                // The page went with its view, and any capture it held or was granted with the
+                // page: its card comes down now, not at the confirm window's end (NOT-13).
+                capture.ended(tabId)
                 // A view the lock held hidden is gone with its tab: the guard follows what is left.
                 if (privateLock.forget(tabId)) refreshGuard()
                 reply(null)

@@ -42,8 +42,14 @@ class CaptureNotifications(private val host: Host) {
     private val expiry = Runnable { if (ledger.expire(now())) render() else schedule() }
 
     init {
-        // A card of the process before this one (the app died capturing): nothing captures now.
+        // Cards of the process before this one (the app died capturing): nothing captures now.
+        // The service's own card is the untagged id; the cards beside it rode under their tabs'
+        // tags, which only the system still knows.
         manager.cancel(CaptureService.NOTIFICATION_ID)
+        val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        for (shown in runCatching { system.activeNotifications }.getOrNull() ?: emptyArray()) {
+            if (shown.id == CaptureService.NOTIFICATION_ID && shown.tag != null) manager.cancel(shown.tag, shown.id)
+        }
     }
 
     /** The grant path: the page of `tabId` at `url` may capture `use` now (`Permissions.onPermissionRequest`). */
