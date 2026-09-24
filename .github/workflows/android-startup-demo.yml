@@ -28,11 +28,6 @@ on:
         options:
           - '34'
           - '35'
-  # TEMPORARY (PR #454): the branch's own push trigger, gated on `[startup-run]` in the head
-  # commit's message; removed before the PR leaves draft.
-  push:
-    branches:
-      - cursor/android-startup-9615
 
 permissions:
   contents: read

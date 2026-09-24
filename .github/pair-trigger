@@ -1,3 +1,0 @@
-393227c02edb4cea55825fa031b2004023051393
-TEMPORARY (W5-16): the first line is the pair's base ref; bumped to fire the cold start pair on this branch. Removed before completion.
-run 5: the merged head (main's tip #458/#459 merged in, PWA-06 beside) against main's tip 393227c02 - the record's pair for all three changes
