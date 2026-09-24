@@ -531,15 +531,70 @@ describe('ScreenPicker for an extension (chrome.desktopCapture)', () => {
     )
   })
 
-  it('an extension without an icon gets the puzzle glyph, a site none', () => {
+  it('an extension without an icon gets the puzzle glyph; a site whose tab has no favicon the stand-in globe, deemphasised', () => {
     const el = render(
       layer(stateWith([{ ...EXTENSION_REQUEST, extension: { name: 'Recorder', icon: null } }]))
     )
     expect(el.querySelector('h2 img')).toBeNull()
-    expect(el.querySelector('h2 svg')).not.toBeNull()
+    expect(el.querySelector('h2 svg.lucide-puzzle')).not.toBeNull()
+    expect(el.querySelector('h2 [data-testid="screen-picker-globe"]')).toBeNull()
+    // The site's request: the tab offered no favicon, so the glyph slot holds the stand-in
+    // globe (§10.4's 69%, the deemphasised ink), hidden from the reading – the description
+    // names the site in words.
     rerender(layer(stateWith([REQUEST])))
     expect(el.querySelector('h2 img')).toBeNull()
-    expect(el.querySelector('h2 svg')).toBeNull()
+    const globe = el.querySelector<HTMLElement>('h2 [data-testid="screen-picker-globe"]')!
+    expect(globe).not.toBeNull()
+    expect(globe.tagName.toLowerCase()).toBe('svg')
+    expect(globe.classList.contains('lucide-globe')).toBe(true)
+    expect(globe.classList.contains('zen-scpick-requester-globe')).toBe(true)
+    expect(globe.getAttribute('aria-hidden')).toBe('true')
+    // The globe is the title's first child, in the title block's 16 glyph slot (§9.23).
+    expect(el.querySelector('h2.zen-v2-title-block-title')!.firstElementChild).toBe(globe)
+  })
+
+  it('a site’s request carries the requesting tab’s favicon at 16 in the title block’s glyph slot (§9.23, the #330 ruling), live from the tab; one that fails to load gives way to the stand-in globe', () => {
+    const withFavicon = (favicon: string | null, request = REQUEST): UIState => {
+      const state = stateWith([request])
+      state.tabs.t1 = { ...state.tabs.t1, favicon } as UIState['tabs'][string]
+      return state
+    }
+    const el = render(layer(withFavicon('data:image/png;base64,MEET')))
+    const title = el.querySelector<HTMLElement>('h2.zen-v2-title-block-title')!
+    const favicon = title.querySelector<HTMLImageElement>('[data-testid="screen-picker-favicon"]')!
+    expect(favicon).not.toBeNull()
+    expect(favicon.tagName.toLowerCase()).toBe('img')
+    expect(title.firstElementChild).toBe(favicon)
+    expect(favicon.src).toContain('MEET')
+    expect(favicon.getAttribute('width')).toBe('16')
+    expect(favicon.getAttribute('height')).toBe('16')
+    // Decorative: the site is named in the description, not by the picture.
+    expect(favicon.getAttribute('alt')).toBe('')
+    expect(favicon.getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(title.querySelector('[data-testid="screen-picker-globe"]')).toBeNull()
+    // The words are unchanged: the favicon is the glyph beside them, not in them.
+    expect(el.querySelector('#zen-scpick-description')!.textContent).toBe(
+      'meet.example wants to share the contents of your screen'
+    )
+    // The tab's favicon arrives after the request (the page was still loading): the slot follows it.
+    rerender(layer(withFavicon(null)))
+    expect(title.querySelector('[data-testid="screen-picker-favicon"]')).toBeNull()
+    expect(title.querySelector('[data-testid="screen-picker-globe"]')).not.toBeNull()
+    rerender(layer(withFavicon('data:image/png;base64,MEET2')))
+    const again = title.querySelector<HTMLImageElement>('[data-testid="screen-picker-favicon"]')!
+    expect(again.src).toContain('MEET2')
+    // The favicon fails to load: the stand-in globe takes the slot, so it never stands empty.
+    act(() => {
+      again.dispatchEvent(new Event('error'))
+    })
+    expect(title.querySelector('[data-testid="screen-picker-favicon"]')).toBeNull()
+    expect(title.querySelector('[data-testid="screen-picker-globe"]')).not.toBeNull()
+    // An extension's request keeps the extension's icon in the slot, whatever its tab shows.
+    rerender(layer(withFavicon('data:image/png;base64,MEET', EXTENSION_REQUEST)))
+    const icon = el.querySelector<HTMLImageElement>('h2.zen-v2-title-block-title img')!
+    expect(icon.src).toContain('EEEE')
+    expect(el.querySelector('[data-testid="screen-picker-favicon"]')).toBeNull()
+    expect(el.querySelector('[data-testid="screen-picker-globe"]')).toBeNull()
   })
 
   it('shows only the panes the extension asked for, opening on the first; one pane stands alone without the segment', () => {

@@ -30,7 +30,10 @@ import { installEditingFocusReporter } from '../shared/editingFocus'
 import { installShareBridge, installShareShim } from '../shared/share'
 import { installTextFragmentScript } from '../shared/textFragmentScript'
 import { installGeolocationBridge, installGeolocationShim } from '../shared/geolocation'
-import { NOTIFICATION_PERMISSION_CHANNEL } from '../shared/notifications'
+import {
+  NOTIFICATION_PERMISSION_CHANNEL,
+  NOTIFICATION_REQUEST_CHANNEL
+} from '../shared/notifications'
 import { installNotificationBridge, installNotificationShim } from './notifications'
 import {
   PRIVACY_SIGNALS_CHANNEL,
@@ -231,6 +234,7 @@ if (process.isMainFrame) {
           listener(status)
         ),
       focus: () => ipcRenderer.send('zen:page', { type: 'focus' }),
+      request: (gesture) => ipcRenderer.send(NOTIFICATION_REQUEST_CHANNEL, gesture),
       installShim: (events) =>
         contextBridge.executeInMainWorld({ func: installNotificationShim, args: [events] })
     })

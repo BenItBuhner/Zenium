@@ -3,6 +3,7 @@ import type { UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
 import { activeTab } from '@renderer/lib/selectors'
+import { setStripFocus } from '@renderer/lib/tabStrip'
 import {
   browserStore,
   clearTabSelection,
@@ -75,7 +76,7 @@ export function useGlobalKeys(state: UIState): void {
   // strip's roving tab stop: the new space's active row is the stop (lib/tabStrip.ts).
   useEffect(() => {
     clearTabSelection()
-    if (uiStore.get().stripFocus !== null) uiStore.set({ stripFocus: null })
+    setStripFocus(null)
   }, [state.activeSpaceId])
 
   // Sidebar collapse toggle (Zen's "Toggle Sidebar" action).
