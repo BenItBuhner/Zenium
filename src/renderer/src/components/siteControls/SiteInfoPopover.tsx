@@ -33,7 +33,9 @@ import { dismissSiteInfo, refreshSiteInfo, siteInfoStore } from '@renderer/lib/s
 import {
   blockingSummary,
   connectionDetail,
+  connectionFault,
   connectionHeadline,
+  connectionValue,
   cookiesSummary,
   deviceLevelKind,
   deviceRows,
@@ -315,9 +317,7 @@ export function SiteInfoPopover({
                     <>
                       <ListRow
                         label="Connection"
-                        trailing={
-                          <RowValue>{connectionHeadline(security(info, tab.url))}</RowValue>
-                        }
+                        trailing={<ConnectionValue security={security(info, tab.url, tab)} />}
                         chevron
                         onClick={() => go('connection')}
                       />
@@ -404,7 +404,7 @@ export function SiteInfoPopover({
           {level === 'connection' && (
             <ConnectionLevel
               id={titleId}
-              security={security(info, tab.url)}
+              security={security(info, tab.url, tab)}
               onBack={() => go('overview')}
             />
           )}
@@ -560,6 +560,26 @@ function Body({
   )
 }
 
+/**
+ * The overview's Connection value: the headline at rest ("Secure", "Not secure"), or – where the
+ * certificate failed verification – what is wrong with it in the shared module's words
+ * (`connectionFault`, Android's #382: "Certificate expired"), in the danger tier's ink, as the
+ * pill's triangle and the phone sheet's title line say it; the row's value names the fault, never
+ * the refused certificate's issuer.
+ */
+function ConnectionValue({ security: s }: { security: SiteSecurity }): JSX.Element {
+  const fault = connectionFault(s)
+  return (
+    <RowValue
+      muted={!fault}
+      className={fault ? 'text-[var(--v2-danger)]' : undefined}
+      data-fault={fault ?? undefined}
+    >
+      {fault ?? connectionHeadline(s)}
+    </RowValue>
+  )
+}
+
 function ConnectionLevel({
   id,
   security: s,
@@ -570,12 +590,25 @@ function ConnectionLevel({
   onBack: () => void
 }): JSX.Element {
   const cert = s.certificate
+  // A refused certificate: the level's headline is the fault in the danger ink (the row's
+  // word, kept), the sentence under it the shared module's (`certificateErrorDetail`), and the
+  // certificate's rows stand under "Certificate that was refused" – the phone sheet's heading –
+  // where the issuer is listed as a fact of the certificate, not as a credential.
+  const fault = connectionFault(s)
   return (
     <>
       <BarHeader id={id} title="Connection" onBack={onBack} />
       <Body>
         <div className="px-4 pt-1 pb-3">
-          <div className="text-[15px] leading-5 font-semibold">{connectionHeadline(s)}</div>
+          <div
+            className={cn(
+              'text-[15px] leading-5 font-semibold',
+              fault && 'text-[var(--v2-danger)]'
+            )}
+            data-fault={fault ?? undefined}
+          >
+            {connectionValue(s)}
+          </div>
           {/* Body copy at 15 (§4), like every sentence in the levels around it. */}
           <p className="mt-1 text-[15px] leading-5 text-[var(--v2-text-deemphasized)]">
             {connectionDetail(s)}
@@ -584,6 +617,7 @@ function ConnectionLevel({
         {cert && (
           <>
             <Separator />
+            {fault && <GroupLabel>Certificate that was refused</GroupLabel>}
             <ListRow label="Issued to" trailing={<RowValue>{cert.subject || '—'}</RowValue>} />
             <ListRow label="Issued by" trailing={<RowValue>{cert.issuer || '—'}</RowValue>} />
             {cert.validTo !== null && (

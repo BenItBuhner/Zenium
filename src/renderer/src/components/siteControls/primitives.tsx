@@ -400,12 +400,13 @@ function levelFocusTarget(root: HTMLElement, focus: LevelFocus): HTMLElement {
 export function RowValue({
   children,
   muted = true,
-  className
+  className,
+  ...data
 }: {
   children: ReactNode
   muted?: boolean
   className?: string
-}): JSX.Element {
+} & DataAttributes): JSX.Element {
   return (
     <span
       className={cn(
@@ -413,6 +414,7 @@ export function RowValue({
         muted ? 'text-[var(--v2-text-deemphasized)]' : 'text-[var(--v2-text)]',
         className
       )}
+      {...data}
     >
       {children}
     </span>
