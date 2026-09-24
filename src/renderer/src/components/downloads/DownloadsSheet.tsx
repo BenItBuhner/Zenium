@@ -168,61 +168,64 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
   }
 
   return (
-    <>
-      <BottomSheet
-        ref={sheet}
-        hosted
-        onDismissed={() => {
-          if (!handoff.current) closeOverlay()
-        }}
-        contentKey={contentKey}
-        handleLabel="Resize downloads"
-        labelledBy={titleId}
-        header={
-          <>
-            <h2 id={titleId} className="zen-sheet-title">
-              Downloads
-            </h2>
-            <button
-              type="button"
-              className="zen-sheet-header-control"
-              data-side="trailing"
-              aria-label="Downloads settings"
-              title="Downloads settings"
-              onClick={toSettings}
-            >
-              <Settings2 className="h-5 w-5" strokeWidth={1.75} />
-            </button>
-          </>
-        }
-      >
-        {items.length === 0 ? (
-          <p className="zen-sheet-empty">Files you download will appear here</p>
-        ) : (
-          <ul className="pb-2">
-            {items.map((item) => (
-              <DownloadRow key={item.id} item={item} now={now} />
-            ))}
-            {clearable && (
-              <>
-                <li aria-hidden className="zen-sheet-sep" />
-                <li>
-                  <button
-                    type="button"
-                    className="zen-sheet-item"
-                    data-danger=""
-                    data-testid="downloads-clear-all"
-                    onClick={() => setClearing(clearableCount(items))}
-                  >
-                    Clear all
-                  </button>
-                </li>
-              </>
-            )}
-          </ul>
-        )}
-      </BottomSheet>
-      {/* The prompt stacks over this sheet in the same host (the confirm sheet recedes it). */}
+    <BottomSheet
+      ref={sheet}
+      hosted
+      onDismissed={() => {
+        if (!handoff.current) closeOverlay()
+      }}
+      contentKey={contentKey}
+      handleLabel="Resize downloads"
+      labelledBy={titleId}
+      header={
+        <>
+          <h2 id={titleId} className="zen-sheet-title">
+            Downloads
+          </h2>
+          <button
+            type="button"
+            className="zen-sheet-header-control"
+            data-side="trailing"
+            aria-label="Downloads settings"
+            title="Downloads settings"
+            onClick={toSettings}
+          >
+            <Settings2 className="h-5 w-5" strokeWidth={1.75} />
+          </button>
+        </>
+      }
+    >
+      {items.length === 0 ? (
+        <p className="zen-sheet-empty">Files you download will appear here</p>
+      ) : (
+        <ul className="pb-2">
+          {items.map((item) => (
+            <DownloadRow key={item.id} item={item} now={now} />
+          ))}
+          {clearable && (
+            <>
+              <li aria-hidden className="zen-sheet-sep" />
+              <li>
+                <button
+                  type="button"
+                  className="zen-sheet-item"
+                  data-danger=""
+                  data-testid="downloads-clear-all"
+                  onClick={() => setClearing(clearableCount(items))}
+                >
+                  Clear all
+                </button>
+              </li>
+            </>
+          )}
+        </ul>
+      )}
+      {/*
+       * The prompt stacks over this sheet in the same host – its own portal to the frame's
+       * dialog slot, where the confirm sheet recedes this one – from inside the sheet's tree,
+       * not beside it: the slot's child is the chassis alone (`hostedSheetLayer`), and a press
+       * in the prompt is outside this layer's DOM, so the chassis's pointer handling lets it be.
+       */}
       {clearing !== null && (
         <ClearAllConfirm
           count={clearing}
@@ -230,7 +233,7 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
           confirm={() => downloadsEngine.removeCompleted()}
         />
       )}
-    </>
+    </BottomSheet>
   )
 }
 
