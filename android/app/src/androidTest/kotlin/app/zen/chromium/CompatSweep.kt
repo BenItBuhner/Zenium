@@ -4479,6 +4479,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `responseHeaders` (`isMedia`: a `video/` or `audio/` content-type, or a content-length of
      * 100 KB and a media extension), so the [WebRequestProbe] runs beside it (compat round 13's
      * item 4) and a failing grade carries what the runtime gave.
+     *
+     * A listed clip reads as the PAGE'S TITLE with its size ("Media and XHR fixture Download
+     * 0.03MB"; the container is an icon, the URL nowhere in the text – compat round 15's 113
+     * sniffer lane, where the popup listed both clips and the earlier text test, wanting `clip`
+     * or `mp4`, read F over a full list), so the listing is the fixture's title or a media word
+     * beside a download control, with the item count in the record.
      */
     private fun videoDownloaderPLUS(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -4492,7 +4498,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val steps = JSONArray()
         var popup = openPopup(row, factor)
         var dom = JSONObject()
-        val listExpr = """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();var dl=document.querySelectorAll('a[download], [class*="download"], [id*="download"], button, a[href*="clip"]').length;return JSON.stringify({pass:/clip|mp4|webm/i.test(t)&&dl>0&&!/no (video|media)/i.test(t.slice(0,60)),text:t.slice(0,200),controls:dl,consent:/agree|accept|terms|privacy/i.test(t)})})()"""
+        val listExpr = """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();var dl=document.querySelectorAll('a[download], [class*="download"], [id*="download"], button, a[href*="clip"]').length;var listed=/clip|mp4|webm/i.test(t)||/(media and xhr|fetch-fed player) fixture/i.test(t);return JSON.stringify({pass:listed&&dl>0&&!/no (video|media)/i.test(t.slice(0,60)),text:t.slice(0,200),controls:dl,items:document.querySelectorAll('li, tr, [class*="video"], [class*="item"]').length,consent:/agree|accept|terms|privacy/i.test(t)})})()"""
         if (popup != null) {
             SystemClock.sleep(scaled(2_500, factor))
             extra.put("popupFirst", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
@@ -6255,7 +6261,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Over `media.html` with the webRequest probe (round 13's item 4): its sniffer is an
         // `onHeadersReceived` listener with `responseHeaders` (`bg/bg.min.js`), reading the
         // content-type, content-length and content-disposition, or the URL's media extension.
-        Row("mciiogijehkdemklbdcbfkefimifhecn", "Chrono Download Manager", "chrono-download-manager", core = mediaPopup("Chrono Download Manager", "media.html?chrono", "/clip|mp4|webm|video/i", panel = "/sniffer|resources|media/i", probe = true, listener = "onHeadersReceived with responseHeaders (content-type image/audio/video, content-length, content-disposition; or the URL's media extension; tabId != -1)", observer = "fetch-player.html?chrono")),
+        // Its sniffer page refuses a private address ([PUBLIC_NAME_BASE]): both fixtures under the public name.
+        Row("mciiogijehkdemklbdcbfkefimifhecn", "Chrono Download Manager", "chrono-download-manager", core = mediaPopup("Chrono Download Manager", "$PUBLIC_NAME_BASE/media.html?chrono", "/clip|mp4|webm|video/i", panel = "/sniffer|resources|media/i", probe = true, listener = "onHeadersReceived with responseHeaders (content-type image/audio/video, content-length, content-disposition; or the URL's media extension; tabId != -1); its page refuses a private address, so the fixtures are served under $PUBLIC_NAME_BASE", observer = "$PUBLIC_NAME_BASE/fetch-player.html?chrono")),
         Row("nfmmmhanepmpifddlkkmihkalkoekpfd", "FetchV", "fetchv", core = mediaPopup("FetchV", "hls.html?fetchv", "/m3u8|stream|hls|download|clip/i")),
         Row("jlgkpaicikihijadgifklkbpdajbkhjo", "CrxMouse", "crxmouse", core = contentAttached("CrxMouse", "its gestures need a mouse's right button and wheel, which the phone has not got: not applicable")),
         Row("cmdgdghfledlbkbciggfjblphiafkcgg", "SBlock", "sblock", core = ::adBlocker),
@@ -7961,6 +7968,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * host), so a `10.0.2.2` fixture is a page Chrome would not inject into either.
          */
         private const val LOCALHOST_BASE = "http://localhost:8765"
+        /**
+         * The same server under a public-looking name that resolves to the emulator's host address
+         * (nip.io's wildcard DNS: `10.0.2.2.nip.io` answers 10.0.2.2), for Chrono Download Manager,
+         * whose sniffer page refuses a private address before it asks its background for anything
+         * ("Cannot scan resources for this page."; its URL test excludes 10/8, 127/8, 172.16/12,
+         * 192.168/16 and 169.254/16 hosts and a bare `localhost` – compat round 15's 113 sniffer
+         * lane). Chrome shows the same over `http://10.0.2.2:8765/`; a phone's user browses public
+         * names. An image whose DNS does not answer the name fails to load the page, and the
+         * reading says so.
+         */
+        private const val PUBLIC_NAME_BASE = "http://10.0.2.2.nip.io:8765"
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
         /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */
