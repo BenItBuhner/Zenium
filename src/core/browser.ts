@@ -3655,7 +3655,7 @@ export class Browser {
         s.downloads = { ...s.downloads, ...rest }
         if (typeof askWhereToSave === 'boolean') s.askWhereToSave = askWhereToSave
       } else if (key === 'toolbarPins') {
-        // The Customize toolbar dialog writes the whole record; only known controls' folds stay.
+        // The Customise toolbar dialog writes the whole record; only known controls' folds stay.
         s.toolbarPins = sanitizeToolbarPins(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value

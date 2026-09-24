@@ -1062,7 +1062,7 @@ describe('the app menu', () => {
     })
   })
 
-  describe('the folded Forward row (Look and Feel › Customize toolbar, settings-36: the button off the desktop bar)', () => {
+  describe('the folded Forward row (Look and Feel › Customise toolbar, settings-36: the button off the desktop bar)', () => {
     it('heads the desktop menu while Forward is unpinned and is gone while the bar has the button', () => {
       const h = pageHarness(DESKTOP)
       const without = appMenu(h)

@@ -2313,7 +2313,7 @@ export interface Settings {
   toolbarLayout: ToolbarLayout
   /**
    * The desktop toolbar's optional controls that are folded into the app menu (Look and Feel ›
-   * Customize toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
+   * Customise toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
    * key absent reading pinned. Read by the desktop chrome's toolbar row and the desktop app
    * menu; inert on the phone and the tablet, which keep their own bars. Absent in profiles from
    * before it existed.
