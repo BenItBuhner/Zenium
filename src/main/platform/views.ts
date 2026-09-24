@@ -30,10 +30,14 @@ import type {
 } from '../../shared/types'
 import {
   DEVTOOLS_DOCK_HOOK_SCRIPT,
+  DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT,
   DEVTOOLS_SEAM_SCRIPT,
+  devtoolsBandRect,
   devtoolsMoveScript,
-  dockFromConsoleMessage
+  dockFromConsoleMessage,
+  pageBoundsFromConsoleMessage
 } from './devtoolsFrontend'
+import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
 import type { SafeBrowsingHit } from '../../shared/privacy'
@@ -285,6 +289,23 @@ export class ElectronTabView implements TabView {
    * `WebContents`, and a dock change must not dress the standing one twice.
    */
   private readonly dressedFrontends = new WeakSet<WebContents>()
+  /**
+   * Where this view's toolbox stands (§9.29): the dock it was last opened or moved at from
+   * here, then whatever the frontend's own buttons said (`dockFromConsoleMessage`). Reported
+   * to the core with `onDevtoolsOpened`, and it decides whether the toolbox has a picture in
+   * the frame's box (`snapshotDevtools`). Null before the first opening.
+   */
+  private devtoolsDock: DevtoolsDock | null = null
+  /**
+   * The page's hole in a docked frontend's box, in the box's DIP – the frontend's own word
+   * (`setInspectedPageBounds`, read back through `DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT`), the rect
+   * Electron sizes the page's view to. With the box it names the toolbox's band, the part of
+   * the frontend `snapshotDevtools` pictures. Null before the frontend has said, and between
+   * toolboxes.
+   */
+  private devtoolsPageBounds: Rect | null = null
+  /** The view's box as the chrome last laid it out (`setBounds`), in DIP; null before the first. */
+  private bounds: Rect | null = null
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -405,9 +426,13 @@ export class ElectronTabView implements TabView {
     wc.on('leave-html-full-screen', () => ev.onLeaveHtmlFullscreen())
     wc.on('devtools-opened', () => {
       this.dressDevtools()
-      ev.onDevtoolsOpened()
+      ev.onDevtoolsOpened(this.devtoolsDock ?? undefined)
     })
-    wc.on('devtools-closed', () => ev.onDevtoolsClosed())
+    wc.on('devtools-closed', () => {
+      // The frontend is gone with its layout; the next one says where its hole is.
+      this.devtoolsPageBounds = null
+      ev.onDevtoolsClosed()
+    })
     wc.on('found-in-page', (_e, result) => ev.onFoundInPage(result))
     wc.on('zoom-changed', (_e, direction) => ev.onZoomChanged(direction))
     wc.on('context-menu', (_e, params) => {
@@ -864,6 +889,7 @@ export class ElectronTabView implements TabView {
   }
 
   setBounds(rect: Rect): void {
+    this.bounds = rect
     this.view.setBounds(rect)
   }
 
@@ -904,6 +930,7 @@ export class ElectronTabView implements TabView {
       wc.closeDevTools()
       return
     }
+    if (!wc.isDevToolsOpened()) this.devtoolsDock = dock
     wc.openDevTools({ mode: dock, activate: true })
     if (mode === 'inspect') wc.inspectElement(0, 0)
   }
@@ -915,30 +942,44 @@ export class ElectronTabView implements TabView {
   inspectElementAt(x: number, y: number, dock: DevtoolsDock): void {
     const wc = this.wc
     if (wc.isDestroyed()) return
-    if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: dock, activate: true })
+    if (!wc.isDevToolsOpened()) {
+      this.devtoolsDock = dock
+      wc.openDevTools({ mode: dock, activate: true })
+    }
     wc.inspectElement(x, y)
   }
 
   /**
    * Move an open toolbox to `dock` (the app menu's rows): through the frontend's own
    * `DockController`, the path its buttons take, so the toolbox keeps its panel and drawer and
-   * persists the state as the user's. Should this Chromium keep the module elsewhere, the
-   * toolbox is closed and reopened at the dock instead.
+   * persists the state as the user's – and says the new dock on its console, the read-back the
+   * core hears (`onDevtoolsDockChanged`). Should this Chromium keep the module elsewhere, the
+   * toolbox is closed and reopened at the dock instead – one blink of the toolbox, and a line on
+   * the app's log naming the tab and the dock, so a Chromium that takes this path is noticed.
    */
   setDevtoolsDock(dock: DevtoolsDock): void {
     const wc = this.wc
     if (wc.isDestroyed() || !wc.isDevToolsOpened()) return
+    this.devtoolsDock = dock
     const frontend = wc.devToolsWebContents
-    const reopen = (): void => {
+    const reopen = (why: string): void => {
       if (wc.isDestroyed()) return
+      const tabId = this.owner.tabIdForWebContents(wc) ?? `webContents ${wc.id}`
+      console.warn(`[zen] devtools: reopening the toolbox of ${tabId} at ${dock} – ${why}`)
       wc.closeDevTools()
       wc.openDevTools({ mode: dock, activate: true })
     }
     if (!frontend || frontend.isDestroyed()) {
-      reopen()
+      reopen('the frontend is gone')
       return
     }
-    frontend.executeJavaScript(devtoolsMoveScript(dock), true).catch(reopen)
+    frontend
+      .executeJavaScript(devtoolsMoveScript(dock), true)
+      .catch((error: unknown) =>
+        reopen(
+          `the frontend refused the move: ${error instanceof Error ? error.message : String(error)}`
+        )
+      )
   }
 
   /**
@@ -953,10 +994,18 @@ export class ElectronTabView implements TabView {
     if (!frontend || frontend.isDestroyed() || this.dressedFrontends.has(frontend)) return
     this.dressedFrontends.add(frontend)
     frontend.on('console-message', (event) => {
+      const hole = pageBoundsFromConsoleMessage(event.message)
+      if (hole) {
+        this.devtoolsPageBounds = hole
+        return
+      }
       const dock = dockFromConsoleMessage(event.message)
-      if (dock) this.events?.onDevtoolsDockChanged?.(dock)
+      if (!dock) return
+      this.devtoolsDock = dock
+      this.events?.onDevtoolsDockChanged?.(dock)
     })
     frontend.executeJavaScript(DEVTOOLS_DOCK_HOOK_SCRIPT, true).catch(() => undefined)
+    frontend.executeJavaScript(DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT, true).catch(() => undefined)
     frontend.executeJavaScript(DEVTOOLS_SEAM_SCRIPT, true).catch(() => undefined)
   }
 
@@ -1061,32 +1110,32 @@ export class ElectronTabView implements TabView {
    * whatever its pixels (`CoverImage`, `object-cover`), so a 1:1 capture at DPR 2 does not
    * double. The Android host's cover is its own copy and encode (`TabWebView.snapshot`).
    */
-  async snapshot(): Promise<string | null> {
-    try {
-      const image = await Promise.race([
-        this.wc.capturePage(),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_TIMEOUT_MS))
-      ])
-      if (!image || image.isEmpty()) return null
-      const size = image.getSize()
-      // `capturePage` hands the device pixels over as a 1x bitmap (`getScaleFactors()` is [1],
-      // `getSize()` device pixels); the representation's scale is read all the same, so the
-      // arithmetic stays in device pixels should a capture ever come with one of its own.
-      const scales = image.getScaleFactors()
-      const fit = standinScale(size.width, size.height, scales.length ? Math.max(...scales) : 1, {
-        trigger: SNAPSHOT_MAX_PIXELS,
-        target: SNAPSHOT_TARGET_PIXELS
-      })
-      // Past the trigger: Hamming-1 (`good`), not the default Lanczos-3 – half the time on a
-      // picture that is being softened anyway (`SNAPSHOT_TARGET_PIXELS`).
-      const scaled =
-        fit.scale < 1
-          ? image.resize({ width: fit.width, height: fit.height, quality: 'good' })
-          : image
-      return `data:image/jpeg;base64,${scaled.toJPEG(SNAPSHOT_JPEG_QUALITY).toString('base64')}`
-    } catch {
-      return null
-    }
+  snapshot(): Promise<string | null> {
+    return snapshotOf(this.wc)
+  }
+
+  /**
+   * The picture of the developer toolbox docked in this view's box (§9.29), for the cover to lay
+   * under the page's picture: the frontend's own `capturePage`, cut to the toolbox's band – the
+   * part of the box beside the page's hole, the seam at its edge – where the frontend has said
+   * where its hole is (`devtoolsPageBounds`, with the view's box: `devtoolsBandRect`), the whole
+   * box otherwise. The cover anchors the picture to the band's side of the box, so the cut and
+   * the whole lay out the same; the cut keeps the pair of pictures at the box's own pixels
+   * (§9.5's budget: the page's hole is in the page's picture already – at DPR 2 a 1600 × 1000
+   * box is 6 Mpx once, not 9 with the hole pictured twice). Null with no toolbox up, an undocked
+   * one (a window of its own, nothing of it in the frame) or a frontend that is gone; encoded as
+   * the page's picture is (`snapshot`).
+   */
+  snapshotDevtools(): Promise<string | null> {
+    const wc = this.wc
+    if (wc.isDestroyed() || !wc.isDevToolsOpened()) return Promise.resolve(null)
+    if (!this.devtoolsDock || !isDockedInFrame(this.devtoolsDock)) return Promise.resolve(null)
+    const frontend = wc.devToolsWebContents
+    if (!frontend || frontend.isDestroyed()) return Promise.resolve(null)
+    const band = this.bounds
+      ? devtoolsBandRect(this.devtoolsDock, this.devtoolsPageBounds, this.bounds)
+      : null
+    return snapshotOf(frontend, band ?? undefined)
   }
 
   /**
@@ -1689,6 +1738,44 @@ export class ElectronTabView implements TabView {
   /** Where this page's full-page paint is cut, for its zoom on the most scaled display. */
   private fullPageCut(): number {
     return fullPageCut(zoomFactorOf(this.wc), largestDisplayScale())
+  }
+}
+
+/**
+ * The stand-in picture of `wc`'s current paint (`snapshot`, `snapshotDevtools`): `capturePage`
+ * within `SNAPSHOT_TIMEOUT_MS`, scaled past the trigger, a JPEG data URL; null for a capture
+ * that came empty, late or not at all.
+ */
+/**
+ * The stand-in of `wc`'s visible area – or of `rect` alone (DIP of the view's box; a docked
+ * toolbox's band, `snapshotDevtools`) – on the terms `snapshot` documents: the 600 ms race, the
+ * §9.5 trigger and target, JPEG 90 as a data URL; null for a capture that never comes.
+ */
+async function snapshotOf(wc: WebContents, rect?: Rect): Promise<string | null> {
+  try {
+    const image = await Promise.race([
+      rect ? wc.capturePage(rect) : wc.capturePage(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), SNAPSHOT_TIMEOUT_MS))
+    ])
+    if (!image || image.isEmpty()) return null
+    const size = image.getSize()
+    // `capturePage` hands the device pixels over as a 1x bitmap (`getScaleFactors()` is [1],
+    // `getSize()` device pixels); the representation's scale is read all the same, so the
+    // arithmetic stays in device pixels should a capture ever come with one of its own.
+    const scales = image.getScaleFactors()
+    const fit = standinScale(size.width, size.height, scales.length ? Math.max(...scales) : 1, {
+      trigger: SNAPSHOT_MAX_PIXELS,
+      target: SNAPSHOT_TARGET_PIXELS
+    })
+    // Past the trigger: Hamming-1 (`good`), not the default Lanczos-3 – half the time on a
+    // picture that is being softened anyway (`SNAPSHOT_TARGET_PIXELS`).
+    const scaled =
+      fit.scale < 1
+        ? image.resize({ width: fit.width, height: fit.height, quality: 'good' })
+        : image
+    return `data:image/jpeg;base64,${scaled.toJPEG(SNAPSHOT_JPEG_QUALITY).toString('base64')}`
+  } catch {
+    return null
   }
 }
 

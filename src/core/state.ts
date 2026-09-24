@@ -1077,6 +1077,8 @@ export class BrowserState {
           audible: false,
           alert: null,
           capture: null,
+          // A toolbox is a session's own: the key is not written (Android's records never carry it).
+          devtools: undefined,
           errorCode: null,
           // A certificate proceeded past is a decision of the session, not of the tab.
           certificateError: null,
