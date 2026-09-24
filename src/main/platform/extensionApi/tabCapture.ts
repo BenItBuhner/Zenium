@@ -93,8 +93,6 @@ interface LiveRequest {
   extensionId: string
   zenTabId: string
   chromeTabId: number
-  /** `getMediaStreamId`'s requests: no status events, absent from `getCapturedTabs`. */
-  anonymous: boolean
   /** The origin of the consuming document (the extension's, or the consumer tab's). */
   origin: string
   /** The one document that may redeem the id (a `WebContents` id), or any of the extension's. */
@@ -123,8 +121,11 @@ interface LiveRequest {
  *
  * Status follows the consumer's `getUserMedia` call (`streamState` from the shim) and the
  * consumer document's life: Chrome observes the media request, which the engine does not report
- * to the browser layer here. `getCapturedTabs` and `onStatusChanged` cover `capture`'s requests
- * only, like Chrome's (`getMediaStreamId`'s are anonymous).
+ * to the browser layer here. `getCapturedTabs` and `onStatusChanged` cover `getMediaStreamId`'s
+ * requests as much as `capture`'s: Chrome's registry keeps an `is_anonymous` flag (a request
+ * with no status events, absent from `getCapturedTabs`) that neither caller sets any more
+ * (`tab_capture_api.cc` at 152.0.7977.130 passes false for both), so an MV3 extension whose
+ * worker or popup asked for the id sees its capture listed (Audio Master reads it back so).
  *
  * `chrome.desktopCapture.chooseDesktopMedia` puts up the chrome's screen picker (the core's
  * `ScreenCaptureService`, the one `getDisplayMedia` uses) with the extension's name and icon and
@@ -195,7 +196,6 @@ export class TabCaptureApi {
         extensionId: ctx.extensionId,
         zenTabId: target.id,
         chromeTabId,
-        anonymous: true,
         origin,
         consumer: consumerWc.id,
         registered: true,
@@ -217,7 +217,6 @@ export class TabCaptureApi {
       extensionId: ctx.extensionId,
       zenTabId: target.id,
       chromeTabId,
-      anonymous: true,
       origin: extensionOrigin(ctx.extensionId),
       consumer: restrictToCaller && ctx.sender.kind === 'frame' ? ctx.sender.webContents.id : null,
       registered: false,
@@ -240,7 +239,6 @@ export class TabCaptureApi {
       extensionId: ctx.extensionId,
       zenTabId: target.id,
       chromeTabId,
-      anonymous: false,
       origin: extensionOrigin(ctx.extensionId),
       consumer: ctx.sender.webContents.id,
       registered: false,
@@ -252,7 +250,7 @@ export class TabCaptureApi {
 
   private getCapturedTabs(ctx: ApiContext): CaptureInfo[] {
     return this.requests
-      .filter((r) => r.extensionId === ctx.extensionId && !r.anonymous && r.state !== null)
+      .filter((r) => r.extensionId === ctx.extensionId && r.state !== null)
       .map((r) => this.infoOf(r))
   }
 
@@ -682,7 +680,6 @@ export class TabCaptureApi {
   private setState(request: LiveRequest, state: TabCaptureState): void {
     if (request.state === state) return
     request.state = state
-    if (request.anonymous) return
     this.host.dispatch(request.extensionId, 'tabCapture', 'onStatusChanged', [this.infoOf(request)])
   }
 

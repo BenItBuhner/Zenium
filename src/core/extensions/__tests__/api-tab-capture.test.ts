@@ -465,12 +465,31 @@ describe('TabCaptureApi', () => {
       w.api.allowsMediaRequest(target as unknown as WebContents, `chrome-extension://${OTHER}`)
     ).toBe(false)
     expect(w.api.allowsMediaRequest(target as unknown as WebContents, undefined)).toBe(false)
-    // Anonymous: no status events, absent from getCapturedTabs.
+    // Not anonymous (Chrome 152's `getMediaStreamId` passes `is_anonymous` false, as `capture`
+    // does): the capture is listed once the consumer's call is under way, and reported.
+    expect(w.dispatched).toEqual([
+      {
+        extensionId: EXT,
+        event: 'onStatusChanged',
+        args: [{ tabId: 5, status: 'pending', fullscreen: false }]
+      }
+    ])
+    expect(w.api.handlers.getCapturedTabs(w.workerCtx())).toEqual([
+      { tabId: 5, status: 'pending', fullscreen: false }
+    ])
     w.api.handlers.streamState(w.frameCtx(offscreen), streamId, 'active')
-    expect(w.dispatched).toEqual([])
-    expect(w.api.handlers.getCapturedTabs(w.workerCtx())).toEqual([])
+    expect(w.dispatched.at(-1)).toEqual({
+      extensionId: EXT,
+      event: 'onStatusChanged',
+      args: [{ tabId: 5, status: 'active', fullscreen: false }]
+    })
+    expect(w.api.handlers.getCapturedTabs(w.workerCtx())).toEqual([
+      { tabId: 5, status: 'active', fullscreen: false }
+    ])
+    expect(w.api.handlers.getCapturedTabs(w.workerCtx(OTHER))).toEqual([])
     // The consuming document going away ends the capture; the tab is free again.
     offscreen.destroy()
+    expect(w.dispatched.at(-1)?.args).toEqual([{ tabId: 5, status: 'stopped', fullscreen: false }])
     expect(
       w.api.allowsMediaRequest(target as unknown as WebContents, `chrome-extension://${EXT}`)
     ).toBe(false)
@@ -503,6 +522,14 @@ describe('TabCaptureApi', () => {
     expect(() => w.api.handlers.resolveStreamId(w.frameCtx(popup), streamId)).toThrow(
       TAB_CAPTURE_INVALID_TAB_ERROR
     )
+    // The worker reads the capture back (Audio Master's grader does), the popup too.
+    w.api.handlers.streamState(w.frameCtx(offscreen), streamId, 'active')
+    expect(w.api.handlers.getCapturedTabs(w.workerCtx())).toEqual([
+      { tabId: 5, status: 'active', fullscreen: false }
+    ])
+    expect(w.api.handlers.getCapturedTabs(w.frameCtx(popup))).toEqual([
+      { tabId: 5, status: 'active', fullscreen: false }
+    ])
   })
 
   it("an MV2 page's id with no consumerTabId is its own frame's, as Chrome restricts it", () => {
@@ -747,13 +774,23 @@ describe('TabCaptureApi', () => {
     expect(recorder.listenerCount('did-navigate')).toBe(0)
     expect(recorder.listenerCount('render-process-gone')).toBe(0)
     expect(recorder.listenerCount('destroyed')).toBe(0)
+    // The stream-id requests reported their states too (Chrome 152 lists them as capture's);
+    // the second went straight to active above.
+    expect(w.dispatched.map((d) => (d.args[0] as Any).status)).toEqual([
+      'pending',
+      'active',
+      'stopped',
+      'active',
+      'stopped'
+    ])
+    const seen = w.dispatched.length
     const popup = w.page(31)
     const captured = w.api.handlers.capture(w.frameCtx(popup), { audio: true }) as Any
     const streamId = captured.audioConstraints.mandatory.chromeMediaSourceId as string
     w.api.handlers.resolveStreamId(w.frameCtx(popup), streamId)
     w.api.handlers.streamState(w.frameCtx(popup), streamId, 'active')
     popup.navigate()
-    expect(w.dispatched.map((d) => (d.args[0] as Any).status)).toEqual([
+    expect(w.dispatched.slice(seen).map((d) => (d.args[0] as Any).status)).toEqual([
       'pending',
       'active',
       'stopped'
