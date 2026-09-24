@@ -1,5 +1,7 @@
 package app.zen.chromium
 
+import android.view.MotionEvent
+import app.zen.chromium.CustomTabBottomBarRules.InterceptStep
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -60,5 +62,32 @@ class CustomTabBottomBarRulesTest {
         assertFalse(CustomTabBottomBarRules.claimsDrag(2f, 6f, 8f))
         assertTrue(CustomTabBottomBarRules.claimsDrag(2f, -12f, 8f))
         assertFalse(CustomTabBottomBarRules.claimsDrag(20f, -12f, 8f))
+    }
+
+    @Test
+    fun aChildsTapDuringTheSettleSendsTheBarHome() {
+        val bar = 98f
+        val slop = 8f
+        // A swipe released at 40 px of travel: the bar settles from its offset towards 0. Some
+        // 0.1 s in, a finger lands on the caller's button with the bar still raised by half of it …
+        val caught = CustomTabBottomBarRules.dragOffset(40f, bar) / 2
+        assertTrue(caught > 0f)
+        // … the down grabs the bar where it is (travelFor picks the offset up as travel) …
+        assertEquals(InterceptStep.GRAB, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_DOWN, false, 0f, 0f, slop))
+        assertEquals(caught, CustomTabBottomBarRules.dragOffset(CustomTabBottomBarRules.travelFor(caught, bar), bar), 0.01f)
+        // … a tap's wobble within the slop leaves the stream with the button …
+        assertEquals(InterceptStep.NONE, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_MOVE, false, 1f, -2f, slop))
+        // … and the stream's end – the release, or the cancel a parent sends – settles the bar the
+        // grab stopped: raised by `caught`, it would otherwise stand there until the next drag or scroll.
+        assertEquals(InterceptStep.SETTLE, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_UP, false, 1f, -2f, slop))
+        assertEquals(InterceptStep.SETTLE, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_CANCEL, false, 1f, -2f, slop))
+        // A move past the slop, mostly vertical, claims the stream for the drag instead …
+        assertEquals(InterceptStep.CLAIM, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_MOVE, false, 2f, -12f, slop))
+        assertEquals(InterceptStep.NONE, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_MOVE, false, 20f, -12f, slop))
+        // … and a bar that claimed it hears the rest, its end included, in its own onTouchEvent.
+        assertEquals(InterceptStep.NONE, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_MOVE, true, 2f, -40f, slop))
+        assertEquals(InterceptStep.NONE, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_UP, true, 2f, -40f, slop))
+        assertEquals(InterceptStep.NONE, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_CANCEL, true, 2f, -40f, slop))
+        assertEquals(InterceptStep.NONE, CustomTabBottomBarRules.interceptStep(MotionEvent.ACTION_POINTER_DOWN, false, 0f, 0f, slop))
     }
 }

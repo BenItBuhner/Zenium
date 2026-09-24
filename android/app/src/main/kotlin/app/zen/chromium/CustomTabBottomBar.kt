@@ -204,17 +204,23 @@ class CustomTabBottomBar(
 
     // --- the swipe up ----------------------------------------------------------------------------
 
+    /**
+     * The bar's sight of a touch one of its children took at the down (the caller's own button):
+     * every action of the stream passes here until the bar claims it. The steps are
+     * [CustomTabBottomBarRules.interceptStep]; only a claim returns true, so a child's tap stays
+     * its own – including the tap whose release settles a bar the down caught mid-settle.
+     */
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         if (!swipeUpEnabled) return false
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> grab(ev)
-            MotionEvent.ACTION_MOVE -> {
-                velocity?.addMovement(ev)
-                if (!dragging && CustomTabBottomBarRules.claimsDrag(ev.x - downX, ev.y - downY, slop)) {
-                    dragging = true
-                    return true
-                }
+        val step = CustomTabBottomBarRules.interceptStep(ev.actionMasked, dragging, ev.x - downX, ev.y - downY, slop)
+        if (step == CustomTabBottomBarRules.InterceptStep.GRAB) grab(ev) else velocity?.addMovement(ev)
+        when (step) {
+            CustomTabBottomBarRules.InterceptStep.CLAIM -> {
+                dragging = true
+                return true
             }
+            CustomTabBottomBarRules.InterceptStep.SETTLE -> settle()
+            else -> Unit
         }
         return false
     }
@@ -224,7 +230,9 @@ class CustomTabBottomBar(
         velocity?.addMovement(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                grab(event)
+                // The intercept saw this down first and grabbed it (a ViewGroup's own touch begins
+                // there); a stream that somehow arrives without one is grabbed here.
+                if (velocity == null) grab(event)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -250,7 +258,8 @@ class CustomTabBottomBar(
 
     /**
      * A finger lands on the bar: a settle in flight stops where it is and the drag continues
-     * from there (the travel that offset stands for), so nothing snaps under the finger.
+     * from there (the travel that offset stands for), so nothing snaps under the finger. Once per
+     * stream, at the intercept's sight of the down.
      */
     private fun grab(event: MotionEvent) {
         downX = event.x
