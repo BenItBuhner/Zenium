@@ -99,6 +99,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /** An `identity.launchWebAuthFlow` sheet of the row's, up on the provider's page (`accountGate`). */
     private class AuthSheet(val url: String)
+    /** A side panel the action click opened in the sheet (`accountGate`'s watch, round 14's 7.18e). */
+    private class PanelHit(var text: String, var seen: JSONObject? = null)
 
     /** An action click that opened the extension's popup for the tab (Smarty's per-tab `setPopup`). */
     private class PopupHit(var text: String)
@@ -1747,6 +1749,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                             ?.let { id -> now.entries.firstOrNull { it.key == id && opens.containsMatchIn(it.value) } }
                         ?: authSheetUrl(row.id)?.let { url -> AuthSheet(url) }
                         ?: popupView()?.takeIf { it.context == "popup" && rendered(it) }?.let { PopupHit(json(tabEval(it, DEEP_TEXT)).optString("text")) }
+                        // The side panel an action without a popup opens from `onClicked` (Adobe
+                        // Photoshop's `sidePanel.open`), in the sheet: the row's surface as the popup
+                        // stage already takes it (round 14's 7.18e). Its document may read empty to a
+                        // script (a closed shadow root); the accessibility tree decides then.
+                        ?: popupView()?.takeIf { it.context == "sidePanel" }?.let { sheet ->
+                            val text = json(tabEval(sheet, DEEP_TEXT)).optString("text")
+                            if (rendered(sheet) || text.isNotBlank()) PanelHit(text) else seenInView(sheet).takeIf(::shownDespiteEmptyDom)?.let { PanelHit(text, it) }
+                        }
                         ?: injects?.let { selector -> json(tabEval(view, INJECTED_UI.replace("__SELECTOR__", JSONObject.quote(selector)))).takeIf { it.optBoolean("pass") } }
                 }
                 coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
@@ -1761,11 +1771,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 val injected = hit as? JSONObject
                 val authSheet = hit as? AuthSheet
                 val popupHit = hit as? PopupHit
+                val panelHit = hit as? PanelHit
                 if (popupHit != null) {
                     SystemClock.sleep(scaled(2_000, factor))
                     popupView()?.takeIf { it.context == "popup" }?.let { popupHit.text = json(tabEval(it, DEEP_TEXT)).optString("text") }
                     snap("${entry.optString("slug")}-tab-popup")
                     extra.put("tabPopup", popupHit.text.take(240))
+                }
+                if (panelHit != null) {
+                    // The panel settled: its document's text, else what the accessibility tree
+                    // shows of it (the closed shadow root), the sheet's size, its console.
+                    SystemClock.sleep(scaled(3_000, factor))
+                    popupView()?.takeIf { it.context == "sidePanel" }?.let { sheet ->
+                        panelHit.text = json(tabEval(sheet, DEEP_TEXT)).optString("text")
+                        if (panelHit.text.isBlank()) panelHit.seen = seenInView(sheet)
+                        extra.put("sidePanel", JSONObject().put("url", sheet.url?.take(160)).put("text", panelHit.text.take(240)).put("seen", panelHit.seen ?: JSONObject.NULL).put("sheet", sheetSize(sheet)).put("console", JSONArray(consoleOf(sheet).takeLast(10))))
+                    }
+                    snap("${entry.optString("slug")}-side-panel")
                 }
                 if (injected != null) {
                     SystemClock.sleep(scaled(2_000, factor))
@@ -1847,6 +1869,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         Grade("n/m", "$label: the action click injected its <${injected.optString("tag")}> (${injected.optInt("w")}x${injected.optInt("h")} css px, \"${injected.optString("text").take(80)}\") into the page; the tools need $gate (not measurable here)", extra)
                     popupHit != null ->
                         Grade("n/m", "$label: the action click opened its popup for the tab${if (extra.optBoolean("secondClick")) " on the second click" else ""} (\"${popupHit.text.replace(Regex("\\s+"), " ").trim().take(80)}\"); the core needs $gate (not measurable here)", extra)
+                    panelHit != null -> {
+                        val labels = panelHit.seen?.optJSONArray("labels")?.let { l -> (0 until l.length()).map { l.optString(it) } } ?: emptyList()
+                        val shown = panelHit.text.replace(Regex("\\s+"), " ").trim().ifEmpty { labels.joinToString(" ") }
+                        val how = if (panelHit.text.isBlank()) "; its document reads empty to a script, ${panelHit.seen?.optInt("nodes") ?: 0} nodes by accessibility" else ""
+                        Grade("n/m", "$label: the action click opened its side panel in the sheet${if (extra.optBoolean("secondClick")) " on the second click" else ""} (\"${shown.take(80)}\"$how); the core needs $gate (not measurable here)", extra)
+                    }
                     landed != null && opens.containsMatchIn(landed.value) ->
                         Grade("n/m", "$label: the action click $how ${landed.value.take(100)} (\"${text.take(80)}\"); the core needs $gate (not measurable here)", extra)
                     landed != null ->
@@ -2659,7 +2687,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun liveMarker(label: String, url: String, expr: String, settleMs: Long = 45_000, desktop: Boolean = false, mirrors: List<String> = emptyList()): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val attempts = JSONArray()
-        var grade: Grade? = null
+        val grades = ArrayList<Grade>()
         val targets = listOf(url) + mirrors
         for ((index, target) in targets.withIndex()) {
             val attempt = JSONObject().put("url", target)
@@ -2702,18 +2730,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             attempt.put("errorPage", errorPage)
             val extra = JSONObject().put("attempts", attempts).put("page", found).put("document", page).put("complete", complete)
             val where = target.take(60) + (if (desktop) " (desktop site)" else "")
-            val before = if (index > 0) "; the $index page(s) tried before it did not serve either (attempts)" else ""
-            grade = when {
+            val before = if (index > 0) "; the $index page(s) tried before it: ${grades.joinToString { it.verdict }} (attempts)" else ""
+            val grade = when {
                 found.optBoolean("pass") -> Grade("P", "$label: on $where: ${found.toString().take(220)}$before", extra)
                 errorPage || CHALLENGE_WORDS.containsMatchIn(text) || NOT_FOUND_WORDS.containsMatchIn(text) || text.isEmpty() ->
                     Grade("n/m", "$label: $where did not serve its page to the runner (\"${text.take(80)}\", complete $complete, ${page.optInt("els")} elements${if (refused) ", reloaded once" else ""})$before; nothing for the extension to act on (not measurable here)", extra)
                 else -> Grade("F", "$label: on $where (\"${text.take(60)}\"): ${found.toString().take(200)}$before", extra)
             }
-            // A page that did not serve is no reading: the next mirror of the same shape, if one is named.
-            if (grade.verdict != "n/m" || index == targets.lastIndex) break
+            grades += grade
+            // Every page of the row is tried until one passes (round 14's 7.18a: Buyhatke's
+            // Flipkart page served and its policy refused the extension's chunks – an F – while
+            // the Amazon page behind it mounts the widget), and the row is graded on the best
+            // reading: P over F (a served page is a reading) over n/m (a page that did not serve
+            // is none). Every attempt stays in `attempts`.
+            if (grade.verdict == "P" || index == targets.lastIndex) break
             closeTab(tab)
         }
-        grade!!
+        val best = grades.firstOrNull { it.verdict == "P" } ?: grades.firstOrNull { it.verdict == "F" } ?: grades.last()
+        if (grades.size > 1 && best !== grades.last()) Grade(best.verdict, best.note + "; ${grades.size} pages tried, the best reading kept: ${grades.joinToString { it.verdict }}", best.extra) else best
     }
 
     /**
@@ -5759,11 +5793,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /**
      * eJOY AI Dictionary: its content script (a Vite module graph loaded through `import()`)
-     * mounts `#eJOY__extension_root` on every page and answers a word's selection (`mouseup`)
-     * with its lookup inside that root. A word of the fixture is double-tapped as [dictionary]
-     * taps it, then selected by script with a mouse's events; the pass is the root drawing more
-     * than it held before the taps (a bubble, an icon), or the word in its text; the root
-     * mounted but nothing drawn is `F` with the console; a lookup asking for its account `n/m`.
+     * mounts `#eJOY__extension_root` (the lookup's root) and `#eJOY__extension_ai_adv_root` (its
+     * AI root, with the floating summary button drawn half off the viewport's right edge) on every
+     * page, and answers a word's selection with its lookup icon inside the first root. Its gesture,
+     * read in its bundle (7.1.51): a `selectionchange` on the document must have fired before a
+     * `mouseup` whose target is not the root, the selection non-collapsed – a selection made by
+     * script queues its own `selectionchange` after the script's synchronous mouse events, which is
+     * why round 14's double-click sequence drew nothing. Step 1's witnesses: the root mounted and the
+     * floating button drawn at the viewport's edge ([EJOY_ROOT]'s `edge`, by geometry). Step 2: a word
+     * of the fixture is double-tapped as [dictionary] taps it, then selected by script with
+     * `mousedown`, `selectionchange`, `mouseup` over the word's element ([EJOY_SELECT]); the pass is
+     * the lookup root drawing more than it held before (the icon, a bubble), or the word in its text;
+     * the root mounted with the button but nothing drawn after the gesture is `PARTIAL` (step 1 met,
+     * step 2 not); the root mounted without either is `F` with the console; a lookup asking for its
+     * account `n/m`.
      */
     private fun ejoy(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -5771,6 +5814,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val (_, view) = fixture("page-a.html?ejoy", factor, 3_000)
         val mounted = poll(scaled(20_000, factor), 700) { if (tabEval(view, "String(!!document.getElementById('eJOY__extension_root'))") == "true") true else null }
         extra.put("rootMounted", mounted == true)
+        // The floating button draws a moment after the root mounts; give it its moment before the baseline is read.
+        if (mounted == true) poll(scaled(6_000, factor), 500) { if (json(tabEval(view, EJOY_ROOT)).optJSONObject("edge") != null) true else null }
         val baseline = json(tabEval(view, EJOY_ROOT))
         extra.put("baseline", baseline)
         val word = json(tabEval(view, DICTIONARY_WORD))
@@ -5778,10 +5823,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val wordText = word.optString("word")
         var found = JSONObject()
         val grew = { f: JSONObject -> f.optInt("drawn") > baseline.optInt("drawn") || (f.optInt("drawn") > 0 && wordText.isNotEmpty() && f.optString("text").contains(wordText, ignoreCase = true)) }
+        var how = "the double-tap"
         screenPoint(view, word)?.let { tap(it.first, it.second); SystemClock.sleep(90); tap(it.first, it.second) }
         var shown = poll(scaled(8_000, factor), 600) { found = json(tabEval(view, EJOY_ROOT)); if (grew(found)) true else null }
+        var gesture = JSONObject()
         if (shown == null) {
-            extra.put("synthesised", tabEval(view, DICTIONARY_DBLCLICK))
+            how = "the selection gesture (mousedown, selectionchange, mouseup over the word)"
+            gesture = json(tabEval(view, EJOY_SELECT))
+            extra.put("synthesised", gesture)
             shown = poll(scaled(12_000, factor), 600) { found = json(tabEval(view, EJOY_ROOT)); if (grew(found)) true else null }
         }
         extra.put("root", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
@@ -5789,10 +5838,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-bubble")
         val text = found.optString("text")
+        val button = found.optJSONObject("edge") ?: baseline.optJSONObject("edge")
+        extra.put("floatingButton", button ?: JSONObject.NULL)
+        val buttonLine = button?.let { " and its floating button drawn at the viewport's ${it.optString("side")} edge (${it.optString("box")} px, ${it.optString("cls").ifBlank { it.optString("tag") }}${found.optString("named").takeIf { it.isNotEmpty() && it != "null" }?.let { n -> ", .containerSumEjoyIcon $n" } ?: ""})" } ?: ""
+        val selected = gesture.optString("selected")
         return when {
             shown != null && LOGIN_WORDS.containsMatchIn(text) -> Grade("n/m", "eJOY AI Dictionary: the word's lookup drew in its root, asking for its account (\"${text.take(80)}\"); the core needs an eJOY account (not measurable here)", extra)
-            shown != null -> Grade("P", "eJOY AI Dictionary: double-tap on \"$wordText\" -> its root drew ${found.optInt("drawn")} element(s) (${baseline.optInt("drawn")} before): ${found.toString().take(200)}", extra)
-            mounted == true -> Grade("F", "eJOY AI Dictionary: its root mounted but drew nothing new after the word's double-tap and a synthesised selection: ${found.toString().take(200)}", extra)
+            shown != null -> Grade("P", "eJOY AI Dictionary: $how on \"$wordText\" -> its lookup root drew ${found.optInt("drawn")} element(s) (${baseline.optInt("drawn")} before)$buttonLine: ${found.toString().take(200)}", extra)
+            mounted == true && button != null -> Grade("PARTIAL", "eJOY AI Dictionary: step 1 met – its root mounted$buttonLine – step 2 not: nothing new drew in the lookup root after the word's double-tap and $how (\"$wordText\" selected as \"$selected\", collapsed ${gesture.optBoolean("collapsed")}): ${found.toString().take(200)}", extra)
+            mounted == true -> Grade("F", "eJOY AI Dictionary: its root mounted without its floating button and drew nothing new after the word's double-tap and $how (\"$wordText\" selected as \"$selected\"): ${found.toString().take(200)}", extra)
             else -> Grade("F", "eJOY AI Dictionary: its root (#eJOY__extension_root) did not mount on the fixture within ${scaled(20_000, factor) / 1000} s: ${found.toString().take(160)}", extra)
         }
     }
@@ -6211,7 +6265,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("digojkgonhgmnohbapdfjllpnmjmdhpg", "ProctorExam Activity Sharing", "proctorexam", core = serviceBacked("ProctorExam Activity Sharing", "its content script runs on a ProctorExam exam session alone (proctorexam.com/student_sessions, check_requirements), relaying the page's messages to its worker for the tab sharing an exam needs")),
         Row("oifijhaokejakekmnjmphonojcfkpbbh", "Open Multiple URLs", "open-multiple-urls", core = ::openMultipleUrls),
         Row("lhobafahddgcelffkeicbaginigeejlf", "Allow CORS: Access-Control-Allow-Origin", "allow-cors", core = popupFlow("Allow CORS", "cors.html?allowcors", clicks = listOf("/toggle/i"), expr = CORS_UNLOCKED, settleMs = 20_000)),
-        Row("clldacgmdnnanihiibdgemajcfkmfhia", "Color Picker for Chrome", "color-picker", core = popupFlow("Color Picker for Chrome", "styled-light.html?colors", clicks = listOf("/^palette$/i", "/scan colors on the current page|page analyzer|scan colors|analy[sz]e|scan/i"), expr = COLOR_SWATCHES, onPage = false, settleMs = 20_000)),
+        // v4.0.2's Palette view offers a scheme of the base colour ("Monochromatic / Complementary /
+        // Triadic / Analogous") and no page scan under the older labels (round 14's 7.18c): a
+        // scheme drawn is the swatches the check counts.
+        Row("clldacgmdnnanihiibdgemajcfkmfhia", "Color Picker for Chrome", "color-picker", core = popupFlow("Color Picker for Chrome", "styled-light.html?colors", clicks = listOf("/^palette$/i", "/scan colors on the current page|page analyzer|scan colors|analy[sz]e|scan|monochromatic|complementary|triadic|analogous/i"), expr = COLOR_SWATCHES, onPage = false, settleMs = 20_000)),
         Row("hmffdimoneaieldiddcmajhbjijmnggi", "EasyBib Toolbar", "easybib-toolbar", core = popupMarker("EasyBib Toolbar", EASYBIB_CITATION, settleMs = 30_000, notMeasurable = Regex("sign ?in|log ?in|something went wrong|try again|unable|could not|error", RegexOption.IGNORE_CASE), gate = "Chegg's citation service (gateway.chegg.com)")),
         Row("nbcojefnccbanplpoffopkoepjmhgdgh", "Hoxx VPN Proxy", "hoxx-vpn", core = vpn("Hoxx VPN Proxy")),
         Row("bhmmomiinigofkjcapegjjndpbikblnp", "WOT: Website Security & Safety Checker", "wot", core = actionMarker("WOT", "page-a.html?wot", WOT_SLIDER)),
@@ -6356,34 +6413,51 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /**
      * Keep Awake: an `action.onClicked` row without a popup whose click turns the keep-awake on
      * (`chrome.power.requestKeepAwake('display')` or `'system'`, `background.js`) and relabels its
-     * action with its `statusOn` line ("Keep Awake is ON"). The action is clicked; the pass is the
-     * action's title turning to a line matching `on` with a `power.requestKeepAwake` call in the
-     * bridge's trace and no refusal; a refusal, or the worker's uncaught error on `chrome.power`,
-     * is F, ours (the runtime had no `power` namespace when the round started).
+     * action with its `statusOn` line ("Keep Awake is ON"); a row that starts awake from its
+     * stored default is turned OFF by the same click (`releaseKeepAwake`). The action is clicked
+     * once the worker has titled it; the pass is the title CHANGING on the click, in either
+     * direction, with the `power` call that direction takes in the bridge's trace
+     * (`requestKeepAwake` for OFF -> ON, `releaseKeepAwake` for ON -> OFF; round 14's 7.18f: the
+     * older line matched the pre-click "is ON" of a row that started awake) and no refusal; a
+     * refusal, or the worker's uncaught error on `chrome.power`, is F, ours (the runtime had no
+     * `power` namespace when round 14 started).
      */
     private fun keepAwake(label: String, on: Regex): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture("page-a.html?keepawake", factor, 1_500)
-        val titleBefore = extensionAction(row.id)?.optString("title") ?: ""
+        // The worker titles the action at its start; a click before that would read the start's
+        // title as the click's change.
+        val titleBefore = poll(scaled(10_000, factor), 400) { extensionAction(row.id)?.optString("title")?.takeIf { it.isNotBlank() } } ?: ""
+        val wasOn = on.containsMatchIn(titleBefore)
         val since = StepEvidence(row)
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val title = poll(scaled(20_000, factor), 500) { extensionAction(row.id)?.optString("title")?.takeIf { on.containsMatchIn(it) } }
+        val changed = poll(scaled(20_000, factor), 500) { extensionAction(row.id)?.optString("title")?.takeIf { it.isNotBlank() && it != titleBefore } }
         val titleAfter = extensionAction(row.id)?.optString("title") ?: ""
+        val isOn = on.containsMatchIn(titleAfter)
         since.record(extra, "atEnd")
         val trace = since.trace()
         val powerCalls = trace.filter { " call power." in it }.map { it.substringAfter(" call ") }
+        val expected = if (wasOn) "power.releaseKeepAwake" else "power.requestKeepAwake"
+        val matched = powerCalls.any { it.startsWith(expected) }
+        val direction = when {
+            changed == null -> null
+            !wasOn && isOn -> "on"
+            wasOn && !isOn -> "off"
+            else -> null
+        }
         val (errors, notImplemented) = bridgeErrors(trace)
         val workerErrors = backgroundView(row.id)?.let { consoleOf(it).filter(::isUncaught).takeLast(3) } ?: emptyList()
-        extra.put("titleBefore", titleBefore).put("titleAfter", titleAfter).put("powerCalls", JSONArray(powerCalls.take(8))).put("bridgeErrors", JSONArray(errors.take(6))).put("workerUncaught", JSONArray(workerErrors))
+        extra.put("titleBefore", titleBefore).put("titleAfter", titleAfter).put("wasOn", wasOn).put("isOn", isOn).put("expectedCall", expected).put("matchedCall", matched).put("powerCalls", JSONArray(powerCalls.take(8))).put("bridgeErrors", JSONArray(errors.take(6))).put("workerUncaught", JSONArray(workerErrors))
         popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-core")
         runCatching { coreCall("extension.closePopup", "null") }
-        val note = "title \"$titleBefore\" -> \"$titleAfter\"; power calls ${powerCalls.groupingBy { it }.eachCount()}; bridge errors ${errors.take(3)}"
+        val note = "title \"$titleBefore\" -> \"$titleAfter\"; power calls ${powerCalls.groupingBy { it }.eachCount()} ($expected expected for this direction${if (matched) ", made" else ", NOT made"}); bridge errors ${errors.take(3)}"
         when {
-            title != null && notImplemented.isEmpty() && workerErrors.isEmpty() -> Grade("P", "$label: the click turned it on: $note", extra)
-            title != null -> Grade("PARTIAL", "$label: the click relabelled the action, but the runtime refused a call or the worker threw: ${(notImplemented + workerErrors).first().take(160)}; $note", extra)
+            direction != null && matched && notImplemented.isEmpty() && workerErrors.isEmpty() -> Grade("P", "$label: the click turned it $direction: $note", extra)
+            direction != null && matched -> Grade("PARTIAL", "$label: the click turned it $direction, but the runtime refused a call or the worker threw: ${(notImplemented + workerErrors).first().take(160)}; $note", extra)
+            changed != null -> Grade("PARTIAL", "$label: the click relabelled the action without the power call its direction takes: $note", extra)
             workerErrors.any { "power" in it } -> Grade("F", "$label: its worker threw on chrome.power: ${workerErrors.last { "power" in it }.take(160)}; $note", extra)
             notImplemented.isNotEmpty() -> Grade("F", "$label: the bridge refused ${notImplemented.first().take(120)}; $note", extra)
             workerErrors.isNotEmpty() -> Grade("F", "$label: its worker threw after the click: ${workerErrors.last().take(160)}; $note", extra)
@@ -6427,9 +6501,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Service ("Action Required – Our Terms of Service have changed. Open the settings page to
      * accept them."), which its settings page asks for as an onboarding step – two checkboxes (the
      * ToS, the age and privacy policy) and a `data-testid="onboarding-accept"` button that enables
-     * once both are ticked. The settings page is opened as a tab, the consent given by script, the
-     * tab closed; then round 13's popup flow (the fixture host blocked from the popup) runs as it
-     * did. What the consent step found is kept beside the flow's evidence.
+     * once both are ticked. The settings page is opened as a tab, the consent given by script,
+     * the terms step that follows the page's own reload accepted in rounds (round 14's 7.18b:
+     * the onboarding accept alone left the popup's notice), the tab closed; then round 13's popup
+     * flow (the fixture host blocked from the popup) runs as it did. What the consent and terms
+     * steps found is kept beside the flow's evidence, and a popup still showing the notice is
+     * named in the note.
      */
     private fun stayfocusd(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -6439,11 +6516,34 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         consent.put("console", JSONArray(consoleOf(view).takeLast(6)))
         SystemClock.sleep(scaled(2_500, factor))
         snap("${entry.optString("slug")}-consent")
+        // Round 14's 7.18b: the onboarding accept ("Continue") is not the acceptance the popup
+        // wants – its notice ("Our Terms of Service have changed. Open the settings page to
+        // accept them.") stayed after it. The settings page is kept open through its own reload
+        // and asked, in rounds, for the terms step that follows: every checkbox ticked, the
+        // accept / agree / continue control pressed, until the page shows no terms prompt and no
+        // such control (`pass`), or nothing more to press (recorded). What each round found is
+        // kept in `terms`.
+        val terms = JSONArray()
+        var termsDone = false
+        for (round in 0 until 5) {
+            SystemClock.sleep(scaled(2_500, factor))
+            val step = runCatching { json(tabEval(view, STAYFOCUSD_TERMS)) }.getOrElse { JSONObject().put("error", it.message?.take(120)) }
+            step.put("round", round)
+            terms.put(step)
+            if (step.optBoolean("pass")) {
+                termsDone = true
+                break
+            }
+            if (!step.has("clicked")) break
+        }
+        snap("${entry.optString("slug")}-terms")
         runCatching { closeTab(settings) }
         val grade = popupFlow("StayFocusd", "page-a.html?stayfocusd", clicks = listOf("/block entire site|block this (url|site)|block site/i"), expr = STAYFOCUSD_BLOCKED, onPage = false, settleMs = 20_000)(row, entry)
         val extra = grade.extra ?: JSONObject()
-        extra.put("consent", consent)
-        return Grade(grade.verdict, grade.note + " (consent step: ${consent.toString().take(120)})", extra)
+        extra.put("consent", consent).put("terms", terms).put("termsAccepted", termsDone)
+        val notice = STAYFOCUSD_NOTICE.containsMatchIn(extra.optString("popupText")) || STAYFOCUSD_NOTICE.containsMatchIn(extra.optString("popupAfter"))
+        val trail = "consent step: ${consent.toString().take(120)}; terms step: ${if (termsDone) "accepted in ${terms.length()} round(s)" else "no acceptance found in ${terms.length()} round(s): ${terms.optJSONObject(terms.length() - 1)?.toString()?.take(160)}"}"
+        return Grade(grade.verdict, grade.note + " ($trail${if (notice) "; the popup still shows its terms notice – the acceptance it wants is not on the settings page under these controls" else ""})", extra)
     }
 
     /**
@@ -8399,6 +8499,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var accept=document.querySelector('[data-testid=onboarding-accept]');var boxes=Array.prototype.slice.call(document.querySelectorAll('input[type=checkbox]'));var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "if(!accept)return JSON.stringify({pass:false,accept:false,boxes:boxes.length,text:t.slice(0,120)});boxes.forEach(function(b){if(!b.checked)b.click()});" +
                 "if(accept.disabled)return JSON.stringify({pass:false,accept:true,disabled:true,boxes:boxes.length,ticked:boxes.filter(function(b){return b.checked}).length});accept.click();return JSON.stringify({pass:true,accept:true,boxes:boxes.length,label:(accept.textContent||'').trim().slice(0,40)})})()"
+        /**
+         * StayFocusd's terms step after the onboarding (round 14's 7.18b): the page's terms prompt
+         * (`terms`), every checkbox ticked, the first enabled accept / agree / continue control
+         * pressed (`clicked`); `pass` once the page shows no terms prompt and no such control.
+         */
+        private const val STAYFOCUSD_TERMS =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var terms=/terms of service have changed|accept (the|our|these) (new |updated )?terms|agree to (the|our) terms|action required|i (have read and )?agree/i.test(t);" +
+                "var boxes=Array.prototype.slice.call(document.querySelectorAll('input[type=checkbox]'));boxes.forEach(function(b){if(!b.checked)b.click()});" +
+                "var controls=Array.prototype.slice.call(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(function(b){var r=b.getBoundingClientRect();return r.width>0&&r.height>0&&!b.disabled});" +
+                "var accept=controls.filter(function(b){return /^(i )?(accept|agree|understand|got it|confirm|continue)\\b/i.test((b.textContent||b.value||'').trim())})[0];" +
+                "if(!accept)return JSON.stringify({pass:!terms,terms:terms,boxes:boxes.length,controls:controls.map(function(b){return (b.textContent||b.value||'').trim().slice(0,24)}).slice(0,8),text:t.slice(0,160)});" +
+                "var label=(accept.textContent||accept.value||'').trim().slice(0,40);accept.click();return JSON.stringify({pass:false,terms:terms,clicked:label,boxes:boxes.length,text:t.slice(0,120)})})()"
+        /** StayFocusd's popup notice while its terms are unaccepted. */
+        private val STAYFOCUSD_NOTICE = Regex("terms of service have changed|action required|open the settings page to accept", RegexOption.IGNORE_CASE)
         /** Global Speed's rate on the fixture's clip (`main.js` sets `playbackRate` on the tab's media). */
         private const val GLOBAL_SPEED_RATE =
             "JSON.stringify((function(){var m=document.querySelector('video, audio');return {pass:!!m&&Math.abs(m.playbackRate-1)>0.05,rate:m?m.playbackRate:null,paused:m?m.paused:null}})())"
@@ -8636,10 +8750,30 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val TEXTAREA_TYPE =
             "(function(){var ta=document.querySelector('textarea');if(!ta)return JSON.stringify({typed:false,reason:'no textarea',text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,80):''});ta.focus();ta.value=__TEXT__;" +
                 "ta.dispatchEvent(new Event('input',{bubbles:true}));ta.dispatchEvent(new Event('change',{bubbles:true}));return JSON.stringify({typed:true,id:ta.id||null,length:ta.value.length})})()"
-        /** eJOY's root (`#eJOY__extension_root`, its shadow root when it has one): how many of its elements are drawn, and its text. */
+        /**
+         * eJOY's lookup root (`#eJOY__extension_root`, its shadow root when it has one): how many of its elements are drawn,
+         * and its text – plus the floating button as step 1's second witness: in any of eJOY's roots (the lookup root, the AI
+         * root `#eJOY__extension_ai_adv_root` and its video twin; shadow or light), the first drawn `position: fixed` element
+         * of at most 160 px a side that touches or overflows an edge of the viewport (`edge`, its side and box; `edgeCount`),
+         * and the button's own class when it carries it (`named`: `.containerSumEjoyIcon`, 66x34 px at `right: -27px`, half off
+         * the right edge, shown with `.containerSumEjoyIconShow`).
+         */
         private const val EJOY_ROOT =
             "(function(){var host=document.getElementById('eJOY__extension_root');var root=host&&(host.shadowRoot||host);var drawn=[];var text='';if(root){var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var r=e.getBoundingClientRect();if(r.width>20&&r.height>20&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none')drawn.push((e.tagName+' '+(e.id||'')+' '+(typeof e.className==='string'?e.className:'')).replace(/\\s+/g,' ').trim().slice(0,40))}text=(root.textContent||'').replace(/\\s+/g,' ').trim()}" +
-                "var hr=host?host.getBoundingClientRect():null;return JSON.stringify({host:!!host,shadow:!!(host&&host.shadowRoot),drawn:drawn.length,first:drawn.slice(0,4),text:text.slice(0,120),hostBox:hr?Math.round(hr.width)+'x'+Math.round(hr.height):null,selection:String(getSelection()).trim().slice(0,30)})})()"
+                "var edge=null,edgeCount=0,named=null,W=innerWidth,H=innerHeight;['eJOY__extension_root','eJOY__extension_ai_adv_root','eJOY__extension_ai_adv_root_inside_video'].forEach(function(id){var h=document.getElementById(id);if(!h)return;var rt=h.shadowRoot||h;var els=rt.querySelectorAll('*');for(var j=0;j<els.length;j++){var el=els[j];var cs=getComputedStyle(el);if(cs.display==='none'||cs.visibility==='hidden')continue;var b=el.getBoundingClientRect();if(b.width<8||b.height<8||b.width>160||b.height>160)continue;var cls=typeof el.className==='string'?el.className:'';" +
+                "if(!named&&/containerSumEjoyIcon/.test(cls))named=Math.round(b.width)+'x'+Math.round(b.height)+'@'+Math.round(b.left)+','+Math.round(b.top);if(cs.position!=='fixed')continue;var side=b.left<=2?'left':b.right>=W-2?'right':b.top<=2?'top':b.bottom>=H-2?'bottom':null;if(!side)continue;edgeCount++;if(!edge)edge={root:id,tag:el.tagName,id:el.id||'',cls:cls.replace(/\\s+/g,' ').trim().slice(0,40),box:Math.round(b.width)+'x'+Math.round(b.height),at:Math.round(b.left)+','+Math.round(b.top),side:side}}});" +
+                "var hr=host?host.getBoundingClientRect():null;return JSON.stringify({host:!!host,shadow:!!(host&&host.shadowRoot),aiRoot:!!document.getElementById('eJOY__extension_ai_adv_root'),drawn:drawn.length,first:drawn.slice(0,4),text:text.slice(0,120),hostBox:hr?Math.round(hr.width)+'x'+Math.round(hr.height):null,selection:String(getSelection()).trim().slice(0,30),edge:edge,edgeCount:edgeCount,named:named})})()"
+        /**
+         * eJOY's lookup gesture (its bundle, 7.1.51): a `selectionchange` on the document must have fired before a `mouseup`
+         * whose target is not `#eJOY__extension_root`, the selection non-collapsed – the `mouseup` handler closes otherwise.
+         * A selection made by script queues its own `selectionchange` AFTER the script's synchronous mouse events (round 14's
+         * double-click sequence drew nothing for that), so the event is dispatched by hand between `mousedown` and `mouseup`
+         * over the word's element, as a mouse's drag-select yields; no second `mouseup` follows (one over an open icon closes it).
+         */
+        private const val EJOY_SELECT =
+            "(function(){var w=window.__zenWord;if(!w)return JSON.stringify({error:'no word'});var sel=getSelection();sel.removeAllRanges();sel.addRange(w.range);var el=w.range.startContainer.parentElement;var opts={bubbles:true,cancelable:true,composed:true,clientX:w.x,clientY:w.y,detail:1,view:window,button:0};" +
+                "el.dispatchEvent(new MouseEvent('mousedown',opts));document.dispatchEvent(new Event('selectionchange'));el.dispatchEvent(new MouseEvent('mouseup',opts));el.dispatchEvent(new MouseEvent('click',opts));" +
+                "return JSON.stringify({word:w.word,selected:String(sel).trim().slice(0,30),collapsed:sel.isCollapsed,target:(el.tagName+(el.id?'#'+el.id:'')).slice(0,30)})})()"
         /** `cookie-banner.html`'s four banners: hidden (display none, visibility hidden, a zero box) or removed by the blocker's stylesheet or script; `pass` when at least two are. */
         private const val COOKIE_BANNERS_HIDDEN =
             "(function(){var b=window.__banners?window.__banners():{};var ids=['cookie-notice','cookieConsent','cookieConsentBar','onetrust-consent-sdk'];var hidden=ids.filter(function(id){return b[id]&&b[id].hidden});var how={};ids.forEach(function(id){how[id]=b[id]?b[id].how:'?'});" +
