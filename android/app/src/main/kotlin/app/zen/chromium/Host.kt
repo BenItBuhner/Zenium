@@ -652,7 +652,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "holdBackgroundWork" to BackgroundWorkHold.requested(
                     activity.intent?.getBooleanExtra(BackgroundWorkHold.EXTRA_HOLD, false) == true,
                     BuildConfig.DEBUG
-                )
+                ),
+                // The search widget's or a launcher shortcut's landing state on a cold start
+                // (`Landing.kt`, WID-07): the launch intent's extra, stashed by
+                // `MainActivity.handleIntent` through `chrome.land`; the boot applies it in its
+                // own run, before the chrome's first frame (`boot.ts`). Null in every other start.
+                "landing" to chrome.takeLanding()
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as

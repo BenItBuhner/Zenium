@@ -11,8 +11,9 @@ import { openShortcutPrivateTab } from './privateShortcut'
 /**
  * The states the search widget and the launcher's shortcuts ask the app to open in (WID-07). The
  * words are `Landing.kt`'s: one intent extra (`app.zen.chromium.extra.LANDING`), read by
- * `MainActivity.handleIntent` and handed to `window.__zenHost.land` through the chrome's ready
- * queue, as the private shortcut's action always was.
+ * `MainActivity.handleIntent` and handed to `ChromeWebView.land`. Cold, the chrome stashes it
+ * and the boot answer carries it (`BootInfo.landing`), applied by `bootAndroid` right after
+ * `browser.start()`; warm (`onNewIntent`), it reaches `window.__zenHost.land` at once.
  */
 export const LANDING_STATES = ['search', 'voice', 'private', 'scan', 'newTab'] as const
 export type LandingState = (typeof LANDING_STATES)[number]
@@ -44,8 +45,8 @@ const surfaces: LandingSurfaces = {
 
 /**
  * Run `fn` once the chrome holds the core's state – at once when it does. On a cold start the
- * landing is delivered by the host global's flush, in the same synchronous run as
- * `browser.start()` and before the chrome has mounted (`main.tsx` renders once `bootAndroid`
+ * landing is applied by `bootAndroid` itself, from the boot answer, in the same synchronous run
+ * as `browser.start()` and before the chrome has mounted (`main.tsx` renders once `bootAndroid`
  * resolves): the tab is in place for the chrome's first frame, and the surface over it is asked
  * for as soon as the chrome can answer (`startBrowserSync` fills the store in the microtasks
  * before the first render), never a frame late. Warm (`onNewIntent`) the store is filled and the
@@ -69,10 +70,11 @@ function whenChromeHasState(fn: () => void): void {
  * private tab, the QR scanner – without the previous tab ever painting.
  *
  * The rule that gives the "no flash": every landing is a NEW tab, created active in this turn
- * (`private` is the shortcut's private tab; the rest a blank tab, the phone's new tab page). The
- * tab that was active never takes a frame, because the chrome's first frame – cold, the React
- * mount; warm, the next – already shows the new one. The surface (omnibox, voice, scan) is the
- * chrome's own entry point, called as the chrome is ready (`whenChromeHasState`).
+ * (`private` is the shortcut's private tab; the rest a blank tab, the phone's new tab page). Cold,
+ * this runs inside `bootAndroid`, right after `browser.start()` and before React mounts, so the
+ * chrome's first frame already shows the new tab and the restored one never takes a frame. Warm,
+ * the next frame shows it. The surface (omnibox, voice, scan) is the chrome's own entry point,
+ * called as the chrome is ready (`whenChromeHasState`).
  *
  * The tab is `fromIntent`, as the private shortcut's is (INC-01): back at its root returns to the
  * launcher and closes the tab on the way out (#117's `rootBackAction` -> `caller`) – the widget's

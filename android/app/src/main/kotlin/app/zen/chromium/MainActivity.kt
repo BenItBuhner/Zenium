@@ -311,7 +311,9 @@ class MainActivity : BrowserActivity() {
             WebNotifications.ACTION_OPENED -> host.webNotifications.onOpenIntent(intent)
         }
         // The search widget's face or a launcher shortcut (relayed by LauncherIconActivity) named
-        // the state to open in (Landing.kt, WID-07): the chrome lands in it – the one extra and
+        // the state to open in (Landing.kt, WID-07): the chrome lands in it. Cold (onCreate, the
+        // chrome's document still loading) it stashes the state for the core's boot answer, which
+        // applies it before the first frame; warm it goes to the core at once. The one extra and
         // this read are all the boot path carries for it.
         Landing.of(intent)?.let { host.chrome.land(it) }
         // Consume so a configuration change does not re-open it.

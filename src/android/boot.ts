@@ -118,8 +118,10 @@ export interface HostGlobal {
   newPrivateTab(): void
   /**
    * The search widget's or a launcher shortcut's landing state (`Landing.kt`'s intent extra,
-   * WID-07): the app opens straight in it – a new tab with the omnibox focused, listening, the
-   * QR scanner, or a private tab – the previous tab never painting (`landing.ts`).
+   * WID-07) on a WARM start – `onNewIntent`, or an intent in the boot's tail: the app opens
+   * straight in it – a new tab with the omnibox focused, listening, the QR scanner, or a private
+   * tab (`landing.ts`). A cold start's landing does not come this way: it rides the boot answer
+   * (`BootInfo.landing`) and is applied in `bootAndroid`'s own run, before the first render.
    */
   land(state: string): void
 }
@@ -172,6 +174,13 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   // the line boxes follow from here. Changes arrive with the `environment` event (platform.ts).
   applyTextScale(boot.environment)
   browser.start()
+  // The state a widget face or a launcher shortcut asked this cold start to open in (WID-07):
+  // the boot answer carried it, and it lands here, in the same synchronous run as the start and
+  // before `main.tsx` can render – the restored tab never takes a frame. The ready queue the
+  // warm path uses (`ChromeWebView.land`) would be too late: it fires at `onPageFinished`, after
+  // this run. A start with no landing reads one null here and does nothing else.
+  if (typeof boot.landing === 'string')
+    landFromIntent(boot.landing, platform.browser, platform.window)
   hostGlobal.flush()
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
