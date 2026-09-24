@@ -85,7 +85,9 @@ export class TaskService {
         return { title: sample.serviceName ?? 'Browser', icon: null }
       case 'tab': {
         const tabs = sample.tabIds.map((id) => this.browser.state.model.tabs[id] ?? null)
-        const titles = tabs.map((tab, i) => (tab ? tabTitle(tab) : `Tab ${sample.tabIds[i]}`))
+        const titles = tabs.map((tab, i) =>
+          tab ? tabTitle(tab) : this.placeholderTitle(sample.tabIds[i]!)
+        )
         const first = tabs.find((tab) => tab !== null) ?? null
         return {
           title: titles.length ? titles.join(', ') : 'Tab',
@@ -113,6 +115,15 @@ export class TaskService {
       case 'other':
         return { title: sample.serviceName || 'Helper Process', icon: null }
     }
+  }
+
+  /**
+   * A page view the host maps to a tab id the model does not hold: the new tab page a window
+   * preloads off screen before its tab exists (`NewTabService`, a placeholder id); anything
+   * else is named by its id so the row still says what it is.
+   */
+  private placeholderTitle(tabId: string): string {
+    return this.browser.newTab.isPreloadId(tabId) ? 'New Tab (preloaded)' : `Tab ${tabId}`
   }
 }
 

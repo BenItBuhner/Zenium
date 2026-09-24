@@ -22,6 +22,7 @@ function sample(part: Partial<TaskSample> & { pid: number; kind: TaskSample['kin
 function browserWith(tabs: Record<string, Partial<Record<string, unknown>>>): Browser {
   return {
     state: { model: { tabs } },
+    newTab: { isPreloadId: (id: string) => id.startsWith('newtab_preload') },
     extensions: {
       list: () => [
         { id: EXT, name: 'uBlock Origin', icon: 'data:image/png;base64,AAAA' },
@@ -64,6 +65,9 @@ describe('TaskService', () => {
       sample({ pid: 202, kind: 'tab', tabIds: ['a', 'b'], networkBytesPerSecond: 1200 }),
       sample({ pid: 203, kind: 'tab', tabIds: ['c'] }),
       sample({ pid: 208, kind: 'tab', tabIds: ['d'] }),
+      // The new tab page a window preloads off screen: a placeholder id the model never holds.
+      sample({ pid: 211, kind: 'tab', tabIds: ['newtab_preload_7f3a'] }),
+      sample({ pid: 212, kind: 'tab', tabIds: ['gone'] }),
       sample({ pid: 204, kind: 'devtools', devtoolsForTabId: 'b' }),
       sample({ pid: 209, kind: 'devtools' }),
       sample({ pid: 205, kind: 'extension', extensionId: EXT }),
@@ -85,6 +89,8 @@ describe('TaskService', () => {
       // No title yet: the address, as the tab row shows it.
       [203, 'tab', 'c.example/path', null, true],
       [208, 'tab', 'New Tab', null, true],
+      [211, 'tab', 'New Tab (preloaded)', null, true],
+      [212, 'tab', 'Tab gone', null, true],
       // The extension's NAME and icon as the extension host lists them.
       [205, 'extension', 'uBlock Origin', 'data:image/png;base64,AAAA', true],
       [210, 'extension', 'Extension', null, true],
