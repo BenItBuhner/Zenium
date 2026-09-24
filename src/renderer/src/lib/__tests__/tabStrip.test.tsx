@@ -7,6 +7,8 @@ vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () =
 
 import { run } from '../api'
 import {
+  refocusStripRow,
+  setStripFocus,
   stripEntries,
   stripFocusIn,
   stripFocusOut,
@@ -460,6 +462,66 @@ describe('the roving tab stop', () => {
       relatedTarget: null
     } as unknown as FocusEvent<HTMLElement>)
     expect(uiStore.get().stripFocus).toBeNull()
+  })
+
+  it("tells the core which tab's row holds the keyboard, and when none does (tabs-34)", () => {
+    stripFocusIn(focusEvent(byId('p1'), null))
+    expect(run).toHaveBeenLastCalledWith('strip.focus', { tabId: 'p1' })
+    // The same row again says nothing new.
+    vi.mocked(run).mockClear()
+    stripFocusIn(focusEvent(byId('p1'), null))
+    expect(run).not.toHaveBeenCalled()
+    // A header or a tile is no tab's row: the chord is the active tab's there.
+    stripFocusOut(focusEvent(byId('p1'), byId('h')))
+    stripFocusIn(focusEvent(byId('h'), byId('p1')))
+    expect(run).toHaveBeenLastCalledWith('strip.focus', { tabId: null })
+    stripFocusOut(focusEvent(byId('h'), byId('e1')))
+    stripFocusIn(focusEvent(byId('e1'), byId('h')))
+    expect(run).toHaveBeenLastCalledWith('strip.focus', { tabId: null })
+    stripFocusOut(focusEvent(byId('e1'), byId('r2')))
+    stripFocusIn(focusEvent(byId('r2'), byId('e1')))
+    expect(run).toHaveBeenLastCalledWith('strip.focus', { tabId: 'r2' })
+    // Out of the strip: none.
+    vi.mocked(run).mockClear()
+    stripFocusOut(focusEvent(byId('r2'), byId('newtab')))
+    expect(run).toHaveBeenCalledWith('strip.focus', { tabId: null })
+    // Dropped from elsewhere (the space changed): the core hears that too, once.
+    setStripFocus('tab:r1')
+    vi.mocked(run).mockClear()
+    setStripFocus(null)
+    setStripFocus(null)
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run).toHaveBeenCalledWith('strip.focus', { tabId: null })
+  })
+})
+
+describe('refocusStripRow', () => {
+  it("puts the keyboard on the tab's row on screen, not on one in another space's inert panel", () => {
+    byId('newtab').focus()
+    refocusStripRow('f1a')
+    expect(document.activeElement?.id).toBe('f1a')
+    // The other space's row for a tab is inert: nothing to focus, the keyboard stays.
+    refocusStripRow('other')
+    expect(document.activeElement?.id).toBe('f1a')
+  })
+
+  it('looks for the row again on the next frame when it is not there yet', () => {
+    let frame: FrameRequestCallback | null = null
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      frame = cb
+      return 1
+    })
+    byId('newtab').focus()
+    refocusStripRow('late')
+    expect(document.activeElement?.id).toBe('newtab')
+    const late = document.createElement('div')
+    late.id = 'late'
+    late.setAttribute('role', 'tab')
+    late.setAttribute('data-strip-item', 'tab:late')
+    late.tabIndex = -1
+    byId('r2').after(late)
+    frame!(0)
+    expect(document.activeElement?.id).toBe('late')
   })
 })
 

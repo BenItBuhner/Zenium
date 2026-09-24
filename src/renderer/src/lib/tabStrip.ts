@@ -177,18 +177,30 @@ export function useStripTabIndex(key: string, fallback: boolean): 0 | -1 {
   const roving = uiStore.use((s) => s.stripFocus)
   useEffect(
     () => () => {
-      if (uiStore.get().stripFocus === key) uiStore.set({ stripFocus: null })
+      if (uiStore.get().stripFocus === key) setStripFocus(null)
     },
     [key]
   )
   return (roving === null ? fallback : roving === key) ? 0 : -1
 }
 
+/**
+ * The strip item the keyboard is on (null: none). The core is told which tab's row it is
+ * (`strip.focus`; tabs-34) – a header or a tile names no tab – since the move chords,
+ * Ctrl+Shift+PgUp / PgDn, are the host's before the chrome sees them: the core moves the focused
+ * row's tab rather than the active one while one is named.
+ */
+export function setStripFocus(key: string | null): void {
+  if (uiStore.get().stripFocus === key) return
+  uiStore.set({ stripFocus: key })
+  run('strip.focus', { tabId: key !== null && stripItemKind(key) === 'tab' ? idOf(key) : null })
+}
+
 /** A strip item took the keyboard: it is the strip's tab stop until the keyboard leaves the strip. */
 export function stripFocusIn(e: FocusEvent<HTMLElement>): void {
   if (e.target !== e.currentTarget) return
   const key = e.currentTarget.dataset.stripItem
-  if (key && uiStore.get().stripFocus !== key) uiStore.set({ stripFocus: key })
+  if (key) setStripFocus(key)
 }
 
 /** The keyboard left a strip item; when it left the strip altogether the active row is the stop again. */
@@ -196,7 +208,31 @@ export function stripFocusOut(e: FocusEvent<HTMLElement>): void {
   if (e.target !== e.currentTarget) return
   const to = e.relatedTarget
   if (to instanceof Element && to.closest('[data-strip-item]')) return
-  if (uiStore.get().stripFocus !== null) uiStore.set({ stripFocus: null })
+  setStripFocus(null)
+}
+
+/**
+ * Put the keyboard back on a tab's row after the chord moved it (tabs-34, `tab.moved`): the
+ * row stands somewhere else now, and one that crossed a group's boundary is a new element in
+ * another list – the old one, unmounting, handed the tab stop back – so the row is found by the
+ * tab's id. The event follows the state that draws the row there; should the frame that lays
+ * it out come later still, the row is looked for once more when it has been drawn.
+ */
+export function refocusStripRow(tabId: string, doc: Document = document): void {
+  const key = `tab:${tabId}`
+  const focusRow = (): void => {
+    const row = [...doc.querySelectorAll<HTMLElement>('[data-strip-item]')].find(
+      (el) =>
+        el.dataset.stripItem === key &&
+        el.getClientRects().length > 0 &&
+        !el.closest('[inert], [aria-hidden="true"]')
+    )
+    row?.focus()
+  }
+  focusRow()
+  doc.defaultView?.requestAnimationFrame(() => {
+    if (doc.activeElement?.getAttribute('data-strip-item') !== key) focusRow()
+  })
 }
 
 /**

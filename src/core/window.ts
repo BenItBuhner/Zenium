@@ -119,6 +119,12 @@ export class ZenWindow {
    * chrome are its to capture, and no shortcut runs off them until it stops.
    */
   recordingShortcut = false
+  /**
+   * The tab whose strip row holds this window's keyboard (`strip.focus`; tabs-34), or null when
+   * the keyboard is off the strip's tab rows: the move chords act on this row while one is named,
+   * on the active tab otherwise.
+   */
+  stripFocusTabId: string | null = null
   lastFocusedAt = 0
   /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
   prompt: WindowPrompt | null = null

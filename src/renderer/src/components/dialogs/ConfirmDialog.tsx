@@ -32,8 +32,15 @@ export interface ConfirmDialogProps {
    * paragraph (§9.23's composed-prompt rule). Empty for a question that needs no more words.
    */
   description?: ReactNode
-  /** The verb's label: Quit, Close tabs, Delete, Clear. Cancel is always Cancel. */
+  /** The verb's label: Quit, Close tabs, Delete, Clear. */
   action: string
+  /**
+   * The way out's label, "Cancel" unless the consumer names it (§9.23 as amended on #436): the
+   * way out is named for what it does where "Cancel" would be untrue (Wait); Cancel everywhere
+   * the answer is to leave things as they were. Nothing is cancelled when the user waits on an
+   * unresponsive page, so that prompt says Wait; a Quit, a Delete, a Clear left undone is Cancel.
+   */
+  cancel?: string
   /**
    * A destructive confirmation has no primary (§6): its verb is a secondary in the danger ink
    * beside Cancel, and it has no default key either (§9.22 as amended) – Enter from the held
@@ -41,6 +48,16 @@ export interface ConfirmDialogProps {
    * the accent primary and the prompt's default.
    */
   destructive?: boolean
+  /**
+   * The third form (the #435 lead check on Settings › Apps' Uninstall): the verb as a SECOND
+   * SECONDARY beside Cancel – no primary fill, no danger ink – for a prompt that recommends
+   * neither answer yet destroys nothing of the user's: "Uninstall <app>? Its open window
+   * closes." – a window the user has in front of them goes, but the launcher and the record
+   * are recreatable and no site data is touched, so the danger ink would overstate it. Like the
+   * destructive form it has no default key (§9.22): Enter from the held container is inert.
+   * Named beside `destructive`, the ink is this one's and the keyboard the same either way.
+   */
+  verbTone?: 'plain'
   /**
    * The verb is at work (§9.30): `aria-busy` with the spinner over its label, and neither a
    * press on it nor Enter confirms again.
@@ -57,7 +74,7 @@ export interface ConfirmDialogProps {
   disabled?: boolean
   /** The body's one element, when the prompt has one: a check row under the description (§9.23). */
   checkbox?: { label: string; checked: boolean; onChange: (next: boolean) => void }
-  /** Cancel: the button, Escape and a press on the scrim. */
+  /** The way out (Cancel, or the word `cancel` names): its button, Escape and a press on the scrim. */
   onCancel: () => void
   /**
    * The verb: its button, and – on a prompt that is not `destructive` – Enter from the prompt's
@@ -74,9 +91,11 @@ export interface ConfirmDialogProps {
  * The §9.23 confirmation prompt: a notice at §9.20's 320 on the frame's dialog host, over the
  * page's picture under the frame's scrim (§9.5). A title block – the question at 17/600 with an
  * optional 16 glyph, one description at 15 in the deemphasised ink, 16 to the body – then, when
- * the prompt has one, a check row as the body's only element, then the §9.11 footer: Cancel and
- * the verb, 96 | 8 | 96 hugging the right at 16, the verb in the danger ink when the answer
- * destroys something and the accent primary otherwise. Nothing else: a prompt with more is a
+ * the prompt has one, a check row as the body's only element, then the §9.11 footer: the way out
+ * (Cancel, or the word `cancel` names – Wait on the unresponsive prompt, where nothing is
+ * cancelled) and the verb, 96 | 8 | 96 hugging the right at 16, the verb in the danger ink when the answer
+ * destroys something, a plain second secondary when it costs a window but no data (`verbTone`),
+ * and the accent primary otherwise. Nothing else: a prompt with more is a
  * form dialog (the one-field prompt is `PromptDialog` and the list picker `PickerDialog`, below,
  * on the same panel). The width is §9.20's, by content and by place: the 320 notice for a title block
  * and its two buttons; 400 when the prompt carries the check row ("takes 400 only when it
@@ -180,7 +199,10 @@ export interface PromptField {
   className?: string
 }
 
-export type PromptDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructive'> & {
+export type PromptDialogProps = Omit<
+  ConfirmDialogProps,
+  'checkbox' | 'destructive' | 'verbTone'
+> & {
   /** The body's one element: the field, `.zen-v2-field` at the body's full width under the description. */
   field: PromptField
 }
@@ -215,7 +237,10 @@ export function PromptDialog(props: PromptDialogProps): JSX.Element {
   )
 }
 
-export type PickerDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructive'> & {
+export type PickerDialogProps = Omit<
+  ConfirmDialogProps,
+  'checkbox' | 'destructive' | 'verbTone'
+> & {
   /**
    * The body's one element: the consumer's list – the rows to choose from, its own markup – in
    * the body's slot (`.zen-confirm-dialog-slot`) under the description, at the prompt's full
@@ -269,7 +294,9 @@ function ConfirmPanel({
   glyph,
   description,
   action,
+  cancel = 'Cancel',
   destructive = false,
+  verbTone,
   busy = false,
   disabled = false,
   checkbox,
@@ -281,6 +308,8 @@ function ConfirmPanel({
   data,
   className
 }: ConfirmDialogProps & { field?: PromptField; body?: ReactNode }): JSX.Element {
+  // The plain verb (`verbTone`): a second secondary, and – as a destructive prompt – no default.
+  const plain = verbTone === 'plain'
   const ref = useRef<HTMLDivElement>(null)
   const fieldRef = useRef<HTMLInputElement>(null)
   const id = useId()
@@ -353,8 +382,9 @@ function ConfirmPanel({
     latest.current.onConfirm()
   }
   // The keyboard (§9.22 as amended): Tab wrapping at the ends; Enter from the held container or
-  // its check row as the verb – or, on a destructive prompt, swallowed and answering nothing.
-  useConfirmKeyboard(ref, { destructive, confirm })
+  // its check row as the verb – or, on a destructive prompt or one with the plain verb (neither
+  // recommends an answer), swallowed and answering nothing.
+  useConfirmKeyboard(ref, { destructive: destructive || plain, confirm })
   return (
     <div
       {...data}
@@ -367,6 +397,7 @@ function ConfirmPanel({
       aria-describedby={description ? descriptionId : undefined}
       data-confirm={name}
       data-destructive={destructive || undefined}
+      data-verb={plain ? 'plain' : undefined}
       // A list body takes §9.20's 80% cap and scrolls under the title block (main.css).
       data-body={hasBody ? 'list' : undefined}
       data-surface="page"
@@ -416,14 +447,14 @@ function ConfirmPanel({
         )}
         <div className="zen-confirm-dialog-footer">
           <button type="button" className="zen-v2-button" data-action="cancel" onClick={onCancel}>
-            Cancel
+            {cancel}
           </button>
           <button
             type="button"
             className="zen-v2-button"
             data-action="confirm"
-            data-primary={destructive ? undefined : ''}
-            data-danger={destructive ? '' : undefined}
+            data-primary={destructive || plain ? undefined : ''}
+            data-danger={destructive && !plain ? '' : undefined}
             aria-busy={busy || undefined}
             aria-disabled={disabled || undefined}
             onClick={confirm}

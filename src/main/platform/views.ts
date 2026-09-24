@@ -357,6 +357,8 @@ export class ElectronTabView implements TabView {
     this.wc = this.view.webContents
     this.webContentsId = this.wc.id
     this.view.setVisible(false)
+    // A hold of this view's outlives the session (`sessionDetached`).
+    this.wc.debugger?.on?.('detach', () => this.sessionDetached())
     this.wc.on('blur', () => {
       this.keyboardAsked = false
       const win = this.win
@@ -434,6 +436,11 @@ export class ElectronTabView implements TabView {
     wc.on('render-process-gone', (_e, details) =>
       ev.onCrashed(this.takeEndedByUser() ? 'ended' : details.reason, details.exitCode)
     )
+    // Chromium's hang monitor speaks for the contents whose input went unanswered (tabs-45); the
+    // pages sharing that renderer hang with it, so the host tells the core of every one of them,
+    // as Chrome's "Pages unresponsive" lists them – and of every one answering again.
+    wc.on('unresponsive', () => this.owner.rendererHung(this, true))
+    wc.on('responsive', () => this.owner.rendererHung(this, false))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
     wc.on('media-started-playing', () => ev.onMediaStateChanged(true))
     wc.on('media-paused', () => ev.onMediaStateChanged(false))
@@ -775,6 +782,33 @@ export class ElectronTabView implements TabView {
     else this.wc.reload()
   }
 
+  /**
+   * The "Page unresponsive" prompt's Exit page (tabs-45): Electron kills the renderer as a
+   * crash would, and `render-process-gone` (`killed` or `crashed`) follows for every page it
+   * hosted. A renderer that is gone already (the first of several pages sharing it took it)
+   * is nothing to kill; Electron may throw for it, and that is nothing either.
+   */
+  endRenderer(): void {
+    if (this.wc.isDestroyed()) return
+    try {
+      this.wc.forcefullyCrashRenderer()
+    } catch {
+      // Already gone.
+    }
+  }
+
+  /** The core's word on this page's renderer standing still, or moving again (`rendererHung`). */
+  reportHung(hung: boolean): void {
+    if (this.wc.isDestroyed()) return
+    if (hung) this.events.onUnresponsive?.()
+    else this.events.onResponsive?.()
+  }
+
+  /** The OS process of this page's renderer, for the pages that share it; null when it has none. */
+  rendererProcess(): number | null {
+    return this.rendererPid()
+  }
+
   stop(): void {
     this.wc.stop()
   }
@@ -928,9 +962,16 @@ export class ElectronTabView implements TabView {
     this.view.setBorderRadius(radius)
   }
 
+  /**
+   * Show or hide the page. Always passed on to the engine's view (a shown page has its visibility
+   * re-asserted this way after a thaw); the owner hears of a flip, so the resource governor can
+   * put its CPU clamp on a page that went behind and take it off one that came in front.
+   */
   setVisible(visible: boolean): void {
+    const flipped = this.visible !== visible
     this.visible = visible
     this.view.setVisible(visible)
+    if (flipped) this.owner.visibilityChanged(this)
   }
 
   isVisible(): boolean {
@@ -1289,6 +1330,30 @@ export class ElectronTabView implements TabView {
     }
   }
 
+  /**
+   * Whether the page's renderer takes real input yet: it has presented its first frame, or its
+   * document is one Chromium never holds back. A new http(s) HTML document's commits are
+   * deferred until its first contentful paint or 500 ms of frames (paint holding), and the
+   * renderer's compositor thread drops every press and key – not moves – while they are, acking
+   * them as handled; the 500 ms run only in frames, so a machine whose display compositor is
+   * still starting (a cold runner without a GPU: eight seconds) keeps a loaded, placed page deaf
+   * to clicks, with nothing to show for it. Asked of the isolated world with no user gesture: a
+   * probe must not arm what it probes for (`window.open` after it would pass the pop-up
+   * blocker). A page that does not answer within a second, or errors, counts as painted – the
+   * question is a guard on top of what worked before, not a new way to fail.
+   */
+  async hasPainted(): Promise<boolean> {
+    const wc = this.wc
+    if (wc.isDestroyed()) return true
+    const state = await Promise.race([
+      wc
+        .executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: PAINT_STATE_SCRIPT }], false)
+        .catch(() => 'unknown'),
+      new Promise<string>((r) => setTimeout(() => r('unknown'), PAINT_PROBE_TIMEOUT_MS))
+    ])
+    return state !== 'holding' && state !== 'loading'
+  }
+
   /** The preload's isolated world: pages cannot see the agent runtime or tamper with it. */
   executeIsolatedJavaScript(code: string): Promise<unknown> {
     return this.wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }], true)
@@ -1481,12 +1546,40 @@ export class ElectronTabView implements TabView {
     if (!dbg.isAttached()) {
       dbg.attach('1.3')
       this.cdpAttachedHere = true
-    } else {
-      // The governor's new session: it stays when the hold ends.
-      this.cdpAttachedHere = false
     }
+    // Attached already: by this view's own `sessionDetached` (the hold's, `cdpAttachedHere`
+    // stands) or by the governor putting an override back (its own; it detaches it when that
+    // goes, and a hold of this view's attaches again then).
     if (this.darkeningApplied)
       await dbg.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true })
+  }
+
+  /**
+   * The page's shared session went from under a hold of this view's – the governor's CPU clamp
+   * lifting as the page came in front (the clamp sits on background pages only, so a page in
+   * front keeps Chromium's hang monitor), a recycle, another client: the dark theme's override
+   * went with it, so the hold attaches again and puts it back. A page with no hold is left with
+   * no session, which is what the governor wants of a page in front. Electron emits `detach`
+   * after it has let go, so `attach` is free to take the page again here.
+   */
+  private sessionDetached(): void {
+    if (this.wc.isDestroyed()) return
+    if (!this.darkeningApplied && this.cdpPending === 0) return
+    const dbg = this.wc.debugger
+    if (dbg.isAttached()) return
+    try {
+      dbg.attach('1.3')
+    } catch {
+      // Another client (DevTools, an extension) holds the page: the next change tries again.
+      this.darkeningApplied = false
+      return
+    }
+    this.cdpAttachedHere = true
+    if (this.darkeningApplied) {
+      void dbg.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true }).catch(() => {
+        this.darkeningApplied = false
+      })
+    }
   }
 
   // --- dark theme for sites (CT-18) -------------------------------------------------
@@ -1900,6 +1993,24 @@ const VIEWPORT_TIMEOUT_MS = 1500
  * page) and the document's scrollable size (the larger of the root's and the body's, never
  * smaller than the viewport). One expression, so a single evaluation answers it.
  */
+/**
+ * The page's readiness for real input (`hasPainted`), read from where Chromium records it:
+ * `painted` – a `paint` performance entry exists, so a frame was presented, so a commit went
+ * through and no first-paint deferral is holding the renderer's input back; `holding` – an
+ * http(s) HTML document without one, the kind paint holding defers (`document_loader.cc`:
+ * `kPaintHolding && IsA<HTMLDocument> && ProtocolIsInHttpFamily`), whose commits are or will be
+ * deferred until its first contentful paint or 500 ms of frames; `loading` / `ready` – any other
+ * document (`zen:`, `file:`, XML), never deferred beyond the main-frame-update hold that ends
+ * with its render-blocking resources, which the parser reaching the end bounds.
+ */
+const PAINT_STATE_SCRIPT = `(function () {
+  if (performance.getEntriesByType('paint').length > 0) return 'painted'
+  var held = /^https?:$/.test(location.protocol) && document instanceof HTMLDocument
+  return held ? 'holding' : document.readyState === 'loading' ? 'loading' : 'ready'
+})()`
+/** A renderer that takes longer than this to answer the paint probe is not waited for. */
+const PAINT_PROBE_TIMEOUT_MS = 1000
+
 const VIEWPORT_SCRIPT = `(function () {
   var d = document.documentElement, b = document.body, s = document.scrollingElement || d
   return {
@@ -2207,6 +2318,7 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly byTabId = new Map<string, ElectronTabView>()
   private readonly tabIds = new Map<number, string>()
   private readonly viewListeners = new Set<(view: ElectronTabView) => void>()
+  private readonly visibilityListeners = new Set<(view: ElectronTabView) => void>()
   /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
   private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
@@ -2295,11 +2407,41 @@ export class ElectronTabViewHost implements TabViewHost {
     return view
   }
 
+  /**
+   * A page's renderer stopped answering, or answers again (tabs-45): every live page in that
+   * renderer is told – they hang and recover together – `view` first. A view whose process the
+   * engine cannot name (gone between the event and the read) speaks for itself alone.
+   */
+  rendererHung(view: ElectronTabView, hung: boolean): void {
+    const process = view.rendererProcess()
+    const shared =
+      process === null
+        ? []
+        : [...this.byWebContentsId.values()].filter(
+            (other) => other !== view && other.rendererProcess() === process
+          )
+    for (const each of [view, ...shared]) each.reportHung(hung)
+  }
+
   /** Follow every tab view for its lifetime (the ones already alive included). */
   onViewCreated(listener: (view: ElectronTabView) => void): () => void {
     this.viewListeners.add(listener)
     for (const view of this.byWebContentsId.values()) listener(view)
     return () => this.viewListeners.delete(listener)
+  }
+
+  /**
+   * Hear of every page shown or hidden (`ElectronTabView.setVisible` flipping): the chrome's
+   * layout shows the page in front of each window – both panes of a split, a glance – and hides
+   * the rest, so this is the word on which pages are in front anywhere.
+   */
+  onVisibilityChanged(listener: (view: ElectronTabView) => void): () => void {
+    this.visibilityListeners.add(listener)
+    return () => this.visibilityListeners.delete(listener)
+  }
+
+  visibilityChanged(view: ElectronTabView): void {
+    for (const listener of this.visibilityListeners) listener(view)
   }
 
   /**

@@ -395,20 +395,39 @@ export function setOnScreenWaitMsForTests(ms: number): void {
 }
 
 /**
- * Whether the tab's page is painted where the user sees it: its view is shown, the chrome's
- * last layout report placed it, and no chrome covers the content area (the URL bar, a menu, a
- * dialog – anything the report flags as `contentHidden`). Only such a view hit-tests real input.
+ * Whether the tab's view is placed where the user sees it: shown, placed by the chrome's last
+ * layout report, and with no chrome covering the content area (the URL bar, a menu, a dialog –
+ * anything the report flags as `contentHidden`). Only such a view hit-tests real input – and only
+ * once its page has painted, which is the host's to know (`waitInputReady`).
  */
 function isOnScreen(win: ZenWindow, view: TabView, tabId: string): boolean {
   return view.isVisible() && !win.contentHidden && win.viewRect(tabId) !== null
 }
 
-async function waitOnScreen(ctx: ToolContext, tabId: string, view: TabView): Promise<boolean> {
+/** What keeps a page from taking real input, or null when nothing does. */
+type NotReady = 'off screen' | 'unpainted'
+
+/**
+ * Waits, within `ON_SCREEN_WAIT_MS`, for the page to take real input: its view on screen, and
+ * its renderer past its first paint (`TabView.hasPainted`, asked only once the view is placed).
+ * The second matters because Chromium holds a new page's first frame back until it has content
+ * or 500 ms of frames have gone by, and while it does its renderer drops presses and keys but
+ * acknowledges them – a click sent to a loaded, placed, unpainted page is lost without a trace.
+ * On a cold runner without a GPU the display compositor takes seconds to start, no frame moves
+ * the 500 ms along, and that is what the sign-in smoke's `browser_click` ran into: "Clicked",
+ * and the button's handler never ran.
+ */
+async function waitInputReady(
+  ctx: ToolContext,
+  tabId: string,
+  view: TabView
+): Promise<NotReady | null> {
   const win = ctx.browser.tabs.windowFor(tabId)
   const deadline = Date.now() + onScreenWaitMs
   for (;;) {
-    if (isOnScreen(win, view, tabId)) return true
-    if (Date.now() >= deadline) return false
+    const placed = isOnScreen(win, view, tabId)
+    if (placed && (!view.hasPainted || (await view.hasPainted()))) return null
+    if (Date.now() >= deadline) return placed ? 'unpainted' : 'off screen'
     await sleep(Math.min(60, Math.max(1, deadline - Date.now())))
   }
 }
@@ -422,7 +441,7 @@ export interface InputRouting {
 }
 
 export function syntheticInputNote(cause: string): string {
-  return `input: synthetic – ${cause}, so the event was dispatched as a scripted DOM event instead of real input. It is untrusted (isTrusted: false) and armed no user gesture: a pop-up, download or permission prompt it would have opened did not fire. Real input needs the tab on screen: foreground mode, with no URL bar or other chrome overlay covering the page.`
+  return `input: synthetic – ${cause}, so the event was dispatched as a scripted DOM event instead of real input. It is untrusted (isTrusted: false) and armed no user gesture: a pop-up, download or permission prompt it would have opened did not fire. Real input needs the tab on screen and painted: foreground mode, with no URL bar or other chrome overlay covering the page, and the page's first frame shown.`
 }
 
 /**
@@ -430,9 +449,10 @@ export function syntheticInputNote(cause: string): string {
  * iframes included, that counts as a user gesture – only works on a painted, on-screen view. This
  * decides the path once per tool call and never degrades silently: background mode is synthetic
  * by design (the agent asked to keep the tab off screen); in the foreground the tool waits up to
- * `ON_SCREEN_WAIT_MS` for the chrome to place the view and drop any overlay, and if the page is
- * still not on screen – or another element covers the point, where a real click would hit that
- * element instead – it takes the synthetic path and says so in the result.
+ * `ON_SCREEN_WAIT_MS` for the chrome to place the view and drop any overlay and for the page to
+ * paint its first frame, and if the page is still not on screen or still unpainted – or another
+ * element covers the point, where a real click would hit that element instead – it takes the
+ * synthetic path and says so in the result.
  *
  * Both paths reach into cross-origin iframes: trusted input is sent at top-viewport coordinates
  * and the host routes it to the frame under the point; synthetic input runs the page runtime
@@ -451,11 +471,20 @@ export async function routeInput(
       trusted: false,
       note: syntheticInputNote('you are in background mode and the tab is kept off screen')
     }
-  if (!(await waitOnScreen(ctx, tabId, view)))
+  const notReady = await waitInputReady(ctx, tabId, view)
+  const seconds = Math.round(onScreenWaitMs / 1000)
+  if (notReady === 'off screen')
     return {
       trusted: false,
       note: syntheticInputNote(
-        `the tab did not come on screen within ${Math.round(onScreenWaitMs / 1000)} s (chrome such as the URL bar covers the page, or another tab is in front)`
+        `the tab did not come on screen within ${seconds} s (chrome such as the URL bar covers the page, or another tab is in front)`
+      )
+    }
+  if (notReady === 'unpainted')
+    return {
+      trusted: false,
+      note: syntheticInputNote(
+        `the page had not painted its first frame within ${seconds} s (its renderer drops real clicks and keys until it has; give it a moment and try again)`
       )
     }
   if (loc?.covered)
@@ -1782,7 +1811,7 @@ export function agentInstructions(mode: AgentMode, allowScripts: boolean): strin
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',
     '- Navigation: browser_navigate (also changes the URL of an existing tab via tabId), browser_navigate_back, browser_navigate_forward, browser_reload. Tabs: browser_tabs list / new / select / close / move (reorder) / group (folder) / ungroup.',
     '- browser_read_page is the cheap way to read an article; browser_take_screenshot (viewport, fullPage: true, or target for one element) only when the layout or an image matters.',
-    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action, a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open). Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen. Switch with zen_mode.`,
+    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action, a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open). Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen or had not painted its first frame yet (then wait a moment and retry). Switch with zen_mode.`,
     '- browser_navigate accepts URLs or search words. Use zen_spaces to keep your work in its own space when it is more than a quick lookup.',
     allowScripts
       ? '- browser_evaluate runs JavaScript in the page (an expression or an arrow function) when nothing else does the job, e.g. to read attributes.'

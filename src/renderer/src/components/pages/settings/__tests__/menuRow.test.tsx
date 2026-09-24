@@ -85,7 +85,7 @@ describe('the item row’s ⋯ on a mouse (§10.5)', () => {
   const ctx = { open: vi.fn() }
 
   it('the menu’s items are the sheet’s action rows in their order, the inapplicable one disabled, a destructive one in the danger ink', () => {
-    const items = itemMenuItems(languageRow())
+    const items = itemMenuItems(languageRow(), () => undefined)
     expect(items.map((i) => i.label)).toEqual(['Move Up', 'Move Down', 'Remove'])
     expect(items.map((i) => i.disabled)).toEqual([true, undefined, undefined])
     expect(items.map((i) => i.danger)).toEqual([undefined, undefined, undefined])
@@ -104,7 +104,8 @@ describe('the item row’s ⋯ on a mouse (§10.5)', () => {
             }
           ]
         }
-      })
+      }),
+      () => undefined
     )
     expect(destructive.map((i) => [i.label, i.danger])).toEqual([['Clear', true]])
   })

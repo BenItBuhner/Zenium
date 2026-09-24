@@ -58,6 +58,7 @@ import type {
 } from '../shared/types'
 import type { TranslateUIState } from '../shared/translate'
 import type { ContentDefault } from '../shared/contentSettings'
+import type { InstalledWebApp } from '../shared/webApp'
 import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
@@ -258,6 +259,7 @@ export interface StateExtras {
   extensionUpdates: ExtensionUpdateCheck
   sidePanel: SidePanelInfo | null
   mods: Mod[]
+  webApps: InstalledWebApp[]
   sync: SyncStatus
   agents: AgentInfo[]
   agentServer: AgentServerStatus
@@ -396,6 +398,7 @@ export class BrowserState {
     extensionUpdates: { lastCheckedAt: null, checking: false },
     sidePanel: null,
     mods: [],
+    webApps: [],
     sync: {
       enabled: false,
       folder: null,
@@ -1079,6 +1082,10 @@ export class BrowserState {
           capture: null,
           // A toolbox is a session's own: the key is not written (Android's records never carry it).
           devtools: undefined,
+          // A pinned tab's attention dot is the session's too: seen or not, a restart clears it.
+          attention: undefined,
+          // A hung renderer is the session's; the page is a fresh one after a restart.
+          unresponsive: undefined,
           // So is a wake from sleep: the leaf's number is this session's (`Tabs.load`).
           memorySaver: undefined,
           errorCode: null,

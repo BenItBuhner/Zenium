@@ -509,6 +509,7 @@ export class Browser {
       extensionUpdates: this.extensions.updateCheck(),
       sidePanel: this.extensions.sidePanel(win),
       mods: this.mods.all(),
+      webApps: this.webApps.installed(),
       sync: this.sync.status(),
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
@@ -2773,6 +2774,8 @@ export class Browser {
       'tab.toggleEssential': ({ tabId }, win) => tabs.toggleEssential(tabId, win),
       'tab.resetPinned': ({ tabId }, win) => tabs.resetPinned(tabId, true, win),
       'tab.editPinnedUrl': ({ tabId, url }) => tabs.editPinnedUrl(tabId, url),
+      'tab.exitUnresponsive': ({ tabIds }) => tabs.exitUnresponsive(tabIds),
+      'tab.waitUnresponsive': ({ tabIds }) => tabs.waitUnresponsive(tabIds),
       'tab.rename': ({ tabId, title }) => tabs.rename(tabId, title),
       'tab.setIcon': ({ tabId, icon }) => tabs.setIcon(tabId, icon),
       'tab.addRoute': ({ tabId, spaceId }) => this.addRouteForTab(tabId, spaceId),
@@ -3043,6 +3046,9 @@ export class Browser {
       },
       'shortcuts.recording': ({ recording }, win) => {
         win.recordingShortcut = recording
+      },
+      'strip.focus': ({ tabId }, win) => {
+        win.stripFocusTabId = tabId
       },
       'sidebar.setWidth': ({ width }) => {
         state.settings.sidebarWidth = Math.max(160, Math.min(520, Math.round(width)))
