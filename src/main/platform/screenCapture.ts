@@ -21,6 +21,18 @@ const INTENT_TTL_MS = 10_000
 /** How long the picker's answer waits for the engine's display-media request that consumes it. */
 const ANSWER_TTL_MS = 30_000
 
+/**
+ * A screen pass that comes back empty is asked once more after this: the X error a window pass
+ * trips stays in the capturer's state a moment, and the next screen enumeration after it can
+ * resolve with nothing – the screens are back when asked again.
+ */
+const SCREEN_RETRY_DELAY_MS = 150
+
+/** The passes' order: screens first, so a broken window pass cannot come before them. */
+const SOURCE_PASS_ORDER: ReadonlyArray<'screen' | 'window'> = ['screen', 'window']
+
+const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
 /** What a page told us right before its call: whether it asked for audio. */
 interface Intent {
   audio: boolean
@@ -67,7 +79,8 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
   constructor(
     private readonly views: ElectronTabViewHost,
     private readonly service: () => ScreenCaptureService,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly delay: (ms: number) => Promise<void> = wait
   ) {}
 
   attach(ses: Session): void {
@@ -113,10 +126,18 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
   async sources(kinds: Array<'screen' | 'window'>): Promise<ScreenCaptureSource[]> {
     // Screens and windows are enumerated separately: on some Linux setups (a bare X server with
     // no window manager, a portal that lists only what it granted) the window pass throws while
-    // screens are fine, and one call for both would lose the lot. Each pass stands alone.
+    // screens are fine, and one call for both would lose the lot. Each pass stands alone, and
+    // the screens go first whatever order was asked, so nothing the window pass trips can be
+    // ahead of them; a screen pass that still comes back empty is asked once more
+    // (`SCREEN_RETRY_DELAY_MS`) before "no screens" is believed.
     const out: ScreenCaptureSource[] = []
-    for (const type of kinds) {
-      const list = await this.enumerate(type)
+    for (const type of SOURCE_PASS_ORDER) {
+      if (!kinds.includes(type)) continue
+      let list = await this.enumerate(type)
+      if (type === 'screen' && list.length === 0) {
+        await this.delay(SCREEN_RETRY_DELAY_MS)
+        list = await this.enumerate(type)
+      }
       for (const source of list) {
         const kind = source.id.startsWith('screen:') ? 'screen' : 'window'
         this.names.set(source.id, source.name)

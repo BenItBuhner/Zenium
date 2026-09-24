@@ -28,11 +28,18 @@ function source(id: string, name: string, opts: { empty?: boolean } = {}): unkno
   }
 }
 
-function host(): ElectronScreenCapture {
-  return new ElectronScreenCapture(
+/** A host whose retry delay is recorded and skipped, so the tests do not wait for it. */
+function host(): ElectronScreenCapture & { delays: number[] } {
+  const delays: number[] = []
+  const out = new ElectronScreenCapture(
     {} as ElectronTabViewHost,
-    (() => ({})) as unknown as () => ScreenCaptureService
+    (() => ({})) as unknown as () => ScreenCaptureService,
+    Date.now,
+    async (ms) => {
+      delays.push(ms)
+    }
   )
+  return Object.assign(out, { delays })
 }
 
 /** The `types` of each getSources call that carried options (a stricter, order-preserving view). */
@@ -179,12 +186,77 @@ describe('ElectronScreenCapture.sources', () => {
       if (options?.types[0] === 'screen') return [source('screen:0:0', 'Entire Screen')]
       return []
     })
-    const out = await host().sources(['screen', 'window'])
-    // One getSources per type, each with only its own type (not both at once).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const h = host()
+      const out = await h.sources(['screen', 'window'])
+      // One getSources per type, each with only its own type (not both at once).
+      expect(typeArgs(getSources)).toEqual([['screen'], ['window']])
+      expect(out).toHaveLength(1)
+      expect(out[0]).toMatchObject({ id: 'screen:0:0', kind: 'screen', name: 'Entire screen' })
+      expect(out[0].thumbnail).toMatch(/^data:image\/jpeg;base64,/)
+      // The throwing pass is warned about and yields nothing; the screens were not retried.
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0]?.[0]).toContain('could not list windows')
+      expect(h.delays).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('enumerates the screens before the windows whatever order was asked, so a broken window pass cannot precede them', async () => {
+    getSources.mockImplementation(async (options?: { types: string[] }) => {
+      if (options?.types[0] === 'screen') return [source('screen:0:0', 'Entire Screen')]
+      return [source('window:5:0', 'Editor')]
+    })
+    const out = await host().sources(['window', 'screen'])
     expect(typeArgs(getSources)).toEqual([['screen'], ['window']])
+    expect(out.map((s) => s.kind)).toEqual(['screen', 'window'])
+    // A list of one kind asks for that kind alone.
+    getSources.mockClear()
+    await host().sources(['window'])
+    expect(typeArgs(getSources)).toEqual([['window']])
+  })
+
+  it('asks for the screens once more when the pass comes back empty, after a short delay', async () => {
+    let screenPasses = 0
+    getSources.mockImplementation(async (options?: { types: string[] }) => {
+      if (options?.types[0] === 'screen') {
+        screenPasses++
+        // The first pass after a poisoned window enumeration resolves with nothing.
+        return screenPasses === 1 ? [] : [source('screen:0:0', 'Entire Screen')]
+      }
+      return []
+    })
+    const h = host()
+    const out = await h.sources(['screen', 'window'])
+    expect(typeArgs(getSources)).toEqual([['screen'], ['screen'], ['window']])
+    expect(h.delays).toEqual([150])
     expect(out).toHaveLength(1)
     expect(out[0]).toMatchObject({ id: 'screen:0:0', kind: 'screen', name: 'Entire screen' })
-    expect(out[0].thumbnail).toMatch(/^data:image\/jpeg;base64,/)
+  })
+
+  it('believes "no screens" after the one retry; a throwing screen pass reads as empty and is retried the same once', async () => {
+    getSources.mockImplementation(async () => [])
+    const h = host()
+    expect(await h.sources(['screen'])).toEqual([])
+    expect(typeArgs(getSources)).toEqual([['screen'], ['screen']])
+    expect(h.delays).toEqual([150])
+
+    getSources.mockReset()
+    getSources.mockImplementation(async () => {
+      throw new Error('no display')
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const thrown = host()
+      expect(await thrown.sources(['screen', 'window'])).toEqual([])
+      // A throwing screen pass reads as empty and gets the same one retry; the windows their own.
+      expect(typeArgs(getSources)).toEqual([['screen'], ['screen'], ['window']])
+      expect(warn).toHaveBeenCalledTimes(3)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('names a lone screen "Entire screen" and numbers several; windows keep their names', async () => {
