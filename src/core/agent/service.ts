@@ -77,6 +77,12 @@ export interface AgentSession extends McpSession {
   userAgent: string
   currentTabId: string | null
   readonly tabIds: Set<string>
+  /** Tab groups (folders) the session owns; a tab is the session's when it sits in one of them. */
+  readonly groupIds: Set<string>
+  /** One-line notices about things done to the session's tabs, prepended to its next result. */
+  readonly notices: string[]
+  /** Serial queue: one tool call at a time per session (other sessions run concurrently). */
+  queue: Promise<void>
   /** Last cursor position per tab, so the cursor reappears where it was after a navigation. */
   readonly cursors: Map<string, { x: number; y: number }>
   /** Per tab: which frame each ref came from and the frame tree of the last snapshot. */
@@ -293,7 +299,7 @@ export class AgentService implements SessionStore, McpHandlers {
       connectedAt: s.connectedAt,
       lastActiveAt: s.lastActiveAt,
       tabIds: [...s.tabIds],
-      currentTabId: s.currentTabId,
+      groupIds: [...s.groupIds],
       pending: s.pending,
       calls: s.calls
     }
@@ -374,6 +380,9 @@ export class AgentService implements SessionStore, McpHandlers {
       userAgent: init.userAgent,
       currentTabId: null,
       tabIds: new Set(),
+      groupIds: new Set(),
+      notices: [],
+      queue: Promise.resolve(),
       cursors: new Map(),
       frames: new Map()
     }
