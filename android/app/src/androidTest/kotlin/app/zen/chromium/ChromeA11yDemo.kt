@@ -1435,9 +1435,10 @@ class ChromeA11yDemo : DemoHarness(
             if (awaitSettingsRowInTree("Back to Settings") == null) finding("  [settings-look] the tree had no Back to Settings ${TREE_WINDOW_MS / 1000} s after the section came up again")
         }
         SystemClock.sleep(1_200)
-        // The Layout row (the toolbar layout's picture cards) is the desktop's alone since #409:
-        // the phone's Look page carries the Colour scheme choice, the Tabs on the right switch and
-        // the app icon's radios. The value row's picker is audited on Colour scheme.
+        // The Layout row (the toolbar layout's picture cards) is the desktop's alone since #361
+        // (`layouts: ['desktop']` on the toolbar-layout block, 5768f49d): the phone's Look page
+        // carries the Colour scheme choice, the Tabs on the right switch and the app icon's
+        // radios. The value row's picker is audited on Colour scheme.
         audit(
             "settings-look",
             listOf(
@@ -1562,7 +1563,9 @@ class ChromeA11yDemo : DemoHarness(
      * The system font scale at 1.3 and 2.0 (A11Y-05): the chrome's text zoom follows, the bar's
      * buttons and the pill hold their 44, a Settings row grows from its line box (20 → 26 → 36
      * plus the row's 24), the surfaces re-measure without clipping; stills of each at each scale.
-     * Then the bold-text setting once. Leaves the system as found.
+     * Then the bold-text setting once. Leaves the system as found whatever the scene's fate: the
+     * scale (and the bold setting, put on inside the loop) go back in a `finally`, so a scene
+     * that dies at 2.0 does not hand the next scene its scale (the first-line review of #440).
      */
     private fun fontScaleScene() {
         measureScale("100", 1.0)
@@ -1571,25 +1574,29 @@ class ChromeA11yDemo : DemoHarness(
         // `textZoom`), so the same document – with its mark – is there after each.
         val marker = "run3-${SystemClock.uptimeMillis()}"
         chromeJs("document.documentElement.dataset.a11yMarker=${JSONObject.quote(marker)}")
-        for (scale in listOf("1.3", "2.0")) {
-            shell("settings put system font_scale $scale")
-            val zoom = awaitTextZoom { it != "100" && it.isNotEmpty() && it != lastZoom }
-            finding("  font_scale $scale → data-text-zoom '$zoom' (textZoom ${chromeTextZoom()})")
-            expect("the chrome's text zoom followed font_scale $scale: '$zoom'", zoom.toIntOrNull()?.let { it >= (if (scale == "1.3") 128 else 160) } ?: false)
-            val kept = chromeValue("document.documentElement.dataset.a11yMarker||''")
-            expect("font_scale $scale re-zoomed the chrome in place, no reload (the mark '$marker' is still on the document: '$kept')", kept == marker)
-            SystemClock.sleep(2_000)
-            measureScale(zoom, scale.toDouble())
-            // Bold text with the large scale (both settings at once): the weights read 700 / 900.
-            if (scale == "2.0") boldText(zoom)
-            lastZoom = zoom
+        try {
+            for (scale in listOf("1.3", "2.0")) {
+                shell("settings put system font_scale $scale")
+                val zoom = awaitTextZoom { it != "100" && it.isNotEmpty() && it != lastZoom }
+                finding("  font_scale $scale → data-text-zoom '$zoom' (textZoom ${chromeTextZoom()})")
+                expect("the chrome's text zoom followed font_scale $scale: '$zoom'", zoom.toIntOrNull()?.let { it >= (if (scale == "1.3") 128 else 160) } ?: false)
+                val kept = chromeValue("document.documentElement.dataset.a11yMarker||''")
+                expect("font_scale $scale re-zoomed the chrome in place, no reload (the mark '$marker' is still on the document: '$kept')", kept == marker)
+                SystemClock.sleep(2_000)
+                measureScale(zoom, scale.toDouble())
+                // Bold text with the large scale (both settings at once): the weights read 700 / 900.
+                if (scale == "2.0") boldText(zoom)
+                lastZoom = zoom
+            }
+        } finally {
+            shell("settings put system font_scale 1.0")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) shell("settings put secure font_weight_adjustment 0")
+            lastZoom = "100"
         }
-        shell("settings put system font_scale 1.0")
         val back = awaitTextZoom { it == "100" || it.isEmpty() }
         expect("font_scale 1.0 brings the chrome back to 100: '$back'", back == "100" || back.isEmpty())
         val kept = chromeValue("document.documentElement.dataset.a11yMarker||''")
         expect("font_scale 1.0 re-zoomed the chrome in place too (mark '$kept')", kept == marker)
-        lastZoom = "100"
         boldText("100")
     }
 
