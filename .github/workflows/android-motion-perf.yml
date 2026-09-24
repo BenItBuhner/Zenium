@@ -31,6 +31,12 @@ name: Android motion perf
 # profile, some ten more for the drivers. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
+  # TEMPORARY (services perf pass 2's AFTER run: the group fold's scenes on this branch, read
+  # against #455's AFTER runs of the same tree main's tip is – no token in the project can
+  # dispatch); removed before the PR is nod-ready. The push run's scene default below is
+  # `overview-group` in place of `all`; its functional drivers run, as a dispatch's do.
+  push:
+    branches: [cursor/services-perf-2-24d1]
   workflow_dispatch:
     inputs:
       theme:
@@ -79,7 +85,7 @@ jobs:
         PERF_OUT=artifacts/android-motion-perf
         PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
-        DEMO_SCENES=${{ inputs.scenes || 'all' }}
+        DEMO_SCENES=${{ inputs.scenes || 'overview-group' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
@@ -103,7 +109,7 @@ jobs:
         PERF_OUT=artifacts/android-motion-perf
         PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
-        DEMO_SCENES=${{ inputs.scenes || 'all' }}
+        DEMO_SCENES=${{ inputs.scenes || 'overview-group' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
