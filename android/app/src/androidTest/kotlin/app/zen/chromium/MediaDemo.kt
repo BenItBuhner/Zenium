@@ -182,11 +182,16 @@ class MediaDemo : MediaDemoBase("services-android-media-android") {
         return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
     }
 
-    /** The quiet prompt's sheet: its permission, title and the words on it; empty when none is up. */
+    /**
+     * The quiet prompt's sheet: its permission, title, the words on it and its buttons; empty when
+     * none is up. The `data-*` sit on the sheet's body (`V2Sheet`), and the buttons in the
+     * chassis's footer beside it (`.zen-sheet-footer`, §9.11), so they are read from the sheet.
+     */
     private fun readQuietSheet(): JSONObject {
         val raw = chromeJsString(
             "(function(){var s=document.querySelector('[data-testid=\"permission-prompt\"][data-quiet=\"true\"]');if(!s)return '';" +
-                "var h=s.querySelector('h1,h2,h3');var buttons=[].map.call(s.querySelectorAll('button'),function(b){return (b.getAttribute('aria-label')||b.textContent||'').trim()}).filter(Boolean);" +
+                "var sheet=s.closest('.zen-sheet')||s;var h=s.querySelector('h1,h2,h3');" +
+                "var buttons=[].map.call(sheet.querySelectorAll('.zen-sheet-footer button'),function(b){return (b.getAttribute('aria-label')||b.textContent||'').trim()}).filter(Boolean);" +
                 "return JSON.stringify({permission:s.getAttribute('data-permission')||'',title:h?h.textContent.trim():'',text:(s.textContent||'').replace(/\\s+/g,' ').trim().slice(0,220),buttons:buttons})})()"
         ) ?: ""
         return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
