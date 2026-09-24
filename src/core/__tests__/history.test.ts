@@ -1138,6 +1138,31 @@ describe('HistoryService', () => {
       const counts = new Map(h.recent(5).map((e) => [e.url, e.typedCount]))
       expect(counts.get('http://example.test:8080/a?b=1')).toBe(0)
       expect(counts.get('https://www.example.test/a?b=1')).toBe(1)
+      // The label moves with the credit: what a reader recounts from agrees with what was credited.
+      expect(
+        h
+          .visits({ limit: 5, includeRedirectSources: true })
+          .map((v) => [v.url, v.transition, v.redirectSource ?? false])
+      ).toEqual([
+        ['http://example.test:8080/a?b=1', 'redirect', true],
+        ['https://www.example.test/a?b=1', 'typed', false]
+      ])
+      // A peer importing the chain credits the same page …
+      const peer = new HistoryService(fakeIo(), now)
+      vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      peer.importVisits(h.exportVisits({ since: 0 }).visits, { source: 'sync' })
+      vi.restoreAllMocks()
+      const peerCounts = new Map(peer.recent(5).map((e) => [e.url, e.typedCount]))
+      expect(peerCounts.get('http://example.test:8080/a?b=1')).toBe(0)
+      expect(peerCounts.get('https://www.example.test/a?b=1')).toBe(1)
+      // … and so does this store's recount after another visit of the page goes.
+      clock += 500
+      h.visit('https://www.example.test/a?b=1', 'A', null)
+      const later = h.visits({ limit: 1 })[0]
+      h.deleteVisits([later.id])
+      const recounted = new Map(h.recent(5).map((e) => [e.url, e.typedCount]))
+      expect(recounted.get('http://example.test:8080/a?b=1')).toBe(0)
+      expect(recounted.get('https://www.example.test/a?b=1')).toBe(1)
       // The typed http address bounced elsewhere first: the credit stays with what was typed.
       clock += 1000
       h.visit('https://other.test/', 'O', null, {

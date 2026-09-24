@@ -555,20 +555,24 @@ export class HistoryService {
     const chain = redirectChain(opts.redirectedFrom, url)
     const added: ImportedVisit[] = []
     // The chain's hops first, at the landing's time (Chrome records every hop of a chain with
-    // one timestamp, `history_backend.cc` `AddPage`): the first hop keeps the navigation's
-    // transition – a typed address that redirected was still typed, and Chrome's typed credit
-    // goes there (`IsTypedIncrement`) – and every later one was reached by the redirect. One
-    // exception, Chrome's too: a typed http address that only moved to its https twin credits
-    // the https one (`transfer_typed_credit_from_first_to_second_url`).
+    // one timestamp, `history_backend.cc` `AddPage`): the navigation's transition belongs to
+    // the first member – a typed address that redirected was still typed, and Chrome's typed
+    // credit goes there (`IsTypedIncrement`) – and every later one was reached by the redirect.
+    // One exception, Chrome's too: a typed http address that only moved to its https twin
+    // credits the https one (`transfer_typed_credit_from_first_to_second_url`); the label moves
+    // with the credit, because the label is what a later reader counts typed credit from – this
+    // store's recount after a deletion, a peer's import of the chain – and the two must agree.
     const members = chain ? [...chain, url] : [url]
-    const typedMember =
+    const creditedMember =
       transition === 'typed' && chain && isHttpsUpgrade(members[0], members[1]) ? 1 : 0
+    const memberTransition = (i: number): HistoryTransition =>
+      i === creditedMember ? transition : 'redirect'
     if (chain) {
       for (let i = 0; i < chain.length; i += 1) {
         const hop = chain[i]
-        const hopTransition: HistoryTransition = i === 0 ? transition : 'redirect'
+        const hopTransition = memberTransition(i)
         // No title of its own: a hop keeps the one its landing gave it (`updateTitle`).
-        this.bumpEntry(hop, '', null, at, transition === 'typed' && i === typedMember)
+        this.bumpEntry(hop, '', null, at, hopTransition === 'typed')
         this.insertVisit({
           id: newId('visit'),
           url: hop,
@@ -582,14 +586,8 @@ export class HistoryService {
         added.push(exported(hop, '', at, hopTransition, null, { redirectSource: true }))
       }
     }
-    const landingTransition: HistoryTransition = chain ? 'redirect' : transition
-    this.bumpEntry(
-      url,
-      title,
-      favicon,
-      at,
-      transition === 'typed' && members.length - 1 === typedMember
-    )
+    const landingTransition = memberTransition(members.length - 1)
+    this.bumpEntry(url, title, favicon, at, landingTransition === 'typed')
     this.insertVisit({
       id: newId('visit'),
       url,
