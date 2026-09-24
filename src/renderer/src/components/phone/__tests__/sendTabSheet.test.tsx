@@ -33,7 +33,8 @@ const { browserStore, openSendTabSheet, uiStore } = await import('@renderer/lib/
 
 const NOW = 1_700_000_000_000
 const LAPTOP = { id: 'dev-2', name: 'Work laptop', lastSeen: NOW - 2 * 3_600_000 }
-const DESK = { id: 'dev-3', name: 'Home desktop', lastSeen: NOW - 20_000 }
+const DESK = { id: 'dev-3', name: 'Home desktop', lastSeen: NOW - 20_000, kind: 'desktop' as const }
+const PIXEL = { id: 'dev-4', name: 'Pixel 9', lastSeen: NOW - 60_000, kind: 'phone' as const }
 
 function stateOf(devices: SyncStatus['devices']): UIState {
   const tab = {
@@ -207,27 +208,50 @@ const rowText = (row: HTMLElement): { title: string; subtitle: string } => ({
 // --- the sheet ---------------------------------------------------------------------------------
 
 describe('the phone Send to your devices sheet', () => {
-  it('lists the other devices most recently seen first – name over when last active – under Chrome’s title, no glyph column', async () => {
-    await show([LAPTOP, DESK])
+  it('lists the other devices most recently seen first – the kind’s glyph, the name over when last active – under Chrome’s title', async () => {
+    await show([LAPTOP, DESK, PIXEL])
     expect(titles()).toEqual(['Send to your devices'])
     expect(uiStore.get().sendTabSheet).toEqual({ tabId: 't' })
     expect(rows().map(rowText)).toEqual([
       { title: 'Home desktop', subtitle: 'Last active just now' },
+      { title: 'Pixel 9', subtitle: 'Last active 1 min ago' },
       { title: 'Work laptop', subtitle: 'Last active 2 h ago' }
     ])
     expect(rows().map((r) => rowMain(r).getAttribute('aria-label'))).toEqual([
       'Home desktop, Last active just now',
+      'Pixel 9, Last active 1 min ago',
       'Work laptop, Last active 2 h ago'
     ])
-    // No row draws a glyph – the record has no device kind, and one picture on every row tells
-    // nothing (the #314 ruling; as the Settings › Sync device rows) – and no empty box stands
-    // where one would go: the text starts at the gutter. Two-line rows.
-    for (const row of rows()) {
-      expect(row.querySelector('.zen-list-lead')).toBeNull()
-      expect(row.querySelector('svg')).toBeNull()
-      expect(row.getAttribute('data-two-line')).toBe('true')
-    }
+    // Every row leads with the device's kind glyph (services pass 4; §10.4's one glyph column):
+    // the laptop for the desktop (Chrome's one computer glyph), the phone for the Pixel, and
+    // for the laptop – a build that announced no kind – the stand-in at 69 %, decorative all
+    // three. Two-line rows.
+    const glyphs = rows().map((row) => {
+      const lead = row.querySelector<HTMLElement>('.zen-list-lead')!
+      const glyph = lead.querySelector<SVGElement>('svg[data-testid="device-glyph"]')!
+      return {
+        kind: glyph.getAttribute('data-kind'),
+        standin: glyph.classList.contains('zen-list-standin'),
+        hidden: glyph.getAttribute('aria-hidden')
+      }
+    })
+    expect(glyphs).toEqual([
+      { kind: 'desktop', standin: false, hidden: 'true' },
+      { kind: 'phone', standin: false, hidden: 'true' },
+      { kind: 'none', standin: true, hidden: 'true' }
+    ])
+    for (const row of rows()) expect(row.getAttribute('data-two-line')).toBe('true')
     expect(commands()).toEqual([])
+  })
+
+  it('a list in which no device announced a kind – every peer an older build – has no glyph column: the names at the gutter, no stand-in column (§10.4’s condition, anyDeviceKind)', async () => {
+    await show([LAPTOP, { ...DESK, kind: undefined }])
+    expect(rows().map((r) => rowText(r).title)).toEqual(['Home desktop', 'Work laptop'])
+    // No leading box on any row – the rows read from the gutter, as a list with nothing to
+    // lead with does – and no glyph, stand-in or otherwise.
+    expect(document.querySelector('.zen-frame-dialogs .zen-list-lead')).toBeNull()
+    expect(document.querySelector('.zen-frame-dialogs [data-testid="device-glyph"]')).toBeNull()
+    for (const row of rows()) expect(row.getAttribute('data-two-line')).toBe('true')
   })
 
   it('opens on its first row (§9.22, a list sheet), the dialog named by its title behind it', async () => {

@@ -46,6 +46,7 @@ import {
 } from '@renderer/lib/portals'
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { DeviceGlyph, anyDeviceKind } from '../DeviceGlyph'
 import { GroupGlyph } from '../GroupGlyph'
 import { ReloadStopGlyph, StarGlyph } from '../phone/BarGlyphs'
 import { RowFavicon } from '../phone/PhoneList'
@@ -777,10 +778,20 @@ function MenuLevel({
     ;(row ?? node).focus({ preventScroll: true })
     onFocused()
   }, [focus, onFocused, placed])
+  // The device rows (the Send to Your Devices submenu) draw their kind glyphs while any device
+  // of the level announced a kind (`anyDeviceKind`, §10.4's condition; the #453 lead check): the
+  // kinds at the full ink, the stand-in for the rest – and none at all when no device did, so
+  // a submenu of older builds' rows reads as plain rows, not a column of stand-ins.
+  const deviceGlyphs = anyDeviceKind(items.flatMap((item) => (item.device ? [item.device] : [])))
   // The glyph slot stands before every label when any row of the level has something to put in
-  // it – a favicon, a group's mark, a check – so the labels share one edge.
+  // it – a favicon, a group's mark, a device's kind, a check – so the labels share one edge.
   const withGlyphs = items.some(
-    (item) => item.icon || item.group || item.type === 'checkbox' || item.type === 'radio'
+    (item) =>
+      item.icon ||
+      item.group ||
+      (item.device && deviceGlyphs) ||
+      item.type === 'checkbox' ||
+      item.type === 'radio'
   )
   return (
     <div
@@ -853,6 +864,10 @@ function MenuLevel({
                   // A saved group's row (the Tab Folders submenu): the one group glyph (§9.37)
                   // in the slot, the ring of its colour, or the folder's own icon.
                   <GroupGlyph folder={item.group} saved={item.group.saved} />
+                ) : item.device && deviceGlyphs ? (
+                  // Another device's row (the Send to Your Devices submenu): the device's kind
+                  // glyph, the stand-in for a kind it did not announce.
+                  <DeviceGlyph kind={item.device.kind} />
                 ) : item.icon ? (
                   <img src={item.icon} alt="" className="h-4 w-4 rounded-sm" draggable={false} />
                 ) : null}

@@ -304,7 +304,11 @@ export class Menus {
    * other device yet, and there is no item: an action with nothing to send to is not drawn
    * disabled (§10.4). Only a web page travels (`isSendableUrl`, the engine's rule): an internal
    * or extension page keeps the item, disabled, so the page reads as the reason. The engine
-   * confirms the hand-over with its toast, "Sent to Laptop".
+   * confirms the hand-over with its toast, "Sent to Laptop". Each device's row carries the
+   * device's kind (`device`, services pass 4): the renderer-drawn app menu leads the row with
+   * the kind's glyph – Chrome's picker draws a laptop, a phone, a tablet per device – and the
+   * stand-in for a device that announced none; the tab strip's native context menu, which the
+   * host draws in the platform's menu ink, keeps the rows as text.
    */
   private sendToDevicesItems(tab: Tab | undefined, win: ZenWindow): Template {
     if (!tab) return []
@@ -331,7 +335,11 @@ export class Menus {
       {
         label: 'Send to Your Devices',
         enabled,
-        submenu: devices.map((device) => ({ label: device.name, click: () => send(device.id) }))
+        submenu: devices.map((device) => ({
+          label: device.name,
+          device: { kind: device.kind ?? null },
+          click: () => send(device.id)
+        }))
       }
     ]
   }

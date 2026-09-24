@@ -9,6 +9,7 @@ import type {
   ExtensionInfo,
   MenuItemDescriptor,
   PhoneBarPosition,
+  SyncDevice,
   SyncDeviceTabs,
   Tab,
   UIState
@@ -1086,10 +1087,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         id: 'preview-quiet',
         gesture: false
       })
-      untilState(
-        (s) => s.permissionPrompts.some((p) => p.tabId === tab.id && p.quiet === true),
-        up
-      )
+      untilState((s) => s.permissionPrompts.some((p) => p.tabId === tab.id && p.quiet === true), up)
     } else {
       // The active page asks, as its script would (`permissions.decide` is what the host calls
       // from the WebView's permission request); the answer is the prompt sheet's business.
@@ -1652,8 +1650,11 @@ const SYNC_FIXTURE_TREE =
  * (nothing set up, no folder chosen), `chosen` (the setup draft holds a picked tree, so Turn on
  * sync is live and its sheet has a folder to set up), `busy` (`chosen`, with the engine's
  * `sync.setup` held open so the passphrase sheet stays on its §9.30 busy form once sent), `on`
- * (connected: two other devices, last synced five minutes ago), `tabs` (`on` with Open tabs
- * syncing and the two devices' open tabs published: Tabs from other devices, History's From your
+ * (connected: four other devices – a laptop, a desktop, a tablet and one of an older build that
+ * announced no kind – last synced five minutes ago), `unknown` (`on` with the same four devices
+ * all of older builds: no record carries a kind, so the list draws no glyph column at all –
+ * §10.4's condition, `anyDeviceKind`), `tabs` (`on` with Open tabs
+ * syncing and the laptop's and the desktop's open tabs published: Tabs from other devices, History's From your
  * other devices group and the tab search's reach (TAB-02, TAB-21) are live, the menus carry
  * Send to your devices, and the core's sync stands in for the engine so they act; see
  * `standInEngine`), `empty` (connected, no other
@@ -1685,9 +1686,10 @@ function seedSync(variant: string, browser: Browser): void {
 
 /**
  * While the `tabs` fixture stands the core's own sync stands in as a connected engine: the menus
- * read its status (Send to your devices is in the tab menu and the app menu with two devices to
- * pick from), `sync.tabsFromDevices` answers the fixture's lists (`REMOTE_TABS`: the two devices'
- * open tabs, as the engine sorts them) and `sync.sendTab` confirms with the engine's toast, "Sent
+ * read its status (Send to your devices is in the tab menu and the app menu with the fixture's
+ * devices to pick from), `sync.tabsFromDevices` answers the fixture's lists (`REMOTE_TABS`: the
+ * laptop's and the desktop's open tabs, each list with its device's kind, as the engine joins
+ * and sorts them) and `sync.sendTab` confirms with the engine's toast, "Sent
  * to Work laptop", writing nothing – the stand-in host has no folder. Every other call goes to
  * the real engine. Returns the undo.
  */
@@ -1728,6 +1730,7 @@ const REMOTE_TABS = (now: number): SyncDeviceTabs[] => [
   {
     deviceId: 'device-desktop',
     deviceName: 'Home desktop',
+    deviceKind: 'desktop',
     updatedAt: now - 3 * 60_000,
     tabs: [
       {
@@ -1751,6 +1754,7 @@ const REMOTE_TABS = (now: number): SyncDeviceTabs[] => [
   {
     deviceId: 'device-laptop',
     deviceName: 'Work laptop',
+    deviceKind: 'laptop',
     updatedAt: now - 2 * HOUR_MS,
     tabs: [
       {
@@ -1842,13 +1846,23 @@ export function syncFixture(state: UIState, variant: string, now: number): UISta
   }
   const lost = variant === 'lost'
   const merge = variant === 'merge'
-  const devices =
+  // The other devices with the kind each announced (§10.4's glyph per row): a laptop, a
+  // desktop and a tablet, and one whose build predates the kind – its record has none, so its
+  // rows draw the stand-in. `unknown`: the same four, every build predating the kind – no
+  // record carries one, and the list draws no glyph column (`anyDeviceKind`).
+  const unknown = variant === 'unknown'
+  const announced: SyncDevice[] = [
+    { id: 'device-laptop', name: 'Work laptop', lastSeen: now - 2 * HOUR_MS, kind: 'laptop' },
+    { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000, kind: 'desktop' },
+    { id: 'device-tablet', name: 'Galaxy Tab', lastSeen: now - 26 * HOUR_MS, kind: 'tablet' },
+    { id: 'device-study', name: 'Study PC', lastSeen: now - 9 * 24 * HOUR_MS }
+  ]
+  const devices: SyncDevice[] =
     variant === 'empty' || merge
       ? []
-      : [
-          { id: 'device-laptop', name: 'Work laptop', lastSeen: now - 2 * HOUR_MS },
-          { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000 }
-        ]
+      : unknown
+        ? announced.map(({ id, name, lastSeen }) => ({ id, name, lastSeen }))
+        : announced
   // `tabs`: `on` with Open tabs among what syncs and the devices' lists published (ID-28), so
   // Tabs from other devices, History's From your other devices group (TAB-02) and the menus'
   // Send to your devices (ID-27) are live.
