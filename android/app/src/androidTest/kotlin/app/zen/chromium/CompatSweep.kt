@@ -742,6 +742,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val errors = console.filter { it.startsWith("ERROR ") && !isUncaught(it) }
         detail.put("console", JSONArray(console.takeLast(30)))
         detail.put("url", runCatching { tabEval(view, "location.href", 5) }.getOrDefault("?"))
+        // The engine builtins the bootstrap gave the realm because the WebView lacked them
+        // (`extensionPolyfills.ts`; `Promise.withResolvers` on 113): the measurement of compat
+        // round 16's engine-line row (Adobe Photoshop's worker) is this column going PARTIAL -> P
+        // with the name listed here.
+        detail.put("polyfills", runCatching { json(tabEval(view, POLYFILLS_REPORT, 5)) }.getOrElse { JSONObject().put("error", it.toString().take(120)) })
         stage(
             entry, "background",
             if (uncaught.isEmpty()) "P" else "PARTIAL",
@@ -8766,6 +8771,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          */
         private const val FLOW_REPORT =
             "JSON.stringify((window.__zenExtStats&&window.__zenExtStats.flow)||{})"
+        /**
+         * The engine builtins the bootstrap gave an extension realm because the WebView lacked
+         * them (`BootStats.polyfills`), and whether `Promise.withResolvers` is a function there
+         * now, whoever's it is (the engine's on 156, the bootstrap's on 113).
+         */
+        private const val POLYFILLS_REPORT =
+            "JSON.stringify({installed:(window.__zenExtStats&&window.__zenExtStats.polyfills)||null,withResolvers:typeof Promise.withResolvers})"
         /** A document's size and content, shadow roots included. */
         private const val DOM_REPORT =
             "(function(){var r=document.body?document.body.getBoundingClientRect():{width:0,height:0};var deep=function(root){var n=0;var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){n++;if(all[i].shadowRoot)n+=deep(all[i].shadowRoot)}return n};" +

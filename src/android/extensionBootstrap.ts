@@ -55,6 +55,7 @@ import { installCorsProxy } from './extensionCorsProxy'
 import { createFetchRelay, type FetchRelay } from './extensionFetchRelay'
 import { installExtensionUrlRewrite } from './extensionFrameUrls'
 import { installPdfDocumentType } from './extensionPdfDocument'
+import { installExtensionPolyfills, type PolyfillRealm } from './extensionPolyfills'
 import { installSpeechSynthesis } from './extensionSpeechSynthesis'
 import { installUrlOrigin, scopedUrlClass } from './extensionUrlOrigin'
 
@@ -450,6 +451,9 @@ declare const __zenExtBoot: Boot
     const context = boot.config.context
     const frame = frameContext()
     const origin = extensionOrigin(ext.id)
+    // The engine builtins an older WebView lacks, in this realm of the extension's own before
+    // any script of its runs (extensionPolyfills.ts; the MV3 worker's page among them).
+    const polyfills = installExtensionPolyfills(realWindow as PolyfillRealm)
     // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
     // MV2 backgrounds are pages in Chrome too and get none of it.
     const background = ext.manifest.background as Record<string, unknown> | undefined
@@ -494,11 +498,14 @@ declare const __zenExtBoot: Boot
       // counters, for the compat sweep's reading of what a popup's burst met at the page.
       const flow: Record<string, FlowStats> = {}
       for (const [ep, running] of engines) flow[ep] = running.flow
-      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow'> & { page: EngineContextKind } = {
+      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow' | 'polyfills'> & {
+        page: EngineContextKind
+      } = {
         frame: frame.url,
         world: 'page',
         page: context,
-        flow
+        flow,
+        polyfills
       }
       Object.defineProperty(g, '__zenExtStats', {
         value: pageStats,
@@ -826,9 +833,13 @@ declare const __zenExtBoot: Boot
     // (extensionPdfDocument.ts); any other document is left as it is.
     installPdfDocumentType(window)
     let result: ShieldResult = { policy: false, patched: 0 }
-    if (isolation === 'world')
+    if (isolation === 'world') {
       result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`)
-    else if (pristine) {
+      // The world's own builtins are the extension's to complete (extensionPolyfills.ts); the
+      // `with` scope's are the page's and are left alone.
+      const polyfills = installExtensionPolyfills(realWindow as PolyfillRealm)
+      if (stats) stats.polyfills = polyfills
+    } else if (pristine) {
       /* a frame on an inherited origin keeps the page's sinks; its content scripts write under the page's policy */
     } else {
       const ownCaller = ownScriptMatcher(Error)
