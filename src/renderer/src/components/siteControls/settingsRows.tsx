@@ -348,9 +348,9 @@ const SITE_SETTINGS_INTRO =
  * Site settings as rows: the catalogue's content types this host honours, grouped as Chrome
  * groups them, each an item row (its default's meaning under it) whose sheet holds the default
  * as a value row – the §9.13 picker over it – and the sites with an answer of their own for
- * that type, each an action that forgets the answer after a confirmation (Chrome's per-type
- * pages); a type with one possible default is a fact. Then the sites with settings of their
- * own, each a sheet of its answers with a Reset, and Reset all.
+ * that type, each an item row whose one action, Forget, runs at once (the lead's #418 ruling 5;
+ * Chrome's per-type pages); a type with one possible default is a fact. Then the sites with
+ * settings of their own, each a sheet of its answers with a Reset, and Reset all.
  */
 export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
   const platform = state.platform === 'android' ? 'android' : 'desktop'
@@ -576,21 +576,41 @@ function grantRow(listId: string, kind: DeviceKind, origin: string, grant: Devic
   }
 }
 
-/** A site's answer for one type: forgotten, after a confirmation, so the site asks again. */
-function ruleRow(typeId: string, rule: PermissionRule): ActionRow {
+/**
+ * A site's answer for one type, the grant rows' shape (§10.4; the lead's #418 ruling 5): an item
+ * row named for its host with Forget trailing – "Forget <host>" to a reader – running at once,
+ * no confirmation, as the grant rows' Revoke does; the answer is one the site asks for again the
+ * next time it needs it, not the user's own data.
+ */
+function ruleRow(typeId: string, rule: PermissionRule): ItemRow {
   const host = hostOf(rule.origin)
+  const id = `${typeId}:${rule.origin}:${rule.permission}`
   const qualified = rule.permission.includes(':')
-  return {
+  const description = qualified
+    ? describeRule(rule)
+    : rule.decision === 'allow'
+      ? 'Allowed'
+      : 'Blocked'
+  const onPress = (): void =>
+    void run('permissions.forget', { origin: rule.origin, permission: rule.permission })
+  const forget: ActionRow = {
     kind: 'action',
-    id: `${typeId}:${rule.origin}:${rule.permission}`,
+    id: `${id}:forget`,
+    label: 'Forget',
+    description: 'The site asks again the next time it needs it.',
+    button: 'Forget',
+    onPress
+  }
+  return {
+    kind: 'item',
+    id,
     label: host,
-    description: qualified ? describeRule(rule) : rule.decision === 'allow' ? 'Allowed' : 'Blocked',
-    button: 'Forget…',
-    confirm: {
-      title: `Forget the answer for ${host}?`,
-      description: 'The site asks again the next time it needs it.',
-      action: 'Forget'
-    },
-    onPress: () => run('permissions.forget', { origin: rule.origin, permission: rule.permission })
+    description,
+    action: { label: 'Forget', onPress },
+    sheet: {
+      title: host,
+      description,
+      groups: [{ id: `${id}:actions`, heading: null, rows: [forget] }]
+    }
   }
 }
