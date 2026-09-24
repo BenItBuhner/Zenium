@@ -318,9 +318,11 @@ async function clickThroughMcp() {
     const rHead = String(retryOut).split('\n')[0]
     const synth = /input: synthetic/.test(String(retryOut))
     const rv = await evaluate('window.__clickTrusted').catch(() => 'evalErr')
-    const rc = await evaluate('window.__events.length').catch(() => '?')
+    const rs = await evaluate(
+      `({ events: window.__events.length, moves: window.__moveCount, lastMove: window.__lastMove, active: navigator.userActivation.hasBeenActive })`
+    ).catch(() => '?')
     log(
-      `  DIAG mcp retry ${r}: __clickTrusted=${JSON.stringify(rv)} events=${rc} synthetic=${synth} headline=${JSON.stringify(rHead)}`
+      `  DIAG mcp retry ${r}: __clickTrusted=${JSON.stringify(rv)} synthetic=${synth} headline=${JSON.stringify(rHead)} page=${JSON.stringify(rs)}`
     )
     if (rv === true) break
   }
@@ -394,7 +396,7 @@ async function clickThroughXdotool(cover) {
       if (move && move.trusted) {
         const origin = { x: move.screenX - move.clientX, y: move.screenY - move.clientY }
         log(
-          `xdotool: pointer at (${x}, ${y}) reached the page; view origin (${origin.x}, ${origin.y})`
+          `xdotool: pointer at (${x}, ${y}) reached the page; view origin (${origin.x}, ${origin.y}) (${xdotool('getmouselocation')})`
         )
         return origin
       }
@@ -446,6 +448,27 @@ async function clickThroughXdotool(cover) {
       `xdotool: window.__clickTrusted after the click: ${JSON.stringify(after.trusted)} (null: no click reached the button; false: the synthetic click's value); at the button's centre: ${after.atCentre}; view ${after.iw}x${after.ih} at window ${after.sx},${after.sy} ${after.ow}x${after.oh}, ${after.vis}, focus ${after.focus}; last trusted mousemove ${moved}; pointer ${xdotool('getmouselocation')}`
     )
     log(`xdotool: ${await tabsListing()}`)
+    // DIAG: what the renderer saw of the X click (the capture-phase trace), the X windows on
+    // the display (geometry, map state, stacking) and the X focus window.
+    const trace = await evaluate(
+      `({ events: window.__events, moves: window.__moveCount, active: navigator.userActivation.hasBeenActive })`
+    ).catch((e) => String(e))
+    log(`  DIAG page after X click: ${JSON.stringify(trace)}`)
+    const x11 = (cmd, args) => {
+      try {
+        return execFileSync(cmd, args, { encoding: 'utf8', timeout: 5000 }).trim()
+      } catch (e) {
+        return `${cmd} failed: ${e.message}`
+      }
+    }
+    log(`  DIAG X focus: ${x11('xdotool', ['getwindowfocus', '-f'])}`)
+    if (has('xwininfo')) {
+      const tree = x11('xwininfo', ['-root', '-tree'])
+        .split('\n')
+        .filter((l) => /0x[0-9a-f]+/i.test(l))
+        .slice(0, 60)
+      for (const l of tree) log(`  DIAG xwininfo: ${l.trim()}`)
+    }
   }
   return false
 }

@@ -1,4 +1,5 @@
 import {
+  BrowserWindow,
   ClipboardItem,
   WebContentsView,
   app,
@@ -8,7 +9,7 @@ import {
   nativeTheme,
   net,
   screen,
-  type BrowserWindow,
+  webContents as allWebContents,
   type BrowserWindowConstructorOptions,
   type LoadURLOptions,
   type Session,
@@ -135,6 +136,29 @@ const SNAPSHOT_JPEG_QUALITY = 90
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
+
+/**
+ * DIAG (sign-in smoke, runner-only gesture loss): input-path tracing on stdout when
+ * `ZEN_INPUT_DIAG` is set – the browser-side input events per page, view placement, the
+ * dispatch path and its ack latency, the window and its child views. Off in normal runs.
+ */
+const INPUT_DIAG = Boolean(process.env.ZEN_INPUT_DIAG)
+let lastMoveDiagAt = 0
+function inputDiag(message: string): void {
+  if (INPUT_DIAG) console.log(`[signin-diag] t=${process.uptime().toFixed(3)} ${message}`)
+}
+/** One line per browser-side input event (mouse moves throttled to two a second). */
+function inputDiagEvent(wcId: number, input: Electron.InputEvent): void {
+  if (!INPUT_DIAG) return
+  const now = Date.now()
+  if (input.type === 'mouseMove') {
+    if (now - lastMoveDiagAt < 500) return
+    lastMoveDiagAt = now
+  }
+  const m = input as Electron.MouseInputEvent
+  const at = typeof m.x === 'number' ? ` (${m.x},${m.y})` : ''
+  inputDiag(`input-event wc=${wcId} ${input.type}${at}`)
+}
 
 /**
  * Whether an input event on its way to the page grants it user activation: mouse and touch
@@ -496,8 +520,24 @@ export class ElectronTabView implements TabView {
     })
     // Trusted input on its way to the page: the core's user-activation clock for pop-ups.
     wc.on('input-event', (_e, input) => {
+      inputDiagEvent(id, input)
       if (isActivatingInput(input)) ev.onUserActivation()
     })
+    if (INPUT_DIAG) {
+      wc.on('did-start-navigation', (details) =>
+        inputDiag(
+          `did-start-navigation wc=${id} main=${details.isMainFrame} same-doc=${details.isSameDocument} ${details.url}`
+        )
+      )
+      wc.on('did-frame-navigate', (_e, url, code, _s, isMainFrame, pid, rid) =>
+        inputDiag(
+          `did-frame-navigate wc=${id} main=${isMainFrame} ${code} pid=${pid} rid=${rid} ${url}`
+        )
+      )
+      wc.on('did-finish-load', () => inputDiag(`did-finish-load wc=${id} ${wc.getURL()}`))
+      wc.on('focus', () => inputDiag(`focus wc=${id}`))
+      wc.on('blur', () => inputDiag(`blur wc=${id}`))
+    }
     wc.setWindowOpenHandler(({ url, disposition, features, referrer, postBody }) => {
       // Announced before the core creates the tab, so the new view finds the pending target.
       const cancelTarget = this.onNavigationTarget?.(wc, url)
@@ -880,17 +920,22 @@ export class ElectronTabView implements TabView {
     if (!win) return
     this.owner.watchKeyboard(win)
     win.contentView.addChildView(this.view)
+    inputDiag(
+      `attachTo wc=${this.webContentsId} win=${win.id} children=${win.contentView.children.length}`
+    )
   }
 
   detach(): void {
     const win = this.win
     if (win) win.contentView.removeChildView(this.view)
     this.host = null
+    inputDiag(`detach wc=${this.webContentsId}`)
   }
 
   setBounds(rect: Rect): void {
     this.bounds = rect
     this.view.setBounds(rect)
+    inputDiag(`setBounds wc=${this.webContentsId} ${JSON.stringify(rect)}`)
   }
 
   setBorderRadius(radius: number): void {
@@ -900,6 +945,7 @@ export class ElectronTabView implements TabView {
   setVisible(visible: boolean): void {
     this.visible = visible
     this.view.setVisible(visible)
+    inputDiag(`setVisible wc=${this.webContentsId} ${visible}`)
   }
 
   isVisible(): boolean {
@@ -910,6 +956,7 @@ export class ElectronTabView implements TabView {
     // Re-adding moves the view to the top of the z-order.
     const win = this.win
     if (win) win.contentView.addChildView(this.view)
+    inputDiag(`bringToFront wc=${this.webContentsId}`)
   }
 
   // --- page operations -----------------------------------------------------------
@@ -1203,28 +1250,15 @@ export class ElectronTabView implements TabView {
   async sendInput(event: AgentInputEvent): Promise<void> {
     const wc = this.wc
     if (wc.isDestroyed()) return
-    const diag = process.env.ZEN_INPUT_DIAG
-    if (diag) {
-      try {
-        const b = this.view.getBounds()
-        const cur = screen.getCursorScreenPoint()
-        const xy = 'x' in event ? `(${event.x},${event.y})` : `[${event.type}]`
-        console.log(
-          `[signin-diag] sendInput ${event.type} ${xy} viewBounds=${JSON.stringify(b)} visible=${this.view.getVisible()} zoom=${wc.getZoomFactor()} cursorScreen=(${cur.x},${cur.y}) wcId=${this.webContentsId}`
-        )
-      } catch {
-        /* diag best-effort */
-      }
-    }
+    if (INPUT_DIAG) this.inputDiagDump(event)
     try {
       await this.withDebugger((dbg) => dispatchInputViaCdp(dbg, event))
-      if (diag) console.log(`[signin-diag] path=cdp ${event.type}`)
+      inputDiag(`path=cdp ${event.type} wc=${this.webContentsId}`)
       return
     } catch (error) {
-      if (diag)
-        console.log(
-          `[signin-diag] path=fallback ${event.type} err=${(error as Error)?.message ?? error}`
-        )
+      inputDiag(
+        `path=fallback ${event.type} wc=${this.webContentsId} err=${(error as Error)?.message ?? error}`
+      )
       /* no debugger for this page: fall back to the widget */
     }
     if (wc.isDestroyed()) return
@@ -1273,6 +1307,53 @@ export class ElectronTabView implements TabView {
       }
       case 'text':
         await wc.insertText(event.text)
+    }
+  }
+
+  /**
+   * DIAG: the geometry an agent input event is dispatched into – this view's bounds and
+   * visibility, the page's URL, focus and process, the window's bounds and focus, every child
+   * view of the window in z-order (bottom first) with its bounds and visibility, every window,
+   * every WebContents, and the X pointer.
+   */
+  private inputDiagDump(event: AgentInputEvent): void {
+    try {
+      const wc = this.wc
+      const win = this.win
+      const cur = screen.getCursorScreenPoint()
+      const xy = 'x' in event ? `(${event.x},${event.y})` : `[${event.type}]`
+      inputDiag(
+        `sendInput ${event.type} ${xy} wc=${this.webContentsId} viewBounds=${JSON.stringify(this.view.getBounds())} visible=${this.view.getVisible()}/${this.visible} zoom=${wc.getZoomFactor()} url=${wc.getURL()} wcFocused=${wc.isFocused()} pid=${wc.mainFrame.processId} rid=${wc.mainFrame.routingId} frames=${wc.mainFrame.framesInSubtree.length} cursorScreen=(${cur.x},${cur.y})`
+      )
+      if (win) {
+        const children = win.contentView.children.map((child, index) => {
+          const cwc = (child as WebContentsView).webContents as WebContents | undefined
+          return `#${index} ${child.constructor.name} wc=${cwc && !cwc.isDestroyed() ? cwc.id : '-'} ${JSON.stringify(child.getBounds())} visible=${child.getVisible()}`
+        })
+        inputDiag(
+          `window id=${win.id} bounds=${JSON.stringify(win.getBounds())} content=${JSON.stringify(win.getContentBounds())} focused=${win.isFocused()} visible=${win.isVisible()} minimized=${win.isMinimized()} mainWc=${win.webContents.id} children=[${children.join('; ')}]`
+        )
+      }
+      inputDiag(
+        `windows=${JSON.stringify(
+          BrowserWindow.getAllWindows().map((w) => ({
+            id: w.id,
+            b: w.getBounds(),
+            vis: w.isVisible(),
+            foc: w.isFocused(),
+            wc: w.webContents.id
+          }))
+        )} webContents=${JSON.stringify(
+          allWebContents.getAllWebContents().map((c) => ({
+            id: c.id,
+            type: c.getType(),
+            url: c.getURL().slice(0, 60),
+            focused: c.isFocused()
+          }))
+        )} focusedWindow=${BrowserWindow.getFocusedWindow()?.id ?? null} focusedWc=${allWebContents.getFocusedWebContents()?.id ?? null}`
+      )
+    } catch (error) {
+      inputDiag(`dump failed: ${(error as Error)?.message ?? error}`)
     }
   }
 
@@ -2100,42 +2181,27 @@ function cdpKey(key: string): { key: string; code: string; vk: number; text: str
  * handled the event.
  */
 async function dispatchInputViaCdp(dbg: Electron.Debugger, event: AgentInputEvent): Promise<void> {
+  // DIAG: the ack latency of each mouse command – an event the renderer handled takes a few
+  // milliseconds; one dropped on the browser side with a synthetic ack resolves at once.
+  const mouse = async (params: Record<string, unknown>): Promise<void> => {
+    const started = INPUT_DIAG ? performance.now() : 0
+    const result = (await dbg.sendCommand('Input.dispatchMouseEvent', params)) as unknown
+    if (INPUT_DIAG)
+      inputDiag(
+        `cdp ${String(params.type)} ack ${(performance.now() - started).toFixed(1)}ms result=${JSON.stringify(result)}`
+      )
+  }
   switch (event.type) {
     case 'mouseMove':
-      await dbg.sendCommand('Input.dispatchMouseEvent', {
-        type: 'mouseMoved',
-        x: event.x,
-        y: event.y,
-        button: 'none'
-      })
+      await mouse({ type: 'mouseMoved', x: event.x, y: event.y, button: 'none' })
       return
     case 'click': {
       const modifiers = cdpModifiers(event.modifiers)
       const { x, y, button } = event
-      await dbg.sendCommand('Input.dispatchMouseEvent', {
-        type: 'mouseMoved',
-        x,
-        y,
-        button: 'none',
-        modifiers
-      })
+      await mouse({ type: 'mouseMoved', x, y, button: 'none', modifiers })
       for (let i = 1; i <= Math.max(1, event.clickCount); i++) {
-        await dbg.sendCommand('Input.dispatchMouseEvent', {
-          type: 'mousePressed',
-          x,
-          y,
-          button,
-          clickCount: i,
-          modifiers
-        })
-        await dbg.sendCommand('Input.dispatchMouseEvent', {
-          type: 'mouseReleased',
-          x,
-          y,
-          button,
-          clickCount: i,
-          modifiers
-        })
+        await mouse({ type: 'mousePressed', x, y, button, clickCount: i, modifiers })
+        await mouse({ type: 'mouseReleased', x, y, button, clickCount: i, modifiers })
       }
       return
     }
