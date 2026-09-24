@@ -298,12 +298,18 @@ describe('Bridge port', () => {
     const { native: n, calls, hops } = native(true, true)
     const bridge = new Bridge(n)
     // Before the port: the hop, as ever.
-    const before = bridge.call<{ data: string } | null>('thumbnail.load', { tabId: 't1', url: 'https://a/' })
+    const before = bridge.call<{ data: string } | null>('thumbnail.load', {
+      tabId: 't1',
+      url: 'https://a/'
+    })
     expect(hops).toEqual(['call thumbnail.load'])
 
     const page = port(hops)
     bridge.adoptPort(page.port)
-    const after = bridge.call<{ data: string } | null>('thumbnail.load', { tabId: 't2', url: 'https://b/' })
+    const after = bridge.call<{ data: string } | null>('thumbnail.load', {
+      tabId: 't2',
+      url: 'https://b/'
+    })
     bridge.send('thumbnail.drop', { tabId: 't1' })
     bridge.send('thumbnail.sweep', { keep: ['t2'] })
     bridge.send('thumbnail.configure', { width: 320 })
@@ -370,7 +376,7 @@ describe('Bridge port', () => {
     warn.mockRestore()
   })
 
-  it('marks every hop by its channel and method when traced, and never otherwise', () => {
+  it('marks every hop by its channel and method as it leaves and as it returns when traced, and never otherwise', () => {
     const mark = vi.spyOn(performance, 'mark').mockImplementation(() => ({}) as PerformanceMark)
     const { native: n, hops } = native(true, true)
     const bridge = new Bridge(n)
@@ -393,19 +399,50 @@ describe('Bridge port', () => {
     } finally {
       delete g.__zenBridgeTrace
     }
-    expect(mark.mock.calls.map((c) => c[0])).toEqual([
+    // Each hop's pair: the mark as it leaves, the same name with `:ret` as the entry point returns.
+    const leaves = [
       'bridge:port:storage.write',
       'bridge:call:tab.activate',
       'bridge:port:thumbnail.load',
       'bridge:post:chrome.setBarHide',
       'bridge:batch:view.setBounds+view.setVisible',
       'bridge:sync:view.navigationEntries'
-    ])
+    ]
+    expect(mark.mock.calls.map((c) => c[0])).toEqual(leaves.flatMap((m) => [m, `${m}:ret`]))
     void bridge.call('storage.write', { name: 'a.json' })
     bridge.post('chrome.setBarHide', { enabled: true })
     bridge.batched('view.setBounds', { tabId: 't1', rect: {} })
     bridge.callSync('view.navigationEntries', { tabId: 't1' })
-    expect(mark).toHaveBeenCalledTimes(6)
+    expect(mark).toHaveBeenCalledTimes(12)
+    mark.mockRestore()
+  })
+
+  it('a port that fails under a traced call marks the port hop it tried and the call hop it took, each returned once', () => {
+    const mark = vi.spyOn(performance, 'mark').mockImplementation(() => ({}) as PerformanceMark)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { native: n, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    bridge.adoptPort({
+      postMessage: () => {
+        throw new Error('closed')
+      },
+      close: () => {}
+    })
+    const g = globalThis as { __zenBridgeTrace?: unknown }
+    g.__zenBridgeTrace = true
+    try {
+      void bridge.call('thumbnail.load', { tabId: 't1', url: 'https://a/' })
+    } finally {
+      delete g.__zenBridgeTrace
+    }
+    expect(mark.mock.calls.map((c) => c[0])).toEqual([
+      'bridge:port:thumbnail.load',
+      'bridge:call:thumbnail.load',
+      'bridge:call:thumbnail.load:ret'
+    ])
+    expect(hops).toEqual(['call thumbnail.load'])
+    expect(bridge.ported).toBe(false)
+    warn.mockRestore()
     mark.mockRestore()
   })
 

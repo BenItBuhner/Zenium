@@ -111,15 +111,28 @@ export const PORTED: ReadonlySet<string> = new Set([...STORAGE_CLASS, ...THUMBNA
 export const PORT_REQUEST = 'bridge.port'
 
 /**
- * Whether the bridge marks its hops in the performance timeline (`bridge:<entry>:<method>`, the
- * entry being `call`, `port`, `post`, `sync` or `batch` – a batch named by its commands' methods
- * joined with `+` – in the `blink.user_timing` category of the WebView's trace): the motion
- * profile's probe (`MotionPerfDemo`) turns it on for a scene, so the trace tells every hop's task
- * by the entry point and the method that paid it; off, a hop costs no mark. Read on every hop so
- * a probe installed after boot is heard.
+ * Whether the bridge marks its hops in the performance timeline (`bridge:<entry>:<method>` as a
+ * hop leaves and the same name with `:ret` as the host's entry point returns, the entry being
+ * `call`, `port`, `post`, `sync` or `batch` – a batch named by its commands' methods joined with
+ * `+` – in the `blink.user_timing` category of the WebView's trace): the motion profile's probe
+ * (`MotionPerfDemo`) turns it on for a scene, so the trace tells every hop's task by the entry
+ * point and the method that paid it, and the pair of marks tells the JS thread's wait in the hop
+ * itself, whatever else the task around it did; off, a hop costs no mark. Read on every hop so a
+ * probe installed after boot is heard.
  */
 const traced = (): boolean =>
   (globalThis as { __zenBridgeTrace?: unknown }).__zenBridgeTrace === true
+
+const noMark = (): void => {}
+
+/** Mark a hop as it leaves and hand back the mark of its return (`<name>:ret`); nothing when untraced. */
+const markHop = (name: string): (() => void) => {
+  if (!traced()) return noMark
+  performance.mark(name)
+  return () => {
+    performance.mark(`${name}:ret`)
+  }
+}
 
 export class Bridge {
   private seq = 0
@@ -168,9 +181,10 @@ export class Bridge {
   private hop(method: string, json: string): void {
     const port = this.port
     if (port !== null && PORTED.has(method)) {
-      if (traced()) performance.mark(`bridge:port:${method}`)
+      const returned = markHop(`bridge:port:${method}`)
       try {
         port.postMessage(json)
+        returned()
         return
       } catch (error) {
         // A port that will not take a string (closed under the page: the host closed its
@@ -179,8 +193,9 @@ export class Bridge {
         console.warn('[zen] the bridge port failed; back to call', error)
       }
     }
-    if (traced()) performance.mark(`bridge:call:${method}`)
+    const returned = markHop(`bridge:call:${method}`)
     this.native.call(json)
+    returned()
   }
 
   /** Fire-and-forget variant for the many tiny view updates (bounds, visibility, …). */
@@ -203,9 +218,10 @@ export class Bridge {
       return
     }
     this.flush()
-    if (traced()) performance.mark(`bridge:post:${method}`)
+    const returned = markHop(`bridge:post:${method}`)
     try {
       this.native.post(JSON.stringify({ method, args } satisfies NativeCommand))
+      returned()
     } catch (error) {
       console.warn(`[zen] native ${method} failed`, error)
     }
@@ -237,9 +253,10 @@ export class Bridge {
     if (this.queue.length === 0 || typeof this.native.batch !== 'function') return
     const commands = this.queue
     this.queue = []
-    if (traced()) performance.mark(`bridge:batch:${commands.map((c) => c.method).join('+')}`)
+    const returned = markHop(`bridge:batch:${commands.map((c) => c.method).join('+')}`)
     try {
       this.native.batch(JSON.stringify(commands))
+      returned()
     } catch (error) {
       console.warn(
         `[zen] native batch of ${commands.map((c) => c.method).join(', ')} failed`,
@@ -250,8 +267,9 @@ export class Bridge {
 
   callSync<T>(method: string, args: unknown = {}): T {
     this.flush()
-    if (traced()) performance.mark(`bridge:sync:${method}`)
+    const returned = markHop(`bridge:sync:${method}`)
     const raw = this.native.callSync(JSON.stringify({ id: 0, method, args } satisfies NativeCall))
+    returned()
     return (raw === '' ? undefined : JSON.parse(raw)) as T
   }
 
