@@ -12,8 +12,6 @@ name: Android Settings tab demo
 # this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-small-rows-1347]
 
 permissions:
   contents: read
