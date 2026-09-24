@@ -10,21 +10,29 @@
 //                      rows on both lanes to the one OOM, and the second lane's job was green)
 //   ids=a,b,c        – the rows left, in the sweep's order: `order` minus the rows with a grade;
 //                      every id of ALL_IDS when there is no results.json
-//   last=a           – the row in flight at the death (the first left), to run after the others
+//   last=a,b         – the rows to run after the others: the row in flight at the death (the
+//                      first left) and the sweep's own LAST_IDS that are still left (the rows
+//                      the first boot already kept for last – round 14's before run lost them
+//                      when a first boot without a results.json handed the second boot an
+//                      empty `last`, and the row kept for last took the guest 17 rows in)
 // Environment: DIED (the shared workflow's emulator-died output), FAILED (the sweep job's result
-// is failure), ALL_IDS (the sweep's ids); the first two only name the cause in the log.
+// is failure), ALL_IDS (the sweep's ids), LAST_IDS (the sweep's SWEEP_LAST, optional); the
+// first two only name the cause in the log.
 import { existsSync, readFileSync } from 'node:fs'
 
+const ids = (value) =>
+  (value ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
 const died = process.env.DIED === 'true'
 const failed = process.env.FAILED === 'true'
-const all = (process.env.ALL_IDS ?? '')
-  .split(',')
-  .map((id) => id.trim())
-  .filter(Boolean)
+const all = ids(process.env.ALL_IDS)
+const keptForLast = ids(process.env.LAST_IDS)
 const file = process.argv[2]
 
 let left = all
-let last = ''
+let inFlight = ''
 let graded = 0
 if (file && existsSync(file)) {
   const results = JSON.parse(readFileSync(file, 'utf8'))
@@ -37,13 +45,14 @@ if (file && existsSync(file)) {
   )
   graded = done.size
   left = order.filter((id) => !done.has(id))
-  last = left[0] ?? ''
+  inFlight = left[0] ?? ''
 }
+const last = [...new Set([inFlight, ...keptForLast].filter((id) => id && left.includes(id)))]
 
 const boot = left.length > 0
 console.error(
-  `emulator died: ${died}; driver failed: ${failed}; graded ${graded}; left ${left.length}${last ? ` (in flight when the driver stopped: ${last})` : ''}; second boot: ${boot}`
+  `emulator died: ${died}; driver failed: ${failed}; graded ${graded}; left ${left.length}${inFlight ? ` (in flight when the driver stopped: ${inFlight})` : ''}${keptForLast.length ? ` (kept for last: ${keptForLast.join(',')})` : ''}; second boot: ${boot}`
 )
 console.log(`boot=${boot}`)
 console.log(`ids=${left.join(',')}`)
-console.log(`last=${last}`)
+console.log(`last=${last.join(',')}`)

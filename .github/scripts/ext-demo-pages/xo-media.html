@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cross-origin media and XHR fixture</title>
+    <style>
+      body {
+        font: 16px system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      video {
+        display: block;
+        width: 100%;
+        max-width: 320px;
+        background: #000;
+      }
+      table {
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      td,
+      th {
+        border: 1px solid #ccc;
+        padding: 2px 6px;
+        text-align: left;
+        vertical-align: top;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Cross-origin media and XHR fixture</h1>
+    <p>
+      This page sits on one of the fixture server's origins and loads from the other
+      (<code id="other">…</code>): a clip in a media element, then the clip, the server's JSON and
+      a 200,000-byte <code>video/mp4</code> answer through <code>fetch</code> and
+      <code>XMLHttpRequest</code>, each once without and once with
+      <code>Access-Control-Expose-Headers</code>, plus one answer without
+      <code>Access-Control-Allow-Origin</code> and the clip from the page's own origin for
+      comparison. Per load it records the response headers the browser lets the page read
+      (<code>response.headers</code>, <code>getAllResponseHeaders()</code>) on
+      <code>window.__xo</code>, which is what a page script observing the page's own requests
+      could hand a request observer.
+    </p>
+    <video id="clip" muted playsinline preload="auto"></video>
+    <p>Loads recorded: <span id="count">0</span> of <span id="total">0</span></p>
+    <table id="loads">
+      <tr><th>load</th><th>status</th><th>visible response headers</th></tr>
+    </table>
+    <script>
+      var here = location.host
+      var other = /^localhost(:|$)/.test(here) ? 'http://10.0.2.2:8765' : 'http://localhost:8765'
+      var own = location.protocol + '//' + location.host
+      document.getElementById('other').textContent = other
+      window.__xo = { other: other, own: own, loads: [], done: false, expected: 0, startedAt: Date.now() }
+      var table = document.getElementById('loads')
+      function record(load) {
+        load.at = Date.now() - window.__xo.startedAt
+        window.__xo.loads.push(load)
+        var tr = document.createElement('tr')
+        var cells = [load.name, load.error ? 'error: ' + load.error : String(load.status), load.names && load.names.length ? load.names.join(', ') : '(none)']
+        cells.forEach(function (c) {
+          var td = document.createElement('td')
+          td.textContent = c
+          tr.appendChild(td)
+        })
+        table.appendChild(tr)
+        document.getElementById('count').textContent = String(window.__xo.loads.length)
+        if (window.__xo.loads.length >= window.__xo.expected) window.__xo.done = true
+      }
+      function viaFetch(name, url) {
+        window.__xo.expected++
+        fetch(url, { cache: 'no-store', mode: 'cors' })
+          .then(function (r) {
+            var h = {}
+            r.headers.forEach(function (v, k) {
+              h[k] = v
+            })
+            var load = { name: name, kind: 'fetch', url: url, status: r.status, headers: h, names: Object.keys(h).sort() }
+            return r.arrayBuffer().then(function (b) {
+              load.bytes = b.byteLength
+              record(load)
+            })
+          })
+          .catch(function (e) {
+            record({ name: name, kind: 'fetch', url: url, error: String((e && e.message) || e), headers: null, names: [] })
+          })
+      }
+      function viaXhr(name, url) {
+        window.__xo.expected++
+        var x = new XMLHttpRequest()
+        x.open('GET', url)
+        x.responseType = 'arraybuffer'
+        x.onload = function () {
+          var h = {}
+          x.getAllResponseHeaders()
+            .trim()
+            .split(/[\r\n]+/)
+            .forEach(function (line) {
+              var i = line.indexOf(':')
+              if (i > 0) h[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim()
+            })
+          record({ name: name, kind: 'xhr', url: url, status: x.status, headers: h, names: Object.keys(h).sort(), bytes: x.response ? x.response.byteLength : null })
+        }
+        x.onerror = function () {
+          record({ name: name, kind: 'xhr', url: url, status: x.status, error: 'network error (status ' + x.status + ')', headers: null, names: [] })
+        }
+        x.send()
+      }
+      // The media element: the browser loads it, the page sees no response header of it.
+      var v = document.getElementById('clip')
+      window.__xo.expected++
+      var videoUrl = other + '/cors/clip.mp4?xo=video'
+      var videoDone = false
+      function videoRecord(error) {
+        if (videoDone) return
+        videoDone = true
+        record({ name: 'video-xo-clip', kind: 'video', url: videoUrl, status: error ? null : 'loadedmetadata', error: error || undefined, headers: null, names: [], duration: isFinite(v.duration) ? v.duration : null, readyState: v.readyState })
+      }
+      v.addEventListener('loadedmetadata', function () {
+        videoRecord(null)
+      })
+      v.addEventListener('error', function () {
+        videoRecord(v.error ? v.error.code + ' ' + (v.error.message || '') : 'error')
+      })
+      v.src = videoUrl
+      v.load()
+      viaXhr('xhr-xo-data', other + '/cors/data.json?xo=xhr')
+      viaFetch('fetch-xo-data', other + '/cors/data.json?xo=fetch')
+      viaXhr('xhr-xo-data-expose', other + '/cors/data.json?xo=xhr&expose=1')
+      viaFetch('fetch-xo-data-expose', other + '/cors/data.json?xo=fetch&expose=1')
+      viaXhr('xhr-xo-clip', other + '/cors/clip.mp4?xo=xhr')
+      viaFetch('fetch-xo-clip', other + '/cors/clip.mp4?xo=fetch')
+      viaXhr('xhr-xo-clip-expose', other + '/cors/clip.mp4?xo=xhr&expose=1')
+      viaFetch('fetch-xo-clip-expose', other + '/cors/clip.mp4?xo=fetch&expose=1')
+      viaXhr('xhr-xo-large', other + '/cors/large.mp4?xo=xhr')
+      viaFetch('fetch-xo-large', other + '/cors/large.mp4?xo=fetch')
+      viaXhr('xhr-xo-nocors', other + '/no-cors.json?xo=xhr')
+      viaFetch('fetch-xo-nocors', other + '/no-cors.json?xo=fetch')
+      viaXhr('xhr-same-clip', own + '/clip.mp4?xo=same-xhr')
+      viaFetch('fetch-same-clip', own + '/clip.mp4?xo=same-fetch')
+      document.getElementById('total').textContent = String(window.__xo.expected)
+      // A load that never settles (a stalled clip) must not hold the record open.
+      setTimeout(function () {
+        if (!videoDone) videoRecord('no loadedmetadata within 20 s (readyState ' + v.readyState + ')')
+        window.__xo.done = true
+        window.__xo.timedOut = window.__xo.loads.length < window.__xo.expected
+      }, 20000)
+    </script>
+  </body>
+</html>

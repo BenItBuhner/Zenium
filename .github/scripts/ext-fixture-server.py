@@ -18,7 +18,14 @@ Serves `.github/scripts/ext-demo-pages/` as `python3 -m http.server` did, plus:
     and `/stream` is the same clip under an extension-less URL;
   - `/no-cors.json`: a JSON answer without `Access-Control-Allow-Origin`, for a page on the
     server's other origin (`cors.html`) whose fetch the browser refuses unless an extension
-    sets the header on the response (Allow CORS).
+    sets the header on the response (Allow CORS);
+  - `/cors/<file>`: a file of the directory answered WITH `Access-Control-Allow-Origin: *` and a
+    `Content-Disposition`, ranges included, so a page on the server's other origin
+    (`xo-media.html`) reads the response through `fetch` / `XMLHttpRequest` and records which
+    response headers the browser lets it see; `?expose=1` adds `Access-Control-Expose-Headers`
+    naming the non-safelisted ones (Content-Disposition, Content-Range, Accept-Ranges), and
+    `/cors/large.mp4` is the clip zero-padded to 200,000 bytes under `video/mp4` (headers are
+    what that load measures: a sniffer's size rule, compat round 14's item 1).
 
     python3 ext-fixture-server.py <port> <directory>
 """
@@ -49,6 +56,9 @@ class FixtureHandler(SimpleHTTPRequestHandler):
             return
         if parts.path == '/no-cors.json':
             self.no_cors_json()
+            return
+        if parts.path.startswith('/cors/'):
+            self.cors_file(parts.path[len('/cors/'):], parse_qs(parts.query).get('expose', ['0'])[0] == '1')
             return
         if parts.path == '/stream':
             # The clip under an extension-less URL (a CDN's `/videoplayback?...`): the same file,
@@ -112,6 +122,60 @@ class FixtureHandler(SimpleHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
+
+    LARGE_BYTES = 200000
+    EXPOSED = 'Content-Disposition, Content-Range, Accept-Ranges, Last-Modified'
+
+    def cors_file(self, name, expose):
+        """`/cors/<name>` (see the module doc): the file with the CORS answer headers, a range honoured, `large.mp4` synthesised."""
+        if '/' in name or name.startswith('.'):
+            self.send_error(404)
+            return
+        if name == 'large.mp4':
+            clip = self.translate_path('/clip.mp4')
+            with open(clip, 'rb') as f:
+                data = f.read()
+            data = (data + b'\0' * self.LARGE_BYTES)[:self.LARGE_BYTES]
+            content_type = 'video/mp4'
+        else:
+            path = self.translate_path('/' + name)
+            if not os.path.isfile(path):
+                self.send_error(404)
+                return
+            with open(path, 'rb') as f:
+                data = f.read()
+            content_type = self.guess_type(path)
+        size = len(data)
+        wanted = self.byte_range(size)
+        if wanted is not None and wanted[0] >= size:
+            self.send_response(416)
+            self.send_header('Content-Range', 'bytes */%d' % size)
+            self.send_header('Content-Length', '0')
+            self.cors_headers(name, expose)
+            self.end_headers()
+            return
+        if wanted is not None:
+            first, last = wanted
+            body = data[first:last + 1]
+            self.send_response(206)
+            self.send_header('Content-Range', 'bytes %d-%d/%d' % (first, last, size))
+        else:
+            body = data
+            self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Accept-Ranges', 'bytes')
+        self.send_header('Last-Modified', self.date_time_string())
+        self.cors_headers(name, expose)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def cors_headers(self, name, expose):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Content-Disposition', 'inline; filename="%s"' % name)
+        self.send_header('Cache-Control', 'no-store')
+        if expose:
+            self.send_header('Access-Control-Expose-Headers', self.EXPOSED)
 
     def no_cors_json(self):
         data = json.dumps({'fixture': 'no-cors', 'origin': self.headers.get('Origin'), 'host': self.headers.get('Host')}).encode('utf-8')
