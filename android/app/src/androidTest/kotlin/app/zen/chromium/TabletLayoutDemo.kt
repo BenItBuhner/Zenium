@@ -51,15 +51,19 @@ import kotlin.math.roundToInt
  *     the device draws on the popover – read off the layout too, here and on the tab menu, as a
  *     `scrollbar on …` line in the findings; back closes it;
  * 10. a pull down the toolbar opens the tab overview (the `tablet-overview-pull` scene, traced):
- *     on the tablet the switcher SLIDES UP over the page – a `translateY` of the layer on the
- *     overview's progress under the finger, the page's still under it, no morph (MOT-04) – and
- *     the release's spring is the `tablet-overview-slide` scene (traced; read for its sequence
- *     of long tasks, never its timing); open, the grid runs at the width's columns (three or
- *     more at any tablet width, four at 1280) with the tab search a FIELD in its header, no
- *     magnifier (TABLET-14, §9.34); a query narrows the grid and takes the New Tab card with
- *     it, the field's X stands over the query alone and clears it; its More button opens a
- *     sheet that docks centred at 480; back closes the sheet, back the overview; the toolbar's
- *     `Tabs (N)` button before Menu is the switcher's second entry, pressed while it is up;
+ *     on the tablet the switcher comes DOWN from the toolbar's edge over the page, with the
+ *     finger – a NEGATIVE `translateY` of the layer on the overview's progress (above its rest,
+ *     descending; §9.36 "pulled down from the toolbar", §11's input rule), the page's still
+ *     under it, no morph (MOT-04) – and the release's spring is the `tablet-overview-slide`
+ *     scene (traced; read for its sequence of long tasks, never its timing); open, the grid runs
+ *     at the width's columns (three or more at any tablet width, four at 1280) with the tab
+ *     search a FIELD in its header, no magnifier (TABLET-14, §9.34), its cards at the frame's
+ *     aspect – landscape on this landscape shard – and the active card's row whole; a query
+ *     narrows the grid and takes the New Tab card with it, the field's X stands over the query
+ *     alone and clears it; its More button opens a sheet that docks centred at 480; back closes
+ *     the sheet, back the overview; the toolbar's `Tabs (N)` button before Menu is the
+ *     switcher's second entry, pressed while it is up on the window's fill, its square never
+ *     inverted;
  * 11. live resize through `wm size`: with the overview up, a query in its field and the Spaces
  *     drawer over it, 1280 x 590 is the phone chrome (the short side under 600 dp) with the
  *     overview, the query and the drawer still up – the switcher's transient state is
@@ -472,17 +476,18 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         val pill = screen(domRect(ADDRESS_PILL)) ?: return
         framesSettled()
         val f = Finger()
-        // The first stretch of the pull, off the record: the layer rises under the finger (MOT-04's
-        // slide, a `translateY` of the overview on its progress – the phone morphs instead), read
-        // and pictured with the finger held about two fifths of the way (the travel is 0.42 of the
+        // The first stretch of the pull, off the record: the layer comes down from the toolbar's
+        // edge with the finger (MOT-04's slide, a negative `translateY` of the overview on its
+        // progress – §9.36's "pulled down from the toolbar"; the phone morphs instead), read and
+        // pictured with the finger held about two fifths of the way (the travel is 0.42 of the
         // page's height, `overviewTravel`).
         f.down(pill.centerX(), pill.centerY())
         f.moveBy(0f, 0.16f * height, 300)
         // The chrome lies under the page views: the layer is unseen until the host has drawn the
         // frame without the live page (the page's still, under the layer, stands in from that
         // frame), so the finger holds here until it shows – the capture behind it takes about a
-        // second on the software GPU – and the reads and the picture are of the layer risen over
-        // the still at the finger's progress. The wait is a reading (the harness's wall clock).
+        // second on the software GPU – and the reads and the picture are of the layer come down
+        // over the still to the finger's progress. The wait is a reading (the harness's wall clock).
         val pullAt = SystemClock.uptimeMillis()
         val layerShown = awaitJs(OVERVIEW_VISIBLE, true, 8_000)
         val heroPagePhase = jsText(HERO_PAGE_PHASE)
@@ -497,12 +502,25 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         finding("mid-pull the layer's frame was drawn ${paintedFrames()} (the harness's wall clock; a reading)")
         val midPull = jsText(OVERVIEW_TRANSFORM)
         val midPhase = jsText(OVERVIEW_PHASE)
+        // The direction's proof (§9.36 as amended, the design gate's redirect): the offset is
+        // NEGATIVE – the layer stands above its rest and comes down with the finger, its foot
+        // between the box's head (the toolbar's edge) and its rest, so what is drawn is the layer's
+        // head over the page's top. A positive offset would be a rise from the box's foot: the
+        // phone sheet's direction, against the finger under a top toolbar.
+        val midOffset = midPull.removePrefix("translateY(").removeSuffix("px)").toFloatOrNull()
+        val layerFoot = jsNumber(LAYER_FOOT)
+        val boxHeight = jsNumber(LAYER_BOX_HEIGHT)
         check(
-            "mid-pull the switcher is a slide up over the page (a translateY on the tablet's mount, no scale)",
-            midPull.startsWith("translateY(") && !midPull.contains("scale") && jsBoolean("!!document.querySelector('$OVERVIEW_LAYER')"),
+            "mid-pull the switcher comes DOWN from the toolbar's edge over the page (a negative translateY on the tablet's mount, no scale; §9.36)",
+            midPull.startsWith("translateY(") && !midPull.contains("scale") && midOffset != null && midOffset < 0f && jsBoolean("!!document.querySelector('$OVERVIEW_LAYER')"),
             "transform '$midPull' in phase $midPhase, layer ${domRect(OVERVIEW_LAYER)}"
         )
-        check("the page's still lies under the rising layer, in the page's frame", jsBoolean("!!document.querySelector('$OVERVIEW_HERO')"), "still ${domRect(OVERVIEW_HERO)}, content ${domRect(CONTENT)}")
+        check(
+            "mid-pull the layer's foot stands between the toolbar's edge and its rest: its head is what shows, come down over the page's top",
+            !layerFoot.isNaN() && !boxHeight.isNaN() && layerFoot > 0 && layerFoot < boxHeight,
+            "foot ${layerFoot.toInt()} px below the box's head, the box ${boxHeight.toInt()} tall, transform '$midPull'"
+        )
+        check("the page's still lies under the descending layer, in the page's frame", jsBoolean("!!document.querySelector('$OVERVIEW_HERO')"), "still ${domRect(OVERVIEW_HERO)}, content ${domRect(CONTENT)}")
         shot("13a-overview-mid-slide")
         // The rest of the pull is the jank record's gesture scene; the release and its spring come
         // after, as their own: the spring carries the layer the rest of the way (§11's gentle
@@ -522,6 +540,25 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         check("the tab search stands in the header as a field, no magnifier toggle (TABLET-14, §9.34)", awaitDom(SEARCH_INPUT, 4_000) && !jsBoolean("!!document.querySelector('$SEARCH_TOGGLE')"), "field ${domRect(SEARCH_INPUT)}, toggle ${domRect(SEARCH_TOGGLE)}")
         check("the field's X stands only over a query: none on the empty field", !jsBoolean("!!document.querySelector('$SEARCH_CLEAR')"), "clear ${domRect(SEARCH_CLEAR)}")
         check("the header keeps under four segments", jsNumber("document.querySelectorAll('$SEGMENT').length") <= 3, "segments ${jsText("[...document.querySelectorAll('$SEGMENT')].map(function(s){return s.textContent})")}")
+        // §9.36: a card's picture takes the frame's aspect – landscape on this landscape shard – and
+        // the grid opens with the active card's row whole. The numbers drawn are the finding.
+        val frame = domRect(CONTENT)
+        val frameRatio = if (frame != null && frame.height() > 0) frame.width() / frame.height() else Float.NaN
+        val cardWidth = jsNumber(CARD_WIDTH)
+        val cardHeight = jsNumber(CARD_HEIGHT)
+        val pictureHeight = jsNumber(CARD_PICTURE_HEIGHT)
+        val pictureRatio = if (pictureHeight > 0) cardWidth / pictureHeight else Double.NaN
+        finding("the cards: ${cardWidth.toInt()} x ${cardHeight.toInt()} (${"%.3f".format(cardWidth / cardHeight)} : 1), the picture ${cardWidth.toInt()} x ${pictureHeight.toInt()} (${"%.3f".format(pictureRatio)} : 1) under the frame's ${frame?.width()?.toInt()} x ${frame?.height()?.toInt()} (${"%.3f".format(frameRatio)} : 1); ratio set ${jsText(CARD_ASPECT_SET)}")
+        check(
+            "a card's picture takes the frame's aspect: landscape on the landscape tablet, within a percent of the frame's ratio (§9.36)",
+            !frameRatio.isNaN() && !pictureRatio.isNaN() && cardWidth > cardHeight && abs(pictureRatio - frameRatio) <= 0.01 * frameRatio,
+            "picture ${"%.3f".format(pictureRatio)} : 1, frame ${"%.3f".format(frameRatio)} : 1, card ${cardWidth.toInt()} x ${cardHeight.toInt()}"
+        )
+        check(
+            "the grid opened with the active card's row whole under the header (the scroll set by the hero's slot)",
+            jsBoolean(ACTIVE_ROW_WHOLE),
+            "active card ${domRect(ACTIVE_CELL)}, grid ${domRect(GRID)}, scrollTop ${jsText("(document.querySelector('$GRID')||{scrollTop:''}).scrollTop")}"
+        )
         SystemClock.sleep(1_500)
         shot("13-overview")
         val cellsBefore = cellKeys()
@@ -565,8 +602,27 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         val tabsLabel = jsText("(document.querySelector('$TABS_BUTTON')||{getAttribute:function(){return ''}}).getAttribute('aria-label')")
         check("the toolbar carries `Tabs (N)` before Menu, not pressed with the overview down", tabsLabel.matches(Regex("Tabs \\(\\d+\\)")) && jsText("document.querySelector('$TABS_BUTTON').getAttribute('aria-pressed')") == "false" && buttonPrecedes(TABS_BUTTON, MENU_BUTTON), "label '$tabsLabel' (${tabOrder().size} tabs in the space), tabs ${domRect(TABS_BUTTON)}, menu ${domRect(MENU_BUTTON, last = true)}")
         tapDom(TABS_BUTTON)
+        // The tap's entrance is the pull's direction (§9.36: the same on a tap as on the drag) –
+        // the same writer – read mid-flight if a read lands in the spring's frames: a reading, the
+        // spring being about 300 ms and the read's timing the harness's, not a claim.
+        val tapAt = SystemClock.uptimeMillis()
+        val tapMidFlight = awaitJs("$OVERVIEW_TRANSFORM.indexOf('translateY(-')===0", true, 1_000)
+        val tapTransform = jsText(OVERVIEW_TRANSFORM)
+        val tapShown = awaitJs(OVERVIEW_VISIBLE, true, 8_000)
+        finding("the tap's entrance: ${if (tapMidFlight) "read mid-flight at '$tapTransform' – a negative translateY, down from the toolbar's edge" else "landed before a read caught it"}; the layer showed ${SystemClock.uptimeMillis() - tapAt} ms after the tap${if (tapShown) "" else " (not within 8 s)"} at '${jsText(OVERVIEW_TRANSFORM)}' (the harness's wall clock and the page's capture behind it – a reading, not a claim)")
         check("the tab-count button opens the overview", awaitJs(OVERVIEW_PHASE + "==='open'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
         check("and reads pressed while it is up", awaitJs("document.querySelector('$TABS_BUTTON').getAttribute('aria-pressed')==='true'", true, 3_000), "aria-pressed ${jsText("document.querySelector('$TABS_BUTTON').getAttribute('aria-pressed')")}")
+        // §9.36: pressed, the button takes the window's fill and the count's square keeps its
+        // outline – never the phone bar's inverted square. Read off the computed styles.
+        val buttonFill = jsText("getComputedStyle(document.querySelector('$TABS_BUTTON')).backgroundColor")
+        val squareFill = jsText("getComputedStyle(document.querySelector('$TABS_BUTTON').firstElementChild).backgroundColor")
+        val squareInk = jsText("getComputedStyle(document.querySelector('$TABS_BUTTON').firstElementChild).color")
+        val buttonInk = jsText("getComputedStyle(document.querySelector('$TABS_BUTTON')).color")
+        check(
+            "pressed, `Tabs (N)` takes the window's pressed fill and its square is not inverted: the square's own ground stays clear and its ink is the button's",
+            buttonFill.isNotEmpty() && !isClear(buttonFill) && isClear(squareFill) && squareInk == buttonInk,
+            "button fill $buttonFill, square fill $squareFill, square ink $squareInk, button ink $buttonInk"
+        )
         SystemClock.sleep(1_200)
         back()
         check("back closes the overview the button opened", awaitJs(OVERVIEW_PHASE + "==='closed'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
@@ -872,6 +928,10 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
 
     private fun jsBoolean(code: String): Boolean = chromeJs("!!($code)") == "true"
 
+    /** A computed background that paints nothing: `rgba(0, 0, 0, 0)` as Blink serialises `transparent`. */
+    private fun isClear(color: String): Boolean =
+        color == "transparent" || color.replace(" ", "") == "rgba(0,0,0,0)"
+
     private fun jsNumber(code: String): Double = chromeJs("Number($code)").toDoubleOrNull() ?: Double.NaN
 
     /** The value `code` evaluates to, as text (a string unquoted; anything else as its JSON). */
@@ -1055,12 +1115,30 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val OVERVIEW_VISIBLE = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');return !!l&&getComputedStyle(l).visibility==='visible'})()"
         /** The hero page's view, as the chrome knows it (`lib/pageView.ts`): shown, hiding, hidden or showing. */
         private const val HERO_PAGE_PHASE = "(function(){var id=window.__zenStores.stage.get().overview.heroTabId;if(!id)return 'no hero';return window.__zenStores['page-view'].get().phases.get(id)||'shown'})()"
-        /** The page's still the layer rises over (the hero card in the page's frame). */
+        /** The page's still the layer comes down over (the hero card in the page's frame). */
         private const val OVERVIEW_HERO = ".zen-overview-hero"
+        /**
+         * The direction's geometry (§9.36): where the layer's foot stands below its box's head – the box
+         * is the slide's clip, its head the toolbar's edge – and the box's height. Mid-slide the foot
+         * is between the two: the layer's head is what shows, come down over the page's top.
+         */
+        private const val LAYER_FOOT = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;var b=l.parentElement.getBoundingClientRect();return Math.round(l.getBoundingClientRect().bottom-b.top)})()"
+        private const val LAYER_BOX_HEIGHT = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;return Math.round(l.parentElement.getBoundingClientRect().height)})()"
         /** The Tabs pane's grid (the scroller's inner grid carries the column template) and its cells. */
         private const val GRID = ".zen-overview-grid[data-pane=\"tabs\"] .grid"
+        private const val SCROLLER = ".zen-overview-grid[data-pane=\"tabs\"]"
         private const val CELL = ".zen-overview-grid[data-pane=\"tabs\"] [data-cell]"
         private const val NEW_TAB_CELL = "new-tab"
+        /** A tab's card in the grid – the first that is one (not the New Tab card) – and the active tab's. */
+        private const val CARD_CELL = "$CELL:not([data-cell=\"$NEW_TAB_CELL\"])"
+        private const val ACTIVE_CELL = "$CELL > .zen-overview-card[data-active=\"true\"]"
+        /** The card's box, its title row's height, and the ratio set on the layer's box for the cells (`--zen-overview-card-aspect`). */
+        private const val CARD_WIDTH = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().width:NaN})()"
+        private const val CARD_HEIGHT = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().height:NaN})()"
+        private const val CARD_PICTURE_HEIGHT = "(function(){var c=document.querySelector('$CARD_CELL');if(!c)return NaN;var h=c.querySelector('.zen-overview-card-header');return c.getBoundingClientRect().height-(h?h.getBoundingClientRect().height:0)})()"
+        private const val CARD_ASPECT_SET = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');return l&&l.parentElement?(l.parentElement.style.getPropertyValue('--zen-overview-card-aspect')||'none'):'no layer'})()"
+        /** Whether the active card's cell lies whole inside the grid's scroller (the opening scroll, §9.36). */
+        private const val ACTIVE_ROW_WHOLE = "(function(){var a=document.querySelector('$ACTIVE_CELL');var s=document.querySelector('$SCROLLER');if(!a||!s)return false;var r=a.getBoundingClientRect();var g=s.getBoundingClientRect();return r.top>=g.top-1&&r.bottom<=g.bottom+1})()"
         /** The header's tab search: the field (inline on the tablet, the phone's own row after a fold), its X, the phone's magnifier. */
         private const val SEARCH_INPUT = ".zen-overview [data-testid=\"overview-search\"] input"
         private const val SEARCH_CLEAR = ".zen-overview [data-testid=\"overview-search-clear\"]"
