@@ -45,7 +45,9 @@ import java.nio.charset.StandardCharsets
  * property (a scuttler cannot redefine it, as a real `ServiceWorkerGlobalScope` has it), a
  * `defineProperty` of a name the page global refuses lands in G's target instead of throwing
  * (LavaMoat's scuttle then runs to its end, as in Chrome, and the page global the runtime reads
- * is untouched), a descriptor read through G hands out the operation bound to the page and an
+ * is untouched), a non-configurable define of a new name goes to the page and is mirrored onto
+ * the target (the proxy invariant, as the runtime's `self` mirrors onto its own held set), a
+ * descriptor read through G hands out the operation bound to the page and an
  * accessor that tolerates G as its receiver (LavaMoat copies the global by descriptors), and
  * G's prototype carries the prototype chain's operations bound the same way. The page's `self`
  * and `globalThis` are repointed to G, so the runtime's `instanceof` answers for it. A module
@@ -88,7 +90,7 @@ object BareWindowBracket {
         defineProperty:function(t,k,d){
         if(own(k))return Reflect.defineProperty(T,k,d);
         var s=Reflect.getOwnPropertyDescriptor(S,k);
-        if(!s)return Reflect.defineProperty(S,k,d);
+        if(!s){var r=Reflect.defineProperty(S,k,d);if(r&&!d.configurable)Reflect.defineProperty(T,k,d);return r}
         var seed={enumerable:!!s.enumerable,configurable:true};
         if(k==='globalThis'){seed.value=G;seed.writable=true}
         else if('value' in s){seed.value=s.value;seed.writable=!!s.writable}
