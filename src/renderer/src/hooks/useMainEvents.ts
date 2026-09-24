@@ -5,6 +5,7 @@ import {
   announcementVoice,
   loadCompleteAnnouncement,
   startAnnouncer,
+  tabMoveAnnouncement,
   zoomAnnouncement
 } from '@renderer/lib/announce'
 import { installedMessage } from '@shared/webApp'
@@ -26,6 +27,7 @@ import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
 import { openImportSurface } from '@renderer/lib/pages'
+import { refocusStripRow } from '@renderer/lib/tabStrip'
 import {
   configureThumbnails,
   rememberCard,
@@ -339,6 +341,13 @@ export function useMainEvents(): void {
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
       onEvent('tab.dragOver', (over) => remoteDragOver(over)),
       onEvent('tab.startRename', ({ tabId }) => uiStore.set({ renamingTabId: tabId })),
+      onEvent('tab.moved', (moved) => {
+        // The chord moved a tab (tabs-34): the reader hears where it landed, and the keyboard
+        // goes back onto the row when the move was the focused row's (the row re-rendered where
+        // the tab now stands; the event followed the state that drew it there).
+        announce(tabMoveAnnouncement(moved))
+        if (moved.focused) refocusStripRow(moved.tabId)
+      }),
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
       onEvent('folder.edit', ({ folderId }) => {
         // Chrome's group editor bubble (tabs-13) beside the folder's header; the phone's group

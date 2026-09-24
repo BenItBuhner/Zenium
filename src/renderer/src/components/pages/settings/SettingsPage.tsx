@@ -357,7 +357,13 @@ function PhoneSettings({
           tab={tab}
           inert={Subpage !== undefined}
         >
-          <GroupList groups={models[0].groups} ctx={rowCtx} className="zen-settings-body" />
+          {/* The bar's title is the page's h1; the groups follow it at h2 (heading-order). */}
+          <GroupList
+            groups={models[0].groups}
+            ctx={rowCtx}
+            className="zen-settings-body"
+            headingLevel={2}
+          />
         </DrillIn>
       )}
       {current && subpage && Subpage && (

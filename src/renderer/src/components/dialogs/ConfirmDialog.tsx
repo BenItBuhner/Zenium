@@ -32,8 +32,15 @@ export interface ConfirmDialogProps {
    * paragraph (§9.23's composed-prompt rule). Empty for a question that needs no more words.
    */
   description?: ReactNode
-  /** The verb's label: Quit, Close tabs, Delete, Clear. Cancel is always Cancel. */
+  /** The verb's label: Quit, Close tabs, Delete, Clear. */
   action: string
+  /**
+   * The way out's label, "Cancel" unless the consumer names it (§9.23 as amended on #436): the
+   * way out is named for what it does where "Cancel" would be untrue (Wait); Cancel everywhere
+   * the answer is to leave things as they were. Nothing is cancelled when the user waits on an
+   * unresponsive page, so that prompt says Wait; a Quit, a Delete, a Clear left undone is Cancel.
+   */
+  cancel?: string
   /**
    * A destructive confirmation has no primary (§6): its verb is a secondary in the danger ink
    * beside Cancel, and it has no default key either (§9.22 as amended) – Enter from the held
@@ -67,7 +74,7 @@ export interface ConfirmDialogProps {
   disabled?: boolean
   /** The body's one element, when the prompt has one: a check row under the description (§9.23). */
   checkbox?: { label: string; checked: boolean; onChange: (next: boolean) => void }
-  /** Cancel: the button, Escape and a press on the scrim. */
+  /** The way out (Cancel, or the word `cancel` names): its button, Escape and a press on the scrim. */
   onCancel: () => void
   /**
    * The verb: its button, and – on a prompt that is not `destructive` – Enter from the prompt's
@@ -84,8 +91,9 @@ export interface ConfirmDialogProps {
  * The §9.23 confirmation prompt: a notice at §9.20's 320 on the frame's dialog host, over the
  * page's picture under the frame's scrim (§9.5). A title block – the question at 17/600 with an
  * optional 16 glyph, one description at 15 in the deemphasised ink, 16 to the body – then, when
- * the prompt has one, a check row as the body's only element, then the §9.11 footer: Cancel and
- * the verb, 96 | 8 | 96 hugging the right at 16, the verb in the danger ink when the answer
+ * the prompt has one, a check row as the body's only element, then the §9.11 footer: the way out
+ * (Cancel, or the word `cancel` names – Wait on the unresponsive prompt, where nothing is
+ * cancelled) and the verb, 96 | 8 | 96 hugging the right at 16, the verb in the danger ink when the answer
  * destroys something, a plain second secondary when it costs a window but no data (`verbTone`),
  * and the accent primary otherwise. Nothing else: a prompt with more is a
  * form dialog (the one-field prompt is `PromptDialog` and the list picker `PickerDialog`, below,
@@ -286,6 +294,7 @@ function ConfirmPanel({
   glyph,
   description,
   action,
+  cancel = 'Cancel',
   destructive = false,
   verbTone,
   busy = false,
@@ -438,7 +447,7 @@ function ConfirmPanel({
         )}
         <div className="zen-confirm-dialog-footer">
           <button type="button" className="zen-v2-button" data-action="cancel" onClick={onCancel}>
-            Cancel
+            {cancel}
           </button>
           <button
             type="button"

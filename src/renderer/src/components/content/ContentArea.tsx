@@ -484,6 +484,7 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.credentialLeakOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
+    ui.unresponsivePromptOpen ||
     ui.windowPromptOpen ||
     ui.clearBrowsingDataOpen ||
     ui.nameWindowOpen ||

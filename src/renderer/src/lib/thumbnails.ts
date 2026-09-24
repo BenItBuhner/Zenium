@@ -308,10 +308,16 @@ export function useThumbnail(
 /**
  * Capture `tabId` if its page is on screen and remember the result as its cover. Resolves with
  * the newest picture available (the fresh capture, or the remembered one when the page is
- * hidden). The host derives the tab's card picture from the same capture.
+ * hidden). The host derives the tab's card picture from the same capture. `fresh` asks for a
+ * page whose view is hidden as it is now (the hover card's preview of a background tab,
+ * tabs-19): Electron paints a hidden view on request; a host that cannot answers null and the
+ * remembered picture stands.
  */
-export async function captureThumbnail(tabId: string): Promise<string | null> {
-  const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
+export async function captureThumbnail(
+  tabId: string,
+  { fresh = false }: { fresh?: boolean } = {}
+): Promise<string | null> {
+  const data = await cmd('overlay.snapshot', fresh ? { tabId, fresh } : { tabId }).catch(() => null)
   if (data) rememberThumbnail(tabId, data)
   return data ?? thumbnailOf(tabId)
 }
