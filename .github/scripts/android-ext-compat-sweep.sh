@@ -25,6 +25,10 @@
 #   GUEST_PROBE_S    – seconds the `adb shell echo alive` probe of that check may take before the
 #                      guest counts as not answering (default 20; a frozen guest answers nothing,
 #                      so a lane racing a short-lived qemu sets it low)
+#   DONE_PROBE_S     – seconds the loop's `adb shell run-as … test -f done` probe (every 30 s) may
+#                      take (default 60); a frozen guest holds it for the whole timeout, so a lane
+#                      racing a short-lived qemu sets it low too, or the silence check above never
+#                      gets its turn
 #   GFXINFO_EVERY_S  – `dumpsys gfxinfo` of the app every that many seconds into
 #                      gfxinfo-samples.txt (the render pipeline's own account up to the last
 #                      seconds before a death); unset: never
@@ -296,12 +300,18 @@ dump_host() {
       echo "== threads: tid, %cpu, state, kernel wait channel, name"
       ps -L -o tid=,pcpu=,stat=,wchan:32=,comm= -p "$pid" 2> /dev/null || true
       echo "== user stacks"
-      if command -v gdb > /dev/null 2>&1; then
-        timeout 300 sudo env DEBUGINFOD_URLS= gdb -p "$pid" -batch -ex 'set pagination off' -ex 'thread apply all bt 16' 2>&1 \
+      # eu-stack first (seconds for every thread, ELF symbols only), gdb after it while the
+      # process still stands: qemu left forty to fifty seconds after the guest's last line in
+      # round 16's samples, and a stack without a symbol beats none.
+      if command -v eu-stack > /dev/null 2>&1; then
+        timeout 40 sudo eu-stack -p "$pid" 2>&1 || echo "eu-stack did not answer"
+      fi
+      if command -v gdb > /dev/null 2>&1 && kill -0 "$pid" 2> /dev/null; then
+        echo "== user stacks (gdb)"
+        timeout 120 sudo env DEBUGINFOD_URLS= gdb -p "$pid" -batch -ex 'set pagination off' -ex 'thread apply all bt 16' 2>&1 \
           | grep -vE '^\[New LWP|^\[Thread debugging|^Using host libthread_db|^warning: |^Reading symbols|^Download' || echo "gdb did not answer"
-      elif command -v eu-stack > /dev/null 2>&1; then
-        timeout 300 sudo eu-stack -p "$pid" 2>&1 || echo "eu-stack did not answer"
-      else
+      fi
+      if ! command -v gdb > /dev/null 2>&1 && ! command -v eu-stack > /dev/null 2>&1; then
         echo "(neither gdb nor eu-stack on the runner: the kernel stacks)"
         for task in /proc/"$pid"/task/*; do
           echo "-- tid ${task##*/} $(cat "$task/comm" 2> /dev/null) state=$(awk '/^State/ {print $2}' "$task/status" 2> /dev/null) wchan=$(cat "$task/wchan" 2> /dev/null) syscall=$(sudo cat "$task/syscall" 2> /dev/null | cut -d' ' -f1)"
@@ -324,7 +334,6 @@ dump_host() {
   echo "the emulator's host side written to $(basename "$file")"
 }
 guest_silence_s=${GUEST_SILENCE_S:-0}
-logcat_size=0
 logcat_still=0
 frozen_samples=0
 frozen_tick=0
@@ -446,14 +455,12 @@ while kill -0 "$driver_pid" 2> /dev/null; do
   # and the artifact instead of the job's cap; note_emulator_death then records the loss as
   # today. A guest that still answers adb is merely quiet, and the run goes on.
   if [ "$guest_silence_s" -gt 0 ] && [ "$frozen_samples" -lt 2 ]; then
-    size=$(stat -c %s "$out/logcat.txt" 2> /dev/null || echo 0)
-    if [ "$size" != "$logcat_size" ]; then
-      logcat_size=$size
-      logcat_still=0
-    else
-      logcat_still=$((logcat_still + 5))
-    fi
-    if [ "$logcat_still" -ge "$guest_silence_s" ] && [ $((tick - frozen_tick)) -ge 6 ] && pgrep -f qemu-system-x86_64 > /dev/null 2>&1; then
+    # The silence by the file's own clock (now minus its last write), not by counted ticks: a tick
+    # that stood in an adb call against a frozen guest is still one tick, and round 16's fifth
+    # sample lost its capture that way – the loop stood in the done-file probe below while qemu
+    # left, forty seconds after the guest's last line.
+    logcat_still=$(( $(date +%s) - $(stat -c %Y "$out/logcat.txt" 2> /dev/null || date +%s) ))
+    if [ "$logcat_still" -ge "$guest_silence_s" ] && [ $((tick - frozen_tick)) -ge 6 ] && pgrep qemu-system-x86 > /dev/null 2>&1; then
       frozen_tick=$tick
       if [ "$(timeout "${GUEST_PROBE_S:-20}" adb shell echo alive 2> /dev/null | tr -d '\r' || true)" = alive ]; then
         echo "the guest's logcat stood still for ${logcat_still}s but the guest answers adb; carrying on ($(date +%T))"
@@ -470,7 +477,7 @@ while kill -0 "$driver_pid" 2> /dev/null; do
     fi
   fi
   if [ $((tick % 6)) -ne 0 ]; then continue; fi
-  if timeout 60 adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
+  if timeout "${DONE_PROBE_S:-60}" adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
   if [ "$hung" -eq 0 ]; then
     # `pidof` exits 1 while the app is dead (a crash the instrumentation is still winding down):
     # under pipefail that would end the driver here, before `note_emulator_death` and `collect`.
