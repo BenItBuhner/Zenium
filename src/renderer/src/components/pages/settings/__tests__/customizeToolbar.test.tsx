@@ -10,6 +10,7 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
+  emptyAgentSkillStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
@@ -88,6 +89,7 @@ function state(settings: Partial<Settings> = {}): UIState {
     webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
+    agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.4.27-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
     passwords: emptyPasswordsStatus(),
     autofill: emptyAutofillUIState(),

@@ -37,6 +37,9 @@ const DRAG_THRESHOLD = 4
 /** Half the grid gap: the caret sits in the middle of the gap before the drop slot. */
 const HALF_GAP = 6
 const UNDO_MS = 8000
+
+/** Engine favicon addresses that loaded on this page: shown from the first frame on a re-push. */
+const loadedFavicons = new Set<string>()
 /**
  * The private window's accent, as the chrome sets it on `.zen-window[data-window-kind='private']`
  * in main.css (`newTabPage.test.ts` pins the two in step): a private page's controls take the
@@ -147,6 +150,8 @@ class NewTabPage {
   private readonly cookiesDescription = byId<HTMLElement>('zen-cookies-desc')
   private readonly greeting = byId<HTMLHeadingElement>('zen-greeting')
   private readonly search = byId<HTMLFormElement>('zen-search')
+  private readonly engineGlyph = byId<HTMLSpanElement>('zen-engine-glyph')
+  private readonly engineFavicon = byId<HTMLImageElement>('zen-engine-favicon')
   private readonly input = byId<HTMLInputElement>('zen-search-input')
   private readonly empty = byId<HTMLParagraphElement>('zen-empty')
   private readonly grid = byId<HTMLDivElement>('zen-grid')
@@ -160,7 +165,8 @@ class NewTabPage {
   private custom = false
   private focusIndex = 0
   private toastTimer: ReturnType<typeof setTimeout> | null = null
-  private pendingUndo: Removed | null = null
+  /** What the toast's Undo does while it stands (a removal's restore, a move's reversal). */
+  private pendingUndo: (() => void) | null = null
   private drag: Drag | null = null
   private suppressClick = false
   private greetingTimer: ReturnType<typeof setInterval> | null = null
@@ -186,6 +192,7 @@ class NewTabPage {
   private apply(state: NewTabPageState): void {
     this.state = state
     this.applyTheme()
+    this.applyEngineFavicon()
     this.applyGreeting()
     this.applyPrivateCookies()
     // The grid is the user's own under "My shortcuts" (add tile, drag to reorder); under "Most
@@ -198,11 +205,69 @@ class NewTabPage {
     if (!this.drag) this.renderGrid()
   }
 
-  /** The chrome's tile menu picked Remove: the page removes the tile itself, with Undo. */
+  /**
+   * The chrome's tile menu picked Remove: the page removes the tile itself, with Undo. The
+   * page menu hid a section (NTP-18): the state push already took it off; the toast offers
+   * Undo, which asks for it back. The page menu restored the default shortcuts (NTP-22): the
+   * push already redrew the grid; the toast offers Undo, which asks for the pins, the removed
+   * sites and the mode back.
+   */
   private onCommand(command: NewTabPageCommand): void {
+    if (command.type === 'section-hidden') {
+      const { section } = command
+      this.showToast(section === 'greeting' ? 'Greeting hidden' : 'Shortcuts hidden', () =>
+        this.transport.send({ type: 'show-section', section })
+      )
+      return
+    }
+    if (command.type === 'defaults-restored') {
+      this.showToast('Default shortcuts restored', () =>
+        this.transport.send({ type: 'undo-restore-default-shortcuts' })
+      )
+      return
+    }
     if (command.type !== 'remove-tile') return
     const tile = this.tiles.find((t) => t.id === command.id)
     if (tile) this.remove(tile)
+  }
+
+  /**
+   * The field's leading glyph (v2 §6, the chrome's EngineFieldGlyph in the page's own form): the
+   * default engine's favicon at 16 once it has loaded, the magnifier until then and for good
+   * when the engine has none or its image never comes – the slot is never blank. The favicon
+   * arrives on a 120 ms fade; an address that loaded once on this page shows at once, so a
+   * re-push (a settings commit, a theme change) never flashes the magnifier back.
+   */
+  private applyEngineFavicon(): void {
+    const favicon = this.state?.engineFavicon ?? null
+    const img = this.engineFavicon
+    const magnifier = this.engineGlyph.querySelector('svg')
+    const show = (shown: boolean): void => {
+      img.hidden = !shown
+      if (shown) img.setAttribute('data-shown', '')
+      else img.removeAttribute('data-shown')
+      if (magnifier) magnifier.style.display = shown ? 'none' : ''
+    }
+    if (favicon === null) {
+      img.removeAttribute('src')
+      show(false)
+      return
+    }
+    if (img.getAttribute('src') === favicon) return
+    img.onload = () => {
+      loadedFavicons.add(favicon)
+      img.hidden = false
+      if (magnifier) magnifier.style.display = 'none'
+      // Two frames: the image must paint at opacity 0 before the transition can run.
+      requestAnimationFrame(() => requestAnimationFrame(() => img.setAttribute('data-shown', '')))
+    }
+    img.onerror = () => {
+      img.removeAttribute('src')
+      show(false)
+    }
+    show(false)
+    img.src = favicon
+    if (loadedFavicons.has(favicon)) show(true)
   }
 
   private isDark(): boolean {
@@ -556,33 +621,42 @@ class NewTabPage {
   }
 
   private showUndo(removed: Removed): void {
-    this.pendingUndo = removed
+    this.showToast(removed.custom ? 'Shortcut removed' : 'Site removed', () => {
+      if (removed.custom) {
+        this.transport.send({
+          type: 'restore-shortcut',
+          id: removed.tile.id,
+          title: removed.tile.title,
+          url: removed.tile.url,
+          index: removed.index
+        })
+      } else this.transport.send({ type: 'unhide-site', url: removed.tile.url })
+    })
+  }
+
+  /**
+   * The toast (v2 §9.21, §9.33: 8 s while it offers Undo): a sentence and Undo – one action,
+   * §9.33's rule (Chrome's second link on this toast, "Restore default shortcuts", is the page
+   * menu's row here, NTP-22). Because Undo is in hand no confirmation stands before any of
+   * these acts (§10.5).
+   */
+  private showToast(message: string, undo: () => void): void {
+    this.pendingUndo = undo
     this.toast.textContent = ''
-    this.toast.appendChild(
-      el('span', undefined, removed.custom ? 'Shortcut removed' : 'Site removed')
-    )
-    const undo = el('button', 'zen-v2-button', 'Undo')
-    undo.type = 'button'
-    undo.addEventListener('click', () => this.undo())
-    this.toast.appendChild(undo)
+    this.toast.appendChild(el('span', undefined, message))
+    const undoButton = el('button', 'zen-v2-button', 'Undo')
+    undoButton.type = 'button'
+    undoButton.addEventListener('click', () => this.undo())
+    this.toast.appendChild(undoButton)
     this.toast.hidden = false
     if (this.toastTimer !== null) clearTimeout(this.toastTimer)
     this.toastTimer = setTimeout(() => this.hideToast(), UNDO_MS)
   }
 
   private undo(): void {
-    const removed = this.pendingUndo
+    const undo = this.pendingUndo
     this.hideToast()
-    if (!removed) return
-    if (removed.custom) {
-      this.transport.send({
-        type: 'restore-shortcut',
-        id: removed.tile.id,
-        title: removed.tile.title,
-        url: removed.tile.url,
-        index: removed.index
-      })
-    } else this.transport.send({ type: 'unhide-site', url: removed.tile.url })
+    undo?.()
   }
 
   private hideToast(): void {
@@ -848,6 +922,8 @@ class NewTabPage {
       const byId = new Map(this.tiles.map((t) => [t.id, t]))
       this.tiles = order.map((id) => byId.get(id)).filter((t): t is Tile => Boolean(t))
       this.focusIndex = drag.to
+      // No toast for a move (Chrome raises none): a tile dropped in the wrong slot is dragged
+      // back; the toast is the removal's, where the tile is gone from under the pointer.
       this.transport.send({ type: 'reorder-shortcuts', ids: order })
     }
     this.renderGrid()

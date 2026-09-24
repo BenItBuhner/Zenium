@@ -14,6 +14,7 @@ import type {
 import type {
   DevtoolsDock,
   NewTabDeviceState,
+  NewTabHideableSection,
   NewTabPageAction,
   NewTabPageShortcut,
   NewTabPageState,
@@ -28,10 +29,13 @@ import type {
 import { privateThirdPartyCookieStatus, type SafeBrowsingHit } from '../shared/privacy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
-import { resolveTheme, themeCssVariables } from '../shared/theme'
+import { makeTheme, resolveTheme, themeCssVariables, unfollowedTheme } from '../shared/theme'
+import { engineFieldFavicon } from '../shared/search'
 import { newId } from '../shared/ids'
 import {
+  DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
+  emptyNewTabDevice,
   hideSite,
   newTabBackground,
   newTabSections,
@@ -40,6 +44,7 @@ import {
   removeSite,
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
+  setNewTabSection,
   siteHost,
   toggleNewTabModule,
   unhideSite,
@@ -189,6 +194,17 @@ export class ForwardingEvents implements TabViewEvents {
   }
 }
 
+/** Whether two settings documents say the same thing (the Undo of a hidden section reads it). */
+function sameNewTabSettings(a: NewTabSettings, b: NewTabSettings): boolean {
+  if (a.enabled !== b.enabled || a.mode !== b.mode) return false
+  if (a.preset !== b.preset || a.background !== b.background) return false
+  const keys = new Set([...Object.keys(a.modules), ...Object.keys(b.modules)]) as Set<
+    keyof NewTabSettings['modules']
+  >
+  for (const key of keys) if (a.modules[key] !== b.modules[key]) return false
+  return true
+}
+
 /** Title and address a shortcut is stored with; null when the address is not one. */
 export function normalizeShortcutInput(
   title: string,
@@ -231,7 +247,11 @@ export class NewTabService {
   constructor(private readonly browser: Browser) {
     browser.state.newTabBackgroundFor = () => {
       const host = browser.platform.newTabBackground
-      return { image: Boolean(host?.current()), canPick: Boolean(host?.pick) }
+      return {
+        image: Boolean(host?.current()),
+        canPick: Boolean(host?.pick),
+        accent: this.imageAccent()
+      }
     }
     browser.history.onChange(() => {
       this.historyVersion += 1
@@ -260,8 +280,17 @@ export class NewTabService {
   private updateDevice(mutate: (device: NewTabDeviceState) => NewTabDeviceState): void {
     const { state } = this.browser
     state.newTabDevice = sanitizeNewTabDevice(mutate(state.newTabDevice))
+    // A change after "Restore default shortcuts" is the user's; the restore's Undo would undo it.
+    this.restoredFrom = null
     state.commit()
   }
+
+  /** What "Restore default shortcuts" replaced, for its Undo; null once anything else changed. */
+  private restoredFrom: {
+    shortcuts: NewTabShortcut[]
+    hiddenHosts: string[]
+    mode: NewTabSettings['mode']
+  } | null = null
 
   /** The one write path of the settings from this service: sanitised on every write. */
   private setSettings(patch: Partial<NewTabSettings>): void {
@@ -386,7 +415,11 @@ export class NewTabService {
       shortcuts,
       topSites: shortcutsMode === 'most-visited' && !isPrivate ? this.topSites(shortcuts) : [],
       backgroundImage,
-      canPickImage: Boolean(host?.pick)
+      canPickImage: Boolean(host?.pick),
+      // The field leads with the engine's favicon (v2 §6), the pill's source: the extension's
+      // engine while one holds the default, else the user's pick. A settings commit re-pushes
+      // the page, so a new default engine changes the glyph on a live page.
+      engineFavicon: engineFieldFavicon(this.browser.state.defaultSearchEngine())
     }
     // The same answer `ProtectionService.status()` gives the chrome (`PrivacyStatus`), read from
     // the settings it is computed from: a settings commit re-pushes the page, so a global-mode
@@ -511,6 +544,13 @@ export class NewTabService {
       case 'unhide-site':
         this.unhideSite(action.url)
         return
+      case 'undo-restore-default-shortcuts':
+        this.undoRestoreDefaultShortcuts()
+        return
+      case 'show-section':
+        if (action.section === 'greeting' || action.section === 'shortcuts')
+          this.showSection(action.section)
+        return
       case 'edit-shortcut':
         this.openShortcutDialog(tabId, action.id, win)
         return
@@ -555,6 +595,40 @@ export class NewTabService {
   removeTileFromPage(tabId: string, id: string): void {
     this.browser.tabs.view(tabId)?.sendNewTabCommand?.({ type: 'remove-tile', id })
   }
+
+  /**
+   * The page menu's "Hide Greeting" / "Hide Shortcuts" (NTP-18): the section off through the one
+   * model (`setNewTabSection`, as Settings' switch writes it – so a named layout becomes Custom
+   * with that section off), the commit's push taking it off every page, and this page's toast
+   * raised with Undo (v2 §9.33: 8 s; §10.5: a reversible action asks nothing). What the
+   * settings were is kept for the Undo, which puts them back whole – the layout's name
+   * included – while nothing else has changed them since; otherwise it turns the section on.
+   */
+  hideSection(tabId: string, section: NewTabHideableSection): void {
+    const before = this.settings
+    const after = setNewTabSection(before, section, false)
+    if (after === before) return
+    this.setSettings(after)
+    this.hidden = { section, before, after: this.settings }
+    this.browser.tabs.view(tabId)?.sendNewTabCommand?.({ type: 'section-hidden', section })
+  }
+
+  /** The Undo of `hideSection` (`show-section`): the section back, as it was when it went. */
+  showSection(section: NewTabHideableSection): void {
+    const hidden = this.hidden
+    this.hidden = null
+    const current = this.settings
+    if (hidden?.section === section && sameNewTabSettings(current, hidden.after))
+      this.setSettings(hidden.before)
+    else this.setSettings(setNewTabSection(current, section, true))
+  }
+
+  /** The last `hideSection`, for its Undo. */
+  private hidden: {
+    section: NewTabHideableSection
+    before: NewTabSettings
+    after: NewTabSettings
+  } | null = null
 
   /** Whether a tile id names one of the user's shortcuts (the chrome's tile menu offers Edit). */
   isShortcut(id: string): boolean {
@@ -638,6 +712,87 @@ export class NewTabService {
   }
 
   /**
+   * Whether the grid is anything but a fresh profile's – a pinned shortcut, a removed site or a
+   * mode other than the default – so the page menu's "Restore Default Shortcuts" has work to do
+   * (the row is greyed otherwise).
+   */
+  canRestoreDefaultShortcuts(): boolean {
+    const device = this.device
+    return (
+      device.shortcuts.length > 0 ||
+      device.hiddenHosts.length > 0 ||
+      this.settings.mode !== DEFAULT_NEW_TAB_SETTINGS.mode
+    )
+  }
+
+  /**
+   * The page menu's "Restore Default Shortcuts" (NTP-22; Chrome's is a second link on the
+   * removal toast, which §9.33 gives one action): the grid restored through the one model – the
+   * commit's push redraws every page – and this page's toast raised ("Default shortcuts
+   * restored") with Undo alone, as `hideSection` raises its own. Nothing is raised when the
+   * grid was the default already.
+   */
+  restoreDefaultShortcutsFromPage(tabId: string): void {
+    if (!this.restoreDefaultShortcuts()) return
+    this.browser.tabs.view(tabId)?.sendNewTabCommand?.({ type: 'defaults-restored' })
+  }
+
+  /**
+   * The grid as a fresh profile has it – the most visited mode, no pinned shortcuts, no removed
+   * sites. Not a confirmation but an Undo (v2 §10.5, §9.33): what the three were is kept for
+   * `undoRestoreDefaultShortcuts` until the next change to any of them. False when the grid is
+   * the default already.
+   */
+  restoreDefaultShortcuts(): boolean {
+    if (!this.canRestoreDefaultShortcuts()) return false
+    const device = this.device
+    const mode = this.settings.mode
+    this.updateDevice((d) => ({ ...d, shortcuts: [], hiddenHosts: [] }))
+    if (mode !== DEFAULT_NEW_TAB_SETTINGS.mode)
+      this.setSettings({ mode: DEFAULT_NEW_TAB_SETTINGS.mode })
+    // After the writes: a device write forgets the snapshot, since a later change is not undone.
+    this.restoredFrom = { shortcuts: device.shortcuts, hiddenHosts: device.hiddenHosts, mode }
+    return true
+  }
+
+  /** Undo of the restore: the pins, the removed sites and the mode as they were. */
+  undoRestoreDefaultShortcuts(): boolean {
+    const from = this.restoredFrom
+    if (!from) return false
+    this.restoredFrom = null
+    this.updateDevice((d) => ({ ...d, shortcuts: from.shortcuts, hiddenHosts: from.hiddenHosts }))
+    if (from.mode !== this.settings.mode) this.setSettings({ mode: from.mode })
+    return true
+  }
+
+  /**
+   * Settings' "Reset to default" for the background alone (NTP-12): the space gradient, and the
+   * device's picked image let go – a single row's reset, so nothing is asked (§10.5).
+   */
+  async resetBackground(): Promise<void> {
+    const host = this.browser.platform.newTabBackground
+    if (host?.current()) await host.clear()
+    if (this.settings.background !== DEFAULT_NEW_TAB_SETTINGS.background)
+      this.setSettings({ background: DEFAULT_NEW_TAB_SETTINGS.background })
+    else this.browser.state.commit()
+  }
+
+  /**
+   * The whole page back to its defaults (NTP-22; the row's §9.23 confirmation stands before
+   * this): the layout preset and its sections, the shortcuts mode, the background and the
+   * greeting as `DEFAULT_NEW_TAB_SETTINGS` has them, the pinned shortcuts and removed sites
+   * cleared, the picked image let go. `enabled` – whether a new tab opens the page at all – is
+   * not the page's content and stays.
+   */
+  async reset(): Promise<void> {
+    const host = this.browser.platform.newTabBackground
+    if (host?.current()) await host.clear()
+    this.restoredFrom = null
+    this.browser.state.newTabDevice = emptyNewTabDevice()
+    this.setSettings({ ...DEFAULT_NEW_TAB_SETTINGS, enabled: this.settings.enabled })
+  }
+
+  /**
    * The phone's tile menu: pin a site (a shortcut at the end of the grid, its host back among
    * the most visited if it was removed), unpin it, or take it off the page altogether.
    */
@@ -682,6 +837,7 @@ export class NewTabService {
     // The picker took the chrome's focus; give it back so the next click is not dropped.
     win.focusChrome()
     if (!picked) return false
+    this.followPicture()
     this.showImage()
     return true
   }
@@ -699,6 +855,100 @@ export class NewTabService {
     return this.browser.platform.newTabBackground?.current() ?? null
   }
 
+  /** The colour read from the image at `url` (`accent` null when the host could not read one). */
+  private accentCache: { url: string; accent: string | null } | null = null
+  /** The image address whose colour is being read. */
+  private accentPending: string | null = null
+  /** The address of a picture just picked, whose colour the following spaces take once read. */
+  private followUrl: string | null = null
+
+  /**
+   * The colour the background picture suggests for the accent (NTP-14; `UIState.newTabBackground
+   * .accent`): read once per image through the host's decoder, asynchronously – the first ask
+   * returns null and starts the read, whose end commits the state so the chrome hears the
+   * answer; an image that changed under a read drops it. Null with no image, or on a host that
+   * has no decoder.
+   */
+  private imageAccent(): string | null {
+    const host = this.browser.platform.newTabBackground
+    const url = host?.current() ?? null
+    if (!url || !host?.accent) return null
+    if (this.accentCache?.url === url) return this.accentCache.accent
+    if (this.accentPending !== url) {
+      this.accentPending = url
+      const settle = (accent: string | null): void => {
+        if (this.accentPending !== url) return
+        this.accentPending = null
+        this.accentCache = { url, accent }
+        if (this.followUrl === url) {
+          this.followUrl = null
+          this.recolourFollowing(accent)
+        }
+        this.browser.state.commit()
+      }
+      void host.accent().then(settle, () => settle(null))
+    }
+    return null
+  }
+
+  /**
+   * Settings' "Use the picture's colour" switch (NTP-14). On: the window's active space takes the
+   * picture's colour as its theme's primary through `makeTheme` – the same seed the theme
+   * picker's swatch would give it – with the theme's other settings (opacity, texture, algorithm,
+   * angle) kept, so the window, the sidebar and the page agree on the colour; and the theme is
+   * marked as following the picture (`SpaceTheme.fromImage`), so each new picture picked while
+   * the switch stays on recolours it the same way. Off: the following ends and the colours stay –
+   * they are the space's now; the theme editor is where another comes from. The user's choice,
+   * never made for them: a picked wallpaper does not recolour a space the user themed. False when
+   * nothing changed: while the colour is not known, in a private window, whose look is one theme
+   * by rule (v2 §9.19), or off already.
+   */
+  useImageColor(on: boolean, win: ZenWindow): boolean {
+    if (win.isPrivate) return false
+    const space = win.activeSpace()
+    if (!on) {
+      if (space.theme?.fromImage !== true) return false
+      space.theme = unfollowedTheme(space.theme)
+      this.browser.state.commit()
+      return true
+    }
+    const accent = this.imageAccent()
+    if (!accent) return false
+    space.theme = followingTheme(space.theme, accent)
+    this.browser.state.commit()
+    return true
+  }
+
+  /**
+   * A picture was just picked on this device: the spaces following the picture take its colour –
+   * at once when it is known, else when its read ends (`imageAccent`'s settle; the read starts
+   * here, not at the chrome's next look at the state, which a second picture over a first would
+   * not bring). Only a pick follows, not the read of the picture found at boot: pictures are
+   * each device's own, and two devices recolouring one synced space from two pictures would
+   * never settle.
+   */
+  private followPicture(): void {
+    const url = this.browser.platform.newTabBackground?.current() ?? null
+    if (!url) return
+    if (this.accentCache?.url === url) {
+      this.recolourFollowing(this.accentCache.accent)
+      this.browser.state.commit()
+      return
+    }
+    this.followUrl = url
+    this.imageAccent()
+    // No decoder on this host: nothing will ever be read.
+    if (this.accentPending !== url) this.followUrl = null
+  }
+
+  /** Every space following the picture takes `accent` as its primary; none without a colour. */
+  private recolourFollowing(accent: string | null): void {
+    if (!accent) return
+    for (const space of this.browser.state.model.spaces) {
+      if (space.theme?.fromImage === true) space.theme = followingTheme(space.theme, accent)
+    }
+  }
+
   /**
    * Keep an image the chrome read itself (the phone's file chooser), or with null let it go;
    * the background source follows – shown, for a pick; the space colours after a removal.
@@ -707,8 +957,10 @@ export class NewTabService {
     const host = this.browser.platform.newTabBackground
     if (!host?.set) throw new Error('This device cannot keep a background image')
     await host.set(dataUrl)
-    if (dataUrl) this.showImage()
-    else if (this.settings.background === 'image') this.setSettings({ background: 'space' })
+    if (dataUrl) {
+      this.followPicture()
+      this.showImage()
+    } else if (this.settings.background === 'image') this.setSettings({ background: 'space' })
     else this.browser.state.commit()
   }
 
@@ -812,6 +1064,17 @@ export class NewTabService {
   destroyAll(): void {
     for (const id of [...this.preloads.keys()]) this.dropPreload(id)
   }
+}
+
+/**
+ * `theme` recoloured from the picture's `accent` and marked as following it: the seed's colours
+ * with the theme's other settings kept; a space with no theme yet takes the seed whole.
+ */
+function followingTheme(theme: SpaceTheme | null, accent: string): SpaceTheme {
+  const seeded = makeTheme(accent)
+  return theme
+    ? { ...theme, colors: seeded.colors, monochrome: false, fromImage: true }
+    : { ...seeded, fromImage: true }
 }
 
 /** Before the first layout: roughly the page area of a window with the sidebar open. */

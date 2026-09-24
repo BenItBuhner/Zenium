@@ -84,6 +84,7 @@ import { edgeStoreUserAgent, navigationClientHints, webstoreClientHints } from '
 import { ResourceGovernor } from './resources/governor'
 import { ElectronSyncHost } from '../sync/host'
 import { ElectronAgentTransport } from '../agent/server'
+import { SkillInstaller } from '../agent/skills'
 import { CookiePolicyEnforcer, ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
 import { ElectronPrintingHost } from './printing'
@@ -142,6 +143,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Chromium's PDF viewer draws PDFs in the page itself.
   pdfViewer: false,
   agents: true,
+  // Claude Code, Cursor and Codex run beside the browser: the skill installs into their folders.
+  agentSkills: true,
   updates: true,
   share: false,
   clipboardChip: false,
@@ -238,6 +241,8 @@ export class ElectronPlatform implements Platform {
   readonly importHost = new ElectronImportHost()
   /** The task manager page's process list (`zen://tasks`); its network count attaches in `start`. */
   readonly tasks: ElectronTaskHost
+  /** The `zenium-browser` Agent Skill into the coding harnesses' skills folders (Settings › AI Agents). */
+  readonly agentSkills: SkillInstaller
   /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
   readonly mediaSession?: ElectronMpris
   /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
@@ -281,6 +286,7 @@ export class ElectronPlatform implements Platform {
     })
     this.profileDir = join(userDataDir, 'zen')
     this.io = new FileStoreIO(this.profileDir)
+    this.agentSkills = new SkillInstaller({ version: this.info.version, io: this.io })
     this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
     this.newTabBackground = new ElectronNewTabBackground(join(this.profileDir, 'newtab'))
     // The launcher confirms to the core once its files are written (the browser exists by then:
