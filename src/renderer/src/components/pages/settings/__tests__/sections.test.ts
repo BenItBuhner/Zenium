@@ -2559,7 +2559,8 @@ describe('the section model', () => {
       PAGE.sections[0],
       context(state({}, { splitLinksToRight: true }), true).ctx
     )
-    expect(row(on, 'split-links-right').checked).toBe(true)
+    const lit = row(on, 'split-links-right')
+    expect(lit.kind === 'switch' && lit.checked).toBe(true)
     // Found by what the user would type for it.
     expect(searchRows([look], 'right pane').map((h) => h.row.id)).toContain('split-links-right')
   })
