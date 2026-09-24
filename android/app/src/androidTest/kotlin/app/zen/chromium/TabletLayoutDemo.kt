@@ -505,8 +505,9 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         // The direction's proof (§9.36 as amended, the design gate's redirect): the offset is
         // NEGATIVE – the layer stands above its rest and comes down with the finger, its foot
         // between the box's head (the toolbar's edge) and its rest, so what is drawn is the layer's
-        // head over the page's top. A positive offset would be a rise from the box's foot: the
-        // phone sheet's direction, against the finger under a top toolbar.
+        // foot leading – its lower rows over the page's top, the header row arriving last. A
+        // positive offset would be a rise from the box's foot: the phone sheet's direction,
+        // against the finger under a top toolbar.
         val midOffset = midPull.removePrefix("translateY(").removeSuffix("px)").toFloatOrNull()
         val layerFoot = jsNumber(LAYER_FOOT)
         val boxHeight = jsNumber(LAYER_BOX_HEIGHT)
@@ -516,11 +517,22 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
             "transform '$midPull' in phase $midPhase, layer ${domRect(OVERVIEW_LAYER)}"
         )
         check(
-            "mid-pull the layer's foot stands between the toolbar's edge and its rest: its head is what shows, come down over the page's top",
+            "mid-pull the layer's foot stands between the toolbar's edge and its rest: its lower rows are what show, the foot leading down over the page's top",
             !layerFoot.isNaN() && !boxHeight.isNaN() && layerFoot > 0 && layerFoot < boxHeight,
             "foot ${layerFoot.toInt()} px below the box's head, the box ${boxHeight.toInt()} tall, transform '$midPull'"
         )
         check("the page's still lies under the descending layer, in the page's frame", jsBoolean("!!document.querySelector('$OVERVIEW_HERO')"), "still ${domRect(OVERVIEW_HERO)}, content ${domRect(CONTENT)}")
+        // The active tab's card is part of the grid that comes down: drawn in its slot from the
+        // descent's first frame (§9.36's hero card at the page's frame; §11 – a slot that fills by a
+        // cut at the settle is no motion). The phone hides that card until its flying hero lands on
+        // it; on the tablet nothing flies – the hero is the still under the layer – so the card is
+        // never hidden. Read off the computed opacity (the hide is an inline `opacity: 0`).
+        val midCardOpacity = jsText(ACTIVE_CARD_OPACITY)
+        check(
+            "mid-pull the active tab's card is drawn in its slot, come down with the grid – not an empty slot that fills at the settle (§9.36, §11)",
+            midCardOpacity == "1",
+            "active card opacity '$midCardOpacity', card ${domRect(ACTIVE_CELL)}, layer ${domRect(OVERVIEW_LAYER)}"
+        )
         shot("13a-overview-mid-slide")
         // The rest of the pull is the jank record's gesture scene; the release and its spring come
         // after, as their own: the spring carries the layer the rest of the way (§11's gentle
@@ -557,7 +569,7 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         check(
             "the grid opened with the active card's row whole under the header (the scroll set by the hero's slot)",
             jsBoolean(ACTIVE_ROW_WHOLE),
-            "active card ${domRect(ACTIVE_CELL)}, grid ${domRect(GRID)}, scrollTop ${jsText("(document.querySelector('$GRID')||{scrollTop:''}).scrollTop")}"
+            "active card ${domRect(ACTIVE_CELL)}, scroller ${domRect(SCROLLER)}, its scrollTop ${jsText("(document.querySelector('$SCROLLER')||{scrollTop:''}).scrollTop")}, grid ${domRect(GRID)}"
         )
         SystemClock.sleep(1_500)
         shot("13-overview")
@@ -593,6 +605,12 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         check("the overview stays under it", jsText(OVERVIEW_PHASE) == "open", "phase ${jsText(OVERVIEW_PHASE)}")
         SystemClock.sleep(800)
         back()
+        // The close is the descent run backwards (the same writer): the active card stays drawn
+        // through the rise – read mid-flight if a read lands in the spring's frames (about 300 ms;
+        // the read's timing is the harness's, so a reading, not a claim).
+        val closeMidFlight = awaitJs("$OVERVIEW_TRANSFORM.indexOf('translateY(-')===0", true, 1_000)
+        val closeCardOpacity = jsText(ACTIVE_CARD_OPACITY)
+        finding("the close's rise: ${if (closeMidFlight) "read mid-flight at '${jsText(OVERVIEW_TRANSFORM)}' with the active card's opacity '$closeCardOpacity'" else "landed before a read caught it"} (the harness's wall clock – a reading, not a claim)")
         check("the next back closes the overview", awaitJs(OVERVIEW_PHASE + "==='closed'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
         SystemClock.sleep(1_500)
         check("the sidebar is back once the overview is gone", sidebarMode() == "expanded", "data-sidebar ${sidebarMode()}")
@@ -1120,11 +1138,15 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         /**
          * The direction's geometry (§9.36): where the layer's foot stands below its box's head – the box
          * is the slide's clip, its head the toolbar's edge – and the box's height. Mid-slide the foot
-         * is between the two: the layer's head is what shows, come down over the page's top.
+         * is between the two: the layer's lower rows are what show, its foot leading down over the
+         * page's top, the header row arriving last.
          */
         private const val LAYER_FOOT = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;var b=l.parentElement.getBoundingClientRect();return Math.round(l.getBoundingClientRect().bottom-b.top)})()"
         private const val LAYER_BOX_HEIGHT = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;return Math.round(l.parentElement.getBoundingClientRect().height)})()"
-        /** The Tabs pane's grid (the scroller's inner grid carries the column template) and its cells. */
+        /**
+         * The Tabs pane's scroller – what moves: its `scrollTop` is the opening scroll – its inner
+         * grid (which carries the column template and never scrolls itself), and the cells.
+         */
         private const val GRID = ".zen-overview-grid[data-pane=\"tabs\"] .grid"
         private const val SCROLLER = ".zen-overview-grid[data-pane=\"tabs\"]"
         private const val CELL = ".zen-overview-grid[data-pane=\"tabs\"] [data-cell]"
@@ -1135,6 +1157,8 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
          */
         private const val CARD_CELL = "$CELL[data-tab-id]"
         private const val ACTIVE_CELL = "$CELL > .zen-overview-card[data-active=\"true\"]"
+        /** The active card's computed opacity: `1` drawn in its slot, `0` hidden (the phone's card under its flying hero). */
+        private const val ACTIVE_CARD_OPACITY = "(function(){var a=document.querySelector('$ACTIVE_CELL');return a?getComputedStyle(a).opacity:'no card'})()"
         /** The card's box, its title row's height, and the ratio set on the layer's box for the cells (`--zen-overview-card-aspect`). */
         private const val CARD_WIDTH = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().width:NaN})()"
         private const val CARD_HEIGHT = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().height:NaN})()"
