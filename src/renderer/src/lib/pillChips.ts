@@ -18,6 +18,15 @@
  * in the sheet as a row, coming back to the pill when the newer ends. A state chip is never
  * informational (a blocked count and an offer are not states).
  *
+ * A quiet state is the slot's third tenant (§9.29 as amended 2026-09-24 on the design gate for
+ * NOT-03): a question the page waits on – the quiet notification ask's bell-off – sits in the
+ * slot at rest, in the slot's rest ink (69 %, a stored block's), under a live state and above
+ * the connection's glyph, and leaves when the question is answered. It is not live: it does not
+ * enter the states' record, a live state folds it to the sheet as a row for as long as the state
+ * lasts, and it comes back to the slot when the state ends. The slot's precedence, one glyph at a
+ * time: the danger glyph, a live state, a stored site-level block, a quiet request, the
+ * connection's own glyph.
+ *
  * So the fold is a rule per chip, not a width computation: this module is that rule, pure and
  * deterministic; `components/phone/pillChips.tsx` builds the chips, remembers the states' order
  * of arrival and draws what stays.
@@ -26,11 +35,13 @@
 /**
  * How a chip of the phone pill relates to the pill at rest.
  * - `glyph`: the site-information glyph – the pill's anatomy; never a sheet row, gives way to a
- *   live state chip and returns when the state ends.
+ *   live state chip or a quiet one and returns when it ends.
  * - `sheet`: an informational chip – always in the site-information sheet, never in the pill.
  * - `live`: a transient state chip – in the pill while its state is live, in the glyph's slot.
+ * - `quiet`: a quiet state – a question the page waits on (the quiet notification ask); in the
+ *   glyph's slot at rest, under a live state (the sheet's row while one is up), above the glyph.
  */
-export type PillChipFold = 'glyph' | 'sheet' | 'live'
+export type PillChipFold = 'glyph' | 'sheet' | 'live' | 'quiet'
 
 export interface PillChipFoldSpec {
   /** A stable id (`lock` and the glyph's other states, `blocked`, `translate`, `media`, `save-prompt`). */
@@ -39,11 +50,11 @@ export interface PillChipFoldSpec {
 }
 
 export interface PillFold<T extends PillChipFoldSpec> {
-  /** The chips the pill draws after the host, in the order they were given: the glyph, or the one live state chip. */
+  /** The chips the pill draws after the host, in the order they were given: the glyph, or the one live state chip, or the quiet state in its place. */
   shown: T[]
-  /** The chips the site-information sheet lists, in the order they were given: the informational chips, and a live state waiting behind a newer one. */
+  /** The chips the site-information sheet lists, in the order they were given: the informational chips, a live state waiting behind a newer one, a quiet state under a live one. */
   folded: T[]
-  /** The glyph while a live state has its slot: neither drawn nor listed (the sheet's title carries the connection, the favicon still opens the sheet). */
+  /** The glyph while a live or a quiet state has its slot: neither drawn nor listed (the sheet's title carries the connection, the favicon still opens the sheet). */
   yielded: T[]
 }
 
@@ -61,7 +72,13 @@ export const PILL_CHIP_FOLDS: Readonly<Record<string, PillChipFold>> = {
   blocked: 'sheet',
   translate: 'sheet',
   'save-prompt': 'live',
-  media: 'live'
+  media: 'live',
+  // The quiet notification ask (NOT-03): a quiet state, not a live one (the design gate's
+  // ruling on §9.29) – the bell-off glyph takes the slot at rest, in the slot's rest ink, and
+  // the sheet opens from it; a live state folds it to the sheet for as long as the state lasts.
+  // Under a danger glyph the pill folds it to the sheet instead (§9.29's first rule: the
+  // identity in question beats every other state) – `phonePillChips` gives the chip that fold.
+  'notifications-blocked': 'quiet'
 }
 
 /** The fold of a chip by id, for a chip built without one. */
@@ -100,25 +117,40 @@ function newestLive<T extends PillChipFoldSpec>(live: readonly T[], arrival: rea
  * Fold the pill's chips (§9.29): with no live state the glyph stays and every informational
  * chip goes to the sheet; with a live state the newest one – by `arrival`, the record
  * {@link liveArrival} keeps; without a record, the order given – takes the glyph's slot, the
- * glyph gives way, and any older live state waits in the sheet as a row. Nothing about the
- * pill's width comes into it – the same set folds the same way at every width and font scale.
+ * glyph gives way, and any older live state waits in the sheet as a row. A quiet state has the
+ * slot when no live state does – the glyph gives way to it as to a live state – and is the
+ * sheet's row while a live state is up; it takes no part in the record, so it never outranks a
+ * live state, however it arrived. Nothing about the pill's width comes into it – the same set
+ * folds the same way at every width and font scale.
  */
 export function foldPillChips<T extends PillChipFoldSpec>(
   chips: readonly T[],
   arrival: readonly string[] = chips.filter((c) => c.fold === 'live').map((c) => c.id)
 ): PillFold<T> {
   const live = chips.filter((c) => c.fold === 'live')
+  const quiet = chips.filter((c) => c.fold === 'quiet')
   if (live.length === 0) {
+    if (quiet.length === 0) {
+      return {
+        shown: chips.filter((c) => c.fold === 'glyph'),
+        folded: chips.filter((c) => c.fold === 'sheet'),
+        yielded: []
+      }
+    }
+    // The first quiet state in the pill's order has the slot; another waits as a row.
+    const [first] = quiet
     return {
-      shown: chips.filter((c) => c.fold === 'glyph'),
-      folded: chips.filter((c) => c.fold === 'sheet'),
-      yielded: []
+      shown: [first!],
+      folded: chips.filter((c) => c.fold === 'sheet' || (c.fold === 'quiet' && c !== first)),
+      yielded: chips.filter((c) => c.fold === 'glyph')
     }
   }
   const newest = newestLive(live, arrival)
   return {
     shown: [newest],
-    folded: chips.filter((c) => c.fold === 'sheet' || (c.fold === 'live' && c !== newest)),
+    folded: chips.filter(
+      (c) => c.fold === 'sheet' || c.fold === 'quiet' || (c.fold === 'live' && c !== newest)
+    ),
     yielded: chips.filter((c) => c.fold === 'glyph')
   }
 }

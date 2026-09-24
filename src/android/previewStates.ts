@@ -1072,13 +1072,30 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (then.length === 0) requestAnimationFrame(() => requestAnimationFrame(finish))
     else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
   } else if (target.kind === 'permission' && tab) {
-    // The active page asks, as its script would (`permissions.decide` is what the host calls
-    // from the WebView's permission request); the answer is the prompt sheet's business.
-    void browser.permissions.decide(target.permission, tab.url, { tabId: tab.id })
-    untilState(
-      (s) => s.permissionPrompts.some((p) => p.tabId === tab.id),
-      () => afterFrames(2, () => done(spec))
-    )
+    const then = target.then ?? []
+    const up = (): void => {
+      if (then.length === 0) afterFrames(2, () => done(spec))
+      else setTimeout(() => steps(then, () => done(spec)), STEP_SETTLE_MS)
+    }
+    if (target.quiet) {
+      // The page's polyfill asks with no finger behind it (NOT-03), as the page script posts it:
+      // the core's quiet prompt – the bell-off glyph in the pill's slot, no sheet until the bell
+      // is tapped (`then=tap:Notifications blocked`).
+      browser.webNotifications.handle(tab.id, {
+        notification: 'request',
+        id: 'preview-quiet',
+        gesture: false
+      })
+      untilState(
+        (s) => s.permissionPrompts.some((p) => p.tabId === tab.id && p.quiet === true),
+        up
+      )
+    } else {
+      // The active page asks, as its script would (`permissions.decide` is what the host calls
+      // from the WebView's permission request); the answer is the prompt sheet's business.
+      void browser.permissions.decide(target.permission, tab.url, { tabId: tab.id })
+      untilState((s) => s.permissionPrompts.some((p) => p.tabId === tab.id), up)
+    }
   } else if (target.kind === 'ntp' && state) {
     applyNewTabPose(target, state, finish)
   } else if (target.kind === 'private' && state) {

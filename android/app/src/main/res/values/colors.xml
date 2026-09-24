@@ -6,6 +6,12 @@
     <color name="shortcut_private_background">#3F2C7A</color>
     <!-- The app icon's indigo (Theme.Zen's primary), behind the New tab, Search and Scan QR code shortcuts' glyphs. -->
     <color name="shortcut_background">#6264DC</color>
+    <!--
+      Zenium's accent (the default theme's zen-accent custom property, main.css), the colour the shade tints
+      the app's glyph and name with on every card Zenium posts in its own name (the private
+      session's, the capture's, the updates'; NOT-13, NOT-17): one brand colour on the shade.
+    -->
+    <color name="zen_accent">#6264DC</color>
 
     <!--
       The v2 token block (design-language-v2-draft.md §1; the v2 custom properties main.css

@@ -2597,6 +2597,10 @@ class TabWebView(
             host.permissions.onPermissionRequest(this@TabWebView, request)
         }
 
+        override fun onPermissionRequestCanceled(request: PermissionRequest) {
+            host.permissions.onPermissionRequestCanceled(this@TabWebView, request)
+        }
+
         override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
             host.permissions.onGeolocation(this@TabWebView, origin, callback)
         }

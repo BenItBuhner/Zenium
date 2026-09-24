@@ -14,6 +14,11 @@
          (MediaPlaybackService.kt) holds the process up as one of the mediaPlayback kind. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- A page capturing the camera or the microphone keeps capturing behind other apps: the
+         "<site> is using your microphone" notification's service (CaptureService.kt) holds the
+         process up as one of the camera / microphone kinds; Android 14 names each kind's permission. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- The chrome's gesture haptics (a tab card picked up in the overview). -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- In-app updates: hand a downloaded release APK to the package installer. -->
@@ -371,6 +376,17 @@
             android:name=".MediaPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- The "<site> is using your microphone" card's service (CaptureService.kt, NOT-13): while a
+             page holds the camera or the microphone the process is one with a camera / microphone
+             service in the foreground, so the capture carries on behind other apps (Android 11+
+             cuts a background app's otherwise). Started from the permission grant path alone,
+             while the app is in front, as Android 14 requires of these kinds; it stops with the
+             capture. -->
+        <service
+            android:name=".CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone" />
 
         <!-- The launcher's confirmation that a Home-screen shortcut was pinned (Shortcuts.kt). -->
         <receiver

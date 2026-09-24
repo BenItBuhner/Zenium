@@ -31,9 +31,11 @@ import { POPOVER_WIDTH } from '@renderer/lib/portals'
 import {
   answerPermissionPrompt,
   closePermissionPrompt,
+  closeQuietPrompt,
   currentPermissionPrompt,
   openPermissionPrompt
 } from '@renderer/lib/security'
+import { uiStore } from '@renderer/lib/ui'
 import { V2_GLYPH, V2Button } from '../v2/controls'
 import { siteChip, siteChipRects, usePhone } from '@renderer/lib/surfaces'
 import { DesktopPopover, Footer, TitleBlock, V2Sheet, type SheetApi } from './primitives'
@@ -81,7 +83,16 @@ const GLYPHS: Record<string, LucideIcon> = {
  * gesture dismiss. The answered prompt leaves on the spring before the next one comes in.
  */
 export function PermissionPrompts({ state }: { state: UIState }): JSX.Element | null {
-  const current = currentPermissionPrompt(state)
+  const phone = usePhone()
+  // A quiet notification prompt (NOT-03) is the pill's bell on a phone, and a sheet only once
+  // the bell was tapped for it; the desktop shows every prompt in turn.
+  const quietOpenId = uiStore.use((s) => s.quietPromptId)
+  const current = currentPermissionPrompt(state, phone ? { quietOpenId } : {})
+  // The quiet prompt the bell opened was answered or withdrawn: the flag goes with it.
+  useEffect(() => {
+    if (quietOpenId !== null && !state.permissionPrompts.some((p) => p.id === quietOpenId))
+      closeQuietPrompt()
+  }, [quietOpenId, state.permissionPrompts])
   // The prompt on show: the core's current one once there is one, kept while its surface leaves
   // after the core moved on (answered, withdrawn, another tab in front). Settled during render,
   // so the surface for the next prompt never waits on an effect.
@@ -93,7 +104,6 @@ export function PermissionPrompts({ state }: { state: UIState }): JSX.Element | 
   }
   const closing = prompt !== null && prompt.id !== current?.id
   const onClosed = useCallback(() => setShown(null), [])
-  const phone = usePhone()
   if (!prompt) return null
   return phone ? (
     <PromptSheet key={prompt.id} prompt={prompt} closing={closing} onClosed={onClosed} />
@@ -240,9 +250,11 @@ function PromptSheet({ prompt, closing, onClosed }: SurfaceProps): JSX.Element |
       api={api}
       handleLabel="Resize permission prompt"
       labelledBy={titleId}
-      // A pull-down or scrim tap is the same "not now" as Escape; the core hears it once.
+      // A pull-down or scrim tap is the same "not now" as Escape; the core hears it once. A quiet
+      // prompt's sheet closing is not an answer: the bell stays up for it (NOT-03).
       onDismissed={() => {
-        respond('dismiss')
+        if (prompt.quiet) closeQuietPrompt()
+        else respond('dismiss')
         onClosed()
       }}
       titleBlock={
@@ -283,6 +295,7 @@ function PromptSheet({ prompt, closing, onClosed }: SurfaceProps): JSX.Element |
       }
       data-testid="permission-prompt"
       data-permission={prompt.permission}
+      data-quiet={prompt.quiet ? 'true' : undefined}
     >
       {null}
     </V2Sheet>
