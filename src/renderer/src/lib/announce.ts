@@ -26,8 +26,10 @@ import { browserStore } from './ui'
  * driver caught for the toasts) – the event `View.announceForAccessibility` would send, from
  * the route Android 15 keeps (the method is deprecated in API 35 in favour of live regions).
  * The phone's voice puts the name first, as its overview cards do (`overviewLabels.ts`), and
- * adds the front tab's load finishing; toasts and banners have regions of their own
- * (`ToastCard`, `BannerCard`) and are never repeated here.
+ * adds the front tab's load finishing – on the core's `tab.loaded` event, not read off two
+ * snapshots: a start and its stop in one tick (a reload off the loopback, a cached page)
+ * coalesce into one broadcast that never shows `loading` on. Toasts and banners have regions
+ * of their own (`ToastCard`, `BannerCard`) and are never repeated here.
  */
 
 /**
@@ -94,9 +96,9 @@ export function resetAnnouncer(): void {
 /**
  * What two consecutive states say: the tab that came to the front (by any means – the strip,
  * Ctrl+Tab, a space change, a close that moved the front, a tab opened) and tabs muted or
- * unmuted; in the phone's voice, the front tab's load finishing as well. Only the focused window
- * speaks: a background window's reader is not listening, and an event that reaches every window
- * would otherwise be said once per window.
+ * unmuted. Only the focused window speaks: a background window's reader is not listening, and
+ * an event that reaches every window would otherwise be said once per window. A load finishing
+ * is the core's `tab.loaded` event's news (`loadCompleteAnnouncement`), not the snapshots'.
  */
 export function stateAnnouncements(
   prev: UIState,
@@ -109,9 +111,6 @@ export function stateAnnouncements(
   if (front !== null && front !== frontTabId(prev)) {
     const switched = tabSwitchAnnouncement(next, front, voice)
     if (switched) words.push(switched)
-  } else if (voice === 'phone') {
-    const loaded = loadCompleteAnnouncement(prev, next)
-    if (loaded) words.push(loaded)
   }
   words.push(...muteAnnouncements(prev, next))
   return words
@@ -160,19 +159,23 @@ export function tabSwitchAnnouncement(
 }
 
 /**
- * The front tab's load finished between two states (A11Y-02, the phone): "Example Domain loaded"
- * – the page's title once it has one, the address before that. Said for the tab that was already
- * in front (a switch to a tab is the switch's announcement, whatever its load is doing) and
- * only as `loading` goes off; a load that started, progress ticks and a title changing on a
- * page that is not loading say nothing.
+ * The words for the core's `tab.loaded` event – `tabId`'s load finished (A11Y-02, the phone):
+ * "Example Domain loaded", the page's title once it has one, the address before that. Only the
+ * phone's voice hears it, only the focused window's reader, and only for the tab in front: a
+ * tab behind finishing is not the reader's news (it is the switch's, once the tab comes to the
+ * front). The core sends the event after the broadcast that turned the tab's `loading` off, so
+ * `state` holds the page's title.
  */
-export function loadCompleteAnnouncement(prev: UIState, next: UIState): string | null {
-  const front = frontTabId(next)
-  if (front === null || front !== frontTabId(prev)) return null
-  const before = prev.tabs[front]
-  const after = next.tabs[front]
-  if (!before || !after || !before.loading || after.loading) return null
-  return `${nameOf(after)} loaded`
+export function loadCompleteAnnouncement(
+  state: UIState,
+  tabId: string,
+  voice: AnnouncementVoice = 'desktop'
+): string | null {
+  if (voice !== 'phone' || !state.window.focused) return null
+  if (frontTabId(state) !== tabId) return null
+  const tab = state.tabs[tabId]
+  if (!tab) return null
+  return `${nameOf(tab)} loaded`
 }
 
 /**
