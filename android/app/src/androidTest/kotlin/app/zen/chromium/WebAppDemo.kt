@@ -156,12 +156,18 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         SystemClock.sleep(1_500)
         val name = json("(document.querySelector('.zen-install-name')||{}).textContent||''")
         check("the install sheet opened for '$name'", sheet && name == "Sketch Studio")
-        if (!tapLabel(f, "Add")) {
+        if (!tapSettled(f, "Add")) {
             fail("no Add button in the sheet")
             back()
             return false
         }
-        val system = awaitSystemWindow(12_000)
+        var system = awaitSystemWindow(12_000)
+        if (!system && json("String(!!document.querySelector('.zen-sheet.zen-install-sheet'))") == "true") {
+            // The sheet still up and no dialog: the first finger touched nothing (run 36002509774's
+            // light act). A second real touch, on the record, before the claim is judged.
+            finding("the first touch on Add brought no pin dialog in 12 s with the sheet still up; a second finger goes in")
+            if (tapSettled(f, "Add")) system = awaitSystemWindow(8_000)
+        }
         SystemClock.sleep(1_500)
         check("the system's pin dialog came up (${ui.rootInActiveWindow?.packageName})", system)
         // The install sheet's injected touch (the rule in DemoHarness): Add under a finger hands
@@ -395,14 +401,20 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         describeWindow(opened, "fullscreen", FULL_THEME, expectToolbar = false, expectBarsHidden = true, expectMode = "fullscreen")
         val page = opened.page
         if (page != null) {
-            // The page's own height follows the bars a layout pass or two later than the insets
-            // (the dark act of run 35992814329 read 1516 of 1600 with the insets already 0).
+            // A display cutout outlives the bars' hiding: the window keeps the page below its safe
+            // inset, the strip in theme_color over the cutout (Chrome's viewport-fit=auto letterboxes
+            // it black). The dark acts of runs 35992814329 and 36002509774 booted with an 85 px
+            // cutout at the top (the status bar grown to cover it) and read 1516 of 1600 with the
+            // bars hidden – the pose, not a lag; the light acts, without a cutout, read the full 1600.
+            val cutout = cutoutOf(opened)
+            val expected = height - cutout.top - cutout.bottom
+            val where = if (cutout.top + cutout.bottom > 0) " below the display cutout (safe insets top ${cutout.top} bottom ${cutout.bottom})" else ""
             var viewport = 0
             val spans = awaitTrue(6_000) {
                 viewport = evalJs(page, "String(Math.round(window.innerHeight * (window.devicePixelRatio || 1)))")?.toIntOrNull() ?: 0
-                viewport >= height - 4
+                viewport >= expected - 4
             }
-            check("the page's viewport spans the screen ($viewport of $height px)", spans)
+            check("the page's viewport spans the screen$where ($viewport of $expected px)", spans)
         }
         // The recording ends on the browser: the fullscreen window away, the browser's task forward.
         finishWebApps()
@@ -423,7 +435,8 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         check("$what: toolbar ${if (expectToolbar) "shown" else "hidden"} (${if (shown) "shown" else "hidden"})", shown == expectToolbar)
         val statusVisible = onMain { ViewCompat.getRootWindowInsets(webApp.window.decorView)?.isVisible(WindowInsetsCompat.Type.statusBars()) ?: true }
         val navVisible = onMain { ViewCompat.getRootWindowInsets(webApp.window.decorView)?.isVisible(WindowInsetsCompat.Type.navigationBars()) ?: true }
-        finding("$what: bars status ${if (statusVisible) "visible" else "hidden"} / navigation ${if (navVisible) "visible" else "hidden"}, insets top ${bars.top} bottom ${bars.bottom}; barsHidden ${onMain { webApp.barsHidden }}")
+        val cutout = cutoutOf(webApp)
+        finding("$what: bars status ${if (statusVisible) "visible" else "hidden"} / navigation ${if (navVisible) "visible" else "hidden"}, insets top ${bars.top} bottom ${bars.bottom}, display cutout top ${cutout.top} bottom ${cutout.bottom}; barsHidden ${onMain { webApp.barsHidden }}")
         if (expectBarsHidden) {
             check("$what: the status bar and the navigation bar are hidden", !statusVisible && !navVisible && onMain { webApp.barsHidden })
         } else {
@@ -580,6 +593,12 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         Rect(insets?.left ?: 0, insets?.top ?: 0, insets?.right ?: 0, insets?.bottom ?: 0)
     }
 
+    /** The window's display cutout safe insets, which stay when the bars hide (the page is laid out below them). */
+    private fun cutoutOf(webApp: WebAppActivity): Rect = onMain {
+        val insets = ViewCompat.getRootWindowInsets(webApp.window.decorView)?.getInsets(WindowInsetsCompat.Type.displayCutout())
+        Rect(insets?.left ?: 0, insets?.top ?: 0, insets?.right ?: 0, insets?.bottom ?: 0)
+    }
+
     /** Wait until the page is on a path ending in `path` and has finished loading. */
     private fun waitForPage(webApp: WebAppActivity, path: String) {
         val deadline = SystemClock.uptimeMillis() + 20_000
@@ -675,6 +694,28 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
             waitFor(TILE_LABEL, 2_000)?.let { return it }
         }
         return null
+    }
+
+    /**
+     * A real touch on the node labelled `label` once two reads of its bounds 350 ms apart agree
+     * (the tree trails the sheet's slide-in by a frame or more on the software-rendered emulator;
+     * run 36002509774's light act tapped the Add the tree had for a moment and no pin request
+     * reached the system), logged with the bounds it landed on. False when the label never comes.
+     */
+    private fun tapSettled(f: Finger, label: String, timeoutMs: Long = 8_000): Boolean {
+        var last: Rect? = null
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val now = waitFor(label, 2_000)
+            if (now != null && now == last) {
+                Log.i(tag, "touch at ${now.exactCenterX()},${now.exactCenterY()} on '$label' (bounds $now, two reads agree)")
+                f.tap(now.exactCenterX(), now.exactCenterY())
+                return true
+            }
+            last = now
+            SystemClock.sleep(350)
+        }
+        return false
     }
 
     /** A real tap on the clickable node labelled `label` in any window on screen (the launcher's pin dialog is a window of its own). */
