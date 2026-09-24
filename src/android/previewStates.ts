@@ -755,6 +755,36 @@ function holdLink(tabId: string, url: string, text?: string): void {
 }
 
 /**
+ * The site tab a link is held on: `active` itself when it is on a site, else – a chrome page or
+ * a blank tab in front – its opener when that is a site tab, or the space's first loose site
+ * tab, made active first; null when the space has none.
+ */
+function onSiteTab(state: UIState, active: Tab, then: (tab: Tab | null) => void): void {
+  const onSite = (t: Tab): boolean => !isInternalPageUrl(t.url) && t.url !== BLANK_URL
+  if (onSite(active)) {
+    then(active)
+    return
+  }
+  const opener = active.openerTabId ? state.tabs[active.openerTabId] : undefined
+  const space = activeSpace(state)
+  const site =
+    opener && onSite(opener)
+      ? opener
+      : space
+        ? regularOf(state, space).find((t) => !t.folderId && onSite(t))
+        : undefined
+  if (!site) {
+    then(null)
+    return
+  }
+  void cmd('tab.activate', { tabId: site.id }).catch(() => undefined)
+  whenActiveTabIs(
+    (t) => t.id === site.id,
+    () => then(site)
+  )
+}
+
+/**
  * `then` once the menu the core is about to show has landed in the ui store (`menu.show`) and
  * its sheet has had a frame to mount.
  */
@@ -935,11 +965,19 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       if (then.length === 0) end()
       else setTimeout(() => steps(then, end), STEP_SETTLE_MS)
     })
-  } else if (target.kind === 'link' && tab) {
-    // The link menu on its own (PUI-18's header, PUI-22's contact items): held on the active
-    // page as it stands, the state reached once the sheet has had a frame to mount.
-    whenMenuUp(finish)
-    holdLink(tab.id, target.url, target.text)
+  } else if (target.kind === 'link' && tab && state) {
+    // The link menu on its own (PUI-18's header, PUI-22's contact items): held on a site's page
+    // – the active tab, or a site tab brought to the front when a chrome page (a previous
+    // `page=` state's, which stays open) is there – the state reached once the sheet has had a
+    // frame to mount.
+    onSiteTab(state, tab, (site) => {
+      if (!site) {
+        finish()
+        return
+      }
+      whenMenuUp(finish)
+      holdLink(site.id, target.url, target.text)
+    })
   } else if (target.kind === 'overlay') {
     // A seeded engine state stands before the overlay opens: the History page's From your other
     // devices group reads the sync status and asks for the devices' tabs as it mounts (TAB-02),
@@ -2543,10 +2581,12 @@ function tap(text: string): void {
 /**
  * Hold the first button whose accessible label or own text reads `text` – a row with a menu –
  * the way a finger resting on it would: the row's gestures take the `contextmenu` Chromium
- * raises for a touch hold (`useRowGestures`), so that event stands for the hold.
+ * raises for a touch hold (`useRowGestures`), so that event stands for the hold. Failing a
+ * button, a row that copies itself on a hold (`data-copies`: Settings › About's version block,
+ * SET-54) whose text reads `text` takes the same event (`useLongPress`).
  */
 function hold(text: string): void {
-  const button = pressable(text)
+  const button = pressable(text) ?? copying(text)
   if (!button) return
   const box = button.getBoundingClientRect()
   button.dispatchEvent(
@@ -2611,6 +2651,18 @@ function pressable(text: string): HTMLElement | null {
     if (node.textContent?.trim() !== wanted) continue
     const button = node.parentElement?.closest(PRESSABLE)
     if (reachable(button)) return button
+  }
+  return null
+}
+
+/** The first row that copies on a hold (`data-copies`) with a text node reading `text`. */
+function copying(text: string): HTMLElement | null {
+  const wanted = text.trim()
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.textContent?.trim() !== wanted) continue
+    const row = node.parentElement?.closest<HTMLElement>('[data-copies]')
+    if (row && !row.closest('[inert]')) return row
   }
   return null
 }

@@ -12067,7 +12067,9 @@
   margin-bottom: 0;
 }
 .zen-v2-heading.zen-page-prose-heading {
+  /* The prose carries the gutter; the group heading's own inset would step the heading in. */
   margin: 20px 0 8px;
+  padding: 0;
   font-size: var(--v2-font-heading);
   line-height: var(--v2-line-heading);
 }
@@ -12081,8 +12083,16 @@
   font-weight: var(--v2-weight-heading);
   line-height: var(--v2-line-small);
 }
+/* The preflight strips list markers; a read page's lists keep theirs, outside the text. */
 .zen-page-prose-list {
   padding-inline-start: 20px;
+  list-style: disc outside;
+}
+ol.zen-page-prose-list {
+  list-style: decimal outside;
+}
+.zen-page-prose-list > li::marker {
+  color: var(--v2-text-deemphasized);
 }
 .zen-page-prose-list > li {
   margin: 0 0 4px;
