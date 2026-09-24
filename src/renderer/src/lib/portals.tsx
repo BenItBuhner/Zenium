@@ -172,6 +172,15 @@ export function chromeInertHeld(): boolean {
   return inertHolds > 0
 }
 
+/**
+ * Whether `node` lies inside a frame dialog host – in the dialog or sheet that holds the window
+ * chrome inert, which is the chrome that has the window while the hold stands. For chrome that
+ * yields to an open dialog unless it is the dialog's own (the tooltip, lib/tooltip.ts).
+ */
+export function insideFrameDialog(node: Element): boolean {
+  return node.closest('.zen-frame-dialogs') !== null
+}
+
 /** The elements the frame covers have made inert, with how many covers hold each. */
 const frameInertMarked = new Map<Element, number>()
 

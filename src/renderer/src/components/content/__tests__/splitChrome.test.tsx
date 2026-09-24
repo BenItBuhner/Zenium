@@ -142,7 +142,7 @@ describe('the active pane’s outline (§9.35)', () => {
     // The pre-#262 underline is gone from both headers: nothing 2 px tall filled in the accent
     // (the gutter's hover tint is the gutter's, not a header's).
     expect(container.querySelector('.h-0\\.5')).toBeNull()
-    const headers = [...container.querySelectorAll<HTMLElement>('[title^="Un-split"]')].map(
+    const headers = [...container.querySelectorAll<HTMLElement>('[data-tooltip^="Un-split"]')].map(
       (button) => button.parentElement!
     )
     expect(headers).toHaveLength(2)

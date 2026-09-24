@@ -114,7 +114,9 @@ describe('AppTitleBar', () => {
     expect(icon.getAttribute('src')).toBe(app.icon)
     const title = q('.zen-app-titlebar-title')
     expect(title.textContent).toBe('Today – Notes')
-    expect(title.getAttribute('title')).toBe('notes.example.com')
+    // The chrome's tooltip (a11y-26), never the native one.
+    expect(title.getAttribute('data-tooltip')).toBe('notes.example.com')
+    expect(title.hasAttribute('title')).toBe(false)
   })
 
   it("reads the app's name while the page has no title", () => {

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Home-screen search widget (SearchWidgetProvider; WID-01 / OMN-33): the omnibox pill's face
+     at four cells by one – Zenium's mark, the omnibox's hint, the mic, the private mask – resizable
+     along the row only (Chrome's search widget likewise keeps one row). The cell sizes are the
+     platform's rule (70 dp a cell, 30 dp for the margins): 250 dp for four cells, 180 dp for the
+     three the pill can shrink to – the face's fixed content (widget_search.xml: 14 dp of padding,
+     the 20 dp mark, the hint's 12 + 4 dp margins, two 44 dp boxes, 2 dp of padding) is 140 dp, more
+     than two cells' 110 dp, so a two-cell face would clip its own buttons. The preview is the
+     layout itself where the picker can render one (API 31); older pickers draw the vector under
+     previewImage. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:description="@string/widget_search_description"
+    android:initialLayout="@layout/widget_search"
+    android:minWidth="250dp"
+    android:minHeight="40dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="40dp"
+    android:maxResizeHeight="40dp"
+    android:previewImage="@drawable/widget_search_preview"
+    android:previewLayout="@layout/widget_search"
+    android:resizeMode="horizontal"
+    android:targetCellWidth="4"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    tools:targetApi="s" />

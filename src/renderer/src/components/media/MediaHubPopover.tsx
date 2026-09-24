@@ -190,7 +190,7 @@ function Player({
         <button
           type="button"
           className="zen-mhub-text"
-          title="Switch to tab"
+          data-tooltip="Switch to tab"
           data-media-switch=""
           onClick={() => {
             run('tab.activate', { tabId: media.tabId })
@@ -278,7 +278,7 @@ function Transport({ media }: { media: MediaState }): JSX.Element {
         type="button"
         className={cn('zen-v2-icon-button zen-mhub-toggle')}
         aria-label={media.playing ? 'Pause' : 'Play'}
-        title={media.playing ? 'Pause' : 'Play'}
+        data-tooltip={media.playing ? 'Pause' : 'Play'}
         data-media-toggle=""
         // The Media Session's toggle where the page reports one, the element itself otherwise.
         onClick={() => run('media.toggle', { tabId: media.tabId })}

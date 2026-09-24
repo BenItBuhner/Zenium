@@ -448,7 +448,7 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
               <button
                 type="button"
                 className="zen-toolbar-button shrink-0"
-                title="All tabs"
+                data-tooltip="All tabs"
                 aria-label="All tabs"
                 aria-haspopup="dialog"
                 aria-expanded={searchUp}

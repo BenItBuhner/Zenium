@@ -22,7 +22,9 @@ import android.view.WindowManager
  * each variant's res/xml by the build), declared through the `android.app.shortcuts` meta-data on
  * the launcher aliases (`scripts/app-icons/lib.ts`): its intent carries [ACTION_NEW_TAB] to
  * `LauncherIconActivity`, the trampoline outside the browser's task, which relays it to
- * `MainActivity`; the activity asks the chrome for a private tab in the running window.
+ * `MainActivity` as the private landing ([Landing.forwarded], [Landing.PRIVATE]); the activity
+ * asks the chrome for a private tab in the running window. An intent carrying the action straight
+ * to the activity (a pinned copy of the shortcut from before the landing extra) lands the same.
  */
 object PrivateBrowsing {
     /** The launcher shortcut's intent action: a new private tab in the browser window. */
@@ -30,13 +32,6 @@ object PrivateBrowsing {
 
     /** The static shortcut's id (`src/main/shortcuts/shortcuts.xml`). */
     const val SHORTCUT_ID = "new-private-tab"
-
-    /**
-     * The action `LauncherIconActivity` carries over to `MainActivity` for an intent it was started
-     * with: the shortcut's own; null for everything else (a launcher tap on an icon alias), which
-     * the trampoline forwards as the launcher's plain start.
-     */
-    fun forwardedAction(action: String?): String? = if (action == ACTION_NEW_TAB) ACTION_NEW_TAB else null
 
     /**
      * Debug builds only: a recorded demo (`PrivateTabsDemo`) lets the screen recorder see the

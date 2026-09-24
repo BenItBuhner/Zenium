@@ -304,10 +304,6 @@ class MainActivity : BrowserActivity() {
             Intent.ACTION_WEB_SEARCH -> host.share.onWebSearch(intent)
             // One of Zenium's own buttons in the system share sheet (Android 14).
             Share.ACTION_BROWSER_ACTION -> host.share.onBrowserAction(intent)
-            // The launcher's "New private tab" shortcut (src/main/shortcuts/shortcuts.xml, relayed
-            // by LauncherIconActivity): the chrome opens one in the current space, or says why it
-            // cannot on a WebView without profiles.
-            PrivateBrowsing.ACTION_NEW_TAB -> host.chrome.newPrivateTab()
             // A tap or a button on an extension's notification card (chrome.notifications).
             ExtensionNotifications.ACTION_OPENED -> host.extensions.onNotificationIntent(intent)
             // A tap on the media notification (or the system's media player): the session's tab.
@@ -317,8 +313,18 @@ class MainActivity : BrowserActivity() {
             // A tap on a capture's card ("<site> is using your microphone"): its tab (CaptureNotifications.kt).
             CaptureNotifications.ACTION_OPEN -> host.capture.onOpenIntent(intent)
         }
+        // The search widget's face or a launcher shortcut (relayed by LauncherIconActivity) named
+        // the state to open in (Landing.kt, WID-07): the chrome lands in it. Cold (onCreate, the
+        // chrome's document still loading) it stashes the state for the core's boot answer, which
+        // applies it before the first frame; warm it goes to the core at once. The one extra and
+        // this read are all the boot path carries for it. "New private tab" by its bare action,
+        // aimed straight at this activity (a pinned copy of the launcher shortcut from before the
+        // extra; the shortcut itself comes through LauncherIconActivity with the extra), is the
+        // private landing read the same way – not a second path through the ready queue.
+        Landing.of(intent)?.let { host.chrome.land(it) }
         // Consume so a configuration change does not re-open it.
         intent.action = null
+        intent.removeExtra(Landing.EXTRA)
     }
 
     // --- lifecycle --------------------------------------------------------------------------
