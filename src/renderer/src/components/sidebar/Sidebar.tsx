@@ -433,7 +433,12 @@ function Resizer({ state }: { state: UIState }): JSX.Element {
         'zen-resizer zen-no-drag absolute top-0 h-full w-1.5 hover:bg-[var(--zen-accent)]/30',
         side === 'left' ? '-right-0.5' : '-left-0.5'
       )}
-      data-tooltip="Drag to resize · double-click to collapse"
+      // The toolkit's tooltip, on purpose (the one hint left on a `title` in the desktop chrome,
+      // pinned by tooltipVocabulary.test.tsx): the handle is a nameless 6 px hairline as tall as
+      // the sidebar, and §9.31's tooltip – centred on its control, 8 below its box, flipped above
+      // – has nowhere to stand for it but the seam's foot, a screen away from the pointer; the
+      // toolkit's follows the pointer, which is where a hint on a handle belongs.
+      title="Drag to resize · double-click to collapse"
       onDoubleClick={() => run('sidebar.toggleExpanded', undefined)}
     />
   )
