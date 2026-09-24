@@ -351,10 +351,12 @@ interface Live {
   input: AgentInputEvent[]
   /** The tab a click "opened" through the cursor calls, to check the overlay stays in the top frame. */
   cursor: Array<{ x: number; y: number; action: string }>
-  /** What the chrome shows: flip these to bring the page on screen or cover it mid-call. */
-  screen: { visible: boolean; covered: boolean; placed: boolean }
+  /** What the chrome shows: flip these to bring the page on screen, cover it or paint it mid-call. */
+  screen: { visible: boolean; covered: boolean; placed: boolean; painted: boolean }
   /** How often a tool asked whether the page is on screen. */
   polls: () => number
+  /** How often a tool asked whether the page has painted. */
+  paintPolls: () => number
 }
 
 interface LiveOptions {
@@ -364,9 +366,13 @@ interface LiveOptions {
   covered?: boolean
   /** The layout report has placed the tab's view. */
   placed?: boolean
+  /** The page's renderer has presented its first frame (`hasPainted`). */
+  painted?: boolean
   mode?: 'foreground' | 'background'
   /** A host without real input (no `sendInput`). */
   noInput?: boolean
+  /** A host that cannot tell whether the page has painted (no `hasPainted`). */
+  noPaintState?: boolean
 }
 
 function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
@@ -376,14 +382,20 @@ function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
   const screen = {
     visible: opts.visible ?? true,
     covered: opts.covered ?? false,
-    placed: opts.placed ?? true
+    placed: opts.placed ?? true,
+    painted: opts.painted ?? true
   }
   let polls = 0
+  let paintPolls = 0
   const view = {
     executeJavaScript: (code: string, frameId?: number) => page.eval(frameId ?? 0, code),
     frames: () => page.frames() ?? undefined,
     sendInput: async (e: AgentInputEvent) => {
       input.push(e)
+    },
+    hasPainted: async () => {
+      paintPolls++
+      return screen.painted
     },
     isVisible: () => {
       polls++
@@ -393,6 +405,7 @@ function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
   } as unknown as TabView
   if (page.frames() === null) delete (view as { frames?: unknown }).frames
   if (opts.noInput) delete (view as { sendInput?: unknown }).sendInput
+  if (opts.noPaintState) delete (view as { hasPainted?: unknown }).hasPainted
   const win = {
     get contentHidden() {
       return screen.covered
@@ -444,7 +457,15 @@ function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
     },
     session
   }
-  return { ctx: ctx as unknown as ToolContext, page, input, cursor, screen, polls: () => polls }
+  return {
+    ctx: ctx as unknown as ToolContext,
+    page,
+    input,
+    cursor,
+    screen,
+    polls: () => polls,
+    paintPolls: () => paintPolls
+  }
 }
 
 function textOf(result: ToolResult): string {
@@ -683,7 +704,61 @@ describe('real input waits for the page to be on screen, and never degrades sile
     const live = liveContext(signInPage())
     await run('browser_click', live.ctx, { x: 200, y: 230 })
     expect(live.polls()).toBe(1)
+    expect(live.paintPolls()).toBe(1)
     expect(live.input).toHaveLength(1)
+  })
+
+  /*
+   * The first paint: Chromium holds a new page's first frame back and drops presses and keys
+   * meanwhile (acknowledged, so the host's dispatch "succeeds"); a placed page that has not
+   * painted is waited for like one that is not placed, and named as the cause when it never does.
+   */
+  it("waits for the page's first paint, then sends real input", async () => {
+    const live = liveContext(signInPage(), { painted: false })
+    await run('browser_snapshot', live.ctx, {})
+    // The renderer's first frame comes while the tool waits (a display compositor starting late).
+    setTimeout(() => {
+      live.screen.painted = true
+    }, 40)
+    const out = textOf(await run('browser_click', live.ctx, { target: 'e4' }))
+    expect(live.input).toEqual([
+      { type: 'click', x: 220, y: 230, button: 'left', clickCount: 1, modifiers: [] }
+    ])
+    expect(out).not.toContain('input: synthetic')
+    expect(live.paintPolls()).toBeGreaterThan(1)
+    expect(live.page.frame(7).log.map((l) => l.method)).not.toContain('clickJs')
+  })
+
+  it('a page that never paints gets a synthetic click and says why', async () => {
+    const live = liveContext(signInPage(), { painted: false })
+    await run('browser_snapshot', live.ctx, {})
+    const out = textOf(await run('browser_click', live.ctx, { target: 'e4' }))
+    expect(live.paintPolls()).toBeGreaterThan(1)
+    expect(live.input).toEqual([])
+    expect(live.page.frame(7).log.map((l) => l.method)).toContain('clickJs')
+    const [headline, warning] = out.split('\n')
+    expect(headline).toBe(
+      'Clicked button "Sign in with Google" [ref=e4] in frame "Sign in with Google".'
+    )
+    expect(warning).toMatch(
+      /^input: synthetic – the page had not painted its first frame within \d+ s/
+    )
+    expect(warning).toContain('drops real clicks and keys until it has')
+    expect(warning).toContain('isTrusted: false')
+  })
+
+  it('the paint is asked about only once the view is placed, and off screen wins as the cause', async () => {
+    const live = liveContext(signInPage(), { visible: false, painted: false })
+    const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(live.paintPolls()).toBe(0)
+    expect(out).toContain('input: synthetic – the tab did not come on screen')
+  })
+
+  it('a host that cannot tell about the paint sends real input once the view is on screen', async () => {
+    const live = liveContext(signInPage(), { noPaintState: true })
+    const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(live.input[0]).toMatchObject({ type: 'click', x: 200, y: 230 })
+    expect(out).not.toContain('input: synthetic')
   })
 })
 
