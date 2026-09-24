@@ -37,6 +37,8 @@ const { defaultShortcuts } = await import('@shared/shortcuts')
 const { Sidebar } = await import('../sidebar/Sidebar')
 const { Toolbar } = await import('../Toolbar')
 const { BookmarksBar } = await import('../bookmarks/BookmarksBar')
+const { V2IconButton } = await import('../extensions/v2')
+const { SkipForward } = await import('lucide-react')
 
 function tab(id: string, over: Partial<Tab> = {}): Tab {
   return {
@@ -270,6 +272,28 @@ describe('the desktop chrome, rendered: one tooltip vocabulary (§9.31, a11y-26)
     const texts = expectOneVocabulary(el, 'rail').map((c) => tooltipText(c))
     expect(texts).toContain('Work')
   })
+
+  // The v2 icon button (extensions/v2.tsx) stands in twelve desktop chrome surfaces – the media
+  // hub's transport, the capture overlay, the reader's preferences, the translate bar, the
+  // Settings rows, the bookmark dialogs, the share popover, the default-browser prompt, the
+  // screen picker, the blocked pop-ups panel: one primitive carries them all onto the chrome's
+  // tooltip. Its `title` prop is the shorter hint, never a DOM attribute.
+  it('V2IconButton puts its label – or its hint – on data-tooltip and no title on the button', () => {
+    const el = render(
+      <>
+        <V2IconButton icon={SkipForward} label="Seek forward" />
+        <V2IconButton icon={SkipForward} label="Unpin Ad blocker" title="Unpin from toolbar" />
+      </>
+    )
+    const [plain, hinted] = all('button', el)
+    expect(plain!.hasAttribute('title')).toBe(false)
+    expect(hinted!.hasAttribute('title')).toBe(false)
+    expect(plain!.getAttribute(TOOLTIP_ATTR)).toBe('Seek forward')
+    expect(plain!.getAttribute('aria-label')).toBe('Seek forward')
+    expect(hinted!.getAttribute(TOOLTIP_ATTR)).toBe('Unpin from toolbar')
+    expect(hinted!.getAttribute('aria-label')).toBe('Unpin Ad blocker')
+    expectOneVocabulary(el, 'v2 icon button')
+  })
 })
 
 describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)', () => {
@@ -284,6 +308,8 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
     'pages/',
     // OverlayShell's content-area panels, shared with the phone: themes, spaces, boosts, add-ons, passwords.
     'overlays/',
+    // The extension program's surfaces (the Extensions page, its details, the prompt dialog) –
+    // except the two files walked by name in `ALSO_WALKED`.
     'extensions/',
     'autofill/',
     // Site information and the confirm chassis: W5-2's and W5-3's.
@@ -291,6 +317,13 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
     'siteinfo/',
     'dialogs/'
   ]
+
+  /**
+   * Walked although their directory is not: the v2 primitives (`V2IconButton` is the desktop
+   * chrome's icon button in a dozen surfaces) and the extensions toolbar with its panel, both
+   * of which the chrome's tooltip host reaches.
+   */
+  const ALSO_WALKED = ['extensions/v2.tsx', 'extensions/ToolbarActions.tsx']
 
   /**
    * The native titles left, by file, each with its reason – a follow-up in the wave report. A
@@ -360,7 +393,14 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
 
   const files = sources(root)
     .map((f) => ({ path: f, rel: relative(root, f).split('\\').join('/') }))
-    .filter(({ rel }) => !NOT_DESKTOP_CHROME.some((dir) => rel.startsWith(dir)))
+    .filter(
+      ({ rel }) => ALSO_WALKED.includes(rel) || !NOT_DESKTOP_CHROME.some((dir) => rel.startsWith(dir))
+    )
+
+  it('the walk reaches the v2 primitives and the extensions toolbar', () => {
+    const rels = files.map(({ rel }) => rel)
+    for (const rel of ALSO_WALKED) expect(rels).toContain(rel)
+  })
 
   it('no DOM element in the desktop chrome carries both title and data-tooltip', () => {
     const both = files.flatMap(({ path }) => nativeTitles(path)).filter((f) => f.both)
