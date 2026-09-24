@@ -2427,6 +2427,23 @@ export class Menus {
           }
         )
       }
+      // Chrome's "Open in split view" (context-menus-109), the bar's: the page beside the
+      // window's active tab, as a link's row splits it (`splitLink`); the bookmark counts as used.
+      if (bar) {
+        const active = this.browser.tabs.activeTabFor(win)
+        const url = single.url ?? ''
+        template.push(
+          ...desktop({
+            label: 'Open in Split View',
+            enabled: Boolean(active && url),
+            click: () => {
+              if (!active) return
+              bookmarks.touch(single.id)
+              this.splitLink(active.id, url, win)
+            }
+          })
+        )
+      }
     } else if (nodes.length) {
       template.push({
         label: `Open All (${urls})`,
@@ -2498,6 +2515,26 @@ export class Menus {
           click: () => this.browser.deleteBookmarks(ids, win)
         }
       )
+      // Chrome's Undo / Redo of the last bookmark edit (context-menus-109), the bar's rows for
+      // #357's undo stack; each enabled while it has a step to take.
+      if (bar) {
+        const { bookmarkUndo } = this.browser
+        template.push(
+          ...desktop(
+            { type: 'separator' },
+            {
+              label: 'Undo',
+              enabled: bookmarkUndo.depth > 0,
+              click: () => void this.browser.undoBookmarkEdit()
+            },
+            {
+              label: 'Redo',
+              enabled: bookmarkUndo.redoDepth > 0,
+              click: () => void this.browser.redoBookmarkEdit(win)
+            }
+          )
+        )
+      }
     }
     template.push(
       { type: 'separator' },

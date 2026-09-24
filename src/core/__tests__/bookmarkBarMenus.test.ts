@@ -314,3 +314,95 @@ describe("the threshold's question (Chrome's 15, `OPEN_ALL_PROMPT_AT`)", () => {
     expect(Object.keys(f.browser.state.model.tabs).length).toBe(tabsBefore + 15)
   })
 })
+
+describe("the bar item menu's rows (context-menus-109)", () => {
+  function page(f: Fixture, title = 'A', url = 'https://a.test/'): string {
+    return f.browser.bookmarks.create({ parentId: BOOKMARKS_BAR_ID, title, url })!.id
+  }
+
+  it('Open in Split View follows the window rows on the bar; the manager and the phone have no such row', () => {
+    const f = fixture()
+    const id = page(f)
+    f.browser.tabs.createTab({ url: 'https://open.test/', active: true }, f.win)
+    expect(menuFor(f, [id]).slice(0, 4)).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      'Open in Split View'
+    ])
+    expect(item(f.shown(), 'Open in Split View').enabled).toBe(true)
+    expect(menuFor(f, [id], 'manager')).not.toContain('Open in Split View')
+    f.browser.handleCommand(f.win, 'window.formFactor', { formFactor: 'phone' })
+    expect(menuFor(f, [id])).not.toContain('Open in Split View')
+  })
+
+  it("splits the window's active tab with the page, which counts as used", () => {
+    const f = fixture()
+    const id = page(f)
+    const current = f.browser.tabs.createTab({ url: 'https://open.test/', active: true }, f.win)
+    menuFor(f, [id])
+    item(f.shown(), 'Open in Split View').click!()
+    const m = f.browser.state.model
+    const opened = Object.values(m.tabs).find((t) => t.url === 'https://a.test/')!
+    expect(opened).toBeDefined()
+    expect(m.tabs[current.id].splitGroupId).toBeTruthy()
+    expect(opened.splitGroupId).toBe(m.tabs[current.id].splitGroupId)
+    expect(f.browser.bookmarks.get(id)?.dateLastUsed).toBeDefined()
+  })
+
+  it('Undo and Redo follow Delete in a group of their own, each enabled only while it has a step', () => {
+    const f = fixture()
+    const a = page(f, 'A', 'https://a.test/')
+    const b = page(f, 'B', 'https://b.test/')
+    let rows = menuFor(f, [a])
+    const at = rows.indexOf('Delete')
+    expect(rows.slice(at, at + 4)).toEqual(['Delete', '-', 'Undo', 'Redo'])
+    expect(item(f.shown(), 'Undo').enabled).toBe(false)
+    expect(item(f.shown(), 'Redo').enabled).toBe(false)
+    // Not the manager's rows, not the phone's.
+    expect(menuFor(f, [a], 'manager')).not.toContain('Undo')
+
+    f.browser.bookmarkUndo.update(b, { title: 'Bee' })
+    menuFor(f, [a])
+    expect(item(f.shown(), 'Undo').enabled).toBe(true)
+    expect(item(f.shown(), 'Redo').enabled).toBe(false)
+    item(f.shown(), 'Undo').click!()
+    expect(f.browser.bookmarks.get(b)?.title).toBe('B')
+
+    rows = menuFor(f, [a])
+    expect(item(f.shown(), 'Undo').enabled).toBe(false)
+    expect(item(f.shown(), 'Redo').enabled).toBe(true)
+    item(f.shown(), 'Redo').click!()
+    expect(f.browser.bookmarks.get(b)?.title).toBe('Bee')
+
+    f.browser.handleCommand(f.win, 'window.formFactor', { formFactor: 'phone' })
+    rows = menuFor(f, [a])
+    expect(rows).not.toContain('Undo')
+    expect(rows).not.toContain('Redo')
+  })
+
+  it('a delete done again through Redo (or bookmark.redo) tells the window as the first did, so the toast comes back with Undo', () => {
+    const f = fixture()
+    const a = page(f)
+    f.browser.handleCommand(f.win, 'bookmark.remove', { ids: [a] })
+    const first = f.sent.filter((s) => s.name === 'bookmark.deleted')
+    expect(first).toHaveLength(1)
+    f.browser.handleCommand(f.win, 'bookmark.undo', {})
+    expect(f.browser.bookmarks.get(a)).not.toBeNull()
+
+    const redone = f.browser.handleCommand(f.win, 'bookmark.redo', undefined) as {
+      kind: string
+      token: number
+      ids: string[]
+    } | null
+    expect(redone).toMatchObject({ kind: 'remove', ids: [a] })
+    expect(f.browser.bookmarks.get(a)).toBeNull()
+    const told = f.sent.filter((s) => s.name === 'bookmark.deleted')
+    expect(told).toHaveLength(2)
+    expect(told[1].payload).toMatchObject({ token: redone!.token, count: 1, kind: 'bookmark' })
+    // Nothing more to redo; the delete is undoable once more, under the new token.
+    expect(f.browser.handleCommand(f.win, 'bookmark.redo', undefined)).toBeNull()
+    f.browser.handleCommand(f.win, 'bookmark.undo', { token: redone!.token })
+    expect(f.browser.bookmarks.get(a)).not.toBeNull()
+  })
+})

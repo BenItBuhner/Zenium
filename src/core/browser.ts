@@ -1562,6 +1562,19 @@ export class Browser {
     return undone
   }
 
+  /**
+   * Do the newest undone bookmark edit again (the bar menu's Redo, the manager's Ctrl+Shift+Z /
+   * Ctrl+Y; context-menus-109). A delete done again is a delete: the window that asked gets its
+   * toast with Undo, as for the first one.
+   */
+  redoBookmarkEdit(win: ZenWindow): BookmarkUndone | null {
+    const redone = this.bookmarkUndo.redo()
+    if (!redone) return null
+    if (redone.removal) this.emit('bookmark.deleted', redone.removal, win)
+    const { kind, token, ids, parentId } = redone
+    return { kind, token, ids, parentId }
+  }
+
   /** Open the bookmarks below the given nodes in a new window (private when asked). */
   async openBookmarksInWindow(
     ids: readonly string[],
@@ -3178,6 +3191,7 @@ export class Browser {
         void this.bookmarkUndo.move(ids, parentId, index),
       'bookmark.remove': ({ ids, quiet }, win) => this.deleteBookmarks(ids, win, quiet),
       'bookmark.undo': ({ token }) => this.undoBookmarkEdit(token),
+      'bookmark.redo': (_a, win) => this.redoBookmarkEdit(win),
       'bookmark.open': ({ id, newTab, tabId, background }, win) =>
         this.openBookmark(id, newTab, tabId, win, Boolean(background)),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),

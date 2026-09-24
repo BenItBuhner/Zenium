@@ -363,3 +363,121 @@ describe('BookmarkUndoStack', () => {
     expect(undo.depth).toBe(BOOKMARK_UNDO_DEPTH)
   })
 })
+
+describe('redo (context-menus-109: the bar menu’s Redo row, the manager’s Ctrl+Shift+Z)', () => {
+  it('does an undone delete again, and the delete is back on the undo stack with its toast’s word', () => {
+    const { service, undo } = setup()
+    const ids = seed(service)
+    expect(undo.redoDepth).toBe(0)
+    expect(undo.redo()).toBeNull()
+
+    undo.remove([ids.b])
+    expect(undo.undo()?.kind).toBe('remove')
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+    expect(undo.redoDepth).toBe(1)
+    expect(undo.depth).toBe(0)
+
+    const redone = undo.redo()!
+    expect(redone).toMatchObject({
+      kind: 'remove',
+      ids: [ids.b],
+      parentId: BOOKMARKS_BAR_ID,
+      removal: { count: 1, kind: 'bookmark' }
+    })
+    expect(redone.token).toBe(redone.removal!.token)
+    expect(bar(service)).toEqual(['a', 'c', 'd'])
+    expect(undo.redoDepth).toBe(0)
+    expect(undo.depth).toBe(1)
+    // And back again: the same node, where it stood.
+    expect(undo.undo()).toMatchObject({ kind: 'remove', token: redone.token, ids: [ids.b] })
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+    expect(service.get(ids.b)?.index).toBe(1)
+  })
+
+  it('puts a move’s rows back on the spots the move had given them, and a rename’s words back on the node', () => {
+    const { service, undo } = setup()
+    const ids = seed(service)
+    undo.move([ids.d], BOOKMARKS_BAR_ID, 0)
+    undo.undo()
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+    expect(undo.redo()).toMatchObject({ kind: 'move', ids: [ids.d], removal: null })
+    expect(bar(service)).toEqual(['d', 'a', 'b', 'c'])
+    expect(undo.depth).toBe(1)
+    expect(undo.undo()?.kind).toBe('move')
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+
+    undo.update(ids.a, { title: 'A!', url: 'https://elsewhere.example/' })
+    undo.undo()
+    expect(service.get(ids.a)).toMatchObject({ title: 'a', url: 'https://a.example/' })
+    expect(undo.redo()).toMatchObject({ kind: 'update', ids: [ids.a], removal: null })
+    expect(service.get(ids.a)).toMatchObject({ title: 'A!', url: 'https://elsewhere.example/' })
+    expect(undo.undo()?.kind).toBe('update')
+    expect(service.get(ids.a)).toMatchObject({ title: 'a', url: 'https://a.example/' })
+  })
+
+  it('redoes in order, newest undone first; a new edit of the user’s own forgets what was left to redo', () => {
+    const { service, undo } = setup()
+    const ids = seed(service)
+    undo.update(ids.a, { title: 'A' })
+    undo.remove([ids.c])
+    undo.undo()
+    undo.undo()
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+    expect(undo.redoDepth).toBe(2)
+    // The rename was undone last, so it is redone first.
+    expect(undo.redo()?.kind).toBe('update')
+    expect(bar(service)).toEqual(['A', 'b', 'c', 'd'])
+    expect(undo.redo()?.kind).toBe('remove')
+    expect(bar(service)).toEqual(['A', 'b', 'd'])
+    expect(undo.redo()).toBeNull()
+
+    undo.undo()
+    expect(undo.redoDepth).toBe(1)
+    undo.update(ids.b, { title: 'B' })
+    expect(undo.redoDepth).toBe(0)
+    expect(undo.redo()).toBeNull()
+    // `clear` forgets both stacks.
+    undo.undo()
+    undo.undo()
+    expect(undo.redoDepth).toBe(2)
+    undo.clear()
+    expect(undo.redoDepth).toBe(0)
+    expect(undo.depth).toBe(0)
+  })
+
+  it('follows a node that came back under a new id, and gives up on one that is gone for good', () => {
+    const { service, undo } = setup()
+    const ids = seed(service)
+    undo.update(ids.b, { title: 'B' })
+    undo.remove([ids.b])
+    // A stranger takes b's id before the delete is undone: b comes back under a new id, which
+    // the redo of the rename (made on the old id) follows.
+    service.applySynced(ids.b, {
+      parentId: OTHER_BOOKMARKS_ID,
+      index: 0,
+      type: 'url',
+      title: 'Stranger',
+      url: 'https://stranger.example/',
+      dateAdded: 1
+    })
+    service.syncTabs()
+    const [newId] = undo.undo()!.ids
+    expect(newId).not.toBe(ids.b)
+    expect(undo.undo()).toMatchObject({ kind: 'update', ids: [newId] })
+    expect(service.get(newId)?.title).toBe('b')
+    expect(undo.redo()).toMatchObject({ kind: 'update', ids: [newId] })
+    expect(service.get(newId)?.title).toBe('B')
+    expect(service.get(ids.b)?.title).toBe('Stranger')
+    // The delete done again takes the node under its new id, the stranger left alone.
+    expect(undo.redo()).toMatchObject({ kind: 'remove', ids: [newId] })
+    expect(service.get(newId)).toBeNull()
+    expect(service.get(ids.b)?.title).toBe('Stranger')
+
+    // A node deleted for good meanwhile (no undo of ours) leaves its redo nothing to do.
+    undo.update(ids.a, { title: 'A' })
+    undo.undo()
+    service.remove(ids.a)
+    expect(undo.redo()).toBeNull()
+    expect(undo.redoDepth).toBe(0)
+  })
+})

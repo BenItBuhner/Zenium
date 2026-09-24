@@ -4785,6 +4785,20 @@ export interface Commands {
     } | null
   }
   /**
+   * Do the newest undone edit again (the bar menu's Redo, the manager's Ctrl+Shift+Z / Ctrl+Y):
+   * the same word as `bookmark.undo`'s, the token the edit's new one on the undo stack; null for
+   * nothing. A delete done again tells the window `bookmark.deleted` as the first one did.
+   */
+  'bookmark.redo': {
+    args: void
+    result: {
+      kind: 'remove' | 'move' | 'update'
+      token: number
+      ids: string[]
+      parentId: string | null
+    } | null
+  }
+  /**
    * Open a bookmark (records `dateLastUsed`); `background` with `newTab` is a tab behind the
    * current one (a middle or Ctrl click on a manager row, §10.1), as `urlbar.submit` has it.
    */
