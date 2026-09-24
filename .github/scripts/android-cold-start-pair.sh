@@ -120,7 +120,8 @@ after_wait=$(median "${after_waits[@]}")
 
 {
   echo "MainActivity cold start, am start -W after am force-stop, $runs runs each on one emulator boot (medians in ms)"
-  echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | sed 's/.*: //') dpi"
+  # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
+  echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
   echo
   echo "| build | TotalTime median | WaitTime median | TotalTime runs | LaunchState |"
   echo "| --- | --- | --- | --- | --- |"
