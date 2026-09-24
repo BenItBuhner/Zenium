@@ -465,8 +465,8 @@ export class WebAppService {
         ? {
             display: info.display,
             scope: info.scope,
-            themeColor: info.themeColor,
-            backgroundColor: info.backgroundColor
+            themeColor: hexColor(info.themeColor),
+            backgroundColor: hexColor(info.backgroundColor)
           }
         : {})
     }
@@ -608,4 +608,10 @@ function originOf(url: string): string {
   } catch {
     return url
   }
+}
+
+/** A manifest colour as `#rrggbb` for a host that paints natively with it; null for none it can read. */
+function hexColor(css: string | null): string | null {
+  if (!css) return null
+  return tileColor(css, '') || null
 }

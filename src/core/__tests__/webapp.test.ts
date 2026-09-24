@@ -295,6 +295,18 @@ describe('WebAppService', () => {
     })
   })
 
+  it('hands the launcher the manifest colours as hex, whatever form the manifest wrote', async () => {
+    const h = harness()
+    h.service.handleMessage(h.tab.id, {
+      type: 'webapp',
+      webapp: 'manifest',
+      manifestUrl: MANIFEST_URL,
+      manifest: { ...MANIFEST, display: 'minimal-ui', theme_color: 'rgb(0, 128, 255)', background_color: '#FFF' }
+    })
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    expect(h.pins[0]).toMatchObject({ display: 'minimal-ui', themeColor: '#0080ff', backgroundColor: '#ffffff' })
+  })
+
   it('leaves the display mode out of a plain page shortcut', async () => {
     const h = harness()
     await h.service.pin(h.tab.id, 'Sketch', h.win)

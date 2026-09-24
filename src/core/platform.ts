@@ -2209,9 +2209,9 @@ export interface ShortcutRequest {
   display?: WebAppDisplay
   /** The manifest's absolute scope; navigations outside it leave the app's window. */
   scope?: string
-  /** The manifest's `theme_color`, for the window's system bars and Recents entry. */
+  /** The manifest's `theme_color` as `#rrggbb`, for the window's system bars and Recents entry. */
   themeColor?: string | null
-  /** The manifest's `background_color`, the window's colour before the page paints. */
+  /** The manifest's `background_color` as `#rrggbb`, the window's colour before the page paints. */
   backgroundColor?: string | null
 }
 
