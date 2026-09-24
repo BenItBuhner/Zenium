@@ -303,7 +303,7 @@ function IconPickerDialog({ tab }: { tab: UIState['tabs'][string] }): JSX.Elemen
               'zen-squircle flex h-9 items-center justify-center rounded-lg text-[11px] hover:bg-[var(--zen-element-bg)]',
               !tab.customIcon && 'bg-[var(--zen-element-bg-active)]'
             )}
-            title="Use the site's favicon"
+            data-tooltip="Use the site's favicon"
             onClick={() => pick(null)}
           >
             Auto

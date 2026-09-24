@@ -655,7 +655,7 @@ describe('the collapsed rail’s flyout (tabs-03): the pointer', () => {
     // The expanded sidebar's separator carries the Clear unpinned tabs brush (its 20 row).
     sidebar({ tabs, layout: 'single', separator: true })
     expect(line()).not.toBeNull()
-    expect(brush()?.title).toContain('Clear unpinned tabs')
+    expect(brush()?.getAttribute('data-tooltip')).toContain('Clear unpinned tabs')
     // The rail's: the line, no brush – and the flyout keeps it so, the rows in their expanded
     // form around it; the brush's 20 would push every row below the line down by 19.
     sidebar({ tabs, separator: true })

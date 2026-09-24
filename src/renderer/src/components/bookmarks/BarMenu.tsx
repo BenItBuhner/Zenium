@@ -547,7 +547,7 @@ function MenuLevel({
           aria-haspopup={node.type === 'folder' ? 'menu' : undefined}
           aria-expanded={node.type === 'folder' ? openId === node.id : undefined}
           className="zen-v2-menu-item"
-          title={node.url ?? undefined}
+          data-tooltip={node.url ?? undefined}
           onPointerEnter={() => onHoverRow(depth, node)}
           // A click the keyboard made (a mnemonic's, `detail` 0) is the keyboard's activation.
           onClick={(e) => onActivate(node, e.ctrlKey || e.metaKey, e.detail === 0)}

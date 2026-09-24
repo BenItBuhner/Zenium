@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Rect } from '@shared/types'
-import { POPOVER_MARGIN } from '../portals'
+import type { MenuDescriptor, Rect } from '@shared/types'
+import { closeAllPopovers, openPopover } from '../popoverStore'
+import { holdChromeInert, POPOVER_MARGIN } from '../portals'
 import {
   placeTooltip,
   TOOLTIP_ATTR,
@@ -9,12 +10,16 @@ import {
   TOOLTIP_DELAY,
   TOOLTIP_GAP,
   TOOLTIP_HIDDEN,
+  TOOLTIP_NO_COVER_ATTR,
+  tooltipBlocked,
   TooltipController,
+  tooltipMayCover,
   tooltipPaneOf,
   tooltipSize,
   tooltipTargetOf,
   type TooltipState
 } from '../tooltip'
+import { HOVER_CARD_HIDDEN, uiStore, type DragState } from '../ui'
 
 /*
  * The chrome tooltip's timing and geometry (lib/tooltip.ts; v2 draft §9.31, a11y-26): the
@@ -33,7 +38,7 @@ const control = (x: number, y: number): Rect => ({ x, y, width: 28, height: 28 }
 describe('placeTooltip', () => {
   it('centres under the control, 8 px below its box, inside its pane', () => {
     expect(placeTooltip(control(100, 40), size, viewport, sidebar, page)).toEqual({
-      box: { side: 'below', left: 100 + 14 - 48, top: 40 + 28 + TOOLTIP_GAP },
+      box: { side: 'below', left: 100 + 14 - 48, top: 40 + 28 + TOOLTIP_GAP, width: 96 },
       coversPage: false
     })
   })
@@ -56,7 +61,7 @@ describe('placeTooltip', () => {
     const wide = { width: 95.2, height: 30 }
     const placed = placeTooltip(control(204, 44), wide, viewport, sidebar, page)
     expect(placed.box.left).toBe(136)
-    expect(placed.box.left + wide.width).toBeLessThanOrEqual(sidebar.width - POPOVER_MARGIN)
+    expect(placed.box.left + placed.box.width).toBeLessThanOrEqual(sidebar.width - POPOVER_MARGIN)
     // A pane starting on a fraction: the margin's inner edge is the next whole pixel.
     const shifted: Rect = { x: 0.5, y: 0, width: 240, height: 1000 }
     expect(placeTooltip(control(0, 40), size, viewport, shifted, page).box.left).toBe(9)
@@ -67,12 +72,33 @@ describe('placeTooltip', () => {
     ).toBe(66)
   })
 
+  it('takes the measured width up to the whole pixel, so the right hairline stands on a column too', () => {
+    // Seek forward's tooltip measured 74.36 wide (the W5-1 drive, 2026-09-24): its left edge
+    // on a column, its right hairline between two. The box is 75 wide, never 74 – a width
+    // under the text's own would wrap its last word – and centred on the whole width.
+    const fractional = { width: 74.36, height: 30 }
+    const placed = placeTooltip(control(100, 40), fractional, viewport, sidebar, page)
+    expect(placed.box.width).toBe(75)
+    expect(placed.box.left).toBe(Math.round(100 + 14 - 75 / 2))
+    expect(Number.isInteger(placed.box.left + placed.box.width)).toBe(true)
+    // A whole width stays as it is, and the flip above carries it too.
+    expect(placeTooltip(control(100, 40), size, viewport, sidebar, page).box.width).toBe(96)
+    expect(placeTooltip(control(100, 964), fractional, viewport, sidebar, page).box).toMatchObject({
+      side: 'above',
+      width: 75
+    })
+    // Handed to the window (a pane too narrow), the same whole width.
+    const rail: Rect = { x: 0, y: 0, width: 48, height: 1000 }
+    expect(placeTooltip(control(10, 40), fractional, viewport, rail, page).box.width).toBe(75)
+  })
+
   it('flips above a control at the bottom of its pane', () => {
     const bottom = control(100, 1000 - 8 - 28)
     expect(placeTooltip(bottom, size, viewport, sidebar, page).box).toEqual({
       side: 'above',
       left: 66,
-      top: bottom.y - TOOLTIP_GAP - size.height
+      top: bottom.y - TOOLTIP_GAP - size.height,
+      width: 96
     })
   })
 
@@ -89,14 +115,19 @@ describe('placeTooltip', () => {
     const band: Rect = { x: 0, y: 0, width: 1600, height: 40 }
     const below: Rect = { x: 0, y: 40, width: 1600, height: 960 }
     const placed = placeTooltip(control(100, 6), size, viewport, band, below)
-    expect(placed.box).toEqual({ side: 'below', left: 66, top: 6 + 28 + TOOLTIP_GAP })
+    expect(placed.box).toEqual({ side: 'below', left: 66, top: 6 + 28 + TOOLTIP_GAP, width: 96 })
     expect(placed.coversPage).toBe(true)
   })
 
   it('a pane too narrow for the text hands over to the window too', () => {
     const rail: Rect = { x: 0, y: 0, width: 48, height: 1000 }
     const placed = placeTooltip(control(10, 40), size, viewport, rail, { ...page, x: 48 })
-    expect(placed.box).toEqual({ side: 'below', left: POPOVER_MARGIN, top: 40 + 28 + TOOLTIP_GAP })
+    expect(placed.box).toEqual({
+      side: 'below',
+      left: POPOVER_MARGIN,
+      top: 40 + 28 + TOOLTIP_GAP,
+      width: 96
+    })
     expect(placed.coversPage).toBe(true)
   })
 
@@ -105,7 +136,12 @@ describe('placeTooltip', () => {
     const band: Rect = { x: 0, y: 0, width: 1600, height: 36 }
     const lower: Rect = { x: 0, y: 80, width: 1600, height: 920 }
     expect(placeTooltip(control(1560, 4), size, viewport, band, lower)).toEqual({
-      box: { side: 'below', left: 1600 - POPOVER_MARGIN - size.width, top: 4 + 28 + TOOLTIP_GAP },
+      box: {
+        side: 'below',
+        left: 1600 - POPOVER_MARGIN - size.width,
+        top: 4 + 28 + TOOLTIP_GAP,
+        width: 96
+      },
       coversPage: false
     })
   })
@@ -118,8 +154,61 @@ describe('placeTooltip', () => {
       null,
       null
     )
-    expect(placed.box).toEqual({ side: 'below', left: 66, top: 77 })
+    expect(placed.box).toEqual({ side: 'below', left: 66, top: 77, width: 96 })
     expect(placed.coversPage).toBe(false)
+  })
+
+  it('in the window it takes the side that misses the page: a split pane’s header at the top of the frame shows above, beside the page', () => {
+    // The pane's header (24 tall) at the top of the content area, the page's view right under
+    // it (lib/layout.ts `splitPaneRects`), the caption band above (measured 2026-09-24: the
+    // Layout button at y 82 in a 20 box, the area from y 80).
+    const area: Rect = { x: 240, y: 80, width: 1352, height: 912 }
+    const layout: Rect = { x: 859, y: 82, width: 20, height: 20 }
+    const placed = placeTooltip(layout, size, viewport, null, area)
+    expect(placed).toEqual({
+      box: { side: 'above', left: 859 + 10 - 48, top: 82 - TOOLTIP_GAP - size.height, width: 96 },
+      coversPage: false
+    })
+    // Below still comes first where both sides miss the page (a control under the area).
+    const under: Rect = { x: 800, y: 992 - 28 - 60, width: 28, height: 28 }
+    expect(placeTooltip(under, size, viewport, null, { ...area, height: 800 }).box.side).toBe(
+      'below'
+    )
+  })
+
+  it('with a view on either side neither is clear: below, over the page, as before', () => {
+    // A lower pane's header in a rows split: the upper pane's view above, its own below.
+    const area: Rect = { x: 240, y: 48, width: 1352, height: 944 }
+    const header: Rect = { x: 859, y: 500, width: 20, height: 20 }
+    const placed = placeTooltip(header, size, viewport, null, area)
+    expect(placed.box.side).toBe('below')
+    expect(placed.coversPage).toBe(true)
+  })
+
+  it('a control at the very top with the page under it flips above only where above fits the window', () => {
+    // 8 px margin above: 82 - 8 - 30 = 44 fits; at y 40 it would be 2, under the margin – below,
+    // over the page, and the cover.
+    const area: Rect = { x: 240, y: 40, width: 1352, height: 952 }
+    const placed = placeTooltip(
+      { x: 859, y: 40, width: 20, height: 20 },
+      size,
+      viewport,
+      null,
+      area
+    )
+    expect(placed.box.side).toBe('below')
+    expect(placed.coversPage).toBe(true)
+  })
+})
+
+describe('tooltipMayCover', () => {
+  it('a control in the views’ gaps says no; any other yes', () => {
+    document.body.innerHTML = `
+      <div ${TOOLTIP_NO_COVER_ATTR}><button ${TOOLTIP_ATTR}="Layout" id="layout"></button></div>
+      <aside><button ${TOOLTIP_ATTR}="Back" id="back"></button></aside>`
+    expect(tooltipMayCover(document.getElementById('layout')!)).toBe(false)
+    expect(tooltipMayCover(document.getElementById('back')!)).toBe(true)
+    document.body.innerHTML = ''
   })
 })
 
@@ -311,6 +400,22 @@ describe('TooltipController', () => {
     expect(state.target).toBeNull()
   })
 
+  it('the block is asked about the control: the surface that has the window names its own, nothing outside it shows', () => {
+    // A bubble is up: `a` is one of its controls, `b` the toolbar button under it.
+    controller = new TooltipController(store, { blocked: (t) => t !== a, now: () => clock })
+    controller.pointerEnter(b)
+    tick(TOOLTIP_DELAY)
+    expect(writes).toEqual([])
+    controller.pointerEnter(a)
+    tick(TOOLTIP_DELAY)
+    expect(state).toEqual({ target: a, by: 'pointer' })
+    controller.pointerLeave(a)
+    controller.focus(b)
+    expect(state.target).toBeNull()
+    controller.focus(a)
+    expect(state).toEqual({ target: a, by: 'focus' })
+  })
+
   it('a control that left the DOM or lost its text shows nothing', () => {
     controller.pointerEnter(a)
     a.remove()
@@ -331,5 +436,129 @@ describe('TooltipController', () => {
     controller.hide()
     expect(state.target).toBeNull()
     expect(controller.showing()).toBe(false)
+  })
+})
+
+describe('tooltipBlocked', () => {
+  /*
+   * §9.20's one at a time, seen from the control asking (W5-1, a11y-26): the surface that has
+   * the window – the popover on top, else a frame dialog holding the chrome inert – names its
+   * own controls and nothing outside it; with neither up, the UI state's surfaces block every
+   * control; a drag or a native menu blocks all.
+   */
+  let toolbarButton: HTMLElement
+  let bubbleButton: HTMLElement
+  let bubble: HTMLElement
+  let listRow: HTMLElement
+  let list: HTMLElement
+  let dialogButton: HTMLElement
+  const releases: Array<() => void> = []
+
+  const reset = (): void => {
+    uiStore.set({
+      drag: null,
+      menu: null,
+      floatingChrome: 0,
+      hoverCard: HOVER_CARD_HIDDEN,
+      downloadsOpen: false
+    })
+  }
+
+  beforeEach(() => {
+    reset()
+    document.body.innerHTML = `
+      <header data-surface="window"><button ${TOOLTIP_ATTR}="Back">toolbar</button></header>
+      <div class="zen-frame-dialogs"><div role="dialog"><button ${TOOLTIP_ATTR}="Use the site's favicon">dialog</button></div></div>
+      <div class="zen-chrome-layer">
+        <div class="bubble"><button ${TOOLTIP_ATTR}="Pause">bubble</button></div>
+        <div class="list"><button ${TOOLTIP_ATTR}="Row">list</button></div>
+      </div>`
+    const q = (selector: string): HTMLElement => document.querySelector(selector) as HTMLElement
+    toolbarButton = q('header button')
+    dialogButton = q('[role="dialog"] button')
+    bubble = q('.bubble')
+    bubbleButton = q('.bubble button')
+    list = q('.list')
+    listRow = q('.list button')
+  })
+  afterEach(() => {
+    while (releases.length) releases.pop()?.()
+    closeAllPopovers()
+    reset()
+  })
+
+  const popover = (element: HTMLElement, anchor?: HTMLElement): void => {
+    releases.push(
+      openPopover({ element: () => element, anchor: anchor && (() => anchor), close: () => {} })
+    )
+  }
+
+  it('with nothing up, a control anywhere has its tooltip', () => {
+    expect(tooltipBlocked(toolbarButton)).toBe(false)
+    expect(tooltipBlocked(bubbleButton)).toBe(false)
+  })
+
+  it('an open popover names its own controls and blocks every other', () => {
+    popover(bubble, toolbarButton)
+    expect(tooltipBlocked(bubbleButton)).toBe(false)
+    expect(tooltipBlocked(toolbarButton)).toBe(true)
+    expect(tooltipBlocked(dialogButton)).toBe(true)
+    releases.pop()?.()
+    expect(tooltipBlocked(toolbarButton)).toBe(false)
+  })
+
+  it('only the popover on top has the window: a row of the popover under it waits', () => {
+    popover(bubble, toolbarButton)
+    // The list's anchor sits in the bubble, so the bubble stays open under it (its child).
+    popover(list, bubbleButton)
+    expect(tooltipBlocked(listRow)).toBe(false)
+    expect(tooltipBlocked(bubbleButton)).toBe(true)
+    releases.pop()?.()
+    expect(tooltipBlocked(bubbleButton)).toBe(false)
+  })
+
+  it('a frame dialog holding the chrome inert names its own controls and blocks the chrome under it', () => {
+    releases.push(holdChromeInert())
+    expect(tooltipBlocked(dialogButton)).toBe(false)
+    expect(tooltipBlocked(toolbarButton)).toBe(true)
+    expect(tooltipBlocked(bubbleButton)).toBe(true)
+    // A menulist's list over the dialog is on top of it.
+    popover(list, dialogButton)
+    expect(tooltipBlocked(listRow)).toBe(false)
+    expect(tooltipBlocked(dialogButton)).toBe(true)
+  })
+
+  it('the UI state’s surfaces block a control anywhere, the hover card and the tooltip’s own cover excepted', () => {
+    uiStore.set({ downloadsOpen: true })
+    expect(tooltipBlocked(toolbarButton)).toBe(true)
+    uiStore.set({
+      downloadsOpen: false,
+      hoverCard: { ...HOVER_CARD_HIDDEN, tabId: 't1', by: 'pointer' }
+    })
+    expect(tooltipBlocked(toolbarButton)).toBe(false)
+    uiStore.set({ hoverCard: HOVER_CARD_HIDDEN, floatingChrome: 1 })
+    expect(tooltipBlocked(toolbarButton)).toBe(true)
+    expect(tooltipBlocked(toolbarButton, 1)).toBe(false)
+  })
+
+  it('a drag or a native menu blocks every control, the open popover’s too', () => {
+    popover(bubble, toolbarButton)
+    const drag: DragState = {
+      tabId: 't1',
+      remote: false,
+      title: 'Tab',
+      favicon: null,
+      width: 200,
+      height: 32,
+      tile: false,
+      settling: false
+    }
+    uiStore.set({ drag })
+    expect(tooltipBlocked(bubbleButton)).toBe(true)
+    uiStore.set({ drag: null })
+    expect(tooltipBlocked(bubbleButton)).toBe(false)
+    const menu: MenuDescriptor = { id: 'm', items: [], source: 'page', x: 0, y: 0 }
+    uiStore.set({ menu })
+    expect(tooltipBlocked(bubbleButton)).toBe(true)
   })
 })

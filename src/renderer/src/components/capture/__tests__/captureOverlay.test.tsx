@@ -254,10 +254,12 @@ describe('the dimmed page (capture-02)', () => {
     for (const key of ['visible', 'full']) {
       const button = el.querySelector<HTMLButtonElement>(`[data-capture-${key}]`)!
       // §9.30: off on aria-disabled, not disabled – the pointer and the keyboard still reach
-      // it, so the title that says why nothing can be captured can be read.
+      // it, so the tooltip that says why nothing can be captured can be read (the chrome's,
+      // a11y-26, never the native one).
       expect(button.disabled).toBe(false)
       expect(button.getAttribute('aria-disabled')).toBe('true')
-      expect(button.title).toBe(reason)
+      expect(button.getAttribute('data-tooltip')).toBe(reason)
+      expect(button.hasAttribute('title')).toBe(false)
       click(button)
     }
     expect(invoke).not.toHaveBeenCalled()

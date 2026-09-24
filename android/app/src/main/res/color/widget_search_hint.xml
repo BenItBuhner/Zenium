@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's hint (res/layout/widget_search.xml; WID-01): the face's text ink at 69 %,
+     §9.29's deemphasised text – derived from the ink token, so it follows the ink into the
+     system's dark theme (values-night/colors.xml) instead of carrying a literal of its own. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:alpha="0.69"
+        android:color="@color/widget_search_ink" />
+</selector>

@@ -105,7 +105,7 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
       {status && !compact && (
         <div
           className="truncate px-1 text-[11px] text-[var(--v2-control-text-deemphasized)]"
-          title={status}
+          data-tooltip={status}
         >
           {status}
         </div>

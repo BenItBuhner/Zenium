@@ -104,7 +104,7 @@ function EssentialTile({
       data-frozen={tab.frozen}
       data-lifted={lifted || undefined}
       data-drop-into={dropKey === `tab:${tab.id}:into` || undefined}
-      title={tabTooltip(tab)}
+      data-tooltip={tabTooltip(tab)}
       onFocus={stripFocusIn}
       onBlur={stripFocusOut}
       onKeyDown={stripKeyDown}
