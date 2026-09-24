@@ -7,7 +7,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
-import android.graphics.Rect
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -87,11 +86,15 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         // The workflow disables Gmail to keep the emulator quiet; it is what lets the mailto: sheet
         // name the app that would open the address (and gives the panel's row a real app).
         shell("pm enable --user 0 com.google.android.gm")
-        // The first menu pays for layout and compilation: open it once off camera.
+        // The first menu pays for layout and compilation: open it once off camera. Its leave can
+        // take seconds behind that first layout and the blocking engine's boot-time snapshot (3 s
+        // on the first proof run's API 34 emulator), and the page's view is not on screen until
+        // it has left: the host's word on the surface is waited for, not a fixed pause.
         openMenu()
         if (waitFor(HANDLE_LABEL, 6_000) != null) {
             SystemClock.sleep(800)
             back()
+            if (!awaitSurface(false, 15_000)) Log.w(tag, "the warm-up menu is still up after 15 s")
         }
         SystemClock.sleep(1_500)
         if (panelStandsIn) {
@@ -312,8 +315,13 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         }
         SystemClock.sleep(if (menuShot != null) 1_500 else 700)
         if (menuShot != null) shot(menuShot)
-        val node = awaitNode(8_000) { it == SHARE_LABEL } ?: run {
+        if (!revealMenuRow(SHARE_LABEL)) {
             finding("  no $SHARE_LABEL in the app menu")
+            back()
+            return false
+        }
+        val node = awaitNode(8_000) { it == SHARE_LABEL } ?: run {
+            finding("  $SHARE_LABEL is in the app menu but never came on screen")
             back()
             return false
         }
@@ -333,6 +341,25 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         }
         noteOpen(frames ?: "again", wall, up)
         return up
+    }
+
+    /**
+     * The open menu pulled to its full height (its handle flung up, the harness's `openMenuItem`
+     * way) and the row reading `label` scrolled into view through the tree. The menu opens at its
+     * peek detent with Share… some twenty rows below the fold, and a row below the fold has its
+     * bounds off screen, where no finger goes (the first proof run: "no Share… in the app menu"
+     * on both emulators). True when the menu has the row.
+     */
+    private fun revealMenuRow(label: String): Boolean {
+        findByLabel(HANDLE_LABEL)?.let { handle ->
+            Finger().apply {
+                down(handle.exactCenterX(), handle.exactCenterY())
+                moveBy(0f, -0.4f * height, 130)
+                up()
+            }
+            SystemClock.sleep(2_000)
+        }
+        return reveal(label) != null
     }
 
     /** [openPanel] for a step, with the finding when it could not. */
@@ -592,8 +619,11 @@ P.end=function(){return JSON.stringify({long:P.long,marks:P.marks})}})()"""
         if (waitFor(HANDLE_LABEL, 6_000) != null) {
             SystemClock.sleep(1_500)
             shot("01-app-menu")
-            // The menu flow's injected touch (the rule in DemoHarness): the system's chooser,
-            // another package's window, must come in front on it.
+            // The menu opens at its peek detent with Share… below the fold: the sheet pulled up
+            // and the row scrolled into view first ([revealMenuRow]), then the menu flow's
+            // injected touch (the rule in DemoHarness): the system's chooser, another package's
+            // window, must come in front on it.
+            revealMenuRow("Share…")
             if (touchTapLabelExpecting("Share…", "the system chooser is in front", timeoutMs = 8_000) {
                     ui.rootInActiveWindow?.packageName?.toString().let { it != null && it != app.packageName }
                 }
@@ -691,17 +721,13 @@ P.end=function(){return JSON.stringify({long:P.long,marks:P.marks})}})()"""
 
     // --- moves -----------------------------------------------------------------------------------
 
+    /**
+     * A finger on the bar's Menu button, read back and tried again when nothing came of it or
+     * the bar took it as a hold (the harness's [tapMenuButton]); the callers wait for the handle.
+     */
     private fun openMenu() {
-        ensureForeground()
-        val button = findByLabel(MENU_LABEL) ?: computedMenuButton()
-        Finger().tap(button.exactCenterX(), button.exactCenterY())
+        tapMenuButton()
     }
-
-    /** Where the menu button is when the accessibility tree does not say: rightmost in the bar. */
-    private fun computedMenuButton() = Rect(
-        (width - 52 * density).toInt(), (pill.centerY() - 22 * density).toInt(),
-        (width - 8 * density).toInt(), (pill.centerY() + 22 * density).toInt()
-    )
 
     /** Take down whatever a step left up: another app's window (the chooser), then an open menu. */
     private fun dismiss() {
@@ -754,9 +780,21 @@ P.end=function(){return JSON.stringify({long:P.long,marks:P.marks})}})()"""
         return found
     }
 
+    /** [pageWebView] polled for up to `timeoutMs`; null when no tab view is shown in that time. */
+    private fun awaitPageWebView(timeoutMs: Long): TabWebView? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            pageWebView()?.let { return it }
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(250)
+        }
+    }
+
     /** Add the demo links to the page (once it is there) and return where they are on screen. */
     private fun plantLinks(): List<PointF> {
-        val web = pageWebView() ?: run {
+        // The view is back on screen only once the warm-up's menu has left (its leave can trail
+        // the host's word on the surface by a frame or two): up to ten seconds for it.
+        val web = awaitPageWebView(10_000) ?: run {
             Log.w(tag, "no tab WebView on screen")
             return emptyList()
         }
@@ -806,7 +844,6 @@ P.end=function(){return JSON.stringify({long:P.long,marks:P.marks})}})()"""
     private fun quote(text: String) = "'" + text.replace("'", "'\\''") + "'"
 
     companion object {
-        private const val MENU_LABEL = "Menu"
         private const val HANDLE_LABEL = "Resize menu"
         private const val DECLINE_LABEL = "Not now"
         private const val OPEN_LABEL = "Open"
