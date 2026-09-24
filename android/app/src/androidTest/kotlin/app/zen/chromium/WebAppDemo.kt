@@ -86,6 +86,9 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
     /** The device's own scheme: the app's window follows the system, not the browser's profile. */
     override fun beforeLaunch() {
         shellCommand("cmd uimode night ${if (THEME == "dark") "yes" else "no"}")
+        // The system's one-time "Viewing full screen" prompt, confirmed ahead (as the status bar
+        // and error page demos do): the fullscreen still is the window's, not the prompt's.
+        shellCommand("settings put secure immersive_mode_confirmations confirmed")
         SystemClock.sleep(1_500)
     }
 
@@ -392,8 +395,14 @@ class WebAppDemo : DemoHarness("pwa-demo-state.json", "android-pwa-display", "we
         describeWindow(opened, "fullscreen", FULL_THEME, expectToolbar = false, expectBarsHidden = true, expectMode = "fullscreen")
         val page = opened.page
         if (page != null) {
-            val viewport = evalJs(page, "String(Math.round(window.innerHeight * (window.devicePixelRatio || 1)))")?.toIntOrNull() ?: 0
-            check("the page's viewport spans the screen ($viewport of $height px)", viewport >= height - 4)
+            // The page's own height follows the bars a layout pass or two later than the insets
+            // (the dark act of run 35992814329 read 1516 of 1600 with the insets already 0).
+            var viewport = 0
+            val spans = awaitTrue(6_000) {
+                viewport = evalJs(page, "String(Math.round(window.innerHeight * (window.devicePixelRatio || 1)))")?.toIntOrNull() ?: 0
+                viewport >= height - 4
+            }
+            check("the page's viewport spans the screen ($viewport of $height px)", spans)
         }
         // The recording ends on the browser: the fullscreen window away, the browser's task forward.
         finishWebApps()
