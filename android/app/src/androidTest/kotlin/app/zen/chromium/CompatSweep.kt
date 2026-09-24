@@ -1819,7 +1819,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     popupView()?.takeIf { it.context == "sidePanel" }?.let { sheet ->
                         panelHit.text = json(tabEval(sheet, DEEP_TEXT)).optString("text")
                         if (panelHit.text.isBlank()) panelHit.seen = seenInView(sheet)
-                        extra.put("sidePanel", JSONObject().put("url", sheet.url?.take(160)).put("text", panelHit.text.take(240)).put("seen", panelHit.seen ?: JSONObject.NULL).put("sheet", sheetSize(sheet)).put("console", JSONArray(consoleOf(sheet).takeLast(10))))
+                        extra.put("sidePanel", JSONObject().put("url", urlOf(sheet)?.take(160)).put("text", panelHit.text.take(240)).put("seen", panelHit.seen ?: JSONObject.NULL).put("sheet", sheetSize(sheet)).put("console", JSONArray(consoleOf(sheet).takeLast(10))))
                     }
                     snap("${entry.optString("slug")}-side-panel")
                 }
@@ -6547,7 +6547,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * ToS, the age and privacy policy) and a `data-testid="onboarding-accept"` button that enables
      * once both are ticked. The settings page is opened as a tab, the consent given by script,
      * the terms step that follows the page's own reload accepted in rounds (round 14's 7.18b:
-     * the onboarding accept alone left the popup's notice), the tab closed; then round 13's popup
+     * the onboarding accept alone left the popup's notice; round 15: the onboarding's sign-in
+     * card skipped on its icon-only control, which is where the acceptance is written), the tab
+     * closed; then round 13's popup
      * flow (the fixture host blocked from the popup) runs as it did. What the consent and terms
      * steps found is kept beside the flow's evidence, and a popup still showing the notice is
      * named in the note.
@@ -6785,13 +6787,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * its title. Over `feed.html` (one RSS link to `feed.xml`, "Zenium fixture feed"): a badge
      * count of one or more, or the popup naming the feed, is the pass. A popup that opens on
      * its account prompt first (RSS Feed Reader's "Create an account / Log in / Continue without
-     * account", round 15) is taken past it on its own no-account control, and read again.
+     * account", round 15) is taken past it on its own no-account control, and read again. The
+     * choice closes the popup with it (RSS Feed Reader 8.1.0 sets its sync type in the worker a
+     * second after the tap and opens its web app as a tab; the badge was read before the choice,
+     * while the worker's state was `undecided`), so the read-again is over a fresh feed page and
+     * a fresh popup once the worker settled: the badge polled again, the popup opened again.
      */
     private fun feedDetector(label: String, page: String, feedTitle: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, 3_000)
-        val badge = poll(scaled(15_000, factor), 500) { extensionAction(row.id)?.optString("badgeText")?.takeIf { Regex("[1-9]").containsMatchIn(it) } }
+        var badge = poll(scaled(15_000, factor), 500) { extensionAction(row.id)?.optString("badgeText")?.takeIf { Regex("[1-9]").containsMatchIn(it) } }
         extra.put("action", extensionAction(row.id)).put("badge", badge ?: JSONObject.NULL)
         val popup = openPopup(row, factor)
         var found = JSONObject()
@@ -6801,7 +6807,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (!found.optBoolean("pass") && Regex("without (an )?account|skip|continue", RegexOption.IGNORE_CASE).containsMatchIn(found.optString("text"))) {
                 val steps = JSONArray()
                 if (tapLabel("/^(continue without( an)? account|skip( for now)?|continue)$/i", factor, steps, "no-account")) {
-                    popupView()?.takeIf { it.context == "popup" }?.let { live -> found = pollExpr(live, names, scaled(20_000, factor)) }
+                    popupView()?.takeIf { it.context == "popup" }?.let { live -> found = runCatching { pollExpr(live, names, scaled(10_000, factor)) }.getOrDefault(found) }
+                    if (!found.optBoolean("pass")) {
+                        SystemClock.sleep(scaled(5_000, factor))
+                        extra.put("tabsAfterChoice", JSONArray(tabUrls().values.toList()))
+                        runCatching { coreCall("extension.closePopup", "null") }
+                        fixture(page, factor, 3_000)
+                        badge = poll(scaled(15_000, factor), 500) { extensionAction(row.id)?.optString("badgeText")?.takeIf { Regex("[1-9]").containsMatchIn(it) } }
+                        extra.put("badgeAfterChoice", badge ?: JSONObject.NULL)
+                        openPopup(row, factor)?.let { fresh -> found = pollExpr(fresh, names, scaled(20_000, factor)) }
+                    }
                 }
                 extra.put("accountPrompt", steps)
             }
@@ -7102,6 +7117,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun authSheetUrl(id: String): String? {
         var url: String? = null
         instrumentation.runOnMainSync { url = host.extensions.authSheetView(id)?.url?.takeIf { it.isNotEmpty() && it != "about:blank" } }
+        return url
+    }
+
+    /**
+     * A view's URL, read where WebView allows it: `WebView.getUrl` checks the calling thread and
+     * throws off the main one (the side-panel record of round 15's 113 sweep read it from the
+     * instrumentation thread, and two rows read "core check threw" for that alone).
+     */
+    private fun urlOf(view: WebView): String? {
+        var url: String? = null
+        instrumentation.runOnMainSync { url = view.url }
         return url
     }
 
@@ -8534,12 +8560,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * An image downloader's list: how many images it shows and how many of them are the
          * gallery fixture's `photo-N.png` (through open shadow roots), by URL or – a list that
          * shows what it fetched as blobs (ImageAssistant's extractor, round 15) – by the
-         * fixture's picture size, 320 by 240 decoded.
+         * fixture's picture size, 320 by 240: decoded, or declared beside a thumbnail that is a
+         * re-encoded copy (ImageAssistant 1.70.7 draws each picture scaled to 256 px and names the
+         * original's size on the item – `data-width` / `data-height`, `data-resolution`, a
+         * "320x240" label – so the shown image's `naturalWidth` is not the fixture's; round 15's
+         * AFTER read four items and no size match).
          */
         private const val IMAGE_LIST_REPORT =
-            "(function(){var imgs=[];var sized=0;var walk=function(root){var all=root.querySelectorAll('img, [style*=\"background-image\"]');for(var i=0;i<all.length;i++){var e=all[i];var s=e.currentSrc||e.src||(e.style&&e.style.backgroundImage)||'';imgs.push(String(s));if(e.tagName==='IMG'&&e.naturalWidth===320&&e.naturalHeight===240)sized++;if(e.shadowRoot)walk(e.shadowRoot)}var rest=root.querySelectorAll('*');for(var j=0;j<rest.length;j++){if(rest[j].shadowRoot)walk(rest[j].shadowRoot)}};if(document.documentElement)walk(document.documentElement);" +
-                "var byUrl=imgs.filter(function(s){return /photo-\\d\\.png/.test(s)}).length;var photos=Math.max(byUrl,sized);var text=document.body?document.body.innerText.replace(/\\s+/g,' ').trim():'';" +
-                "return JSON.stringify({pass:photos>=4,photos:photos,byUrl:byUrl,bySize:sized,images:imgs.length,text:text.slice(0,160),title:document.title.slice(0,40)})})()"
+            "(function(){var imgs=[];var sized=0;var attrs=0;var labels=0;var walk=function(root){var all=root.querySelectorAll('img, [style*=\"background-image\"]');for(var i=0;i<all.length;i++){var e=all[i];var s=e.currentSrc||e.src||(e.style&&e.style.backgroundImage)||'';imgs.push(String(s));if(e.tagName==='IMG'&&e.naturalWidth===320&&e.naturalHeight===240)sized++;if(e.shadowRoot)walk(e.shadowRoot)}" +
+                "attrs+=root.querySelectorAll('[data-width=\"320\"][data-height=\"240\"], [data-resolution=\"320x240\"]').length;var texts=root.querySelectorAll('div, span, small, p, figcaption');for(var k=0;k<texts.length;k++){if(texts[k].children.length===0&&/^\\s*320\\s*[x×]\\s*240\\s*$/i.test(texts[k].textContent||''))labels++}" +
+                "var rest=root.querySelectorAll('*');for(var j=0;j<rest.length;j++){if(rest[j].shadowRoot)walk(rest[j].shadowRoot)}};if(document.documentElement)walk(document.documentElement);" +
+                "var byUrl=imgs.filter(function(s){return /photo-\\d\\.png/.test(s)}).length;var declared=Math.max(attrs,labels);var photos=Math.max(byUrl,sized,declared);var text=document.body?document.body.innerText.replace(/\\s+/g,' ').trim():'';" +
+                "return JSON.stringify({pass:photos>=4,photos:photos,byUrl:byUrl,bySize:sized,declared:declared,images:imgs.length,text:text.slice(0,160),title:document.title.slice(0,40)})})()"
         /** The body's computed background as a colour and its relative luminance (white 1.0), with a count of the page's foreign elements. */
         private const val LUMINANCE_REPORT =
             "(function(){var bg=getComputedStyle(document.body).backgroundColor;var html=getComputedStyle(document.documentElement).backgroundColor;var pick=function(c){var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/.exec(c||'');if(!m)return null;if(m[4]!==undefined&&parseFloat(m[4])===0)return null;var f=function(v){v=parseInt(v,10)/255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)};return 0.2126*f(m[1])+0.7152*f(m[2])+0.0722*f(m[3])};" +
@@ -8579,15 +8611,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /**
          * StayFocusd's terms step after the onboarding (round 14's 7.18b): the page's terms prompt
          * (`terms`), every checkbox ticked, the first enabled accept / agree / continue control
-         * pressed (`clicked`); `pass` once the page shows no terms prompt and no such control.
+         * pressed (`clicked`); `pass` once the page shows no terms prompt, no onboarding dialog and
+         * no such control. The onboarding's last card offers a Google sign-in and a skip – an
+         * icon-only round control whose `title` / `aria-label` reads "Skip" (4.6.14's
+         * `data-testid="skip"`, no text) – and the skip is what writes the acceptance the popup
+         * reads (`HasAcceptedToS`, `HasAcceptedPrivacyPolicy`: written at the onboarding's end,
+         * not by the consent card's Continue); round 15's 113 AFTER read that card as "no terms
+         * prompt" and stopped, the popup's notice still up. The skip is pressed when the dialog
+         * (or a sign-in offer) is up and no accept control is.
          */
         private const val STAYFOCUSD_TERMS =
             "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var terms=/terms of service have changed|accept (the|our|these) (new |updated )?terms|agree to (the|our) terms|action required|i (have read and )?agree/i.test(t);" +
+                "var dialog=document.querySelector('[data-testid=onboarding-page], [data-testid=google-sign-in-page]');var onboarding=!!dialog&&dialog.getBoundingClientRect().width>0&&getComputedStyle(dialog).visibility!=='hidden';" +
                 "var boxes=Array.prototype.slice.call(document.querySelectorAll('input[type=checkbox]'));boxes.forEach(function(b){if(!b.checked)b.click()});" +
                 "var controls=Array.prototype.slice.call(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(function(b){var r=b.getBoundingClientRect();return r.width>0&&r.height>0&&!b.disabled});" +
                 "var accept=controls.filter(function(b){return /^(i )?(accept|agree|understand|got it|confirm|continue)\\b/i.test((b.textContent||b.value||'').trim())})[0];" +
-                "if(!accept)return JSON.stringify({pass:!terms,terms:terms,boxes:boxes.length,controls:controls.map(function(b){return (b.textContent||b.value||'').trim().slice(0,24)}).slice(0,8),text:t.slice(0,160)});" +
-                "var label=(accept.textContent||accept.value||'').trim().slice(0,40);accept.click();return JSON.stringify({pass:false,terms:terms,clicked:label,boxes:boxes.length,text:t.slice(0,120)})})()"
+                "var skip=controls.filter(function(b){return !(b.textContent||'').trim()&&/^skip( for now)?$/i.test((b.getAttribute('aria-label')||b.title||'').trim())})[0];" +
+                "if(!accept&&skip&&(onboarding||/sign in with google/i.test(t))){skip.click();return JSON.stringify({pass:false,terms:terms,onboarding:onboarding,clicked:'skip ('+(skip.getAttribute('aria-label')||skip.title)+')',boxes:boxes.length,text:t.slice(0,120)})}" +
+                "if(!accept)return JSON.stringify({pass:!terms&&!onboarding,terms:terms,onboarding:onboarding,boxes:boxes.length,controls:controls.map(function(b){return (b.textContent||b.value||b.getAttribute('aria-label')||b.title||'').trim().slice(0,24)}).slice(0,8),text:t.slice(0,160)});" +
+                "var label=(accept.textContent||accept.value||'').trim().slice(0,40);accept.click();return JSON.stringify({pass:false,terms:terms,onboarding:onboarding,clicked:label,boxes:boxes.length,text:t.slice(0,120)})})()"
         /** StayFocusd's popup notice while its terms are unaccepted. */
         private val STAYFOCUSD_NOTICE = Regex("terms of service have changed|action required|open the settings page to accept", RegexOption.IGNORE_CASE)
         /** Global Speed's rate on the fixture's clip (`main.js` sets `playbackRate` on the tab's media). */
