@@ -893,6 +893,45 @@ describe('a group is not a landmark (axe landmark-unique, the desktop’s #358)'
   })
 })
 
+describe('the outline steps by one (axe heading-order; the phone’s pre-existing finding on #391)', () => {
+  /** axe's `heading-order` over the page: every heading at most one level below the one before it. */
+  async function headingOrder(el: HTMLElement): Promise<string[]> {
+    const results = await axe.run(el, {
+      runOnly: { type: 'rule', values: ['heading-order'] },
+      resultTypes: ['violations']
+    })
+    return results.violations.flatMap((v) => v.nodes.map((n) => String(n.target[0])))
+  }
+  const levels = (el: ParentNode): string[] =>
+    [...el.querySelectorAll('h1, h2, h3, h4, h5, h6')].map((h) => h.tagName.toLowerCase())
+
+  it('the desktop: the page title h1, the section title h2, the groups h3', async () => {
+    viewport(TWO_PANE_MIN_WIDTH)
+    const el = mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/search'))
+    const outline = levels(el)
+    expect(outline.slice(0, 3)).toEqual(['h1', 'h2', 'h3'])
+    expect(new Set(outline)).toEqual(new Set(['h1', 'h2', 'h3']))
+    for (const heading of el.querySelectorAll('.zen-settings-group > .zen-settings-heading'))
+      expect(heading.tagName).toBe('H3')
+    expect(await headingOrder(el)).toEqual([])
+  })
+
+  it('the phone: the landing’s h1, the drill-in bar’s h1, then the groups at h2 – no level skipped; the styles stay on the class', async () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/search'))
+    const drillIn = el.querySelector<HTMLElement>('.zen-settings-drill-in')!
+    expect(drillIn.querySelector('.zen-settings-bar-title')!.tagName).toBe('H1')
+    const headings = [...drillIn.querySelectorAll<HTMLElement>('.zen-settings-group > .zen-settings-heading')]
+    expect(headings.length).toBeGreaterThan(0)
+    for (const heading of headings) {
+      expect(heading.tagName).toBe('H2')
+      expect(heading.classList.contains('zen-v2-heading')).toBe(true)
+    }
+    expect(new Set(levels(el))).toEqual(new Set(['h1', 'h2']))
+    expect(await headingOrder(el)).toEqual([])
+  })
+})
+
 describe('a section asked for one of its rows (zen://settings/<section>?row=<id>)', () => {
   /** A phone that syncs (`ANDROID` has no sync engine; the row asked for is Sync's). */
   const SYNCING_PHONE: HostCapabilities = { ...ANDROID, sync: true }

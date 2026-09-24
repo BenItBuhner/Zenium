@@ -9,7 +9,7 @@ import {
   siteDataListingNotes
 } from '@renderer/lib/siteDataUi'
 import type { ActionRow, ItemRow, RowGroup } from './model'
-import { RowView } from './rows'
+import { GroupHeading, RowView } from './rows'
 import { SheetStack } from './sheets'
 import { SiteDataPrompt } from './SiteDataPrompt'
 import { useSheetStack } from './useSheetStack'
@@ -95,14 +95,15 @@ export function SiteDataPage(): JSX.Element {
         aria-label={t.sites}
         aria-busy={listing === null && !failed ? true : undefined}
       >
-        <h3 className="zen-v2-heading zen-settings-heading">
+        {/* The drill-in bar's title is the page's h1: the group heading follows it at h2. */}
+        <GroupHeading level={2}>
           {t.sites}
           {listing && (
             <span className="zen-settings-heading-aside" data-testid="site-data-count">
               {siteDataCountAside(listing)}
             </span>
           )}
-        </h3>
+        </GroupHeading>
         {notes.map((note) => (
           <p key={note} className="zen-settings-group-description">
             {note}

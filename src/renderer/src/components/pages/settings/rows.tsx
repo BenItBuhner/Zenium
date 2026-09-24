@@ -82,6 +82,29 @@ export interface RowContext {
 }
 
 /**
+ * The level of a group's heading in the page's outline, which steps by one from the heading
+ * above it (axe `heading-order`): `3` under the desktop pane's `h2` section title and under a
+ * sheet's or dialog's `h2` title block; `2` on the phone's drill-in page, whose bar is the
+ * page's `h1` and which has no section title between the bar and the groups (#391's
+ * pre-existing `heading-order` on the phone layout). The styles hang on the class, not the tag.
+ */
+export type GroupHeadingLevel = 2 | 3
+
+/** A group's heading (§9.27) at its outline level; the classes are the same at either. */
+export function GroupHeading({
+  level,
+  className,
+  children
+}: {
+  level: GroupHeadingLevel
+  className?: string
+  children: ReactNode
+}): JSX.Element {
+  const Tag = level === 2 ? 'h2' : 'h3'
+  return <Tag className={cn('zen-v2-heading zen-settings-heading', className)}>{children}</Tag>
+}
+
+/**
  * The groups of a section (or an item sheet): heading, description, rows, or the empty line.
  * `children` come after the groups, as one more of them (a search's "Other categories").
  */
@@ -90,12 +113,15 @@ export function GroupList({
   ctx,
   className,
   variant = 'phone',
+  headingLevel = 3,
   children
 }: {
   groups: readonly RowGroup[]
   ctx: RowContext
   className?: string
   variant?: RowVariant
+  /** The groups' heading level (`GroupHeadingLevel`); 3 unless the list stands right under a page's `h1`. */
+  headingLevel?: GroupHeadingLevel
   children?: ReactNode
 }): JSX.Element {
   return (
@@ -112,10 +138,10 @@ export function GroupList({
           aria-label={group.heading ?? undefined}
         >
           {group.heading !== null && (
-            <h3 className="zen-v2-heading zen-settings-heading">
+            <GroupHeading level={headingLevel}>
               {group.heading}
               {group.aside && <span className="zen-settings-heading-aside">{group.aside}</span>}
-            </h3>
+            </GroupHeading>
           )}
           {group.description && (
             <p className="zen-settings-group-description">{group.description}</p>
