@@ -438,15 +438,20 @@ function onRowControl(e: {
 
 /**
  * A control in the row – close, mute, wake, reset, the agent badge: a button by role, named by
- * its tooltip, that takes no focus. The children of a `tab` are presentational (ARIA), so a
- * focusable element inside one is a control the keyboard cannot name (axe `nested-interactive`;
- * a negative tabindex does not make it one it can): the row's own keys stand for these – Delete
- * closes, Enter wakes, the context menu has the rest (§9.22) – and the pointer has the control
- * itself. A press on it never lifts the row and its click never activates the tab.
+ * its tooltip, that takes no focus. The `title` is the chrome tooltip's text (`data-tooltip`,
+ * lib/tooltip.ts – §9.31's one vocabulary, never the native one; the word is PillChip's), and
+ * the control's accessible name unless an `aria-label` says otherwise: its glyph is hidden from
+ * the tree. The children of a `tab` are presentational (ARIA), so a focusable element inside one
+ * is a control the keyboard cannot name (axe `nested-interactive`; a negative tabindex does not
+ * make it one it can): the row's own keys stand for these – Delete closes, Enter wakes, the
+ * context menu has the rest (§9.22) – and the pointer has the control itself. A press on it
+ * never lifts the row and its click never activates the tab.
  */
 function RowControl({
   onClick,
   children,
+  title,
+  'aria-label': ariaLabel,
   ...rest
 }: {
   onClick: () => void
@@ -461,6 +466,8 @@ function RowControl({
   return (
     <span
       role="button"
+      data-tooltip={title}
+      aria-label={ariaLabel ?? title}
       {...rest}
       onClick={(e) => {
         e.stopPropagation()
@@ -622,7 +629,7 @@ function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
       )}
       data-alert={alert}
       role="img"
-      title={label}
+      data-tooltip={label}
       aria-label={label}
     >
       {alert === 'recording' && (

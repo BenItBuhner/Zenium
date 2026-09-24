@@ -378,13 +378,17 @@ describe('the rows’ trailing glyphs (§9.3)', () => {
     }
     for (const id of ['f', 'g'])
       expect(indicator(id).className).toContain('text-[var(--v2-danger)]')
-    expect(indicator('a').getAttribute('title')).toBe('This tab is connected to a Bluetooth device')
-    expect(indicator('b').getAttribute('title')).toBe('This tab is connected to a USB device')
-    expect(indicator('c').getAttribute('title')).toBe('This tab is connected to a HID device')
-    expect(indicator('d').getAttribute('title')).toBe('This tab is connected to a serial port')
-    expect(indicator('e').getAttribute('title')).toBe(
-      'This tab is presenting VR content to a headset'
-    )
+    // Named by the chrome's tooltip and the same words in `aria-label` (a11y-26 / W5-1).
+    const tooltip = (id: string): string | null => indicator(id).getAttribute('data-tooltip')
+    expect(tooltip('a')).toBe('This tab is connected to a Bluetooth device')
+    expect(tooltip('b')).toBe('This tab is connected to a USB device')
+    expect(tooltip('c')).toBe('This tab is connected to a HID device')
+    expect(tooltip('d')).toBe('This tab is connected to a serial port')
+    expect(tooltip('e')).toBe('This tab is presenting VR content to a headset')
+    for (const id of ['a', 'b', 'c', 'd', 'e']) {
+      expect(indicator(id).getAttribute('aria-label')).toBe(tooltip(id))
+      expect(indicator(id).hasAttribute('title')).toBe(false)
+    }
     // The alert takes the audio's slot: a page that plays and holds a device shows the device.
     expect(document.querySelectorAll('[data-tab-id="b"] .zen-tab-audio')).toHaveLength(0)
   })

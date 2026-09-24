@@ -397,7 +397,7 @@ function ColorSwatches({
             role="radio"
             aria-checked={checked}
             aria-label={entry.name}
-            title={entry.name}
+            data-tooltip={entry.name}
             data-color={entry.color}
             data-group-rgb=""
             tabIndex={index === pickedIndex ? 0 : -1}

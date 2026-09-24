@@ -51,7 +51,8 @@ export function GlanceFrame({ state, glance, area, ready }: Props): JSX.Element 
         <button
           type="button"
           className="zen-toolbar-button h-6 w-6"
-          title="Close (Esc)"
+          aria-label="Close (Esc)"
+          data-tooltip="Close (Esc)"
           onClick={() => run('glance.close', undefined)}
         >
           <X className="h-3.5 w-3.5" />
@@ -59,7 +60,8 @@ export function GlanceFrame({ state, glance, area, ready }: Props): JSX.Element 
         <button
           type="button"
           className="zen-toolbar-button h-6 w-6"
-          title={hint('Expand into a tab', state, 'glance.expand')}
+          aria-label={hint('Expand into a tab', state, 'glance.expand')}
+          data-tooltip={hint('Expand into a tab', state, 'glance.expand')}
           onClick={() => run('glance.expand', undefined)}
         >
           <Maximize2 className="h-3.5 w-3.5" />
@@ -67,7 +69,8 @@ export function GlanceFrame({ state, glance, area, ready }: Props): JSX.Element 
         <button
           type="button"
           className="zen-toolbar-button h-6 w-6"
-          title="Open as split view"
+          aria-label="Open as split view"
+          data-tooltip="Open as split view"
           onClick={() => run('glance.split', undefined)}
         >
           <Columns2 className="h-3.5 w-3.5" />

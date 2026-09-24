@@ -67,7 +67,7 @@ export function AppTitleBar({
       }}
     >
       <AppIcon app={app} tab={tab} />
-      <span className="zen-app-titlebar-title truncate" title={host || undefined}>
+      <span className="zen-app-titlebar-title truncate" data-tooltip={host || undefined}>
         {title}
       </span>
       <button

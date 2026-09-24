@@ -265,20 +265,34 @@ export function paneFirstControl(pane: PaneId, doc: Document = document): HTMLEl
  * and no chrome tooltip – until the next key the document does see (measured by the a11y-2
  * drive, 2026-09-23: Shift+Alt+T after the app menu's mouse clicks focused Reload with
  * `:focus-visible` false; the Tab after it rang). The mark stands in for the heuristic where
- * the chrome reads it: the tooltip counts it as keyboard focus (components/Tooltip.tsx). The
- * ring is still `:focus-visible`'s alone (§1, main.css's base floor and the v2 and pill forms):
- * a `[data-keyboard-focus]:focus` form beside each is the seam, the lead's to rule on. It goes
- * with the control's blur.
+ * the chrome reads it: the tooltip counts it as keyboard focus (components/Tooltip.tsx), and
+ * the ring draws for it as for `:focus-visible` – `[data-keyboard-focus]:focus` is the ring's
+ * second trigger (§1 as amended with #400's ruling 7), written beside each ring form in
+ * main.css (the base floor, the `zen-v2-` rule, the pill's `:has()`, the bookmark chip's inset
+ * ring, the toolbar glyph's full ink, …), never as one global override, so a chord landing shows
+ * the 2 px accent ring at the control's own offset exactly as a Tab landing does. The mark goes
+ * with the control's blur, and with the next pointer press anywhere ({@link markKeyboardFocus}):
+ * a press on the focused control itself keeps the focus but is the mouse's, and the heuristic's
+ * own ring would go with it too.
  */
 export const KEYBOARD_FOCUS_ATTR = 'data-keyboard-focus'
 
-/** Set before the focus lands: the tooltip host reads it in the synchronous `focusin`. */
-function markKeyboardFocus(target: HTMLElement): void {
+/**
+ * Set before the focus lands: the tooltip host reads it in the synchronous `focusin`, the
+ * stylesheet's `[data-keyboard-focus]:focus` forms draw the ring from the same frame. Cleared
+ * on the control's blur or on the next `pointerdown` in the document (capture, so no control's
+ * handler can swallow it), whichever comes first; the other listener is dropped with it.
+ */
+function markKeyboardFocus(target: HTMLElement, doc: Document = document): void {
   if (target.hasAttribute(KEYBOARD_FOCUS_ATTR)) return
   target.setAttribute(KEYBOARD_FOCUS_ATTR, '')
-  target.addEventListener('blur', () => target.removeAttribute(KEYBOARD_FOCUS_ATTR), {
-    once: true
-  })
+  const clear = (): void => {
+    target.removeAttribute(KEYBOARD_FOCUS_ATTR)
+    target.removeEventListener('blur', clear)
+    doc.removeEventListener('pointerdown', clear, true)
+  }
+  target.addEventListener('blur', clear)
+  doc.addEventListener('pointerdown', clear, true)
 }
 
 /**
@@ -314,7 +328,7 @@ export function focusPane(request: FocusPaneRequest, doc: Document = document): 
   }
   if (!target) return null
   run('focus.chrome', undefined)
-  markKeyboardFocus(target)
+  markKeyboardFocus(target, doc)
   target.focus()
   // After the target has the keyboard: the bar closing must not ask for the page's focus, which
   // would arrive later and take the keyboard back off the target.
