@@ -353,6 +353,27 @@ describe('WebNotificationService', () => {
       expect(h.service.dismissedBefore('https://site.example/')).toBe(false)
     })
 
+    it('a site’s notification rule reset in Settings drops its quiet mark: it asks aloud again', async () => {
+      h.loudAnswer = 'dismiss'
+      h.service.handle('t1', { notification: 'request', id: 'r1', gesture: true })
+      await flush()
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(true)
+      // Another site's rule changing, or another permission's, says nothing of this mark.
+      for (const listener of h.listeners) {
+        listener({ permission: 'notifications', origin: 'https://other.example' })
+        listener({ permission: 'camera', origin: 'https://site.example' })
+      }
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(true)
+      // The site's own rule: a reset (`permissions.resetOrigin`, `forget`) or a hand-set answer.
+      for (const listener of h.listeners)
+        listener({ permission: 'notifications', origin: 'https://site.example' })
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(false)
+      h.service.handle('t1', { notification: 'request', id: 'r2', gesture: true })
+      await flush()
+      expect(h.decideCalls).toHaveLength(2)
+      expect(h.prompts).toEqual([])
+    })
+
     it('a request without the gesture word (an older page script) asks loudly', async () => {
       h.service.handle('t1', { notification: 'request', id: 'r1' })
       await flush()

@@ -85,10 +85,13 @@ export class WebNotificationService {
 
   constructor(private readonly browser: Browser) {
     // A site's permission withdrawn (Settings, the site sheet, a reset): its notifications and
-    // its channel go, and the pages of the site learn their new status.
+    // its channel go, and the pages of the site learn their new status. A rule changed by hand
+    // is a fresh start for the site's question too: the quiet mark a dismissal left goes with
+    // it, so a site reset in Settings asks aloud again, not quietly for the rest of the session.
     browser.permissions.subscribe((change) => {
       if (change.permission !== 'notifications') return
       if (change.origin !== null) {
+        this.dismissedSites.delete(change.origin)
         const decision = browser.permissions.resolve('notifications', change.origin)
         if (decision !== 'allow') this.forgetOrigin(change.origin)
       }
