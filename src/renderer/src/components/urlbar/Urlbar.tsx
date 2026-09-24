@@ -1905,22 +1905,27 @@ function SuggestionRow({
         }
       }
     : pointerProps
-  // The desktop row's glyph is a §9.3 row glyph – 16 at stroke 1.5 in the lead slot's
-  // deemphasised ink (`V2_GLYPH`); the phone sheet's row keeps its own.
-  const icon =
-    item.favicon && !faviconBroken && !page ? (
-      <img
-        src={item.favicon}
-        alt=""
-        className="h-4 w-4 rounded-[3px]"
-        referrerPolicy="no-referrer"
-        onError={() => setFaviconBroken(true)}
-      />
-    ) : sheet ? (
-      <Icon className="h-4 w-4 shrink-0 opacity-60" />
-    ) : (
-      <Icon className={V2_GLYPH} aria-hidden />
-    )
+  // The desktop row's glyph is a §9.3 row glyph – 16 at stroke 1.5 (`V2_GLYPH`) in the row's
+  // ink (§10.4: a leading glyph is full ink like the title it introduces); the phone sheet's row
+  // keeps its own.
+  const favicon = page || faviconBroken ? null : item.favicon
+  // The globe alone is a stand-in – the address offered no favicon – and the slot draws it at
+  // 69%, §10.4's one exception; a kind's glyph (the clock, the star, the magnifier) says what
+  // the row is and is no stand-in.
+  const standIn = !favicon && !page && item.kind === 'url'
+  const icon = favicon ? (
+    <img
+      src={favicon}
+      alt=""
+      className="h-4 w-4 rounded-[3px]"
+      referrerPolicy="no-referrer"
+      onError={() => setFaviconBroken(true)}
+    />
+  ) : sheet ? (
+    <Icon className="h-4 w-4 shrink-0 opacity-60" />
+  ) : (
+    <Icon className={V2_GLYPH} aria-hidden />
+  )
   if (sheet) {
     // The row is the option (what a tap picks) and, after it, its control: Show or the Refine
     // arrow. ARIA makes an option's children presentational, so a button inside one is not in the
@@ -2019,7 +2024,12 @@ function SuggestionRow({
         aria-selected={selected}
         className="zen-omnibox-row-body flex min-w-0 flex-1 items-center"
       >
-        <span className="zen-omnibox-row-icon flex shrink-0 items-center justify-center">
+        <span
+          className={cn(
+            'zen-omnibox-row-icon flex shrink-0 items-center justify-center',
+            standIn && 'zen-omnibox-row-globe'
+          )}
+        >
           {icon}
         </span>
         <span className="zen-omnibox-row-title">

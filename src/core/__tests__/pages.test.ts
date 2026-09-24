@@ -290,7 +290,7 @@ describe('opening Settings as a tab', () => {
     })
   })
 
-  it('opens the New Tab section from the new tab page’s Customize as a tab of this tab, never the overlay', () => {
+  it('opens the New Tab section from the new tab page’s Customise as a tab of this tab, never the overlay', () => {
     const f = fixture()
     f.browser.handleCommand(f.win, 'newtab.open', undefined)
     const ntp = activeTab(f)!

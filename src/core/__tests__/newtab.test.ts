@@ -898,7 +898,7 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(commands).toEqual([{ type: 'remove-tile', id: 'site:news.example' }])
   })
 
-  it('Customize opens Settings at the New Tab section', () => {
+  it('Customise opens Settings at the New Tab section', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
     f.browser.handleCommand(win, 'newtab.open', undefined)

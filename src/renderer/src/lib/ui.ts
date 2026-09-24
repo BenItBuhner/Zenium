@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import type { PageViewport } from '@shared/capture'
+import { isDockedInFrame } from '@shared/devtoolsDock'
 import {
   INTERNAL_PAGES,
   pageForOverlayKind,
@@ -29,6 +30,7 @@ import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, run } from './api'
 import { browserStore } from './browserStore'
+import { devtoolsDockOf } from './contentRadius'
 import { isPhone, viewportStore } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
 import { onboardingCovers } from './onboarding'
@@ -271,6 +273,12 @@ export interface UiState {
   /** Data URL of the active tab, shown dimmed behind overlays. */
   snapshot: string | null
   snapshotTabId: string | null
+  /**
+   * The picture of the developer toolbox docked in `snapshotTabId`'s box (§9.29), taken with
+   * `snapshot` and laid under it – the whole box, the page's hole covered by the page's picture
+   * – so a menu over a docked toolbox leaves the toolbox in view. Null with none docked there.
+   */
+  toolboxSnapshot: string | null
   /** At most one toast is live; a toast on its way out may still be alongside it. */
   toasts: Toast[]
   /** The screenshot preview card in the toast's slot (one live, one maybe on its way out). */
@@ -574,6 +582,7 @@ export const uiStore = createStore<UiState>(
     zoomTabId: null,
     snapshot: null,
     snapshotTabId: null,
+    toolboxSnapshot: null,
     toasts: [],
     screenshotCards: [],
     longScreenshot: null,
@@ -1018,25 +1027,41 @@ export async function captureActiveTab(
   { fresh = false }: { fresh?: boolean } = {}
 ): Promise<void> {
   if (!tabId) {
-    uiStore.set({ snapshot: null, snapshotTabId: null })
+    uiStore.set({ snapshot: null, snapshotTabId: null, toolboxSnapshot: null })
     return
   }
   if (snapshotHeld(tabId)) return
   const pending = captures.get(tabId)
   if (pending) return pending
   const capture = (async (): Promise<void> => {
-    const data = await cmd('overlay.snapshot', fresh ? { tabId, fresh } : { tabId }).catch(
-      () => null
-    )
+    const args = fresh ? { tabId, fresh } : { tabId }
+    // A toolbox docked in the tab's box (§9.29) is pictured with the page, the two asked for
+    // together so the cover swaps in whole; the picture goes under the page's in `ContentArea`.
+    const [data, toolbox] = await Promise.all([
+      cmd('overlay.snapshot', args).catch(() => null),
+      toolboxDockedIn(tabId) ? cmd('overlay.snapshotDevtools', args).catch(() => null) : null
+    ])
     if (data) rememberThumbnail(tabId, data)
     // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
     // looked like the last time it was.
-    uiStore.set({ snapshot: data ?? thumbnailOf(tabId), snapshotTabId: tabId })
+    uiStore.set({
+      snapshot: data ?? thumbnailOf(tabId),
+      snapshotTabId: tabId,
+      toolboxSnapshot: toolbox
+    })
   })().finally(() => {
     captures.delete(tabId)
   })
   captures.set(tabId, capture)
   return capture
+}
+
+/** Whether `tabId`'s developer toolbox stands docked in its frame box (§9.29), by the tab's own reading. */
+function toolboxDockedIn(tabId: string): boolean {
+  const state = browserStore.get().state
+  if (!state) return false
+  const dock = devtoolsDockOf(state, tabId)
+  return dock !== null && isDockedInFrame(dock)
 }
 
 /**
@@ -1239,7 +1264,7 @@ export function invalidateSnapshot(): void {
       return
     }
     snapshotStale = false
-    uiStore.set({ snapshot: null, snapshotTabId: null })
+    uiStore.set({ snapshot: null, snapshotTabId: null, toolboxSnapshot: null })
   }
 }
 

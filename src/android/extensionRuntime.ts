@@ -130,8 +130,8 @@ import type { ViewEventPayloads } from './views'
  * Kotlin protocol (runtime → Kotlin), every call keyed by extension id:
  *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots, navigationListener, messageLimit }
  *  ext.open { id, path }                    → { manifest, locales: { <locale>: <messages.json> } }
- *  ext.configure { id, version, path, allowFileAccess, allowPrivate, units, served, debug }
- *                                           → { units: [{ key, chars, cached }], ms }
+ *  ext.configure { id, name, version, path, allowFileAccess, allowPrivate, units, served, debug }
+ *                                           → { units: [{ key, chars, cached, refused? }], ms }
  *  ext.detach { id }
  *  ext.expect { ids }                       the extensions about to be attached (a restored tab's page on one is held, not 404'd)
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
@@ -188,7 +188,17 @@ interface OpenedExtension {
 
 /** What Kotlin reports after compiling and installing one extension's units. */
 export interface ConfigureStats {
-  units: Array<{ key: string; chars: number; cached: boolean }>
+  units: Array<{
+    key: string
+    chars: number
+    cached: boolean
+    /**
+     * Set when Kotlin refused the unit as more than the heap can hold as one script (the
+     * characters it would have run to); its content scripts are not injected, the extension's
+     * other units and pages are. Kotlin puts the line on the extension's error console.
+     */
+    refused?: number | null
+  }>
   ms: number
 }
 
@@ -932,11 +942,46 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   }
 
   /**
+   * A plan on its way to Kotlin, per extension, and the one follow-up due after it. A burst of
+   * `registerContentScripts` calls (eJOY's bundled webext-dynamic-content-scripts registers
+   * each manifest script for each additional origin, eighty-one calls without a wait between
+   * them) re-planned and recompiled the extension's units once per call: eighty-one compiles
+   * in thirty-six seconds on the emulator, each over a larger unit than the last (compat
+   * round 13). A call that arrives while a plan is in flight shares ONE follow-up, planned from
+   * the state at the time it runs – so it carries every registration recorded by then – and
+   * resolves when that landed; nothing an extension awaits resolves before its plan is live.
+   */
+  private readonly configuring = new Map<string, { landed: Promise<void>; next: Promise<void> | null }>()
+
+  /**
    * Plan the extension's units from its manifest, registered scripts and world configuration
    * and hand them to Kotlin; a plan identical to the last one is not sent again (Kotlin keeps
    * its compiled units per extension and version, so every other extension is untouched).
+   * Plans of one extension go one at a time ([configuring]).
    */
-  private async configure(ext: Attached): Promise<void> {
+  private configure(ext: Attached): Promise<void> {
+    const id = ext.record.id
+    const inFlight = this.configuring.get(id)
+    if (inFlight) {
+      // Whatever the plan in flight comes to, one more follows it for the state since; an
+      // extension detached or replaced meanwhile plans for itself.
+      const again = (): Promise<void> =>
+        this.extensions.get(id) === ext ? this.configure(ext) : Promise.resolve()
+      inFlight.next ??= inFlight.landed.then(again, again)
+      return inFlight.next
+    }
+    const entry: { landed: Promise<void>; next: Promise<void> | null } = {
+      landed: Promise.resolve(),
+      next: null
+    }
+    entry.landed = this.configureNow(ext).finally(() => {
+      if (this.configuring.get(id) === entry) this.configuring.delete(id)
+    })
+    this.configuring.set(id, entry)
+    return entry.landed
+  }
+
+  private async configureNow(ext: Attached): Promise<void> {
     const env = await this.ensureEnv()
     const id = ext.record.id
     const bootFor = (isolation: IsolationMode): ExtensionBoot =>
@@ -978,6 +1023,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     }
     const stats = await this.bridge.call<ConfigureStats>('ext.configure', {
       id,
+      // For the console line Kotlin writes when it refuses a unit.
+      name: ext.record.name,
       version: ext.manifest.version,
       path: ext.record.path,
       allowFileAccess: ext.record.allowFileAccess === true,

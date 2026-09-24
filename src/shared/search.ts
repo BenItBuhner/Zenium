@@ -200,13 +200,17 @@ function uniqueEngineId(prefix: string, name: string, existing: readonly SearchE
 }
 
 /**
- * The engine a Settings > Search form adds: its name and template, a keyword and glyph derived
- * from the name, no suggestions (a hand-typed engine offers no suggest endpoint).
+ * The engine a Settings > Search form adds: its name and template, the shortcut the form typed
+ * (`keyword`, `@` or not, normalised as `editedSearchEngine` keeps an edit's) or – left empty,
+ * or not given – one derived from the name, a glyph derived from the name, no suggestions (a
+ * hand-typed engine offers no suggest endpoint). A typed word another engine answers to is the
+ * caller's to refuse first (`engineKeywordProblem`); this takes it as it is.
  */
 export function customSearchEngine(
   name: string,
   url: string,
-  existing: readonly SearchEngine[]
+  existing: readonly SearchEngine[],
+  keyword = ''
 ): SearchEngine {
   const cleanName = name.trim().slice(0, MAX_ENGINE_NAME)
   return {
@@ -214,7 +218,7 @@ export function customSearchEngine(
     name: cleanName,
     searchUrl: url.trim(),
     suggestUrl: null,
-    keyword: uniqueEngineKeyword(cleanName, existing),
+    keyword: normalizeEngineKeyword(keyword) ?? uniqueEngineKeyword(cleanName, existing),
     glyph: engineGlyph(cleanName),
     source: 'custom',
     favicon: null
