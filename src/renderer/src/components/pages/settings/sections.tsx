@@ -1271,6 +1271,7 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
   const prefs = state.settings.newTab
   const write = (next: NewTabSettings): void => set({ newTab: next })
   const { image, canPick, accent } = state.newTabBackground
+  const activeSpace = state.spaces.find((s) => s.id === state.activeSpaceId)
   const backgroundOptions: Array<{ value: NewTabBackgroundKind; label: string }> = [
     { value: 'space', label: 'Space gradient' },
     { value: 'solid', label: 'Solid colour' }
@@ -1335,9 +1336,25 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
             else write(setNewTabBackground(prefs, v))
           }
         }),
-        // The image rows exist where a file can be picked; both depend on an image being set.
+        // The image rows exist where a file can be picked; each depends on an image being set.
         ...(canPick
           ? [
+              // The picture's colour as the space's accent (NTP-14): Chrome recolours the browser
+              // from the image on its own; here it is the user's switch, under the background it
+              // reads from. On, this space takes the picture's colour the moment it is flipped
+              // (§9.23) and follows each new picture; off, the colours stay. It rests at .4
+              // without a picture, and until the picture's colour is read.
+              {
+                kind: 'switch',
+                id: 'newtab-image-colour',
+                label: "Use the picture's colour",
+                description:
+                  'This space takes the colour your picture is mostly of, and follows a new one.',
+                keywords: ['theme', 'accent', 'colour', 'color', 'wallpaper'],
+                checked: activeSpace?.theme?.fromImage === true,
+                disabled: !image || !accent,
+                onChange: (v) => run('newtab.useImageColor', { on: v })
+              } satisfies SettingsRow,
               {
                 kind: 'action',
                 id: 'newtab-change-image',
@@ -1355,19 +1372,6 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
                 button: 'Remove',
                 disabled: !image,
                 onPress: () => run('newtab.clearBackgroundImage', undefined)
-              } satisfies SettingsRow,
-              // The picture's colour as the space's accent (NTP-14): Chrome suggests a browser
-              // colour from the image; here it is a row the user takes, never applied for them.
-              // The colour is read once the image is set; until it is, the row rests.
-              {
-                kind: 'action',
-                id: 'newtab-image-colour',
-                label: "Use the picture's colour",
-                description: 'This space takes the colour your background image is mostly of.',
-                keywords: ['theme', 'accent', 'colour', 'color', 'wallpaper'],
-                button: 'Use',
-                disabled: !image || !accent,
-                onPress: () => run('newtab.useImageColor', undefined)
               } satisfies SettingsRow
             ]
           : []),

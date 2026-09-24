@@ -47,6 +47,7 @@ import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES, withDefaultSearchEngineActive } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
+import { makeTheme } from '@shared/theme'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { emptySiteDataStatus } from '@shared/siteData'
@@ -1386,25 +1387,55 @@ describe('the section model', () => {
     )
     expect(row(solid, 'newtab-reset-background')).toMatchObject({ disabled: false })
 
-    // NTP-14: "Use the picture's colour" stands with the image rows – so only where a file can be
-    // picked – and arms once an image is set and its colour read; pressing it is the command.
+    // NTP-14: "Use the picture's colour" is a switch directly under the background – with the
+    // image rows, so only where a file can be picked – at rest (disabled) without an image and
+    // until its colour is read, on when the active space's theme follows the picture; flipping
+    // it is the command.
     expect(findRow(newtab.groups, 'newtab-image-colour')).toBeNull()
-    const pickable = (accent: string | null, image = true): Model =>
+    const pickable = (accent: string | null, image = true, following = false): Model =>
       section(
         'newtab',
         state({
           capabilities: { ...ANDROID, newTabPage: true },
-          newTabBackground: { image, canPick: true, accent }
-        } as Partial<UIState>)
+          newTabBackground: { image, canPick: true, accent },
+          spaces: [
+            {
+              id: 'space',
+              name: 'Personal',
+              activeTabId: 'settings',
+              tabIds: ['site', 'settings'],
+              theme: following ? { ...makeTheme('#3b6fd6'), fromImage: true } : null
+            }
+          ]
+        } as unknown as Partial<UIState>)
       )
-    expect(row(pickable(null, false), 'newtab-image-colour')).toMatchObject({ disabled: true })
+    expect(row(pickable(null, false), 'newtab-image-colour')).toMatchObject({
+      kind: 'switch',
+      checked: false,
+      disabled: true
+    })
     expect(row(pickable(null), 'newtab-image-colour')).toMatchObject({ disabled: true })
+    const ids = pickable('#3b6fd6').groups[0].rows.map((r) => r.id)
+    expect(ids.indexOf('newtab-image-colour')).toBe(ids.indexOf('newtab-background') + 1)
     const useColour = row(pickable('#3b6fd6'), 'newtab-image-colour')
-    if (useColour.kind !== 'action') throw new Error('not an action')
-    expect(useColour).toMatchObject({ label: "Use the picture's colour", disabled: false })
-    expect(useColour.confirm).toBeUndefined()
-    useColour.onPress?.()
-    expect(invoke).toHaveBeenCalledWith('newtab.useImageColor', undefined)
+    if (useColour.kind !== 'switch') throw new Error('not a switch')
+    expect(useColour).toMatchObject({
+      label: "Use the picture's colour",
+      checked: false,
+      disabled: false
+    })
+    useColour.onChange(true)
+    expect(invoke).toHaveBeenCalledWith('newtab.useImageColor', { on: true })
+    const following = row(pickable('#3b6fd6', true, true), 'newtab-image-colour')
+    if (following.kind !== 'switch') throw new Error('not a switch')
+    expect(following).toMatchObject({ checked: true, disabled: false })
+    following.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('newtab.useImageColor', { on: false })
+    // The picture let go while on: the switch keeps the space's choice, at rest.
+    expect(row(pickable(null, false, true), 'newtab-image-colour')).toMatchObject({
+      checked: true,
+      disabled: true
+    })
 
     // A shortcut without a name is listed by its address; its sheet edits, moves and removes it.
     expect(row(newtab, 'shortcut:b').label).toBe('https://b.test/')

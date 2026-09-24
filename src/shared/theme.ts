@@ -341,6 +341,48 @@ export function makeTheme(primaryHex: string, extra: string[] = []): SpaceTheme 
 }
 
 /**
+ * A theme as the theme editor writes it (`space.update`; NTP-14): the wheel's colours are the
+ * user's own choice, so a theme whose colours changed no longer follows the background picture
+ * (`SpaceTheme.fromImage`), and the editor never starts the following – only Settings' switch
+ * does. Edits that leave the colours – opacity, texture, angle, algorithm, monochrome – keep a
+ * following that was on, even from an editor whose copy of the theme predates the switch.
+ */
+export function editedTheme(
+  current: SpaceTheme | null,
+  next: SpaceTheme | null
+): SpaceTheme | null {
+  if (!next) return null
+  if (current?.fromImage === true && sameColors(current.colors, next.colors)) {
+    return next.fromImage === true ? next : { ...next, fromImage: true }
+  }
+  return next.fromImage === undefined ? next : unfollowedTheme(next)
+}
+
+/** `theme` following the picture no longer: the colours it has stay, as the space's own. */
+export function unfollowedTheme(theme: SpaceTheme): SpaceTheme {
+  const own = { ...theme }
+  delete own.fromImage
+  return own
+}
+
+function sameColors(a: ThemeColor[], b: ThemeColor[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((p, i) => {
+      const q = b[i]
+      return (
+        p.c[0] === q.c[0] &&
+        p.c[1] === q.c[1] &&
+        p.c[2] === q.c[2] &&
+        p.x === q.x &&
+        p.y === q.y &&
+        Boolean(p.isPrimary) === Boolean(q.isPrimary)
+      )
+    })
+  )
+}
+
+/**
  * Zen's private-window look: a deep purple gradient regardless of the space theme, and dark
  * under either scheme (an Incognito window is): muted towards paper for a light scheme it came
  * out lavender, where neither ink reached 4.5:1 (a11y-30).

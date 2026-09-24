@@ -150,7 +150,7 @@ import {
 import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeHomepage } from '../shared/homepage'
-import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
+import { PRIVATE_THEME, captionColors, editedTheme, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
@@ -2858,7 +2858,8 @@ export class Browser {
         if (!space) return
         if (patch.name !== undefined) space.name = patch.name.trim() || space.name
         if (patch.icon !== undefined) space.icon = patch.icon
-        if (patch.theme !== undefined) space.theme = patch.theme
+        // The editor's colours are the user's: they end a theme's following of the picture.
+        if (patch.theme !== undefined) space.theme = editedTheme(space.theme, patch.theme)
         if (
           patch.containerId !== undefined &&
           !space.windowId &&
@@ -3143,7 +3144,7 @@ export class Browser {
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),
       'newtab.reset': () => this.newTab.reset(),
-      'newtab.useImageColor': (_a, win) => this.newTab.useImageColor(win),
+      'newtab.useImageColor': ({ on }, win) => this.newTab.useImageColor(on, win),
       'newtab.backgroundImage': () => this.newTab.backgroundImage(),
       'newtab.setBackgroundImage': ({ dataUrl }) => this.newTab.setBackgroundImage(dataUrl),
 

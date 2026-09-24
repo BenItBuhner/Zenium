@@ -29,7 +29,7 @@ import type {
 import { privateThirdPartyCookieStatus, type SafeBrowsingHit } from '../shared/privacy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
-import { makeTheme, resolveTheme, themeCssVariables } from '../shared/theme'
+import { makeTheme, resolveTheme, themeCssVariables, unfollowedTheme } from '../shared/theme'
 import { engineFieldFavicon } from '../shared/search'
 import { newId } from '../shared/ids'
 import {
@@ -837,6 +837,7 @@ export class NewTabService {
     // The picker took the chrome's focus; give it back so the next click is not dropped.
     win.focusChrome()
     if (!picked) return false
+    this.followPicture()
     this.showImage()
     return true
   }
@@ -858,6 +859,8 @@ export class NewTabService {
   private accentCache: { url: string; accent: string | null } | null = null
   /** The image address whose colour is being read. */
   private accentPending: string | null = null
+  /** The address of a picture just picked, whose colour the following spaces take once read. */
+  private followUrl: string | null = null
 
   /**
    * The colour the background picture suggests for the accent (NTP-14; `UIState.newTabBackground
@@ -877,6 +880,10 @@ export class NewTabService {
         if (this.accentPending !== url) return
         this.accentPending = null
         this.accentCache = { url, accent }
+        if (this.followUrl === url) {
+          this.followUrl = null
+          this.recolourFollowing(accent)
+        }
         this.browser.state.commit()
       }
       void host.accent().then(settle, () => settle(null))
@@ -885,23 +892,61 @@ export class NewTabService {
   }
 
   /**
-   * Settings' "Use the picture's colour" (NTP-14): the window's active space takes the image's
-   * colour as its theme's primary through `makeTheme` – the same seed the theme picker's swatch
-   * would give it – with the theme's other settings (opacity, texture, algorithm, angle) kept, so
-   * the window, the sidebar and the page agree on the colour. A suggestion the user takes, never
-   * applied for them: a picked wallpaper does not recolour a space the user themed. False while
-   * the colour is not known, and in a private window, whose look is one theme by rule (v2 §9.19).
+   * Settings' "Use the picture's colour" switch (NTP-14). On: the window's active space takes the
+   * picture's colour as its theme's primary through `makeTheme` – the same seed the theme
+   * picker's swatch would give it – with the theme's other settings (opacity, texture, algorithm,
+   * angle) kept, so the window, the sidebar and the page agree on the colour; and the theme is
+   * marked as following the picture (`SpaceTheme.fromImage`), so each new picture picked while
+   * the switch stays on recolours it the same way. Off: the following ends and the colours stay –
+   * they are the space's now; the theme editor is where another comes from. The user's choice,
+   * never made for them: a picked wallpaper does not recolour a space the user themed. False when
+   * nothing changed: while the colour is not known, in a private window, whose look is one theme
+   * by rule (v2 §9.19), or off already.
    */
-  useImageColor(win: ZenWindow): boolean {
-    const accent = this.imageAccent()
-    if (!accent || win.isPrivate) return false
+  useImageColor(on: boolean, win: ZenWindow): boolean {
+    if (win.isPrivate) return false
     const space = win.activeSpace()
-    const seeded = makeTheme(accent)
-    space.theme = space.theme
-      ? { ...space.theme, colors: seeded.colors, monochrome: false }
-      : seeded
+    if (!on) {
+      if (space.theme?.fromImage !== true) return false
+      space.theme = unfollowedTheme(space.theme)
+      this.browser.state.commit()
+      return true
+    }
+    const accent = this.imageAccent()
+    if (!accent) return false
+    space.theme = followingTheme(space.theme, accent)
     this.browser.state.commit()
     return true
+  }
+
+  /**
+   * A picture was just picked on this device: the spaces following the picture take its colour –
+   * at once when it is known, else when its read ends (`imageAccent`'s settle; the read starts
+   * here, not at the chrome's next look at the state, which a second picture over a first would
+   * not bring). Only a pick follows, not the read of the picture found at boot: pictures are
+   * each device's own, and two devices recolouring one synced space from two pictures would
+   * never settle.
+   */
+  private followPicture(): void {
+    const url = this.browser.platform.newTabBackground?.current() ?? null
+    if (!url) return
+    if (this.accentCache?.url === url) {
+      this.recolourFollowing(this.accentCache.accent)
+      this.browser.state.commit()
+      return
+    }
+    this.followUrl = url
+    this.imageAccent()
+    // No decoder on this host: nothing will ever be read.
+    if (this.accentPending !== url) this.followUrl = null
+  }
+
+  /** Every space following the picture takes `accent` as its primary; none without a colour. */
+  private recolourFollowing(accent: string | null): void {
+    if (!accent) return
+    for (const space of this.browser.state.model.spaces) {
+      if (space.theme?.fromImage === true) space.theme = followingTheme(space.theme, accent)
+    }
   }
 
   /**
@@ -912,8 +957,10 @@ export class NewTabService {
     const host = this.browser.platform.newTabBackground
     if (!host?.set) throw new Error('This device cannot keep a background image')
     await host.set(dataUrl)
-    if (dataUrl) this.showImage()
-    else if (this.settings.background === 'image') this.setSettings({ background: 'space' })
+    if (dataUrl) {
+      this.followPicture()
+      this.showImage()
+    } else if (this.settings.background === 'image') this.setSettings({ background: 'space' })
     else this.browser.state.commit()
   }
 
@@ -1017,6 +1064,17 @@ export class NewTabService {
   destroyAll(): void {
     for (const id of [...this.preloads.keys()]) this.dropPreload(id)
   }
+}
+
+/**
+ * `theme` recoloured from the picture's `accent` and marked as following it: the seed's colours
+ * with the theme's other settings kept; a space with no theme yet takes the seed whole.
+ */
+function followingTheme(theme: SpaceTheme | null, accent: string): SpaceTheme {
+  const seeded = makeTheme(accent)
+  return theme
+    ? { ...theme, colors: seeded.colors, monochrome: false, fromImage: true }
+    : { ...seeded, fromImage: true }
 }
 
 /** Before the first layout: roughly the page area of a window with the sidebar open. */

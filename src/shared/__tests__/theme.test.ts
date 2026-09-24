@@ -11,6 +11,7 @@ import {
   contrastRatio,
   cssColorToHex,
   deriveColors,
+  editedTheme,
   hexToRgb,
   hslToRgb,
   isDarkColor,
@@ -24,9 +25,11 @@ import {
   themeCssVariables,
   themeInk,
   toMonochrome,
+  unfollowedTheme,
   wantsLightInk,
   wheelToColor
 } from '../theme'
+import type { SpaceTheme } from '../types'
 
 describe('colour utilities', () => {
   it('round-trips rgb <-> hsl and hex', () => {
@@ -242,5 +245,45 @@ describe('blendResolvedThemes', () => {
     const vars = themeCssVariables(blendResolvedThemes(space, priv, 0.3))
     expect(vars['--zen-bg']).toMatch(/^linear-gradient\(\d+deg, (#[0-9a-f]{6} \d+%(, )?)+\)$/)
     expect(vars['--zen-bg-solid']).toMatch(/^#[0-9a-f]{6}$/)
+  })
+})
+
+describe('editedTheme (the theme editor against a theme following the picture, NTP-14)', () => {
+  const following: SpaceTheme = { ...makeTheme('#3b6fd6'), fromImage: true }
+
+  it('keeps the following through edits that leave the colours, from a stale copy too', () => {
+    const stale = unfollowedTheme(following)
+    expect(stale).toEqual(makeTheme('#3b6fd6'))
+    expect(stale).not.toHaveProperty('fromImage')
+    expect(editedTheme(following, { ...stale, texture: 0.4 })).toEqual({
+      ...following,
+      texture: 0.4
+    })
+    expect(editedTheme(following, { ...following, monochrome: true, rotation: 10 })).toEqual({
+      ...following,
+      monochrome: true,
+      rotation: 10
+    })
+  })
+
+  it("ends it with the wheel's colours, and never starts it", () => {
+    const own = makeTheme('#c82828')
+    expect(editedTheme(following, { ...following, colors: own.colors })).toEqual({
+      ...following,
+      colors: own.colors,
+      fromImage: undefined
+    })
+    expect(editedTheme(following, { ...following, colors: own.colors })).not.toHaveProperty(
+      'fromImage'
+    )
+    // Another dot on the wheel is a colour of the user's as much as a moved one.
+    const two = makeTheme('#3b6fd6', ['#ffffff'])
+    expect(editedTheme(following, { ...following, colors: two.colors })).not.toHaveProperty(
+      'fromImage'
+    )
+    expect(editedTheme(own, { ...own, fromImage: true })).toEqual(own)
+    expect(editedTheme(null, { ...own, fromImage: true })).toEqual(own)
+    expect(editedTheme(own, own)).toBe(own)
+    expect(editedTheme(following, null)).toBeNull()
   })
 })

@@ -402,6 +402,15 @@ export interface SpaceTheme {
    * under a light scheme, the way an Incognito window does, so its light ink keeps reading on it.
    */
   scheme?: 'light' | 'dark'
+  /**
+   * The colours follow the new tab page's background picture (NTP-14; Settings' "Use the
+   * picture's colour" switch): seeded from the picture's colour when the switch went on, and
+   * again from each new picture picked on a device while it stays on. The switch's own state –
+   * the space's, kept with its theme wherever the space goes; absent reads off. Colours the user
+   * picks on the theme editor's wheel end the following (`editedTheme`): a picture does not
+   * overrule the user's colour unasked.
+   */
+  fromImage?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -3679,7 +3688,7 @@ export interface UIState {
    * picker for one (the phone's page reads the file itself and stores it through `set`), and
    * the colour the picture suggests for the space's accent (NTP-14; `#rrggbb`, fitted to read on
    * both panels) – null with no image, while it is still being read, or on a host that cannot
-   * decode the file. Settings' "Use the picture's colour" row arms on it.
+   * decode the file. Settings' "Use the picture's colour" switch arms on it.
    */
   newTabBackground: { image: boolean; canPick: boolean; accent: string | null }
   recentlyClosedCount: number
@@ -4839,11 +4848,14 @@ export interface Commands {
    */
   'newtab.reset': { args: void; result: void }
   /**
-   * Settings › New Tab's "Use the picture's colour" (NTP-14): the window's active space takes the
-   * background image's colour (`UIState.newTabBackground.accent`) as its theme's primary, the
-   * rest of the theme kept. False when no image is set or its colour is not known yet.
+   * Settings › New Tab's "Use the picture's colour" switch (NTP-14). On: the window's active
+   * space takes the background picture's colour (`UIState.newTabBackground.accent`) as its
+   * theme's primary, the rest of the theme kept, and follows each new picture from then on
+   * (`SpaceTheme.fromImage`). Off: the following ends; the colours stay. False when nothing
+   * changed – no picture or its colour not known yet, a private window (v2 §9.19), or off
+   * already.
    */
-  'newtab.useImageColor': { args: void; result: boolean }
+  'newtab.useImageColor': { args: { on: boolean }; result: boolean }
   /**
    * The background image's address for a chrome that paints the page itself (the phone's; a data
    * URL there), or null when none is set.
