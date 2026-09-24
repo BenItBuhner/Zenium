@@ -18,6 +18,7 @@ describe('parsePreviewSeed', () => {
       lock: false,
       screenLock: null,
       bar: null,
+      appLinks: null,
       siteData: null
     })
     // The lock on (INC-05): the cover over a private tab in front, or over the Private pane.
@@ -35,8 +36,24 @@ describe('parsePreviewSeed', () => {
       lock: true,
       screenLock: false,
       bar: null,
+      appLinks: null,
       siteData: null
     })
+  })
+
+  it('seeds the host’s link-handling answer from `applinks=`, for About’s Open by default row', () => {
+    expect(parsePreviewSeed('page=settings&section=about&applinks=allowed')).toMatchObject({
+      appLinks: 'allowed'
+    })
+    expect(parsePreviewSeed('page=settings&section=about&applinks=disallowed')).toMatchObject({
+      appLinks: 'disallowed'
+    })
+    expect(parsePreviewSeed('page=settings&applinks=unknown')).toMatchObject({
+      appLinks: 'unknown'
+    })
+    // Any other word, or none, leaves the host its own answer.
+    expect(parsePreviewSeed('page=settings&applinks=maybe')).toMatchObject({ appLinks: null })
+    expect(parsePreviewSeed('page=settings&section=about')).toMatchObject({ appLinks: null })
   })
 
   it('seeds the site-data policy and the viewer’s sample from `sitedata=`', () => {
@@ -196,6 +213,33 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('group=abc')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('group=3&overlay=history')).toEqual({ kind: 'group', members: 3 })
     expect(parsePreviewSpec('page=settings&group=3')).toEqual({ kind: 'page', page: 'settings' })
+  })
+
+  it('holds the link menu up on its own for `link=`, the link’s text along for the header', () => {
+    expect(parsePreviewSpec('link=https://sample.example/other')).toEqual({
+      kind: 'link',
+      url: 'https://sample.example/other'
+    })
+    expect(parsePreviewSpec('link=tel:%2B15550100&text=Call the demo')).toEqual({
+      kind: 'link',
+      url: 'tel:+15550100',
+      text: 'Call the demo'
+    })
+    expect(parsePreviewSpec('link=mailto:hello@zenium.example&text=')).toEqual({
+      kind: 'link',
+      url: 'mailto:hello@zenium.example'
+    })
+    // Behind a group (which takes the link as its own), ahead of an overlay; nothing for no URL.
+    expect(parsePreviewSpec('group=2&link=https://sample.example/other')).toEqual({
+      kind: 'group',
+      members: 2,
+      link: 'https://sample.example/other'
+    })
+    expect(parsePreviewSpec('link=https://sample.example/other&overlay=history')).toEqual({
+      kind: 'link',
+      url: 'https://sample.example/other'
+    })
+    expect(parsePreviewSpec('link=')).toEqual({ kind: 'idle' })
   })
 
   it('opens the app menu, behind an overlay but ahead of the bars', () => {
