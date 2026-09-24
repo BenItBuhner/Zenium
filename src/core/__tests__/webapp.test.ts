@@ -279,6 +279,30 @@ describe('WebAppService', () => {
     expect(h.closedTabs).toEqual([])
   })
 
+  it('hands the launcher the display mode, scope and colours of an app with a manifest', async () => {
+    const h = harness()
+    postManifest(h)
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    expect(h.pins).toHaveLength(1)
+    // The host's own window (activity) needs these without the page: PWA-07 reads them back.
+    expect(h.pins[0]).toMatchObject({
+      id: MANIFEST_ID,
+      url: DOCUMENT_URL,
+      display: 'standalone',
+      scope: 'https://app.example/',
+      themeColor: null,
+      backgroundColor: null
+    })
+  })
+
+  it('leaves the display mode out of a plain page shortcut', async () => {
+    const h = harness()
+    await h.service.pin(h.tab.id, 'Sketch', h.win)
+    expect(h.pins).toHaveLength(1)
+    expect(h.pins[0].display).toBeUndefined()
+    expect(h.pins[0].scope).toBeUndefined()
+  })
+
   it('opens the installing tab in an app window of its own on desktop and keeps the icon', async () => {
     const h = harness({ desktop: true })
     postManifest(h)

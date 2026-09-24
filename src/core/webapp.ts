@@ -460,7 +460,15 @@ export class WebAppService {
       iconUrl: icon?.url ?? tab.favicon,
       iconKind: icon ? icon.kind : tab.favicon ? 'any' : null,
       background: this.tileColorFor(info, tab),
-      iconBackground: info?.backgroundColor ?? null
+      iconBackground: info?.backgroundColor ?? null,
+      ...(info
+        ? {
+            display: info.display,
+            scope: info.scope,
+            themeColor: info.themeColor,
+            backgroundColor: info.backgroundColor
+          }
+        : {})
     }
     this.pendingPins.set(request.id, { tabId, title: name, url: request.url })
     if (info) this.pendingApps.set(request.id, { ...info, name })
