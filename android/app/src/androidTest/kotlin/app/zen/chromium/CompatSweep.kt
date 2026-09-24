@@ -6817,7 +6817,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * the popup opened over the fixture, its play control tapped (`play`, a label regex), then
      * the worker's `chrome.tts.isSpeaking` and the popup's own state (a pause or stop control
      * up, a sentence highlighted) are read: either speaking or the player past its play state
-     * is the pass. The sign-in gate of a service-backed voice is `n/m` on its surface.
+     * is the pass. The sign-in gate of a service-backed voice is `n/m` on its surface. An image
+     * with no text-to-speech engine (`chrome.tts.getVoices` answers an empty list, no error: the
+     * AOSP image of the modern-WebView lane, where the Google image's engine answers voices)
+     * leaves the reading `n/a` on that lane – nothing of the chrome's is measured by a player
+     * that has no voice to start.
      */
     private fun ttsPopup(label: String, play: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -6849,9 +6853,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-tts-popup")
         runCatching { coreCall("extension.closePopup", "null") }
         val gate = popup != null && !state.optBoolean("pass") && LOGIN_WORDS.containsMatchIn(text + " " + state.optString("text"))
+        val voices = extra.opt("voices") as? JSONObject
+        val noVoice = voices != null && voices.optString("tts") == "object" && voices.optInt("voices", -1) == 0 && voices.isNull("error")
         when {
             state.optBoolean("pass") || speaking == "true" -> Grade("P", "$label: popup over the fixture, play tapped (${steps.toString().take(100)}): ${state.toString().take(200)}; tts.isSpeaking $speaking", extra)
             popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
+            noVoice -> Grade("n/a", "$label: the popup rendered and play was tapped (${steps.toString().take(100)}), but this image offers no voice – chrome.tts.getVoices answered an empty list without an error (no text-to-speech engine on the image; the Google image's engine answers voices): image limit, the reading not measurable on this lane; popup ${state.toString().take(160)}", extra)
             gate -> Grade("n/m", "$label: its popup asks for its account (\"${text.take(100)}\"); its voices are its service's (not measurable here)", extra)
             else -> Grade("F", "$label: popup over the fixture did not start reading after play (${steps.toString().take(100)}): ${state.toString().take(200)}; tts.isSpeaking $speaking", extra)
         }
