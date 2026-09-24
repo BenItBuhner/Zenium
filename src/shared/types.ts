@@ -5880,6 +5880,13 @@ export interface Events {
    */
   'screenshot.saved': ScreenshotSaved & { tabId: string }
   /**
+   * The long-screenshot editor asked for over `tabId`'s page from outside the chrome: Zenium's
+   * Long screenshot in Android 14's share sheet (SH-02, `Share.kt`'s action row), relayed by the
+   * host once the sheet has closed. The chrome stitches the page and opens the editor (SH-08),
+   * as its own Long screenshot chips do. Hosts whose share sheet has no row of Zenium's never send it.
+   */
+  'screenshot.openLong': { tabId: string }
+  /**
    * Web capture asked for its overlay over `tabId`'s page (Ctrl+Shift+S in the Chrome preset,
    * the app menu's "Web Capture…", the palette): the desktop chrome dims the page's frame over
    * its stand-in and takes the user's region, visible area or full page (`shared/capture.ts`).

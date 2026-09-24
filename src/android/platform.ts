@@ -11,7 +11,6 @@ import type {
   PageEnvironment,
   Platform as PlatformOs,
   ScreenshotSaved,
-  ShareAction,
   SharePanelRequest,
   ThumbnailPicture
 } from '@shared/types'
@@ -108,6 +107,7 @@ import { FullscreenHintCues } from './fullscreenHint'
 import { AndroidNewTabBackground } from './newTabBackground'
 import { AndroidSyncHost } from './sync'
 import { AndroidSiteData } from './siteData'
+import { type HostShareAction, routeShareAction } from './shareAction'
 import { AndroidStoreIO } from './storeIo'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
 import { AndroidTabViewHost, type HostHistory, type ViewEventPayloads } from './views'
@@ -463,8 +463,11 @@ export interface HostEventPayloads {
   intent: SharedIntent
   /** A page wants to open another app; Kotlin holds the navigation until `externalProtocol.respond`. */
   'externalProtocol.request': HostExternalRequest
-  /** A tap on one of Zenium's own buttons in the system share sheet (Android 14). */
-  'share.action': ShareAction
+  /**
+   * A tap on one of Zenium's own buttons in the system share sheet (Android 14, SH-02): Copy link
+   * and Print are the core's, Long screenshot the chrome's editor (`shareAction.ts`).
+   */
+  'share.action': HostShareAction
   /**
    * The host put up the browser's own share panel (`Share.kt`, below Android 14; SH-03): the
    * chrome draws it from this and answers with `share.panelAction`.
@@ -1753,7 +1756,10 @@ export class AndroidPlatform implements Platform {
         )
         return
       case 'share.action':
-        browser.onShareAction(payload as HostEventPayloads['share.action'], this.window)
+        routeShareAction(payload as HostEventPayloads['share.action'], {
+          core: (action) => browser.onShareAction(action, this.window),
+          openLongScreenshot: (tabId) => browser.emit('screenshot.openLong', { tabId }, this.window)
+        })
         return
       case 'share.panel':
         browser.emit('share.panel', payload as HostEventPayloads['share.panel'], this.window)
