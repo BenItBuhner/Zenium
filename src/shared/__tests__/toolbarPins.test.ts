@@ -10,7 +10,7 @@ import {
 } from '../toolbarPins'
 
 /**
- * The desktop toolbar's pins (Settings › Look and Feel › Customize toolbar, settings-36): the
+ * The desktop toolbar's pins (Settings › Look and Feel › Customise toolbar, settings-36): the
  * record of departures the core sanitises on read (`state.ts`, `browser.ts`), the chrome reads
  * (`NavRow`) and the dialog writes (`CustomizeToolbarForm`).
  */

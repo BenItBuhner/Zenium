@@ -2263,7 +2263,7 @@ export interface NewTabPageState {
  * Actions the new tab page asks the browser for (one-way; the browser answers with state).
  * Tiles are plain links, so opening one needs no action: the page navigates like any page.
  * The page draws no popover or dialog of its own: a tile's menu, the add / edit dialog and the
- * Customize surface are the chrome's (design language v2 §9.20–9.23), asked for here.
+ * Customise surface are the chrome's (design language v2 §9.20–9.23), asked for here.
  */
 export type NewTabPageAction =
   | { type: 'ready' }
@@ -2292,7 +2292,7 @@ export type NewTabPageAction =
       y: number
       keyboard: boolean
     }
-  /** The Customize button: Settings opens on its New Tab section. */
+  /** The Customise button: Settings opens on its New Tab section. */
   | { type: 'customize' }
   /**
    * The private page's "Block third-party cookies" switch was flipped: `privacy.thirdPartyCookiesPrivate`
@@ -2313,7 +2313,7 @@ export interface Settings {
   toolbarLayout: ToolbarLayout
   /**
    * The desktop toolbar's optional controls that are folded into the app menu (Look and Feel ›
-   * Customize toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
+   * Customise toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
    * key absent reading pinned. Read by the desktop chrome's toolbar row and the desktop app
    * menu; inert on the phone and the tablet, which keep their own bars. Absent in profiles from
    * before it existed.
@@ -4506,14 +4506,16 @@ export interface Commands {
   'clipboard.read': { args: void; result: ClipboardContent }
   'clipboard.markUsed': { args: void; result: void }
   /**
-   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), edit one of
-   * the user's (name, template, shortcut – empty for one derived from the name; omnibox-09),
-   * take one out of the omnibox or bring it back (`active`, settings-43; the default engine
-   * stays active), forget one the user added or a page offered, or make one the default. The
-   * shipped engines cannot be edited or removed; `search.remove` on the default falls back to
-   * the shipped default.
+   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query; `keyword` the
+   * shortcut typed in the form, `@` or not – absent or empty for one derived from the name, as
+   * before the form carried one), edit one of the user's (name, template, shortcut – empty for
+   * one derived from the name; omnibox-09), take one out of the omnibox or bring it back
+   * (`active`, settings-43; the default engine stays active), forget one the user added or a
+   * page offered, or make one the default. The shipped engines cannot be edited or removed;
+   * `search.remove` on the default falls back to the shipped default. Both forms' shortcuts
+   * are refused with `engineKeywordProblem`'s line – the one the form shows as typed.
    */
-  'search.addEngine': { args: { name: string; url: string }; result: string }
+  'search.addEngine': { args: { name: string; url: string; keyword?: string }; result: string }
   'search.updateEngine': {
     args: { id: string; name: string; searchUrl: string; keyword: string }
     result: void

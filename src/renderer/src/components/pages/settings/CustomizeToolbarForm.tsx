@@ -6,7 +6,8 @@ import type { Settings, UIState } from '@shared/types'
 import { hiddenAtThisWidth, toolbarTiering } from '@renderer/lib/toolbarPins'
 import { V2Button } from '../../extensions/v2'
 import { SheetFooter } from './blocks'
-import { RowText } from './rows'
+import type { SwitchRow } from './model'
+import { RowView, type RowContext } from './rows'
 
 /**
  * Look and Feel › Customise toolbar (settings-36; Chrome's pinnable toolbar actions, Firefox's
@@ -26,6 +27,11 @@ import { RowText } from './rows'
  * 32 secondary – nothing to cancel, nothing was held back. No reorder: the bar keeps the order
  * the rows show. "Pin" and "unpin" are Chrome's words for the box's two states and are not
  * drawn.
+ *
+ * The rows are the chassis's own: switch rows (`model.ts`) drawn in the desktop vocabulary
+ * (`rows.tsx`'s check row – the 16 box left, the row its label, a press anywhere toggles) with
+ * the control's glyph in the row's `leading` slot between the box and the label (#419, the
+ * W4-10 ask), so the rows measure and paint as every other check row does and drift with it.
  *
  * The downloads button's pin is the existing `downloads.alwaysShowButton` (Chrome's "Always
  * show downloads button", also Settings › Downloads' switch): one field, bound here as its
@@ -50,40 +56,43 @@ export function CustomizeToolbarForm({
   const controlRow = (
     control: ToolbarControl,
     label: string,
-    glyph: ReactNode,
+    leading: ReactNode,
     description?: string
-  ): JSX.Element => (
-    <ControlRow
-      key={control}
-      id={control}
-      label={label}
-      glyph={glyph}
-      checked={toolbarPinned(pins, control)}
-      description={
-        toolbarPinned(pins, control) && hiddenAtThisWidth(hidden, control)
-          ? HIDDEN_AT_THIS_WIDTH
-          : description
-      }
-      onChange={(checked) => pin(control, checked)}
-    />
-  )
+  ): SwitchRow => ({
+    kind: 'switch',
+    id: `toolbar-control:${control}`,
+    label,
+    leading,
+    checked: toolbarPinned(pins, control),
+    description:
+      toolbarPinned(pins, control) && hiddenAtThisWidth(hidden, control)
+        ? HIDDEN_AT_THIS_WIDTH
+        : description,
+    onChange: (checked) => pin(control, checked)
+  })
+  const rows: SwitchRow[] = [
+    controlRow('forward', 'Forward', <ArrowRight />),
+    controlRow('reader', 'Reader View', <BookOpenText />, 'Shows on pages with an article.'),
+    controlRow('translate', 'Translate', <Languages />),
+    controlRow('star', 'Bookmark this page', <Star />),
+    controlRow('media', 'Media', <SquarePlay />, 'Shows while media plays.'),
+    {
+      kind: 'switch',
+      id: 'toolbar-control:downloads',
+      label: 'Downloads',
+      leading: <Download />,
+      checked: downloads.alwaysShowButton,
+      description: DOWNLOADS_UNCHECKED,
+      onChange: (checked) => set({ downloads: { alwaysShowButton: checked } })
+    }
+  ]
   return (
     <>
       <div className="zen-settings-groups zen-settings-sheet-rows" data-testid="customize-toolbar">
         <section role="group" className="zen-settings-group" aria-label="Toolbar controls">
-          {controlRow('forward', 'Forward', <ArrowRight />)}
-          {controlRow('reader', 'Reader View', <BookOpenText />, 'Shows on pages with an article.')}
-          {controlRow('translate', 'Translate', <Languages />)}
-          {controlRow('star', 'Bookmark this page', <Star />)}
-          {controlRow('media', 'Media', <SquarePlay />, 'Shows while media plays.')}
-          <ControlRow
-            id="downloads"
-            label="Downloads"
-            glyph={<Download />}
-            checked={downloads.alwaysShowButton}
-            description={DOWNLOADS_UNCHECKED}
-            onChange={(checked) => set({ downloads: { alwaysShowButton: checked } })}
-          />
+          {rows.map((row) => (
+            <RowView key={row.id} row={row} ctx={NO_SHEETS} variant="desktop" />
+          ))}
         </section>
       </div>
       <SheetFooter>
@@ -106,43 +115,7 @@ export const HIDDEN_AT_THIS_WIDTH = 'Hidden at this width.'
 export const DOWNLOADS_UNCHECKED = 'Unchecked, shows once a download starts.'
 
 /**
- * One control's row: the chassis's desktop check row (`rows.tsx`'s `CheckRow` – the 16 box
- * left, the row its label, a press anywhere toggles) with the control's glyph in the leading
- * slot after the box. Drawn here rather than by the builder because `SwitchRow` has no
- * `leading` (the chassis ask on the report); the classes are the primitive's, so the row
- * measures and paints as every other check row.
+ * A check row toggles in place and asks the page for no sheet; the rows' context has nothing to
+ * open (the dialog they stand in is the page's, opened by the Customise toolbar row itself).
  */
-function ControlRow({
-  id,
-  label,
-  glyph,
-  checked,
-  description,
-  onChange
-}: {
-  id: string
-  label: string
-  glyph: ReactNode
-  checked: boolean
-  description?: string
-  onChange(checked: boolean): void
-}): JSX.Element {
-  return (
-    <label
-      data-row={`toolbar-control:${id}`}
-      data-hidden-at-width={description === HIDDEN_AT_THIS_WIDTH || undefined}
-      className="zen-settings-row zen-settings-check-row zen-v2-row zen-v2-check-row"
-    >
-      <input
-        type="checkbox"
-        className="zen-v2-checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      <span className="zen-settings-leading" aria-hidden="true">
-        {glyph}
-      </span>
-      <RowText label={label} description={description} />
-    </label>
-  )
-}
+const NO_SHEETS: RowContext = { open: () => undefined }

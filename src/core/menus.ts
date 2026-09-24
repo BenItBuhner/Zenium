@@ -3326,7 +3326,7 @@ export class Menus {
         // row is where it goes; with the button up, the button is the hub). The phone has its
         // own chip and sheet (§9.33).
         ...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win)),
-        // Forward folded off the desktop's bar (Look and Feel › Customize toolbar, settings-36)
+        // Forward folded off the desktop's bar (Look and Feel › Customise toolbar, settings-36)
         // heads the menu the same way: the row is where the button went.
         ...desktop(...this.foldedForwardRow(win, active)),
         // The tabs and windows.
@@ -3485,7 +3485,7 @@ export class Menus {
   }
 
   /**
-   * The desktop bar's Forward button, folded into the menu when Look and Feel › Customize
+   * The desktop bar's Forward button, folded into the menu when Look and Feel › Customise
    * toolbar unpins it (`Settings.toolbarPins.forward === false`, `shared/toolbarPins.ts`):
    * the row runs what the button ran and is disabled, not dropped, on the last entry (design
    * language v2 §9.30), so the menu keeps its shape from one opening to the next. Nothing
