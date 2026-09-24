@@ -21,7 +21,9 @@
 #                      answering adb, before the emulator's HOST side is captured (dump_host: the
 #                      qemu process's threads and their stacks) and, on a second sample, the driver
 #                      ended so the rows before keep their reading; unset: never (the sweeps). The
-#                      same host capture then joins dump_hang. A single-row lane sets it.
+#                      same host capture then joins dump_hang, and once the process is gone its
+#                      core (apport's report or a core file) is read by gdb into
+#                      host-emulator-core-bt.txt. A single-row lane sets it.
 #   GUEST_PROBE_S    – seconds the `adb shell echo alive` probe of that check may take before the
 #                      guest counts as not answering (default 20; a frozen guest answers nothing,
 #                      so a lane racing a short-lived qemu sets it low)
@@ -243,6 +245,49 @@ note_emulator_death() {
       done
       ls -la "$HOME"/.android/breakpad/ 2> /dev/null || echo "no breakpad directory"
       for dmp in "$HOME"/.android/breakpad/*.dmp; do [ -e "$dmp" ] && cp "$dmp" "$out/" 2> /dev/null; done
+      # The host process's own core, when the kernel wrote one: round 16's seventh single-row
+      # attempt caught qemu with every thread in do_exit and one in vfs_coredump – the "frozen
+      # guest" death is a fatal signal in qemu, the forty seconds of silence the kernel writing a
+      # 5 GB dump, and the crashing thread's stack is in that dump, not in the live process. Where
+      # the kernel put it is core_pattern's: a file (in the process's cwd), or apport's pipe
+      # (/var/crash/*.crash, the dump inside as CoreDump). The backtrace is read only under
+      # GUEST_SILENCE_S (a single-row lane): gdb over such a dump takes minutes.
+      echo "== host core dump"
+      echo "core_pattern: $(cat /proc/sys/kernel/core_pattern 2> /dev/null)"
+      echo "core limit (this shell): $(ulimit -c)"
+      # apport, or the kernel itself, may still be writing: wait up to a minute for a report.
+      for _ in 1 2 3 4 5 6; do
+        ls /var/crash/*.crash > /dev/null 2>&1 && break
+        sleep 10
+      done
+      ls -la /var/crash/ 2> /dev/null || echo "no /var/crash"
+      core_file=$(find "$PWD" /tmp/android-runner "$HOME" /tmp -maxdepth 2 -type f \( -name 'core' -o -name 'core.*' -o -name '*.core' \) -mmin -90 -size +10M 2> /dev/null | head -n 1)
+      [ -n "$core_file" ] && echo "core file: $core_file ($(stat -c %s "$core_file") bytes)"
+      if [ "${GUEST_SILENCE_S:-0}" -gt 0 ]; then
+        crash=$(ls -t /var/crash/*qemu*.crash 2> /dev/null | head -n 1)
+        if [ -n "$crash" ]; then
+          echo "-- apport report: $crash ($(stat -c %s "$crash") bytes)"
+          grep -E '^(ProblemType|Signal|ExecutablePath|ProcCmdline|Date|Title|SegvAnalysis|SegvReason|StacktraceTop):' "$crash" 2> /dev/null | cut -c1-300 || true
+          if command -v apport-unpack > /dev/null 2>&1; then
+            rm -rf /tmp/qemu-crash
+            timeout 600 apport-unpack "$crash" /tmp/qemu-crash 2>&1 | tail -n 3 || true
+            [ -f /tmp/qemu-crash/CoreDump ] && core_file=/tmp/qemu-crash/CoreDump
+          fi
+        fi
+        qemu_bin="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}/emulator/qemu/linux-x86_64/qemu-system-x86_64-headless"
+        if [ -n "$core_file" ] && [ -x "$qemu_bin" ] && command -v gdb > /dev/null 2>&1; then
+          echo "-- backtrace of $core_file ($(stat -c %s "$core_file") bytes) into host-emulator-core-bt.txt"
+          {
+            echo "the host process's core ($core_file, $(stat -c %s "$core_file") bytes) read by gdb at $(date +%T)"
+            timeout 900 gdb -batch -q -ex 'set pagination off' -ex 'info threads' -ex 'bt 40' -ex 'thread apply all bt 12' "$qemu_bin" "$core_file" 2>&1 | cut -c1-400
+          } > "$out/host-emulator-core-bt.txt" || true
+          echo "-- gdb done ($(date +%T)): $(wc -l < "$out/host-emulator-core-bt.txt") lines"
+        elif [ -n "$core_file" ]; then
+          echo "-- a core but no reader (gdb: $(command -v gdb || echo none); qemu binary: $qemu_bin)"
+        else
+          echo "-- no core found"
+        fi
+      fi
       echo "== emulator log files"
       ls -la "$HOME"/.android/avd/*.avd/*.log /tmp/android-runner/*.log 2> /dev/null || echo "none"
       for log in "$HOME"/.android/avd/*.avd/*.log /tmp/android-runner/*.log; do
