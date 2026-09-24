@@ -220,6 +220,12 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
      * fullscreen ([CustomTabHost.enterFullscreen]) hides and shows them itself.
      */
     private fun applyBars() {
+        // The window's own pose from the display rule alone: a page element's fullscreen (a
+        // video) hides the bars too, but `barsHidden` – and with it the mode `reportedDisplay`
+        // answers – does not follow it; the manifest's mode holds until the element's exit
+        // restores this pose (onFullscreenChanged). Chrome's `CustomTabWebContentsDelegate.getDisplayMode`
+        // answers `fullscreen` there (`isFullscreen()`, the tab's HTML fullscreen) – a difference
+        // the PR names.
         val hide = WebAppRules.immersive(record.display) && inScope
         barsHidden = hide
         if (host.fullscreenTab != null) return
