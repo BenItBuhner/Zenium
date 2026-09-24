@@ -34,14 +34,26 @@ import androidx.core.widget.ImageViewCompat
  * page loads, and a hairline under it all. Geometry per the v2 draft: 56 px bar, 44 px icon
  * buttons with 20 px glyphs at radius 8, 15/600 title over 13/400 host at 69%, weights 400 and
  * 600 only.
+ *
+ * An installed web app's window ([WebAppActivity], PWA-07) raises the same bar over a page that
+ * has left the app's scope – the [Mode.WEB_APP] bar: the X, the titles and the menu, without
+ * Minimize, which is the custom tab's own (CCT-11: its activity alone enters picture-in-picture).
+ * A custom tab's bar ([Mode.CUSTOM_TAB], the default) is unchanged by the mode.
  */
-class CustomTabToolbar(context: Context, private val config: CustomTabConfig, listener: Listener) : FrameLayout(context) {
+class CustomTabToolbar(
+    context: Context,
+    private val config: CustomTabConfig,
+    listener: Listener,
+    private val mode: Mode = Mode.CUSTOM_TAB
+) : FrameLayout(context) {
     interface Listener {
         fun onClose()
         fun onMenu()
         fun onAction()
         fun onMinimize()
     }
+
+    enum class Mode { CUSTOM_TAB, WEB_APP }
 
     private val density = resources.displayMetrics.density
     private val scheme = config.scheme
@@ -87,10 +99,12 @@ class CustomTabToolbar(context: Context, private val config: CustomTabConfig, li
 
         // Minimize sits at the bar's start beside the close control, where Chrome keeps it; with
         // the close control sent to the end it is the first thing in the bar.
-        val minimize = iconButton(context.getString(R.string.cct_minimize)) { listener.onMinimize() }
-        minimize.setImageResource(R.drawable.ic_cct_minimize)
-        ImageViewCompat.setImageTintList(minimize, ColorStateList.valueOf(ink))
-        row.addView(minimize)
+        if (mode == Mode.CUSTOM_TAB) {
+            val minimize = iconButton(context.getString(R.string.cct_minimize)) { listener.onMinimize() }
+            minimize.setImageResource(R.drawable.ic_cct_minimize)
+            ImageViewCompat.setImageTintList(minimize, ColorStateList.valueOf(ink))
+            row.addView(minimize)
+        }
 
         row.addView(titles(), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 

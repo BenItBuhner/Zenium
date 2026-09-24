@@ -1,13 +1,17 @@
 package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -22,7 +26,8 @@ import java.io.File
  * install sheet built from the manifest (tile, name, origin, description, the screenshot strip),
  * its Add handing the request to the launcher's own pin dialog, the launcher's confirmation
  * toasting "Added Sketch to Home screen" with Open; the menu then reading "Open Sketch" inside
- * the app; and, from the Home screen, the pinned tile opening the app's URL in Zenium.
+ * the app; and, from the Home screen, the pinned tile opening the app in its own window
+ * ([WebAppActivity]: the manifest declares `standalone`; [WebAppDemo] records that window).
  *
  * The pages come from a loopback server inside this process ([DemoServer]): `/notes.html` has no
  * manifest, `/app/` declares one whose icon and screenshots are the preview host's demo app
@@ -244,25 +249,56 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
 
     // --- 5. the tile on the Home screen ---------------------------------------------------------------
 
+    /**
+     * The tile opens the app in its own window ([WebAppActivity], PWA-07: the manifest declares
+     * `standalone`); [WebAppDemo] records that window's claims. Here: the window came up on the
+     * app's URL, toolbar-less.
+     */
     private fun homeScreenTile(f: Finger, pinned: Boolean) {
         finding("\nHome screen tile")
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
         SystemClock.sleep(3_500)
         val tile = if (pinned) findTile() else null
         shot("09-home-screen-tile")
-        finding("${verdict(tile != null)} the '$TILE_LABEL' tile is on the Home screen")
-        if (tile != null) {
+        // The pin's failure is this line's: with no tile the window below is opened from the
+        // intent the install writes (the record the manifest gives), so its claims are still
+        // read, under a finding that names the route; a record-less intent would land in the
+        // browser and fail the window's line for the pin's fault.
+        finding("${verdict(tile != null)} the '$TILE_LABEL' tile is on the Home screen${if (pinned) "" else " (the pin step failed above)"}")
+        val route = if (tile != null) {
             f.tap(tile.exactCenterX(), tile.exactCenterY())
+            "from the tile"
         } else {
-            // Nothing to tap: come back the way the tile would, so the recording ends on the app.
-            openLink(APP_URL)
+            app.startActivity(Shortcuts.launchIntent(app, APP_URL, INSTALLED).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "from the install's intent (no tile to tap)"
         }
         val front = awaitForeground(10_000)
-        awaitActiveUrl(APP_URL, 12_000)
+        val window = awaitWebAppWindow(12_000)
         SystemClock.sleep(2_500)
         shot("10-opened-from-tile")
-        val url = activeCoreTab()?.optString("url")
-        finding("${verdict(front && url == APP_URL)} Zenium is in front on the app's URL ($url)")
+        val url = window?.let { w -> onMain { w.page?.url } }
+        val toolbar = window?.let { w -> onMain { w.toolbar.visibility == View.VISIBLE } }
+        finding("${verdict(front && url == APP_URL && toolbar == false)} the app's own window is in front on the app's URL, toolbar-less, opened $route ($url, toolbar ${toolbar ?: "no window"})")
+    }
+
+    /** The app's own window, once one is resumed (the driver shares Zenium's process). */
+    private fun awaitWebAppWindow(timeoutMs: Long): WebAppActivity? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val found = onMain {
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<WebAppActivity>().firstOrNull()
+            }
+            if (found != null) return found
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    private fun <T> onMain(block: () -> T): T {
+        var result: T? = null
+        instrumentation.runOnMainSync { result = block() }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
 
     /** The shortcut's icon on the launcher's workspace, looking one page to each side when needed. */
@@ -421,6 +457,8 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         private const val TILE_LABEL = "Sketch"
         /** The launcher's pin dialog accepts on one of these (Launcher3 says "Add automatically"). */
         private val PIN_ACCEPT_LABELS = listOf("Add automatically", "Add to Home screen", "Add to home screen", "Add")
+        /** The record the install writes for the manifest below (WebAppDemo's SKETCH is the same app). */
+        private val INSTALLED = WebAppRecord(APP_ID, TILE_LABEL, APP_URL, APP_URL, WebAppRules.Display.STANDALONE, 0xff2f6f8f.toInt(), 0xffe8f1f5.toInt())
 
         private val APP_PAGE = """
             <!doctype html><html><head><meta charset=utf-8>
