@@ -3671,6 +3671,67 @@ describe('the history row menu', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The URL bar popup's suggestion row menu (context-menus-115)
+// ---------------------------------------------------------------------------
+
+describe('the suggestion row menu', () => {
+  it('offers Remove on a removable row, opening where the row’s right-click said, and Remove goes back to the bar as its pick', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', {
+      id: 'hist:https://example.com/docs',
+      kind: 'history',
+      x: 640,
+      y: 212
+    })
+    expect(labels(h.shown())).toEqual(['Remove'])
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 640, y: 212 })
+    expect(h.where()).not.toHaveProperty('keyboard')
+    h.sent.length = 0
+    h.shown()[0].click!()
+    expect(h.sent).toEqual(['urlbar.suggestionAction'])
+  })
+
+  it('a remembered search adds Delete Search History, whose pick goes back the same way; the keyboard’s anchor passes through', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', {
+      id: 'recent:https://www.google.com/search?q=cats',
+      kind: 'search',
+      x: 640,
+      y: 262,
+      keyboard: true
+    })
+    expect(labels(h.shown())).toEqual(['Remove', 'Delete Search History'])
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 640, y: 262, keyboard: true })
+    h.sent.length = 0
+    h.shown()[1].click!()
+    expect(h.sent).toEqual(['urlbar.suggestionAction'])
+    // Nothing is forgotten by the menu itself: the bar acts on the pick through the core's
+    // removes, Delete Search History being `urlbar.clearSearchHistory`.
+    const shortcuts = h.browser.omniboxShortcuts
+    shortcuts.learn('cat', {
+      url: 'https://www.google.com/search?q=cats',
+      title: 'cats',
+      kind: 'search',
+      engineId: 'google'
+    })
+    shortcuts.learn('gm', { url: 'https://mail.google.com/', title: 'Gmail', kind: 'url' })
+    expect(shortcuts.all()).toHaveLength(2)
+    h.browser.handleCommand(h.win, 'urlbar.clearSearchHistory', undefined)
+    expect(shortcuts.all().map((s) => s.kind)).toEqual(['url'])
+  })
+
+  it('the other kinds get Remove alone: a page, an extension’s row', () => {
+    const h = harness(DESKTOP)
+    for (const kind of ['url', 'omnibox'] as const) {
+      h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', { id: `${kind}:1`, kind })
+      expect(labels(h.shown())).toEqual(['Remove'])
+    }
+    // No anchor given: the host opens the menu at the pointer.
+    expect(h.where()).not.toHaveProperty('x')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The History page's device heading menu (history-21; the lead's #326 ruling)
 // ---------------------------------------------------------------------------
 
