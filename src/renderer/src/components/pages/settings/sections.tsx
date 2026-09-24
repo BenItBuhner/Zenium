@@ -1268,7 +1268,7 @@ function voiceOptionDescription(voice: ReadAloudVoice, lang: string): string {
 function newTabSection({ state, set }: SectionContext): RowGroup[] {
   const prefs = state.settings.newTab
   const write = (next: NewTabSettings): void => set({ newTab: next })
-  const { image, canPick } = state.newTabBackground
+  const { image, canPick, accent } = state.newTabBackground
   const backgroundOptions: Array<{ value: NewTabBackgroundKind; label: string }> = [
     { value: 'space', label: 'Space gradient' },
     { value: 'solid', label: 'Solid colour' }
@@ -1353,6 +1353,19 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
                 button: 'Remove',
                 disabled: !image,
                 onPress: () => run('newtab.clearBackgroundImage', undefined)
+              } satisfies SettingsRow,
+              // The picture's colour as the space's accent (NTP-14): Chrome suggests a browser
+              // colour from the image; here it is a row the user takes, never applied for them.
+              // The colour is read once the image is set; until it is, the row rests.
+              {
+                kind: 'action',
+                id: 'newtab-image-colour',
+                label: "Use the picture's colour",
+                description: 'This space takes the colour your background image is mostly of.',
+                keywords: ['theme', 'accent', 'colour', 'color', 'wallpaper'],
+                button: 'Use',
+                disabled: !image || !accent,
+                onPress: () => run('newtab.useImageColor', undefined)
               } satisfies SettingsRow
             ]
           : []),

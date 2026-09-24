@@ -9,6 +9,7 @@ import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
+import { makeTheme, resolveTheme } from '../../shared/theme'
 import { Browser } from '../browser'
 import type { RequestContext } from '../blocking/rules'
 import { MAX_NEW_TAB_SHORTCUTS, normalizeShortcutInput } from '../newtab'
@@ -56,13 +57,19 @@ interface Fixture {
   browser: Browser
   views: Recorded[]
   sent: Array<{ name: string; payload: unknown }>
-  background: { current: string | null; picks: number }
+  background: { current: string | null; picks: number; accent: string | null; accentReads: number }
 }
 
 function fixture(opts: { newTabPage?: boolean; withBackground?: boolean } = {}): Fixture {
   const views: Recorded[] = []
   const sent: Array<{ name: string; payload: unknown }> = []
-  const background = { current: null as string | null, picks: 0 }
+  const background = {
+    current: null as string | null,
+    picks: 0,
+    /** What the host's decoder reads from the image (NTP-14), and how often it was asked. */
+    accent: null as string | null,
+    accentReads: 0
+  }
   const capabilities = stub<HostCapabilities>({
     windows: true,
     updates: false,
@@ -156,6 +163,10 @@ function fixture(opts: { newTabPage?: boolean; withBackground?: boolean } = {}):
           },
           clear: async () => {
             background.current = null
+          },
+          accent: async () => {
+            background.accentReads += 1
+            return background.accent
           }
         }
       : undefined
@@ -1183,14 +1194,114 @@ describe('NewTabService: my shortcuts and most visited', () => {
   it('the chrome state says whether an image is set and whether the host can pick one', async () => {
     const f = fixture({ withBackground: true })
     const win = f.browser.focusedWindow()
-    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({ image: false, canPick: true })
+    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({
+      image: false,
+      canPick: true,
+      accent: null
+    })
     f.browser.handleCommand(win, 'newtab.open', undefined)
     await f.browser.newTab.pickBackgroundImage(win)
-    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({ image: true, canPick: true })
+    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({
+      image: true,
+      canPick: true,
+      accent: null
+    })
     const bare = fixture()
     expect(bare.browser.state.snapshot(bare.browser.focusedWindow()).newTabBackground).toEqual({
       image: false,
-      canPick: false
+      canPick: false,
+      accent: null
+    })
+  })
+
+  describe("the picture's colour (NTP-14)", () => {
+    it('the chrome state carries the colour once the host has read it – one read per image', async () => {
+      const f = fixture({ withBackground: true })
+      f.background.accent = '#3b6fd6'
+      const win = f.browser.focusedWindow()
+      // No image: nothing to read, nothing asked.
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      expect(f.background.accentReads).toBe(0)
+      await f.browser.newTab.pickBackgroundImage(win)
+      // The first ask starts the read and answers null; the read's end commits the answer.
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      await settle()
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBe('#3b6fd6')
+      f.browser.state.snapshot(win)
+      f.browser.state.snapshot(win)
+      expect(f.background.accentReads).toBe(1)
+      // The image let go: no colour, and nothing read for nothing.
+      await f.browser.handleCommand(win, 'newtab.clearBackgroundImage', undefined)
+      await settle()
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      expect(f.background.accentReads).toBe(1)
+    })
+
+    it("Use the picture's colour seeds the active space's theme and keeps its other settings", async () => {
+      const f = fixture({ withBackground: true })
+      f.background.accent = '#3b6fd6'
+      const win = f.browser.focusedWindow()
+      const space = win.activeSpace()
+      space.theme = {
+        type: 'gradient',
+        colors: [{ c: [200, 40, 40], x: 0.2, y: 0.2, isPrimary: true }],
+        opacity: 0.8,
+        texture: 0.2,
+        algorithm: 'analogous',
+        monochrome: true,
+        rotation: 45
+      }
+      f.browser.state.commit()
+      // Before the colour is known the command does nothing and says so.
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', undefined)).toBe(false)
+      await f.browser.newTab.pickBackgroundImage(win)
+      await settle()
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', undefined)).toBe(true)
+      const theme = win.activeSpace().theme!
+      expect(theme.colors).toHaveLength(1)
+      expect(theme.colors[0]).toMatchObject({ c: [59, 111, 214], isPrimary: true })
+      expect(theme).toMatchObject({
+        opacity: 0.8,
+        texture: 0.2,
+        algorithm: 'analogous',
+        rotation: 45,
+        monochrome: false
+      })
+      expect(resolveTheme(theme, false).accent).toEqual([59, 111, 214])
+      // A space with no theme yet takes the seeded theme whole.
+      win.activeSpace().theme = null
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', undefined)).toBe(true)
+      expect(win.activeSpace().theme).toEqual(makeTheme('#3b6fd6'))
+    })
+
+    it('a host that reads no colour, or has no decoder, suggests nothing', async () => {
+      const f = fixture({ withBackground: true })
+      const win = f.browser.focusedWindow()
+      await f.browser.newTab.pickBackgroundImage(win)
+      await settle()
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      expect(f.background.accentReads).toBe(1)
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', undefined)).toBe(false)
+      const plain = fixture({ withBackground: true })
+      delete plain.browser.platform.newTabBackground!.accent
+      plain.background.accent = '#3b6fd6'
+      const other = plain.browser.focusedWindow()
+      await plain.browser.newTab.pickBackgroundImage(other)
+      await settle()
+      expect(plain.browser.state.snapshot(other).newTabBackground.accent).toBeNull()
+      expect(plain.browser.handleCommand(other, 'newtab.useImageColor', undefined)).toBe(false)
+    })
+
+    it('a private window keeps its own theme (v2 §9.19)', async () => {
+      const f = fixture({ withBackground: true })
+      f.background.accent = '#3b6fd6'
+      const win = f.browser.focusedWindow()
+      await f.browser.newTab.pickBackgroundImage(win)
+      await settle()
+      const priv = f.browser.openWindow('private')!
+      const before = priv.activeSpace().theme
+      expect(f.browser.handleCommand(priv, 'newtab.useImageColor', undefined)).toBe(false)
+      expect(priv.activeSpace().theme).toBe(before)
     })
   })
 

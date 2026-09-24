@@ -351,7 +351,11 @@ export class BrowserState {
   /** The stacks' host-state blobs, one document per tab, kept out of `state.json`. */
   readonly navigationState: NavigationStateStore
   /** The new tab page's custom background image; provided by the Browser (the host owns the file). */
-  newTabBackgroundFor: () => UIState['newTabBackground'] = () => ({ image: false, canPick: false })
+  newTabBackgroundFor: () => UIState['newTabBackground'] = () => ({
+    image: false,
+    canPick: false,
+    accent: null
+  })
   /**
    * The new tab page's device-local sets: the user's shortcuts in grid order and the hosts
    * removed from the most-visited tiles. Replaced whole by the `NewTabService` (never mutated in

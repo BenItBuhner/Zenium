@@ -3624,9 +3624,12 @@ export interface UIState {
   privateLockOnLeave: boolean
   /**
    * The new tab page's custom background: whether one is set, whether the host can open a file
-   * picker for one (the phone's page reads the file itself and stores it through `set`).
+   * picker for one (the phone's page reads the file itself and stores it through `set`), and
+   * the colour the picture suggests for the space's accent (NTP-14; `#rrggbb`, fitted to read on
+   * both panels) – null with no image, while it is still being read, or on a host that cannot
+   * decode the file. Settings' "Use the picture's colour" row arms on it.
    */
-  newTabBackground: { image: boolean; canPick: boolean }
+  newTabBackground: { image: boolean; canPick: boolean; accent: string | null }
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
   recentlyClosed: ClosedEntrySummary[]
@@ -4761,6 +4764,12 @@ export interface Commands {
    * removed sites and the picked image. Whether the page opens at all (`enabled`) is kept.
    */
   'newtab.reset': { args: void; result: void }
+  /**
+   * Settings › New Tab's "Use the picture's colour" (NTP-14): the window's active space takes the
+   * background image's colour (`UIState.newTabBackground.accent`) as its theme's primary, the
+   * rest of the theme kept. False when no image is set or its colour is not known yet.
+   */
+  'newtab.useImageColor': { args: void; result: boolean }
   /**
    * The background image's address for a chrome that paints the page itself (the phone's; a data
    * URL there), or null when none is set.

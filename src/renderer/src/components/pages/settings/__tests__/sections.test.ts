@@ -291,7 +291,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
     siteData: emptySiteDataStatus(),
-    newTabBackground: { image: false, canPick: false },
+    newTabBackground: { image: false, canPick: false, accent: null },
     translate: TRANSLATE,
     spellcheck: UNAVAILABLE_SPELLCHECK,
     ...patch
@@ -1385,6 +1385,26 @@ describe('the section model', () => {
       })
     )
     expect(row(solid, 'newtab-reset-background')).toMatchObject({ disabled: false })
+
+    // NTP-14: "Use the picture's colour" stands with the image rows – so only where a file can be
+    // picked – and arms once an image is set and its colour read; pressing it is the command.
+    expect(findRow(newtab.groups, 'newtab-image-colour')).toBeNull()
+    const pickable = (accent: string | null, image = true): Model =>
+      section(
+        'newtab',
+        state({
+          capabilities: { ...ANDROID, newTabPage: true },
+          newTabBackground: { image, canPick: true, accent }
+        } as Partial<UIState>)
+      )
+    expect(row(pickable(null, false), 'newtab-image-colour')).toMatchObject({ disabled: true })
+    expect(row(pickable(null), 'newtab-image-colour')).toMatchObject({ disabled: true })
+    const useColour = row(pickable('#3b6fd6'), 'newtab-image-colour')
+    if (useColour.kind !== 'action') throw new Error('not an action')
+    expect(useColour).toMatchObject({ label: "Use the picture's colour", disabled: false })
+    expect(useColour.confirm).toBeUndefined()
+    useColour.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.useImageColor', undefined)
 
     // A shortcut without a name is listed by its address; its sheet edits, moves and removes it.
     expect(row(newtab, 'shortcut:b').label).toBe('https://b.test/')

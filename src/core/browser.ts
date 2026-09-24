@@ -3130,6 +3130,7 @@ export class Browser {
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
       'newtab.resetBackground': () => this.newTab.resetBackground(),
       'newtab.reset': () => this.newTab.reset(),
+      'newtab.useImageColor': (_a, win) => this.newTab.useImageColor(win),
       'newtab.backgroundImage': () => this.newTab.backgroundImage(),
       'newtab.setBackgroundImage': ({ dataUrl }) => this.newTab.setBackgroundImage(dataUrl),
 

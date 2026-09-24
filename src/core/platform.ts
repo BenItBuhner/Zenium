@@ -959,6 +959,13 @@ export interface NewTabBackgroundHost {
    */
   set?(dataUrl: string | null): Promise<void>
   clear(): Promise<void>
+  /**
+   * The colour the current image suggests for the space's accent (NTP-14), as `#rrggbb` fitted
+   * by `shared/imageColor.ts`: the host decodes the picture (it holds the bytes) and hands the
+   * pixels of a small resample to `imageAccentHex`. Null with no image, or one the host cannot
+   * decode. Hosts without a decoder leave it out; the core then offers no suggestion.
+   */
+  accent?(): Promise<string | null>
 }
 
 // ---------------------------------------------------------------------------

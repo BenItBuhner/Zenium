@@ -29,7 +29,7 @@ import type {
 import { privateThirdPartyCookieStatus, type SafeBrowsingHit } from '../shared/privacy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
-import { resolveTheme, themeCssVariables } from '../shared/theme'
+import { makeTheme, resolveTheme, themeCssVariables } from '../shared/theme'
 import { engineFieldFavicon } from '../shared/search'
 import { newId } from '../shared/ids'
 import {
@@ -247,7 +247,11 @@ export class NewTabService {
   constructor(private readonly browser: Browser) {
     browser.state.newTabBackgroundFor = () => {
       const host = browser.platform.newTabBackground
-      return { image: Boolean(host?.current()), canPick: Boolean(host?.pick) }
+      return {
+        image: Boolean(host?.current()),
+        canPick: Boolean(host?.pick),
+        accent: this.imageAccent()
+      }
     }
     browser.history.onChange(() => {
       this.historyVersion += 1
@@ -829,6 +833,56 @@ export class NewTabService {
   /** The image's address for a chrome that paints the page itself (the phone's: a data URL). */
   backgroundImage(): string | null {
     return this.browser.platform.newTabBackground?.current() ?? null
+  }
+
+  /** The colour read from the image at `url` (`accent` null when the host could not read one). */
+  private accentCache: { url: string; accent: string | null } | null = null
+  /** The image address whose colour is being read. */
+  private accentPending: string | null = null
+
+  /**
+   * The colour the background picture suggests for the accent (NTP-14; `UIState.newTabBackground
+   * .accent`): read once per image through the host's decoder, asynchronously – the first ask
+   * returns null and starts the read, whose end commits the state so the chrome hears the
+   * answer; an image that changed under a read drops it. Null with no image, or on a host that
+   * has no decoder.
+   */
+  private imageAccent(): string | null {
+    const host = this.browser.platform.newTabBackground
+    const url = host?.current() ?? null
+    if (!url || !host?.accent) return null
+    if (this.accentCache?.url === url) return this.accentCache.accent
+    if (this.accentPending !== url) {
+      this.accentPending = url
+      const settle = (accent: string | null): void => {
+        if (this.accentPending !== url) return
+        this.accentPending = null
+        this.accentCache = { url, accent }
+        this.browser.state.commit()
+      }
+      void host.accent().then(settle, () => settle(null))
+    }
+    return null
+  }
+
+  /**
+   * Settings' "Use the picture's colour" (NTP-14): the window's active space takes the image's
+   * colour as its theme's primary through `makeTheme` – the same seed the theme picker's swatch
+   * would give it – with the theme's other settings (opacity, texture, algorithm, angle) kept, so
+   * the window, the sidebar and the page agree on the colour. A suggestion the user takes, never
+   * applied for them: a picked wallpaper does not recolour a space the user themed. False while
+   * the colour is not known, and in a private window, whose look is one theme by rule (v2 §9.19).
+   */
+  useImageColor(win: ZenWindow): boolean {
+    const accent = this.imageAccent()
+    if (!accent || win.isPrivate) return false
+    const space = win.activeSpace()
+    const seeded = makeTheme(accent)
+    space.theme = space.theme
+      ? { ...space.theme, colors: seeded.colors, monochrome: false }
+      : seeded
+    this.browser.state.commit()
+    return true
   }
 
   /**
