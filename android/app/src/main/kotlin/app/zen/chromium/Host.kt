@@ -126,10 +126,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private val touchExplorationListener = AccessibilityManager.TouchExplorationStateChangeListener { enabled ->
         Log.d(TAG, "touch exploration ${if (enabled) "on: the bar stays put" else "off: the bar may hide on scroll again"}")
         chrome.barTouchExploration(enabled)
+        // The menu's list variant (A11Y-04) hears the same change with the font scale beside it.
+        chrome.hostEvent("accessibility", accessibilityState())
     }
 
     /** An accessibility service explores the screen by touch right now (TalkBack). */
     val touchExploration: Boolean get() = accessibility?.isTouchExplorationEnabled == true
+
+    /**
+     * Touch exploration and the system font scale as one payload (`AccessibilityState`): in the
+     * boot payload, and again as the `accessibility` host event on either's change.
+     */
+    fun accessibilityState(): JSONObject =
+        AccessibilityState.payload(touchExploration, activity.resources.configuration.fontScale)
 
     init {
         focusHandoff.wireChrome(chrome)
@@ -643,6 +652,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "readAloud" to readAloud.available,
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
                 "touchExploration" to touchExploration,
+                // The same flag with the font scale, the menu's list variant's state (A11Y-04);
+                // changes follow as `accessibility` host events.
+                "accessibility" to accessibilityState(),
                 // The device's connectivity at boot; changes follow as `connectivity` host events.
                 "online" to connectivity.online,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).

@@ -380,6 +380,8 @@ class MainActivity : BrowserActivity() {
         host.chrome.applyTextScale()
         // A dock, a keyboard, a fold or a font-size change may move the page controls' defaults.
         host.chrome.hostEvent("environment", environment())
+        // A font-size change turns the menu's icon row into a list, or back (A11Y-04).
+        host.chrome.hostEvent("accessibility", host.accessibilityState())
     }
 
     override fun onTrimMemory(level: Int) {
