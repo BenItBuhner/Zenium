@@ -28,9 +28,11 @@ import { PermissionPrompts } from '../PermissionPromptBubble'
  * form of it (NOT-03 / omnibox-38): a loud prompt shows in its turn under the pill's site chip,
  * a notice that takes no focus; a quiet one shows nothing until the pill's bell is pressed for
  * it (`quietPromptId`), then the same 400 bubble titled "Notifications blocked" under the
- * crossed-out bell, Keep blocking and Allow, focus on its first button – a surface the user
- * opened. Escape or an outside press puts it away and is no answer: the flag clears, the core
- * hears nothing, the bell stays. A loud prompt behind a quiet one is not held up.
+ * crossed-out bell, Keep blocking and Allow, the keyboard in its held container – a surface the
+ * user opened (§9.22, pr-434 ruling 5): Enter from the container is Allow, Tab reaches Keep
+ * blocking then Allow. Escape or an outside press puts it away and is no answer: the flag
+ * clears, the core hears nothing, the bell stays, the keyboard goes back to the bell. A loud
+ * prompt behind a quiet one is not held up.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -139,6 +141,20 @@ const escape = (): void => {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
 }
 
+/** A key pressed on `el`, bubbling as the browser's does; returns the event for its outcome. */
+function key(el: HTMLElement, name: string, init: KeyboardEventInit = {}): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', {
+    key: name,
+    bubbles: true,
+    cancelable: true,
+    ...init
+  })
+  act(() => {
+    el.dispatchEvent(event)
+  })
+  return event
+}
+
 /**
  * The bubble's leave, drawn: the collapse ends on its transition (dispatched here, as no
  * compositor runs) and the spring on its frames, each under `act` so React draws the removal.
@@ -195,6 +211,10 @@ describe('the desktop permission prompt bubble', () => {
     expect(dialog.contains(document.activeElement)).toBe(false)
     expect(uiStore.get().permissionPromptOpen).toBe(true)
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+    // And it has no default: an Enter reaching its root grants nothing.
+    const enter = key(dialog, 'Enter')
+    expect(enter.defaultPrevented).toBe(false)
+    expect(run).not.toHaveBeenCalledWith('permissions.respond', expect.anything())
   })
 
   describe('the quiet notification request (NOT-03)', () => {
@@ -206,7 +226,7 @@ describe('the desktop permission prompt bubble', () => {
       expect(run).not.toHaveBeenCalled()
     })
 
-    it('opens from the bell as the same bubble – "Notifications blocked" under the crossed-out bell, Keep blocking and Allow – with focus on its first button', async () => {
+    it('opens from the bell as the same bubble – "Notifications blocked" under the crossed-out bell, Keep blocking and Allow – holding its container', async () => {
       render(<PermissionPrompts state={state([quietAsk])} />)
       await settle()
       act(() => openQuietPrompt('perm-q1'))
@@ -228,9 +248,53 @@ describe('the desktop permission prompt bubble', () => {
       )
       // No Allow once: a notification permission is the site's standing right or nothing.
       expect(buttons(dialog)).toEqual(['Keep blocking', 'Allow'])
-      // A surface the user opened (§9.22): the keyboard lands on its first button.
-      expect(document.activeElement?.textContent).toBe('Keep blocking')
+      // A surface the user opened (§9.22): the keyboard lands in the held container itself,
+      // no button armed – as the loud prompt without a chip and the confirmation prompt hold.
+      expect(document.activeElement).toBe(dialog)
+      expect(dialog.tabIndex).toBe(-1)
       expect(uiStore.get().permissionPromptOpen).toBe(true)
+    })
+
+    it('from the held container Enter is Allow, the primary; Tab reaches Keep blocking then Allow; a button’s Enter is its own (pr-434 ruling 5)', async () => {
+      render(<PermissionPrompts state={state([quietAsk])} />)
+      await settle()
+      act(() => openQuietPrompt('perm-q1'))
+      await settle()
+      const dialog = bubble()!
+      expect(document.activeElement).toBe(dialog)
+      const [keep, allow] = Array.from(dialog.querySelectorAll('button'))
+      // Tab from the container enters at the first button; Shift+Tab at the last (the wrap).
+      expect(key(dialog, 'Tab').defaultPrevented).toBe(true)
+      expect(document.activeElement).toBe(keep)
+      expect(keep.textContent).toBe('Keep blocking')
+      // At the last button Tab wraps to the first; from the first Shift+Tab to the last.
+      act(() => allow.focus())
+      key(allow, 'Tab')
+      expect(document.activeElement).toBe(keep)
+      key(keep, 'Tab', { shiftKey: true })
+      expect(document.activeElement).toBe(allow)
+      expect(allow.textContent).toBe('Allow')
+      // Enter on a button is the button's, not the prompt's default: the hook leaves it alone.
+      run.mockClear()
+      expect(key(allow, 'Enter').defaultPrevented).toBe(false)
+      expect(key(keep, 'Enter').defaultPrevented).toBe(false)
+      expect(run).not.toHaveBeenCalledWith('permissions.respond', expect.anything())
+      // A modified Enter from the container is not the prompt's either.
+      act(() => dialog.focus())
+      expect(key(dialog, 'Enter', { shiftKey: true }).defaultPrevented).toBe(false)
+      expect(run).not.toHaveBeenCalledWith('permissions.respond', expect.anything())
+      // Enter from the container: consumed, and Allow – the primary – goes to the core once.
+      const enter = key(dialog, 'Enter')
+      expect(enter.defaultPrevented).toBe(true)
+      expect(run).toHaveBeenCalledWith('permissions.respond', { id: 'perm-q1', answer: 'allow' })
+      expect(run.mock.calls.filter(([name]) => name === 'permissions.respond')).toHaveLength(1)
+      // A second Enter before the surface has left answers nothing more.
+      key(dialog, 'Enter')
+      expect(run.mock.calls.filter(([name]) => name === 'permissions.respond')).toHaveLength(1)
+      // The core answered: the prompt leaves the queue, and the bell's flag with it.
+      act(() => root!.render(<PermissionPrompts state={state([])} />))
+      await leave()
+      expect(uiStore.get().quietPromptId).toBeNull()
     })
 
     it('is put away by Escape without a word: the flag clears, the core hears nothing, the keyboard goes back to the bell', async () => {

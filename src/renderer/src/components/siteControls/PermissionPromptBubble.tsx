@@ -38,6 +38,7 @@ import {
 } from '@renderer/lib/security'
 import { uiStore } from '@renderer/lib/ui'
 import { V2_GLYPH, V2Button } from '../v2/controls'
+import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
 import { siteChip, siteChipRects, usePhone } from '@renderer/lib/surfaces'
 import { DesktopPopover, Footer, TitleBlock, V2Sheet, type SheetApi } from './primitives'
 
@@ -86,10 +87,12 @@ const GLYPHS: Record<string, LucideIcon> = {
  * A quiet notification prompt (`PermissionPrompt.quiet`, NOT-03) asks through the pill's slot
  * instead: the bell-off glyph stands there (`lib/siteChips.ts`, §9.29) and the surface – the
  * sheet on a phone, the same 400 popover on the desktop – opens only from a press on the bell
- * (`quietPromptId`), so it is a surface the user opened: focus goes to its first button, Escape
- * hands it back to the bell. Closing it without a word (Escape, an outside press, the sheet
- * pulled down) folds it back into the bell and is no answer: the bell stays up, the core hears
- * nothing – a quiet prompt is only answered or withdrawn by the page leaving.
+ * (`quietPromptId`), so it is a surface the user opened: the keyboard lands in its held
+ * container (§9.22), no button armed – Enter from there is Allow, the primary, Tab reaches
+ * Keep blocking then Allow – and Escape hands it back to the bell. Closing it without a word
+ * (Escape, an outside press, the sheet pulled down) folds it back into the bell and is no
+ * answer: the bell stays up, the core hears nothing – a quiet prompt is only answered or
+ * withdrawn by the page leaving.
  */
 export function PermissionPrompts({ state }: { state: UIState }): JSX.Element | null {
   const phone = usePhone()
@@ -224,12 +227,30 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
     [left, onClosed]
   )
   const titleId = `permission-prompt-${prompt.id}`
+  // The quiet bubble is a surface the user opened from the bell, and holds its container as the
+  // confirmation prompt does (§9.22): the keyboard is parked on the popover's root, no button
+  // armed, and from there Enter is the primary – Allow – while Tab reaches Keep blocking then
+  // Allow (the popover wraps Tab itself, `tab: false`); Escape is `usePopover`'s, and hands the
+  // keyboard back to the bell. The root is found up from the body as the listener is placed
+  // (`confirmKeyboard.ts`), once the bubble has painted (`enabled` on `ready`): the popover
+  // renders nothing before the page's picture is in place, so a listener bound at mount would
+  // find no root. The loud prompt takes no default: a page raised it, and a key the user did
+  // not aim at it must not grant.
+  const body = useRef<HTMLDivElement>(null)
+  useConfirmKeyboard(body, {
+    destructive: false,
+    confirm: () => respond('allow'),
+    enabled: quiet && ready,
+    tab: false,
+    container: (el) => el.closest<HTMLElement>('[role="dialog"]')
+  })
   if (!ready) return null
   const lines = detailLines(prompt)
   // Beside its chip the prompt is a notice: no focus on open, and its "not now" folds it back
   // into the chip (§9.20, §9.22). With the pill hidden it is the only affordance: it takes the
   // container and leaves on the spring as any popover. The quiet prompt's bubble the user
-  // opened from the bell: focus on its first button, folding back into the bell when put away.
+  // opened from the bell takes the container too (above), folding back into the bell when put
+  // away.
   const chip = rects.anchor !== null
   return (
     <DesktopPopover
@@ -241,7 +262,7 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
       collapse={chip && dismissed}
       onClosed={closed}
       onDismiss={dismiss}
-      focus={quiet ? 'first' : chip ? 'none' : 'container'}
+      focus={chip && !quiet ? 'none' : 'container'}
       follow
       anchorElement={siteChip}
       data-testid="permission-prompt"
@@ -250,7 +271,7 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
       data-quiet={quiet ? 'true' : undefined}
     >
       {() => (
-        <>
+        <div ref={body} className="contents">
           <TitleBlock
             id={titleId}
             glyph={glyphFor(prompt)}
@@ -274,7 +295,7 @@ function PromptBubble({ prompt, closing, onClosed }: SurfaceProps): JSX.Element 
               {prompt.allowLabel}
             </V2Button>
           </Footer>
-        </>
+        </div>
       )}
     </DesktopPopover>
   )
