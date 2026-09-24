@@ -28,17 +28,19 @@ import androidx.core.widget.ImageViewCompat
 
 /**
  * The custom tab's toolbar, drawn natively in the caller's colour (or Zenium's window colour):
- * the close control, the page's title over its host (or the host alone) behind a lock glyph
- * when the connection is secure, the caller's one action button, the menu button, a 2 px
- * progress line along the bottom while the page loads, and a hairline under it all. Geometry
- * per the v2 draft: 56 px bar, 44 px icon buttons with 20 px glyphs at radius 8, 15/600 title
- * over 13/400 host at 69%, weights 400 and 600 only.
+ * the close control, Minimize beside it (the tab into a floating card, CCT-11), the page's title
+ * over its host (or the host alone) behind a lock glyph when the connection is secure, the
+ * caller's one action button, the menu button, a 2 px progress line along the bottom while the
+ * page loads, and a hairline under it all. Geometry per the v2 draft: 56 px bar, 44 px icon
+ * buttons with 20 px glyphs at radius 8, 15/600 title over 13/400 host at 69%, weights 400 and
+ * 600 only.
  */
 class CustomTabToolbar(context: Context, private val config: CustomTabConfig, listener: Listener) : FrameLayout(context) {
     interface Listener {
         fun onClose()
         fun onMenu()
         fun onAction()
+        fun onMinimize()
     }
 
     private val density = resources.displayMetrics.density
@@ -58,6 +60,7 @@ class CustomTabToolbar(context: Context, private val config: CustomTabConfig, li
     private val hairlinePaint = Paint().apply { color = hairline }
     private var topInset = 0
     private var loading = false
+    private var actionView: ImageButton? = null
     private val hideProgress = Runnable { progress.animate().alpha(0f).setDuration(180).start() }
 
     /** The bar's own height, without the status bar it paints under. */
@@ -82,6 +85,13 @@ class CustomTabToolbar(context: Context, private val config: CustomTabConfig, li
         ImageViewCompat.setImageTintList(close, ColorStateList.valueOf(ink))
         if (!config.closeAtEnd) row.addView(close)
 
+        // Minimize sits at the bar's start beside the close control, where Chrome keeps it; with
+        // the close control sent to the end it is the first thing in the bar.
+        val minimize = iconButton(context.getString(R.string.cct_minimize)) { listener.onMinimize() }
+        minimize.setImageResource(R.drawable.ic_cct_minimize)
+        ImageViewCompat.setImageTintList(minimize, ColorStateList.valueOf(ink))
+        row.addView(minimize)
+
         row.addView(titles(), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         val action = config.actionButton
@@ -92,6 +102,7 @@ class CustomTabToolbar(context: Context, private val config: CustomTabConfig, li
             button.setPadding(dp(10), dp(10), dp(10), dp(10))
             if (action.tint) ImageViewCompat.setImageTintList(button, ColorStateList.valueOf(ink))
             row.addView(button)
+            actionView = button
         }
 
         val menu = iconButton(context.getString(R.string.cct_menu)) { listener.onMenu() }
@@ -186,6 +197,14 @@ class CustomTabToolbar(context: Context, private val config: CustomTabConfig, li
 
     fun setTitle(text: String?) {
         title.text = text?.takeIf { it.isNotBlank() } ?: host.text
+    }
+
+    /** A later icon for the caller's action button (`CustomTabsSession.setToolbarItem`); false without one. */
+    fun updateAction(icon: Bitmap, description: String): Boolean {
+        val button = actionView ?: return false
+        button.setImageDrawable(BitmapDrawable(resources, scaledIcon(icon)))
+        button.contentDescription = description
+        return true
     }
 
     /** The page's address: its host (without a leading `www.`) and whether it is secure. */

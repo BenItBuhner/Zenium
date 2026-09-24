@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CORS fixture</title>
+    <style>
+      body {
+        font: 18px system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      code {
+        background: #eee;
+        padding: 1px 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>CORS fixture</h1>
+    <p>
+      This page fetches <code id="target">…</code>, the fixture server on its other origin
+      (<code>localhost</code> when the page is on <code>10.0.2.2</code>, and the other way round),
+      a route that answers without <code>Access-Control-Allow-Origin</code>. The browser refuses
+      the response to the page unless an extension sets the header on it; the fetch is repeated
+      every two seconds so a toggle after the load is caught.
+    </p>
+    <p>Attempts: <span id="attempts">0</span>, succeeded: <span id="ok">0</span>, last: <span id="last">pending</span></p>
+    <script>
+      var here = location.host
+      var other = /^localhost(:|$)/.test(here) ? 'http://10.0.2.2:8765' : 'http://localhost:8765'
+      var target = other + '/no-cors.json'
+      document.getElementById('target').textContent = target
+      window.__cors = { target: target, attempts: 0, ok: 0, lastStatus: null, lastError: null, body: null, firstOkAttempt: null }
+      function attempt() {
+        var c = window.__cors
+        c.attempts++
+        fetch(target, { cache: 'no-store', mode: 'cors' })
+          .then(function (r) {
+            c.lastStatus = r.status
+            return r.json()
+          })
+          .then(function (j) {
+            c.ok++
+            if (c.firstOkAttempt === null) c.firstOkAttempt = c.attempts
+            c.body = j
+            c.lastError = null
+            document.getElementById('last').textContent = 'ok (' + JSON.stringify(j).slice(0, 60) + ')'
+          })
+          .catch(function (e) {
+            c.lastError = String((e && e.message) || e)
+            document.getElementById('last').textContent = 'refused: ' + c.lastError
+          })
+          .then(function () {
+            document.getElementById('attempts').textContent = String(c.attempts)
+            document.getElementById('ok').textContent = String(c.ok)
+          })
+      }
+      attempt()
+      setInterval(attempt, 2000)
+    </script>
+  </body>
+</html>

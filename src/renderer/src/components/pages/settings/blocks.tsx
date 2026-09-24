@@ -1,5 +1,5 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
-import { useContext, useEffect, useState } from 'react'
+import type { CSSProperties, JSX, KeyboardEvent, ReactNode } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, CircleAlert, Copy, Globe } from 'lucide-react'
 import type {
@@ -20,7 +20,7 @@ import {
 } from '@shared/appIcon'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
-import { searchTemplateProblem } from '@shared/search'
+import { engineKeywordProblem, searchTemplateProblem } from '@shared/search'
 import { inputToUrl } from '@shared/url'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -622,34 +622,106 @@ export function FaviconGlyph({ src }: { src: string | null | undefined }): JSX.E
   )
 }
 
+/** What the search-engine form submits: the three fields, trimmed, the shortcut as typed. */
+export interface SearchEngineFormValues {
+  name: string
+  /** The template, `%s` where the terms go (`searchTemplateProblem` has passed it). */
+  url: string
+  /**
+   * The shortcut as typed, `@` or not; the engine keeps it as `@word`, lower case. Empty when
+   * an engine is added without one: the engine derives its keyword from the name
+   * (`customSearchEngine`), as the core does today for every engine it adds.
+   */
+  shortcut: string
+}
+
 /**
- * Search › Add search engine (Chrome's form): a name and the search URL with `%s` where the
- * terms go, the template checked as it is typed (`searchTemplateProblem`), the button held until
- * both are in; the browser adds the engine and the sheet closes.
+ * Search › Add search engine and › Edit search engine, one form (Chrome's, W4-10): a name, the
+ * shortcut typed in the address bar before a space (Chrome's Shortcut column) and the search URL
+ * with `%s` where the terms go, each checked once it is left or on Enter (§9.12's leave-then-
+ * check) by the engine's own rules in `shared/search.ts` – the shortcut through
+ * `engineKeywordProblem` against `engines`, the list the caller holds (one word, `@` or not,
+ * at most 64 characters as `normalizeEngineKeyword` keeps it, not one of Zenium's own scopes,
+ * not a word another engine answers to – the engine being edited, `engineId`, excepted, its
+ * own word being its own), the template through `searchTemplateProblem` – each field by its
+ * own leaving, so leaving the shortcut does not set the URL speaking as it is typed – the
+ * button held until the name and the template are in. The line a field shows is its
+ * description (`aria-describedby`) for a reader on the field, the sheet's own pattern
+ * (`FieldSheet`). `initial` fills the fields from the engine being edited; the verb is the
+ * caller's – "Add" for a new engine, "Save" for an edit – as the sheet's title is. The
+ * shortcut is the one field that may be left empty, and only when adding: the engine derives a
+ * keyword from the name then, and the core's `search.addEngine` takes none yet, so a word the
+ * form insisted on would be typed to be dropped; a typed word is checked whichever the form
+ * is. Editing, the engine's own word stands in the field and an empty one is refused – an
+ * engine never holds one (#409's edit path, where the word is kept): "Give the engine a
+ * shortcut" once the field is left or the form is submitted, and on submit the focus goes to
+ * the field (§9.12's line on submit – a held button that answers Enter with nothing is the
+ * failure the section names; the #419 lead check's ruling 1). The caller adds or saves, and
+ * the sheet closes; what it refuses shows as the form's validation line.
  */
 export function SearchEngineForm({
-  onAdd,
+  initial,
+  action,
+  engines,
+  engineId,
+  onSubmit,
   close
 }: {
-  onAdd: (name: string, url: string) => Promise<unknown> | void
+  /** The engine being edited, as the fields start; absent, the form adds one. */
+  initial?: SearchEngineFormValues
+  /** The primary button's verb: "Add" for a new engine, "Save" for an edit. */
+  action: string
+  /** Every engine of the profile, for the shortcut's uniqueness (`engineKeywordProblem`). */
+  engines: readonly SearchEngine[]
+  /**
+   * The id of the engine being edited, whose own word is no collision; absent when adding –
+   * the engine has no id yet, and every engine's word is another's.
+   */
+  engineId?: string
+  onSubmit: (values: SearchEngineFormValues) => Promise<unknown> | void
   close: () => void
 }): JSX.Element {
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [shortcut, setShortcut] = useState(initial?.shortcut ?? '')
+  const [url, setUrl] = useState(initial?.url ?? '')
   const [error, setError] = useState<string | null>(null)
-  const [touched, setTouched] = useState(false)
-  const problem = searchTemplateProblem(url)
-  const ready = Boolean(name.trim()) && !problem
+  // One flag a field: the shortcut's leaving speaks for the shortcut alone, the URL's for the URL
+  // (§9.12 – a field is checked once it is left, not as the next one is typed); Enter sets both.
+  const [touchedShortcut, setTouchedShortcut] = useState(false)
+  const [touchedUrl, setTouchedUrl] = useState(false)
+  const shortcutInput = useRef<HTMLInputElement>(null)
+  // Adding, the engine has no id: the helper is given one no engine has (`sanitizeSearchEngine`
+  // keeps none empty), and every engine's word is another's.
+  const shortcutProblem = engineKeywordProblem(shortcut, engineId ?? '', engines)
+  const urlProblem = searchTemplateProblem(url)
+  // Adding, an empty shortcut is the engine's to derive; editing, the engine's word stays a word.
+  const shortcutMissing = initial !== undefined && !shortcut.trim()
+  const ready = Boolean(name.trim()) && !shortcutMissing && !shortcutProblem && !urlProblem
   const submit = (): void => {
     if (!ready) {
-      setTouched(true)
+      setTouchedShortcut(true)
+      setTouchedUrl(true)
+      // The emptied shortcut of an edit speaks on submit and takes the focus (§9.12; ruling 1).
+      if (shortcutMissing) shortcutInput.current?.focus()
       return
     }
-    void Promise.resolve(onAdd(name.trim(), url.trim()))
+    void Promise.resolve(
+      onSubmit({ name: name.trim(), url: url.trim(), shortcut: shortcut.trim() })
+    )
       .then(close)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Could not add the engine'))
+      .catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : `Could not ${action.toLowerCase()} the engine`)
+      )
   }
-  const shown = error ?? (touched && url.trim() ? problem : null)
+  const onEnter = (e: KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') submit()
+  }
+  // The shortcut's line once the field is left or the form submitted: the word's problem while
+  // there is a word (`engineKeywordProblem` has none for an empty field); editing, "Give the
+  // engine a shortcut" for none – the one empty that speaks.
+  const shortcutLine = shortcutMissing ? 'Give the engine a shortcut' : shortcutProblem
+  const shownShortcut = touchedShortcut ? shortcutLine : null
+  const shownUrl = error ?? (touchedUrl && url.trim() ? urlProblem : null)
   return (
     <div className="zen-settings-form" data-testid="search-engine-form">
       <Field id="search-engine-name" label="Name">
@@ -661,13 +733,50 @@ export function SearchEngineForm({
           autoCorrect="off"
           spellCheck={false}
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value)
+            setError(null)
+          }}
+          onKeyDown={onEnter}
         />
+      </Field>
+      <Field
+        id="search-engine-shortcut"
+        label="Shortcut"
+        description={
+          shownShortcut
+            ? undefined
+            : 'Type it in the address bar, then a space, to search with this engine.'
+        }
+      >
+        <input
+          ref={shortcutInput}
+          id="search-engine-shortcut"
+          className="zen-settings-input zen-v2-field"
+          placeholder="@wikipedia"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          aria-invalid={shownShortcut ? true : undefined}
+          aria-describedby={shownShortcut ? 'search-engine-shortcut-error' : undefined}
+          value={shortcut}
+          onChange={(e) => {
+            setShortcut(e.target.value)
+            setError(null)
+          }}
+          onBlur={() => setTouchedShortcut(true)}
+          onKeyDown={onEnter}
+        />
+        {shownShortcut && (
+          <ValidationMessage id="search-engine-shortcut-error" message={shownShortcut} />
+        )}
       </Field>
       <Field
         id="search-engine-url"
         label="URL with %s in place of query"
-        description={shown ? undefined : 'Example: https://en.wikipedia.org/w/index.php?search=%s'}
+        description={
+          shownUrl ? undefined : 'Example: https://en.wikipedia.org/w/index.php?search=%s'
+        }
       >
         <input
           id="search-engine-url"
@@ -677,20 +786,19 @@ export function SearchEngineForm({
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          aria-invalid={shown ? true : undefined}
+          aria-invalid={shownUrl ? true : undefined}
+          aria-describedby={shownUrl ? 'search-engine-url-error' : undefined}
           value={url}
           onChange={(e) => {
             setUrl(e.target.value)
             setError(null)
           }}
-          onBlur={() => setTouched(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
-          }}
+          onBlur={() => setTouchedUrl(true)}
+          onKeyDown={onEnter}
         />
-        {shown && <ValidationMessage message={shown} />}
+        {shownUrl && <ValidationMessage id="search-engine-url-error" message={shownUrl} />}
       </Field>
-      <SheetActions action="Add" disabled={!ready} onCancel={close} onAction={submit} />
+      <SheetActions action={action} disabled={!ready} onCancel={close} onAction={submit} />
     </div>
   )
 }

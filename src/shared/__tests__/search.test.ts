@@ -222,6 +222,56 @@ describe('search engines: the shortcut and the active flag (omnibox-09, settings
     )
   })
 
+  it('a bare @ is a word missing, not a word too long: its own line, spaces around it or not', () => {
+    // `normalizeEngineKeyword('@')` is null as a 65-character word's is; the reason differs.
+    expect(engineKeywordProblem('@', own.id, all)).toBe('Type a word after the @')
+    expect(engineKeywordProblem(' @ ', own.id, all)).toBe('Type a word after the @')
+    expect(engineKeywordProblem('@w', own.id, all)).toBeNull()
+    // The long word keeps its line.
+    expect(engineKeywordProblem(`@${'x'.repeat(65)}`, own.id, all)).toBe('The shortcut is too long')
+  })
+
+  it('an engine being added has no id: given one no engine has, every engine’s word is another’s', () => {
+    // `sanitizeSearchEngine` keeps no engine with an empty id, so '' names none of them.
+    expect(engineKeywordProblem('ddg', '', all)).toBe('DuckDuckGo already answers to @ddg')
+    expect(engineKeywordProblem(own.keyword, '', all)).toBe(
+      `${own.name} already answers to ${own.keyword}`
+    )
+    expect(engineKeywordProblem('fresh', '', all)).toBeNull()
+  })
+
+  it('an added engine takes the shortcut the form typed, normalised as an edit’s is; empty or not given, one derived from the name (W5-4)', () => {
+    // Typed: `@` added when left off, lower case – `normalizeEngineKeyword`'s word.
+    const typed = customSearchEngine('Wiki', 'https://wiki.example/w?search=%s', all, ' Wiki ')
+    expect(typed.keyword).toBe('@wiki')
+    expect(customSearchEngine('Wiki', 'https://wiki.example/w?search=%s', all, '@WP').keyword).toBe(
+      '@wp'
+    )
+    // Empty, or not given at all (the callers before the form carried one): derived from the
+    // name, unique among the engines – `@google` is the shipped engine's, so `2`.
+    expect(customSearchEngine('Google', 'https://mirror.example/?q=%s', all, '').keyword).toBe(
+      '@google2'
+    )
+    expect(customSearchEngine('Google', 'https://mirror.example/?q=%s', all).keyword).toBe(
+      '@google2'
+    )
+    // A word that cannot be a shortcut (spaces) is null to the normaliser and derives too: the
+    // caller refuses it before this with `engineKeywordProblem`, as the core does.
+    expect(customSearchEngine('Wiki', 'https://wiki.example/?q=%s', all, 'two words').keyword).toBe(
+      '@wiki'
+    )
+    // The rest of the engine is as without a shortcut.
+    expect(typed).toMatchObject({
+      id: 'custom:wiki',
+      name: 'Wiki',
+      searchUrl: 'https://wiki.example/w?search=%s',
+      suggestUrl: null,
+      glyph: 'W',
+      source: 'custom',
+      favicon: null
+    })
+  })
+
   it('edits name, shortcut and template; an empty shortcut derives from the new name, unique', () => {
     const edited = editedSearchEngine(
       own,

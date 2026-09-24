@@ -410,6 +410,7 @@ textarea.zen-v2-field {
 .zen-v2-af-row:disabled {
   opacity: 0.4;
 }
+/* The row's kind glyph leads in the row's ink (§10.4: full ink like the label it introduces). */
 .zen-v2-af-row-icon {
   display: flex;
   flex-shrink: 0;
@@ -418,7 +419,7 @@ textarea.zen-v2-field {
   margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   align-items: center;
   justify-content: center;
-  color: var(--v2-text-deemphasized);
+  color: var(--v2-text);
 }
 .zen-v2-af-row-icon img {
   width: 100%;

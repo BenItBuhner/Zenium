@@ -8,9 +8,11 @@ name: Desktop smoke (Windows, macOS, Linux installers)
 # DPI and OS dark mode screenshots. Windows additionally installs the NSIS build silently, checks
 # the default-browser registration it wrote (RegisteredApplications, the StartMenuInternet client
 # and Capabilities, the http/https associations, the ProgID), boots the installed executable,
-# uninstalls it and checks that the registration went with it. Windows also runs the smoke's
-# notifications scenario (a page's toast on the notification platform, the AppUserModelId
-# registration Settings lists the app under, the click that reveals the tab) and macOS its
+# uninstalls it and checks that the registration went with it – the AppUserModelId class key the
+# app writes for its toasts included. Windows also runs the smoke's notifications scenario (a
+# page's toast on the notification platform, the AppUserModelId registration Settings lists the
+# app under – the unpacked build's first, then the installed build's refresh of the same key with
+# its own icon path – and the click that reveals the tab) and macOS its
 # default-browser scenario (Make default's setAsDefaultProtocolClient('http') call – the OS's
 # dialog that follows is the user's, so LaunchServices' handlers are read for the record only;
 # .github/smoke/README.md says which half of each is OS-confirmed). The Linux job builds the two
@@ -94,8 +96,12 @@ jobs:
           if (-not $exe) { throw "no unpacked zenium.exe under dist ($((Get-ChildItem dist | Select-Object -ExpandProperty Name) -join ', '))" }
           "unpacked exe: $exe"
           # notifications (os-27/28/30): the page's toast on the notification platform, the AUMID
-          # class key the build registers for itself, the click that reveals the tab.
-          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios boot,restore,scale,dark,notifications
+          # class key the build registers for itself, the click that reveals the tab. It runs
+          # first so that its app-id-registered step is the leg's first launch of the build and
+          # meets the key as the leg starts: absent on the runner's first run, so the scenario
+          # seeds a stale key and the build has to replace its values with its own (a launch
+          # before it would already have written them, and the step would read "unchanged").
+          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark
       - name: Windows and processes left behind by the unpacked build
         if: always()
         run: |
@@ -127,22 +133,29 @@ jobs:
         timeout-minutes: 14
         # notifications on the installed build also reads the shortcuts' System.AppUserModel.ID
         # (the installer's WinShell::SetLnkAUMI): the id an installed build's toasts are grouped by.
-        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios boot,restore,notifications
+        # It runs first here too, so its app-id-registered step is the installed build's first
+        # launch and meets the class key the unpacked build wrote above (its IconUri under
+        # dist\win-unpacked; the silent install runs nothing) – and requires the installed build
+        # to have replaced it with its own (under LOCALAPPDATA\Programs\zenium): W4-12's finding
+        # 1, the refresh, recorded as the step's before → after.
+        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore
       - name: Windows and processes left behind by the installed build
         if: always()
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action dialogs | Tee-Object -FilePath "$env:SMOKE_OUT\installed-leftover-windows.json"
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action processes | Tee-Object -FilePath "$env:SMOKE_OUT\installed-leftover-processes.json"
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action kill
-      - name: Uninstall silently; nothing of the browser registration may stay behind
+      - name: Uninstall silently; nothing of the browser registration or the app's AppUserModelId key may stay behind
         if: always()
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-install.ps1" -Action uninstall -Out "$env:SMOKE_OUT" -Label installed
           $uninstallExit = $LASTEXITCODE
           $info = Get-Content "$env:SMOKE_OUT\installed-uninstall.json" -Raw | ConvertFrom-Json
-          # ci-08: every key of the registration gone, no document type still naming the ProgID.
+          # ci-08: every key of the registration gone, no document type still naming the ProgID,
+          # and the AppUserModelId class key the installed build wrote for its toasts gone too
+          # (installer.nsh's customUnInstall; W4-12's finding 2) – win-install.ps1 reads until gone.
           $left = @($info.registrationLeftovers | Where-Object { $_ })
-          if ($left.Count -gt 0) { throw "default-browser registration left after the uninstall ($($left.Count)): $($left -join '; ')" }
+          if ($left.Count -gt 0) { throw "registration left after the uninstall ($($left.Count), read $($info.registrationLeftoverRounds) time(s)): $($left -join '; ')" }
           if ($uninstallExit -ne 0) { throw "uninstaller exited with code $($info.exitCode) (win-install.ps1 exit $uninstallExit)" }
       - name: Verdict (log and step summary)
         if: always()
