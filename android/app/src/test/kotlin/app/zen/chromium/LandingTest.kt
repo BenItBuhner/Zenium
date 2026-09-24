@@ -33,6 +33,8 @@ class LandingTest {
         assertNull(Landing.parse("https://example.com/"))
     }
 
+    // `forwarded` is the trampoline's read for a shortcut's intent and, through `Landing.of`,
+    // MainActivity's own read of what reaches it (the extra, or the bare private action).
     @Test
     fun theTrampolineCarriesTheExtraOverAndReadsTheOldShortcutsActionAsPrivate() {
         assertEquals(Landing.SEARCH, Landing.forwarded(null, "search"))

@@ -52,7 +52,6 @@ import { landFromIntent } from './landing'
 import { schemeForPages } from './pageScheme'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
-import { openShortcutPrivateTab } from './privateShortcut'
 import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
@@ -114,8 +113,6 @@ export interface HostGlobal {
    * evaluation's result (the array as JSON text) while the system's action mode is coming up.
    */
   selectionMenu(tabId: string, json: string | null): SelectionToolbarItem[]
-  /** The launcher's "New private tab" shortcut: a private tab in the current space. */
-  newPrivateTab(): void
   /**
    * The search widget's or a launcher shortcut's landing state (`Landing.kt`'s intent extra,
    * WID-07) on a WARM start – `onNewIntent`, or an intent in the boot's tail: the app opens
@@ -486,10 +483,6 @@ function installHostGlobal(
             parse<{ text?: unknown } | undefined>(json) ?? {}
           ) ?? [])
         : [],
-    newPrivateTab: () =>
-      withPlatform((platform) => {
-        openShortcutPrivateTab(platform.browser, platform.window)
-      }),
     land: (state) =>
       withPlatform((platform) => {
         landFromIntent(state, platform.browser, platform.window)

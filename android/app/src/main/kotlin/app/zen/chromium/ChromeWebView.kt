@@ -312,13 +312,9 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         onReady { js("window.__zenHost&&__zenHost.openUrl(${JSONObject.quote(url)})") }
     }
 
-    /** The launcher's "New private tab" shortcut: a private tab in the current space, once the core is up. */
-    fun newPrivateTab() {
-        onReady { js("window.__zenHost&&__zenHost.newPrivateTab()") }
-    }
-
     /**
-     * The search widget's or a launcher shortcut's landing state ([Landing], WID-07): the chrome
+     * The search widget's or a launcher shortcut's landing state ([Landing], WID-07; the "New
+     * private tab" shortcut's bare action reads as the private landing, `Landing.of`): the chrome
      * opens straight in it, the previous tab never painting.
      *
      * Cold – the document's core has not asked for its boot answer yet – the state is stashed for

@@ -53,14 +53,19 @@ object Landing {
         return STATES.firstOrNull { it.equals(word, ignoreCase = true) }
     }
 
-    /** The landing [intent] asks for, or null. */
-    fun of(intent: Intent?): String? = parse(intent?.getStringExtra(EXTRA))
+    /**
+     * The landing [intent] asks for – the extra's word, or the one its action implies
+     * ([forwarded]: a third party's explicit `NEW_PRIVATE_TAB` intent aimed at `MainActivity`
+     * itself is the private landing by another name, on the same path) – or null.
+     */
+    fun of(intent: Intent?): String? = forwarded(intent?.action, intent?.getStringExtra(EXTRA))
 
     /**
-     * What the trampoline carries over to `MainActivity` for a shortcut's intent: the landing it
-     * named, or the one its action implies (`PrivateBrowsing.ACTION_NEW_TAB` is the private
-     * landing by another name – the shortcut that predates the extra keeps its action). Null for a
-     * plain launcher tap.
+     * The landing an intent's word and action come to: the landing it named, or the one its
+     * action implies (`PrivateBrowsing.ACTION_NEW_TAB` is the private landing by another name –
+     * the shortcut that predates the extra keeps its action, and so does a pinned copy of it aimed
+     * straight at `MainActivity`). What the trampoline carries over to `MainActivity` for a
+     * shortcut's intent, and what `MainActivity` reads of its own. Null for a plain launcher tap.
      */
     fun forwarded(action: String?, extra: String?): String? =
         parse(extra) ?: if (action == PrivateBrowsing.ACTION_NEW_TAB) PRIVATE else null
