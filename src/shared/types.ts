@@ -3754,7 +3754,7 @@ export interface CommandDescriptor {
 export type MenuGlyph = 'forward' | 'home' | 'star' | 'download' | 'info' | 'reload' | 'stop'
 
 /**
- * A tab group's mark before a row's label (the app menu's Tab Groups submenu, where every row
+ * A tab group's mark before a row's label (the app menu's Tab Folders submenu, where every row
  * is a saved group; shortcuts-menus-111): the one group glyph (`GroupGlyph`, design language
  * v2 §9.37) drawn from the group's colour and its own icon – the 10 ring at a 2 stroke for a
  * SAVED group, the 10 dot for an open one – in the favicon's 16 box, so the row reads as the
@@ -3775,7 +3775,7 @@ export interface MenuItemDescriptor {
   checked: boolean
   /** A favicon (`data:` or remote URL) the renderer may show before the label. */
   icon?: string | null
-  /** A tab group's mark in the glyph slot (the Tab Groups submenu's rows). */
+  /** A tab group's mark in the glyph slot (the Tab Folders submenu's rows). */
   group?: MenuGroupMark
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */

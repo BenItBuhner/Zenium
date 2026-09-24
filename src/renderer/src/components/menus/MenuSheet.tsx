@@ -809,7 +809,7 @@ function MenuLevel({
                 {checkable && item.checked ? (
                   <Check />
                 ) : item.group ? (
-                  // A saved group's row (the Tab Groups submenu): the one group glyph (§9.37)
+                  // A saved group's row (the Tab Folders submenu): the one group glyph (§9.37)
                   // in the slot, the ring of its colour, or the folder's own icon.
                   <GroupGlyph folder={item.group} saved={item.group.saved} />
                 ) : item.icon ? (

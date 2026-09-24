@@ -445,7 +445,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
   'Bookmarks > -',
-  'Bookmarks > Tab Groups',
+  'Bookmarks > Tab Folders',
   'History',
   'History > Show Full History',
   'History > -',
@@ -673,10 +673,10 @@ describe('the app menu', () => {
       })
       return folder
     }
-    /** The Tab Groups submenu of the window's app menu. */
+    /** The Tab Folders submenu of the window's app menu (Chrome's Tab groups ▸; the desktop's noun). */
     const tabGroups = (h: Harness, win = h.win): MenuItemTemplate[] => {
       h.browser.handleCommand(win, 'app.menu', {})
-      return item(item(h.shown(), 'Bookmarks').submenu!, 'Tab Groups').submenu!
+      return item(item(h.shown(), 'Bookmarks').submenu!, 'Tab Folders').submenu!
     }
 
     it("closes the Bookmarks submenu as its last group – Chrome's seat for a list beside the bookmarks – listing the saved groups by name with their mark, the most recently used first", () => {
@@ -691,7 +691,7 @@ describe('the app menu', () => {
       h.browser.createFolder(h.win.activeSpace().id, 'Empty', '📁', h.win, { rename: false })
       appMenu(h)
       const bookmarks = item(h.shown(), 'Bookmarks').submenu!
-      expect(topLabels(bookmarks).slice(-3)).toEqual(['Export Bookmarks…', '-', 'Tab Groups'])
+      expect(topLabels(bookmarks).slice(-3)).toEqual(['Export Bookmarks…', '-', 'Tab Folders'])
       expect(separators(bookmarks)).toBe(3)
       const rows = tabGroups(h)
       expect(rows.map((r) => r.label)).toEqual(['Trip', 'Research'])
@@ -726,16 +726,16 @@ describe('the app menu', () => {
       expect(tabGroups(h).map((r) => r.label)).toEqual(['Trip'])
     })
 
-    it("with nothing saved the submenu is §9.17's empty state: 'No saved tab groups' as the note row", () => {
+    it("with nothing saved the submenu is §9.17's empty state: 'No saved tab folders' as the note row", () => {
       const h = harness(DESKTOP)
-      expect(tabGroups(h)).toEqual([{ label: 'No saved tab groups', enabled: false, note: true }])
+      expect(tabGroups(h)).toEqual([{ label: 'No saved tab folders', enabled: false, note: true }])
       // A group open in the sidebar saves nothing yet: still the note.
       const p = pageHarness(DESKTOP)
       const open = p.browser.createFolder(p.win.activeSpace().id, 'Work', '📁', p.win, {
         rename: false
       })
       p.browser.tabs.moveToFolder(p.tabId, open.id)
-      expect(tabGroups(p).map((r) => r.label)).toEqual(['No saved tab groups'])
+      expect(tabGroups(p).map((r) => r.label)).toEqual(['No saved tab folders'])
     })
 
     it("is the desktop's alone, and no row of a private window's menu: the tablet's and the phone's Bookmarks keep their shape", () => {
@@ -743,15 +743,15 @@ describe('the app menu', () => {
       savedGroup(desktop, 'Trip', ['https://c.example/'])
       const priv = desktop.browser.openWindow('private', desktop.win)!
       desktop.browser.handleCommand(priv, 'app.menu', {})
-      expect(labels(desktop.shown())).not.toContain('Bookmarks > Tab Groups')
+      expect(labels(desktop.shown())).not.toContain('Bookmarks > Tab Folders')
       expect(labels(item(desktop.shown(), 'Bookmarks').submenu!).at(-1)).toBe('Export Bookmarks…')
       const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
       savedGroup(tablet, 'Trip', ['https://c.example/'])
-      expect(appMenu(tablet)).not.toContain('Bookmarks > Tab Groups')
+      expect(appMenu(tablet)).not.toContain('Bookmarks > Tab Folders')
       const phone = pageHarness(ANDROID, { formFactor: 'phone' })
       savedGroup(phone, 'Trip', ['https://c.example/'])
-      expect(appMenu(phone)).not.toContain('Bookmarks > Tab Groups')
-      expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Tab Groups')
+      expect(appMenu(phone)).not.toContain('Bookmarks > Tab Folders')
+      expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Tab Folders')
     })
   })
 
@@ -1131,7 +1131,7 @@ describe('the app menu', () => {
         label !== 'More Tools > Compact Mode' &&
         label !== 'More Tools > Name Window…' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
-        label !== 'Bookmarks > Tab Groups' &&
+        label !== 'Bookmarks > Tab Folders' &&
         label !== 'Save and Share > Web Capture…'
     )
     tabletChrome.splice(tabletChrome.lastIndexOf('Bookmarks > -'), 1)

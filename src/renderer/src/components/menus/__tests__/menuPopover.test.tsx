@@ -156,14 +156,14 @@ describe('the popover menu', () => {
     expect(menus()[0].dataset.context).toBeUndefined()
   })
 
-  it("a saved group's row draws the one group glyph in the slot – the ring of its colour, or the folder's own icon – and gives the level the slot (the Tab Groups submenu, shortcuts-menus-111)", () => {
+  it("a saved group's row draws the one group glyph in the slot – the ring of its colour, or the folder's own icon – and gives the level the slot (the Tab Folders submenu, shortcuts-menus-111)", () => {
     show(
       tabMenu({
         source: 'app',
         items: [
           item('trip', 'Trip', { group: { color: 'green', icon: '✈️', saved: true } }),
           item('research', 'Research', { group: { color: 'blue', icon: '📁', saved: true } }),
-          item('none', 'No saved tab groups', { enabled: false, note: true })
+          item('none', 'No saved tab folders', { enabled: false, note: true })
         ]
       })
     )
