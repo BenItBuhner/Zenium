@@ -24,6 +24,8 @@ name: Android chrome accessibility and font scale demo
 # demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/android-a11y-pass-2-bb11]
 
 permissions:
   contents: read
