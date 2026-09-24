@@ -26,17 +26,26 @@
 #   warm start  (light only) `am start -W --activity-clear-task`: the activity re-created in the
 #               living process – LaunchState WARM, the platform's starting window, the chrome
 #               booting again under it; recorded for the record, judged by no rule
+#   web app     the fixture web app's cold launch (PWA-06): the process gone, the app's launch
+#               intent (the seed's `webapp-start:` line: the record as extras, as the tile's
+#               trampoline sends it) fired as root under screenrecord with the `/webapp` answer
+#               held for WEBAPP_HOLD_MS – the platform's plain window, the splash dressed at the
+#               hand-over in the app's colour and tile (the design still), held to the page's
+#               first frame (the `web app page painted` line, the page still), then the page
 #
 # The recordings are read frame by frame (android-startup-frames.mjs: splash, restored picture,
 # page, blank, in that order and never a blank slot after the splash; the hot start with no
-# splash and no blank) and cut into a contact sheet each. Everything lands under DEMO_OUT:
-# per scheme <theme>/ (the seed's notes and still, the am start answers, the stills under the
-# round's names – android-startup-design-splash-<theme>.png, -design-restored-picture-<theme>.png,
-# -page-painted-<theme>.png, -hot-<theme>.png, the tiles android-startup-frames-cold-<theme>.png
-# and -frames-warm-<theme>.png (the hot start's: the row's warm start is the process alive) –
-# the recordings, their frame findings, the logcat), startup-findings.txt (every verdict),
-# startup-table.md (the numbers, also the job summary). STARTUP_ASSERT=true fails the run on a
-# verdict that did not hold; anything else reports only.
+# splash and no blank; the web app's launch: the tile on the ground, never a bare window before
+# it, the page within the exit's motion of the last splash frame) and cut into a contact sheet
+# each. Everything lands under DEMO_OUT: per scheme <theme>/ (the seed's notes and still, the am
+# start answers, the stills under the round's names – android-startup-design-splash-<theme>.png,
+# -design-restored-picture-<theme>.png, -page-painted-<theme>.png, -hot-<theme>.png,
+# -design-webapp-splash-<theme>.png, -webapp-page-<theme>.png, the tiles
+# android-startup-frames-cold-<theme>.png, -frames-warm-<theme>.png (the hot start's: the row's
+# warm start is the process alive) and -frames-webapp-<theme>.png – the recordings, their frame
+# findings, the logcat), startup-findings.txt (every verdict), startup-table.md (the numbers,
+# also the job summary). STARTUP_ASSERT=true fails the run on a verdict that did not hold;
+# anything else reports only.
 #
 #   DEMO_OUT          where the findings go (artifacts/android-startup-demo by default)
 #   DEMO_PREPARED     1 when an earlier driver on this boot prepared the device (the nightly)
@@ -44,6 +53,9 @@
 #   STARTUP_THEMES    the schemes to run, `light dark` by default (the nightly runs light)
 #   STARTUP_HOLD_MS   how long the cold start's fixture answer is held, 7000 by default (under
 #                     RestoredPictures' 10 s release, past READY on this emulator by 3 s)
+#   WEBAPP_HOLD_MS    how long the web app's page answer is held, 4000 by default (the splash
+#                     dressed and standing well past the hand-over, under StartupSplash's 6 s
+#                     watchdog from it)
 #   STARTUP_PORT      the fixture server's port, 18931 by default
 #   STARTUP_ASSERT    true to fail on a verdict that did not hold
 set -euo pipefail
@@ -56,6 +68,7 @@ demo_dir=startup-demo
 out=${DEMO_OUT:-artifacts/android-startup-demo}
 port=${STARTUP_PORT:-18931}
 hold_ms=${STARTUP_HOLD_MS:-7000}
+webapp_hold_ms=${WEBAPP_HOLD_MS:-4000}
 assert=${STARTUP_ASSERT:-false}
 themes=${STARTUP_THEMES:-light dark}
 display=${DEMO_DISPLAY:-720x1600@280}
@@ -222,9 +235,11 @@ frame_failures() {
 # --- the acts -----------------------------------------------------------------------------------
 
 rows=()
+webapp_rows=()
 
 # The seed: the driver's one act, the handshake answered without a recorder. Leaves the notes
-# (the slot's rectangle) and the still in $1/; the process is gone after it.
+# (the slot's rectangle, the web app's launch arguments) and the still in $1/; the process is
+# gone after it.
 seed() {
   local theme=$1 dir=$2
   echo "== seed ($theme)"
@@ -438,6 +453,93 @@ warm_start() {
   rows+=("| warm, activity re-created ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully | $held | $splash_seen / - | - | - | - | - |")
 }
 
+# The web app's cold launch (PWA-06): the process gone, the app's launch intent fired as root
+# (the window is not exported; the tile's trampoline is the only other way in), the page's answer
+# held so the dressed splash stands to be seen, the page's first frame lifting it.
+webapp_launch() {
+  local theme=$1 dir=$2
+  local args
+  args=$(sed -n 's/^webapp-start: //p' "$dir/android-startup-notes.txt" 2> /dev/null | head -n 1 || true)
+  if [ -z "$args" ]; then
+    verdict false "the web app's launch arguments came from the seed ($theme)" "no webapp-start line in the notes"
+    return
+  fi
+  echo "== web app cold launch ($theme)"
+  adb shell am force-stop "$app_id" || true
+  adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.HOME > /dev/null 2>&1 || true
+  sleep 3
+  echo "$webapp_hold_ms" > "$hold_file"
+  adb logcat -c || true
+  adb shell screenrecord --bit-rate 6000000 --time-limit 40 "/sdcard/startup-webapp-$theme.mp4" &
+  local recorder_pid=$!
+  sleep 1.5
+  adb shell "su 0 am start -W $args" > "$dir/am-start-webapp.txt" 2>&1 &
+  local am_pid=$!
+  wait "$am_pid" || true
+  local answer
+  answer=$(tr -d '\r' < "$dir/am-start-webapp.txt")
+  local total wait_ state
+  total=$(field TotalTime "$answer")
+  wait_=$(field WaitTime "$answer")
+  state=$(field LaunchState "$answer")
+  # The window's first frame is drawn (the answer came): the hand-over and the dress follow
+  # within a frame or two; the page's answer is still held – the design still.
+  local dressed_line
+  dressed_line=$(wait_line "web app splash: dressed at the hand-over" 10)
+  sleep 0.8
+  adb exec-out screencap -p > "$dir/android-startup-design-webapp-splash-$theme.png" || true
+  local painted_line
+  painted_line=$(wait_line "web app page painted: first frame" $(( webapp_hold_ms / 1000 + 15 )))
+  sleep 0.8
+  adb exec-out screencap -p > "$dir/android-startup-webapp-page-$theme.png" || true
+  sleep 1
+  adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
+  wait "$recorder_pid" || true
+  adb pull "/sdcard/startup-webapp-$theme.mp4" "$dir/startup-webapp-$theme.mp4" > /dev/null || true
+  startup_log > "$dir/webapp-startup-log.txt" || true
+  adb logcat -d -v time > "$dir/webapp-logcat.txt" 2> /dev/null || true
+  rm -f "$hold_file"
+
+  local held started dressed_at painted_at dressed_ms painted_ms fully_ms
+  held=$(held_by)
+  fully_ms=$(duration_ms "$(startup_log | grep -m 1 "Fully drawn $app_id/app.zen.chromium.WebAppActivity" | sed -n 's/.*Fully drawn [^:]*: *+\([0-9smh]*\).*/\1/p' || true)")
+  started=$(line_at "ActivityTaskManager: START u0 .*cmp=$app_id/")
+  dressed_at=$(line_at "web app splash: dressed at the hand-over")
+  painted_at=$(line_at "web app page painted: first frame")
+  dressed_ms=$(ms_between "$started" "$dressed_at")
+  painted_ms=$(ms_between "$started" "$painted_at")
+  echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; Fully drawn $fully_ms; splash dressed +$dressed_ms ms, page painted +$painted_ms ms (from the start request); splash held $held"
+  echo "  ${dressed_line:-no dressed line}"
+  {
+    echo "web app cold launch ($theme): $answer"
+    echo "Fully drawn: $fully_ms ms; splash dressed: +$dressed_ms ms; page painted: +$painted_ms ms; splash held: $held"
+    echo "${dressed_line:-no dressed line}"
+    echo "${painted_line:-no page painted line}"
+  } > "$dir/webapp-numbers.txt"
+
+  verdict "$([ "${state:-}" = COLD ] && echo true || echo false)" "the web app's launch was cold ($theme)" "LaunchState ${state:-?}"
+  verdict "$(case "$dressed_line" in *"icon on"*) echo true ;; *) echo false ;; esac)" \
+    "the splash was dressed at the hand-over with the tile already decoded ($theme)" "${dressed_line:-no dressed line}"
+  verdict "$([ -n "$painted_line" ] && echo true || echo false)" "the page's first frame was reported ($theme)" "${painted_line:-no page painted line}; Fully drawn $fully_ms ms"
+  verdict "$(case "$held" in *"(ready)") echo true ;; *) echo false ;; esac)" "the page's first frame lifted the web app's splash, not the watchdog ($theme)" "splash held $held"
+  verdict "$([ "$dressed_ms" != - ] && [ "$painted_ms" != - ] && [ "$dressed_ms" -lt "$painted_ms" ] && echo true || echo false)" \
+    "the splash was dressed before the page's first frame ($theme)" "dressed +$dressed_ms ms, painted +$painted_ms ms"
+  if command -v ffmpeg > /dev/null 2>&1; then
+    # The whole display is the slot: the edges read the app's ground, the centre its tile.
+    local status=0 size=${display%@*}
+    node .github/scripts/android-startup-frames.mjs webapp "$dir/startup-webapp-$theme.mp4" "0 0 ${size%x*} ${size#*x}" "$size" "$dir/webapp-frames.txt" \
+      --still splash="$dir/android-startup-design-webapp-splash-$theme.png" --still page="$dir/android-startup-webapp-page-$theme.png" \
+      --tile "$dir/android-startup-frames-webapp-$theme.png" || status=$?
+    grep -E '^(PASS|FAIL):' "$dir/webapp-frames.txt" | sed "s/)$/; $theme web app recording)/" >> "$findings" || true
+    failures=$((failures + $(frame_failures "$dir/webapp-frames.txt" "$status")))
+  else
+    verdict false "the web app launch's recording was read ($theme)" "no ffmpeg"
+  fi
+  webapp_rows+=("| web app cold launch ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully_ms | +$dressed_ms | +$painted_ms | $held |")
+  adb shell am force-stop "$app_id" || true
+  adb shell rm -f "/sdcard/startup-webapp-$theme.mp4" || true
+}
+
 for theme in $themes; do
   dir=$out/$theme
   mkdir -p "$dir"
@@ -447,6 +549,7 @@ for theme in $themes; do
   cold_start "$theme" "$dir"
   hot_start "$theme" "$dir"
   if [ "$theme" = light ]; then warm_start "$theme" "$dir"; fi
+  webapp_launch "$theme" "$dir"
   adb shell am force-stop "$app_id" || true
   adb shell rm -f "/sdcard/startup-cold-$theme.mp4" "/sdcard/startup-hot-$theme.mp4" || true
   sleep 2
@@ -461,6 +564,12 @@ adb shell cmd uimode night no > /dev/null || true
   echo "| start | LaunchState | TotalTime | WaitTime | Fully drawn | splash held (by) | splash windows | picture up | READY frame | page painted | frame statistics since the process start |"
   echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
   for row in "${rows[@]}"; do echo "$row"; done
+  echo
+  echo "The fixture web app's cold launch (PWA-06, WebAppActivity, the process gone, the page's answer held $webapp_hold_ms ms): TotalTime the platform's window (the fixed ground); the moments are ms after the start request on logcat's clock – the splash dressed in the app's colour and tile at the hand-over, the page's first frame (reportFullyDrawn, the splash lifting)."
+  echo
+  echo "| launch | LaunchState | TotalTime | WaitTime | Fully drawn | splash dressed | page painted | splash held (by) |"
+  echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
+  for row in "${webapp_rows[@]}"; do echo "$row"; done
   echo
   echo "verdicts: $(grep -c '^PASS' "$findings" || true) held, $failures did not"
 } | tee "$table"

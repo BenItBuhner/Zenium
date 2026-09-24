@@ -1,5 +1,7 @@
 package app.zen.chromium
 
+import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.SystemClock
@@ -31,6 +33,14 @@ import java.io.File
  * The one still, `android-startup-seeded.png`, is the chrome with the live fixture page: the
  * look the restored picture is judged against. `-e assert true` fails the act when the picture
  * is not on disk (the scene's premise); otherwise it only reports.
+ *
+ * The scene's last act is a web app's cold launch (PWA-06: the app's tile on its
+ * `background_color`, held to the page's first frame). What only the process can do for it is
+ * done here too: the install's record and tile for a fixture app on the runner's `/webapp` page
+ * are written where the window reads them ([WebAppStore]; the tile a flat cyan layer the
+ * recording tells from the app's purple ground and the page's green), and the notes carry the
+ * `am start` arguments of the app's launch intent ([WebAppLauncherActivity.launchIntent]) for
+ * the runner to fire as root once the process is gone.
  */
 @RunWith(AndroidJUnit4::class)
 class StartupDemo : DemoHarness("startup-demo-state.json", "android-startup", "startup-demo") {
@@ -85,6 +95,7 @@ class StartupDemo : DemoHarness("startup-demo-state.json", "android-startup", "s
             note("slot: ${rect[0]} ${rect[1]} ${rect[2]} ${rect[3]}")
         }
         note("bar: ${barEdge() ?: "?"}")
+        seedWebApp()
         val file = File(File(app.cacheDir, Thumbnails.DIR), "$TAB${Thumbnails.SUFFIX}")
         val before = if (file.isFile) file.lastModified() else 0L
         // Home: Host.onPause takes every page's picture on the way to the background (BH-33's
@@ -106,6 +117,45 @@ class StartupDemo : DemoHarness("startup-demo-state.json", "android-startup", "s
         }
         note("\nend: ${if (failures == 0) "the session is seeded for the cold start" else "$failures claim(s) failed"}")
     }
+
+    /**
+     * The fixture web app as an install left it: its record and a flat cyan tile under
+     * `files/zen/webapps/` (the tile the launch's splash shows, the Recents icon), and the launch
+     * intent's `am start` arguments in the notes (`webapp-start:`) – the record as extras, the
+     * task URI as data, the flags – so the runner's launch is the tile's own, less the trampoline.
+     */
+    private fun seedWebApp() {
+        val url = fixture.substringBeforeLast('/') + "/webapp"
+        val scope = fixture.substringBeforeLast('/') + "/"
+        val record = WebAppRecord(
+            id = url, name = "Startup fixture app", startUrl = url, scope = scope,
+            display = WebAppRules.Display.STANDALONE, themeColor = WEBAPP_THEME, backgroundColor = WEBAPP_BACKGROUND
+        )
+        val canvas = (ShortcutTile.CANVAS_DP * density).toInt()
+        val tile = Bitmap.createBitmap(canvas, canvas, Bitmap.Config.ARGB_8888).apply { eraseColor(WEBAPP_TILE) }
+        WebAppStore.save(app, record, tile)
+        val saved = WebAppStore.tileFile(app, record.shortcutId)
+        check("the web app's record and tile are on disk", WebAppStore.load(app, record.shortcutId) != null && saved.isFile, "${saved.name}, ${saved.length()} B, ${canvas}px")
+        note("webapp-start: ${amStartArguments(WebAppLauncherActivity.launchIntent(app, record, url))}")
+        note("webapp-colours: ground #%06x tile #%06x theme #%06x".format(WEBAPP_BACKGROUND and 0xffffff, WEBAPP_TILE and 0xffffff, WEBAPP_THEME and 0xffffff))
+    }
+
+    /** `am start`'s arguments for `intent`: action, data, component, flags, and the extras as `--es` / `--ei` (single-quoted for the device's shell). */
+    private fun amStartArguments(intent: Intent): String {
+        val parts = mutableListOf("-a", intent.action.orEmpty(), "-d", quote(intent.dataString.orEmpty()), "-n", intent.component!!.flattenToShortString(), "-f", intent.flags.toString())
+        val extras = intent.extras
+        if (extras != null) {
+            for (key in extras.keySet().sorted()) {
+                when (val value = extras.get(key)) {
+                    is Int -> { parts += "--ei"; parts += key; parts += value.toString() }
+                    is String -> { parts += "--es"; parts += key; parts += quote(value) }
+                }
+            }
+        }
+        return parts.joinToString(" ")
+    }
+
+    private fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     /** Poll the seeded tab's title as the core has it until `accept`s it and the tab is not loading. */
     private fun waitTitle(timeoutMs: Long, accept: (String) -> Boolean): String {
@@ -149,6 +199,10 @@ class StartupDemo : DemoHarness("startup-demo-state.json", "android-startup", "s
         const val TAB = "tab_startup"
         /** The runner's fixture server as the emulator reaches it (its host loopback is 10.0.2.2). */
         const val DEFAULT_FIXTURE = "http://10.0.2.2:18931/fixture"
+        /** The fixture web app's colours, the recording's classes (android-startup-frames.mjs): the manifest's `background_color`, the tile, the `theme_color`. */
+        const val WEBAPP_BACKGROUND = 0xFF7A1FA2.toInt()
+        const val WEBAPP_TILE = 0xFF00B8D9.toInt()
+        const val WEBAPP_THEME = 0xFF4A148C.toInt()
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
         }

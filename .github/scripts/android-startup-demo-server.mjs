@@ -15,7 +15,9 @@
 // long enough to be seen and read), and the page carries the live mark, an amber disc at the
 // centre the seed's serve did not have, so a frame in which the page itself has painted reads
 // apart from one showing its picture. Every request is logged with its time and its hold.
-// GET /health answers `ok`.
+// GET /webapp is the fixture web app's page (PWA-06's act): a green body, its centre clear, held
+// the same way – the app's splash (its cyan tile on the purple ground) has to stand until this
+// page's first frame long enough to be seen and read. GET /health answers `ok`.
 import { createServer } from 'node:http'
 import { existsSync, readFileSync } from 'node:fs'
 
@@ -42,6 +44,22 @@ p{position:absolute;bottom:8%;left:0;right:0;margin:0;text-align:center;font-siz
 </main></body></html>
 `
 
+const webAppPage = (heldMs) => `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SU|webapp</title>
+<meta name="theme-color" content="#4a148c">
+<style>
+html,body{margin:0;height:100%;background:#2e7d32;color:#fff;font:600 22px/1.3 system-ui,sans-serif}
+main{position:relative;height:100%;overflow:hidden}
+h1{position:absolute;top:12%;left:0;right:0;margin:0;text-align:center;font-size:24px}
+p{position:absolute;bottom:8%;left:0;right:0;margin:0;text-align:center;font-size:14px;opacity:.85}
+</style></head>
+<body><main><h1>Zenium startup fixture app</h1>
+<p>served ${new Date().toISOString()}${heldMs ? ` after a hold of ${heldMs} ms` : ' at once'}</p>
+</main></body></html>
+`
+
 const holdMs = () => {
   if (!existsSync(holdFile)) return 0
   const value = Number(readFileSync(holdFile, 'utf8').trim())
@@ -57,20 +75,22 @@ const server = createServer((req, res) => {
     res.end('ok\n')
     return
   }
-  if (url.pathname !== '/fixture') {
+  if (url.pathname !== '/fixture' && url.pathname !== '/webapp') {
     res.writeHead(404, { 'content-type': 'text/plain' })
     res.end('not here\n')
     return
   }
   const hold = holdMs()
-  console.log(`${stamp()} GET /fixture${hold ? ` held ${hold} ms` : ''}`)
+  console.log(`${stamp()} GET ${url.pathname}${hold ? ` held ${hold} ms` : ''}`)
   const answer = () => {
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store'
     })
-    res.end(page(hold > 0, hold))
-    console.log(`${stamp()} answered /fixture${hold ? ' with the live mark' : ''}`)
+    res.end(url.pathname === '/webapp' ? webAppPage(hold) : page(hold > 0, hold))
+    console.log(
+      `${stamp()} answered ${url.pathname}${hold && url.pathname === '/fixture' ? ' with the live mark' : ''}`
+    )
   }
   if (hold > 0) setTimeout(answer, hold)
   else answer()

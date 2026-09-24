@@ -27,7 +27,24 @@
 // splash frame, no blank frame, the page on the chrome's first frame. Each still named on the
 // command line is read the same way and must show its class.
 //
-//   node android-startup-frames.mjs <cold|hot> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
+// The web app's launch (PWA-06, `webapp`; the slot is the whole display, the centre the icon's)
+// has classes of its own, the fixture app's colours (StartupDemo.seedWebApp):
+//
+//   plain    both edges the window's page colour, light or dark (the theme's fixed ground: the
+//            platform's starting window before the hand-over) – read as `blank` above
+//   splash   both edges the app's purple (#7A1FA2, its manifest background_color) and the
+//            centre its cyan tile (#00B8D9): the dressed splash, held
+//   window   both edges purple and the centre purple too: the app's window bare (or the splash
+//            without its tile) – allowed only as the dress blend before the tile and the exit's
+//            icon fade after the last splash frame
+//   page     both edges the page's green (#2E7D32)
+//   dress    between the plain ground and the tile: the blend to the app's colour (150 ms)
+//
+// Its rules: the tile was on screen on the app's ground; the window never stood bare before the
+// tile beyond the dress; the page's first frame came after the last splash frame within the
+// exit's motion; nothing bare or plain after the page; no splash frame after the page's first.
+//
+//   node android-startup-frames.mjs <cold|hot|webapp> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
 //        [--still <class>=<png>]... [--tile <png>]
 //
 // The findings carry the timeline (runs of frames), the verdicts and each still's reading; the
@@ -48,6 +65,13 @@ const BLANKS = [
   [0xf2, 0xf1, 0xf5],
   [0x16, 0x16, 0x1b]
 ]
+/** The fixture web app's (StartupDemo.WEBAPP_*): its ground, its tile, its page. */
+const PURPLE = [0x7a, 0x1f, 0xa2]
+const CYAN = [0x00, 0xb8, 0xd9]
+const GREEN = [0x2e, 0x7d, 0x32]
+/** Frames before the tile that may be the dress blend (150 ms), and after the last splash frame that may be the exit (482 ms), at FPS. */
+const DRESS_FRAMES = 6
+const EXIT_FRAMES = 14
 
 const args = process.argv.slice(2)
 const positional = []
@@ -63,12 +87,19 @@ for (let i = 0; i < args.length; i++) {
   } else positional.push(args[i])
 }
 const [kind, video, slotArg, displayArg, outPath] = positional
-if (!kind || !video || !slotArg || !displayArg || !outPath || !['cold', 'hot'].includes(kind))
+if (
+  !kind ||
+  !video ||
+  !slotArg ||
+  !displayArg ||
+  !outPath ||
+  !['cold', 'hot', 'webapp'].includes(kind)
+)
   usage()
 
 function usage() {
   console.error(
-    'usage: android-startup-frames.mjs <cold|hot> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>]'
+    'usage: android-startup-frames.mjs <cold|hot|webapp> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>]'
   )
   process.exit(2)
 }
@@ -122,6 +153,13 @@ const blank = (c) => BLANKS.some((ref) => near(c, ref))
 const hex = (c) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
 
 function classify(left, right, centre) {
+  if (kind === 'webapp') {
+    if (near(left, PURPLE) && near(right, PURPLE))
+      return near(centre, CYAN) ? 'splash' : near(centre, PURPLE) ? 'window' : 'other'
+    if (near(left, GREEN) && near(right, GREEN)) return 'page'
+    if (blank(left) && blank(right)) return 'plain'
+    return 'other'
+  }
   if (near(left, INDIGO) && near(right, INDIGO)) return 'splash'
   if (near(left, TEAL) && near(right, TEAL)) return near(centre, AMBER) ? 'page' : 'picture'
   if (blank(left) && blank(right)) return 'blank'
@@ -185,12 +223,24 @@ if (video !== '-') {
 }
 // A frame between the splash's last and the chrome's first that is neither is the exit's blend.
 const lastSplash = frames.map((f) => f.cls).lastIndexOf('splash')
+const firstSplash = frames.findIndex((f) => f.cls === 'splash')
 const firstChrome = frames.findIndex(
   (f, i) => i > lastSplash && ['picture', 'page', 'blank'].includes(f.cls)
 )
-if (lastSplash >= 0 && firstChrome > lastSplash) {
+if (kind !== 'webapp' && lastSplash >= 0 && firstChrome > lastSplash) {
   for (let i = lastSplash + 1; i < firstChrome; i++)
     if (frames[i].cls === 'other') frames[i].cls = 'fade'
+}
+// The web app's: the dress blend just before the tile, the exit (the icon's fade leaves the
+// window's colour bare for its 133 ms, then the reveal blends it into the page) just after the
+// last splash frame – within their windows and no further.
+if (kind === 'webapp' && firstSplash >= 0) {
+  for (let i = Math.max(0, firstSplash - DRESS_FRAMES); i < firstSplash; i++)
+    if (['other', 'window'].includes(frames[i].cls)) frames[i].cls = 'dress'
+  for (let i = lastSplash + 1; i < Math.min(frames.length, lastSplash + 1 + EXIT_FRAMES); i++) {
+    if (frames[i].cls === 'page') break
+    if (['other', 'window'].includes(frames[i].cls)) frames[i].cls = 'fade'
+  }
 }
 
 if (frames.length) {
@@ -212,7 +262,38 @@ if (frames.length) {
   const count = (cls) => classes.filter((c) => c === cls).length
   const firstOf = (cls) => classes.indexOf(cls)
   const at = (i) => (i < 0 ? 'never' : `${(i / FPS).toFixed(2)} s`)
-  if (kind === 'cold') {
+  if (kind === 'webapp') {
+    verdict(
+      "the splash showed the app's tile on its ground",
+      count('splash') > 0,
+      `${count('splash')} splash frames from ${at(firstSplash)} to ${at(lastSplash)}`
+    )
+    const bareBefore = classes.filter((c, i) => c === 'window' && i < firstSplash).length
+    verdict(
+      "the app's window never stood bare before its tile",
+      firstSplash >= 0 && bareBefore === 0,
+      `${bareBefore} bare frames before the tile beyond the dress (plain ground until ${at(classes.lastIndexOf('plain'))})`
+    )
+    const page = firstOf('page')
+    verdict(
+      "the page's first frame came after the splash, within the exit's motion",
+      page > lastSplash && lastSplash >= 0 && page - lastSplash <= EXIT_FRAMES,
+      `last splash at ${at(lastSplash)}, page from ${at(page)}`
+    )
+    const bareAfter = classes.filter(
+      (c, i) => page >= 0 && i > page && ['window', 'plain'].includes(c)
+    ).length
+    verdict(
+      'nothing bare or plain after the page',
+      page >= 0 && bareAfter === 0,
+      `${bareAfter} bare or plain frames after the page's first`
+    )
+    verdict(
+      "no splash frame after the page's first",
+      page >= 0 && lastSplash < page,
+      `last splash at ${at(lastSplash)}, page from ${at(page)}`
+    )
+  } else if (kind === 'cold') {
     verdict(
       'the splash was on screen',
       count('splash') > 0,
