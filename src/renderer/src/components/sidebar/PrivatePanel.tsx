@@ -151,7 +151,7 @@ function PrivateHeader({ count, compact }: { count: number; compact: boolean }):
         compact && 'justify-center px-0'
       )}
       aria-label={`Private, ${count} ${unit}`}
-      title={compact ? 'Private' : undefined}
+      data-tooltip={compact ? 'Private' : undefined}
       data-testid="sidebar-private-header"
     >
       <VenetianMask className="h-4 w-4 shrink-0" aria-hidden />

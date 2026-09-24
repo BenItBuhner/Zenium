@@ -165,7 +165,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
             type="button"
             className="zen-button zen-zoom-step"
             aria-label="Zoom out"
-            title={hint('Zoom out', state, 'zoom.out')}
+            data-tooltip={hint('Zoom out', state, 'zoom.out')}
             disabled={factor <= ZOOM_FLOOR + 0.005}
             onClick={() => step(-1)}
           >
@@ -175,7 +175,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
             type="button"
             className="zen-button zen-zoom-step"
             aria-label="Zoom in"
-            title={hint('Zoom in', state, 'zoom.in')}
+            data-tooltip={hint('Zoom in', state, 'zoom.in')}
             disabled={factor >= ZOOM_CEILING - 0.005}
             onClick={() => step(1)}
           >
@@ -184,7 +184,7 @@ export function ZoomBubble({ state, bubble }: { state: UIState; bubble: Bubble }
           <button
             type="button"
             className="zen-button ml-auto"
-            title={hint(`Back to ${formatZoom(defaultZoom)}`, state, 'zoom.reset')}
+            data-tooltip={hint(`Back to ${formatZoom(defaultZoom)}`, state, 'zoom.reset')}
             disabled={atDefault}
             onClick={() => step(null)}
           >

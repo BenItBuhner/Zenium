@@ -211,7 +211,8 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                     type="button"
                     tabIndex={-1}
                     className="zen-toolbar-button h-5 w-5 opacity-0 group-hover/sep:opacity-70"
-                    title={hint('Clear unpinned tabs', state, 'space.closeUnpinned')}
+                    aria-label={hint('Clear unpinned tabs', state, 'space.closeUnpinned')}
+                    data-tooltip={hint('Clear unpinned tabs', state, 'space.closeUnpinned')}
                     onClick={() => run('space.closeUnpinned', { spaceId: space.id })}
                   >
                     <Brush className="h-3 w-3" />
@@ -377,7 +378,7 @@ function SpaceHeader({
     <button
       type="button"
       className="zen-space-header mb-1 flex h-[var(--zen-tab-row)] w-full items-center gap-2 rounded-lg px-2 text-[13px] font-semibold text-[var(--zen-fg)]"
-      title={space.pinnedCollapsed ? 'Show pinned tabs' : 'Collapse pinned tabs'}
+      data-tooltip={space.pinnedCollapsed ? 'Show pinned tabs' : 'Collapse pinned tabs'}
       aria-label={`${space.name} pinned tabs`}
       aria-expanded={!space.pinnedCollapsed}
       data-strip-item={key}
@@ -479,8 +480,8 @@ export function NewTabButton({
       data-new-tab
       data-strip-new-tab={button || undefined}
       data-drop-into={dropInto || undefined}
-      title={isPrivate ? label : hinted}
-      aria-label={button ? label : undefined}
+      data-tooltip={isPrivate ? label : hinted}
+      aria-label={button ? label : compact ? (isPrivate ? label : hinted) : undefined}
       onClick={() =>
         window.dispatchEvent(
           new CustomEvent('zen-new-tab', {
@@ -689,7 +690,7 @@ export function FolderRow({
           run('folder.contextMenu', { folderId: folder.id, ...contextMenuAnchor(e) })
         }}
         {...(tablet ? hold : {})}
-        title={compact ? folder.name : undefined}
+        data-tooltip={compact ? folder.name : undefined}
       >
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
         {horizontal ? (
@@ -725,7 +726,7 @@ export function FolderRow({
                   'h-1.5 w-1.5 shrink-0 rounded-full',
                   liveError ? 'bg-[var(--v2-danger)]' : 'zen-live-dot bg-[var(--v2-control-accent)]'
                 )}
-                title={liveError ?? 'Live folder – updates automatically'}
+                data-tooltip={liveError ?? 'Live folder – updates automatically'}
               />
             )}
           </>
@@ -778,7 +779,7 @@ export function FolderRow({
                           ? 'bg-[var(--v2-danger)]'
                           : 'zen-live-dot bg-[var(--v2-control-accent)]'
                       )}
-                      title={liveError ?? 'Live folder – updates automatically'}
+                      data-tooltip={liveError ?? 'Live folder – updates automatically'}
                     />
                   )}
                   {/* The count as the tablet row's 13 tabular aside at 69% (§9.36), folded and
@@ -913,7 +914,7 @@ function SavedPageRow({
       data-strip-item={key}
       data-strip-parent={parent}
       tabIndex={tabIndex}
-      title={compact ? title : undefined}
+      data-tooltip={compact ? title : undefined}
       onFocus={stripFocusIn}
       onBlur={stripFocusOut}
       onKeyDown={stripKeyDown}

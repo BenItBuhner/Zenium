@@ -395,11 +395,24 @@
  * between them, so the accent reads against the accent as Firefox's primary buttons ring outside
  * their fill (§4, the #251 ruling; a11y-10). Coarse pointers keep it: the generic suppressor
  * further down (`button:focus-visible { outline: none }`) does not apply to v2 controls.
+ *
+ * The ring's second trigger (§1 as amended with #400; a11y-09): a focus the app moved for a
+ * keyboard command it consumed itself – a pane chord (F6, Shift+F6, Shift+Alt+T, Shift+Alt+B),
+ * eaten in the main process before the document sees a key – and marked keyboard-made
+ * (`data-keyboard-focus`, lib/panes.ts) rings as a Tab landing does. Chromium's `:focus-visible`
+ * heuristic reads a script-moved focus after any mouse use as the mouse's and says no; the mark
+ * says yes. Every ring form in this stylesheet carries the twin selector beside its
+ * `:focus-visible` – never one global override, so each form keeps its own offset and its own
+ * `none`.
  */
 [class^='zen-v2-']:focus-visible,
 [class*=' zen-v2-']:focus-visible,
 :root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,
-:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible {
+:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible,
+[class^='zen-v2-'][data-keyboard-focus]:focus,
+[class*=' zen-v2-'][data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] [class^='zen-v2-'][data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] [class*=' zen-v2-'][data-keyboard-focus]:focus {
   outline: 2px solid var(--v2-ring);
   outline-offset: var(--v2-ring-offset);
 }
@@ -413,10 +426,15 @@
  * dialog's own controls keep their ring, and no dialog states `outline: none` for itself. The
  * `:root` carries the weight over the coarse-pointer form of the v2 ring rule above (0,4,0),
  * which a phone's `data-pointer` would otherwise put ahead; the rule sits under it so it wins
- * the tie, and beats the base floor and the plain form outright.
+ * the tie, and beats the base floor and the plain form outright. The pane chord's twin (§1 as
+ * amended, `[data-keyboard-focus]:focus`) follows as its own rule: the form is pinned by name.
  */
 :root [role='dialog'][tabindex='-1']:focus-visible,
 :root [role='alertdialog'][tabindex='-1']:focus-visible {
+  outline: none;
+}
+:root [role='dialog'][tabindex='-1'][data-keyboard-focus]:focus,
+:root [role='alertdialog'][tabindex='-1'][data-keyboard-focus]:focus {
   outline: none;
 }
 
@@ -691,7 +709,11 @@
 .zen-firstrun-radio:focus-visible,
 .zen-firstrun-tile:focus-visible,
 :root[data-pointer='coarse'] .zen-firstrun-radio:focus-visible,
-:root[data-pointer='coarse'] .zen-firstrun-tile:focus-visible {
+:root[data-pointer='coarse'] .zen-firstrun-tile:focus-visible,
+.zen-firstrun-radio[data-keyboard-focus]:focus,
+.zen-firstrun-tile[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-firstrun-radio[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-firstrun-tile[data-keyboard-focus]:focus {
   outline: 2px solid var(--v2-control-accent);
   outline-offset: -2px;
 }
@@ -864,7 +886,8 @@
   text-decoration: underline;
   text-align: left;
 }
-.zen-error-proceed:focus-visible {
+.zen-error-proceed:focus-visible,
+.zen-error-proceed[data-keyboard-focus]:focus {
   outline: 2px solid var(--v2-ring);
   outline-offset: 2px;
   border-radius: var(--v2-radius-checkbox);
@@ -1092,6 +1115,11 @@
  * the ring faded in from a 3 px ring in the text colour (`outline-color`'s initial
  * `currentColor`, `outline-width`'s `medium`) over the control's 150 ms. Every rule that draws a
  * standing outline (a card's hairline, a picked tile's accent) sets its own width and offset.
+ *
+ * The floor draws for the ring's two triggers alike (§1 as amended): `:focus-visible`, and the
+ * `data-keyboard-focus` mark a pane chord's landing carries (lib/panes.ts) where Chromium's
+ * heuristic would say no – the sidebar's tab row, which has no ring rule of its own, rings from
+ * here on F6 as on Tab.
  */
 @layer base {
   * {
@@ -1099,7 +1127,8 @@
     outline-width: 2px;
     outline-offset: -2px;
   }
-  :focus-visible {
+  :focus-visible,
+  [data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
@@ -1295,10 +1324,14 @@
   .zen-toolbar-button:hover:not(:disabled) {
     background: var(--v2-window-fill-hover);
   }
-  /* The keyboard on the button: full ink, so its ring is not drawn at the resting 85 % (a11y-10). */
+  /*
+   * The keyboard on the button: full ink, so its ring is not drawn at the resting 85 % (a11y-10)
+   * – on a Tab landing and on a pane chord's marked landing alike (§1 as amended).
+   */
   .zen-toolbar-button:is(
       :hover:not(:disabled),
       :focus-visible,
+      [data-keyboard-focus]:focus,
       [aria-expanded='true'],
       :disabled,
       [data-disabled]
@@ -2725,7 +2758,9 @@
     opacity: 0.4;
   }
   .zen-message-button:focus-visible,
-  .zen-message-close:focus-visible {
+  .zen-message-close:focus-visible,
+  .zen-message-button[data-keyboard-focus]:focus,
+  .zen-message-close[data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-ring);
     outline-offset: 0;
   }
@@ -2905,7 +2940,8 @@
   .zen-screenshot-thumb:active {
     transform: scale(0.97);
   }
-  .zen-screenshot-thumb:focus-visible {
+  .zen-screenshot-thumb:focus-visible,
+  .zen-screenshot-thumb[data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-ring);
     outline-offset: 2px;
   }
@@ -3026,7 +3062,8 @@
   .zen-longshot-handle[data-dragging='true'] .zen-sheet-handle {
     background: rgb(var(--v2-text-rgb) / 0.4);
   }
-  .zen-longshot-handle:focus-visible .zen-longshot-grip {
+  .zen-longshot-handle:focus-visible .zen-longshot-grip,
+  .zen-longshot-handle[data-keyboard-focus]:focus .zen-longshot-grip {
     outline: 2px solid var(--v2-ring);
     outline-offset: 2px;
   }
@@ -4616,7 +4653,8 @@
     transition: background 120ms var(--zen-ease);
   }
   button.zen-siteinfo-row:hover:not(:disabled),
-  button.zen-siteinfo-row:focus-visible {
+  button.zen-siteinfo-row:focus-visible,
+  button.zen-siteinfo-row[data-keyboard-focus]:focus {
     background: var(--v2-fill);
     outline: none;
   }
@@ -4774,7 +4812,8 @@
    * anything outside it, and so would cut a ring drawn round the chip at the top, the bottom and
    * the strip's end (a11y-10).
    */
-  .zen-bm-chip:focus-visible {
+  .zen-bm-chip:focus-visible,
+  .zen-bm-chip[data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
@@ -4947,10 +4986,13 @@
    * `--v2-border` hairline and nothing else (no shadow, no arrow), the control radius
    * (`--v2-radius-control`: 4 on the desktop, a plain round corner – §2 keeps the squircle for
    * radius 8 and up, so no `corner-shape` here) – its text 13/400 on a 20 line (§4: 13 → 20,
-   * `--v2-line-small`) in `--v2-text`, padding 4 8, so a one-line tooltip stands 30 tall. It
-   * sizes to its text up to a list popover's 320 and wraps past that (a long address on the
-   * pill), and takes no pointer. Placed by `placeTooltip`; it appears with the panels' pop, a
-   * 120 ms fade under reduced motion (`zen-animate-pop`, §11.3).
+   * `--v2-line-small`) in `--v2-text`, padding 4 8, so a tooltip stands 30 tall: one line, a
+   * name (a tile's or a sleeping row's is the title and its state on the one line, " · "
+   * between – `tabTooltip`; the hover card is the surface that reads on several). It sizes to
+   * its text (`max-content`, taken up to the whole pixel by the host – `placeTooltip`'s
+   * `box.width` – so both hairlines stand on a column) up to a list popover's 320 and wraps
+   * past that (a long address on the pill), and takes no pointer. Placed by `placeTooltip`; it
+   * appears with the panels' pop, a 120 ms fade under reduced motion (`zen-animate-pop`, §11.3).
    */
   .zen-tooltip {
     position: fixed;
@@ -4966,6 +5008,7 @@
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
     font-weight: 400;
+    white-space: normal;
     overflow-wrap: anywhere;
     pointer-events: none;
   }
@@ -5299,7 +5342,8 @@
   .zen-select:hover {
     background: var(--v2-fill);
   }
-  .zen-select:focus-visible {
+  .zen-select:focus-visible,
+  .zen-select[data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-accent);
     outline-offset: 0;
   }
@@ -5318,7 +5362,8 @@
   .zen-field::placeholder {
     color: var(--v2-text-deemphasized);
   }
-  .zen-field:focus-visible {
+  .zen-field:focus-visible,
+  .zen-field[data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-accent);
     outline-offset: 0;
   }
@@ -5354,6 +5399,11 @@
    * accent fill a ring at offset 0 is the accent on the accent, 1.00:1, no ring at all.
    */
   .zen-button:focus-visible {
+    outline: 2px solid var(--v2-accent);
+    outline-offset: var(--v2-ring-offset);
+  }
+  /* The pane chord's twin (§1 as amended), as its own rule: the form above is pinned by name. */
+  .zen-button[data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-accent);
     outline-offset: var(--v2-ring-offset);
   }
@@ -5433,11 +5483,13 @@
  * ring is the URL field's inset one (§1: −2 on text fields and the URL field, in both themes –
  * the −2 measured on Zen's URL bar field): the pill fills its bar to the edge.
  */
-.zen-pill:has(> button:focus-visible) {
+.zen-pill:has(> button:focus-visible),
+.zen-pill:has(> button[data-keyboard-focus]:focus) {
   outline: 2px solid var(--v2-ring);
   outline-offset: -2px;
 }
-.zen-pill > button:focus-visible {
+.zen-pill > button:focus-visible,
+.zen-pill > button[data-keyboard-focus]:focus {
   outline: none;
 }
 /*
@@ -5540,7 +5592,8 @@
   .zen-dl-show-all:hover {
     background: var(--v2-fill-hover);
   }
-  .zen-dl-show-all:focus-visible {
+  .zen-dl-show-all:focus-visible,
+  .zen-dl-show-all[data-keyboard-focus]:focus {
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
@@ -9098,7 +9151,8 @@
 .zen-v2-field::placeholder {
   color: var(--v2-text-deemphasized);
 }
-.zen-v2-field:focus-visible {
+.zen-v2-field:focus-visible,
+.zen-v2-field[data-keyboard-focus]:focus {
   border-color: var(--v2-accent);
 }
 /*
@@ -9838,6 +9892,7 @@
   justify-content: center;
 }
 .zen-v2-menu-item:focus-visible,
+.zen-v2-menu-item[data-keyboard-focus]:focus,
 .zen-v2-menu-item[aria-expanded='true'] {
   background: var(--v2-fill);
   outline: none;
@@ -10038,7 +10093,8 @@
 .zen-v2-menulist-option:active {
   background: var(--v2-fill);
 }
-.zen-v2-menulist-option:focus-visible {
+.zen-v2-menulist-option:focus-visible,
+.zen-v2-menulist-option[data-keyboard-focus]:focus {
   outline: none;
 }
 @media (hover: hover) {
@@ -12246,7 +12302,8 @@ ol.zen-page-prose-list {
   background: var(--v2-fill);
   box-shadow: inset 0 0 0 2px var(--v2-accent);
 }
-.zen-bm-tree-row:focus-visible {
+.zen-bm-tree-row:focus-visible,
+.zen-bm-tree-row[data-keyboard-focus]:focus {
   outline-offset: -2px;
 }
 .zen-bm-tree-twisty {
@@ -12357,10 +12414,12 @@ ol.zen-page-prose-list {
  * pointer fades to its placeholder; a folder's and an unfaviconed bookmark's glyph are the
  * deemphasised ink; the rename field (§9.12) stands on the label's line, its 24 centred on the 20.
  */
-.zen-bm-rows:focus-visible {
+.zen-bm-rows:focus-visible,
+.zen-bm-rows[data-keyboard-focus]:focus {
   outline: none;
 }
-.zen-bm-rows:focus-visible > .zen-bm-row[data-focused] {
+.zen-bm-rows:focus-visible > .zen-bm-row[data-focused],
+.zen-bm-rows[data-keyboard-focus]:focus > .zen-bm-row[data-focused] {
   outline: 2px solid var(--v2-ring);
   outline-offset: -2px;
 }
@@ -13176,12 +13235,18 @@ ol.zen-page-prose-list {
 .zen-protection-radio:focus-visible,
 .zen-protection-action-row:focus-visible,
 :root[data-pointer='coarse'] .zen-protection-radio:focus-visible,
-:root[data-pointer='coarse'] .zen-protection-action-row:focus-visible {
+:root[data-pointer='coarse'] .zen-protection-action-row:focus-visible,
+.zen-protection-radio[data-keyboard-focus]:focus,
+.zen-protection-action-row[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-protection-radio[data-keyboard-focus]:focus,
+:root[data-pointer='coarse'] .zen-protection-action-row[data-keyboard-focus]:focus {
   outline: 2px solid var(--v2-ring);
   outline-offset: 0;
 }
 :root[data-theme='dark'] .zen-protection-radio:focus-visible,
-:root[data-theme='dark'] .zen-protection-action-row:focus-visible {
+:root[data-theme='dark'] .zen-protection-action-row:focus-visible,
+:root[data-theme='dark'] .zen-protection-radio[data-keyboard-focus]:focus,
+:root[data-theme='dark'] .zen-protection-action-row[data-keyboard-focus]:focus {
   outline-offset: -2px;
 }
 
@@ -13665,7 +13730,8 @@ ol.zen-page-prose-list {
  * Outside the thumb in both themes: the thumb is the accent, so dark's inset ring (the shared
  * v2 rule's -2) would sit on its own fill, under the panel-colour border, and show nothing (a11y-10).
  */
-.zen-zoom-slider [role='slider']:focus-visible {
+.zen-zoom-slider [role='slider']:focus-visible,
+.zen-zoom-slider [role='slider'][data-keyboard-focus]:focus {
   outline: 2px solid var(--v2-ring);
   outline-offset: 0;
 }
@@ -13979,13 +14045,19 @@ ol.zen-page-prose-list {
   [data-space-target][aria-current='true']:focus-visible,
   .zen-segment[data-active='true']:focus-visible,
   nav > button[aria-current='page']:focus-visible,
-  .zen-app-icon[aria-checked='true']:focus-visible {
+  .zen-app-icon[aria-checked='true']:focus-visible,
+  .zen-tab[data-active='true'][data-keyboard-focus]:focus,
+  .zen-essential[data-active='true'][data-keyboard-focus]:focus,
+  [data-space-target][aria-current='true'][data-keyboard-focus]:focus,
+  .zen-segment[data-active='true'][data-keyboard-focus]:focus,
+  nav > button[aria-current='page'][data-keyboard-focus]:focus,
+  .zen-app-icon[aria-checked='true'][data-keyboard-focus]:focus {
     outline-color: HighlightText;
     outline-offset: -2px;
   }
-  /* Multi-selected tabs: the accent outline becomes Highlight; the keyboard's ring takes over when focused. */
-  .zen-tab[data-selected]:not(:focus-visible),
-  .zen-essential[data-selected]:not(:focus-visible) {
+  /* Multi-selected tabs: the accent outline becomes Highlight; the keyboard's ring – a Tab's or a pane chord's marked landing – takes over when focused. */
+  .zen-tab[data-selected]:not(:focus-visible):not([data-keyboard-focus]:focus),
+  .zen-essential[data-selected]:not(:focus-visible):not([data-keyboard-focus]:focus) {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }
@@ -14047,7 +14119,7 @@ ol.zen-page-prose-list {
   [aria-checked='true'] > .zen-v2-checkbox::after {
     background-color: HighlightText;
   }
-  .zen-v2-card-radio[aria-checked='true']:not(:focus-visible) {
+  .zen-v2-card-radio[aria-checked='true']:not(:focus-visible):not([data-keyboard-focus]:focus) {
     outline: 2px solid Highlight;
     outline-offset: 0;
   }
