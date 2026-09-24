@@ -633,15 +633,19 @@ class MediaDemo : MediaDemoBase("services-android-media-android") {
         postUpdateNotice("null")
         val withdrawn = poll(5_000) { activeNotification(UpdateNotifications.NOTIFICATION_ID) == null }
         note("  notice withdrawn (installed, or the check found nothing): card gone=$withdrawn")
-        // The deep link's Settings tab goes; the demo tab is on screen again for step 5.
+        // The deep link's Settings tab goes (the core keeps its pages under `zen://`; the intent's
+        // `zenium://` form is the alias); the demo tab is on screen again for step 5.
         val tabs = coreState().getJSONObject("tabs")
-        for (id in tabs.keys().asSequence().toList()) {
-            if (id != TAB && tabs.getJSONObject(id).optString("url").startsWith("zenium://settings")) {
-                coreInvoke("tab.close", """{"tabId":"$id","force":true}""")
-            }
-        }
+        val settingsTabs = tabs.keys().asSequence().filter { id ->
+            val url = tabs.getJSONObject(id).optString("url")
+            id != TAB && (url.startsWith("zen://settings") || url.startsWith("zenium://settings"))
+        }.toList()
+        for (id in settingsTabs) coreInvoke("tab.close", """{"tabId":"$id","force":true}""")
         coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
         ensureForeground()
+        val demoTabBack = poll(5_000) { activeCoreTab()?.optString("id") == TAB && settingsSection() == "" }
+        note("  the Settings tab closed (${settingsTabs.size}); the demo tab active again: $demoTabBack; tabs: ${coreState().getJSONObject("tabs").length()}")
+        if (!demoTabBack) touchFault("the demo tab did not come back after the Updates step's Settings tab closed")
         SystemClock.sleep(1_500)
     }
 

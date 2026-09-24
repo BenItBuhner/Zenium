@@ -471,21 +471,26 @@ abstract class MediaDemoBase(private val shotPrefix: String) : DemoHarness("medi
      * button) under a finger's tap on the window, and the node reading `label` in it. The menu
      * hides itself 3.5 seconds after it shows, so the look is at SystemUI's windows alone, every
      * 100 ms – the second run walked the app's own WebView tree first, a binder call a node, and
-     * the menu had gone by the time the walk reached it – and the tap is tried twice; the windows
-     * on screen go to the notes when the menu never showed the label.
+     * the menu had gone by the time the walk reached it – and the tap is tried three times: a tap
+     * while the menu is still up hides it instead, and a menu SystemUI has detached and attached
+     * again can sit unread behind UiAutomation's window cache while it is plainly on screen (run
+     * 35935540371's recording has the menu up, its Play glyph in the row, through a whole look
+     * that found nothing), so each further tap waits the menu's 3.5 s out and clears the cache
+     * first; the windows on screen go to the notes after every look that missed.
      */
     protected fun openPipMenu(win: Rect, label: String): AccessibilityNodeInfo? {
-        for (attempt in 1..2) {
+        for (attempt in 1..3) {
+            if (attempt > 1) {
+                SystemClock.sleep(4_000)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) runCatching { ui.clearCache() }
+            }
             Finger().tap(win.exactCenterX(), win.exactCenterY())
             val deadline = SystemClock.uptimeMillis() + 3_000
             while (SystemClock.uptimeMillis() < deadline) {
                 findInWindows(SYSTEM_UI) { it == label }?.let { return it }
                 SystemClock.sleep(100)
             }
-            if (attempt == 1) {
-                dumpWindows("pip menu after tap $attempt, looking for '$label'")
-                SystemClock.sleep(4_000)
-            }
+            dumpWindows("pip menu after tap $attempt, looking for '$label'")
         }
         return null
     }
@@ -499,7 +504,7 @@ abstract class MediaDemoBase(private val shotPrefix: String) : DemoHarness("medi
      */
     protected fun touchPipMenu(win: Rect, label: String, effect: String, timeoutMs: Long = 8_000, shotAfter: String? = null, took: () -> Boolean): Boolean {
         val node = openPipMenu(win, label) ?: run {
-            note("  the small window's menu never showed '$label' (two taps on the window)")
+            note("  the small window's menu never showed '$label' (three taps on the window)")
             touchFault("the picture-in-picture window's menu never showed '$label'")
             return false
         }
