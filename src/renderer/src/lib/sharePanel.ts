@@ -1,5 +1,6 @@
 import { Copy, Printer, QrCode, Scan, Share, type LucideIcon } from 'lucide-react'
 import type { SharePanelRequest } from '@shared/types'
+import { COVERED_TIMEOUT_MS, pageOffScreen, pageViewStore } from './pageView'
 
 /**
  * The browser's own share panel (Android below 14; SH-03): what the sheet draws for a share, as
@@ -70,4 +71,38 @@ export function sharePanelCopy(
     return request.text ? { text: request.text, confirmation: 'Text copied' } : null
   }
   return request.url ? { text: request.url, confirmation: 'Link copied' } : null
+}
+
+/**
+ * Run `then` once `tabId`'s live page is back on the screen – or at once where it never left.
+ *
+ * The sheet's `dismiss(then)` runs its callback with the sheet gone from the screen but still
+ * mounted: the layout the chrome reports without it, the core's `layout.applied` and the host's
+ * frame with the page view back (`view.drawn`) all come after. A capture asked for in between
+ * meets a page view the host holds `GONE` under the sheet's cover and is refused on the spot
+ * (`PageCapture.runBitmap`): Long screenshot waits for the page as `pageCovered` waits for the
+ * cover on the way in, and gives up waiting after `COVERED_TIMEOUT_MS` – a host that never
+ * answers has the capture asked for regardless, and its own answer says whether it could.
+ */
+export function afterPageShown(tabId: string, then: () => void): void {
+  if (!pageOffScreen(pageViewStore.get(), tabId)) {
+    then()
+    return
+  }
+  let done = false
+  let unsubscribe: (() => void) | null = null
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const finish = (): void => {
+    if (done) return
+    done = true
+    unsubscribe?.()
+    unsubscribe = null
+    if (timer !== null) clearTimeout(timer)
+    timer = null
+    then()
+  }
+  unsubscribe = pageViewStore.subscribe(() => {
+    if (!done && !pageOffScreen(pageViewStore.get(), tabId)) finish()
+  })
+  timer = setTimeout(finish, COVERED_TIMEOUT_MS)
 }

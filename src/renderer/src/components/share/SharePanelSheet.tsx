@@ -8,6 +8,7 @@ import { useBackSurface } from '@renderer/lib/back'
 import { SheetPresence, useSheetLeave } from '@renderer/lib/motion/presence'
 import {
   SHARE_PANEL_MORE,
+  afterPageShown,
   sharePanelChips,
   sharePanelCopy,
   sharePanelPreview,
@@ -54,7 +55,9 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
   useEscapeUnlessLeaving(() => sheet.current?.dismiss(), useSheetLeave()?.leaving)
 
   // The sheet leaves first, then the pick runs: the other app, the system sheet or a chip's own
-  // surface comes up over the page, not over a sheet on its way out, and a capture finds the page.
+  // surface comes up over the page, not over a sheet on its way out. The page view itself comes
+  // back later still, once the sheet has unmounted and the host has drawn the page again
+  // (`lib/pageView.ts`): the one pick that copies the page waits for that (`afterPageShown`).
   const pick = (then: () => void): void => sheet.current?.dismiss(then)
   const release = (): void => answerSharePanel(request.id, { kind: 'dismiss' })
 
@@ -71,12 +74,14 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
           if (copy) run('clipboard.writeText', copy)
         })
         return
-      case 'screenshot':
+      case 'screenshot': {
+        const tabId = request.tabId
         pick(() => {
           release()
-          if (request.tabId) openLongScreenshot(request.tabId)
+          if (tabId) afterPageShown(tabId, () => openLongScreenshot(tabId))
         })
         return
+      }
       case 'print':
         pick(() => {
           release()

@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SharePanelRequest } from '@shared/types'
-import { SHARE_PANEL_MORE, sharePanelChips, sharePanelCopy, sharePanelPreview } from '../sharePanel'
+import { COVERED_TIMEOUT_MS, onLayoutApplied, onViewDrawn, pageViewStore } from '../pageView'
+import {
+  SHARE_PANEL_MORE,
+  afterPageShown,
+  sharePanelChips,
+  sharePanelCopy,
+  sharePanelPreview
+} from '../sharePanel'
 
 /** A request as the host sends one (`Share.kt`), with what a test names changed. */
 function request(over: Partial<SharePanelRequest> = {}): SharePanelRequest {
@@ -120,5 +127,64 @@ describe('what Copy puts on the clipboard', () => {
   it('is nothing when the share carries nothing to copy', () => {
     expect(sharePanelCopy(request({ url: null }))).toBeNull()
     expect(sharePanelCopy(request({ kind: 'text', text: null }))).toBeNull()
+  })
+})
+
+describe("Long screenshot's wait for the page view (afterPageShown)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    pageViewStore.set({ phases: new Map(), lastApplied: null })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('runs at once for a page the host never took down', () => {
+    const then = vi.fn()
+    afterPageShown('tab-1', then)
+    expect(then).toHaveBeenCalledTimes(1)
+  })
+
+  it("holds while the page view is under the sheet's cover, and runs once the host has drawn the page back", () => {
+    onLayoutApplied({ contentHidden: true, hid: ['tab-1'], shown: [] })
+    onViewDrawn('tab-1', false)
+    const then = vi.fn()
+    afterPageShown('tab-1', then)
+    expect(then).not.toHaveBeenCalled()
+    // The sheet unmounts, the chrome's layout brings the view back: it is on its way, not yet drawn.
+    onLayoutApplied({ contentHidden: false, hid: [], shown: ['tab-1'] })
+    expect(then).not.toHaveBeenCalled()
+    onViewDrawn('tab-1', true)
+    expect(then).toHaveBeenCalledTimes(1)
+    // Nothing later runs it again.
+    onLayoutApplied({ contentHidden: true, hid: ['tab-1'], shown: [] })
+    onViewDrawn('tab-1', true)
+    expect(then).toHaveBeenCalledTimes(1)
+  })
+
+  it("another tab's page coming back is not this one's", () => {
+    onLayoutApplied({ contentHidden: true, hid: ['tab-1', 'tab-2'], shown: [] })
+    onViewDrawn('tab-1', false)
+    onViewDrawn('tab-2', false)
+    const then = vi.fn()
+    afterPageShown('tab-1', then)
+    onLayoutApplied({ contentHidden: false, hid: [], shown: ['tab-2'] })
+    onViewDrawn('tab-2', true)
+    expect(then).not.toHaveBeenCalled()
+  })
+
+  it('gives up waiting after COVERED_TIMEOUT_MS and asks regardless, once', () => {
+    onLayoutApplied({ contentHidden: true, hid: ['tab-1'], shown: [] })
+    onViewDrawn('tab-1', false)
+    const then = vi.fn()
+    afterPageShown('tab-1', then)
+    vi.advanceTimersByTime(COVERED_TIMEOUT_MS - 1)
+    expect(then).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(then).toHaveBeenCalledTimes(1)
+    onLayoutApplied({ contentHidden: false, hid: [], shown: ['tab-1'] })
+    onViewDrawn('tab-1', true)
+    expect(then).toHaveBeenCalledTimes(1)
   })
 })

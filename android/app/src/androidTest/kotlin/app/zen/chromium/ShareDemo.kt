@@ -165,10 +165,22 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             }
         }
 
-        // 4. Long screenshot: the editor with its edge handles, left by back.
+        // 4. Long screenshot: the editor with its edge handles, left by back. The capture waits
+        // for the page view to be back on the screen under the sheet's cover, then the host
+        // stitches the page out of the window (a software GPU's frames): the editor gets the
+        // stitch's own budget. A miss records what came instead – the chrome's toast and
+        // whether a page view is shown at all – so the next reading has more than a timeout.
         if (reopen("Long screenshot")) {
             expect("Long screenshot dismisses the panel", tapCell(SCREENSHOT_LABEL))
-            val editor = waitFor(EDGE_LABEL, 15_000) != null
+            val asked = SystemClock.uptimeMillis()
+            val editor = waitFor(EDGE_LABEL, LONG_CAPTURE_WAIT_MS) != null
+            if (editor) {
+                finding("  the editor came ${SystemClock.uptimeMillis() - asked} ms after the touch")
+            } else {
+                val toast = chromeJsString("(document.querySelector('.zen-toast')||{}).textContent||''")
+                val page = if (pageWebView() != null) "a page view is shown" else "no page view is shown"
+                finding("  no editor after $LONG_CAPTURE_WAIT_MS ms; the chrome's toast reads '${toast ?: ""}'; $page")
+            }
             expect("Long screenshot opens the screenshot editor", editor)
             if (editor) {
                 SystemClock.sleep(1_200)
@@ -865,6 +877,8 @@ P.end=function(){return JSON.stringify({long:P.long,marks:P.marks})}})()"""
         private const val QR_TITLE = "Scan to open"
         private const val QR_CLOSE = "Close"
         private const val EDGE_LABEL = "Top edge"
+        /** The stitched capture's budget on a software GPU (`ShareScreenshotDemo` allows its Capture more 40 s). */
+        private const val LONG_CAPTURE_WAIT_MS = 30_000L
 
         /** The fixture share target of the instrumentation APK (ShareTargetActivity.java, its manifest entry). */
         private const val FIXTURE_CLASS = "app.zen.chromium.ShareTargetActivity"
