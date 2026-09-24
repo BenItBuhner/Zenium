@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Settings, Tab, UIState } from '@shared/types'
+import type { RowGroup } from '../model'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import { DEFAULT_BLOCKING_SETTINGS, emptyBlockingStatus } from '@shared/blocking'
 import {
@@ -33,7 +34,7 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () =
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { buildSection } = await import('../sections')
-const { allRows, groupShows } = await import('../model')
+const { allRows, findRow, groupShows } = await import('../model')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 const { idleDictionaryWords } = await import('@renderer/lib/spellcheckWords')
 
@@ -288,7 +289,40 @@ function desktopState(): UIState {
       token: 'secret-token',
       error: null
     },
-    agentSkills: emptyAgentSkillStatus(),
+    // The Agent skill group: two harnesses found on this computer, the skill in one of them, so
+    // the status row, a switch per harness and the install-everywhere action all build.
+    agentSkills: {
+      ...emptyAgentSkillStatus('0.3.77-test'),
+      targets: [
+        {
+          id: 'claude',
+          label: 'Claude Code',
+          dir: '~/.claude/skills/zenium-browser',
+          detected: true,
+          installed: true,
+          installedVersion: '0.3.77-test',
+          note: null
+        },
+        {
+          id: 'cursor',
+          label: 'Cursor',
+          dir: '~/.cursor/skills/zenium-browser',
+          detected: true,
+          installed: false,
+          installedVersion: null,
+          note: null
+        },
+        {
+          id: 'codex',
+          label: 'Codex',
+          dir: '~/.codex/skills/zenium-browser',
+          detected: false,
+          installed: false,
+          installedVersion: null,
+          note: null
+        }
+      ]
+    },
     updates: emptyUpdateStatus('0.3.77-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
     passwords: emptyPasswordsStatus(),
     defaultBrowser: { isDefault: false, prompt: null },
@@ -601,7 +635,14 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Default mode for new agents',
     'Show the agent’s cursor',
     'Ask before a new agent connects',
-    'Allow agents to run JavaScript in pages'
+    'Allow agents to run JavaScript in pages',
+    // The Agent skill group (desktop hosts): the status row, a switch per harness found (the
+    // fixture's two; Codex is not on this computer), the install-everywhere action, the note.
+    'zenium-browser skill',
+    'Claude Code',
+    'Cursor',
+    'Install for all detected',
+    'Kept current'
   ],
   passwords: ['Manage passwords', 'Offer to save passwords', 'Ask again before showing or copying'],
   // #259's Import (ID-23): the pane's two dialog rows; the last import's one row comes and goes.
@@ -809,5 +850,189 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       }
     }
     expect(bare).toEqual([])
+  })
+})
+
+/*
+ * The AI Agents › Agent skill group (S2 of the MCP program): the `zenium-browser` Agent Skill's
+ * install state per coding harness, as `agentSkills` reports it – a status line, a switch per
+ * harness found on this computer, one action for all of them, and the note that Zenium refreshes
+ * the copies it installed. Desktop hosts only: a phone has no harness to install into.
+ */
+describe('the AI Agents › Agent skill group', () => {
+  const section = availableSections(PAGE, ELECTRON, 'desktop', 'linux').find(
+    (s) => s.id === 'agents'
+  )!
+  const build = (
+    agentSkills: UIState['agentSkills'],
+    capabilities: HostCapabilities = ELECTRON
+  ): ReturnType<typeof buildSection> => {
+    const state = desktopState()
+    return buildSection(section, {
+      state: { ...state, capabilities, agentSkills },
+      tab: SETTINGS_TAB,
+      pointer: true,
+      formFactor: 'desktop',
+      set: () => undefined,
+      navigate: () => undefined,
+      openBarEditor: () => undefined,
+      boost: () => undefined,
+      autofill: idleAutofillSettings(),
+      screenLock: false,
+      readAloudVoices: null,
+      dictionary: idleDictionaryWords()
+    })
+  }
+  const target = (
+    id: string,
+    label: string,
+    detected: boolean,
+    installed: boolean
+  ): UIState['agentSkills']['targets'][number] => ({
+    id,
+    label,
+    dir: `~/.${id}/skills/zenium-browser`,
+    detected,
+    installed,
+    installedVersion: installed ? '0.3.77-test' : null,
+    note: null
+  })
+  const skill = (model: ReturnType<typeof buildSection>): RowGroup | undefined =>
+    model.groups.find((g) => g.id === 'skill')
+
+  it('sits right after Connect an agent, on hosts with harnesses to install into', () => {
+    const status = { ...emptyAgentSkillStatus('0.3.77-test'), targets: [] }
+    const ids = build(status).groups.map((g) => g.id)
+    expect(ids.indexOf('skill')).toBe(ids.indexOf('connect') + 1)
+    expect(
+      build(status, { ...ELECTRON, agentSkills: false }).groups.map((g) => g.id)
+    ).not.toContain('skill')
+  })
+
+  it('offers a switch per harness found and one install for all of them while any is missing', () => {
+    invoke.mockClear()
+    const group = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        targets: [
+          target('claude', 'Claude Code', true, false),
+          target('cursor', 'Cursor', true, false),
+          target('codex', 'Codex', false, false)
+        ]
+      })
+    )!
+    expect(group.heading).toBe('Agent skill')
+    expect(group.rows.map((r) => r.id)).toEqual([
+      'skill-status',
+      'skill:claude',
+      'skill:cursor',
+      'skill-all',
+      'skill-refresh-note'
+    ])
+    const status = group.rows[0]
+    expect(status.kind === 'info' && status.description).toBe('Not installed')
+    const cursor = findRow([group], 'skill:cursor')!
+    expect(cursor.kind).toBe('switch')
+    if (cursor.kind === 'switch') {
+      expect(cursor.checked).toBe(false)
+      expect(cursor.description).toBe('~/.cursor/skills/zenium-browser')
+      cursor.onChange(true)
+      expect(invoke).toHaveBeenLastCalledWith('agent.installSkill', { targets: ['cursor'] })
+      cursor.onChange(false)
+      expect(invoke).toHaveBeenLastCalledWith('agent.uninstallSkill', { targets: ['cursor'] })
+    }
+    const all = findRow([group], 'skill-all')!
+    expect(all.kind === 'action' && all.label).toBe('Install for all detected')
+    if (all.kind === 'action') {
+      expect(all.button).toBe('Install')
+      expect(all.confirm).toBeUndefined()
+      all.onPress()
+      expect(invoke).toHaveBeenLastCalledWith('agent.installSkill', {})
+    }
+  })
+
+  it('counts the installs and turns the action into a confirmed Remove everywhere once all are in', () => {
+    invoke.mockClear()
+    const partial = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        targets: [
+          target('claude', 'Claude Code', true, true),
+          target('cursor', 'Cursor', true, false),
+          target('codex', 'Codex', true, false)
+        ]
+      })
+    )!
+    const partialStatus = partial.rows[0]
+    expect(partialStatus.kind === 'info' && partialStatus.description).toBe(
+      'Installed for 1 of 3 detected harnesses · version 0.3.77-test'
+    )
+    expect(findRow([partial], 'skill-all')?.label).toBe('Install for all detected')
+
+    const full = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        targets: [
+          target('claude', 'Claude Code', true, true),
+          target('cursor', 'Cursor', true, true)
+        ]
+      })
+    )!
+    const fullStatus = full.rows[0]
+    expect(fullStatus.kind === 'info' && fullStatus.description).toBe(
+      'Installed for 2 of 2 detected harnesses · version 0.3.77-test'
+    )
+    const remove = findRow([full], 'skill-all')!
+    expect(remove.kind === 'action' && remove.label).toBe('Remove everywhere')
+    if (remove.kind === 'action') {
+      expect(remove.destructive).toBe(true)
+      expect(remove.confirm?.action).toBe('Remove')
+      remove.onPress()
+      expect(invoke).toHaveBeenLastCalledWith('agent.uninstallSkill', {})
+    }
+  })
+
+  it('says when no harness is on this computer and offers to look again', () => {
+    invoke.mockClear()
+    const group = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        targets: [target('codex', 'Codex', false, false)]
+      })
+    )!
+    expect(group.rows.map((r) => r.id)).toEqual(['skill-status', 'skill-all', 'skill-refresh-note'])
+    const status = group.rows[0]
+    expect(status.kind === 'info' && status.description).toBe(
+      'No coding harness found on this computer'
+    )
+    const again = findRow([group], 'skill-all')!
+    if (again.kind === 'action') {
+      expect(again.button).toBe('Check again')
+      again.onPress()
+      expect(invoke).toHaveBeenLastCalledWith('agent.refreshSkill', undefined)
+    }
+  })
+
+  it('shows the installer’s error and a harness’s note in place of the path', () => {
+    const group = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        error: 'Could not install: EACCES',
+        targets: [
+          {
+            ...target('claude', 'Claude Code', true, false),
+            note: 'A copy Zenium did not install is there; installing replaces it'
+          }
+        ]
+      })
+    )!
+    const status = group.rows[0]
+    expect(status.kind === 'info' && status.description).toBe('Could not install: EACCES')
+    expect(status.tone).toBe('danger')
+    const claude = findRow([group], 'skill:claude')!
+    expect(claude.kind === 'switch' && claude.description).toBe(
+      'A copy Zenium did not install is there; installing replaces it'
+    )
+    expect(claude.tone).toBe('warn')
   })
 })

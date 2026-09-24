@@ -132,7 +132,7 @@ const ANDROID: HostCapabilities = {
   printPreview: false,
   pdfViewer: true,
   agents: true,
-  agentSkills: true,
+  agentSkills: false,
   updates: true,
   share: true,
   clipboardChip: true,
