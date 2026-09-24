@@ -3,7 +3,12 @@
 // (ruling 2: the recording's frames are read, not the clock). Every frame is decoded at a
 // quarter of the display through ffmpeg and read at three points of the page slot the seed
 // act reported (`slot: left top right bottom` in display pixels): a point near each side edge
-// at the slot's middle height, and the slot's centre. The colours are the scene's own:
+// a quarter of the way down the slot, and the slot's centre. The edges sit at the quarter, not
+// the middle, for the launcher's sake: the emulator's wallpaper is sky on the left and night on
+// the right at that height, so a launcher frame (the recording's lead-in, the hot start's
+// starting point) is never read as a blank slot, while the fixture is one colour there and the
+// dark middle of the wallpaper would pass for the dark theme's background. The colours are the
+// scene's own:
 //
 //   splash   both edges indigo (#6264DC, the splash's brand background covers the window)
 //   picture  both edges teal (#1F9D7A, the fixture) and the centre not amber: the restored
@@ -13,7 +18,8 @@
 //   blank    both edges the window's background (light or dark, or plain white or near-black):
 //            the page slot with nothing in it, the plain window
 //   fade     between the splash's last frame and the chrome's first: the exit's blend
-//   other    anything else (the launcher, a task switch)
+//   other    anything else: the launcher (the edges' two colours), a task switch, a window's
+//            open transition mid-way
 //
 // The cold start's rules: a splash was seen; the chrome's first frame after it shows the
 // picture (not a blank slot, not yet the page); no blank frame after the splash; the page's
@@ -75,9 +81,10 @@ const height = Math.floor(displayH / SCALE)
 const sx = width / displayW
 const sy = height / displayH
 const [l, t, r, b] = slot
+const edgeY = Math.round((t + (b - t) / 4) * sy)
 const points = {
-  left: [Math.round((l + 24) * sx), Math.round(((t + b) / 2) * sy)],
-  right: [Math.round((r - 24) * sx), Math.round(((t + b) / 2) * sy)],
+  left: [Math.round((l + 24) * sx), edgeY],
+  right: [Math.round((r - 24) * sx), edgeY],
   centre: [Math.round(((l + r) / 2) * sx), Math.round(((t + b) / 2) * sy)]
 }
 

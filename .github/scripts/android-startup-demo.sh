@@ -20,7 +20,9 @@
 #               down: painted) from their logcat times, the boot's frame statistics
 #               (`dumpsys gfxinfo`: janky, slow UI thread, deadline missed – ruling 5's numbers)
 #   hot start   home, then `am start -W` with the process alive and the activity behind the
-#               launcher: LaunchState HOT, no splash window, the page on the first frame
+#               launcher, the platform's window transitions cut for the act (the reader wants
+#               the page's first frame, not its blend with the launcher): LaunchState HOT, no
+#               splash window, the page on the first frame
 #   warm start  (light only) `am start -W --activity-clear-task`: the activity re-created in the
 #               living process – LaunchState WARM, the platform's starting window, the chrome
 #               booting again under it; recorded for the record, judged by no rule
@@ -144,7 +146,7 @@ startup_log() {
 }
 # The epoch seconds of the first line matching $1 (extended regex), or nothing.
 line_at() {
-  startup_log | grep -E -m 1 "$1" | awk '{ print $1 }'
+  startup_log | grep -E -m 1 "$1" | awk '{ print $1 }' || true
 }
 # Wait up to $2 seconds for a line matching $1; echoes it (or nothing).
 wait_line() {
@@ -159,8 +161,16 @@ wait_line() {
 # `+1s234ms` (the platform's own format) in milliseconds; `-` for anything else.
 duration_ms() {
   local s=${1#+}
+  [ -n "$s" ] || { echo "-"; return; }
   [[ $s =~ ^(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?$ ]] || { echo "-"; return; }
   echo $(( 10#${BASH_REMATCH[2]:-0} * 60000 + 10#${BASH_REMATCH[4]:-0} * 1000 + 10#${BASH_REMATCH[6]:-0} ))
+}
+# `1537 (ready)` from the hand-over line's `splash held 1537 ms, lifted by ready`; `-` without one.
+held_by() {
+  local held
+  held=$(startup_log | grep -o 'splash held [0-9-]* ms, lifted by [a-z]*' | head -n 1 \
+    | sed 's/splash held \([0-9-]*\) ms, lifted by \([a-z]*\)/\1 (\2)/' || true)
+  echo "${held:--}"
 }
 # ms from epoch seconds $1 to $2 (decimals), or `-` when either is missing.
 ms_between() {
@@ -170,6 +180,15 @@ ms_between() {
 # How many splash starting windows of the app the window manager has right now.
 splash_windows() {
   adb shell dumpsys window windows 2> /dev/null | tr -d '\r' | grep -c "Splash Screen $app_id" || true
+}
+# The platform's window transitions at scale $1 (0 for cuts, 1 for the device's own). The hot
+# start runs under cuts: its open transition (a fade and a scale of the resumed task over the
+# launcher) would otherwise blend the launcher into the page's first frames and the reader would
+# see them as neither. The app's own animators (`animator_duration_scale`) are left alone – the
+# WebView reads that scale into `prefers-reduced-motion`, and the splash's exit follows it.
+window_transitions() {
+  adb shell settings put global transition_animation_scale "$1" || true
+  adb shell settings put global window_animation_scale "$1" || true
 }
 # The `am start -W` answer's field $1 (TotalTime, WaitTime, LaunchState) from the text in $2.
 field() {
@@ -232,7 +251,7 @@ seed() {
   wait "$driver_pid" || status=$?
   for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" 2> /dev/null | tr -d '\r'); do
     case "$name" in
-      *.png | *.txt) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$dir/$name" ;;
+      *.png | *.txt) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$dir/$name" || true ;;
     esac
   done
   adb logcat -d -v time > "$dir/seed-logcat.txt" 2> /dev/null || true
@@ -250,7 +269,7 @@ seed() {
 cold_start() {
   local theme=$1 dir=$2
   local slot
-  slot=$(sed -n 's/^slot: //p' "$dir/android-startup-notes.txt" 2> /dev/null | head -n 1)
+  slot=$(sed -n 's/^slot: //p' "$dir/android-startup-notes.txt" 2> /dev/null | head -n 1 || true)
   echo "== cold start ($theme); slot ${slot:-unknown}"
   echo "$hold_ms" > "$hold_file"
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.HOME > /dev/null 2>&1 || true
@@ -287,7 +306,8 @@ cold_start() {
   sleep 0.7
   adb exec-out screencap -p > "$dir/android-startup-page-painted-$theme.png" || true
   local stats
-  stats=$(frame_stats)
+  stats=$(frame_stats || true)
+  stats=${stats:--}
   sleep 1
   adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
   wait "$recorder_pid" || true
@@ -298,9 +318,9 @@ cold_start() {
 
   # The numbers: the platform's, and the lines' order on the log's own clock.
   local fully held marks started up_at frame_at down_at up_ms frame_ms down_ms fully_ms
-  fully_ms=$(duration_ms "$(startup_log | grep -m 1 "Fully drawn $app_id/$activity" | sed -n 's/.*Fully drawn [^:]*: *+\([0-9smh]*\).*/\1/p')")
-  held=$(startup_log | grep -o 'splash held [0-9-]* ms, lifted by [a-z]*' | head -n 1 | sed 's/splash held \([0-9-]*\) ms, lifted by \([a-z]*\)/\1 (\2)/' | grep . || echo "-")
-  marks=$(startup_log | grep -o 'boot marks: .*' | head -n 1 | sed 's/^boot marks: //')
+  fully_ms=$(duration_ms "$(startup_log | grep -m 1 "Fully drawn $app_id/$activity" | sed -n 's/.*Fully drawn [^:]*: *+\([0-9smh]*\).*/\1/p' || true)")
+  held=$(held_by)
+  marks=$(startup_log | grep -o 'boot marks: .*' | head -n 1 | sed 's/^boot marks: //' || true)
   started=$(line_at "ActivityTaskManager: START u0 .*cmp=$app_id/")
   up_at=$(line_at "restored picture up for $tab")
   frame_at=$(line_at "chrome ready: frame drawn")
@@ -349,8 +369,9 @@ cold_start() {
 hot_start() {
   local theme=$1 dir=$2
   local slot
-  slot=$(sed -n 's/^slot: //p' "$dir/android-startup-notes.txt" 2> /dev/null | head -n 1)
+  slot=$(sed -n 's/^slot: //p' "$dir/android-startup-notes.txt" 2> /dev/null | head -n 1 || true)
   echo "== hot start ($theme)"
+  window_transitions 0
   adb shell input keyevent KEYCODE_HOME || true
   sleep 3
   adb logcat -c || true
@@ -358,13 +379,14 @@ hot_start() {
   local recorder_pid=$!
   sleep 1.5
   local answer
-  answer=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$activity" 2>&1 | tr -d '\r')
+  answer=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$activity" 2>&1 | tr -d '\r' || true)
   local splash_seen
   splash_seen=$(splash_windows)
   adb exec-out screencap -p > "$dir/android-startup-hot-$theme.png" || true
   sleep 1.5
   adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
   wait "$recorder_pid" || true
+  window_transitions 1
   adb pull "/sdcard/startup-hot-$theme.mp4" "$dir/startup-hot-$theme.mp4" > /dev/null || true
   startup_log > "$dir/hot-startup-log.txt" || true
   printf '%s\n' "$answer" > "$dir/am-start-hot.txt"
@@ -408,8 +430,8 @@ warm_start() {
   wait_=$(field WaitTime "$answer")
   state=$(field LaunchState "$answer")
   wait_line "chrome ready: frame drawn" 25 > /dev/null
-  fully=$(duration_ms "$(startup_log | grep -m 1 "Fully drawn $app_id/$activity" | sed -n 's/.*Fully drawn [^:]*: *+\([0-9smh]*\).*/\1/p')")
-  held=$(startup_log | grep -o 'splash held [0-9-]* ms, lifted by [a-z]*' | head -n 1 | sed 's/splash held \([0-9-]*\) ms, lifted by \([a-z]*\)/\1 (\2)/' | grep . || echo "-")
+  fully=$(duration_ms "$(startup_log | grep -m 1 "Fully drawn $app_id/$activity" | sed -n 's/.*Fully drawn [^:]*: *+\([0-9smh]*\).*/\1/p' || true)")
+  held=$(held_by)
   startup_log > "$dir/warm-startup-log.txt" || true
   echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; Fully drawn $fully; splash held $held; splash windows one second in: $splash_seen"
   echo "warm start ($theme), the activity re-created: LaunchState ${state:-?}, TotalTime ${total:-?}, Fully drawn $fully, splash held $held, splash windows one second in $splash_seen (recorded, not judged)" >> "$findings"
