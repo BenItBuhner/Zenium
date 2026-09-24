@@ -296,7 +296,12 @@ describe('TasksPage', () => {
         })
     )
     const el = await mountPage()
-    expect(text(el.querySelector('[data-testid="tasks-loading"]'))).toBe('Reading the processes')
+    const loading = el.querySelector('[data-testid="tasks-loading"]')!
+    expect(text(loading)).toBe('Reading the processes')
+    // One form for the list's three states (§9.17): the loading line is the same centred
+    // `PageEmpty` as "no processes" and "no match", not the group-row line at the gutter.
+    expect(loading.className).toBe('zen-page-empty')
+    expect(loading.getAttribute('role')).toBe('status')
     expect(rows(el)).toHaveLength(0)
     await act(async () => {
       release!()

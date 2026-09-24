@@ -310,11 +310,7 @@ export function TasksPage({ tab }: { state: UIState; tab: Tab }): JSX.Element {
             )
           })}
         </div>
-        {loading && (
-          <p className="zen-page-group-empty" role="status" data-testid="tasks-loading">
-            Reading the processes
-          </p>
-        )}
+        {loading && <PageEmpty testId="tasks-loading">Reading the processes</PageEmpty>}
         {empty && <PageEmpty testId="tasks-empty">This host lists no processes</PageEmpty>}
         {!loading && !empty && shown.length === 0 && (
           <PageEmpty testId="tasks-no-match">No tasks match “{text}”</PageEmpty>
