@@ -218,7 +218,7 @@ jobs:
 
   proof-system-webview:
     if: contains(github.event.head_commit.message, '[proof]')
-    name: The #448 proof row alone - System WebView (API 34 image)
+    name: "The 448 proof row alone (own pages exempt) - System WebView (API 34 image)"
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-ext-compat-sweep.sh
@@ -231,7 +231,7 @@ jobs:
 
   proof-modern-webview:
     if: contains(github.event.head_commit.message, '[proof]')
-    name: The #448 proof row alone - Best effort - Chromium snapshot WebView on an AOSP image
+    name: "The 448 proof row alone (own pages exempt) - Best effort - Chromium snapshot WebView on an AOSP image"
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-ext-compat-sweep.sh
