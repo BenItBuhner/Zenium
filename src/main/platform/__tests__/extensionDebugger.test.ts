@@ -441,14 +441,14 @@ describe('chrome.debugger', () => {
         page.paintAnswers.splice(0, 1, 'holding')
         w.api.handlers.attach(w.ctx(EXT), { tabId: 9 }, '1.3')
         let result: unknown = null
-        void w.api.handlers
-          .sendCommand(w.ctx(EXT), { tabId: 9 }, 'Input.dispatchKeyEvent', {
+        void Promise.resolve(
+          w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 9 }, 'Input.dispatchKeyEvent', {
             type: 'keyDown',
             key: 'Enter'
           })
-          .then((r) => {
-            result = r
-          })
+        ).then((r) => {
+          result = r
+        })
         await vi.advanceTimersByTimeAsync(9_900)
         expect(page.dbg.commands).toEqual([])
         expect(result).toBeNull()

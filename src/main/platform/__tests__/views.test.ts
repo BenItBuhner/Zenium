@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { Tab } from '../../../shared/types'
-import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
+import type {
+  AgentInputEvent,
+  TabViewEvents,
+  WindowHost,
+  WindowOpenTicket
+} from '../../../core/platform'
 import {
   DEFAULT_FONT_SETTINGS,
   electronFontDefaults,
@@ -977,14 +982,14 @@ describe('ElectronTabView.sendInput and the DevTools session', () => {
     } & FakePaint
     return { view, dbg: wc.debugger, widget: wc.widgetEvents, page: wc }
   }
-  const CLICK = {
+  const CLICK: AgentInputEvent = {
     type: 'click',
     x: 10,
     y: 20,
     button: 'left',
     clickCount: 1,
     modifiers: []
-  } as const
+  }
 
   afterEach(() => {
     vi.useRealTimers()
