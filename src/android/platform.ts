@@ -100,7 +100,8 @@ import {
   AndroidExtensionsWithRuntime,
   AndroidExtensionRuntime,
   type ExtMessageEvent,
-  type ExtRequestEvent
+  type ExtRequestEvent,
+  type ExtResponseEvent
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { FullscreenHintCues } from './fullscreenHint'
@@ -642,6 +643,8 @@ export interface HostEventPayloads {
   'ext.wake': { id: string }
   /** One intercepted request, while an extension listens for `webRequest` events. */
   'ext.request': ExtRequestEvent
+  /** The response stage of a media request the engine relayed for it, while a response-stage listener exists. */
+  'ext.response': ExtResponseEvent
   /**
    * An `identity.launchWebAuthFlow` sheet (`ext/ExtensionAuthSheet.kt`) reports a top-frame
    * navigation (one back to `https://<id>.chromiumapp.org/…` is cancelled there and ends the
@@ -1974,6 +1977,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'ext.request':
         this.extensionRuntime?.onRequest(payload as HostEventPayloads['ext.request'])
+        return
+      case 'ext.response':
+        this.extensionRuntime?.onResponse(payload as HostEventPayloads['ext.response'])
         return
       case 'ext.authView':
         this.extensionRuntime?.onAuthView(payload)

@@ -405,11 +405,95 @@ describe('WebNotificationService', () => {
       expect(h.remembered).toHaveLength(1)
     })
 
+    it('a request without a gesture asks aloud when the page was reached by a same-origin navigation (the carve-out)', async () => {
+      // The tab's first page, then the site's own next page: the user came from the site itself.
+      h.service.onNavigated('t1', 'https://site.example/a', false)
+      h.service.onNavigated('t1', 'https://site.example/page', false)
+      expect(h.service.arrivedSameOrigin('t1', 'https://site.example')).toBe(true)
+      // The mark is the site's: another origin is not excused on it.
+      expect(h.service.arrivedSameOrigin('t1', 'https://other.example')).toBe(false)
+      h.service.handle('t1', { notification: 'request', id: 'r1', gesture: false })
+      await flush()
+      expect(h.decideCalls).toEqual([
+        { permission: 'notifications', url: 'https://site.example/page' }
+      ])
+      expect(h.prompts).toEqual([])
+      expect(lastPosted('t1')).toMatchObject({ action: 'result', status: 'granted', id: 'r1' })
+      // An in-page navigation leaves the document, and the record, where they are; a reload
+      // reads as a same-origin navigation, as it does in Chrome.
+      h.service.onNavigated('t1', 'https://site.example/page#part', true)
+      expect(h.service.arrivedSameOrigin('t1', 'https://site.example')).toBe(true)
+      h.service.onNavigated('t1', 'https://site.example/page', false)
+      expect(h.service.arrivedSameOrigin('t1', 'https://site.example')).toBe(true)
+    })
+
+    it("a fresh tab's first page, and a page reached from another site, ask quietly without a gesture", async () => {
+      // A fresh tab: its first page is nobody's same-origin navigation.
+      h.service.onNavigated('t1', 'https://site.example/page', false)
+      expect(h.service.arrivedSameOrigin('t1', 'https://site.example')).toBe(false)
+      h.service.handle('t1', { notification: 'request', id: 'q1', gesture: false })
+      await flush()
+      expect(h.decideCalls).toEqual([])
+      expect(h.prompts).toHaveLength(1)
+      expect(h.prompts[0]!.quiet).toBe(true)
+      // A tab that came to the site from another site.
+      h.service.onNavigated('t2', 'https://site.example/elsewhere', false)
+      h.service.onNavigated('t2', 'https://other.example/', false)
+      expect(h.service.arrivedSameOrigin('t2', 'https://other.example')).toBe(false)
+      h.service.handle('t2', { notification: 'request', id: 'q2', gesture: false })
+      await flush()
+      expect(h.decideCalls).toEqual([])
+      expect(h.prompts).toHaveLength(2)
+      expect(h.prompts[1]!).toMatchObject({
+        tabId: 't2',
+        origin: 'https://other.example',
+        quiet: true
+      })
+      // A page that is no site leaves no site to come from.
+      h.service.onNavigated('t2', 'about:blank', false)
+      h.service.onNavigated('t2', 'https://other.example/', false)
+      expect(h.service.arrivedSameOrigin('t2', 'https://other.example')).toBe(false)
+    })
+
+    it('a site dismissed before asks quietly however its page was reached; a closed tab’s record goes', async () => {
+      h.loudAnswer = 'dismiss'
+      h.service.handle('t1', { notification: 'request', id: 'r1', gesture: true })
+      await flush()
+      expect(h.decideCalls).toHaveLength(1)
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(true)
+      h.service.onNavigated('t1', 'https://site.example/a', false)
+      h.service.onNavigated('t1', 'https://site.example/page', false)
+      // Without a gesture and with one alike: the bell, the carve-out notwithstanding.
+      h.service.handle('t1', { notification: 'request', id: 'r2', gesture: false })
+      await flush()
+      expect(h.decideCalls).toHaveLength(1)
+      expect(h.prompts).toHaveLength(1)
+      expect(h.prompts[0]!.quiet).toBe(true)
+      h.answer(h.prompts[0]!.id, null)
+      await flush()
+      h.service.handle('t1', { notification: 'request', id: 'r3', gesture: true })
+      await flush()
+      expect(h.decideCalls).toHaveLength(1)
+      expect(h.prompts).toHaveLength(1)
+      // The tab's view goes: its record with it, and the next view's first page is fresh.
+      expect(h.service.arrivedSameOrigin('t1', 'https://site.example')).toBe(true)
+      h.service.onTabGone('t1')
+      expect(h.service.arrivedSameOrigin('t1', 'https://site.example')).toBe(false)
+      h.service.onNavigated('t1', 'https://site.example/page', false)
+      expect(h.service.arrivedSameOrigin('t1', 'https://site.example')).toBe(false)
+    })
+
     it('the quiet rule and the quiet prompt are pure', () => {
       expect(asksQuietly(false, false)).toBe(true)
       expect(asksQuietly(true, true)).toBe(true)
       expect(asksQuietly(undefined, false)).toBe(false)
       expect(asksQuietly(true, false)).toBe(false)
+      // The carve-out: a same-origin navigation lifts the gesture rule, never the dismissal's.
+      expect(asksQuietly(false, false, true)).toBe(false)
+      expect(asksQuietly(false, true, true)).toBe(true)
+      expect(asksQuietly(true, false, true)).toBe(false)
+      expect(asksQuietly(undefined, false, true)).toBe(false)
+      expect(asksQuietly(false, false, false)).toBe(true)
       const prompt = quietNotificationPrompt('t9', 'https://news.example:8443', 42)
       expect(prompt.quiet).toBe(true)
       expect(prompt.requestedAt).toBe(42)
