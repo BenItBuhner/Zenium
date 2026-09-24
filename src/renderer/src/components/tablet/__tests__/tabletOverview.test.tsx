@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Space, Tab, UIState } from '@shared/types'
+import type { OverviewState } from '@renderer/lib/gestures/stage'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { PHONE_MAX_WIDTH } from '@shared/formFactor'
 import { BLANK_URL } from '@shared/url'
@@ -426,7 +427,7 @@ async function pick(text: string): Promise<void> {
   await land()
 }
 
-function overview(patch: Partial<typeof OPEN & { phase: string; progress: number }>): void {
+function overview(patch: Partial<OverviewState>): void {
   act(() => stageStore.set({ overview: { ...stageStore.get().overview, ...patch } }))
 }
 
