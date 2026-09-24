@@ -24,6 +24,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
@@ -34,10 +35,13 @@ import android.util.Log
 import android.util.SizeF
 import android.view.ContextThemeWrapper
 import android.view.Gravity
+import android.view.PixelCopy
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
+import android.view.Window
 import android.widget.FrameLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -46,7 +50,9 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -64,12 +70,15 @@ import kotlin.math.roundToInt
  *    up (traced: RULING 5's long tasks by the renderer's own clock), the mask in a new private
  *    tab – or, on a WebView without profiles, in the toast that says so;
  *  - the COLD landings (the WID-07 rule): the browser's task removed, the widget's own
- *    `PendingIntent` sent for `search`, `scan` and `private`, and every frame from the send to
- *    the landing grabbed and read for the previous tab's page – a full-bleed orange page the
- *    profile restores as its active tab – which must never paint: the landing opens its own new
- *    tab in the boot's run, before the chrome's first frame. The frames go on a sheet
- *    (`widget-<theme>-frames-cold-<landing>.png`); the send-to-landing wall time and the main
- *    thread's CPU time over it are on record;
+ *    `PendingIntent` sent for `search`, `scan` and `private`, and the new window's frames grabbed
+ *    from its first buffer to the landing (`PixelCopy`, up to 20 a second) and read for the
+ *    previous tab's page – a full-bleed orange page the profile restores as its active tab –
+ *    which must never paint: the landing rides the core's boot answer and opens its own new tab
+ *    in the boot's run, before the chrome's first frame. Beside the pixels, every draw of the
+ *    window is counted with whether the previous tab's view was shown in it (an `OnDrawListener`,
+ *    the frame-exact signal). The frames go on a sheet (`widget-<theme>-frames-cold-<landing>.png`);
+ *    the send-to-landing wall time, the main thread's CPU time over it and the grab rate are on
+ *    record;
  *  - the launcher's four static shortcuts read from the manifest in rank order with their
  *    landings, the Search shortcut fired cold through the trampoline with the same frame read,
  *    Scan QR code and New tab fired warm from Home.
@@ -462,11 +471,14 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     /**
      * The browser's task removed, the previous tab on screen until then, and the landing's intent
      * sent as the widget sends it – `send` defaults to the face's own PendingIntent – with a frame
-     * grabber running from the send until `landed` answers. The previous tab must never paint:
-     * no grabbed frame carries its orange; the landing's tab is the active one, the previous tab
-     * still in the state behind it; the previous tab's view, if the platform made one, is not
-     * shown. On record: the send-to-landing wall time, the main thread's CPU time over it, the
-     * frames' timeline (the sheet).
+     * grabber on the new window from its first buffer until `landed` answers, and the window's
+     * draws counted with whether the previous tab's view was shown in them. The previous tab must
+     * never paint: no grabbed frame carries its orange, no drawn frame had its view shown; the
+     * landing's tab is the active one, the previous tab still in the state behind it; the previous
+     * tab's view, if the platform made one, is not shown at the landing. The grabber must have
+     * read at [MIN_GRAB_RATE] frames a second at least for its pass to mean anything. On record:
+     * the send-to-landing wall time, the main thread's CPU time over it, the grab rate, the draw
+     * counts, the frames' timeline (the sheet).
      */
     private fun coldLanding(
         face: Face,
@@ -485,7 +497,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         expect("the browser's task is gone before the send", onMain { activity.isDestroyed } && frontPackage() != app.packageName)
 
         val started = watchStarts { send() }
-        val grabber = FrameGrabber().also { it.start() }
+        val grabber = FrameGrabber { started.main?.window }.also { it.start() }
         val cpuBefore = mainThreadCpuMs()
         val t0 = SystemClock.uptimeMillis()
         started.send()
@@ -494,6 +506,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         if (created !is MainActivity) {
             // Nothing came up: the scenes after this one need a browser, so launch it plainly.
             grabber.halt()
+            started.stopWatchingDraws()
             finding("  cold $landing: no MainActivity within 20 s of the send (${grabber.frames().size} frames read); relaunching for the next scene")
             launch()
             ensureForeground()
@@ -507,11 +520,16 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val cpuAfter = mainThreadCpuMs()
         SystemClock.sleep(700)
         grabber.halt()
+        started.stopWatchingDraws()
         val frames = grabber.frames()
+        val drawn = started.framesDrawn
+        val drawnWithPrevious = started.framesWithPrevious
+        val rate = grabber.rate(frames)
+        val grabs = "${frames.size} grabs by ${grabber.source} from +${grabber.windowAt} ms at ${"%.1f".format(rate)}/s"
         expect("the $landing landing is up after the cold start ($result)", result != null)
         if (!awaitChromeUp(15_000)) {
             // The core never answered in the new activity: nothing below can be read.
-            finding("  cold $landing: the chrome never came up in the new activity (${frames.size} frames read)")
+            finding("  cold $landing: the chrome never came up in the new activity ($grabs; window drawn $drawn frames)")
             grabber.sheet("frames-cold-$landing", frames, "cold $landing landing: send at 0 ms, the chrome never came up")
             ensureForeground()
             return
@@ -522,6 +540,9 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val flashes = frames.filter { it.orange >= FLASH_SHARE }
         val previousView = onMain { host.tabs.get(PREVIOUS_TAB) }
         val previousShown = onMain { previousView?.isShown == true && previousView.visibility == View.VISIBLE }
+        // A read of two frames a second says nothing about a half-second page; the pass below is
+        // evidence only at a rate that would catch it several times over.
+        expect("the grabber read the new window at $MIN_GRAB_RATE frames a second or more ($grabs)", rate >= MIN_GRAB_RATE)
         if (result == PRIVATE_TOAST) {
             // No profiles on this WebView: there is nothing private to land in, so the restored tab
             // is the right page to paint, under the toast that says why (the same as the warm mask).
@@ -529,21 +550,26 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             finding("  the frame read is not applied to this landing: the restored tab is the page to paint here")
         } else {
             expect("the active tab is the landing's own, not the restored one", tab != null && tab.optString("id") != PREVIOUS_TAB && tab.optBoolean("fromIntent"))
-            expect("no frame from the send to the landing shows the previous tab's page (${frames.size} frames read)", frames.isNotEmpty() && flashes.isEmpty())
+            expect("no frame from the window's first buffer to the landing shows the previous tab's page ($grabs)", frames.isNotEmpty() && flashes.isEmpty())
+            expect("no frame the window drew had the previous tab's view shown ($drawnWithPrevious of $drawn frames drawn)", drawn > 0 && drawnWithPrevious == 0)
             expect("the previous tab's view is not the one shown at the landing", !previousShown)
         }
         expect("the previous tab is restored behind it, not closed", previous != null && previous.optString("url").endsWith(PREVIOUS_PATH))
         finding(
             "  cold $landing: landed ${result ?: "no"} at +$landedAt ms wall, main thread CPU over it ${cpuMs(cpuBefore, cpuAfter)}, " +
-                "frames ${frames.size} (first at +${frames.firstOrNull()?.at ?: "-"} ms, last at +${frames.lastOrNull()?.at ?: "-"} ms, max orange ${"%.2f".format(frames.maxOfOrNull { it.orange } ?: 0f)}), " +
+                "$grabs (first at +${frames.firstOrNull()?.at ?: "-"} ms, last at +${frames.lastOrNull()?.at ?: "-"} ms, max orange ${"%.2f".format(frames.maxOfOrNull { it.orange } ?: 0f)}, copy errors ${grabber.copyErrors}), " +
+                "window drawn $drawn frames from +${started.firstDrawAt} ms, the previous tab's view shown in $drawnWithPrevious of them, " +
                 "tabs ${tabsBefore} -> ${state.optJSONObject("tabs")?.length() ?: 0}, active ${describeActive()}, previous view ${describeView(previousView)}, " +
                 "previous page requests since the send ${server.hits(PREVIOUS_PATH) - hitsBefore}"
         )
-        for (flash in flashes) finding("    ${if (result == PRIVATE_TOAST) "restored page" else "FLASH"} at +${flash.at} ms: orange ${"%.2f".format(flash.orange)}")
+        val word = if (result == PRIVATE_TOAST) "restored page" else "FLASH"
+        for (flash in flashes.take(MAX_FLASH_LINES)) finding("    $word at +${flash.at} ms: orange ${"%.2f".format(flash.orange)}")
+        if (flashes.size > MAX_FLASH_LINES) finding("    … and ${flashes.size - MAX_FLASH_LINES} more such frames, the last at +${flashes.last().at} ms")
         grabber.sheet(
             "frames-cold-$landing",
             frames,
-            "cold $landing landing: send at 0 ms, landed at +$landedAt ms" + (if (result == PRIVATE_TOAST) " (no profiles: the restored tab under the toast)" else "")
+            "cold $landing landing: send at 0 ms, window at +${grabber.windowAt} ms, landed at +$landedAt ms, ${"%.0f".format(rate)} grabs/s" +
+                (if (result == PRIVATE_TOAST) " (no profiles: the restored tab under the toast)" else "")
         )
         shot("0${5 + COLD_ORDER.indexOf(landing)}-cold-$landing")
         leaveLanding(result)
@@ -680,6 +706,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val result = landed()
         val at = SystemClock.uptimeMillis() - t0
         val created = started.awaitMain(0)
+        started.stopWatchingDraws()
         expect("the warm $id shortcut lands ($result)", result != null)
         expect("the warm shortcut creates no MainActivity: the running one takes the landing through onNewIntent", created == null && activity === activityBefore && host === hostBefore && onMain { activity.intent } !== intentBefore)
         expect("Zenium comes back in front", awaitFront(ours = true))
@@ -727,16 +754,31 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
      * and fires; [awaitMain] hands back the created MainActivity, or null – once its `onCreate`
      * has RUN THROUGH (`onActivityPostCreated`): `onActivityCreated` is dispatched from
      * `super.onCreate`, before the activity's own body makes its host (run 2's fault).
+     *
+     * From that moment the created window's draws are counted (`OnDrawListener` on its decor, the
+     * main thread) with whether the previous tab's view was shown in each – in the tree, visible
+     * through its parents, with a size: the frame-exact signal beside the pixel read, which grabs
+     * at most 20 frames a second and could miss a frame of 16 ms. The pixel read stays the truth
+     * for the page having painted (a shown view may still be blank); [stopWatchingDraws] ends it.
      */
     private inner class Start(private val fire: () -> Unit) {
         private val created = CopyOnWriteArrayList<Activity>()
         private val trampolines = CopyOnWriteArrayList<Activity>()
+        /** The window's draws since the activity's creation; those with the previous tab's view shown; the first's time since the send. */
+        @Volatile var framesDrawn = 0
+        @Volatile var framesWithPrevious = 0
+        @Volatile var firstDrawAt = -1L
+        private var sentAt = 0L
+        @Volatile private var detachDrawWatch: (() -> Unit)? = null
         private val callbacks = object : Application.ActivityLifecycleCallbacks {
             override fun onActivityCreated(a: Activity, savedInstanceState: Bundle?) {
                 if (a is LauncherIconActivity) trampolines += a
             }
             override fun onActivityPostCreated(a: Activity, savedInstanceState: Bundle?) {
-                if (a is MainActivity) created += a
+                if (a is MainActivity) {
+                    if (created.isEmpty()) watchDraws(a)
+                    created += a
+                }
             }
             override fun onActivityStarted(a: Activity) {}
             override fun onActivityResumed(a: Activity) {}
@@ -747,9 +789,12 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         }
         private val application = app.applicationContext as Application
         val trampoline: Activity? get() = trampolines.firstOrNull()
+        /** The MainActivity the send created, once its own `onCreate` ran through; null until then. */
+        val main: MainActivity? get() = created.firstOrNull() as? MainActivity
 
         fun send() {
             application.registerActivityLifecycleCallbacks(callbacks)
+            sentAt = SystemClock.uptimeMillis()
             fire()
         }
 
@@ -758,6 +803,26 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             while (created.isEmpty() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
             application.unregisterActivityLifecycleCallbacks(callbacks)
             return created.firstOrNull()
+        }
+
+        /** Main thread, from `onActivityPostCreated`: the activity's host exists, its decor is set. */
+        private fun watchDraws(a: MainActivity) {
+            val decor = a.window.decorView
+            val listener = ViewTreeObserver.OnDrawListener {
+                if (firstDrawAt < 0) firstDrawAt = SystemClock.uptimeMillis() - sentAt
+                framesDrawn++
+                val view = a.host.tabs.get(PREVIOUS_TAB)
+                if (view != null && view.isShown && view.width > 0 && view.height > 0) framesWithPrevious++
+            }
+            decor.viewTreeObserver.addOnDrawListener(listener)
+            detachDrawWatch = { decor.viewTreeObserver.removeOnDrawListener(listener) }
+        }
+
+        /** The draw watch off (on the main thread, never from within a draw). */
+        fun stopWatchingDraws() {
+            val detach = detachDrawWatch ?: return
+            detachDrawWatch = null
+            onMain { detach() }
         }
     }
 
@@ -813,16 +878,34 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     private class GrabbedFrame(val at: Long, val orange: Float, val luminance: Float, val thumb: Bitmap)
 
     /**
-     * Screenshots in a loop from a thread of its own, each stamped with its time since the loop
-     * started, read for the previous tab's orange and the mean luminance, and kept as a thumbnail
-     * for the sheet. The emulator's screenshot takes a few hundred milliseconds, so the read is
-     * of a few frames a second: a page that painted for a frame or two may fall between grabs –
-     * the previous tab's view being shown at the landing ([coldLanding]) is read beside it.
+     * The new window's frames from a thread of its own: `PixelCopy` of the created MainActivity's
+     * window ([window] hands it over once the activity exists) – the window's last rendered buffer,
+     * copied at a quarter of its size by the RenderThread in one synchronous call – every
+     * [GRAB_PERIOD_MS] at most, twenty a second. (The authorised run grabbed the whole screen with
+     * `UiAutomation.takeScreenshot`, which takes ~500 ms on the emulator: a read of ~2 frames a
+     * second, no evidence against a half-second page.) Nothing is read before the window has a
+     * surface with a frame in it: the previous tab's page can only paint inside that window (what
+     * shows before it is the system's splash), so the grabs run from the window's first buffer
+     * and [windowAt] says when that was. Each grab is stamped with its time since the send, read
+     * for the previous tab's orange and the mean luminance, and kept as a thumbnail for the
+     * sheet. Should the copies fail on a device (20 in a row with a surface up), the grabber
+     * falls back to the screenshot and [source] says so. The per-frame view signal ([Start]'s
+     * draw watch) is read beside the pixels.
      */
-    private inner class FrameGrabber : Thread("widget-frame-grabber") {
+    private inner class FrameGrabber(private val window: () -> Window?) : Thread("widget-frame-grabber") {
         @Volatile private var running = true
         private val grabbed = CopyOnWriteArrayList<GrabbedFrame>()
         private var t0 = 0L
+        /** When the window's first buffer was copied, ms since the start; -1 for never. */
+        @Volatile var windowAt = -1L
+        /** Copies that failed with a surface up (not the no-surface and no-frame-yet waits). */
+        @Volatile var copyErrors = 0
+        /** What the frames came from: `PixelCopy`, or `screenshot` after the fallback. */
+        @Volatile var source = "PixelCopy"
+        private var failedInARow = 0
+        private var pixels = IntArray(0)
+        private val results = HandlerThread("widget-frame-results").also { it.start() }
+        private val resultHandler = Handler(results.looper)
 
         override fun start() {
             t0 = SystemClock.uptimeMillis()
@@ -831,17 +914,65 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
 
         override fun run() {
             while (running) {
-                val bitmap = runCatching { ui.takeScreenshot() }.getOrNull()
-                val at = SystemClock.uptimeMillis() - t0
-                if (bitmap == null) {
-                    SystemClock.sleep(80)
+                val began = SystemClock.uptimeMillis()
+                val copy = if (source == "PixelCopy") copyWindow() else screenshot()
+                if (copy == null) {
+                    SystemClock.sleep(if (source == "PixelCopy") 5 else 80)
                     continue
                 }
-                val (orange, luminance) = read(bitmap)
-                val thumb = Bitmap.createScaledBitmap(bitmap, max(1, bitmap.width / THUMB_SCALE), max(1, bitmap.height / THUMB_SCALE), true)
-                if (thumb !== bitmap) bitmap.recycle()
-                grabbed += GrabbedFrame(at, orange, luminance, thumb)
+                val at = SystemClock.uptimeMillis() - t0
+                if (windowAt < 0) windowAt = at
+                val (orange, luminance) = read(copy)
+                val thumb = thumbnail(copy)
+                copy.recycle()
+                if (grabbed.size < MAX_FRAMES) grabbed += GrabbedFrame(at, orange, luminance, thumb) else thumb.recycle()
+                val spent = SystemClock.uptimeMillis() - began
+                if (spent < GRAB_PERIOD_MS) SystemClock.sleep(GRAB_PERIOD_MS - spent)
             }
+            results.quitSafely()
+        }
+
+        /**
+         * The window's last buffer at a quarter size, or null while there is no window, no surface
+         * or no frame in it yet – and after a failure with a surface up, which counts towards the
+         * fallback.
+         */
+        private fun copyWindow(): Bitmap? {
+            val win = window() ?: return null
+            val decor = win.peekDecorView() ?: return null
+            val width = decor.width
+            val height = decor.height
+            if (width <= 0 || height <= 0) return null
+            val dest = Bitmap.createBitmap(max(1, width / COPY_SCALE), max(1, height / COPY_SCALE), Bitmap.Config.ARGB_8888)
+            val result = try {
+                val done = ArrayBlockingQueue<Int>(1)
+                PixelCopy.request(win, null, dest, { done.offer(it) }, resultHandler)
+                done.poll(2, TimeUnit.SECONDS) ?: PixelCopy.ERROR_TIMEOUT
+            } catch (e: IllegalArgumentException) {
+                // "Window doesn't have a backing surface!": not up yet.
+                NO_SURFACE
+            }
+            if (result == PixelCopy.SUCCESS) {
+                failedInARow = 0
+                return dest
+            }
+            dest.recycle()
+            if (result != NO_SURFACE && result != PixelCopy.ERROR_SOURCE_NO_DATA) {
+                copyErrors++
+                if (++failedInARow >= FALLBACK_AFTER) {
+                    Log.w(tag, "PixelCopy failed $failedInARow times in a row (last $result); the grabber falls back to screenshots")
+                    source = "screenshot"
+                }
+            }
+            return null
+        }
+
+        /** The whole screen at the copy's scale (the fallback), or null. */
+        private fun screenshot(): Bitmap? {
+            val bitmap = runCatching { ui.takeScreenshot() }.getOrNull() ?: return null
+            val scaled = Bitmap.createScaledBitmap(bitmap, max(1, bitmap.width / COPY_SCALE), max(1, bitmap.height / COPY_SCALE), true)
+            if (scaled !== bitmap) bitmap.recycle()
+            return scaled
         }
 
         fun halt() {
@@ -851,27 +982,46 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
 
         fun frames(): List<GrabbedFrame> = grabbed.toList()
 
+        /** Grabs a second over the frames read (their first to their last); 0 under two frames. */
+        fun rate(frames: List<GrabbedFrame>): Float {
+            if (frames.size < 2) return 0f
+            val span = frames.last().at - frames.first().at
+            return if (span <= 0) 0f else (frames.size - 1) * 1000f / span
+        }
+
         /** The share of sampled pixels within tolerance of the previous tab's orange, and the mean luminance (0–1). */
         private fun read(bitmap: Bitmap): Pair<Float, Float> {
+            val width = bitmap.width
+            val height = bitmap.height
+            if (pixels.size < width * height) pixels = IntArray(width * height)
+            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
             var orange = 0
             var total = 0
             var luminance = 0.0
             var y = 0
-            while (y < bitmap.height) {
+            while (y < height) {
                 var x = 0
-                while (x < bitmap.width) {
-                    val c = bitmap.getPixel(x, y)
+                val row = y * width
+                while (x < width) {
+                    val c = pixels[row + x]
                     val r = Color.red(c)
                     val g = Color.green(c)
                     val b = Color.blue(c)
                     if (kotlin.math.abs(r - PREVIOUS_R) <= TOLERANCE && kotlin.math.abs(g - PREVIOUS_G) <= TOLERANCE && kotlin.math.abs(b - PREVIOUS_B) <= TOLERANCE) orange++
                     luminance += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
                     total++
-                    x += SAMPLE_STEP
+                    x += COPY_STEP
                 }
-                y += SAMPLE_STEP
+                y += COPY_STEP
             }
             return if (total == 0) 0f to 0f else (orange.toFloat() / total) to (luminance / total).toFloat()
+        }
+
+        /** The frame at a tenth of the window, 16-bit: a hundred frames keep to a few megabytes. */
+        private fun thumbnail(copy: Bitmap): Bitmap {
+            val thumb = Bitmap.createBitmap(max(1, copy.width * COPY_SCALE / THUMB_SCALE), max(1, copy.height * COPY_SCALE / THUMB_SCALE), Bitmap.Config.RGB_565)
+            Canvas(thumb).drawBitmap(copy, null, Rect(0, 0, thumb.width, thumb.height), Paint(Paint.FILTER_BITMAP_FLAG))
+            return thumb
         }
 
         /** `widget-<theme>-<name>.png`: the thumbnails in rows, each captioned with its time and its orange share. */
@@ -881,18 +1031,18 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             val thumbHeight = frames.first().thumb.height
             val columns = minOf(SHEET_COLUMNS, frames.size)
             val rows = (frames.size + columns - 1) / columns
-            val pad = 12
-            val label = 30
+            val pad = 10
+            val label = 40
             val header = 44
             val sheet = Bitmap.createBitmap(
-                pad + columns * (thumbWidth + pad),
+                max(pad + columns * (thumbWidth + pad), 1400),
                 header + pad + rows * (thumbHeight + label + pad),
                 Bitmap.Config.ARGB_8888
             )
             val canvas = Canvas(sheet)
             canvas.drawColor(0xFF15141A.toInt())
             val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 22f }
-            val small = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFB8B7C0.toInt(); textSize = 19f }
+            val small = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFB8B7C0.toInt(); textSize = 15f }
             val flash = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF7A00.toInt(); style = Paint.Style.STROKE; strokeWidth = 4f }
             canvas.drawText("$caption · ${frames.size} frames · orange = the previous tab's page", pad.toFloat(), 30f, text)
             frames.forEachIndexed { i, frame ->
@@ -900,7 +1050,8 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
                 val y = header + pad + (i / columns) * (thumbHeight + label + pad)
                 canvas.drawBitmap(frame.thumb, x.toFloat(), y.toFloat(), null)
                 if (frame.orange >= FLASH_SHARE) canvas.drawRect(x - 2f, y - 2f, x + thumbWidth + 2f, y + thumbHeight + 2f, flash)
-                canvas.drawText("+${frame.at} ms  orange ${"%.1f".format(frame.orange * 100)}%", x.toFloat(), (y + thumbHeight + 22).toFloat(), small)
+                canvas.drawText("+${frame.at} ms", x.toFloat(), (y + thumbHeight + 17).toFloat(), small)
+                canvas.drawText("orange ${"%.1f".format(frame.orange * 100)}%", x.toFloat(), (y + thumbHeight + 35).toFloat(), small)
             }
             File(out, "widget-$THEME-$name.png").outputStream().use { sheet.compress(Bitmap.CompressFormat.PNG, 100, it) }
             sheet.recycle()
@@ -1101,13 +1252,31 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         private const val PREVIOUS_G = 0x7A
         private const val PREVIOUS_B = 0x00
         private const val TOLERANCE = 28
+        /** The whole-screen reads' (`orangeOnScreen`) sampling step in screen pixels. */
         private const val SAMPLE_STEP = 6
         /** A frame with this share of the previous tab's orange shows its page. */
         private const val FLASH_SHARE = 0.01f
         /** The previous tab on screen: most of the window is its page. */
         private const val PAGE_SHARE = 0.3f
-        private const val THUMB_SCALE = 5
-        private const val SHEET_COLUMNS = 8
+
+        /** The grabber's copies at a quarter of the window, read every other pixel of the copy (every 8th of the window). */
+        private const val COPY_SCALE = 4
+        private const val COPY_STEP = 2
+        /** Thumbnails at a tenth of the window; twelve to a row on the sheet. */
+        private const val THUMB_SCALE = 10
+        private const val SHEET_COLUMNS = 12
+        /** At most one grab per 50 ms: twenty a second, a tenth of the RenderThread's time at worst. */
+        private const val GRAB_PERIOD_MS = 50L
+        /** Grabs kept with a thumbnail (thirty seconds at the cap); the read stops there. */
+        private const val MAX_FRAMES = 600
+        /** The rate under which a frame read is no evidence: a half-second page would show in five grabs at this. */
+        private const val MIN_GRAB_RATE = 10f
+        /** Frames with the previous tab's page listed one by one in the findings, the rest counted. */
+        private const val MAX_FLASH_LINES = 12
+        /** `PixelCopy.request` threw for a window without a surface yet (not one of its result codes). */
+        private const val NO_SURFACE = -1
+        /** Failed copies in a row, with a surface up, before the grabber falls back to screenshots. */
+        private const val FALLBACK_AFTER = 20
 
         /** A launcher's 4×1 frame on a 412 dp phone, and where on the backdrop it sits. */
         private const val FRAME_WIDTH_DP = 330
