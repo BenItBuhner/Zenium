@@ -17,6 +17,7 @@ import {
   shouldPrompt,
   tileColor,
   type EngagementRecord,
+  type InstalledWebApp,
   type InstallSurface,
   type PinnedWebApp,
   type WebAppInfo
@@ -226,8 +227,20 @@ export class WebAppService {
     return /^https?:\/\//i.test(tab.url)
   }
 
-  allPinned(): PinnedWebApp[] {
-    return this.pinned
+  /**
+   * The installed apps as the UI snapshot lists them (`UIState.webApps`): every record, in the
+   * order of installing, with how many of its windows stand open – the windows `uninstall`
+   * closes, which Settings › Apps asks about first when there are any (§9.23's notice; the #435
+   * lead check). A window on its way out is not counted, as `launch` does not bring one forward;
+   * a host whose apps open as tabs has no app windows and counts none.
+   */
+  installed(): InstalledWebApp[] {
+    const open = new Map<string, number>()
+    for (const w of this.browser.allWindows()) {
+      const id = w.app?.appId
+      if (id && !w.isClosing) open.set(id, (open.get(id) ?? 0) + 1)
+    }
+    return this.pinned.map((app) => ({ ...app, windows: open.get(app.id) ?? 0 }))
   }
 
   // ---------------------------------------------------------------------------

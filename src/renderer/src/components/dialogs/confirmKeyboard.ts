@@ -73,7 +73,9 @@ export interface ConfirmKeyboard {
  * wrap), and the Settings' phone `ConfirmSheet` (`pages/settings/sheets.tsx`) its body's
  * chassis dialog – `container` and `enabled` above are shaped for it (the body to
  * `closest('[role="dialog"]')`, off under another sheet, `tab: false`), in place of the copy
- * of the rule it kept before this hook existed.
+ * of the rule it kept before this hook existed; and the quiet notification bubble
+ * (`siteControls/PermissionPromptBubble.tsx`) its popover's root the same way, bound once the
+ * bubble has painted (`enabled` on its ready flag), Allow – its primary – the default.
  */
 export function useConfirmKeyboard(
   ref: RefObject<HTMLElement | null>,

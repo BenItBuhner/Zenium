@@ -46,6 +46,7 @@ import {
 } from '@renderer/lib/portals'
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { GroupGlyph } from '../GroupGlyph'
 import { ReloadStopGlyph, StarGlyph } from '../phone/BarGlyphs'
 import { RowFavicon } from '../phone/PhoneList'
 import { useLongPress } from '../phone/useLongPress'
@@ -777,9 +778,9 @@ function MenuLevel({
     onFocused()
   }, [focus, onFocused, placed])
   // The glyph slot stands before every label when any row of the level has something to put in
-  // it – a favicon, a check – so the labels share one edge.
+  // it – a favicon, a group's mark, a check – so the labels share one edge.
   const withGlyphs = items.some(
-    (item) => item.icon || item.type === 'checkbox' || item.type === 'radio'
+    (item) => item.icon || item.group || item.type === 'checkbox' || item.type === 'radio'
   )
   return (
     <div
@@ -848,6 +849,10 @@ function MenuLevel({
               <span className="zen-v2-menu-glyph" aria-hidden>
                 {checkable && item.checked ? (
                   <Check />
+                ) : item.group ? (
+                  // A saved group's row (the Tab Folders submenu): the one group glyph (§9.37)
+                  // in the slot, the ring of its colour, or the folder's own icon.
+                  <GroupGlyph folder={item.group} saved={item.group.saved} />
                 ) : item.icon ? (
                   <img src={item.icon} alt="" className="h-4 w-4 rounded-sm" draggable={false} />
                 ) : null}

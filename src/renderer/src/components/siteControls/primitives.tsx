@@ -604,7 +604,10 @@ export function V2Sheet({
  * and no fill tile, the title 17/600 at line-height 22, an optional description 15 at 69% 4 px
  * under it – one composition on both platforms. In a phone sheet it is the chassis's
  * (`.zen-sheet-title-block`: the description runs under the glyph, as the protocol prompt's
- * does). Sticky in a scrolling popover: `scrolled` draws §9.7's hairline at its bottom edge.
+ * does). A title that wraps balances its lines (`text-wrap: balance`, on the chassis rule for
+ * the phone) so a two-line title never leaves one word on its second line; the block's width
+ * is the host's, unchanged. Sticky in a scrolling popover: `scrolled` draws §9.7's hairline at
+ * its bottom edge.
  */
 export function TitleBlock({
   id,
@@ -659,7 +662,7 @@ export function TitleBlock({
       <div className="min-w-0 flex-1">
         <h2
           id={id}
-          className="text-[17px] leading-[var(--v2-line-heading)] font-semibold break-words"
+          className="text-[17px] leading-[var(--v2-line-heading)] font-semibold break-words text-balance"
         >
           {title}
         </h2>

@@ -53,6 +53,7 @@ import {
   errorPageCertificate,
   errorPageUrl,
   extensionPageOf,
+  getDomain,
   httpsOnlyPageUrl,
   interstitialKindOf,
   isBlankTabUrl,
@@ -307,6 +308,11 @@ export class TabManager {
     }
     const view = this.createView(tab, win ?? this.windowFor(tabId))
     this.browser.governor.trackLoad(tabId)
+    // Woken from the sleep `discard` put it into (omnibox-40, Chrome's Memory Saver chip): the
+    // number the discard recorded goes to the pill's leaf with the time of the wake. Only a
+    // discard of this session leaves a number here (`createTabRecord` restores none), so a tab
+    // restored asleep from disk wakes without a leaf – its saving was another session's.
+    if (tab.sleepSavedMb) tab.memorySaver = { savedMb: tab.sleepSavedMb, wokeAt: Date.now() }
     tab.discarded = false
     delete tab.sleepSavedMb
     tab.frozen = false
@@ -671,20 +677,29 @@ export class TabManager {
         // `!didCrash()` with the renderer at importance): not the page's own heap running out,
         // so the sad tab says so and offers the page again rather than unloading it.
         const memoryKill = reason === 'oom-kill'
+        // The user ended the renderer from the task manager (End process): the same unload for a
+        // page out of sight, but the toast says what they did, not that the page crashed.
+        const ended = reason === 'ended'
         const visible = this.allVisibleTabIds().has(tabId)
         // A V8 heap-cap OOM is reported as `oom` on Windows / Android but as a plain `crashed` on
         // Linux. Either way a page nobody is looking at is better unloaded than replaced by an
         // error page in a fresh renderer: keep the tab, drop the page, reload on activation.
         if (outOfMemory || !visible) {
           const memory = outOfMemory || memoryKill
-          const why = memory ? 'the page ran out of memory' : `the page crashed (${reason})`
+          const why = memory
+            ? 'the page ran out of memory'
+            : ended
+              ? 'the user ended the page’s process'
+              : `the page crashed (${reason})`
           this.browser.governor.record('discard', tabId, why, title)
           this.discard(tabId)
           this.browser.toast(
             memory
               ? `"${title}" ran out of memory and was unloaded.`
-              : `"${title}" crashed and was unloaded.`,
-            'error',
+              : ended
+                ? `"${title}" was ended and unloaded.`
+                : `"${title}" crashed and was unloaded.`,
+            ended ? 'info' : 'error',
             ownerWindow()
           )
           return
@@ -1277,6 +1292,8 @@ export class TabManager {
     const saved = this.view(tabId) ? this.browser.governor.memoryOf?.(tabId) : null
     if (saved !== null && saved !== undefined && saved > 0) tab.sleepSavedMb = Math.round(saved)
     else delete tab.sleepSavedMb
+    // Asleep again: the last wake's leaf is over (`load` writes the next one).
+    delete tab.memorySaver
     // The page goes, its history stays: the tab picks the stack up again when it is loaded.
     this.rememberNavigation(tabId)
     this.destroyView(tabId)
@@ -3731,7 +3748,10 @@ export class TabManager {
   /**
    * The loaded pages that may be put to sleep right now: not shown in any window, not playing
    * audio, not loading, not open in DevTools, not driven by an agent and – when `honourList` –
-   * not on the never-sleep list (matched by host, `www.` aside).
+   * not on the never-sleep list. An entry matches a page by its host, `www.` aside (the phone's
+   * Add sheet writes a host), or by the site's registrable domain (`getDomain`, the form the
+   * desktop's Add current site and the pill's Never unload this site write: `google.com` for a
+   * page of `mail.google.com`, so every page of the site stays loaded).
    */
   private sleepCandidates(honourList: boolean): Tab[] {
     const visible = this.allVisibleTabIds()
@@ -3740,7 +3760,7 @@ export class TabManager {
     for (const [id] of this.views) {
       const tab = this.tab(id)
       if (!tab || visible.has(id) || tab.audible || tab.loading) continue
-      if (honourList && excluded.some((d) => domainOf(tab.url) === d)) continue
+      if (honourList && neverUnloaded(tab.url, excluded)) continue
       if (this.browser.state.devtoolsOpenFor.has(id)) continue
       if (this.browser.agents.isDriving(id)) continue
       out.push(tab)
@@ -3792,6 +3812,19 @@ function domainOf(url: string): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * Whether the never-sleep list (`settings.unloadExcludedDomains`, lower-cased) names the page
+ * at `url`: by its host with `www.` aside, or by its registrable domain – the two forms the
+ * list's writers use (`sleepCandidates`).
+ */
+export function neverUnloaded(url: string, excluded: readonly string[]): boolean {
+  if (excluded.length === 0) return false
+  const host = domainOf(url)
+  if (!host) return false
+  const site = getDomain(url)
+  return excluded.some((d) => d === host || (site !== '' && d === site))
 }
 
 /**

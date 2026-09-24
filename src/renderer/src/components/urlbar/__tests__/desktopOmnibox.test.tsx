@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, createElement, type ReactElement } from 'react'
+import { Fragment, act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Suggestion, Tab, UIState } from '@shared/types'
+import type { HostCapabilities, Suggestion, Tab, UIState } from '@shared/types'
 import type { UrlbarState } from '@renderer/lib/ui'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
@@ -22,10 +22,23 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (
   }
   return null
 })
-Object.assign(window, { zen: { invoke, on: () => () => undefined } })
+/** The core's events to the chrome (`window.zen.on`), fired by the tests through `fire`. */
+const listeners = new Map<string, Set<(payload: unknown) => void>>()
+const on = (name: string, listener: (payload: unknown) => void): (() => void) => {
+  const set = listeners.get(name) ?? new Set()
+  listeners.set(name, set)
+  set.add(listener)
+  return () => void set.delete(listener)
+}
+const fire = (name: string, payload: unknown): void => {
+  for (const listener of listeners.get(name) ?? []) listener(payload)
+}
+Object.assign(window, { zen: { invoke, on } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { Urlbar } = await import('../Urlbar')
+const { DeleteSearchHistoryDialog } = await import('../DeleteSearchHistoryDialog')
+const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { uiStore } = await import('@renderer/lib/ui')
 const { pageTookKeyboard } = await import('@renderer/lib/panes')
 
@@ -66,10 +79,10 @@ function tab(url: string, patch: Partial<Tab> = {}): Tab {
   } as Tab
 }
 
-function state(t: Tab): UIState {
+function state(t: Tab, capabilities: Partial<HostCapabilities> = {}): UIState {
   return {
     platform: 'linux',
-    capabilities: {},
+    capabilities,
     tabs: { [t.id]: t },
     spaces: [],
     activeSpaceId: 'space',
@@ -83,9 +96,13 @@ function urlbarState(mode: UrlbarState['mode'] = 'edit'): UrlbarState {
   return { open: true, mode, tabId: 't1', initialText: undefined, attached: true }
 }
 
-const desktop = (t: Tab = tab(PAGE), mode: UrlbarState['mode'] = 'edit'): ReactElement =>
+const desktop = (
+  t: Tab = tab(PAGE),
+  mode: UrlbarState['mode'] = 'edit',
+  capabilities: Partial<HostCapabilities> = {}
+): ReactElement =>
   createElement(Urlbar, {
-    state: state(t),
+    state: state(t, capabilities),
     urlbar: urlbarState(mode),
     area: { x: 0, y: 0, width: 1200, height: 800 },
     phoneEdge: undefined
@@ -226,7 +243,7 @@ async function press(
 beforeEach(() => {
   invoke.mockClear()
   suggestions = () => []
-  uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
+  uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true }, deleteSearchHistoryOpen: false }))
 })
 
 afterEach(() => {
@@ -429,6 +446,320 @@ describe('removing a row (omnibox-22)', () => {
     await key(input(el), 'Delete', { shift: true })
     expect(rows(el)).toHaveLength(2)
     expect(commands()).not.toContain('history.delete')
+  })
+})
+
+describe('a row\u2019s native menu (context-menus-115)', () => {
+  /** The desktop host: its menus are native, so a row's right-click asks the core for one. */
+  const native = (t: Tab = tab(PAGE)): ReactElement => desktop(t, 'edit', { nativeMenus: true })
+  /** A remembered search (a removable search row), or with `deletable` unset the engine's own. */
+  const search = (n: number, extra: Partial<Suggestion> = { deletable: true }): Suggestion =>
+    row('search', `query ${n}`, `query ${n}`, `https://www.google.com/search?q=query+${n}`, {
+      targetId: 'google',
+      ...extra
+    })
+  const option = (r: HTMLElement): HTMLElement => r.querySelector<HTMLElement>('[role="option"]')!
+  const titles = (el: HTMLElement): string[] =>
+    rows(el).map((r) => r.querySelector('.zen-omnibox-row-title')!.textContent!)
+  const menuAsks = (): Array<{
+    id: string
+    kind: string
+    x: number
+    y: number
+    keyboard?: boolean
+  }> => callsTo('urlbar.suggestionContextMenu')
+
+  /** The mouse's right-click on a row at (40, 50): the press, then the `contextmenu` it raises. */
+  async function rightClick(r: HTMLElement): Promise<MouseEvent> {
+    await press(option(r), { button: 2 })
+    const ev = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+      clientX: 40,
+      clientY: 50
+    })
+    await act(async () => {
+      r.dispatchEvent(ev)
+      await Promise.resolve()
+    })
+    return ev
+  }
+
+  /** The core's word on a pick in the host's menu. */
+  async function picked(id: string, action: 'remove' | 'delete-search-history'): Promise<void> {
+    await act(async () => {
+      fire('urlbar.suggestionAction', { id, action })
+      await Promise.resolve()
+    })
+  }
+
+  /**
+   * The frame's dialog host beside the bar, with the "Delete search history?" prompt as
+   * TabDialogs mounts it from the `deleteSearchHistoryOpen` cover flag
+   * (components/urlbar/DeleteSearchHistoryDialog.tsx).
+   */
+  function Prompts(): ReactElement {
+    const open = uiStore.use((s) => s.deleteSearchHistoryOpen)
+    return createElement(
+      FrameDialogHost,
+      { frame: true },
+      open ? createElement(DeleteSearchHistoryDialog) : null
+    )
+  }
+  const withPrompt = (bar: ReactElement): ReactElement =>
+    createElement(Fragment, null, bar, createElement(Prompts))
+  const prompt = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>(
+      '[data-confirm="delete-search-history"]:not([data-leaving])'
+    )
+  const promptButton = (action: 'cancel' | 'confirm'): HTMLButtonElement =>
+    prompt()!.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!
+  /** The prompt's wait for the page's picture done and the prompt up. */
+  async function promptUp(): Promise<HTMLElement> {
+    await act(async () => {
+      await vi.waitFor(() => expect(prompt()).not.toBeNull())
+    })
+    return prompt()!
+  }
+  async function click(el: Element): Promise<void> {
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+  }
+  /**
+   * The prompt's way out ends (the host keeps its panel through the §9.5 pop in reverse and
+   * drops it on `animationend`): the frame's `inert` lifts and the keyboard, waiting on it
+   * (lib/popover.ts `returnFocusTo`), comes back.
+   */
+  async function left(): Promise<void> {
+    await act(async () => {
+      for (const panel of document.querySelectorAll('.zen-frame-dialogs-slot > [data-leaving]'))
+        panel.dispatchEvent(new Event('animationend'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it('a right-click on a removable row asks the host for the row\u2019s menu at the pointer, the press itself picking nothing; a bookmark row gets none', async () => {
+    suggestions = (q) => (q ? [history(1), bookmark(1)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 2)
+    const [page, mark] = rows(el)
+    const ev = await rightClick(page)
+    // The old rule picked the row on any mouse button's press; the right one is the menu's.
+    expect(submits()).toEqual([])
+    expect(ev.defaultPrevented).toBe(true)
+    expect(menuAsks()).toEqual([{ id: 'history:Page 1', kind: 'history', x: 40, y: 50 }])
+    // The bar stands as it was: the menu is the host's, its picks come back as events.
+    expect(uiStore.get().urlbar.open).toBe(true)
+    expect(rows(el)).toHaveLength(2)
+    expect(document.activeElement).toBe(input(el))
+    // A bookmark is not removable (Chrome): no menu, the event left to the chrome's own.
+    const kept = await rightClick(mark)
+    expect(kept.defaultPrevented).toBe(false)
+    expect(menuAsks()).toHaveLength(1)
+    expect(submits()).toEqual([])
+  })
+
+  it('a middle press still opens the row behind, as before', async () => {
+    suggestions = (q) => (q ? [history(1)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 1)
+    await press(option(rows(el)[0]), { button: 1 })
+    expect(submits().at(-1)).toMatchObject({ input: 'https://example.com/1', background: true })
+  })
+
+  it('a host without native menus (the tablet) is asked for nothing; its rows keep the X', async () => {
+    suggestions = (q) => (q ? [history(1)] : [])
+    const el = await render(desktop())
+    await typeAndList(el, 'pa', 1)
+    const ev = await rightClick(rows(el)[0])
+    expect(ev.defaultPrevented).toBe(false)
+    expect(menuAsks()).toEqual([])
+    expect(submits()).toEqual([])
+    expect(removeX(rows(el)[0])).not.toBeNull()
+  })
+
+  it('Remove takes the row through the core\u2019s removes; the highlight stays on its row, the field with it', async () => {
+    suggestions = (q) => (q ? [history(1), history(2), history(3)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 3)
+    await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('Page 1')
+    expect(input(el).value).toBe('example.com/1')
+    await rightClick(rows(el)[1])
+    await picked('history:Page 2', 'remove')
+    expect(callsTo('history.delete')).toEqual([{ url: 'https://example.com/2' }])
+    expect(titles(el)).toEqual(['Page 1', 'Page 3'])
+    expect(selectedRow(el)?.textContent).toContain('Page 1')
+    expect(input(el).value).toBe('example.com/1')
+    // A row above the highlighted one going, the highlight keeps its row too.
+    await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('Page 3')
+    await rightClick(rows(el)[0])
+    await picked('history:Page 1', 'remove')
+    expect(titles(el)).toEqual(['Page 3'])
+    expect(selectedRow(el)?.textContent).toContain('Page 3')
+    expect(input(el).value).toBe('example.com/3')
+    // The highlighted row itself going hands the highlight on, as Shift+Delete does; the last
+    // row's leaves the field with what was typed.
+    await rightClick(rows(el)[0])
+    await picked('history:Page 3', 'remove')
+    expect(rows(el)).toEqual([])
+    expect(selectedRow(el)).toBeNull()
+    expect(input(el).value).toBe('pa')
+    expect(callsTo('history.delete')).toHaveLength(3)
+  })
+
+  it('the highlighted row removed hands the highlight to the row that takes its place (Shift+Delete\u2019s rule)', async () => {
+    suggestions = (q) => (q ? [history(1), history(2), history(3)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 3)
+    await key(input(el), 'ArrowDown')
+    await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('Page 2')
+    await rightClick(rows(el)[1])
+    await picked('history:Page 2', 'remove')
+    expect(titles(el)).toEqual(['Page 1', 'Page 3'])
+    expect(selectedRow(el)?.textContent).toContain('Page 3')
+    expect(input(el).value).toBe('example.com/3')
+  })
+
+  it('a pick the list no longer has is nothing to act on', async () => {
+    suggestions = (q) => (q ? [history(1)] : [])
+    const el = await render(native())
+    await typeAndList(el, 'pa', 1)
+    await picked('history:Page 9', 'remove')
+    expect(rows(el)).toHaveLength(1)
+    expect(commands()).not.toContain('history.delete')
+  })
+
+  it('Delete Search History, offered on a remembered search, asks first (§10.5, pr-434 ruling 3): the §9.23 destructive prompt over the bar; its Delete forgets every remembered search and drops their rows – the engine\u2019s own suggestions and the pages stay – and the field takes the keyboard back', async () => {
+    suggestions = (q) =>
+      q ? [search(1), search(2), search(3, { deletable: undefined }), history(1)] : []
+    const el = await render(withPrompt(native()))
+    await typeAndList(el, 'qu', 4)
+    for (let i = 0; i < 4; i += 1) await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('Page 1')
+    await rightClick(rows(el)[0])
+    expect(menuAsks().at(-1)).toMatchObject({ id: 'search:query 1', kind: 'search' })
+    await picked('search:query 1', 'delete-search-history')
+    const d = await promptUp()
+    // The question first: nothing forgotten yet, the list as it was, the bar up under the prompt.
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(titles(el)).toEqual(['query 1', 'query 2', 'query 3', 'Page 1'])
+    expect(uiStore.get().urlbar.open).toBe(true)
+    expect(uiStore.get().deleteSearchHistoryOpen).toBe(true)
+    // The §9.23 confirmation in its destructive form: the question with the trash glyph, the
+    // one paragraph, Cancel and Delete in the danger ink, no primary (§6).
+    expect(d.getAttribute('role')).toBe('alertdialog')
+    expect(d.dataset.destructive).toBe('true')
+    const title = d.querySelector('.zen-v2-title-block-title')!
+    expect(title.textContent).toBe('Delete search history?')
+    expect(title.querySelector('svg.lucide-trash-2')).not.toBeNull()
+    expect(d.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
+      'Every search Zenium remembered for the address bar is forgotten. Your browsing history stays.'
+    )
+    expect(promptButton('cancel').textContent).toBe('Cancel')
+    expect(promptButton('confirm').textContent).toBe('Delete')
+    expect(promptButton('confirm').hasAttribute('data-danger')).toBe(true)
+    expect(d.querySelector('[data-primary]')).toBeNull()
+    // The container holds the keyboard (§9.22 as amended); Enter from it answers nothing.
+    expect(document.activeElement).toBe(d)
+    await key(d, 'Enter')
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(prompt()).toBe(d)
+    // Delete: the core forgets, the remembered searches' rows go, the highlight keeps its row,
+    // the prompt leaves and the keyboard comes back to the field.
+    await click(promptButton('confirm'))
+    expect(commands()).toContain('urlbar.clearSearchHistory')
+    expect(commands()).not.toContain('urlbar.forgetShortcut')
+    expect(uiStore.get().deleteSearchHistoryOpen).toBe(false)
+    expect(prompt()).toBeNull()
+    expect(titles(el)).toEqual(['query 3', 'Page 1'])
+    expect(selectedRow(el)?.textContent).toContain('Page 1')
+    expect(input(el).value).toBe('example.com/1')
+    expect(uiStore.get().urlbar.open).toBe(true)
+    // The bar stands inert with the frame through the prompt's way out (§9.5); the field takes
+    // the keyboard as the exit ends and the inert lifts – not the page (`focus.content`).
+    expect(document.activeElement).not.toBe(input(el))
+    await left()
+    expect(document.activeElement).toBe(input(el))
+    expect(commands()).not.toContain('focus.content')
+  })
+
+  it('Delete Search History with the highlight on a remembered search moves it to the row that takes the place', async () => {
+    suggestions = (q) => (q ? [history(1), search(1), search(2), history(2)] : [])
+    const el = await render(withPrompt(native()))
+    await typeAndList(el, 'qu', 4)
+    await key(input(el), 'ArrowDown')
+    await key(input(el), 'ArrowDown')
+    expect(selectedRow(el)?.textContent).toContain('query 1')
+    await picked('search:query 1', 'delete-search-history')
+    await promptUp()
+    await click(promptButton('confirm'))
+    expect(titles(el)).toEqual(['Page 1', 'Page 2'])
+    expect(selectedRow(el)?.textContent).toContain('Page 2')
+    expect(input(el).value).toBe('example.com/2')
+    await left()
+    expect(document.activeElement).toBe(input(el))
+  })
+
+  it('the prompt\u2019s Cancel, Escape and scrim forget nothing: the list stands, the bar stays up and the field takes the keyboard back', async () => {
+    suggestions = (q) => (q ? [search(1), search(2), history(1)] : [])
+    const el = await render(withPrompt(native()))
+    await typeAndList(el, 'qu', 3)
+    await picked('search:query 1', 'delete-search-history')
+    await promptUp()
+    await click(promptButton('cancel'))
+    expect(prompt()).toBeNull()
+    expect(uiStore.get().deleteSearchHistoryOpen).toBe(false)
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(titles(el)).toEqual(['query 1', 'query 2', 'Page 1'])
+    expect(uiStore.get().urlbar.open).toBe(true)
+    await left()
+    expect(document.activeElement).toBe(input(el))
+
+    await picked('search:query 2', 'delete-search-history')
+    await promptUp()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(prompt()).toBeNull()
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(titles(el)).toEqual(['query 1', 'query 2', 'Page 1'])
+    expect(uiStore.get().urlbar.open).toBe(true)
+    await left()
+    expect(document.activeElement).toBe(input(el))
+
+    await picked('search:query 1', 'delete-search-history')
+    await promptUp()
+    await act(async () => {
+      document
+        .querySelector('.zen-frame-scrim')!
+        .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
+      await Promise.resolve()
+    })
+    expect(prompt()).toBeNull()
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
+    expect(titles(el)).toEqual(['query 1', 'query 2', 'Page 1'])
+    await left()
+    expect(document.activeElement).toBe(input(el))
+    expect(commands()).not.toContain('focus.content')
+  })
+
+  it('the bar going under the prompt takes the question with it', async () => {
+    suggestions = (q) => (q ? [search(1), history(1)] : [])
+    const el = await render(withPrompt(native()))
+    await typeAndList(el, 'qu', 2)
+    await picked('search:query 1', 'delete-search-history')
+    await promptUp()
+    act(() => root?.unmount())
+    expect(uiStore.get().deleteSearchHistoryOpen).toBe(false)
+    expect(commands()).not.toContain('urlbar.clearSearchHistory')
   })
 })
 
