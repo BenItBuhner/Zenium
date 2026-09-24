@@ -544,12 +544,15 @@ export class Menus {
   }
 
   /**
-   * The served new tab page's own rows (NTP-18), on a right-click on the page itself: "Hide
-   * Greeting" and "Hide Shortcuts" for the sections it shows – each hidden through the one
+   * The served new tab page's own rows (NTP-18, NTP-22), on a right-click on the page itself:
+   * "Hide Greeting" and "Hide Shortcuts" for the sections it shows – each hidden through the one
    * settings model with the page's Undo toast (`NewTabService.hideSection`), so a slip costs one
-   * press and the customise surface keeps the switch either way – and "Customise New Tab Page…",
-   * the Customise button's route. A private page has neither section (its explainer stands
-   * where the grid would) and gets no rows.
+   * press and the customise surface keeps the switch either way; "Restore Default Shortcuts"
+   * while the grid is shown – Chrome's second link on the removal toast, which v2 §9.33 gives
+   * one action, so the restore lives here, greyed when the grid is a fresh profile's already,
+   * with the page's Undo toast in place of a confirmation (§10.5); and "Customise New Tab
+   * Page…", the Customise button's route. A private page has neither section (its explainer
+   * stands where the grid would) and gets no rows.
    */
   private newTabPageGroup(tab: Tab, win: ZenWindow): Template {
     if (tab.containerId === PRIVATE_CONTAINER_ID) return []
@@ -558,8 +561,14 @@ export class Menus {
     const rows: Template = []
     if (sections.greeting)
       rows.push({ label: 'Hide Greeting', click: () => newTab.hideSection(tab.id, 'greeting') })
-    if (sections.shortcuts)
+    if (sections.shortcuts) {
       rows.push({ label: 'Hide Shortcuts', click: () => newTab.hideSection(tab.id, 'shortcuts') })
+      rows.push({
+        label: 'Restore Default Shortcuts',
+        enabled: newTab.canRestoreDefaultShortcuts(),
+        click: () => newTab.restoreDefaultShortcutsFromPage(tab.id)
+      })
+    }
     rows.push({
       label: 'Customise New Tab Page…',
       click: () => this.browser.pages.open('settings', 'newtab', win, tab.id)

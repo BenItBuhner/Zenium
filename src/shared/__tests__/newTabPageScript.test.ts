@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { NewTabPageAction, NewTabPageState } from '../types'
+import type { NewTabPageAction, NewTabPageCommand, NewTabPageState } from '../types'
 import { PRIVATE_COOKIES, newTabPageHtml } from '../newTabPage'
 import { installNewTabPage, type NewTabTransport } from '../newTabPageScript'
 
@@ -256,11 +256,12 @@ describe("zen://newtab: the field's engine favicon", () => {
 })
 
 /**
- * The toast after a change to the grid (NTP-22): Undo and Chrome's "Restore default shortcuts"
- * link; the restore's own toast offers Undo alone. The tiles' Remove runs through the chrome's
- * `remove-tile` command, so the harness feeds that.
+ * The toast after a change to the grid (NTP-22, v2 §9.33: one action): a sentence and Undo,
+ * never a second link – Chrome's "Restore default shortcuts" is the page menu's row, whose
+ * `defaults-restored` command raises the restore's own toast with Undo. The tiles' Remove runs
+ * through the chrome's `remove-tile` command, so the harness feeds that.
  */
-describe('zen://newtab: the toast\'s "Restore default shortcuts" link', () => {
+describe('zen://newtab: the toast carries Undo alone; the restore is the menu’s and comes back as a command', () => {
   const toast = (): HTMLDivElement => document.getElementById('zen-toast') as HTMLDivElement
   const buttons = (): string[] =>
     Array.from(toast().querySelectorAll('button')).map((b) => b.textContent ?? '')
@@ -271,9 +272,9 @@ describe('zen://newtab: the toast\'s "Restore default shortcuts" link', () => {
 
   function mountWithCommands(initial: NewTabPageState): {
     h: Harness
-    command(c: { type: 'remove-tile'; id: string }): void
+    command(c: NewTabPageCommand): void
   } {
-    const listeners: Array<(c: { type: 'remove-tile'; id: string }) => void> = []
+    const listeners: Array<(c: NewTabPageCommand) => void> = []
     const html = newTabPageHtml()
     document.body.innerHTML = html.slice(
       html.indexOf('<body') + html.slice(html.indexOf('<body')).indexOf('>') + 1,
@@ -304,16 +305,22 @@ describe('zen://newtab: the toast\'s "Restore default shortcuts" link', () => {
     return { h, command: (c) => listeners.forEach((l) => l(c)) }
   }
 
-  it('a removal offers Undo and the restore link; the link asks for the defaults and offers its own Undo', () => {
+  it('a removal offers Undo alone – no second link on the toast (§9.33; the restore is the page menu’s row)', () => {
     const { h, command } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
     expect(toast().hidden).toBe(true)
     command({ type: 'remove-tile', id: 's1' })
     expect(toast().hidden).toBe(false)
     expect(toast().querySelector('span')?.textContent).toBe('Shortcut removed')
-    expect(buttons()).toEqual(['Undo', 'Restore default shortcuts'])
+    expect(buttons()).toEqual(['Undo'])
+    expect(document.getElementById('zen-restore-defaults')).toBeNull()
     expect(h.sent.at(-1)).toEqual({ type: 'remove-shortcut', id: 's1' })
-    ;(document.getElementById('zen-restore-defaults') as HTMLButtonElement).click()
-    expect(h.sent.at(-1)).toEqual({ type: 'restore-default-shortcuts' })
+    // Nothing the page sends asks for the defaults: that is the chrome's row, not the page's.
+    expect(h.sent.map((a) => a.type)).not.toContain('restore-default-shortcuts')
+  })
+
+  it('the menu’s restore comes back as `defaults-restored`: the toast says so with Undo alone, and Undo asks for the three back', () => {
+    const { h, command } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
+    command({ type: 'defaults-restored' })
     expect(toast().hidden).toBe(false)
     expect(toast().querySelector('span')?.textContent).toBe('Default shortcuts restored')
     expect(buttons()).toEqual(['Undo'])
@@ -324,18 +331,18 @@ describe('zen://newtab: the toast\'s "Restore default shortcuts" link', () => {
 
   it('a section the chrome hid (NTP-18) raises the toast with Undo alone; Undo asks for the section back', () => {
     const { h, command } = mountWithCommands(state({ greeting: true, shortcuts }))
-    ;(command as (c: unknown) => void)({ type: 'section-hidden', section: 'greeting' })
+    command({ type: 'section-hidden', section: 'greeting' })
     expect(toast().hidden).toBe(false)
     expect(toast().querySelector('span')?.textContent).toBe('Greeting hidden')
     expect(buttons()).toEqual(['Undo'])
     toast().querySelector('button')!.click()
     expect(h.sent.at(-1)).toEqual({ type: 'show-section', section: 'greeting' })
     expect(toast().hidden).toBe(true)
-    ;(command as (c: unknown) => void)({ type: 'section-hidden', section: 'shortcuts' })
+    command({ type: 'section-hidden', section: 'shortcuts' })
     expect(toast().querySelector('span')?.textContent).toBe('Shortcuts hidden')
   })
 
-  it("Undo on a removal restores the tile as before; the toast's link is not sent with it", () => {
+  it('Undo on a removal restores the tile as before and closes the toast', () => {
     const { h, command } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
     command({ type: 'remove-tile', id: 's2' })
     toast().querySelector('button')!.click()
@@ -346,7 +353,6 @@ describe('zen://newtab: the toast\'s "Restore default shortcuts" link', () => {
       url: 'https://two.example/',
       index: 1
     })
-    expect(h.sent.some((a) => a.type === 'restore-default-shortcuts')).toBe(false)
     expect(toast().hidden).toBe(true)
   })
 

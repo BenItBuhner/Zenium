@@ -1054,26 +1054,36 @@ describe('NewTabService: my shortcuts and most visited', () => {
   })
 
   describe('reset (NTP-22 / NTP-12)', () => {
-    it('restore-default-shortcuts: no pins, no removed sites, the most visited mode; Undo puts the three back', () => {
+    it('the page menu’s Restore Default Shortcuts: no pins, no removed sites, the most visited mode, the page’s toast raised; Undo puts the three back', () => {
       const f = fixture()
       f.browser.history.visit('https://news.example/a', 'News', null)
       const win = f.browser.focusedWindow()
       f.browser.handleCommand(win, 'newtab.open', undefined)
       const tab = activeTab(f)!
       const svc = f.browser.newTab
-      // The default grid: the link does nothing and keeps nothing.
-      expect(svc.restoreDefaultShortcuts()).toBe(false)
+      const commands: unknown[] = []
+      f.browser.tabs.view(tab.id)!.sendNewTabCommand = (command) => {
+        commands.push(command)
+      }
+      // The default grid: the row is greyed, the restore does nothing, keeps nothing and raises
+      // no toast.
+      expect(svc.canRestoreDefaultShortcuts()).toBe(false)
+      svc.restoreDefaultShortcutsFromPage(tab.id)
+      expect(commands).toEqual([])
       expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
       svc.addShortcut('Docs', 'docs.example')
+      expect(svc.canRestoreDefaultShortcuts()).toBe(true)
       svc.handleAction(tab.id, { type: 'hide-site', url: 'https://news.example/a' })
       f.browser.handleCommand(win, 'settings.update', {
         newTab: { ...f.browser.state.settings.newTab, mode: 'my-shortcuts' }
       })
       const before = f.browser.state.newTabDevice
-      svc.handleAction(tab.id, { type: 'restore-default-shortcuts' })
+      svc.restoreDefaultShortcutsFromPage(tab.id)
       expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
       expect(f.browser.state.settings.newTab.mode).toBe('most-visited')
       expect(svc.stateFor(tab.id)!.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
+      // The page's toast ("Default shortcuts restored", Undo alone) is the command's.
+      expect(commands).toEqual([{ type: 'defaults-restored' }])
       svc.handleAction(tab.id, { type: 'undo-restore-default-shortcuts' })
       expect(f.browser.state.newTabDevice).toEqual(before)
       expect(f.browser.state.settings.newTab.mode).toBe('my-shortcuts')

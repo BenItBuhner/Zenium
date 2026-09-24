@@ -544,9 +544,6 @@ export class NewTabService {
       case 'unhide-site':
         this.unhideSite(action.url)
         return
-      case 'restore-default-shortcuts':
-        this.restoreDefaultShortcuts()
-        return
       case 'undo-restore-default-shortcuts':
         this.undoRestoreDefaultShortcuts()
         return
@@ -715,19 +712,41 @@ export class NewTabService {
   }
 
   /**
-   * The toast's "Restore default shortcuts" (Chrome's link, NTP-22): the grid as a fresh profile
-   * has it – the most visited mode, no pinned shortcuts, no removed sites. Not a confirmation
-   * but an Undo (v2 §10.5, §9.33): what the three were is kept for `undoRestoreDefaultShortcuts`
-   * until the next change to any of them. False when the grid is the default already.
+   * Whether the grid is anything but a fresh profile's – a pinned shortcut, a removed site or a
+   * mode other than the default – so the page menu's "Restore Default Shortcuts" has work to do
+   * (the row is greyed otherwise).
+   */
+  canRestoreDefaultShortcuts(): boolean {
+    const device = this.device
+    return (
+      device.shortcuts.length > 0 ||
+      device.hiddenHosts.length > 0 ||
+      this.settings.mode !== DEFAULT_NEW_TAB_SETTINGS.mode
+    )
+  }
+
+  /**
+   * The page menu's "Restore Default Shortcuts" (NTP-22; Chrome's is a second link on the
+   * removal toast, which §9.33 gives one action): the grid restored through the one model – the
+   * commit's push redraws every page – and this page's toast raised ("Default shortcuts
+   * restored") with Undo alone, as `hideSection` raises its own. Nothing is raised when the
+   * grid was the default already.
+   */
+  restoreDefaultShortcutsFromPage(tabId: string): void {
+    if (!this.restoreDefaultShortcuts()) return
+    this.browser.tabs.view(tabId)?.sendNewTabCommand?.({ type: 'defaults-restored' })
+  }
+
+  /**
+   * The grid as a fresh profile has it – the most visited mode, no pinned shortcuts, no removed
+   * sites. Not a confirmation but an Undo (v2 §10.5, §9.33): what the three were is kept for
+   * `undoRestoreDefaultShortcuts` until the next change to any of them. False when the grid is
+   * the default already.
    */
   restoreDefaultShortcuts(): boolean {
+    if (!this.canRestoreDefaultShortcuts()) return false
     const device = this.device
     const mode = this.settings.mode
-    const isDefault =
-      device.shortcuts.length === 0 &&
-      device.hiddenHosts.length === 0 &&
-      mode === DEFAULT_NEW_TAB_SETTINGS.mode
-    if (isDefault) return false
     this.updateDevice((d) => ({ ...d, shortcuts: [], hiddenHosts: [] }))
     if (mode !== DEFAULT_NEW_TAB_SETTINGS.mode)
       this.setSettings({ mode: DEFAULT_NEW_TAB_SETTINGS.mode })

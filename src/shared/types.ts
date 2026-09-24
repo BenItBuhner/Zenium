@@ -2339,11 +2339,9 @@ export type NewTabPageAction =
   | { type: 'hide-site'; url: string }
   | { type: 'unhide-site'; url: string }
   /**
-   * The toast's "Restore default shortcuts" link (Chrome's, NTP-22): the grid as it was on first
-   * run – the most visited mode, no pinned shortcuts, no removed sites – and the Undo of that,
-   * which puts the three back as they were before the restore.
+   * The Undo of the page menu's "Restore Default Shortcuts" (`defaults-restored`, NTP-22): the
+   * pinned shortcuts, the removed sites and the mode back as they were before the restore.
    */
-  | { type: 'restore-default-shortcuts' }
   | { type: 'undo-restore-default-shortcuts' }
   /** The Undo of a section the chrome's menu hid (`section-hidden`): it comes back as it was. */
   | { type: 'show-section'; section: NewTabHideableSection }
@@ -2373,12 +2371,17 @@ export type NewTabPageAction =
 /**
  * What the browser tells a new tab page besides its state: a menu item picked in the chrome
  * that the page carries out itself, so its Undo toast works the same as for the Delete key;
- * and a section the chrome's menu hid (NTP-18) – the state push takes it off the page, and the
+ * a section the chrome's menu hid (NTP-18) – the state push takes it off the page, and the
  * command raises the page's toast ("Greeting hidden" / "Shortcuts hidden") with Undo, which
- * asks for `show-section`.
+ * asks for `show-section`; and the grid put back to its defaults by the menu's "Restore Default
+ * Shortcuts" (NTP-22) – the push already redrew the grid, the command raises "Default shortcuts
+ * restored" with Undo, which asks for `undo-restore-default-shortcuts`. Every toast carries
+ * Undo alone (v2 §9.33: one action).
  */
 export type NewTabPageCommand =
-  { type: 'remove-tile'; id: string } | { type: 'section-hidden'; section: NewTabHideableSection }
+  | { type: 'remove-tile'; id: string }
+  | { type: 'section-hidden'; section: NewTabHideableSection }
+  | { type: 'defaults-restored' }
 
 /** The sections the page's menu hides with Undo (NTP-18): the greeting and the tile grid. */
 export type NewTabHideableSection = 'greeting' | 'shortcuts'

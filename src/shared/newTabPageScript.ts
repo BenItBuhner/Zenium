@@ -208,15 +208,21 @@ class NewTabPage {
   /**
    * The chrome's tile menu picked Remove: the page removes the tile itself, with Undo. The
    * page menu hid a section (NTP-18): the state push already took it off; the toast offers
-   * Undo, which asks for it back.
+   * Undo, which asks for it back. The page menu restored the default shortcuts (NTP-22): the
+   * push already redrew the grid; the toast offers Undo, which asks for the pins, the removed
+   * sites and the mode back.
    */
   private onCommand(command: NewTabPageCommand): void {
     if (command.type === 'section-hidden') {
       const { section } = command
-      this.showToast(
-        section === 'greeting' ? 'Greeting hidden' : 'Shortcuts hidden',
-        () => this.transport.send({ type: 'show-section', section }),
-        false
+      this.showToast(section === 'greeting' ? 'Greeting hidden' : 'Shortcuts hidden', () =>
+        this.transport.send({ type: 'show-section', section })
+      )
+      return
+    }
+    if (command.type === 'defaults-restored') {
+      this.showToast('Default shortcuts restored', () =>
+        this.transport.send({ type: 'undo-restore-default-shortcuts' })
       )
       return
     }
@@ -629,12 +635,12 @@ class NewTabPage {
   }
 
   /**
-   * The toast (v2 §9.21, §9.33: 8 s while it offers Undo): a sentence, Undo, and – after a
-   * removal from the grid – Chrome's "Restore default shortcuts" link (NTP-22), which puts the grid
-   * back to a fresh profile's (the most visited mode, no pins, no removed sites) and offers its
-   * own Undo in turn, so no confirmation stands before it (§10.5).
+   * The toast (v2 §9.21, §9.33: 8 s while it offers Undo): a sentence and Undo – one action,
+   * §9.33's rule (Chrome's second link on this toast, "Restore default shortcuts", is the page
+   * menu's row here, NTP-22). Because Undo is in hand no confirmation stands before any of
+   * these acts (§10.5).
    */
-  private showToast(message: string, undo: () => void, restoreLink = true): void {
+  private showToast(message: string, undo: () => void): void {
     this.pendingUndo = undo
     this.toast.textContent = ''
     this.toast.appendChild(el('span', undefined, message))
@@ -642,13 +648,6 @@ class NewTabPage {
     undoButton.type = 'button'
     undoButton.addEventListener('click', () => this.undo())
     this.toast.appendChild(undoButton)
-    if (restoreLink) {
-      const restore = el('button', 'zen-v2-button', 'Restore default shortcuts')
-      restore.type = 'button'
-      restore.id = 'zen-restore-defaults'
-      restore.addEventListener('click', () => this.restoreDefaults())
-      this.toast.appendChild(restore)
-    }
     this.toast.hidden = false
     if (this.toastTimer !== null) clearTimeout(this.toastTimer)
     this.toastTimer = setTimeout(() => this.hideToast(), UNDO_MS)
@@ -658,16 +657,6 @@ class NewTabPage {
     const undo = this.pendingUndo
     this.hideToast()
     undo?.()
-  }
-
-  private restoreDefaults(): void {
-    this.hideToast()
-    this.transport.send({ type: 'restore-default-shortcuts' })
-    this.showToast(
-      'Default shortcuts restored',
-      () => this.transport.send({ type: 'undo-restore-default-shortcuts' }),
-      false
-    )
   }
 
   private hideToast(): void {
