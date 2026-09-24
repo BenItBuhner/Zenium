@@ -1495,6 +1495,18 @@ export interface HistoryVisit {
   visitTime: number
   transition: HistoryTransition
   tabId?: string
+  /**
+   * A hop of a redirect chain the navigation passed through, not the page it landed on (Chrome's
+   * visit without `PAGE_TRANSITION_CHAIN_END`, history-23): recorded at the landing's time,
+   * counted as visited, hidden from the history page's lists and searches. Absent on a landing
+   * and on every visit an older store wrote.
+   */
+  redirectSource?: true
+  /**
+   * On a landing reached through redirects: the chain's earlier addresses, first hop to last
+   * (each stored as a `redirectSource` visit at the same time) – where the user landed from.
+   */
+  redirectedFrom?: string[]
 }
 
 export interface HistoryQuery {
@@ -1509,6 +1521,12 @@ export interface HistoryQuery {
   toMs?: number
   /** Only visits of this host (or its subdomains). */
   host?: string
+  /**
+   * List the redirect chains' hops too (`HistoryVisit.redirectSource`). Off by default: the
+   * history page shows where the user landed, as Chrome's `QueryHistory` does; `chrome.history`'s
+   * `getVisits` and `onVisited` read every visit of a page, as Chrome's do.
+   */
+  includeRedirectSources?: boolean
   limit: number
   offset?: number
 }
