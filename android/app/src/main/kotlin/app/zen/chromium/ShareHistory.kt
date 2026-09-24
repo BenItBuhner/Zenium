@@ -11,7 +11,8 @@ import org.json.JSONObject
  * panel's apps row is ordered by [rank]: the most used in the last week first (Chrome's
  * `kRecentWindowDays`), then the most used ever, then the most recently used, then the order the
  * caller passed (the system's list sorted by package name, so a never-used app keeps its slot).
- * Nothing is recorded from a private tab; the caller does not call [record] for one.
+ * Nothing is recorded from a private tab; the caller does not call [record] for one. Reads and
+ * writes are synchronised: the panel ranks on one IO thread and records on another.
  */
 class ShareHistory(private val store: Store, private val now: () -> Long = System::currentTimeMillis) {
     /** Where the JSON lives; a `SharedPreferences` string in the app. */
@@ -26,6 +27,7 @@ class ShareHistory(private val store: Store, private val now: () -> Long = Syste
     private var loaded: MutableMap<String, MutableMap<String, Use>>? = null
 
     /** The user chose `component` for a share of `type`. */
+    @Synchronized
     fun record(type: String, component: String) {
         val all = load()
         val byType = all.getOrPut(type) { LinkedHashMap() }
@@ -37,12 +39,14 @@ class ShareHistory(private val store: Store, private val now: () -> Long = Syste
     }
 
     /** The record of `component` for `type`, or null when it was never chosen. */
+    @Synchronized
     fun use(type: String, component: String): Use? = load()[type]?.get(component)
 
     /**
      * `candidates` in the order the row shows them: by the count of the last seven days, then by
      * the count of all time, then by the last use, then as given. Stable for ties.
      */
+    @Synchronized
     fun rank(type: String, candidates: List<String>): List<String> {
         val byType = load()[type] ?: return candidates
         val at = now()
@@ -59,6 +63,7 @@ class ShareHistory(private val store: Store, private val now: () -> Long = Syste
     }
 
     /** Forget a target that is no longer installed (the row never shows it either way). */
+    @Synchronized
     fun forget(component: String) {
         val all = load()
         var changed = false

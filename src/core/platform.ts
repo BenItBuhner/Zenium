@@ -41,6 +41,7 @@ import type {
   ResourceSnapshot,
   ScreenCaptureSource,
   ScreenshotSaved,
+  SharePanelAction,
   SharePayload,
   ShortcutAction,
   SidePanelInfo,
@@ -1284,6 +1285,13 @@ export interface ShellHost {
    * without one leave it out and the core copies the link instead.
    */
   share?(payload: SharePayload): Promise<ShareOutcome | void>
+  /**
+   * The chrome's answer to the host's own share panel (Android below 14, SH-03; the host sent
+   * `share.panel` and holds the share's intent under the panel's id): send it to the chosen app,
+   * open the system sheet for More, or let it go. Absent on hosts whose share sheet is the
+   * system's alone (the desktop).
+   */
+  sharePanelAction?(action: SharePanelAction): Promise<void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
   /**

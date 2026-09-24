@@ -12,6 +12,7 @@ import type {
   Platform as PlatformOs,
   ScreenshotSaved,
   ShareAction,
+  SharePanelRequest,
   ThumbnailPicture
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
@@ -456,6 +457,11 @@ export interface HostEventPayloads {
   'externalProtocol.request': HostExternalRequest
   /** A tap on one of Zenium's own buttons in the system share sheet (Android 14). */
   'share.action': ShareAction
+  /**
+   * The host put up the browser's own share panel (`Share.kt`, below Android 14; SH-03): the
+   * chrome draws it from this and answers with `share.panelAction`.
+   */
+  'share.panel': SharePanelRequest
   /**
    * A Zenium item of a page's floating text-selection toolbar was touched (`TabWebView.kt`,
    * the items `selectionMenu` listed): the action's id, the text selected at the touch and
@@ -1348,6 +1354,7 @@ export class AndroidPlatform implements Platform {
       openPath: (path) => bridge.call('app.openPath', { path }),
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
+      sharePanelAction: (action) => bridge.call('share.panelAction', action),
       openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
       openNotificationSettings: () => bridge.send('app.openNotificationSettings'),
       // The link menu's Call / Send message / Add to contacts / Send email (PUI-22): the
@@ -1729,6 +1736,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'share.action':
         browser.onShareAction(payload as HostEventPayloads['share.action'], this.window)
+        return
+      case 'share.panel':
+        browser.emit('share.panel', payload as HostEventPayloads['share.panel'], this.window)
         return
       case 'selection.action': {
         // The host's payload, checked before it names an action: the text is a page's.

@@ -2574,6 +2574,55 @@ export interface ShareAction {
   tabId: string | null
 }
 
+/**
+ * One app in the browser's own share panel (Android below 14, SH-03): the host's row of where
+ * the user shares, ranked by Zenium's own record of past shares.
+ */
+export interface SharePanelTarget {
+  /** The activity's flattened `ComponentName`: the row's key, and where a tap sends the share. */
+  component: string
+  label: string
+  /** The app's launcher icon at the row's 40 dp, a `data:` URL. */
+  icon: string
+}
+
+/**
+ * The browser's own share panel (Android below 14, where the system sheet has no row for the
+ * sharing app's actions; SH-03): what is being shared, for the preview and the chips, and the
+ * apps the host found for it. The host holds the share's intent under `id` until the chrome
+ * answers with `share.panelAction`. Hosts whose share sheet is the system's alone never send it.
+ */
+export interface SharePanelRequest {
+  id: string
+  /** A page or a link (`link`), a selection's text (`text`), or an image shared as a file (`image`). */
+  kind: 'link' | 'text' | 'image'
+  /** The page's title (or the link's text) for the preview's first line; null when the share has none. */
+  title: string | null
+  url: string | null
+  text: string | null
+  /** The page's favicon for the preview (a `data:` or `http(s)` URL); null for an image or a bare link. */
+  favicon: string | null
+  /** The shared image, small, for the preview (a `data:` URL); null unless `kind` is `image`. */
+  image: string | null
+  /** The tab the share started from (Long screenshot and Print work on it); null for none. */
+  tabId: string | null
+  /** A private tab's share: the host records nothing of where it went. */
+  private: boolean
+  targets: SharePanelTarget[]
+}
+
+/** How the share panel was answered, for the host holding the share's intent (`share.panelAction`). */
+export interface SharePanelAction {
+  id: string
+  /**
+   * `target`: send to `component`; `more`: the system sheet; `qr`: the link as a QR code;
+   * `copyImage`: the image onto the clipboard; `dismiss`: nothing more – the intent is released
+   * (the chrome's own chips – Copy link, Long screenshot, Print – ran in the chrome and end so).
+   */
+  kind: 'target' | 'more' | 'qr' | 'copyImage' | 'dismiss'
+  component?: string
+}
+
 // ---------------------------------------------------------------------------
 // Screenshots to the gallery (Android; SH-07, SH-08)
 // ---------------------------------------------------------------------------
@@ -3898,6 +3947,11 @@ export interface Commands {
   'app.quit': { args: void; result: void }
   /** System share sheet (`capabilities.share`); hosts without one copy the link and toast. */
   'app.share': { args: SharePayload; result: void }
+  /**
+   * The chrome's answer to the host's share panel (Android below 14, SH-03; after a
+   * `share.panel` event): where the held share goes. Nothing on hosts without the panel.
+   */
+  'share.panelAction': { args: SharePanelAction; result: void }
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
   /**
@@ -5610,6 +5664,11 @@ export interface Events {
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
   'qr.event': QrEvent
+  /**
+   * The host put up the browser's own share panel for a share (Android below 14, SH-03): the
+   * chrome draws it and answers with `share.panelAction`.
+   */
+  'share.panel': SharePanelRequest
   toast: { message: string; kind?: 'info' | 'error' }
   /**
    * Take Screenshot put the visible page in the gallery (SH-07): the chrome shows the preview

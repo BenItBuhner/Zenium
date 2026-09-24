@@ -940,6 +940,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.openPath" -> { downloads.open(args.str("path"), ""); reply(null) }
             "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
             "app.share" -> share.share(args, reply)
+            "share.panelAction" -> share.onPanelAction(args, reply)
             "screenshot.capture" -> screenshots.capture(args.str("tabId"), reply)
             "screenshot.captureLong" -> screenshots.captureLong(args.str("tabId"), reply)
             "screenshot.saveLong" -> screenshots.saveLong(args.str("id"), args.num("top").toInt(), args.num("bottom").toInt(), args.bool("share"), reply)
