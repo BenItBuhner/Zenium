@@ -64,6 +64,12 @@ export interface UpdateManifest {
   assets: UpdateAsset[]
   /** electron-updater channel files (`latest*.yml`) of this release by target, e.g. `windows-x64`. */
   feeds: Record<string, string>
+  /**
+   * The release's notes as markdown, when the manifest carries them (a field the release
+   * pipeline does not write yet: Settings › About › What's new reads the text from here on the
+   * stable channel the day it does, and from the release list's `body` on the beta channel).
+   */
+  notes?: string
 }
 
 /** Detached signature envelope published next to the manifest. */
@@ -159,6 +165,20 @@ export interface UpdateStatus {
    * alongside instead of over it; the old app must be uninstalled afterwards by hand.
    */
   packageChange: boolean
+  /**
+   * The running version's release notes, when a check brought them (`releaseNotesFromList`, or
+   * a manifest's `notes`): what Settings › About › What's new shows. Null until then – the
+   * stable channel's manifest carries a link alone today – when the page offers the release's
+   * page on GitHub instead. Never fetched on its own: the same request the check makes.
+   */
+  notes: UpdateNotes | null
+}
+
+/** A release's notes as the check found them: which version they describe, and the markdown. */
+export interface UpdateNotes {
+  version: string
+  /** The notes' highlights as markdown (`releaseHighlights`), bounded. */
+  text: string
 }
 
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = {
@@ -234,6 +254,15 @@ export function releaseDownloadBase(repository: string, tag: string): string {
 }
 
 /**
+ * The release page of a version (`releases/tag/v<version>`): where the What's new page sends
+ * the reader for the whole of a release's notes, and its stand-in while a check has brought
+ * none (SET-54).
+ */
+export function releasePageUrl(version: string, repository: string = UPDATE_REPOSITORY): string {
+  return `https://github.com/${repository}/releases/tag/${encodeURIComponent(`v${version}`)}`
+}
+
+/**
  * `stable` reads the manifest of GitHub's "latest" release (never a pre-release, never a draft)
  * through the redirecting `releases/latest/download` URL: no API, no rate limit. `beta` needs
  * the release list from the API to find the newest release including pre-releases.
@@ -304,6 +333,59 @@ export function selectReleaseFromList(list: unknown): ReleaseCandidate | null {
     }
   }
   return best
+}
+
+/**
+ * The notes of the release tagged `v<version>` in a GitHub releases list – its `body`, as
+ * markdown – or null when the list has no such release or it has no text. The beta channel's
+ * check fetches the list anyway (`manifestSource`), so the running version's notes come at no
+ * further request; the list is thirty releases deep, which reaches back well past the version
+ * that is running.
+ */
+export function releaseNotesFromList(list: unknown, version: string): string | null {
+  if (!Array.isArray(list)) return null
+  const tag = `v${version}`
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue
+    const release = entry as { tag_name?: unknown; body?: unknown; draft?: unknown }
+    if (release.draft === true || release.tag_name !== tag) continue
+    return typeof release.body === 'string' && release.body.trim() ? release.body : null
+  }
+  return null
+}
+
+/** The most of a release's notes What's new keeps, in characters – a page of highlights, not the download table. */
+export const RELEASE_HIGHLIGHTS_MAX = 8_000
+
+/**
+ * The part of a release's notes worth a What's new page: the `## Highlights` section as the
+ * release notes write it (`.github/scripts/release-notes.mjs` puts the hand-written highlights
+ * first, then the download table, the install notes and the changelog), up to the next `##`
+ * heading. Notes without that heading keep what stands before their first `##` heading, or –
+ * a body that opens on one – the first section whole. Trimmed and bounded
+ * (`RELEASE_HIGHLIGHTS_MAX`); empty notes give ''.
+ */
+export function releaseHighlights(body: string): string {
+  const text = body.replace(/\r\n?/g, '\n').trim()
+  if (!text) return ''
+  const lines = text.split('\n')
+  const isSection = (line: string): boolean => /^##\s+\S/.test(line)
+  const highlights = lines.findIndex((line) => /^##\s+highlights\s*$/i.test(line))
+  let start: number
+  if (highlights !== -1) start = highlights + 1
+  else if (isSection(lines[0])) start = 1
+  else start = 0
+  let end = lines.length
+  for (let i = start; i < lines.length; i++) {
+    if (isSection(lines[i])) {
+      end = i
+      break
+    }
+  }
+  const section = lines.slice(start, end).join('\n').trim()
+  return section.length > RELEASE_HIGHLIGHTS_MAX
+    ? `${section.slice(0, RELEASE_HIGHLIGHTS_MAX).trimEnd()}…`
+    : section
 }
 
 // ---------------------------------------------------------------------------
@@ -428,7 +510,7 @@ export function parseUpdateManifest(
       if (typeof value === 'string' && value.startsWith(downloadPrefix)) feeds[key] = value
     }
   }
-  return {
+  const manifest: UpdateManifest = {
     schemaVersion: UPDATE_MANIFEST_SCHEMA,
     name: typeof m.name === 'string' && m.name ? m.name : 'Zenium',
     version,
@@ -446,6 +528,9 @@ export function parseUpdateManifest(
     assets,
     feeds
   }
+  // Text, not a field to validate: a manifest without it (every one published so far) is whole.
+  if (typeof m.notes === 'string' && m.notes.trim()) manifest.notes = m.notes
+  return manifest
 }
 
 // ---------------------------------------------------------------------------
@@ -605,6 +690,7 @@ export function emptyUpdateStatus(currentVersion: string, target: UpdateTarget):
     lastCheckedAt: null,
     signature: null,
     signerMismatch: false,
-    packageChange: false
+    packageChange: false,
+    notes: null
   }
 }
