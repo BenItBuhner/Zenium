@@ -159,17 +159,50 @@ describe('Stop', () => {
   })
 
   it('stays off the table on Windows and Linux: Escape is Stop there, owned by the chrome and the page', () => {
+    // A bare Escape, that is: Shift+Esc is the Task Manager's chord (below), a different key.
+    const bareEscape = (b: KeyBinding | null | undefined): boolean =>
+      !!b && b.key === 'Escape' && !b.shift && !b.ctrl && !b.alt && !b.meta
     for (const platform of ['linux', 'win32'] as Platform[]) {
       for (const preset of ['zen', 'chrome'] as const) {
         expect(key('key_stop', platform, preset)).toBeNull()
         expect(extras('key_stop', platform, preset)).toEqual([])
         expect(
           defaultShortcuts(platform, preset).some(
-            (s) => s.binding?.key === 'Escape' || s.extraBindings.some((b) => b.key === 'Escape')
+            (s) => bareEscape(s.binding) || s.extraBindings.some(bareEscape)
           )
         ).toBe(false)
       }
     }
+  })
+})
+
+describe('Task Manager', () => {
+  it('is Shift+Esc in both presets on every platform, as in Chrome (shortcuts-menus-121)', () => {
+    for (const platform of PLATFORMS) {
+      for (const preset of ['zen', 'chrome'] as const) {
+        expect(key('key_taskManager', platform, preset)).toEqual(plain('Escape', { shift: true }))
+        expect(
+          matchShortcut(defaultShortcuts(platform, preset), {
+            key: 'Escape',
+            control: false,
+            alt: false,
+            shift: true,
+            meta: false
+          })?.action
+        ).toBe('tasks.open')
+      }
+    }
+  })
+
+  it('is listed on the desktop alone: the page is the desktop host’s', () => {
+    const row = defaultShortcuts('linux', 'zen').find((s) => s.id === 'key_taskManager')
+    expect(row?.layouts).toEqual(['desktop'])
+    expect(row?.group).toBe('devTools')
+  })
+
+  it('resolves Chrome’s Task manager reference row, so the chord is no collision', () => {
+    const reported = collisions(defaultShortcuts('linux', 'chrome'), chromeReference('linux'))
+    expect(reported.filter((c) => c.shortcut.action === 'tasks.open')).toEqual([])
   })
 })
 

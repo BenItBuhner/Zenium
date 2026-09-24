@@ -250,6 +250,26 @@ describe('OmniboxShortcutsService', () => {
     expect(s.all()).toEqual([])
   })
 
+  it('forgets every remembered search and keeps the destinations (Delete Search History, context-menus-115)', () => {
+    const { s, io } = service()
+    s.learn('gm', GMAIL)
+    s.learn('cat', CATS)
+    s.learn('ca', CATS)
+    s.learn('dog', { ...CATS, url: 'https://www.google.com/search?q=dogs', title: 'dogs' })
+    expect(s.recentSearches(8)).toHaveLength(2)
+    s.forgetSearches()
+    expect(s.all().map((x) => x.url)).toEqual([GMAIL.url])
+    expect(s.recentSearches(8)).toEqual([])
+    s.flushSync()
+    const doc = JSON.parse(io.docs['shortcuts.json']) as { shortcuts: Shortcut[] }
+    expect(doc.shortcuts.map((x) => x.kind)).toEqual(['url'])
+    // Nothing left to forget: the file is left alone.
+    const written = io.docs['shortcuts.json']
+    s.forgetSearches()
+    s.flushSync()
+    expect(io.docs['shortcuts.json']).toBe(written)
+  })
+
   it('persists to shortcuts.json and reads it back, pruning what expired meanwhile', () => {
     const { s, io } = service()
     s.learn('gm', GMAIL)

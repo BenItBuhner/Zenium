@@ -454,6 +454,50 @@ describe('a renderer that goes away out of sight or out of memory', () => {
     expect(viewOf(f, hidden).tabId).toBe(hidden.id)
   })
 
+  it('unloads a hidden tab the user ended from the task manager and says so, not that it crashed', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.tabs.createTab({ url: 'https://shown.example/', active: true }, win)
+    const hidden = f.browser.tabs.createTab({ url: PAGE, active: false }, win)
+    f.browser.tabs.load(hidden.id, win)
+    const view = viewOf(f, hidden)
+    view.events.onNavigated(PAGE, false)
+    view.events.onTitleUpdated('The article')
+    f.sent.length = 0
+
+    // The host reports End process's crash as `ended` (the view was told before the crash).
+    view.events.onCrashed('ended', 5)
+
+    const after = f.browser.tabs.tab(hidden.id)!
+    expect(after.discarded).toBe(true)
+    expect(after.errorCode).toBeNull()
+    expect(view.loads.some((u) => u.startsWith('zen://error'))).toBe(false)
+    // The user just confirmed ending it: the word is theirs, at the info register, not a crash.
+    expect(toasts(f)).toEqual([`"The article" was ended and unloaded.`])
+    expect(
+      f.sent.filter((e) => e.name === 'toast').map((e) => (e.payload as { kind: string }).kind)
+    ).toEqual(['info'])
+  })
+
+  it('shows a tab the user ended in front of them its crash page, as any renderer gone in sight', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+    f.sent.length = 0
+
+    view.events.onCrashed('ended', 5)
+
+    // The code line names the signal the renderer went with (SIGTRAP on Linux), the tab is not
+    // unloaded, and no toast doubles the page.
+    expect(view.loads.at(-1)).toBe(errorPageUrl(CRASH_ERROR_CODE, 'SIGTRAP', PAGE, null, ACCENT))
+    const after = f.browser.tabs.tab(tab.id)!
+    expect(after.errorCode).toBe(CRASH_ERROR_CODE)
+    expect(after.discarded).toBe(false)
+    expect(toasts(f)).toEqual([])
+  })
+
   it('unloads a shown tab that ran out of memory rather than show a page', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
