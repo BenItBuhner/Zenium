@@ -340,6 +340,11 @@ export class Actions {
       case 'devtools.browserConsole':
         if (state.capabilities.devtools) win.host.openChromeDevTools()
         return
+      // Chrome's Shift+Esc: the task manager as a page tab (`zen://tasks`); a layout with no
+      // page tabs drops the ask (`PageService.open` returns null there).
+      case 'tasks.open':
+        this.browser.pages.open('tasks', undefined, win)
+        return
 
       // --- windows ---
       case 'window.new':

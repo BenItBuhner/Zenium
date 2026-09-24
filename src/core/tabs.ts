@@ -661,20 +661,29 @@ export class TabManager {
         // `!didCrash()` with the renderer at importance): not the page's own heap running out,
         // so the sad tab says so and offers the page again rather than unloading it.
         const memoryKill = reason === 'oom-kill'
+        // The user ended the renderer from the task manager (End process): the same unload for a
+        // page out of sight, but the toast says what they did, not that the page crashed.
+        const ended = reason === 'ended'
         const visible = this.allVisibleTabIds().has(tabId)
         // A V8 heap-cap OOM is reported as `oom` on Windows / Android but as a plain `crashed` on
         // Linux. Either way a page nobody is looking at is better unloaded than replaced by an
         // error page in a fresh renderer: keep the tab, drop the page, reload on activation.
         if (outOfMemory || !visible) {
           const memory = outOfMemory || memoryKill
-          const why = memory ? 'the page ran out of memory' : `the page crashed (${reason})`
+          const why = memory
+            ? 'the page ran out of memory'
+            : ended
+              ? 'the user ended the page’s process'
+              : `the page crashed (${reason})`
           this.browser.governor.record('discard', tabId, why, title)
           this.discard(tabId)
           this.browser.toast(
             memory
               ? `"${title}" ran out of memory and was unloaded.`
-              : `"${title}" crashed and was unloaded.`,
-            'error',
+              : ended
+                ? `"${title}" was ended and unloaded.`
+                : `"${title}" crashed and was unloaded.`,
+            ended ? 'info' : 'error',
             ownerWindow()
           )
           return
