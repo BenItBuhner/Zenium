@@ -609,8 +609,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       `[zen] extensions: the service-worker preload did not run in the background worker of ${name} (${extensionId}): ` +
         `no word from Zenium's worker layer within ${WORKER_PRELOAD_GRACE_MS / 1000} s of the worker running, so MV3 ` +
         "extension workers in this process get only the engine's chrome.*. Electron runs service-worker preloads in its " +
-        'sandboxed renderer client only: a launch with --no-sandbox needs --enable-sandbox as well (app.enableSandbox(), ' +
-        'which Zenium calls unless it runs as root on Linux, where Electron refuses it).'
+        'sandboxed renderer client only: a launch with --no-sandbox needs --enable-sandbox as well, which Zenium appends ' +
+        'at startup unless it runs as root on Linux, where Electron refuses it.'
     )
   }
 

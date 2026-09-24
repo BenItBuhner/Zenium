@@ -146,7 +146,7 @@ jobs:
         # Electron evaluates service-worker preload scripts in its sandboxed renderer client
         # only; Zenium's chrome.* layer for MV3 background workers (src/preload/extension.ts,
         # registered as a service-worker preload) is one. The app asks for that client itself
-        # (app.enableSandbox(), src/main/platform/sandbox.ts), so the layer is there under
+        # (--enable-sandbox, src/main/platform/sandbox.ts), so the layer is there under
         # --no-sandbox too – the second leg below proves it – but the first leg checks it with
         # the OS sandbox actually on. Chromium's way into the sandbox where the kernel denies
         # unprivileged user namespaces (this runner's AppArmor default) is the setuid helper,
@@ -169,7 +169,7 @@ jobs:
           --out "$SMOKE_OUT" --scenarios mv3-worker --sandbox --extra-args="--disable-gpu"
       - name: MV3 worker preload under --no-sandbox (the in-house fix)
         # The same scenario under --no-sandbox must find the same layer: the app's own
-        # --enable-sandbox (app.enableSandbox() before ready) puts Electron's sandboxed renderer
+        # --enable-sandbox (appended before ready) puts Electron's sandboxed renderer
         # client on whatever the OS sandbox does, and that client is the one that runs
         # service-worker preloads. Before the fix this leg found the engine's bare chrome.* (dom,
         # extension, i18n, management, runtime, storage, tabs) and was kept as the negative.

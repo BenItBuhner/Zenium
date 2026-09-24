@@ -21,8 +21,9 @@ Electron evaluates a session's `service-worker` preload scripts in its sandboxed
 only, and picks that client for a renderer when `--enable-sandbox` is on its command line or
 `--no-sandbox` is not. Zenium's `chrome.*` layer for MV3 background workers
 (`src/preload/extension.ts`) is such a preload, so a plain `--no-sandbox` launch used to start
-every worker without it; the app now asks for the client itself (`app.enableSandbox()` before
-`ready`, `src/main/platform/sandbox.ts` – not for root on Linux, where Electron refuses it), and
+every worker without it; the app now asks for the client itself (`--enable-sandbox` appended
+before `ready`, `src/main/platform/sandbox.ts` – not for root on Linux, where Electron refuses
+it; not `app.enableSandbox()`, which would also strip `--no-sandbox` from the launch), and
 the layer is there whatever the OS sandbox does. The `mv3-worker` scenario runs twice in
 `ci.yml` and expects the layer both times: sandboxed (`--sandbox`, no `--no-sandbox`; the layer
 with the OS sandbox on) and under `--no-sandbox` (the layer by the app's own switch – the
