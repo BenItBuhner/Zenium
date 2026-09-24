@@ -38,6 +38,15 @@ export interface RowBase {
    * Absent, the row is on every layout; a context without a form factor keeps every row.
    */
   layouts?: readonly FormFactor[]
+  /**
+   * A `--v2-border` hairline stands over this row, closing the run of rows above it: the
+   * builder's `.zen-settings-hairline`, the landing's run separator, drawn by `GroupList`
+   * between the run and the row (Settings › Sync's "Tabs from other devices" under the device
+   * run: the glyph-less action row after a run of glyph rows would otherwise read as a ragged
+   * edge – the #453 lead check; §10.4). A separator, not an empty leading slot for alignment.
+   * Nothing for a group's first row (no run above it) or a row shown alone (a search result).
+   */
+  hairline?: boolean
 }
 
 export interface RowOption {
@@ -198,6 +207,16 @@ export interface FieldRow extends RowBase {
   display?: string
   /** `url`: a text field that brings up the address keyboard (§9.12; `inputMode="url"`). */
   input: 'text' | 'number' | 'url'
+  /**
+   * The desktop row's form. `inline` (the default, §9.21): the field trails the text block at
+   * its width – 160 for text, 96 for a number – with a refused commit's validation line under
+   * it in the trailing column. `stacked` (§9.12's form in a row): the label and description
+   * keep their lines and the field stands UNDER them across the row's content width, the
+   * validation line under the field spanning the field's box – for a value that is long (an
+   * API key) and unreadable at 160. The phone has one form for both: the row shows the value
+   * (`display`) and a field sheet edits it.
+   */
+  form?: 'inline' | 'stacked'
   placeholder?: string
   min?: number
   max?: number

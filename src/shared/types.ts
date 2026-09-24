@@ -62,6 +62,34 @@ export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 export type FormFactor = 'phone' | 'tablet' | 'desktop'
 
 /**
+ * A foldable's posture as the Android host reports it (`androidx.window`'s `FoldingFeature` of
+ * the window's layout, `Posture.kt`; OS-11): the device is `flat` (or has no fold in this
+ * window), or `halfOpened` with the hinge across the window – a laptop / tabletop or a book
+ * pose. The chrome lays itself out by the window's width, not the posture (`FormFactor`; no
+ * tabletop layout): the pose is logged and marked on the root (`lib/posture.ts`) for what reads
+ * it – a driver, a later surface that keeps clear of the hinge.
+ */
+export type PostureKind = 'flat' | 'halfOpened'
+
+export interface FoldHinge {
+  /** The hinge's bounds in CSS px, in the window's coordinates. */
+  left: number
+  top: number
+  right: number
+  bottom: number
+  /** A `horizontal` hinge splits the window top / bottom (tabletop); a `vertical` one left / right (book). */
+  orientation: 'horizontal' | 'vertical'
+  /** A hinge with a width or height (`FoldingFeature.isSeparating`): the two halves are separate. */
+  separating: boolean
+}
+
+export interface DevicePosture {
+  kind: PostureKind
+  /** The fold, when the window has one; a slab or a window off the fold has none. */
+  hinge: FoldHinge | null
+}
+
+/**
  * A surface of the chrome that answers a page's request the core would otherwise hold open for
  * it: the install prompt (`webapp.install`), the screen picker (`screenCaptureRequests`), the
  * share sheet (`shareRequests`). The renderer registers each as its component mounts
@@ -917,10 +945,31 @@ export interface SyncRemoteTab {
   windowId: string | null
 }
 
+/**
+ * What a synced device is, as its own platform reports it – Chrome's `DeviceFormFactor`
+ * (`sync_enums.proto`: desktop, phone, tablet; the older `DeviceType` names an OS, and every
+ * desktop OS draws one computer glyph). Android tells a phone from a tablet by its form factor
+ * (the 600 dp line); a desktop reports `desktop` unless its platform has a reliable signal that
+ * it is a laptop – Electron has none, so today no desktop says `laptop`, and the two kinds draw
+ * one glyph (`DeviceGlyph`). Absent from an older device's announcement: its rows show a
+ * stand-in glyph beside devices that announced one, and none where no device did.
+ */
+export type SyncDeviceKind = 'desktop' | 'laptop' | 'phone' | 'tablet'
+
+/** Another device seen in the sync folder, as its announcement names it. */
+export interface SyncDevice {
+  id: string
+  name: string
+  lastSeen: number
+  kind?: SyncDeviceKind
+}
+
 /** Another device's open tabs, newest activity first ("Tabs from other devices"). */
 export interface SyncDeviceTabs {
   deviceId: string
   deviceName: string
+  /** The device's kind, when its announcement carried one. */
+  deviceKind?: SyncDeviceKind
   /** When the device last published its list (epoch ms). */
   updatedAt: number
   tabs: SyncRemoteTab[]
@@ -948,7 +997,7 @@ export interface SyncStatus {
   lastError: string | null
   syncing: boolean
   /** Other devices seen in the sync folder. */
-  devices: Array<{ id: string; name: string; lastSeen: number }>
+  devices: SyncDevice[]
   /** Set while the first sync waits for the user to confirm merging with existing cloud data. */
   pendingMerge: boolean
   /**
@@ -1495,6 +1544,18 @@ export interface HistoryVisit {
   visitTime: number
   transition: HistoryTransition
   tabId?: string
+  /**
+   * A hop of a redirect chain the navigation passed through, not the page it landed on (Chrome's
+   * visit without `PAGE_TRANSITION_CHAIN_END`, history-23): recorded at the landing's time,
+   * counted as visited, hidden from the history page's lists and searches. Absent on a landing
+   * and on every visit an older store wrote.
+   */
+  redirectSource?: true
+  /**
+   * On a landing reached through redirects: the chain's earlier addresses, first hop to last
+   * (each stored as a `redirectSource` visit at the same time) – where the user landed from.
+   */
+  redirectedFrom?: string[]
 }
 
 export interface HistoryQuery {
@@ -1509,6 +1570,12 @@ export interface HistoryQuery {
   toMs?: number
   /** Only visits of this host (or its subdomains). */
   host?: string
+  /**
+   * List the redirect chains' hops too (`HistoryVisit.redirectSource`). Off by default: the
+   * history page shows where the user landed, as Chrome's `QueryHistory` does; `chrome.history`'s
+   * `getVisits` and `onVisited` read every visit of a page, as Chrome's do.
+   */
+  includeRedirectSources?: boolean
   limit: number
   offset?: number
 }
@@ -2608,6 +2675,55 @@ export interface ShareAction {
   tabId: string | null
 }
 
+/**
+ * One app in the browser's own share panel (Android below 14, SH-03): the host's row of where
+ * the user shares, ranked by Zenium's own record of past shares.
+ */
+export interface SharePanelTarget {
+  /** The activity's flattened `ComponentName`: the row's key, and where a tap sends the share. */
+  component: string
+  label: string
+  /** The app's launcher icon at the row's 40 dp, a `data:` URL. */
+  icon: string
+}
+
+/**
+ * The browser's own share panel (Android below 14, where the system sheet has no row for the
+ * sharing app's actions; SH-03): what is being shared, for the preview and the chips, and the
+ * apps the host found for it. The host holds the share's intent under `id` until the chrome
+ * answers with `share.panelAction`. Hosts whose share sheet is the system's alone never send it.
+ */
+export interface SharePanelRequest {
+  id: string
+  /** A page or a link (`link`), a selection's text (`text`), or an image shared as a file (`image`). */
+  kind: 'link' | 'text' | 'image'
+  /** The page's title (or the link's text) for the preview's first line; null when the share has none. */
+  title: string | null
+  url: string | null
+  text: string | null
+  /** The page's favicon for the preview (a `data:` or `http(s)` URL); null for an image or a bare link. */
+  favicon: string | null
+  /** The shared image, small, for the preview (a `data:` URL); null unless `kind` is `image`. */
+  image: string | null
+  /** The tab the share started from (Long screenshot and Print work on it); null for none. */
+  tabId: string | null
+  /** A private tab's share: the host records nothing of where it went. */
+  private: boolean
+  targets: SharePanelTarget[]
+}
+
+/** How the share panel was answered, for the host holding the share's intent (`share.panelAction`). */
+export interface SharePanelAction {
+  id: string
+  /**
+   * `target`: send to `component`; `more`: the system sheet; `qr`: the link as a QR code;
+   * `copyImage`: the image onto the clipboard; `dismiss`: nothing more – the intent is released
+   * (the chrome's own chips – Copy link, Long screenshot, Print – ran in the chrome and end so).
+   */
+  kind: 'target' | 'more' | 'qr' | 'copyImage' | 'dismiss'
+  component?: string
+}
+
 // ---------------------------------------------------------------------------
 // Screenshots to the gallery (Android; SH-07, SH-08)
 // ---------------------------------------------------------------------------
@@ -3546,15 +3662,16 @@ export interface PageDialogResponse {
 
 /**
  * A question the chrome asks about a window as a whole (window-modal): whether to close the
- * window with its tabs, or to quit Zenium with every open tab.
+ * window with its tabs, to quit Zenium with every open tab, or to open a bookmark folder's many
+ * pages at once (`open-bookmarks`: the desktop's form of Chrome's "Open all bookmarks?").
  */
 export interface WindowPrompt {
   id: string
-  kind: 'close-tabs' | 'quit'
+  kind: 'close-tabs' | 'quit' | 'open-bookmarks'
   /**
    * How many tabs close, for the warning about them ("You are about to quit with N tabs open");
    * 0 when that warning is not part of the question – a single tab, or the setting off – and the
-   * downloads alone are asked about.
+   * downloads alone are asked about. For `open-bookmarks`, how many tabs would open.
    */
   count: number
   /**
@@ -3873,6 +3990,20 @@ export interface MenuGroupMark {
   saved: boolean
 }
 
+/**
+ * Another device's mark before a row's label (the app menu's Send to Your Devices submenu;
+ * services pass 4): the device's kind glyph (`DeviceGlyph`, the one every device row draws) –
+ * the kind its announcement carried, or `null` for a device whose build announced none, drawn
+ * as the 69 % stand-in – so every row of the submenu has the glyph and the labels share one
+ * edge while any device of the submenu announced a kind; a submenu in which none did draws no
+ * glyph column at all (the renderer's `anyDeviceKind`, §10.4's condition – the mark carries the
+ * fact, the renderer the rule). A native menu host has no glyph in the platform's menu ink and
+ * draws the row as text.
+ */
+export interface MenuDeviceMark {
+  kind: SyncDeviceKind | null
+}
+
 export interface MenuItemDescriptor {
   id: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -3883,6 +4014,8 @@ export interface MenuItemDescriptor {
   icon?: string | null
   /** A tab group's mark in the glyph slot (the Tab Folders submenu's rows). */
   group?: MenuGroupMark
+  /** Another device's kind in the glyph slot (the Send to Your Devices submenu's rows). */
+  device?: MenuDeviceMark
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */
   danger?: boolean
@@ -4026,6 +4159,11 @@ export interface Commands {
   'app.quit': { args: void; result: void }
   /** System share sheet (`capabilities.share`); hosts without one copy the link and toast. */
   'app.share': { args: SharePayload; result: void }
+  /**
+   * The chrome's answer to the host's share panel (Android below 14, SH-03; after a
+   * `share.panel` event): where the held share goes. Nothing on hosts without the panel.
+   */
+  'share.panelAction': { args: SharePanelAction; result: void }
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
   /**
@@ -4827,6 +4965,20 @@ export interface Commands {
    */
   'bookmark.undo': {
     args: { token?: number }
+    result: {
+      kind: 'remove' | 'move' | 'update'
+      token: number
+      ids: string[]
+      parentId: string | null
+    } | null
+  }
+  /**
+   * Do the newest undone edit again (the bar menu's Redo, the manager's Ctrl+Shift+Z / Ctrl+Y):
+   * the same word as `bookmark.undo`'s, the token the edit's new one on the undo stack; null for
+   * nothing. A delete done again tells the window `bookmark.deleted` as the first one did.
+   */
+  'bookmark.redo': {
+    args: void
     result: {
       kind: 'remove' | 'move' | 'update'
       token: number
@@ -5746,6 +5898,16 @@ export interface Events {
    */
   'focus.page': { tabId: string }
   /**
+   * A load the model saw start on `tabId` finished (`did-stop-loading` with the tab's `loading`
+   * on): the phone's screen reader hears "<name> loaded" (A11Y-02; `lib/announce.ts`). Sent
+   * once the state broadcast that turned `loading` off has gone out, so the window holds the
+   * page's title, and as a fact of its own because the finish cannot be read off the state's
+   * snapshots: a start and its stop in one tick (a reload off the loopback, a cached page)
+   * coalesce into one broadcast that never shows `loading` on. A stop without a start (a
+   * same-document navigation's) is no load and sends nothing.
+   */
+  'tab.loaded': { tabId: string }
+  /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`
    * the site the factor is remembered for, null for a page that zooms on its own.
@@ -5789,12 +5951,24 @@ export interface Events {
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
   'qr.event': QrEvent
+  /**
+   * The host put up the browser's own share panel for a share (Android below 14, SH-03): the
+   * chrome draws it and answers with `share.panelAction`.
+   */
+  'share.panel': SharePanelRequest
   toast: { message: string; kind?: 'info' | 'error' }
   /**
    * Take Screenshot put the visible page in the gallery (SH-07): the chrome shows the preview
    * card in the toast's slot – the thumbnail, Share | Delete, Capture more – for `tabId`'s page.
    */
   'screenshot.saved': ScreenshotSaved & { tabId: string }
+  /**
+   * The long-screenshot editor asked for over `tabId`'s page from outside the chrome: Zenium's
+   * Long screenshot in Android 14's share sheet (SH-02, `Share.kt`'s action row), relayed by the
+   * host once the sheet has closed. The chrome stitches the page and opens the editor (SH-08),
+   * as its own Long screenshot chips do. Hosts whose share sheet has no row of Zenium's never send it.
+   */
+  'screenshot.openLong': { tabId: string }
   /**
    * Web capture asked for its overlay over `tabId`'s page (Ctrl+Shift+S in the Chrome preset,
    * the app menu's "Web Capture…", the palette): the desktop chrome dims the page's frame over
@@ -5887,6 +6061,12 @@ export interface Events {
    * (`lib/fullscreenLanding.ts`). A host without the word leaves it out.
    */
   insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
+  /**
+   * A foldable's posture from the Android host (`Posture.kt`, OS-11): the pose and the hinge's
+   * bounds in CSS px, at boot and whenever the window's layout says they changed. A host without
+   * the word never sends it; the chrome stands flat.
+   */
+  posture: DevicePosture
   /**
    * The core placed the page views as a `layout.report` asked: `hid` and `shown` name the tabs
    * whose views it took down or brought back under that report (a tab without a view, or one

@@ -126,10 +126,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private val touchExplorationListener = AccessibilityManager.TouchExplorationStateChangeListener { enabled ->
         Log.d(TAG, "touch exploration ${if (enabled) "on: the bar stays put" else "off: the bar may hide on scroll again"}")
         chrome.barTouchExploration(enabled)
+        // The menu's list variant (A11Y-04) hears the same change with the font scale beside it.
+        chrome.hostEvent("accessibility", accessibilityState())
     }
 
     /** An accessibility service explores the screen by touch right now (TalkBack). */
     val touchExploration: Boolean get() = accessibility?.isTouchExplorationEnabled == true
+
+    /**
+     * Touch exploration and the system font scale as one payload (`AccessibilityState`): in the
+     * boot payload, and again as the `accessibility` host event on either's change.
+     */
+    fun accessibilityState(): JSONObject =
+        AccessibilityState.payload(touchExploration, activity.resources.configuration.fontScale)
 
     init {
         focusHandoff.wireChrome(chrome)
@@ -632,6 +641,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // Whether content scripts get real isolated worlds (decided once, when the runtime was built).
                 "isolatedWorlds" to extensions.isolatedWorlds,
                 "insets" to activity.currentInsets(),
+                // A foldable's pose as last seen (`Posture.kt`); changes follow as `posture` host events.
+                "posture" to activity.currentPosture(),
                 "fullscreen" to immersive,
                 "environment" to activity.environment(),
                 "pinShortcuts" to shortcuts.supported,
@@ -643,6 +654,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "readAloud" to readAloud.available,
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
                 "touchExploration" to touchExploration,
+                // The same flag with the font scale, the menu's list variant's state (A11Y-04);
+                // changes follow as `accessibility` host events.
+                "accessibility" to accessibilityState(),
                 // The device's connectivity at boot; changes follow as `connectivity` host events.
                 "online" to connectivity.online,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).
@@ -699,10 +713,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         else -> throw IllegalArgumentException("Unknown sync method: $method")
     }
 
-    /** Asynchronous methods (main thread). Call `reply` exactly once. */
-    fun dispatch(method: String, args: JSONObject, reply: (Any?) -> Unit) {
-        val tabId = args.strOrNull("tabId")
-        val tab = tabId?.let { tabs.get(it) }
+    /**
+     * The storage calls (`JsBridge.STORAGE_CALLS`), which the bridge dispatches ON THE STORAGE
+     * THREAD: it hands them over as the raw string and parses them there, off the thread the
+     * chrome's JS waits on (`JsBridge.Calls`; the overview's fold on thirty tabs, #349: the
+     * `state.json` write's bridge call was 143 ms of the frame). Every branch touches nothing of
+     * the host but [storage] – whose one executor is the thread the bridge runs this on, so a
+     * write queued from here lands behind every storage call parsed before it, in the order the
+     * chrome sent them – and [main], for the reply; it runs on whichever thread calls it. Call
+     * `reply` exactly once, on the main thread.
+     */
+    fun dispatchStorage(method: String, args: JSONObject, reply: (Any?) -> Unit) {
         when (method) {
             // A write that failed rejects the call: the chrome must not remember it as made.
             "storage.write" -> storage.write(args.str("name"), args.str("text"), args.bool("backup")) { failure ->
@@ -730,6 +751,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 val token = args.num("token").toLong()
                 storage.execute { storage.abortWrite(token); main.post { reply(null) } }
             }
+            else -> throw IllegalArgumentException("Not a storage call: $method")
+        }
+    }
+
+    /** Asynchronous methods (main thread). Call `reply` exactly once. */
+    fun dispatch(method: String, args: JSONObject, reply: (Any?) -> Unit) {
+        val tabId = args.strOrNull("tabId")
+        val tab = tabId?.let { tabs.get(it) }
+        when (method) {
+            // The storage calls come through `dispatchStorage` on the storage thread ([JsBridge.Calls]);
+            // one sent another way (a one-way `post`, say) still lands there, from here.
+            in JsBridge.STORAGE_CALLS -> dispatchStorage(method, args, reply)
 
             // --- request blocking (the BlockingHost contract and diagnostics) ----------------------
             "blocking.bundled" -> reply(blocking.bundledLists())
@@ -940,6 +973,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.openPath" -> { downloads.open(args.str("path"), ""); reply(null) }
             "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
             "app.share" -> share.share(args, reply)
+            "share.panelAction" -> share.onPanelAction(args, reply)
             "screenshot.capture" -> screenshots.capture(args.str("tabId"), reply)
             "screenshot.captureLong" -> screenshots.captureLong(args.str("tabId"), reply)
             "screenshot.saveLong" -> screenshots.saveLong(args.str("id"), args.num("top").toInt(), args.num("bottom").toInt(), args.bool("share"), reply)
@@ -1461,6 +1495,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (view.parent == null) root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         // Last among the siblings at 0 too, for a reader of the order (the harness's veil watch).
         view.bringToFront()
+        // What the veil hides from the eye it hides from a screen reader too: the chrome's tree
+        // under it is the frame before the lock – a private page's title in the bar, its card in
+        // the overview – until the masked frame; the veil itself is no stop (A11Y-03). The
+        // private page views went with the arming ([onPrivateLockArmed], [TabHost.setVisible]).
+        chrome.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         Log.d(TAG, "private lock veil raised")
         if (lockVeil.windowVisible) main.postDelayed(veilDeadline, LockVeil.DEADLINE_MS)
     }
@@ -1476,6 +1515,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val view = veilView?.takeIf { it.parent != null } ?: return
         main.removeCallbacks(veilDeadline)
         root.removeView(view)
+        // The chrome under it is the masked one (or the released one) now: read again.
+        chrome.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
         Log.d(TAG, "private lock veil lowered: $why")
     }
 
@@ -1960,6 +2001,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // the lock cover is up – then it is the core's to bring back, not the release's.
         if (privateLock.forget(tabId)) refreshGuard()
         val ticket = pageVisibility.request(tabId, visible) ?: return
+        // What covers the page is up in the chrome already: out of a screen reader's tree from
+        // the ask, not from the frame the hide waits for (A11Y-03, [TabHost.hideRequested]).
+        tabs.hideRequested(tabId)
         // A page on its way off the screen has its card picture taken while it is still there. The
         // chrome may have just captured its cover for the same frame: the copy is shared, and a
         // fresh cover stands as the picture ([TabWebView.captureThumbnail]).

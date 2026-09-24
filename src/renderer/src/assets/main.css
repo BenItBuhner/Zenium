@@ -1249,12 +1249,14 @@
     transition: background 600ms var(--zen-ease);
   }
   /*
-   * On a phone the window family changes colour by the one blend of the resolved tokens over
-   * 240 ms (design language v2 §11.6, `useTheme`): the window reads the tokens as the blend
-   * writes them, and nothing tweens per element – no transition of its own, which would trail
-   * the blend by 600 ms (and, over a gradient, jump at its midpoint instead).
+   * On a phone – and on a tablet, the blend being the touch chassis's – the window family
+   * changes colour by the one blend of the resolved tokens over 240 ms (design language v2
+   * §11.6, `useTheme`): the window reads the tokens as the blend writes them, and nothing tweens
+   * per element – no transition of its own, which would trail the blend by 600 ms (and, over a
+   * gradient, jump at its midpoint instead).
    */
-  :root[data-form-factor='phone'] .zen-window {
+  :root[data-form-factor='phone'] .zen-window,
+  :root[data-form-factor='tablet'] .zen-window {
     transition: none;
   }
   /* Private windows: Zen tints the chrome purple and marks it with a mask. */
@@ -1853,10 +1855,11 @@
     opacity: 0.6;
   }
   /*
-   * The address dragged out of the URL pill (omnibox-43; SidebarTop's slot, lib/addressDrag.ts).
-   * The card Chromium snapshots for the drag image: the page's icon and name on the window's
-   * solid colour at level 2 and 90 % (§9.4's lifted item), a 28 px row at the control radius,
-   * no wider than 280 – kept off screen, since the drag image is a picture of it.
+   * The address dragged out of the URL pill (omnibox-43; SidebarTop's slot, lib/addressDrag.ts)
+   * and a bookmark dragged off the bar (bookmarks-15; BookmarksBar's chips). The card Chromium
+   * snapshots for the drag image: the page's icon and name on the window's solid colour at
+   * level 2 and 90 % (§9.4's lifted item), a 28 px row at the control radius, no wider than 280
+   * – kept off screen, since the drag image is a picture of it.
    */
   .zen-link-ghost {
     position: fixed;
@@ -4330,6 +4333,24 @@
     stroke-width: var(--v2-icon-stroke);
   }
   /*
+   * The same six as a list (A11Y-04; `lib/accessibilityState.ts`): under touch exploration or at
+   * large text each is a §10.3 sheet row – `.zen-sheet-item`'s 44 (the line box's height above
+   * scale 1), the 20 glyph in the leading slot at the 16 gutter, the label 12 after it so the
+   * labels align at 48 as the site-information sheet's do, the row's full width the target, the
+   * press fill – in the body's rhythm: the list's first row flush under the header and the group
+   * hairline 8 below its last, where the icon row's would be. The glyphs keep the row's tokens
+   * (20 at stroke 1.75); the star's stacked pair sizes itself.
+   */
+  .zen-menu-icon-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .zen-menu-icon-list .zen-sheet-item-glyph svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  /*
    * The stateful bookmark star (`BarGlyphs.tsx`), the menu row's and the bar's optional Bookmark
    * alike: the icon token's square, the outline and the filled star stacked in it, each star the
    * square's size – so in the bar, where no row rule sizes the svgs, the star is the 20 of its
@@ -4565,6 +4586,76 @@
     border-left: 0;
     border-top: 0;
     border-bottom-right-radius: calc(var(--v2-radius-card) + 4px);
+  }
+  /*
+   * The browser's own share panel (Android below 14; SH-03; §9.38): the share's preview is
+   * PUI-18's header, read-only (no press fill: nothing happens on it), then two rows that scroll
+   * sideways when they overflow – Zenium's own chips, a hairline, and the apps the user shares
+   * to with More at the end, nearest the thumb. A cell is a §9.3 icon button (44, the glyph 20 at
+   * stroke 1.75, radius 8) with its caption under (13, centred, wrapping to a second line when
+   * the cell's width asks – §9.2: grow, never clamp), the cells 72 wide so the 44 boxes stand 28
+   * apart, the outer ones on the 16 gutter (§9.25); a row stands as tall as its tallest cell.
+   * The whole cell is the target; the press fill is the box's. An app's launcher icon fills 40
+   * of the box, its own shape (adaptive icons come cut already). The scrollbar is hidden, as a
+   * group's chips hide theirs.
+   */
+  .zen-share-panel-preview:active {
+    background: transparent;
+  }
+  /* A selection's share leads with the selected text (Chrome's hub: the text first, the page's
+     link under it), on two lines at most, then ellipsis; the link's line stays one. */
+  .zen-share-panel-preview[data-kind='text'] .zen-menu-link-title {
+    display: -webkit-box;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .zen-share-panel-row {
+    display: flex;
+    gap: 0;
+    padding: 8px 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
+  }
+  .zen-share-panel-row::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-share-panel-cell {
+    display: flex;
+    width: 72px;
+    flex-shrink: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--v2-text);
+  }
+  .zen-share-panel-cell:first-child {
+    margin-left: -14px;
+  }
+  .zen-share-panel-cell:last-child {
+    margin-right: -14px;
+  }
+  .zen-share-panel-box {
+    overflow: hidden;
+  }
+  .zen-share-panel-cell:active > .zen-share-panel-box {
+    background: var(--v2-fill);
+  }
+  .zen-share-panel-app {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+  }
+  .zen-share-panel-caption {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    text-align: center;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
   }
   /* A row under a finger that is dragging the sheet is not being pressed. */
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
@@ -8431,6 +8522,17 @@
   height: var(--v2-icon);
 }
 /*
+ * `Tabs (N)` pressed while the overview stands (§9.36): the window's pressed fill – §9.29's
+ * `--v2-control-fill-hover`, which on the row's window surface is `--v2-window-fill-hover`, the
+ * fill the row's other buttons take on a press and the menu's on `aria-expanded` (the toolbar
+ * rule above) – on `aria-pressed`, from the pull's first frame through the close settle. The
+ * count's square keeps its outline at the ink it has, never an inverted square: the phone bar
+ * fills its badge (`barItems.tsx`), the tablet's row does not.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-tablet-tabs[aria-pressed='true'] {
+  background: var(--v2-window-fill-hover);
+}
+/*
  * The address pill in the row: as tall as the row's buttons (40), radius 12, the address at the
  * phone pill's 14 px; its chips – the site glyph, the star, the blocked count – on 32 boxes with
  * the row's 20 glyph (the §9.29 sidebar-pill tiering keeps deciding which chips are in it).
@@ -8782,6 +8884,38 @@
  */
 :root[data-form-factor='tablet'] .zen-sheet {
   max-width: 480px;
+}
+
+/*
+ * The tablet's tab overview (TABLET-14, MOT-04; §9.36 "the overview is the phone's, pulled down
+ * from the toolbar, at the width's columns, the sidebar fading under it"): the phone's grid,
+ * mounted by the tablet shell's stage with `data-tablet`. Its layer is opaque – it comes down
+ * from the toolbar's edge over the page's still on the spring, in place of the phone's morph –
+ * in the window's own tone: `--zen-bg` as `.zen-window` paints it – read as the §11.6 blend
+ * writes it, no transition of its own, as the touch windows' rule above – laid at the window's
+ * size and offset by `TabOverview`'s morph effect so at rest the gradient is the window's,
+ * seamless at the toolbar's edge (a fixed attachment would lay it so, but under a transform it
+ * is read as `scroll`). The window's grain comes with it
+ * (`.zen-texture`, under the layer's own content: the layer is a stacking context, so the
+ * texture's negative index puts it over the backdrop and under the grid).
+ */
+.zen-overview[data-tablet] {
+  background: var(--zen-bg);
+}
+.zen-overview-texture {
+  z-index: -1;
+}
+/*
+ * The tablet header's tab search (TABLET-14): the phone's field (`.zen-overview-search-field`,
+ * 40 tall in `--v2-urlbar` with the panel's shadow) standing in the header row itself, in the
+ * magnifier's place, at a fixed span that gives way before the title does; no gutter padding of
+ * its own – the header's gap places it. Its clear stands only over a query: an empty field in
+ * the header has nothing to close.
+ */
+.zen-overview-search.zen-overview-search-inline {
+  flex: 0 1 360px;
+  min-width: 160px;
+  padding: 0;
 }
 
 /*
@@ -11437,6 +11571,34 @@
   max-width: 240px;
 }
 /*
+ * The stacked field row (`FieldRow.form: 'stacked'`, `rows.tsx`'s `StackedFieldRow`): §9.12's
+ * form in a row. The row is a column – the text block on its lines, then the field UNDER it
+ * across the row's content width – so no control trails the text and nothing is seated (§9.18);
+ * the row keeps `.zen-v2-row`'s own `--v2-row-pad` above and below, as a plain row does. The
+ * block between is the form's (`.zen-settings-field-block`, its 4 from the text to the field)
+ * and the field's column the inline field's above (its 4 from the field to the message), the
+ * column stretched so the field is the row's content width – the field's own `--v2-control`
+ * tall – and the message spans the field's box instead of the inline form's 240:
+ * 6 + 20 + 20 n + 4 + 32 + 6 = 68 + 20 n for n lines of description (108 with two), a line of
+ * validation +4 + 20. Only the two rules' existing gaps and the tokens size it.
+ */
+.zen-settings-stacked-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+.zen-settings-stacked-row .zen-settings-row-text {
+  flex: none;
+}
+.zen-settings-stacked-field {
+  align-items: stretch;
+}
+.zen-settings-stacked-field > .zen-settings-input {
+  width: 100%;
+}
+.zen-settings-stacked-field > .zen-settings-inline-error {
+  max-width: none;
+}
+/*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
  * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text in
  * `tabular-nums`. On a phone the block is the row's text – the label with the value on its
@@ -12017,6 +12179,35 @@
   font-weight: var(--v2-weight-body);
   font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-small);
+}
+/*
+ * A heading's leading glyph (`PageGroup.lead`: the History page's device groups, whose kind
+ * glyph leads the device's name – services pass 4). The rows under it lead with a 16 favicon
+ * at the gutter and their text 12 on (§9.21's 44), so the glyph's box adds 4 to the heading's
+ * 8 gap: the name starts on its rows' text edge and the glyph on their favicon column – one
+ * glyph column for the group (§10.4).
+ */
+.zen-page-heading-lead {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  align-items: center;
+  justify-content: center;
+  margin-inline-end: 4px;
+}
+/*
+ * A device's kind glyph (`DeviceGlyph`, services pass 4; §10.4's leading slot at the full ink):
+ * the icon size and stroke of the layout it stands on – 16 at 1.5 on a mouse, 20 at 1.75 on a
+ * phone – so the one component serves a Settings row, a phone sheet's row, a heading and a menu
+ * row alike. The stand-in for a device that announced no kind carries `.zen-list-standin`'s
+ * 69 % besides, the deemphasis of a missing favicon's globe (phonePanels.css).
+ */
+.zen-device-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
 }
 .zen-page-heading > .zen-v2-icon-button {
   margin-block: calc((var(--v2-line-body-box) - var(--v2-icon-button)) / 2);

@@ -1,4 +1,4 @@
-import type { Tab } from '@shared/types'
+import type { BookmarkNode, Tab } from '@shared/types'
 import { isEmptyTabUrl, isInternalUrl, presentedUrl } from '@shared/url'
 
 /*
@@ -14,6 +14,11 @@ import { isEmptyTabUrl, isInternalUrl, presentedUrl } from '@shared/url'
  * (`OSExchangeDataProviderWin::SetURL` adds one for the URL), Finder's `.webloc` (the `NSURL`
  * pasteboard type), a file manager's `.desktop` link (`_NETSCAPE_URL` on X11) – with no file of
  * ours written anywhere. The dragged item is Chrome's: copy or link, never a move.
+ *
+ * A bookmark dragged off the bookmarks bar (bookmarks-15, dnd-13) is the same drag with the
+ * chip's own mark on it (`writeBookmarkDrag`): the OS and a tab take the link as above – the
+ * link file, the navigation – while the bar and its panels read the mark and move the chip
+ * rather than file it twice.
  */
 
 /** What the slot lifts: the address as the user sees it, and the page's name for the ghost. */
@@ -56,6 +61,55 @@ export function writeAddressDrag(dt: TransferWriter, drag: AddressDrag): void {
 /** An anchor for the address with the page's title as its text, escaped for markup. */
 export function anchorMarkup({ url, title }: AddressDrag): string {
   return `<a href="${escapeHtml(url)}">${escapeHtml(title)}</a>`
+}
+
+/**
+ * The mark a bookmark dragged off the bar carries beside the link: the chip's id under a type
+ * of our own. The bar and its panels read it at the drop and move the chip; the OS, a page and
+ * the tab strip never look for it and take the link.
+ */
+export const BOOKMARK_DRAG_TYPE = 'application/x-zenium-bookmark'
+
+/**
+ * The drag a chip of the bookmarks bar offers (bookmarks-15; Chrome's bookmark-bar drag), or
+ * null where there is nothing to lift as a link: a folder (its contents are its panel's), a
+ * bookmarklet (`javascript:` is no link for a file manager, and a page it landed on would run
+ * it), a Zenium page (as `addressDragOf` refuses one). The title falls back to the address, so
+ * the card in the hand never reads blank.
+ */
+export function bookmarkDragOf(node: BookmarkNode): AddressDrag | null {
+  const url = node.type === 'url' ? node.url : undefined
+  if (!url || /^javascript:/i.test(url) || isEmptyTabUrl(url) || isInternalUrl(url)) return null
+  const name = node.title.trim()
+  return { url, title: name || url }
+}
+
+/**
+ * Write a bookmark's drag: the address drag's three forms, then the chip's mark. Every
+ * operation is allowed, as Chrome's bookmark drag allows copy, move and link: a drop back on
+ * the bar or into a panel badges as the move it is, while the OS still takes the link as a copy.
+ */
+export function writeBookmarkDrag(dt: TransferWriter, node: BookmarkNode, drag: AddressDrag): void {
+  writeAddressDrag(dt, drag)
+  dt.effectAllowed = 'all'
+  dt.setData(BOOKMARK_DRAG_TYPE, node.id)
+}
+
+/** Whether a drag is a chip of the bar's, from its types alone (all `dragover` may read). */
+export function carriesBookmark(types: readonly string[]): boolean {
+  return types.includes(BOOKMARK_DRAG_TYPE)
+}
+
+/**
+ * The id of the chip a drag lifted, read at the drop (the data is sealed before it), or null
+ * for any other drag: a link from a page, a file, text.
+ */
+export function draggedBookmarkId(dt: {
+  types: readonly string[]
+  getData(type: string): string
+}): string | null {
+  if (!carriesBookmark(dt.types)) return null
+  return dt.getData(BOOKMARK_DRAG_TYPE) || null
 }
 
 function escapeHtml(text: string): string {

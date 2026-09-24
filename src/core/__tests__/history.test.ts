@@ -6,12 +6,15 @@ import {
   groupByDay,
   HistoryService,
   type ImportedVisit,
+  isHttpsUpgrade,
   isRecordableUrl,
   matchesAtWordStart,
   MAX_ENTRIES,
+  MAX_REDIRECT_HOPS,
   MAX_VISITS,
   migrateHistory,
   prune,
+  redirectChain,
   RETENTION_MS,
   scoreFrecency,
   scoreHistoryMatch,
@@ -124,6 +127,51 @@ describe('migrateHistory', () => {
     expect(migrateHistory(null)).toEqual({ entries: [], visits: [] })
     expect(migrateHistory('x')).toEqual({ entries: [], visits: [] })
     expect(migrateHistory({ version: 9, entries: [] })).toEqual({ entries: [], visits: [] })
+  })
+
+  it('reads the redirect-chain flags as written and leaves them off where an older store had none (history-23)', () => {
+    const data = migrateHistory({
+      version: 2,
+      entries: [],
+      visits: [
+        visit({ url: 'https://a.test/', visitTime: 1 }),
+        { ...visit({ url: 'https://sho.rt/x', visitTime: 2 }), redirectSource: true },
+        {
+          ...visit({ url: 'https://b.test/', visitTime: 2 }),
+          redirectedFrom: ['https://sho.rt/x']
+        },
+        // Hand-edited garbage: a string flag, a chain naming the landing itself and a chrome page.
+        { ...visit({ url: 'https://c.test/', visitTime: 3 }), redirectSource: 'yes' },
+        {
+          ...visit({ url: 'https://d.test/', visitTime: 4 }),
+          redirectedFrom: ['https://d.test/', 'zen://blank', 7]
+        }
+      ]
+    })
+    expect(data.visits.map((v) => [v.url, v.redirectSource, v.redirectedFrom])).toEqual([
+      ['https://a.test/', undefined, undefined],
+      ['https://sho.rt/x', true, undefined],
+      ['https://b.test/', undefined, ['https://sho.rt/x']],
+      ['https://c.test/', undefined, undefined],
+      ['https://d.test/', undefined, undefined]
+    ])
+  })
+})
+
+describe('redirectChain (history-23)', () => {
+  it('keeps recordable, distinct hops other than the landing, the last MAX_REDIRECT_HOPS of them', () => {
+    const landing = 'https://final.test/'
+    expect(redirectChain(undefined, landing)).toBeNull()
+    expect(redirectChain([], landing)).toBeNull()
+    expect(redirectChain([landing, 'about:blank', 'zen://newtab', 3], landing)).toBeNull()
+    expect(
+      redirectChain(['https://a.test/', 'https://a.test/', 'http://b.test/', landing], landing)
+    ).toEqual(['https://a.test/', 'http://b.test/'])
+    const long = Array.from({ length: MAX_REDIRECT_HOPS + 5 }, (_, i) => `https://h${i}.test/`)
+    const kept = redirectChain(long, landing)
+    expect(kept).toHaveLength(MAX_REDIRECT_HOPS)
+    expect(kept?.[0]).toBe('https://h5.test/')
+    expect(kept?.at(-1)).toBe(`https://h${MAX_REDIRECT_HOPS + 4}.test/`)
   })
 })
 
@@ -1013,6 +1061,261 @@ describe('HistoryService', () => {
       expect(h.recent(5)[0]).toMatchObject({ url: 'https://a.test/', visitCount: 1, typedCount: 0 })
       expect(h.deleteByKeys([{ url: 'https://a.test/', at: 0 }])).toBe(0)
       expect(events).toHaveLength(1)
+    })
+  })
+
+  describe('redirect chains (history-23)', () => {
+    const SHORT = 'https://sho.rt/abc'
+    const HTTP = 'http://example.test/page'
+    const LANDING = 'https://example.test/page'
+
+    /** A typed shortener address that bounced through the http origin onto the https page. */
+    function chained(h: HistoryService): void {
+      h.visit(LANDING, 'Example', 'data:icon', {
+        transition: 'typed',
+        tabId: 't1',
+        redirectedFrom: [SHORT, HTTP]
+      })
+    }
+
+    it('records one visit per hop at the landing’s time: hops flagged, the first keeping the transition, the landing carrying its chain', () => {
+      const h = new HistoryService(fakeIo(), now)
+      const events: unknown[] = []
+      h.onVisits((e) => events.push(e))
+      chained(h)
+      const all = h.visits({ limit: 10, includeRedirectSources: true })
+      expect(
+        all.map((v) => [
+          v.url,
+          v.transition,
+          v.redirectSource,
+          v.redirectedFrom,
+          v.visitTime,
+          v.tabId
+        ])
+      ).toEqual([
+        [SHORT, 'typed', true, undefined, NOW, 't1'],
+        [HTTP, 'redirect', true, undefined, NOW, 't1'],
+        [LANDING, 'redirect', undefined, [SHORT, HTTP], NOW, 't1']
+      ])
+      // Every address counts as visited; the typed credit went to the one the user asked for.
+      expect(h.visited(SHORT)).toBe(true)
+      expect(h.visited(HTTP)).toBe(true)
+      expect(h.visited(LANDING)).toBe(true)
+      expect(h.visited('https://never.test/')).toBe(false)
+      const counts = new Map(h.recent(5).map((e) => [e.url, [e.visitCount, e.typedCount]]))
+      expect(counts.get(SHORT)).toEqual([1, 1])
+      expect(counts.get(HTTP)).toEqual([1, 0])
+      expect(counts.get(LANDING)).toEqual([1, 0])
+      // One event, every hop in it with its flag – a peer stores the chain as this device did.
+      expect(events).toEqual([
+        {
+          type: 'added',
+          visits: [
+            { url: SHORT, at: NOW, transition: 'typed', redirectSource: true },
+            { url: HTTP, at: NOW, transition: 'redirect', redirectSource: true },
+            {
+              url: LANDING,
+              at: NOW,
+              title: 'Example',
+              transition: 'redirect',
+              redirectedFrom: [SHORT, HTTP]
+            }
+          ]
+        }
+      ])
+      expect(h.redirectChainOf(SHORT)).toEqual([SHORT, HTTP, LANDING])
+      expect(h.redirectChainOf(LANDING)).toEqual([SHORT, HTTP, LANDING])
+      expect(h.redirectChainOf('https://never.test/')).toEqual(['https://never.test/'])
+    })
+
+    it('credits a typed http address that only moved to its https twin to the https page, as Chrome transfers it', () => {
+      const h = new HistoryService(fakeIo(), now)
+      h.visit('https://www.example.test/a?b=1', 'A', null, {
+        transition: 'typed',
+        redirectedFrom: ['http://example.test:8080/a?b=1']
+      })
+      const counts = new Map(h.recent(5).map((e) => [e.url, e.typedCount]))
+      expect(counts.get('http://example.test:8080/a?b=1')).toBe(0)
+      expect(counts.get('https://www.example.test/a?b=1')).toBe(1)
+      // The label moves with the credit: what a reader recounts from agrees with what was credited.
+      expect(
+        h
+          .visits({ limit: 5, includeRedirectSources: true })
+          .map((v) => [v.url, v.transition, v.redirectSource ?? false])
+      ).toEqual([
+        ['http://example.test:8080/a?b=1', 'redirect', true],
+        ['https://www.example.test/a?b=1', 'typed', false]
+      ])
+      // A peer importing the chain credits the same page …
+      const peer = new HistoryService(fakeIo(), now)
+      vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      peer.importVisits(h.exportVisits({ since: 0 }).visits, { source: 'sync' })
+      vi.restoreAllMocks()
+      const peerCounts = new Map(peer.recent(5).map((e) => [e.url, e.typedCount]))
+      expect(peerCounts.get('http://example.test:8080/a?b=1')).toBe(0)
+      expect(peerCounts.get('https://www.example.test/a?b=1')).toBe(1)
+      // … and so does this store's recount after another visit of the page goes.
+      clock += 500
+      h.visit('https://www.example.test/a?b=1', 'A', null)
+      const later = h.visits({ limit: 1 })[0]
+      h.deleteVisits([later.id])
+      const recounted = new Map(h.recent(5).map((e) => [e.url, e.typedCount]))
+      expect(recounted.get('http://example.test:8080/a?b=1')).toBe(0)
+      expect(recounted.get('https://www.example.test/a?b=1')).toBe(1)
+      // The typed http address bounced elsewhere first: the credit stays with what was typed.
+      clock += 1000
+      h.visit('https://other.test/', 'O', null, {
+        transition: 'typed',
+        redirectedFrom: ['http://go.test/', 'https://go.test/']
+      })
+      const again = new Map(h.recent(9).map((e) => [e.url, e.typedCount]))
+      expect(again.get('http://go.test/')).toBe(0)
+      expect(again.get('https://go.test/')).toBe(1)
+      expect(again.get('https://other.test/')).toBe(0)
+      expect(isHttpsUpgrade('http://a.test/x', 'https://a.test/y')).toBe(false)
+      expect(isHttpsUpgrade('https://a.test/', 'https://a.test/')).toBe(false)
+      expect(isHttpsUpgrade('http://a.test/', 'https://www.a.test/')).toBe(true)
+    })
+
+    it('hides the hops from the history page’s list, search, day groups and count; getVisits-style readers opt in', () => {
+      const h = new HistoryService(fakeIo(), now)
+      chained(h)
+      clock += 1000
+      h.visit('https://other.test/', 'Other', null)
+      expect(h.visits({ limit: 10 }).map((v) => v.url)).toEqual(['https://other.test/', LANDING])
+      expect(h.visits({ text: 'sho.rt', limit: 10 })).toEqual([])
+      expect(h.visits({ host: 'sho.rt', limit: 10 })).toEqual([])
+      expect(h.visits({ host: 'sho.rt', limit: 10, includeRedirectSources: true })).toHaveLength(1)
+      expect(h.groupedByDay({ limit: 100 })[0].visits.map((v) => v.url)).toEqual([
+        'https://other.test/',
+        LANDING
+      ])
+      expect(h.count(0, Infinity)).toBe(2)
+      expect(h.visits({ limit: 10, includeRedirectSources: true })).toHaveLength(4)
+    })
+
+    it('offers a chain once in the omnibox: the best-ranked member stands for the whole chain (CullRedirects)', () => {
+      const h = new HistoryService(fakeIo(), now)
+      chained(h)
+      // The landing's title reaches the hops, as Chrome titles the whole chain.
+      h.updateTitle(LANDING, 'Example Site')
+      expect(h.titleFor(SHORT)).toBe('Example Site')
+      expect(h.titleFor(HTTP)).toBe('Example Site')
+      // "example" matches all three entries (the title now, and two addresses): one suggestion.
+      expect(h.search('example', 5).map((e) => e.url)).toEqual([LANDING])
+      // A term only a hop matches finds the hop – a visited address the omnibox may still offer.
+      expect(h.search('sho.rt', 5).map((e) => e.url)).toEqual([SHORT])
+      // Another page of the site is not part of the chain and keeps its own place.
+      clock += 1000
+      h.visit('https://example.test/other', 'Example other', null)
+      expect(
+        h
+          .search('example', 5)
+          .map((e) => e.url)
+          .sort()
+      ).toEqual(['https://example.test/other', LANDING].sort())
+    })
+
+    it('maps the landing’s favicon onto the chain and keeps a hop’s given title over its address', () => {
+      const h = new HistoryService(fakeIo(), now)
+      chained(h)
+      h.updateTitle(LANDING, 'Example Site')
+      h.updateFavicon(LANDING, 'https://example.test/icon.png')
+      expect(h.faviconFor(SHORT)).toBe('https://example.test/icon.png')
+      expect(h.faviconFor(HTTP)).toBe('https://example.test/icon.png')
+      // The shortener is followed again: its entry is bumped, its title stays the page's.
+      clock += 1000
+      chained(h)
+      expect(h.recent(5).find((e) => e.url === SHORT)).toMatchObject({
+        visitCount: 2,
+        title: 'Example Site'
+      })
+    })
+
+    it('removing the landing from the list takes its hops along; removing the page by URL leaves them hidden', () => {
+      const h = new HistoryService(fakeIo(), now)
+      chained(h)
+      clock += 1000
+      h.visit('https://other.test/', 'Other', null)
+      const events: unknown[] = []
+      h.onVisits((e) => events.push(e))
+      const landing = h.visits({ host: 'example.test', limit: 1 })[0]
+      h.deleteVisits([landing.id])
+      expect(h.visits({ limit: 10, includeRedirectSources: true }).map((v) => v.url)).toEqual([
+        'https://other.test/'
+      ])
+      expect(h.visited(SHORT)).toBe(false)
+      expect(events).toEqual([
+        {
+          type: 'removed',
+          keys: [
+            { url: SHORT, at: NOW },
+            { url: HTTP, at: NOW },
+            { url: LANDING, at: NOW }
+          ]
+        }
+      ])
+      // Deleting by URL is the page's own visits only (Chrome's DeleteURLs).
+      clock += 1000
+      chained(h)
+      h.deleteUrls([LANDING])
+      expect(h.visits({ limit: 10 }).map((v) => v.url)).toEqual(['https://other.test/'])
+      expect(h.visited(SHORT)).toBe(true)
+      expect(h.count(0, Infinity)).toBe(1)
+    })
+
+    it('round-trips through the store and the sync wire, and reads a store without the flags as landings only', () => {
+      const io = fakeIo()
+      const h = new HistoryService(io, now)
+      chained(h)
+      h.flushSync()
+      const stored = storedVisits(io)
+      expect(stored.map((v) => [v.url, v.redirectSource, v.redirectedFrom])).toEqual([
+        [SHORT, true, undefined],
+        [HTTP, true, undefined],
+        [LANDING, undefined, [SHORT, HTTP]]
+      ])
+      const again = new HistoryService(io, now)
+      expect(again.visits({ limit: 10 }).map((v) => v.url)).toEqual([LANDING])
+      expect(again.redirectChainOf(HTTP)).toEqual([SHORT, HTTP, LANDING])
+      expect(again.visited(SHORT)).toBe(true)
+      // The export carries the flags; an import of it rebuilds the chain on the other device.
+      const exportedPage = again.exportVisits({ since: 0 })
+      expect(exportedPage.visits.map((v) => [v.url, v.redirectSource, v.redirectedFrom])).toEqual([
+        [SHORT, true, undefined],
+        [HTTP, true, undefined],
+        [LANDING, undefined, [SHORT, HTTP]]
+      ])
+      const peer = new HistoryService(fakeIo(), now)
+      vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      peer.importVisits(exportedPage.visits, { source: 'sync' })
+      vi.restoreAllMocks()
+      expect(peer.visits({ limit: 10 }).map((v) => v.url)).toEqual([LANDING])
+      expect(peer.visits({ limit: 10, includeRedirectSources: true })).toHaveLength(3)
+      expect(peer.redirectChainOf(SHORT)).toEqual([SHORT, HTTP, LANDING])
+      // A store written before the flags existed: every visit is a landing.
+      const old = new HistoryService(
+        fakeIo({
+          'history.json': JSON.stringify({
+            version: 2,
+            entries: [entry({ url: SHORT })],
+            visits: [visit({ url: SHORT, visitTime: NOW })]
+          })
+        }),
+        now
+      )
+      expect(old.visits({ limit: 10 }).map((v) => v.url)).toEqual([SHORT])
+      expect(old.redirectChainOf(SHORT)).toEqual([SHORT])
+    })
+
+    it('skips what is not a chain: an empty list, the landing itself, chrome pages', () => {
+      const h = new HistoryService(fakeIo(), now)
+      h.visit(LANDING, 'Example', null, { redirectedFrom: [] })
+      h.visit(LANDING, 'Example', null, { redirectedFrom: [LANDING, 'about:blank'] })
+      const all = h.visits({ limit: 10, includeRedirectSources: true })
+      expect(all).toHaveLength(2)
+      expect(all.every((v) => v.transition === 'link' && !v.redirectedFrom)).toBe(true)
     })
   })
 })

@@ -8,7 +8,7 @@ import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/mot
 import { GroupGlyph } from '../GroupGlyph'
 import { departed, departStore, releaseDepartures, type Departure } from './departureStore'
 import { GROUP_PAD } from './GroupCard'
-import { CardBody, NewTabFace } from './OverviewCard'
+import { CARD_ASPECT, CardBody, NewTabFace } from './OverviewCard'
 
 /** Travel (px) of the exit spring: its progress is 1 − position / this. */
 const EXIT_TRAVEL = 120
@@ -181,7 +181,7 @@ function Exit({
           }}
         >
           {item.tabs.map((tab) => (
-            <div key={tab.id} className="relative" style={{ aspectRatio: '3 / 4' }}>
+            <div key={tab.id} className="relative" style={{ aspectRatio: CARD_ASPECT }}>
               <div
                 className="zen-overview-card absolute inset-0 flex flex-col overflow-hidden"
                 data-active={tab.id === activeTabId}

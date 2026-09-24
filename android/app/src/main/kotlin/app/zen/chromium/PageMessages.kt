@@ -40,14 +40,21 @@ sealed class PageMessageRoute {
      * document sees only the `<iframe>`, without one. A frame's capture report is heard too
      * (NOT-13): a meeting embedded in an iframe holds the microphone as much as a top document
      * does, and the core folds every frame's report by the frame's id (`TabManager.refreshAlert`,
-     * the same as the desktop's preload, which runs in every frame).
+     * the same as the desktop's preload, which runs in every frame). A frame's request
+     * observation is heard too (the extension runtime's `requestObserver.ts`): an embedded
+     * player's `fetch` / XHR are its frame's own, and a `webRequest` sniffer hears the tab's
+     * requests whichever frame made them, as Chrome reports them.
      */
     fun heardFrom(isMainFrame: Boolean): Boolean =
-        isMainFrame || this is Fullscreen || (this is Forward && message.optString("type") == CAPTURE_STATE)
+        isMainFrame || this is Fullscreen || (this is Forward && message.optString("type") in HEARD_FROM_FRAMES)
 
     companion object {
         /** The shared capture reporter's message (`captureState.ts`). */
         const val CAPTURE_STATE = "capture-state"
+        /** The page script's observation of a `fetch` / XHR response for the extension runtime (`requestObserver.ts`). */
+        const val EXT_OBSERVATION = "ext-observation"
+        /** The forwarded messages a frame is heard on. */
+        private val HEARD_FROM_FRAMES = setOf(CAPTURE_STATE, EXT_OBSERVATION)
     }
 }
 

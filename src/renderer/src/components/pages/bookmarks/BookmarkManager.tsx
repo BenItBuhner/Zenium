@@ -499,20 +499,25 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
   /**
    * Ctrl+Z (Cmd+Z) anywhere on the page but in a text field, whose own undo it is: take back
    * the last delete, move or rename (Chrome's manager, bookmarks-31), and put the focus and the
-   * selection on what came back or moved.
+   * selection on what came back or moved. Ctrl+Shift+Z (Cmd+Shift+Z) and Ctrl+Y do the undone
+   * edit again (context-menus-109); a delete done again leaves nothing to select.
    */
   const onPageKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
-    if (e.key.toLowerCase() !== 'z' || e.shiftKey || e.altKey) return
-    if (!(e.ctrlKey || e.metaKey) || (e.ctrlKey && e.metaKey)) return
+    if (e.altKey || !(e.ctrlKey || e.metaKey) || (e.ctrlKey && e.metaKey)) return
+    const key = e.key.toLowerCase()
+    const undo = key === 'z' && !e.shiftKey
+    const redo = (key === 'z' && e.shiftKey) || (key === 'y' && !e.shiftKey)
+    if (!undo && !redo) return
     if ((e.target as HTMLElement).closest('input, textarea, [contenteditable]')) return
     e.preventDefault()
-    void cmd('bookmark.undo', {}).then((undone) => {
-      if (!undone) return
-      const first = undone.ids[0]
+    const edit = undo ? cmd('bookmark.undo', {}) : cmd('bookmark.redo', undefined)
+    void edit.then((done) => {
+      if (!done || (redo && done.kind === 'remove')) return
+      const first = done.ids[0]
       if (!first) return
       // The rows come back in the folder they were in: show that folder when it is not this one.
-      if (undone.parentId && undone.parentId !== folderId && !searching) navigate(undone.parentId)
-      setSelection(new Set(undone.ids))
+      if (done.parentId && done.parentId !== folderId && !searching) navigate(done.parentId)
+      setSelection(new Set(done.ids))
       setAnchorId(first)
       setFocusId(first)
     })

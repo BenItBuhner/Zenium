@@ -760,6 +760,18 @@ class TabWebView(
     private fun sendFlags() {
         postToPage(json("type" to "flags", "flags" to currentFlags).toString())
         postToPage(formsConfig())
+        // The extension runtime's word on the response stage (contract 7.10): a new document
+        // learns it at hello; a flip while the document lives comes through [setExtObserve].
+        if (host.blocking.observeResponses) setExtObserve(true)
+    }
+
+    /**
+     * Whether the page script observes the page's `fetch` / XHR responses for the extension
+     * runtime's `webRequest` emulation (`requestObserver.ts`): on while a response-stage
+     * listener exists somewhere (`Extensions.kt`, `ext.observeResponses`), off otherwise.
+     */
+    fun setExtObserve(on: Boolean) {
+        postToPage(json("type" to "extObserve", "on" to on).toString())
     }
 
     /**
@@ -2258,6 +2270,11 @@ class TabWebView(
             // A link (or script) is about to take the page elsewhere: the last moment it is whole
             // on screen, and the best one for its back preview.
             if (!request.isRedirect) rememberCurrentPage()
+            // The server sent the navigation under way on from the address it was bound for: the
+            // core keeps the hop and records the chain with the commit (history-23).
+            if (request.isRedirect) currentDocument?.takeIf { it != target }?.let { from ->
+                host.viewEvent(tabId, "redirected", json("from" to from, "to" to target))
+            }
             applyCookiePolicy(host.privacy.flags, target)
             currentDocument = target
             return false

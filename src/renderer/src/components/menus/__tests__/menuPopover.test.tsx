@@ -190,6 +190,72 @@ describe('the popover menu', () => {
     expect(menu.querySelector('[data-menu-note] .zen-v2-menu-glyph')).not.toBeNull()
   })
 
+  it("a device's row draws the device's kind glyph in the slot at the full ink, the stand-in at 69 % for a kind it did not announce, and gives the level the slot (the Send to Your Devices submenu; services pass 4)", () => {
+    show(
+      tabMenu({
+        source: 'app',
+        items: [
+          item('desk', 'Home desktop', { device: { kind: 'desktop' } }),
+          item('pixel', 'Pixel 9', { device: { kind: 'phone' } }),
+          item('pad', 'Tab S9', { device: { kind: 'tablet' } }),
+          item('book', 'Work laptop', { device: { kind: 'laptop' } }),
+          item('old', 'Old build', { device: { kind: null } })
+        ]
+      })
+    )
+    const [menu] = menus()
+    // The rows read by their names alone: the glyph is no part of what a row says.
+    expect(rows(menu).map((r) => r.textContent)).toEqual([
+      'Home desktop',
+      'Pixel 9',
+      'Tab S9',
+      'Work laptop',
+      'Old build'
+    ])
+    const glyph = (
+      id: string
+    ): { kind: string | undefined; standin: boolean; hidden: string | null } => {
+      const svg = rowOf(id).querySelector<SVGElement>(
+        '.zen-v2-menu-glyph > svg[data-testid="device-glyph"]'
+      )!
+      expect(svg, id).not.toBeNull()
+      return {
+        kind: svg.dataset.kind,
+        standin: svg.classList.contains('zen-list-standin'),
+        hidden: svg.getAttribute('aria-hidden')
+      }
+    }
+    expect(glyph('desk')).toEqual({ kind: 'desktop', standin: false, hidden: 'true' })
+    expect(glyph('pixel')).toEqual({ kind: 'phone', standin: false, hidden: 'true' })
+    expect(glyph('pad')).toEqual({ kind: 'tablet', standin: false, hidden: 'true' })
+    expect(glyph('book')).toEqual({ kind: 'laptop', standin: false, hidden: 'true' })
+    expect(glyph('old')).toEqual({ kind: 'none', standin: true, hidden: 'true' })
+    // Three pictures for the four kinds – the desktop class draws the laptop, Chrome's one
+    // computer glyph (the #453 lead check) – and the stand-in a fourth.
+    const paths = ['desk', 'pixel', 'pad', 'book', 'old'].map(
+      (id) => rowOf(id).querySelector('.zen-v2-menu-glyph > svg')!.innerHTML
+    )
+    expect(new Set(paths).size).toBe(4)
+    expect(paths[0]).toBe(paths[3])
+  })
+
+  it('a level whose devices all announced no kind – every peer an older build – has no glyph column at all: plain rows, the labels at the gutter (§10.4’s condition, anyDeviceKind)', () => {
+    show(
+      tabMenu({
+        source: 'app',
+        items: [
+          item('old', 'Old build', { device: { kind: null } }),
+          item('older', 'Older build', { device: { kind: null } })
+        ]
+      })
+    )
+    const [menu] = menus()
+    expect(rows(menu).map((r) => r.textContent)).toEqual(['Old build', 'Older build'])
+    // No slot on any row: not a stand-in, not an empty span held for alignment.
+    expect(menu.querySelector('.zen-v2-menu-glyph')).toBeNull()
+    expect(menu.querySelector('[data-testid="device-glyph"]')).toBeNull()
+  })
+
   it('opened by the pointer the panel holds the focus and Down starts at the first row; from the keyboard the first row has it', () => {
     show(tabMenu())
     expect(document.activeElement).toBe(menus()[0])

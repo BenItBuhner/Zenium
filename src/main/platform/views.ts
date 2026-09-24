@@ -256,7 +256,12 @@ function pageWebPreferences(session?: Session): WebPreferences {
     autoplayPolicy: 'document-user-activation-required',
     backgroundThrottling: true,
     scrollBounce: true,
-    enableWebSQL: false
+    enableWebSQL: false,
+    // A link dropped on the page navigates it, as Chrome's content area does (dnd-13: a
+    // bookmark off the bar, the address out of another window's pill): Blink loads the dragged
+    // URL only where the page left the drop alone, so a page that takes drops itself keeps
+    // them. Electron's default is off; the view's `will-navigate` still refuses zen:// from a page.
+    navigateOnDragDrop: true
   }
 }
 
@@ -284,6 +289,13 @@ export class ElectronTabView implements TabView {
    * handed to the core with the `did-fail-load` that follows so the interstitial can show it.
    */
   private refusedCertificate: { url: string; certificate: CertificateDetails } | null = null
+  /**
+   * The address the main-frame navigation under way is currently bound for: what
+   * `did-start-navigation` named, then each `did-redirect-navigation` target. A redirect is
+   * reported to the core as `onRedirected(from here, to there)` (history-23); null between
+   * navigations.
+   */
+  private navigatingUrl: string | null = null
   /**
    * When the task manager's End process told this view its renderer is about to be crashed on
    * the user's word (`ElectronTaskHost.end` → `noteEndedByUser`): the `render-process-gone` that
@@ -412,6 +424,7 @@ export class ElectronTabView implements TabView {
     wc.on('did-start-loading', () => ev.onStartLoading())
     wc.on('did-stop-loading', () => ev.onStopLoading())
     wc.on('did-navigate', (_e, url) => {
+      this.navigatingUrl = null
       ev.onNavigated(url, false)
       this.fontsAfterNavigation()
     })
@@ -422,6 +435,7 @@ export class ElectronTabView implements TabView {
     wc.on('page-favicon-updated', (_e, favicons) => ev.onFaviconUpdated(favicons))
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       if (!isMainFrame || wc.isDestroyed()) return
+      this.navigatingUrl = null
       const refused = this.refusedCertificate
       this.refusedCertificate = null
       // The certificate the failure is about: refused for this site in this navigation.
@@ -503,11 +517,20 @@ export class ElectronTabView implements TabView {
       ev.onStartNavigation?.(details.url, details.isSameDocument)
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
       if (details.isSameDocument) return
+      this.navigatingUrl = details.url
       this.leaveApproved = false
       this.hostNavigation = null
       this.pageIntent = null
       // A refused certificate belongs to the navigation it happened in (which asks after this).
       this.refusedCertificate = null
+    })
+    // A server redirect inside the navigation under way (Chromium's `DidRedirectNavigation`):
+    // the core keeps the hop and records the chain with the commit (history-23).
+    wc.on('did-redirect-navigation', (details) => {
+      if (!details.isMainFrame || details.isSameDocument) return
+      const from = this.navigatingUrl
+      this.navigatingUrl = details.url
+      if (from && from !== details.url) ev.onRedirected?.(from, details.url)
     })
     wc.on('dom-ready', () => ev.onDomReady())
     // By the time this fires `this.view.webContents` no longer returns the object (Electron drops

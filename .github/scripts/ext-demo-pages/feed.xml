@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Zenium fixture feed</title>
+    <link>http://10.0.2.2:8765/feed.html</link>
+    <description>Three items for a feed reader to list; nothing here is published anywhere.</description>
+    <language>en</language>
+    <item>
+      <title>Fixture item one</title>
+      <link>http://10.0.2.2:8765/page-a.html?feed=1</link>
+      <guid isPermaLink="false">zenium-fixture-feed-1</guid>
+      <pubDate>Tue, 22 Sep 2026 09:00:00 GMT</pubDate>
+      <description>The first of the fixture feed's three items.</description>
+    </item>
+    <item>
+      <title>Fixture item two</title>
+      <link>http://10.0.2.2:8765/page-b.html?feed=2</link>
+      <guid isPermaLink="false">zenium-fixture-feed-2</guid>
+      <pubDate>Wed, 23 Sep 2026 09:00:00 GMT</pubDate>
+      <description>The second of the fixture feed's three items.</description>
+    </item>
+    <item>
+      <title>Fixture item three</title>
+      <link>http://10.0.2.2:8765/page-c.html?feed=3</link>
+      <guid isPermaLink="false">zenium-fixture-feed-3</guid>
+      <pubDate>Thu, 24 Sep 2026 09:00:00 GMT</pubDate>
+      <description>The third of the fixture feed's three items.</description>
+    </item>
+  </channel>
+</rss>

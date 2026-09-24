@@ -14,6 +14,7 @@ import {
 } from '@renderer/lib/otherDevices'
 import { remoteTabsStore, useRemoteTabs } from '@renderer/lib/remoteTabs'
 import { syncScopeRowId } from '@renderer/lib/syncSetup'
+import { DeviceGlyph, anyDeviceKind } from '../DeviceGlyph'
 import { PhoneGroupHeading, PhoneListRow, RowFavicon } from './PhoneList'
 import { useRowGestures } from './useRowGestures'
 
@@ -95,6 +96,7 @@ export function OtherDevicesGroup({
           <DeviceGroup
             key={device.deviceId}
             device={device}
+            glyph={anyDeviceKind(section.devices)}
             now={now}
             onOpen={onOpenTab}
             onMenu={onDeviceMenu}
@@ -115,15 +117,23 @@ export function OtherDevicesGroup({
  * One device: its 15/600 heading with the name and, as the heading's aside, when it last
  * published (§10.3) – the heading is the device's one control, a button held or tapped for its
  * menu (`aria-haspopup`, named with both lines for a reader) – and its tabs as rows, favicon,
- * title and host, newest activity first.
+ * title and host, newest activity first. The heading leads with the device's kind glyph
+ * (`DeviceGlyph`, services pass 4: the kind its announcement carried, the 69 % stand-in for
+ * none), centred on the line the name and the aside share their baseline on; the name takes
+ * the line's width so the aside stays at the gutter. `glyph` is the list's one answer to
+ * whether its headings lead with a glyph at all (`anyDeviceKind`, §10.4's condition): while
+ * any listed device announced a kind every heading has the slot, and when none did the names
+ * stand at the gutter, no stand-in column.
  */
 function DeviceGroup({
   device,
+  glyph,
   now,
   onOpen,
   onMenu
 }: {
   device: RemoteDevice
+  glyph: boolean
   now: number
   onOpen: (tab: SyncRemoteTab) => void
   onMenu: (device: RemoteDevice) => void
@@ -142,7 +152,8 @@ function DeviceGroup({
           onKeyDown={onKeyDown}
           {...pointer}
         >
-          <span className="min-w-0 truncate">{device.deviceName}</span>
+          {glyph && <DeviceGlyph kind={device.kind} className="self-center" />}
+          <span className="min-w-0 flex-1 truncate">{device.deviceName}</span>
           <span className="zen-device-heading-aside shrink-0">{aside}</span>
         </button>
       </h3>

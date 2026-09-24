@@ -35,6 +35,8 @@ class MainActivity : BrowserActivity() {
     private lateinit var fullscreenLayer: FrameLayout
     lateinit var host: Host
         private set
+    /** The foldable's pose for the chrome (`Posture.kt`): reported at boot and on each change. */
+    private lateinit var posture: Posture
     /**
      * The insets as last told to the chrome (CSS px), zeros until the window's first dispatch:
      * the boot payload carries them ([currentInsets]), and a chrome booting ahead of that
@@ -115,6 +117,7 @@ class MainActivity : BrowserActivity() {
             visibility = View.GONE
         }
         host = Host(this, root, fullscreenLayer)
+        posture = Posture(this) { report -> host.chrome.hostEvent("posture", report) }
         root.addView(host.chrome, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val shell = FrameLayout(this)
         shell.addView(root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -161,6 +164,9 @@ class MainActivity : BrowserActivity() {
     }
 
     fun currentInsets(): JSONObject = insets
+
+    /** The posture as last reported (the boot payload's `posture`; flat until a fold is seen). */
+    fun currentPosture(): JSONObject = posture.current()
 
     /**
      * What the page controls need to know about the device (`PageEnvironment` in the core): a
@@ -331,11 +337,14 @@ class MainActivity : BrowserActivity() {
 
     override fun onStart() {
         super.onStart()
+        // The fold's layout info is wanted only while the window is on screen.
+        posture.start()
         if (hidden) host.onStart()
     }
 
     override fun onStop() {
         hidden = true
+        posture.stop()
         host.onStop()
         super.onStop()
     }
@@ -386,6 +395,8 @@ class MainActivity : BrowserActivity() {
         host.chrome.applyTextScale()
         // A dock, a keyboard, a fold or a font-size change may move the page controls' defaults.
         host.chrome.hostEvent("environment", environment())
+        // A font-size change turns the menu's icon row into a list, or back (A11Y-04).
+        host.chrome.hostEvent("accessibility", host.accessibilityState())
     }
 
     override fun onTrimMemory(level: Int) {

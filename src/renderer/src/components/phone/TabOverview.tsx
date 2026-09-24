@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Archive,
@@ -29,12 +29,14 @@ import { announce } from '@renderer/lib/announce'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { closeWithUndo } from '@renderer/lib/closeUndo'
+import { chromeUnderPages } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import type { DropOutcome } from '@renderer/lib/gestures/dropTarget'
 import {
   closeOverview,
   overviewInteractive,
+  setTabletOverviewTravel,
   stageStore,
   type OverviewState
 } from '@renderer/lib/gestures/stage'
@@ -42,7 +44,7 @@ import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRow
 import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
-import { overviewColumns } from '@renderer/lib/layout'
+import { overviewColumns, tabletCardAspect } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import {
@@ -77,6 +79,17 @@ import {
   toggleSelected,
   type OverviewSelection
 } from '@renderer/lib/overviewSelection'
+import {
+  SEARCH_OFF,
+  noteOverviewScroll,
+  overviewUiStore,
+  setOverviewSearch,
+  setOverviewSearchBack,
+  setOverviewSelection,
+  setOverviewSheet,
+  type OverviewSheet as Sheet
+} from '@renderer/lib/overviewUi'
+import { coveredNow, pageCovered, pageViewStore } from '@renderer/lib/pageView'
 import { PRIVATE_TAB_PLACEHOLDER, privateLockStore } from '@renderer/lib/privateLock'
 import {
   isPrivateTab,
@@ -113,10 +126,11 @@ import {
   type Departure,
   type GroupDeparture
 } from './departureStore'
+import { groupActions } from './groupActions'
 import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
 import { InactiveTabsSheet } from './InactiveTabsSheet'
-import { CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
+import { CARD_ASPECT, CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
@@ -178,24 +192,17 @@ interface Props {
   area: Rect
   /** Edge the address bar is docked at: the overview fills the rest of the screen. */
   edge: PhoneBarPosition
+  /**
+   * The tablet shell's mount (TABLET-14, MOT-04; v2 §9.36): the same grid at the width's
+   * columns, with the tab search as a field in the header row in place of the phone's magnifier
+   * (a tablet has the room), the cards' pictures at the frame's aspect, and an entrance that
+   * brings the whole layer DOWN from the toolbar's edge over the page on the spring – the
+   * overview is pulled down from the toolbar, and a surface arrives from where it lives (§11) –
+   * in place of the phone's morph of the page into its card. The phone's rendering is untouched
+   * by it.
+   */
+  tablet?: boolean
 }
-
-/**
- * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
- * closed list as the menu read it), the close-all question, the recently closed list, the
- * inactive tabs list (as the segment row's entry read it), the select-tabs mode's group picker,
- * a Groups pane row's menu and the delete-group question.
- */
-type Sheet =
-  | { kind: 'tab'; tabId: string }
-  | { kind: 'group'; folderId: string }
-  | { kind: 'menu'; closed: ClosedEntrySummary[] }
-  | { kind: 'close-all' }
-  | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
-  | { kind: 'inactive-tabs'; entries: ArchivedTabSummary[] }
-  | { kind: 'group-picker' }
-  | { kind: 'group-row'; folderId: string }
-  | { kind: 'delete-group'; folderId: string }
 
 /** A group the Groups pane asked the Tabs pane to show: scrolled to once its card is there. */
 interface Reveal {
@@ -203,17 +210,6 @@ interface Reveal {
   /** When to give up waiting for the card (`performance.now()`). */
   deadline: number
 }
-
-/**
- * The tab search (TAB-21): whether the field is pinned under the header, and what it holds. Off
- * whenever the overview opens – the field never takes the keyboard on its own – and off again
- * with the overview, so no query outlives the grid it narrowed.
- */
-interface SearchState {
-  open: boolean
-  query: string
-}
-const SEARCH_OFF: SearchState = { open: false, query: '' }
 
 interface PendingDrop {
   /** True once the browser state shows the drop – then the card's new slot can be measured. */
@@ -268,7 +264,7 @@ interface ShownGroups {
  * search lists its recently closed matches; a row brings its tab to the front and the overview
  * leaves on it.
  */
-export function TabOverview({ state, overview, area, edge }: Props): JSX.Element {
+export function TabOverview({ state, overview, area, edge, tablet = false }: Props): JSX.Element {
   const { progress, phase, heroTabId } = overview
   const space = activeSpace(state)
   const active = activeTab(state)
@@ -285,13 +281,23 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // Taps work as soon as the overview is heading open; layout tracking waits for it to rest.
   const interactive = overviewInteractive(overview)
   // The tab search (TAB-21): open from the header's magnifier, off with the overview – the
-  // field is reset in the render that takes it off, as the select-tabs mode's scope is. It is
+  // field is reset in the commit that takes it off, as the select-tabs mode's scope is. It is
   // the card panes' – Tabs and Private – as Chrome's Hub search box is: the Groups pane lists
   // groups as rows, not tabs as cards, so it has no magnifier, and a pick of it closes the search.
-  const [search, setSearch] = useState<SearchState>(SEARCH_OFF)
+  // The state is `overviewUiStore`'s, not this component's – with the picks, the sheet and the
+  // scroll – so that a window resized from the phone layout into the tablet's (or back) swaps
+  // shells with the overview, the field and the query where they were (TABLET-08); the stage
+  // resets the store when the overview goes, so the field never outlives the grid it narrowed.
+  const search = overviewUiStore.use((s) => s.search)
+  const setSearch = setOverviewSearch
   const searchable = interactive && !groupsPane
-  if (search.open && !searchable) setSearch(SEARCH_OFF)
-  const searchOpen = search.open && searchable
+  useEffect(() => {
+    if (search.open && !searchable) setOverviewSearch(SEARCH_OFF)
+  }, [search.open, searchable])
+  // On the tablet the field stands in the header whenever the pane is searchable, so "the search
+  // is up" – what back and Escape address first, what the tree's `aria-expanded` says – is a
+  // query being typed; a field standing empty is a control like the others.
+  const searchOpen = tablet ? searchable && search.query.length > 0 : search.open && searchable
   const query = searchOpen ? normalizeQuery(search.query) : ''
   const searching = query.length > 0
   // The private pane is a session, not a workspace: its cards are neither pinned nor grouped
@@ -380,8 +386,23 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const side = state.settings.sidebarSide
   const isDark = isDarkScheme(state)
   // A phone on its side gets a row of four smaller cards, as Chrome's grid does.
-  const columns = overviewColumns(useViewport().width)
+  const viewportWidth = useViewport().width
+  const columns = overviewColumns(viewportWidth)
+  // On the tablet the cards take the frame's aspect (§9.36): the ratio is set on the layer's box
+  // for its cells to read (`CARD_ASPECT` – a card, the New Tab card, a dissolving group's
+  // members); the phone sets nothing and its cells draw 3 / 4. The column is the grid's – the
+  // box spans the window less its horizontal insets (the layer covers the sidebar) – and the
+  // picture's ratio the page frame's, which is `area`, beside the sidebar.
+  const sideInsets = uiStore.use((s) => s.insets.left + s.insets.right)
+  const cardAspectStyle = tablet
+    ? ({
+        '--zen-overview-card-aspect': String(
+          tabletCardAspect(area, viewportWidth - sideInsets, columns, cardHeaderHeight())
+        )
+      } as CSSProperties)
+    : undefined
 
+  const boxRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const heroRef = useRef<HTMLDivElement>(null)
@@ -391,7 +412,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // it as it writes, and a measurement is not a render of the grid (each phase change, each
   // scroll of the grid re-measures; as state each one rendered every card again, PERF-5).
   const heroCell = useRef<Rect | null>(null)
-  const [sheet, setSheet] = useState<Sheet | null>(null)
+  const sheet = overviewUiStore.use((s) => s.sheet)
+  const setSheet = setOverviewSheet
   /**
    * A sheet has left: forget it – unless the row it was dismissed for has put the next sheet up
    * already (the menu's "Close All Tabs" opens the question as the menu goes).
@@ -402,23 +424,29 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // card's hold sheet, off by Done, back, Escape or an action. It belongs to the grid it was
   // entered on – this pane of this space, with the overview open – and is off the moment that
   // grid is another (a pane or space switch, the overview leaving): the mode is kept with the
-  // scope it was entered in and read as off, and reset, under any other, in the render that
+  // scope it was entered in and read as off, and reset, under any other, in the commit that
   // brings the other grid. The picks are pruned against the cards on show the same way.
   const scope = interactive ? `${pane}|${space.id}` : null
-  const [kept, setKept] = useState<{ scope: string | null; selection: OverviewSelection }>({
-    scope,
-    selection: NO_SELECTION
-  })
-  if (kept.scope !== scope) setKept({ scope, selection: NO_SELECTION })
-  const selection = kept.scope === scope ? kept.selection : NO_SELECTION
+  // Read resolved against this grid's scope: a kept mode under another scope reads as `NO_SELECTION`,
+  // the constant the reset below writes – so the reset re-renders nothing (the phase change that
+  // makes the overview interactive renders each card once, PERF-5; the morph test pins it).
+  const selection = overviewUiStore.use((s) =>
+    s.kept.scope === scope ? s.kept.selection : NO_SELECTION
+  )
+  useEffect(() => {
+    if (overviewUiStore.get().kept.scope !== scope) {
+      setOverviewSelection({ scope, selection: NO_SELECTION })
+    }
+  }, [scope])
   const selecting = selection.on
   const setSelection = useCallback(
     (next: OverviewSelection | ((current: OverviewSelection) => OverviewSelection)): void =>
-      setKept((k) => ({
-        scope: k.scope,
-        selection: typeof next === 'function' ? next(k.selection) : next
+      setOverviewSelection((k) => ({
+        scope,
+        selection:
+          typeof next === 'function' ? next(k.scope === scope ? k.selection : NO_SELECTION) : next
       })),
-    []
+    [scope]
   )
   const exitSelection = useCallback(() => setSelection(endSelection()), [setSelection])
   useBackSurface(selecting ? { name: 'overview-selection', onCommit: exitSelection } : null)
@@ -490,7 +518,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     if (newTab)
       exits.push({ key: NEW_TAB_CELL, kind: 'new-tab', isPrivate: privatePane, rect: newTab })
     depart(exits)
-    setSearch({ open: true, query: next })
+    // The tablet's field is never "pinned" – it stands in the header – so `open` there says a
+    // query stands: what a phone the window narrows into shows as its pinned field (TABLET-08).
+    setSearch({ open: tablet ? next.length > 0 : true, query: next })
   }
   const openSearch = (): void => setSearch((s) => (s.open ? s : { open: true, query: '' }))
   const closeSearch = (): void => setSearch(SEARCH_OFF)
@@ -511,11 +541,22 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   })
   // The field is the user's ask (the magnifier's tap): it takes the focus, and the keyboard with
   // it through the host's policy on `focusin`. Nothing else ever focuses it – the overview opens
-  // with the field closed – so the keyboard never comes up with the overview.
+  // with the field closed – so the keyboard never comes up with the overview. Nor does it come
+  // up with a shell swap: a grid mounted with the search already up (the store's, from the
+  // shell before, TABLET-08) was not asked for the keyboard by anyone, so only the change from
+  // closed to open in this component's own life focuses the field.
+  const searchWasOpen = useRef(searchOpen)
   useLayoutEffect(() => {
-    if (searchOpen) searchInput.current?.focus()
+    const was = searchWasOpen.current
+    searchWasOpen.current = searchOpen
+    if (searchOpen && !was) searchInput.current?.focus()
   }, [searchOpen])
-  useBackSurface(searchOpen ? { name: 'overview-search', onCommit: backSearch } : null)
+  // The search's back surface is the store's, pushed as the search opens (`overviewUi.ts`: it
+  // keeps its place in the stack through a shell swap); the handler is this mount's.
+  useEffect(() => {
+    setOverviewSearchBack(() => searchBack.current())
+    return () => setOverviewSearchBack(null)
+  }, [])
   // What a screen reader is told of the narrowing (TalkBack, the chrome's status region): the
   // count once the typing has paused, not per letter.
   useEffect(() => {
@@ -557,8 +598,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     // hero inside an open group brings its group along – the group's card first, so the header
     // is in view when the group fits (the strip's show-group chip opens the overview at the
     // group, TAB-14), then its own card, which wins when the group is taller than the grid.
-    // The progress read live: the prop's is the one at the shape's last change, and a card
-    // arriving or leaving mid-drag re-runs this with the finger well past the start.
+    // `nearest` with the grid's `scrollPaddingBlock` moves the grid the least that shows the
+    // card whole, clear of the fades: a card already in view leaves the scroll alone. On the
+    // tablet nothing morphs, and the same rule is the grid's opening scroll (v2 §9.36): the
+    // active card's row whole under the header, set by the hero's slot – the rows above it cut
+    // at the top are the grid's earlier rows. The progress read live: the prop's is the one at
+    // the shape's last change, and a card arriving or leaving mid-drag re-runs this with the
+    // finger well past the start.
     const morphing = (phase === 'dragging' && liveProgress(overview) < 0.05) || phase === 'settling'
     if (cell && morphing) {
       if (heroGroup && !heroGroup.collapsed)
@@ -568,6 +614,21 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     measure()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure when the layout inputs change
   }, [heroCellKey, cardsKey, area.width, area.height, phase])
+  // The grid's scroll is the store's too (`noteOverviewScroll`, on the grid's scroll event): a
+  // grid mounted by the next shell with the overview open – a phone window widened into the
+  // tablet layout, or a tablet's narrowed – picks up where the last one's stood, once, before
+  // its first paint (TABLET-08). A fresh overview finds nothing there (the stage reset it), and
+  // a pane switch keeps its own rule: the new pane's grid comes up at the top.
+  const scrollRestored = useRef(false)
+  useLayoutEffect(() => {
+    if (scrollRestored.current) return
+    scrollRestored.current = true
+    const scroll = overviewUiStore.get().scroll
+    const grid = scrollRef.current
+    if (scroll && grid && scroll.pane === pane && settled && scroll.top > 0)
+      grid.scrollTop = scroll.top
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the mount alone
+  }, [])
 
   // Escape closes the overview – unless a sheet or the Spaces drawer is up over it; the top
   // surface takes the key, and the next Escape reaches the overview. The search field takes it
@@ -1129,6 +1190,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     if (row.count > 0) setSheet({ kind: 'delete-group', folderId: row.folder.id })
     else run('folder.delete', { folderId: row.folder.id, unpack: false })
   }
+  /** The same ask from a card's Delete Group (its hold sheet, or the reader's control). */
+  const deleteGroupOf = (folder: Folder): void => {
+    const row = rowOf(folder.id)
+    if (row) deleteGroupAsked(row)
+  }
   const deleteGroup = (row: GroupRow): void => {
     const live = liveMembersOf(row.folder.id)
     const remove = (): void => run('folder.delete', { folderId: row.folder.id, unpack: false })
@@ -1367,7 +1433,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       active={tab.id === active?.id}
       position={placeOf(tab)}
       count={ordered.length}
-      hidden={tab.id === heroTabId && p < 1}
+      // The phone's hero flies into its own card's slot, so the card is hidden until the morph
+      // lands on it pixel-for-pixel. On the tablet nothing flies: the hero is the page's still
+      // under the layer, and its card is part of the grid that comes down whole – drawn from the
+      // descent's first frame and through the close's rise (§9.36; a slot that fills by a cut at
+      // the settle is no motion of §11's).
+      hidden={!tablet && tab.id === heroTabId && p < 1}
       onPick={pick}
       onClose={(t) => closeTabs([t])}
       onSwipeClose={swipedAway}
@@ -1407,6 +1478,61 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // – from the store when the stage's overview is up, from the prop otherwise (the tests, a
   // preview render), so a component outside the stage still draws the progress it is given.
   const morph = useRef<(p: number) => void>(() => {})
+  // The tablet's layer stays unseen until the live page is off the screen (MOT-04). On Android
+  // the chrome lies under the page views (`lib/cover.ts`): a layer rising before the host took
+  // the view down would show beside the page – in the sidebar's column – and hide under it, a
+  // torn picture. The page's still (the hero, outside this layer, at the page's frame) is drawn
+  // under the page from the first frame, so the view's going is a pixel-identical swap, and the
+  // layer shows from the frame after, at the finger's progress: `pageCovered`, the rule a sheet
+  // recedes the cover by, with its timeout for a host that never answers. The phone's morph
+  // waits the same way, unseen, its hero card standing exactly where the page is. A host whose
+  // chrome lies over its pages has nothing to wait for. Declared before the morph effect so that
+  // effect's first write reads the answer.
+  const covered = useRef(true)
+  const latestOverview = useRef(overview)
+  useLayoutEffect(() => {
+    latestOverview.current = overview
+  })
+  useLayoutEffect(() => {
+    if (!tablet) return
+    covered.current =
+      !chromeUnderPages(state.platform) ||
+      heroTabId === null ||
+      coveredNow(pageViewStore.get(), heroTabId)
+    if (covered.current) return
+    let live = true
+    const hold = pageCovered(heroTabId, state.platform)
+    void hold.promise.then(() => {
+      if (!live) return
+      covered.current = true
+      morph.current(liveProgress(latestOverview.current))
+    })
+    return () => {
+      live = false
+      hold.cancel()
+    }
+  }, [tablet, heroTabId, state.platform])
+  // The tablet layer's geometry – the slide's travel (the layer's height) and the backdrop's
+  // alignment (the window's rect and the box's) – read in one measure pass, then written, when
+  // the frame the layer stands in changes: at the mount, a fold, the sidebar's toggle, never on
+  // the grid's own commits (a query's keystroke, a card picked, the scroll's measure), which
+  // the morph effect below runs on – it has no deps, so each of them would have forced a
+  // layout for three reads. The slide is a transform alone, so the writer needs no read per
+  // frame, and the box the slide's transform never moves is what is measured. The height is
+  // also the pull's travel on the tablet (§11's 1:1, the gate's ruling on §9.36's drag): the
+  // stage reads the finger's displacement over it, so the layer's foot moves exactly as far as
+  // the finger – published for the layer's stay, and the phone's own gain is back when it goes.
+  const slideTravel = useRef(0)
+  useLayoutEffect(() => {
+    if (!tablet) {
+      slideTravel.current = 0
+      return
+    }
+    slideTravel.current = rootRef.current?.offsetHeight ?? 0
+    alignBackdrop(rootRef.current, boxRef.current)
+    setTabletOverviewTravel(slideTravel.current)
+    return () => setTabletOverviewTravel(null)
+  }, [tablet, area.x, area.y, area.width, area.height])
   useLayoutEffect(() => {
     const contentRadius =
       parseFloat(
@@ -1415,15 +1541,49 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const reduced = reducedMotion()
     const shadowTo = cardShadow(isDark)
     const headerHeight = cardHeaderHeight()
+    // The tablet's entrance (MOT-04, v2 §9.36): the layer comes DOWN from the toolbar's edge
+    // over the page – the overview is pulled down from the toolbar, and a surface arrives from
+    // where it lives (§11), the same way on a tap as under the finger's pull – its travel the
+    // box's height, on the same 0…1 the phone's morph reads (the spring's, or the pull's: the
+    // finger's displacement over this same height, so the foot moves as far as the finger, 1:1
+    // – §11's input rule), so the page's still stands where the page is under it the whole
+    // way and the sidebar fades beneath it; the dismissal is the same writer run back up. At 0
+    // the layer stands a full height above its rest, clipped by the box, so the page shows
+    // whole; under reduced motion the slide is the phone's fade at scale 1 (§11.3).
+    const slide = slideTravel.current
     morph.current = (p) => {
       const root = rootRef.current
       if (root) {
-        root.style.opacity = String(Math.min(1, p * 1.6))
-        // Under reduced motion the grid appears at scale 1 with a 120 ms fade (v2 §11.3).
-        root.style.transform = reduced ? '' : `scale(${0.94 + 0.06 * p})`
+        // Unseen until the live page is off the screen (the hold above); the phone never writes it.
+        if (tablet) root.style.visibility = covered.current ? '' : 'hidden'
+        if (tablet && !reduced) {
+          root.style.opacity = '1'
+          root.style.transform = p >= 1 ? '' : `translateY(${-(1 - p) * slide}px)`
+        } else {
+          root.style.opacity = String(Math.min(1, p * 1.6))
+          // Under reduced motion the grid appears at scale 1 with a 120 ms fade (v2 §11.3).
+          root.style.transform = reduced || tablet ? '' : `scale(${0.94 + 0.06 * p})`
+        }
       }
       const el = heroRef.current
       if (!el) return
+      if (tablet) {
+        // The still of the page, in the page's frame, for as long as the layer is short of
+        // covering it: no card grows out of it and none shrinks into it.
+        el.style.left = `${area.x}px`
+        el.style.top = `${area.y}px`
+        el.style.width = `${area.width}px`
+        el.style.height = `${area.height}px`
+        el.style.borderRadius = `${contentRadius}px`
+        el.style.boxShadow = shadowCss(FRAME_SHADOW)
+        el.style.opacity = '1'
+        const header = heroHeaderRef.current
+        if (header) {
+          header.style.height = '0px'
+          header.style.opacity = '0'
+        }
+        return
+      }
       const r = lerpRect(area, heroCell.current ?? shrunk(area), p)
       el.style.left = `${r.x}px`
       el.style.top = `${r.y}px`
@@ -1452,9 +1612,49 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     })
   }, [])
 
+  // The hero's box, radius, shadow and fade, and its title row's height and fade, are the morph
+  // effect's per frame (its first frame written in the commit, before the paint). On the phone
+  // it stands over the grid – the page's card flying to its slot; on the tablet under the layer
+  // that comes down over it – the page's still in the page's frame, so it comes first in the tree.
+  const heroNode = hero && p < 1 && (
+    <div
+      ref={heroRef}
+      className="zen-stage-card zen-overview-hero pointer-events-none absolute flex flex-col"
+    >
+      <div
+        ref={heroHeaderRef}
+        className="relative flex shrink-0 items-center gap-2 overflow-hidden pl-3 pr-1"
+      >
+        {heroActive && (
+          <div
+            className="absolute inset-0"
+            style={{ background: 'rgb(var(--zen-accent-rgb) / 0.14)' }}
+          />
+        )}
+        {heroMasked ? (
+          <VenetianMask
+            className="relative h-4 w-4 shrink-0 opacity-60"
+            strokeWidth={1.75}
+            aria-hidden
+          />
+        ) : (
+          <Favicon tab={hero} size={16} className="relative" />
+        )}
+        <span className="zen-overview-card-title relative min-w-0 flex-1 truncate text-[13px] font-medium">
+          {heroMasked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(hero)}
+        </span>
+      </div>
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <HeroPicture tab={hero} progress={p} still={tablet} />
+      </div>
+    </div>
+  )
+
   return (
     <>
+      {tablet && heroNode}
       <div
+        ref={boxRef}
         className="absolute"
         style={{
           left: 'var(--zen-inset-left)',
@@ -1468,7 +1668,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             edge === 'bottom'
               ? 'calc(var(--zen-phone-band) + var(--zen-inset-bottom))'
               : 'var(--zen-inset-bottom)',
-          pointerEvents: interactive ? 'auto' : 'none'
+          pointerEvents: interactive ? 'auto' : 'none',
+          // The tablet's layer comes down from above this box (MOT-04): the box is its clip, so
+          // the layer descends out of the box's head – the toolbar's edge – not over the toolbar.
+          overflow: tablet ? 'hidden' : undefined,
+          // The tablet's card aspect (§9.36), read by every cell in the box: the layer's and a
+          // dissolving group's shell beside it (`Departures`).
+          ...cardAspectStyle
         }}
       >
         <div
@@ -1477,9 +1683,18 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           className="zen-overview absolute inset-0 flex flex-col"
           // The overview backdrop is window chrome (v2 §9.29): its controls draw in the window family.
           data-surface="window"
+          // The tablet's mount (TABLET-14): the layer is opaque – it slides over the page – in
+          // the window's own tone, its gradient laid at the window's size and offset so that at
+          // rest it is the window's, seamless at the toolbar's edge (the geometry effect writes
+          // the size and offset; `background-attachment: fixed` would do it but for the
+          // transform, under which it is read as `scroll`). Its cards take the frame's aspect
+          // (§9.36): the ratio the cells read (`--zen-overview-card-aspect`, set on the box),
+          // the phone's 3 / 4 where it is unset.
+          data-tablet={tablet || undefined}
           // The pane swipe listens here, above the slot it outlives (GN-19).
           {...swipe}
         >
+          {tablet && <div className="zen-texture zen-overview-texture" />}
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
             {selecting ? (
               <SelectionHeader
@@ -1508,7 +1723,20 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                     : `${count} tab${count === 1 ? '' : 's'}`}
                 </span>
                 <span className="flex-1" />
-                {!groupsPane && (
+                {!groupsPane && tablet && (
+                  // The tablet's tab search is the field itself, in the header's trailing run
+                  // where the phone has the magnifier (TABLET-14; §9.34's home for the search):
+                  // a tablet header has the room, and Chrome's Hub search box stands the same way.
+                  <OverviewSearchField
+                    inline
+                    value={search.query}
+                    inputRef={searchInput}
+                    onChange={changeQuery}
+                    onClear={clearQuery}
+                    onClose={closeSearch}
+                  />
+                )}
+                {!groupsPane && !tablet && (
                   <button
                     type="button"
                     className="zen-toolbar-button h-9 w-9"
@@ -1546,7 +1774,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               </>
             )}
           </header>
-          {searchOpen && (
+          {!tablet && searchOpen && (
             <OverviewSearchField
               value={search.query}
               inputRef={searchInput}
@@ -1624,7 +1852,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                   overscrollBehavior: 'contain',
                   scrollPaddingBlock: 16
                 }}
-                onScroll={measure}
+                onScroll={(e) => {
+                  noteOverviewScroll(pane, e.currentTarget.scrollTop)
+                  measure()
+                }}
               >
                 {searching && found === 0 && (
                   // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
@@ -1679,6 +1910,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                       card={card}
                       columns={columns}
                       onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                      onCloseGroup={closeGroup}
+                      onDelete={deleteGroupOf}
                       forming={tabs.length > 0 && forming(folder, tabs)}
                       dissolving={tabs.length === 0}
                       held={gone?.count}
@@ -1706,41 +1939,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         <Departures state={state} activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
       </div>
-      {hero && p < 1 && (
-        // The hero's box, radius, shadow and fade, and its title row's height and fade, are the
-        // morph effect's per frame (its first frame written in the commit, before the paint).
-        <div
-          ref={heroRef}
-          className="zen-stage-card zen-overview-hero pointer-events-none absolute flex flex-col"
-        >
-          <div
-            ref={heroHeaderRef}
-            className="relative flex shrink-0 items-center gap-2 overflow-hidden pl-3 pr-1"
-          >
-            {heroActive && (
-              <div
-                className="absolute inset-0"
-                style={{ background: 'rgb(var(--zen-accent-rgb) / 0.14)' }}
-              />
-            )}
-            {heroMasked ? (
-              <VenetianMask
-                className="relative h-4 w-4 shrink-0 opacity-60"
-                strokeWidth={1.75}
-                aria-hidden
-              />
-            ) : (
-              <Favicon tab={hero} size={16} className="relative" />
-            )}
-            <span className="zen-overview-card-title relative min-w-0 flex-1 truncate text-[13px] font-medium">
-              {heroMasked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(hero)}
-            </span>
-          </div>
-          <div className="relative min-h-0 flex-1 overflow-hidden">
-            <HeroPicture tab={hero} progress={p} />
-          </div>
-        </div>
-      )}
+      {!tablet && heroNode}
       {interactive && sheet?.kind === 'tab' && state.tabs[sheet.tabId] && (
         <TabSheet
           state={state}
@@ -1769,10 +1968,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           count={liveMembersOf(sheet.folderId).length}
           onClose={() => leaveSheet('group')}
           onCloseGroup={closeGroup}
-          onDelete={(folder) => {
-            const row = rowOf(folder.id)
-            if (row) deleteGroupAsked(row)
-          }}
+          onDelete={deleteGroupOf}
         />
       )}
       {interactive && rowSheet && (
@@ -2216,10 +2412,9 @@ function TabSheet({
 
 /**
  * A group card's hold sheet (the header's menu): the colour swatches (`GroupColorPalette`, the
- * Groups pane's row sheet shares them), Rename, Collapse / Expand, Ungroup, then Close Group –
- * its tabs close and the group stays saved with their pages on the Groups pane (TAB-16) – and
- * Delete Group, which asks first (§9.23) since the group holds tabs. Menu items, so Title Case
- * (v2 §9.1): the count keeps its unit, capitalised with the rest.
+ * Groups pane's row sheet shares them) over the group's actions (`groupActions`: Rename,
+ * Collapse / Expand, Ungroup, Close Group, Delete Group – the same actions the card gives a
+ * reader as controls under touch exploration, by the same names).
  */
 function GroupSheet({
   folder,
@@ -2234,37 +2429,10 @@ function GroupSheet({
   onCloseGroup: (folder: Folder) => void
   onDelete: (folder: Folder) => void
 }): JSX.Element {
-  const actions: SheetAction[] = [
-    {
-      id: 'rename',
-      label: 'Rename',
-      onPick: () => uiStore.set({ renamingFolderId: folder.id })
-    },
-    {
-      id: 'collapse',
-      label: folder.collapsed ? 'Expand' : 'Collapse',
-      onPick: () =>
-        run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
-    },
-    {
-      id: 'ungroup',
-      label: 'Ungroup',
-      onPick: () => run('folder.delete', { folderId: folder.id, unpack: true })
-    },
-    // Close Group destroys nothing the saved group does not keep (`folder.close`): the plain
-    // ink, as on the Groups pane's row sheet and the tablet's menu; Delete Group alone is danger.
-    {
-      id: 'close',
-      label: `Close Group (${count} ${count === 1 ? 'Tab' : 'Tabs'})`,
-      onPick: () => onCloseGroup(folder)
-    },
-    {
-      id: 'delete',
-      label: 'Delete Group',
-      destructive: true,
-      onPick: () => onDelete(folder)
-    }
-  ]
+  const actions: SheetAction[] = groupActions(folder, count, {
+    closeGroup: onCloseGroup,
+    deleteGroup: onDelete
+  }).map(({ id, label, destructive, run: onPick }) => ({ id, label, destructive, onPick }))
   return (
     <OverviewSheet
       title={folder.name}
@@ -2288,7 +2456,7 @@ function NewTabCard({ pane, disabled }: { pane: OverviewPane; disabled?: boolean
     <button
       type="button"
       className="zen-overview-new flex flex-col items-center justify-center gap-2 text-[var(--zen-muted)] active:text-[var(--zen-fg)]"
-      style={{ aspectRatio: '3 / 4' }}
+      style={{ aspectRatio: CARD_ASPECT }}
       data-cell={NEW_TAB_CELL}
       data-testid={isPrivate ? 'overview-new-private-tab' : 'overview-new-tab'}
       disabled={disabled}
@@ -2490,11 +2658,38 @@ function whenState<T>(pick: (state: UIState) => T | null, ms: number): Promise<T
  * drawn at, kept while every size reads the same; seven or eight renders over the travel, not
  * one per frame). `progress` is the frame for a render outside the stage (see `Props`).
  */
-function HeroPicture({ tab, progress }: { tab: Tab; progress: number }): JSX.Element {
+function HeroPicture({
+  tab,
+  progress,
+  still = false
+}: {
+  tab: Tab
+  progress: number
+  /** The hero keeps the page's size for the whole travel (the tablet's slide): no shrink to draw. */
+  still?: boolean
+}): JSX.Element {
   const scale = stageStore.use((s) =>
-    heroScale(s.overview.phase === 'closed' ? progress : clampProgress(s.overview.progress))
+    still
+      ? 1
+      : heroScale(s.overview.phase === 'closed' ? progress : clampProgress(s.overview.progress))
   )
   return <TabPreview tab={tab} scale={scale} cover />
+}
+
+/**
+ * The tablet layer's backdrop laid as the window's (TABLET-14): the same `--zen-bg` at the
+ * window's size, shifted by the layer's box's offset in it, so the gradient under the grid is
+ * the one the toolbar and the sidebar stand on, seamless at the layer's edge once it rests. Read
+ * from the box, which the slide's transform never moves, in the commit's layout phase.
+ */
+function alignBackdrop(root: HTMLElement | null, box: HTMLElement | null): void {
+  if (!root || !box) return
+  const window_ = box.closest<HTMLElement>('.zen-window')
+  if (!window_) return
+  const w = window_.getBoundingClientRect()
+  const b = box.getBoundingClientRect()
+  root.style.backgroundSize = `${w.width}px ${w.height}px`
+  root.style.backgroundPosition = `${w.left - b.left}px ${w.top - b.top}px`
 }
 
 let heroScaleDrawn = 1

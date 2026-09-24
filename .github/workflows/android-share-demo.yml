@@ -1,13 +1,17 @@
 name: Android share demo
 
-# Records sharing out of and into the phone chrome on a hardware-accelerated Android emulator:
-# Share from the app menu and from a link's long-press menu (the system chooser with the page's
-# title and preview), mailto:, tel: and intent:// links held behind the external-protocol confirm
-# sheet (with the intent's web fallback), then the share target driven through `am start`: a text
-# with a URL, a plain text and ACTION_WEB_SEARCH routed to the profile's engine. Dispatch-only,
-# like the gesture demo: it takes about ten minutes and says nothing about a change being correct.
-# The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only
-# picks the driver and the demo it runs.
+# Records sharing out of and into the phone chrome on a hardware-accelerated Android emulator.
+# On API 34 the system sheet stands (SH-02): Share from the app menu and from a link's long-press
+# menu (the system chooser with the page's title and preview), mailto:, tel: and intent:// links
+# held behind the external-protocol confirm sheet (with the intent's web fallback), then the share
+# target driven through `am start`: a text with a URL, a plain text and ACTION_WEB_SEARCH routed
+# to the profile's engine. On API 33 the browser's own share panel stands in for the system sheet
+# (SH-03): the same driver runs the panel's scenes there – the panel from the app menu, its chips,
+# the apps row with the instrumentation APK's fixture share target, the ranking, More, back, dark,
+# a private tab's share – and writes share-findings.txt, one PASS or FAIL per claim. Dispatch-only,
+# like the gesture demo: each job takes about ten minutes and says nothing about a change being
+# correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
 
@@ -20,7 +24,7 @@ concurrency:
 
 jobs:
   record:
-    name: Share demo
+    name: Share demo (API 34, the system sheet)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
@@ -32,3 +36,17 @@ jobs:
         DEMO_VIDEO=android-share-demo.mp4
       artifact-name: android-share-demo
       artifact-path: artifacts/android-share-demo/
+
+  record-api33:
+    name: Share demo (API 33, the share panel)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ShareDemo
+        DEMO_DIR=share-demo
+        DEMO_OUT=artifacts/android-share-demo-api33
+        DEMO_VIDEO=android-share-demo-api33.mp4
+      api-level: '33'
+      artifact-name: android-share-demo-api33
+      artifact-path: artifacts/android-share-demo-api33/

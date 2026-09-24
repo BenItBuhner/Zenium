@@ -191,7 +191,10 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
           </div>
         </main>
       </div>
-      <PhoneStage state={state} edge="top" />
+      {/* The tablet's switcher (TABLET-14, MOT-04): the phone's overview at the width's columns
+          with the tab search in its header, sliding up over the page from the toolbar's pull or
+          the tab-count button, the sidebar fading under it (§9.36). */}
+      <PhoneStage state={state} edge="top" tablet />
       {/* The overview's Spaces button opens the phone's Spaces drawer over it (the sidebar, which
           has the spaces, is under the overview by then). */}
       {ui.drawerOpen && <SpacesDrawer state={state} isDark={isDark} />}

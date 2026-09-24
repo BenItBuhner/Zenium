@@ -83,4 +83,44 @@ describe('the relay selection (blocking-rule-interface.md 7.2 as 7.10 amends it)
       relayServedObservation(observation({ tabId: null, url: 'https://news.example/x' }))
     ).toBe(true)
   })
+  it("the observer's side of the table: of the rows a page script can observe (allowed, no document), the observer reports exactly the ones the relay declines – dropped where relayed, reported where not; the rows it cannot observe are the relay's or nobody's", () => {
+    // What the page script's observer knows of a request it saw: method, the Range it set,
+    // whether the URL is another origin's (`requestObserver.ts`); the runtime maps it to the
+    // table's facts as `selects(true, false, method, range !== null, crossOrigin)`.
+    const observed = table.filter(([, allowed, mainFrame]) => allowed && !mainFrame)
+    // Nine rows are a script's to observe: every allowed subresource row.
+    expect(observed.map(([name]) => name)).toEqual([
+      'element same-origin',
+      'element cross-origin no-cors',
+      'element crossorigin (the recorded gap: Origin goes with it)',
+      'fetch same-origin, no Range',
+      'fetch same-origin with Range (a range-reading script: the recorded overlap)',
+      'fetch cross-origin with Range',
+      'XHR cross-origin',
+      'a POST with Range',
+      'a HEAD with Range'
+    ])
+    for (const [name, , , method, hasRange, hasOrigin, relayed] of observed) {
+      const dropped = relayServedObservation({
+        tabId: 't1',
+        url: hasOrigin ? 'https://cdn.example/x' : 'https://news.example/x',
+        method,
+        range: hasRange ? 'bytes=0-' : null,
+        crossOrigin: hasOrigin
+      })
+      // The observer's report survives exactly where the relay did not serve the request.
+      expect(dropped, name).toBe(relayed)
+    }
+    // The element rows are element loads, which the observer does not see (it wraps fetch and
+    // XMLHttpRequest): the two relayed ones come as ext.response, the crossorigin gap comes from
+    // nobody. The blocked row failed in the page; the main-frame row is a document. Of the
+    // script rows: the same-origin ranged fetch is relayed and its observation dropped (the
+    // overlap), the unranged same-origin fetch, the cross-origin ranged fetch, the cross-origin
+    // XHR, the POST and the HEAD are the observer's alone.
+    const scriptRows = observed.filter(([name]) => !name.startsWith('element'))
+    expect(scriptRows.filter(([, , , , , , relayed]) => relayed).map(([name]) => name)).toEqual([
+      'fetch same-origin with Range (a range-reading script: the recorded overlap)'
+    ])
+    expect(scriptRows.filter(([, , , , , , relayed]) => !relayed)).toHaveLength(5)
+  })
 })

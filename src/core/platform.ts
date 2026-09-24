@@ -26,6 +26,7 @@ import type {
   KeyBinding,
   LongCapture,
   LongCaptureCrop,
+  MenuDeviceMark,
   MenuGlyph,
   MenuGroupMark,
   MenuHeader,
@@ -42,10 +43,12 @@ import type {
   ResourceSnapshot,
   ScreenCaptureSource,
   ScreenshotSaved,
+  SharePanelAction,
   SharePayload,
   ShortcutAction,
   SidePanelInfo,
   Suggestion,
+  SyncDeviceKind,
   SyncDeviceTabs,
   SyncScope,
   SyncStatus,
@@ -86,7 +89,7 @@ import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
 import type { TextFragmentHostMessage } from '../shared/textFragmentScript'
 import type { FocusEdge, FocusEdgeHostMessage } from '../shared/focusEdge'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
-import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
+import type { RawWebAppManifest, ShortcutIconKind, WebAppDisplay } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
@@ -569,6 +572,14 @@ export interface TabViewEvents {
    * it: the throbber then waits from `onStartLoading` to the commit.
    */
   onStartNavigation?(url: string, sameDocument: boolean): void
+  /**
+   * The main-frame navigation under way was redirected by the server from `fromUrl` to `toUrl`
+   * (Electron's `did-redirect-navigation`, Android's `shouldOverrideUrlLoading` with
+   * `isRedirect`), before it commits: the core keeps the hops and records them with the commit
+   * as one redirect chain (history-23). Hosts that cannot tell need not call it: the visit is
+   * then the landing alone.
+   */
+  onRedirected?(fromUrl: string, toUrl: string): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
   /**
@@ -1113,6 +1124,12 @@ export interface MenuItemTemplate {
    */
   group?: MenuGroupMark
   /**
+   * Another device's mark before the label of a renderer-drawn menu's row (the app menu's Send
+   * to Your Devices submenu; services pass 4): the chrome draws the device's kind glyph, the
+   * stand-in for a kind it did not announce. Native menu hosts draw the row as text.
+   */
+  device?: MenuDeviceMark
+  /**
    * An icon-row item of a renderer-drawn menu (the phone app menu's first group, design language
    * v2 §9.3): the chrome draws the glyph in a 44 px button named by `label`. Native menu hosts
    * have no such row and ignore it; the phone layout alone builds one.
@@ -1319,6 +1336,13 @@ export interface ShellHost {
    * without one leave it out and the core copies the link instead.
    */
   share?(payload: SharePayload): Promise<ShareOutcome | void>
+  /**
+   * The chrome's answer to the host's own share panel (Android below 14, SH-03; the host sent
+   * `share.panel` and holds the share's intent under the panel's id): send it to the chosen app,
+   * open the system sheet for More, or let it go. Absent on hosts whose share sheet is the
+   * system's alone (the desktop).
+   */
+  sharePanelAction?(action: SharePanelAction): Promise<void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
   /**
@@ -1953,6 +1977,14 @@ export interface SyncPlatformHost {
   folderName?(folder: string): Promise<string>
   /** What this device is called until the user renames it (the hostname; `Build.MODEL`). */
   deviceNameDefault(): string
+  /**
+   * What this device is, for the other devices' rows (`SyncDeviceKind`): Android tells a phone
+   * from a tablet by its form factor; a desktop says `desktop` unless the platform has a
+   * reliable signal that it is a laptop (Electron's `powerMonitor` only says whether the
+   * machine is on battery right now, so the Electron host never guesses `laptop`). A host
+   * without the method announces no kind, as builds before it did.
+   */
+  deviceKind?(): SyncDeviceKind
   createTransport(folder: string): SyncTransport
   /** Native scrypt, when the host has one; must equal the shared implementation bit for bit. */
   scrypt?: SyncScryptFn
@@ -2201,6 +2233,18 @@ export interface ShortcutRequest {
   background: string
   /** The `any` icon's own background when the manifest names one (fills the safe zone edges). */
   iconBackground: string | null
+  /**
+   * The manifest's display mode; a host that opens `standalone` / `fullscreen` / `minimal-ui`
+   * apps in a window (activity) of their own reads it from here. Absent (and for `browser`)
+   * the shortcut opens a tab.
+   */
+  display?: WebAppDisplay
+  /** The manifest's absolute scope; navigations outside it leave the app's window. */
+  scope?: string
+  /** The manifest's `theme_color` as `#rrggbb`, for the window's system bars and Recents entry. */
+  themeColor?: string | null
+  /** The manifest's `background_color` as `#rrggbb`, the window's colour before the page paints. */
+  backgroundColor?: string | null
 }
 
 /**

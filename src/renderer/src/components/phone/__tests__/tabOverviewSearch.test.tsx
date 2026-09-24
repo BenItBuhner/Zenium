@@ -56,6 +56,7 @@ const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, claimMessageCards, uiStore } = await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { pickOverviewPane, resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
 const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { announcerStore, resetAnnouncer } = await import('@renderer/lib/announce')
 const { hideDevice, showHiddenDevices } = await import('@renderer/lib/otherDevices')
@@ -421,6 +422,9 @@ afterEach(() => {
     overview: { phase: 'closed', progress: 0, heroTabId: null, target: 0 }
   })
   act(() => resetOverviewPane())
+  // Mounted outside the stage, `dismissOverview()` (which resets the shared overview UI) never
+  // runs between these tests.
+  act(() => resetOverviewUi())
   act(() => showHiddenDevices())
   for (const [name, descriptor] of sizes) {
     if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)

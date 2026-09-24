@@ -33,4 +33,14 @@ object CustomTabMenu {
         groups.add(listOf(Item.OpenInZenium))
         return groups
     }
+
+    /**
+     * An installed web app's overflow (PWA-08, [WebAppActivity]): no caller, so the page actions
+     * alone – Share, Copy link, Reload – and the way out into the browser as a tab. Find in page
+     * is the custom tab's (its bar hosts the find field; the app's window has no bar in scope).
+     */
+    fun webAppGroups(): List<List<Item>> = listOf(
+        listOf(Item.Share, Item.CopyLink, Item.Reload),
+        listOf(Item.OpenInZenium)
+    )
 }
