@@ -2263,7 +2263,7 @@ export interface NewTabPageState {
  * Actions the new tab page asks the browser for (one-way; the browser answers with state).
  * Tiles are plain links, so opening one needs no action: the page navigates like any page.
  * The page draws no popover or dialog of its own: a tile's menu, the add / edit dialog and the
- * Customize surface are the chrome's (design language v2 §9.20–9.23), asked for here.
+ * Customise surface are the chrome's (design language v2 §9.20–9.23), asked for here.
  */
 export type NewTabPageAction =
   | { type: 'ready' }
@@ -2292,7 +2292,7 @@ export type NewTabPageAction =
       y: number
       keyboard: boolean
     }
-  /** The Customize button: Settings opens on its New Tab section. */
+  /** The Customise button: Settings opens on its New Tab section. */
   | { type: 'customize' }
   /**
    * The private page's "Block third-party cookies" switch was flipped: `privacy.thirdPartyCookiesPrivate`
