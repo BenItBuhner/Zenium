@@ -1,8 +1,8 @@
-import type { AgentMode, Folder, Tab } from '../../shared/types'
+import type { AgentMode, Folder, Space, Tab } from '../../shared/types'
 import { buildSearchUrl } from '../../shared/search'
 import { inputToUrl } from '../../shared/url'
 import type { Browser } from '../browser'
-import { createFolder } from '../model'
+import { folderTabs } from '../model'
 import type { AgentCapture, InputModifier, TabView } from '../platform'
 import {
   deepSnapshot,
@@ -13,11 +13,11 @@ import {
   type FramePage,
   type Located
 } from './frames'
-import { RpcError } from './jsonrpc'
+import { RpcError, UNAUTHORIZED } from './jsonrpc'
 import { pageCall, type PageLocation } from './page'
 import type { JsonSchema, ToolDefinition, ToolResult } from './protocol'
 import type { AgentService, AgentSession } from './service'
-import { looksLikeStatements, sleep, textError } from './util'
+import { FOREGROUND_LEASE_MS, looksLikeStatements, sleep, textError, titleOf } from './util'
 import type { ZenWindow } from '../window'
 
 export { looksLikeStatements }
@@ -25,13 +25,18 @@ export { looksLikeStatements }
 /**
  * The tools agents see. Page tools use the vocabulary agents already know from Playwright MCP
  * (`browser_navigate`, `browser_snapshot` with `[ref=eN]` handles, `browser_click`, …); the
- * `zen_*` tools expose what makes this browser different: spaces, agent modes and who is doing
- * what.
+ * `zen_*` tools expose what makes this browser different: tab groups an agent owns, spaces,
+ * sessions, agent modes and who is doing what.
+ *
+ * Several agents and the user share one browser, so nothing here is implicit: every page tool
+ * names its tab by id (there is no current tab), list positions are refused because they shift
+ * under other agents, and a tab outside the caller's groups is reached only with an explicit
+ * `allowForeign: true` – never another live agent's.
  *
  * Small models get the vocabulary slightly wrong all the time (`ref` for `target`, `function`
- * for `expression`, `switch` for `select`, `[ref=e12]` for `e12`, a tab's list position for its
- * id…). Every argument therefore has aliases, tabs resolve by id, id prefix or list position, and
- * every error says what would have worked.
+ * for `expression`, `switch` for `select`, `[ref=e12]` for `e12`, `folder` for `groupId`…).
+ * Every argument therefore has aliases, tabs resolve by id or unique id prefix, and every error
+ * says what would have worked.
  */
 
 export interface ToolContext {
@@ -49,6 +54,7 @@ export interface AgentTool {
 
 const SNAPSHOT_MAX_CHARS = 30_000
 const LOAD_TIMEOUT_MS = 15_000
+const LEASE_SECONDS = Math.round(FOREGROUND_LEASE_MS / 1000)
 
 // ---------------------------------------------------------------------------
 // Argument helpers
@@ -59,6 +65,9 @@ export const ARG_ALIASES: Record<string, string[]> = {
   target: ['ref', 'selector', 'element', 'locator', 'css', 'elementRef'],
   tabId: ['tab', 'tab_id', 'id', 'index', 'tabIndex'],
   tabIds: ['tabs', 'tab_ids', 'ids'],
+  groupId: ['group', 'group_id', 'folder', 'folderId', 'folder_id'],
+  allowForeign: ['foreign', 'allow_foreign', 'outside', 'allowOutside'],
+  closeTabs: ['close_tabs', 'closeAll', 'close_all'],
   url: ['href', 'link', 'address'],
   expression: ['function', 'script', 'code', 'js', 'javascript'],
   text: ['value', 'input', 'string'],
@@ -69,7 +78,8 @@ export const ARG_ALIASES: Record<string, string[]> = {
   amount: ['pixels', 'px', 'distance', 'by'],
   fullPage: ['full_page', 'full', 'fullpage', 'entirePage'],
   doubleClick: ['double', 'dblclick', 'double_click'],
-  name: ['title', 'folderName', 'groupName', 'folder', 'group'],
+  name: ['title', 'folderName', 'groupName', 'newName', 'new_name'],
+  space: ['spaceId', 'space_id', 'workspace'],
   spaceId: ['space', 'space_id', 'workspace'],
   maxChars: ['max_chars', 'limit', 'maxLength'],
   filter: ['search', 'contains', 'query'],
@@ -77,7 +87,7 @@ export const ARG_ALIASES: Record<string, string[]> = {
   time: ['seconds', 'duration', 'wait'],
   textGone: ['text_gone', 'gone', 'disappears'],
   ignoreCache: ['hard', 'ignore_cache', 'bypassCache'],
-  background: ['inBackground'],
+  background: ['inBackground', 'hidden'],
   submit: ['enter', 'pressEnter']
 }
 
@@ -150,7 +160,17 @@ function point(args: Record<string, unknown>): { x: number; y: number } | undefi
 const TAB_ID = {
   type: 'string',
   description:
-    'Which tab: a tab id from browser_tabs list (e.g. "tab_3f9a…"; a unique prefix is enough) or its position in that list (1, 2, …). Defaults to your current tab. Tabs driven by another agent are refused.'
+    'Which tab: its id from browser_tabs list ("tab_3f9a…"; a unique prefix is enough). Required unless you own exactly one tab – there is no current tab. List positions (1, 2, …) are refused: they shift whenever anyone opens or closes a tab. A tab outside your groups needs allowForeign: true; another live agent\'s tabs are never available.'
+}
+const ALLOW_FOREIGN = {
+  type: 'boolean',
+  description:
+    "Act on a tab outside your groups – the user's, or one in an orphaned agent group – because the user asked you to. Never another live agent's tab; the user's Essentials and pinned tabs are never closed, moved or grouped; the tab does not become yours."
+}
+const GROUP_ID = {
+  type: 'string',
+  description:
+    'One of your groups: its id from zen_groups list (a unique prefix or its exact name works too), or "home" for your home group.'
 }
 const TARGET = {
   type: 'string',
@@ -159,11 +179,19 @@ const TARGET = {
 }
 const XY_NOTE =
   'Alternatively give x and y (CSS pixels from the top-left of the viewport, as reported by the viewport size in snapshots) instead of target.'
+/** The migration line every page tool carries. */
+const PAGE_CHANGED =
+  'Changed: tabId is required (there is no current tab; it may be omitted only while you own exactly one tab), list positions are refused, and a tab outside your groups needs allowForeign: true.'
 
 function schema(properties: Record<string, unknown>, required: string[] = []): JsonSchema {
   // Deliberately not `additionalProperties: false`: a client that validates would then reject
   // the aliases above before the server can understand them.
   return { type: 'object', properties, required }
+}
+
+/** A page tool's properties: its own first, then the tab it acts on. */
+function pageSchema(properties: Record<string, unknown>, required: string[] = []): JsonSchema {
+  return schema({ ...properties, tabId: TAB_ID, allowForeign: ALLOW_FOREIGN }, required)
 }
 
 function text(t: string): ToolResult {
@@ -190,76 +218,36 @@ interface Target {
   page: FramePage
 }
 
-/**
- * Tabs in the order the user sees them: Essentials first, then each space's tabs (pinned before
- * regular), then anything else the model knows about. Positions in this list are what agents
- * may use instead of ids.
- */
-export function orderedTabs(ctx: ToolContext): Tab[] {
-  const m = ctx.browser.state.model
-  const visible = ctx.agents.visibleTabs(ctx.session)
-  const byId = new Map(visible.map((t) => [t.id, t]))
-  const out: Tab[] = []
-  const take = (id: string): void => {
-    const t = byId.get(id)
-    if (t) {
-      out.push(t)
-      byId.delete(id)
-    }
-  }
-  for (const id of m.essentialTabIds) take(id)
-  for (const sp of m.spaces) for (const id of sp.tabIds) take(id)
-  for (const t of byId.values()) out.push(t)
-  return out
+function yourTabs(ctx: ToolContext): string {
+  const own = ctx.agents.ownedTabs(ctx.session)
+  return own.length
+    ? `Your tabs: ${own.map((t) => `${t.id} ${JSON.stringify(titleOf(t).slice(0, 40))}`).join(', ')}.`
+    : 'You have no tabs yet.'
 }
 
 /**
- * Turn whatever an agent passed as a tab reference into a tab id: the id itself, a unique prefix
- * of one ("tab_3f9a"), or a 1-based position in the browser_tabs list.
+ * The tab a tool acts on: the `tabId` the agent named (id or unique prefix; foreign only with
+ * `allowForeign`), or – the compatibility path – the one tab the session owns when it owns
+ * exactly one. Anything else is an error that lists the session's tabs with their ids.
  */
-export function resolveTabRef(ctx: ToolContext, ref: unknown): string {
-  const tabs = orderedTabs(ctx)
-  const describe = (): string =>
-    tabs.length
-      ? `Open tabs: ${tabs.map((t, i) => `${i + 1}. ${t.id}`).join(', ')}`
-      : 'There are no open tabs – open one with browser_tabs {"action":"new","url":"…"}'
-  if (typeof ref === 'number' || (typeof ref === 'string' && /^\d+$/.test(ref.trim()))) {
-    const n = Number(ref)
-    const tab = tabs[n - 1]
-    if (!tab)
-      throw new RpcError(
-        -32602,
-        `There is no tab at position ${n} (positions are 1-based, ${tabs.length} tab(s) open). ${describe()}`
-      )
-    return tab.id
-  }
-  if (typeof ref !== 'string' || !ref.trim())
-    throw new RpcError(-32602, `tabId must be a tab id or a list position. ${describe()}`)
-  const wanted = ref.trim()
-  if (tabs.some((t) => t.id === wanted)) return wanted
-  const prefixed = tabs.filter((t) => t.id.startsWith(wanted))
-  if (prefixed.length === 1) return prefixed[0].id
-  if (prefixed.length > 1)
+export function targetTab(ctx: ToolContext, args: Record<string, unknown>): Tab {
+  const raw = pick(args, 'tabId')
+  if (raw !== undefined) return ctx.agents.resolveTab(ctx.session, raw, bool(args, 'allowForeign'))
+  const own = ctx.agents.ownedTabs(ctx.session)
+  if (own.length === 1) return own[0]
+  if (!own.length)
     throw new RpcError(
       -32602,
-      `"${wanted}" matches ${prefixed.length} tabs (${prefixed.map((t) => t.id).join(', ')}) – give more of the id`
+      'You have no tab yet – browser_tabs {"action":"new","url":"…"} opens one in your group and returns its id; pass that id as tabId. (browser_navigate opens one for you as well.)'
     )
-  // Private tabs and tabs of other windows are invisible: say so instead of "unknown".
-  const anywhere = ctx.browser.tabs.tab(wanted)
-  if (anywhere) throw new RpcError(-32002, `Tab ${wanted} is not available to agents`)
   throw new RpcError(
-    -32002,
-    `Unknown tab "${wanted}" – it may have been closed. ${describe()} (browser_tabs {"action":"list"} shows titles and URLs)`
+    -32602,
+    `tabId is required: you own ${own.length} tabs and there is no current tab. ${yourTabs(ctx)}`
   )
 }
 
-function tabArg(ctx: ToolContext, args: Record<string, unknown>): string | undefined {
-  const raw = pick(args, 'tabId')
-  return raw === undefined ? undefined : resolveTabRef(ctx, raw)
-}
-
 async function actOn(ctx: ToolContext, args: Record<string, unknown>): Promise<Target> {
-  const tab = ctx.agents.resolveTab(ctx.session, tabArg(ctx, args))
+  const tab = targetTab(ctx, args)
   const view = await ctx.agents.prepare(ctx.session, tab.id)
   return { tab, view, page: framePage(ctx, tab.id, view) }
 }
@@ -297,9 +285,14 @@ interface SnapshotOpts {
 
 function describeTab(ctx: ToolContext, tab: Tab): string {
   const s = ctx.session
-  const driver = ctx.agents.driver(tab.id)
-  const who = driver ? (driver.id === s.id ? 'yours' : `driven by ${driver.name}`) : 'not claimed'
-  return `${tab.id} (${who}; you are in ${s.mode} mode)`
+  const owner = ctx.agents.describeOwner(s, tab) ?? "the user's, with allowForeign"
+  const how =
+    s.mode === 'background'
+      ? 'background mode'
+      : ctx.agents.degraded(s)
+        ? 'foreground mode, acted in background – another agent holds the screen'
+        : 'foreground mode'
+  return `${tab.id} (${owner}; ${how})`
 }
 
 /** The standard answer after an action: what happened, then a fresh snapshot of the page. */
@@ -441,18 +434,19 @@ export interface InputRouting {
 }
 
 export function syntheticInputNote(cause: string): string {
-  return `input: synthetic – ${cause}, so the event was dispatched as a scripted DOM event instead of real input. It is untrusted (isTrusted: false) and armed no user gesture: a pop-up, download or permission prompt it would have opened did not fire. Real input needs the tab on screen and painted: foreground mode, with no URL bar or other chrome overlay covering the page, and the page's first frame shown.`
+  return `input: synthetic – ${cause}, so the event was dispatched as a scripted DOM event instead of real input. It is untrusted (isTrusted: false) and armed no user gesture: a pop-up, download or permission prompt it would have opened did not fire. Real input needs the tab on screen and painted: foreground mode with the screen lease, no URL bar or other chrome overlay covering the page, and the page's first frame shown.`
 }
 
 /**
  * Real input – a trusted OS-level event Chromium routes to the frame under the point, cross-origin
  * iframes included, that counts as a user gesture – only works on a painted, on-screen view. This
  * decides the path once per tool call and never degrades silently: background mode is synthetic
- * by design (the agent asked to keep the tab off screen); in the foreground the tool waits up to
- * `ON_SCREEN_WAIT_MS` for the chrome to place the view and drop any overlay and for the page to
- * paint its first frame, and if the page is still not on screen or still unpainted – or another
- * element covers the point, where a real click would hit that element instead – it takes the
- * synthetic path and says so in the result.
+ * by design (the agent asked to keep the tab off screen), and so is a foreground call that had to
+ * run in the background because another agent holds the screen lease; otherwise the tool waits
+ * up to `ON_SCREEN_WAIT_MS` for the chrome to place the view and drop any overlay and for the
+ * page to paint its first frame, and if the page is still not on screen or still unpainted – or
+ * another element covers the point, where a real click would hit that element instead – it takes
+ * the synthetic path and says so in the result.
  *
  * Both paths reach into cross-origin iframes: trusted input is sent at top-viewport coordinates
  * and the host routes it to the frame under the point; synthetic input runs the page runtime
@@ -470,6 +464,13 @@ export async function routeInput(
     return {
       trusted: false,
       note: syntheticInputNote('you are in background mode and the tab is kept off screen')
+    }
+  if (ctx.agents.degraded(ctx.session))
+    return {
+      trusted: false,
+      note: syntheticInputNote(
+        'another agent holds the screen, so this call ran in the background and the tab stayed off screen'
+      )
     }
   const notReady = await waitInputReady(ctx, tabId, view)
   const seconds = Math.round(onScreenWaitMs / 1000)
@@ -611,33 +612,96 @@ function folderOf(ctx: ToolContext, t: Tab): Folder | null {
   return t.folderId ? (ctx.browser.state.model.folders[t.folderId] ?? null) : null
 }
 
-function tabLine(ctx: ToolContext, t: Tab, position: number): string {
-  const driver = ctx.agents.driver(t.id)
-  const folder = folderOf(ctx, t)
+function spaceOf(ctx: ToolContext, spaceId: string | null): Space | undefined {
+  return spaceId ? ctx.browser.state.model.spaces.find((sp) => sp.id === spaceId) : undefined
+}
+
+// ---------------------------------------------------------------------------
+// Listings
+// ---------------------------------------------------------------------------
+
+const NO_GROUPS =
+  '(no groups yet – browser_tabs {"action":"new","url":"…"} makes your home group and opens a tab in it)'
+
+/** One tab, as listings show it: id, title, URL and what matters about it in brackets. */
+function tabLine(ctx: ToolContext, t: Tab, scope: 'own' | 'all'): string {
   const flags: string[] = []
   if (t.essential) flags.push('essential')
   else if (t.pinned) flags.push('pinned')
-  if (folder) flags.push(`folder: ${JSON.stringify(folder.name)}`)
+  const folder = folderOf(ctx, t)
+  if (folder && scope === 'all') flags.push(`group: ${JSON.stringify(folder.name)}`)
   if (t.discarded) flags.push('unloaded')
-  if (driver) flags.push(driver.id === ctx.session.id ? 'yours' : `driven by ${driver.name}`)
-  if (ctx.session.currentTabId === t.id) flags.push('current')
-  const title = (t.customTitle ?? t.title) || '(untitled)'
-  return `${position}. ${t.id} ${JSON.stringify(title.slice(0, 80))} ${t.url}${flags.length ? ` [${flags.join(', ')}]` : ''}`
+  if (scope === 'all') {
+    const owner = ctx.agents.describeOwner(ctx.session, t)
+    if (owner) flags.push(owner)
+    if (ctx.browser.tabs.activeTabFor(ctx.agents.agentWindow())?.id === t.id)
+      flags.push("user's active tab")
+  }
+  return `- ${t.id} ${JSON.stringify(titleOf(t).slice(0, 80))} ${t.url}${flags.length ? ` [${flags.join(', ')}]` : ''}`
 }
 
-/** Every tab the agent may see, numbered, grouped the way the sidebar shows them. */
-export function listTabs(ctx: ToolContext): string {
-  const tabs = orderedTabs(ctx)
+/** Who a group belongs to, as listings say it; null for the caller's own. */
+function groupOwnerLabel(ctx: ToolContext, g: Folder): string | null {
+  const owner = ctx.agents.groupOwner(g.id)
+  if (owner) return owner.id === ctx.session.id ? 'yours' : `owned by ${JSON.stringify(owner.name)}`
+  if (ctx.agents.isOrphan(g.id)) {
+    const was = ctx.agents.orphanWas(g.id)
+    return was ? `orphaned, was ${JSON.stringify(was)}` : 'orphaned'
+  }
+  return "the user's"
+}
+
+function groupHeader(ctx: ToolContext, g: Folder, scope: 'own' | 'all'): string {
+  const m = ctx.browser.state.model
+  const flags: string[] = []
+  if (g.id === ctx.session.homeGroupId) flags.push('home')
+  if (scope === 'all') {
+    const owner = groupOwnerLabel(ctx, g)
+    if (owner) flags.push(owner)
+  }
+  const n = folderTabs(m, g.id).length
+  return `Group ${JSON.stringify(g.name)} (${g.id})${flags.length ? ` [${flags.join(', ')}]` : ''} in space ${JSON.stringify(spaceOf(ctx, g.spaceId)?.name ?? '?')} – ${n} tab${n === 1 ? '' : 's'}:`
+}
+
+function groupMembers(ctx: ToolContext, g: Folder): Tab[] {
+  return folderTabs(ctx.browser.state.model, g.id).filter((t) => !ctx.browser.tabs.isPrivate(t))
+}
+
+/** The session's groups with their tabs, the home group first. */
+export function listOwnTabs(ctx: ToolContext): string {
+  const groups = ctx.agents.groupsOf(ctx.session)
+  if (!groups.length) return NO_GROUPS
+  const lines: string[] = []
+  for (const g of groups) {
+    lines.push(groupHeader(ctx, g, 'own'))
+    const tabs = groupMembers(ctx, g)
+    if (!tabs.length) lines.push('  (empty)')
+    for (const t of tabs) lines.push(tabLine(ctx, t, 'own'))
+  }
+  return lines.join('\n')
+}
+
+/** One group's tabs under its header. */
+export function listGroupTabs(ctx: ToolContext, g: Folder): string {
+  const lines = [groupHeader(ctx, g, 'all')]
+  const tabs = groupMembers(ctx, g)
+  if (!tabs.length) lines.push('  (empty)')
+  for (const t of tabs) lines.push(tabLine(ctx, t, 'all'))
+  return lines.join('\n')
+}
+
+/** Every tab agents may see, the way the sidebar shows them: Essentials, then each space. */
+export function listAllTabs(ctx: ToolContext): string {
+  const tabs = ctx.agents.sidebarOrder(ctx.agents.visibleTabs())
   if (!tabs.length)
     return '(no tabs – open one with browser_tabs {"action":"new","url":"…"} or browser_navigate)'
   const m = ctx.browser.state.model
   const win = ctx.agents.agentWindow()
   const lines: string[] = []
-  let position = 0
   const essentials = tabs.filter((t) => t.essential)
   if (essentials.length) {
     lines.push('Essentials:')
-    for (const t of essentials) lines.push(tabLine(ctx, t, ++position))
+    for (const t of essentials) lines.push(tabLine(ctx, t, 'all'))
   }
   for (const sp of m.spaces) {
     const inSpace = tabs.filter((t) => !t.essential && t.spaceId === sp.id)
@@ -646,63 +710,303 @@ export function listTabs(ctx: ToolContext): string {
       `Space ${JSON.stringify(sp.name)} (${sp.id})${sp.id === win.activeSpaceId ? ' [shown to the user]' : ''}:`
     )
     if (!inSpace.length) lines.push('  (empty)')
-    for (const t of inSpace) lines.push(tabLine(ctx, t, ++position))
+    for (const t of inSpace) lines.push(tabLine(ctx, t, 'all'))
   }
   const rest = tabs.filter((t) => !t.essential && !m.spaces.some((sp) => sp.id === t.spaceId))
   if (rest.length) {
     lines.push('Other tabs:')
-    for (const t of rest) lines.push(tabLine(ctx, t, ++position))
+    for (const t of rest) lines.push(tabLine(ctx, t, 'all'))
   }
-  if (!lines.length) for (const t of tabs) lines.push(tabLine(ctx, t, ++position))
+  if (!lines.length) for (const t of tabs) lines.push(tabLine(ctx, t, 'all'))
   return lines.join('\n')
 }
 
+function listSpaces(ctx: ToolContext): string {
+  const win = ctx.agents.agentWindow()
+  return ctx.browser.state.model.spaces
+    .map(
+      (sp) =>
+        `- ${sp.id} ${JSON.stringify(sp.name)} ${sp.icon} – ${sp.tabIds.length} tab(s)${sp.id === win.activeSpaceId ? ' [shown to the user]' : ''}${ctx.agents.isAgentSpace(sp.id) ? ' [agents]' : ''}`
+    )
+    .join('\n')
+}
+
+/** How the screen lease stands for the session, in a sentence. */
+function leaseLine(ctx: ToolContext): string {
+  const s = ctx.session
+  const holder = ctx.agents.leaseHolder(ctx.agents.agentWindow())
+  if (s.mode === 'background')
+    return holder
+      ? `Agent ${JSON.stringify(holder.name)} holds the screen; you work in the background.`
+      : 'You work in the background; no agent holds the screen.'
+  if (holder?.id === s.id) return 'You hold the screen.'
+  if (holder)
+    return `Agent ${JSON.stringify(holder.name)} holds the screen: your foreground actions run in the background until it has been quiet for ${LEASE_SECONDS} s.`
+  return 'No agent holds the screen; your first foreground action takes it.'
+}
+
 // ---------------------------------------------------------------------------
-// Tools
+// Tools: status, session, groups
 // ---------------------------------------------------------------------------
+
+function statusText(ctx: ToolContext): string {
+  const s = ctx.session
+  const others = ctx.agents.list().filter((a) => a.id !== s.id)
+  const server = ctx.agents.serverStatus()
+  const own = ctx.agents.ownedTabs(s).length
+  const groups = ctx.agents.groupsOf(s).length
+  return [
+    `You are ${JSON.stringify(s.name)} (session ${s.id}, colour ${s.color}) in ${s.mode} mode. ${leaseLine(ctx)}`,
+    '',
+    `Your groups (${groups}) and tabs (${own}) – id "title" url [flags]:`,
+    listOwnTabs(ctx),
+    '',
+    `Other agents (${others.length}):`,
+    ...(others.length
+      ? others.map(
+          (a) =>
+            `- ${JSON.stringify(a.name)} – ${a.mode}, ${a.groupIds.length} group${a.groupIds.length === 1 ? '' : 's'}${a.pending ? ', waiting for approval' : ''}`
+        )
+      : ['(none)']),
+    '',
+    'Spaces:',
+    listSpaces(ctx),
+    '',
+    `Server: ${server.url ?? 'stdio'}${server.running ? '' : ' (not listening)'}. The user's tabs are not listed here: browser_tabs {"action":"list","scope":"all"} shows every tab with its owner.`
+  ].join('\n')
+}
 
 const zenStatus: AgentTool = {
   definition: {
     name: 'zen_status',
     title: 'Browser status',
     description:
-      'Who you are in this browser (name, colour, foreground/background mode, current tab), which other agents are connected and which tabs they drive, the spaces, and every open tab with its position and id. Call this first; call browser_tabs {"action":"list"} later for just the tabs.',
+      'Who you are in this browser (name, session id, colour, foreground/background mode, whether you hold the screen), your groups with their tabs (id, title, URL), the other connected agents (name, mode, number of groups), the spaces and the server. Call this first. Changed: it no longer lists the user\'s tabs or a "current tab" – browser_tabs {"action":"list","scope":"all"} shows every tab with its owner, and every page tool takes a tabId.',
     inputSchema: schema({}),
     annotations: { readOnlyHint: true, openWorldHint: false }
   },
   async run(ctx) {
-    const s = ctx.session
-    const win = ctx.agents.agentWindow()
-    const m = ctx.browser.state.model
-    const agents = ctx.agents.list()
-    const lines = [
-      `You are "${s.name}" (agent ${s.id}, colour ${s.color}) in ${s.mode} mode. Current tab: ${s.currentTabId ?? 'none – browser_navigate or browser_tabs {"action":"new"} opens one for you'}. Tabs you drive: ${s.tabIds.size}.`,
-      '',
-      `Connected agents (${agents.length}):`,
-      ...agents.map(
-        (a) =>
-          `- ${a.name}${a.id === s.id ? ' (you)' : ''} – ${a.mode}, ${a.tabIds.length} tab(s)${a.pending ? ', waiting for approval' : ''}`
-      ),
-      '',
-      'Spaces:',
-      ...m.spaces.map(
-        (sp) =>
-          `- ${sp.id} ${JSON.stringify(sp.name)} ${sp.icon} – ${sp.tabIds.length} tab(s)${sp.id === win.activeSpaceId ? ' [shown to the user]' : ''}`
-      ),
-      '',
-      'Tabs (position. id "title" url [flags]):',
-      listTabs(ctx)
-    ]
-    return text(lines.join('\n'))
+    return text(statusText(ctx))
   }
 }
+
+const SESSION_ACTIONS = ['status', 'end', 'rename'] as const
+type SessionAction = (typeof SESSION_ACTIONS)[number]
+const SESSION_ACTION_ALIASES: Record<string, SessionAction> = {
+  status: 'status',
+  info: 'status',
+  whoami: 'status',
+  get: 'status',
+  end: 'end',
+  close: 'end',
+  quit: 'end',
+  stop: 'end',
+  disconnect: 'end',
+  finish: 'end',
+  rename: 'rename',
+  name: 'rename',
+  setname: 'rename'
+}
+
+const zenSession: AgentTool = {
+  definition: {
+    name: 'zen_session',
+    title: 'Your session',
+    description:
+      'Your session in this browser. action "status": the same as zen_status. "end": end your session – with closeTabs: true your groups and every tab in them are closed (do this when you are done, unless the user wants the results kept); without it they stay open as orphaned groups another agent can adopt (zen_groups adopt). "rename": change the name shown on your cursor, badges and home group (name).',
+    inputSchema: schema(
+      {
+        action: { type: 'string', enum: [...SESSION_ACTIONS] },
+        closeTabs: {
+          type: 'boolean',
+          description: 'end: close your groups and their tabs (default: leave them as orphaned groups)'
+        },
+        name: { type: 'string', description: 'rename: your new name' }
+      },
+      ['action']
+    ),
+    annotations: { openWorldHint: false }
+  },
+  async run(ctx, args) {
+    const raw = (str(args, 'action') ?? 'status').toLowerCase().trim()
+    const action = SESSION_ACTION_ALIASES[raw]
+    if (!action)
+      throw new RpcError(
+        -32602,
+        `Unknown action ${JSON.stringify(raw)} – use one of ${SESSION_ACTIONS.map((a) => `"${a}"`).join(', ')}`
+      )
+    const s = ctx.session
+    if (action === 'status') return text(statusText(ctx))
+    if (action === 'rename') {
+      const name = need(args, 'name', 'the new name, e.g. "Research bot"')
+      const before = s.name
+      ctx.agents.rename(s, name)
+      const home = s.homeGroupId ? ctx.browser.state.model.folders[s.homeGroupId] : undefined
+      return text(
+        `You are ${JSON.stringify(s.name)} now (was ${JSON.stringify(before)}; session ${s.id}).${home ? ` Your home group is ${JSON.stringify(home.name)} (${home.id}).` : ''}`
+      )
+    }
+    const closeTabs = bool(args, 'closeTabs')
+    const groups = ctx.agents.groupsOf(s)
+    const { groups: n, tabs } = ctx.agents.endSession(s, closeTabs)
+    if (!n) return text('Session ended. You had no groups; nothing was left behind.')
+    return text(
+      closeTabs
+        ? `Session ended: your ${n} group${n === 1 ? '' : 's'} and ${tabs} tab${tabs === 1 ? '' : 's'} were closed.`
+        : `Session ended: your ${n} group${n === 1 ? '' : 's'} with ${tabs} tab${tabs === 1 ? '' : 's'} stay open as orphaned groups (${groups.map((g) => `${g.id} ${JSON.stringify(g.name)}`).join(', ')}) – a later session can take them back with zen_groups {"action":"adopt","groupId":"…"}, or the user closes them.`
+    )
+  }
+}
+
+const GROUP_ACTIONS = ['list', 'create', 'rename', 'close', 'adopt'] as const
+type GroupAction = (typeof GROUP_ACTIONS)[number]
+const GROUP_ACTION_ALIASES: Record<string, GroupAction> = {
+  list: 'list',
+  ls: 'list',
+  show: 'list',
+  get: 'list',
+  create: 'create',
+  new: 'create',
+  add: 'create',
+  make: 'create',
+  open: 'create',
+  rename: 'rename',
+  name: 'rename',
+  close: 'close',
+  delete: 'close',
+  remove: 'close',
+  destroy: 'close',
+  adopt: 'adopt',
+  claim: 'adopt',
+  take: 'adopt',
+  takeover: 'adopt',
+  resume: 'adopt'
+}
+
+const zenGroups: AgentTool = {
+  definition: {
+    name: 'zen_groups',
+    title: 'Your tab groups',
+    description:
+      'Your tab groups (Zen folders): every tab of yours sits in one, and a tab is yours because it does. action "list" (scope "own" = your groups with their tabs; "all" = every agent group with its owner and the user\'s folders); "create" a group (name optional; space: "agents" = the shared Agents space, default; "own" = a new space of your own named after you; a space id opens it in that space – the user\'s spaces only with allowForeign: true) and get its groupId; "rename" {groupId, name}; "close" {groupId} closes every tab in one of your groups and removes it; "adopt" {groupId} takes over an orphaned group (its agent is gone) with all its tabs. Changed: new tool – replaces guessing folders by name; browser_tabs group/ungroup are aliases onto it.',
+    inputSchema: schema(
+      {
+        action: { type: 'string', enum: [...GROUP_ACTIONS] },
+        scope: {
+          type: 'string',
+          enum: ['own', 'all'],
+          description: 'list: "own" (default) or "all"'
+        },
+        groupId: { ...GROUP_ID, description: 'rename / close / adopt: the group' },
+        name: { type: 'string', description: 'create / rename: the group name' },
+        space: {
+          type: 'string',
+          description:
+            'create: "agents" (default), "own" (a new space of yours), or a space id (the user\'s spaces need allowForeign: true)'
+        },
+        allowForeign: {
+          ...ALLOW_FOREIGN,
+          description: "create: allow the group in one of the user's spaces because the user asked"
+        }
+      },
+      ['action']
+    ),
+    annotations: { openWorldHint: false }
+  },
+  async run(ctx, args) {
+    const raw = (str(args, 'action') ?? 'list').toLowerCase().trim()
+    const action = GROUP_ACTION_ALIASES[raw]
+    if (!action)
+      throw new RpcError(
+        -32602,
+        `Unknown action ${JSON.stringify(raw)} – use one of ${GROUP_ACTIONS.map((a) => `"${a}"`).join(', ')}`
+      )
+    const s = ctx.session
+    const m = ctx.browser.state.model
+    if (action === 'list') {
+      const scope = (str(args, 'scope') ?? 'own').toLowerCase()
+      if (scope === 'all' || scope === 'everyone' || scope === 'everything') {
+        const agentGroups = ctx.agents.agentGroups()
+        const users = Object.values(m.folders).filter((f) => !agentGroups.includes(f))
+        const lines = [
+          `Agent groups (${agentGroups.length}):`,
+          ...(agentGroups.length
+            ? agentGroups.map((g) => listGroupTabs(ctx, g))
+            : ['(none – no agent has made a group yet)'])
+        ]
+        if (users.length) {
+          lines.push('', `The user's folders (${users.length}; not yours to use):`)
+          for (const f of users) lines.push(groupHeader(ctx, f, 'all'))
+        }
+        return text(lines.join('\n'))
+      }
+      return text(`Your groups – id "title" url [flags]:\n${listOwnTabs(ctx)}`)
+    }
+    if (action === 'create') {
+      const groups = ctx.agents.groupsOf(s)
+      const name = str(args, 'name') ?? `${s.name} · ${s.id.slice(-4)} · ${groups.length + 1}`
+      const where = (str(args, 'space') ?? 'agents').trim()
+      let space: Space
+      if (where.toLowerCase() === 'agents' || where.toLowerCase() === 'shared')
+        space = ctx.agents.agentsSpace()
+      else if (where.toLowerCase() === 'own' || where.toLowerCase() === 'mine' || where === 'new')
+        space = ctx.agents.createOwnSpace(s)
+      else {
+        const found =
+          m.spaces.find((sp) => sp.id === where) ??
+          m.spaces.find((sp) => sp.name.toLowerCase() === where.toLowerCase())
+        if (!found)
+          throw new RpcError(
+            -32602,
+            `Unknown space ${JSON.stringify(where)} – use "agents", "own", or an id from zen_spaces list:\n${listSpaces(ctx)}`
+          )
+        if (!ctx.agents.isAgentSpace(found.id) && !bool(args, 'allowForeign'))
+          throw new RpcError(
+            UNAUTHORIZED,
+            `Space ${found.id} ${JSON.stringify(found.name)} is the user's: a group there is a foreign act. Pass allowForeign: true if the user asked for it, or use space "agents" (the shared Agents space) or "own" (a space of yours).`
+          )
+        space = found
+      }
+      const group = ctx.agents.createGroup(s, name, space.id)
+      return text(
+        `Created group ${group.id} ${JSON.stringify(group.name)} in space ${JSON.stringify(space.name)}. browser_tabs {"action":"new","groupId":"${group.id}","url":"…"} opens tabs in it; browser_tabs move puts tabs of yours into it.\n\nYour groups:\n${listOwnTabs(ctx)}`
+      )
+    }
+    if (action === 'rename') {
+      const group = ctx.agents.resolveGroup(s, need(args, 'groupId', 'the group to rename'))
+      const name = need(args, 'name', 'the new name')
+      const before = group.name
+      ctx.agents.renameGroup(s, group, name)
+      return text(
+        `Renamed group ${group.id} from ${JSON.stringify(before)} to ${JSON.stringify(group.name)}.`
+      )
+    }
+    if (action === 'close') {
+      const group = ctx.agents.resolveGroup(s, need(args, 'groupId', 'the group to close'))
+      const name = group.name
+      const n = ctx.agents.closeGroup(s, group)
+      return text(
+        `Closed group ${group.id} ${JSON.stringify(name)} and its ${n} tab${n === 1 ? '' : 's'}.\n\nYour groups:\n${listOwnTabs(ctx)}`
+      )
+    }
+    const group = ctx.agents.resolveOrphan(s, pick(args, 'groupId'))
+    const was = ctx.agents.adopt(s, group)
+    const n = groupMembers(ctx, group).length
+    return text(
+      `Adopted group ${group.id} ${JSON.stringify(group.name)}${was ? ` (was ${JSON.stringify(was.ownerName)}'s)` : ''} with ${n} tab${n === 1 ? '' : 's'}${s.homeGroupId === group.id ? '; it is your home group now' : ''}.\n\nYour groups:\n${listOwnTabs(ctx)}`
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tools: mode and spaces
+// ---------------------------------------------------------------------------
 
 const zenMode: AgentTool = {
   definition: {
     name: 'zen_mode',
     title: 'Set your operating mode',
-    description:
-      'foreground: your tab is brought in front of the user before every action and your cursor shows what you do. background: you work in your own tabs without changing what the user sees (use this when the user is browsing or another agent works in the foreground).',
+    description: `foreground: your tab is brought in front of the user before every action and your cursor shows what you do – while you hold the screen: the first foreground action takes a lease on it, and while another agent holds the lease (active within ${LEASE_SECONDS} s) your calls run in the background and say so. background: you work in your own tabs without changing what the user sees; recommended whenever other agents are connected or the user is browsing. Changed: switching to foreground no longer brings a tab in front by itself, and the screen is a lease shared with the other agents.`,
     inputSchema: schema({ mode: { type: 'string', enum: ['foreground', 'background'] } }, ['mode']),
     annotations: { idempotentHint: true, openWorldHint: false }
   },
@@ -720,10 +1024,7 @@ const zenMode: AgentTool = {
         `mode must be "foreground" or "background" (got ${JSON.stringify(raw)})`
       )
     ctx.session.mode = mode
-    if (mode === 'foreground' && ctx.session.currentTabId) {
-      await ctx.agents.prepare(ctx.session, ctx.session.currentTabId, { activate: true })
-    }
-    return text(`You are now in ${mode} mode.`)
+    return text(`You are now in ${mode} mode. ${leaseLine(ctx)}`)
   }
 }
 
@@ -731,14 +1032,13 @@ const zenSpaces: AgentTool = {
   definition: {
     name: 'zen_spaces',
     title: 'Spaces',
-    description:
-      "List, create or switch Zenium spaces (workspaces that group tabs). New tabs open in the space shown to the user unless you pass spaceId to browser_tabs; create your own space to keep your work separate from the user's tabs.",
+    description: `List, create or switch Zenium spaces (workspaces that group tabs). Your tabs live in your groups in the shared "Agents" space unless you make a space of your own (create – it is not shown to the user until they or you switch to it). switch changes what the user sees and needs the screen lease: foreground mode, with no other agent holding the screen. Changed: create no longer switches the user's window to the new space; switch requires the foreground lease.`,
     inputSchema: schema(
       {
         action: { type: 'string', enum: ['list', 'create', 'switch'] },
-        name: { type: 'string', description: 'create: the new space name' },
+        name: { type: 'string', description: 'create: the new space name (default: your name)' },
         icon: { type: 'string', description: 'create: an emoji for the space' },
-        spaceId: { type: 'string', description: 'switch: the space to show' }
+        spaceId: { type: 'string', description: 'switch: the space to show (id or name)' }
       },
       ['action']
     ),
@@ -748,33 +1048,38 @@ const zenSpaces: AgentTool = {
     const action = need(args, 'action', 'use "list", "create" or "switch"').toLowerCase()
     const win = ctx.agents.agentWindow()
     const m = ctx.browser.state.model
-    const list = (): string =>
-      m.spaces
-        .map(
-          (sp) =>
-            `- ${sp.id} ${JSON.stringify(sp.name)} ${sp.icon} – ${sp.tabIds.length} tab(s)${sp.id === win.activeSpaceId ? ' [shown to the user]' : ''}`
-        )
-        .join('\n')
-    if (action === 'list') return text(`Spaces:\n${list()}`)
+    if (action === 'list') return text(`Spaces:\n${listSpaces(ctx)}`)
     if (action === 'create' || action === 'new') {
-      const name = str(args, 'name') ?? `${ctx.session.name}'s space`
-      const id = ctx.browser.handleCommand(win, 'space.create', {
-        name,
-        icon: str(args, 'icon') ?? '🤖',
-        containerId: win.activeSpace().containerId,
-        theme: null
-      }) as string
-      return text(`Created space ${id} ${JSON.stringify(name)}.\n\nSpaces:\n${list()}`)
+      const space = ctx.agents.createOwnSpace(ctx.session, {
+        name: str(args, 'name'),
+        icon: str(args, 'icon')
+      })
+      return text(
+        `Created space ${space.id} ${JSON.stringify(space.name)} (yours; the user's window was not switched to it). zen_groups {"action":"create","space":"${space.id}"} makes a group in it.\n\nSpaces:\n${listSpaces(ctx)}`
+      )
     }
     if (action === 'switch' || action === 'select' || action === 'activate') {
       const wanted = need(args, 'spaceId', 'the id (or name) of the space to show')
       const space =
         m.spaces.find((sp) => sp.id === wanted) ??
         m.spaces.find((sp) => sp.name.toLowerCase() === wanted.toLowerCase())
-      if (!space) throw new RpcError(-32602, `Unknown space ${wanted}.\n\nSpaces:\n${list()}`)
+      if (!space)
+        throw new RpcError(-32602, `Unknown space ${wanted}.\n\nSpaces:\n${listSpaces(ctx)}`)
+      if (ctx.session.mode !== 'foreground')
+        throw new RpcError(
+          UNAUTHORIZED,
+          'Switching the space the user sees needs the screen: you are in background mode. zen_mode {"mode":"foreground"} first – or leave the user\'s view alone and work in your groups.'
+        )
+      if (!ctx.agents.foreground(ctx.session, win)) {
+        const holder = ctx.agents.leaseHolder(win)
+        throw new RpcError(
+          UNAUTHORIZED,
+          `Switching the space the user sees needs the screen lease, and agent ${JSON.stringify(holder?.name ?? 'another agent')} holds it – try again once it has been quiet for ${LEASE_SECONDS} s, or work in your groups without switching.`
+        )
+      }
       ctx.browser.tabs.switchSpace(space.id, win)
       return text(
-        `Switched to space ${space.id} ${JSON.stringify(space.name)}.\n\nSpaces:\n${list()}`
+        `Switched to space ${space.id} ${JSON.stringify(space.name)}.\n\nSpaces:\n${listSpaces(ctx)}`
       )
     }
     throw new RpcError(
@@ -784,7 +1089,11 @@ const zenSpaces: AgentTool = {
   }
 }
 
-const TAB_ACTIONS = ['list', 'new', 'select', 'close', 'move', 'group', 'ungroup'] as const
+// ---------------------------------------------------------------------------
+// Tools: tabs
+// ---------------------------------------------------------------------------
+
+const TAB_ACTIONS = ['list', 'new', 'close', 'move', 'select', 'group', 'ungroup'] as const
 type TabAction = (typeof TAB_ACTIONS)[number]
 
 /** Verbs agents reach for instead of the canonical action names. */
@@ -812,7 +1121,6 @@ const TAB_ACTION_ALIASES: Record<string, TabAction> = {
   order: 'move',
   position: 'move',
   group: 'group',
-  folder: 'group',
   fold: 'group',
   ungroup: 'ungroup',
   unfold: 'ungroup',
@@ -824,35 +1132,46 @@ const browserTabs: AgentTool = {
     name: 'browser_tabs',
     title: 'Manage tabs',
     description:
-      'Tab management. action: "list" every tab (position, id, title, url, folder, who drives it); "new" opens a tab (optionally at url) that becomes your current tab; "select" makes an existing tab your current tab (the one page tools act on); "close" closes a tab; "move" reorders a tab to a 1-based index within its space; "group" puts tabIds into a tab folder called name (created if needed); "ungroup" takes a tab out of its folder. To change the page a tab shows, call browser_navigate with that tabId. Tabs driven by another agent are refused.',
+      'Your tabs. action "list": your groups with their tabs (scope "own", default); scope "group" with groupId lists one group; scope "all" lists every tab agents may see – the user\'s, marked [user\'s active tab], other agents\' marked [owned by "name"], and [orphaned] groups whose agent is gone. "new" opens a tab (url optional) in one of your groups – groupId, default your home group, made on first use in the shared Agents space – and returns its id; background: true keeps it out of the user\'s sight; spaceId opens it in the user\'s space and needs allowForeign: true. "close" {tabId} closes a tab of yours (a foreign one only with allowForeign, never an Essential or pinned tab of the user\'s). "move" {tabId, groupId?, index?} moves a tab of yours into another of your groups and/or to a 1-based slot in it. Deprecated aliases: "select" is browser_snapshot {tabId} (there is no current tab); "group" {tabIds, name} makes a group of yours and moves your tabs into it; "ungroup" {tabId} moves a tab of yours to your home group. To change the page a tab shows, call browser_navigate with that tabId. Changed: list has no positions and shows only your tabs by default; new opens in your group (not the user\'s space) and returns the id you pass to every page tool; select no longer sets a current tab.',
     inputSchema: schema(
       {
         action: { type: 'string', enum: [...TAB_ACTIONS] },
+        scope: {
+          type: 'string',
+          enum: ['own', 'group', 'all'],
+          description: 'list: "own" (default), "group" (with groupId) or "all"'
+        },
         url: { type: 'string', description: 'new: URL (or search words) to open' },
         tabId: {
           ...TAB_ID,
           description:
-            'select / close / move / ungroup: the tab (id, unique id prefix, or its 1-based position from list). close defaults to your current tab.'
+            'close / move / select / ungroup: the tab (id or unique id prefix from list; positions are refused)'
         },
         tabIds: {
           type: 'array',
           items: { type: 'string' },
-          description: 'group: the tabs to put in the folder (ids or positions)'
+          description: 'group: the tabs of yours to put together (ids)'
+        },
+        groupId: {
+          ...GROUP_ID,
+          description:
+            'new: the group to open the tab in (default: your home group); move: the group to move it into; list with scope "group": the group to list'
         },
         index: {
           type: 'number',
-          description:
-            "move: new 1-based position among the regular tabs of the tab's space (1 = first)"
+          description: 'move: the new 1-based slot within the group (1 = first)'
         },
-        name: { type: 'string', description: 'group: the folder name' },
+        name: { type: 'string', description: 'group: the name of the new group' },
         spaceId: {
           type: 'string',
-          description: 'new: space to open the tab in (default: the space shown to the user)'
+          description:
+            "new: open in this space of the user's instead of your group – needs allowForeign: true"
         },
         background: {
           type: 'boolean',
           description: 'new: never bring the new tab in front of the user, even in foreground mode'
-        }
+        },
+        allowForeign: ALLOW_FOREIGN
       },
       ['action']
     ),
@@ -863,7 +1182,8 @@ const browserTabs: AgentTool = {
     if (!rawAction) {
       // A bare {url} means "open it"; nothing at all means "list".
       if (str(args, 'url')) args = { ...args, action: 'new' }
-      else return text(`Tabs (position. id "title" url [flags]):\n${listTabs(ctx)}`)
+      else if (pick(args, 'groupId') !== undefined) args = { ...args, action: 'list', scope: 'group' }
+      else return text(`Your tabs – id "title" url [flags]:\n${listOwnTabs(ctx)}`)
     }
     const action = TAB_ACTION_ALIASES[(str(args, 'action') ?? 'list').toLowerCase().trim()]
     if (!action)
@@ -873,88 +1193,134 @@ const browserTabs: AgentTool = {
       )
     const s = ctx.session
     const tabs = ctx.browser.tabs
-    const listing = (): string => `Tabs (position. id "title" url [flags]):\n${listTabs(ctx)}`
-    if (action === 'list') return text(listing())
+    const foreign = bool(args, 'allowForeign')
+    const own = (): string => `Your tabs – id "title" url [flags]:\n${listOwnTabs(ctx)}`
+    if (action === 'list') {
+      const groupRef = pick(args, 'groupId')
+      const scope = (str(args, 'scope') ?? (groupRef !== undefined ? 'group' : 'own')).toLowerCase()
+      if (scope === 'all' || scope === 'everyone' || scope === 'everything')
+        return text(`All tabs – id "title" url [flags]:\n${listAllTabs(ctx)}`)
+      if (scope === 'group' || scope === 'folder') {
+        if (groupRef === undefined)
+          throw new RpcError(
+            -32602,
+            `scope "group" needs groupId (one of your groups from zen_groups list).\n\n${own()}`
+          )
+        const group = ctx.agents.resolveGroup(s, groupRef, foreign)
+        return text(listGroupTabs(ctx, group))
+      }
+      if (scope !== 'own' && scope !== 'mine' && scope !== 'yours')
+        throw new RpcError(-32602, `scope must be "own", "group" or "all" (got ${JSON.stringify(scope)})`)
+      return text(own())
+    }
     if (action === 'new') {
       const win = ctx.agents.agentWindow()
       const rawUrl = str(args, 'url')
       const url = rawUrl ? resolveUrl(ctx, rawUrl) : undefined
-      const foreground = s.mode === 'foreground' && !bool(args, 'background')
+      const groupRef = pick(args, 'groupId')
       const spaceId = str(args, 'spaceId')
-      if (spaceId && !ctx.browser.state.model.spaces.some((sp) => sp.id === spaceId))
-        throw new RpcError(
-          -32602,
-          `Unknown space ${spaceId} – zen_spaces {"action":"list"} shows the ids (or omit spaceId)`
-        )
-      const tab = tabs.createTab({ url, spaceId, active: foreground, load: false }, win)
-      ctx.agents.claim(s, tab.id)
-      const view = await ctx.agents.prepare(s, tab.id, { activate: foreground })
+      // The lease decides whether the user sees the new tab (`background: true` never asks).
+      const active = !bool(args, 'background') && ctx.agents.foreground(s, win)
+      let tab: Tab
+      let where: string
+      if (groupRef !== undefined) {
+        const group = ctx.agents.resolveGroup(s, groupRef)
+        tab = ctx.agents.openTab(s, group, { url, active }, win)
+        where = `in your group ${JSON.stringify(group.name)} (${group.id})`
+      } else if (spaceId) {
+        const space =
+          ctx.browser.state.model.spaces.find((sp) => sp.id === spaceId) ??
+          ctx.browser.state.model.spaces.find((sp) => sp.name.toLowerCase() === spaceId.toLowerCase())
+        if (!space)
+          throw new RpcError(
+            -32602,
+            `Unknown space ${spaceId} – zen_spaces {"action":"list"} shows the ids (or omit spaceId to open in your group)`
+          )
+        if (ctx.agents.isAgentSpace(space.id)) {
+          const group = ctx.agents.groupIn(s, space.id)
+          tab = ctx.agents.openTab(s, group, { url, active }, win)
+          where = `in your group ${JSON.stringify(group.name)} (${group.id}) in space ${JSON.stringify(space.name)}`
+        } else {
+          if (!foreign)
+            throw new RpcError(
+              UNAUTHORIZED,
+              `Opening a tab in the user's space ${JSON.stringify(space.name)} is a foreign act – pass allowForeign: true if the user asked for it; otherwise omit spaceId (your tabs live in your groups in the "Agents" space) or make a space of your own with zen_groups {"action":"create","space":"own"}.`
+            )
+          tab = tabs.createTab({ url, spaceId: space.id, active, load: false }, win)
+          where = `in the user's space ${JSON.stringify(space.name)} – it is not in one of your groups, so every later call on it needs allowForeign: true`
+        }
+      } else {
+        const group = ctx.agents.homeGroup(s)
+        tab = ctx.agents.openTab(s, group, { url, active }, win)
+        where = `in your home group ${JSON.stringify(group.name)} (${group.id})`
+      }
+      const view = await ctx.agents.prepare(s, tab.id, { activate: active })
       if (url) await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
       return pageResult(
         ctx,
         tab,
         view,
-        `Opened tab ${tab.id}${url ? ` at ${url}` : ' (blank)'}. It is now your current tab${url ? '' : ' – browser_navigate loads a page in it'}.`
+        `Opened tab ${tab.id} ${where}${url ? ` at ${url}` : ' (blank – browser_navigate loads a page in it)'}. Pass tabId: ${JSON.stringify(tab.id)} to page tools.`
       )
     }
     if (action === 'select') {
-      const ref = pick(args, 'tabId')
-      if (ref === undefined)
-        throw new RpcError(-32602, `select needs tabId (a tab id or its position).\n\n${listing()}`)
-      const tab = ctx.agents.claim(s, resolveTabRef(ctx, ref))
+      if (pick(args, 'tabId') === undefined && ctx.agents.ownedTabs(s).length !== 1)
+        throw new RpcError(
+          -32602,
+          `select needs tabId. Deprecated: there is no current tab any more – browser_tabs select is browser_snapshot {"tabId":"…"}; pass tabId to every page tool.\n\n${own()}`
+        )
+      const tab = targetTab(ctx, args)
       const view = await ctx.agents.prepare(s, tab.id)
-      return pageResult(ctx, tab, view, `Tab ${tab.id} is now your current tab.`)
+      return pageResult(
+        ctx,
+        tab,
+        view,
+        `Deprecated: there is no current tab any more – "select" only took this snapshot of tab ${tab.id}; pass tabId: ${JSON.stringify(tab.id)} to every page tool instead.`
+      )
     }
     if (action === 'close') {
-      const ref = pick(args, 'tabId')
-      const tabId = ref === undefined ? s.currentTabId : resolveTabRef(ctx, ref)
-      if (!tabId)
-        throw new RpcError(-32602, 'No tab to close – you have no current tab and gave no tabId')
-      const driver = ctx.agents.driver(tabId)
-      if (driver && driver.id !== s.id)
+      if (pick(args, 'tabId') === undefined && ctx.agents.ownedTabs(s).length !== 1)
+        throw new RpcError(-32602, `close needs tabId (the tab to close).\n\n${own()}`)
+      const tab = targetTab(ctx, args)
+      const owner = ctx.agents.owner(s, tab)
+      if (owner.kind === 'user' && (tab.essential || tab.pinned))
         throw new RpcError(
-          -32001,
-          `Tab ${tabId} is being driven by agent "${driver.name}" – only your own tabs (or unclaimed ones) can be closed`
+          UNAUTHORIZED,
+          `Tab ${tab.id} is ${tab.essential ? 'an Essential' : 'a pinned tab'} of the user's – agents never close, move or group the user's Essentials and pinned tabs, not even with allowForeign.`
         )
-      if (!driver) {
-        // Positions make it easy to hit the wrong tab: never close the user's curated tabs.
-        const t = tabs.tab(tabId)
-        if (t && (t.essential || t.pinned))
-          throw new RpcError(
-            -32001,
-            `Tab ${tabId} is ${t.essential ? 'an Essential' : 'a pinned tab'} of the user's, not one of yours – agents only close tabs they opened or ordinary tabs`
-          )
-        ctx.agents.claim(s, tabId)
-      }
-      tabs.closeTab(tabId, true, ctx.agents.agentWindow())
-      return text(
-        `Closed tab ${tabId}. Your current tab is now ${s.currentTabId ?? 'none'}.\n\n${listing()}`
-      )
+      const title = titleOf(tab)
+      tabs.closeTab(tab.id, true, ctx.agents.agentWindow())
+      const whose =
+        owner.kind === 'you'
+          ? ''
+          : owner.kind === 'orphaned'
+            ? ' (a tab of an orphaned agent group, with allowForeign)'
+            : " (a tab of the user's, with allowForeign)"
+      return text(`Closed tab ${tab.id} ${JSON.stringify(title)}${whose}.\n\n${own()}`)
     }
     if (action === 'move') {
-      const ref = pick(args, 'tabId')
+      // `index` is the slot here, not a tab reference: keep the alias out of the tab lookup.
+      const ref = pick({ ...args, index: undefined, tabIndex: undefined }, 'tabId')
       if (ref === undefined)
-        throw new RpcError(-32602, `move needs tabId and index.\n\n${listing()}`)
+        throw new RpcError(
+          -32602,
+          `move needs tabId (the tab of yours to move) and groupId and/or index.\n\n${own()}`
+        )
+      const groupRef = pick(args, 'groupId')
       const index = num(args, 'index') ?? num(args, 'position') ?? num(args, 'to')
-      if (index === undefined)
+      if (groupRef === undefined && index === undefined)
         throw new RpcError(
           -32602,
-          "move needs index: the new 1-based position within the tab's space"
+          'move needs groupId (one of your groups to move the tab into) and/or index (its new 1-based slot in the group)'
         )
-      const tab = ctx.agents.claim(s, resolveTabRef(ctx, ref))
-      if (tab.essential)
-        throw new RpcError(
-          -32602,
-          `Tab ${tab.id} is an Essential; Essentials cannot be reordered by agents`
-        )
-      const win = ctx.agents.agentWindow()
-      tabs.moveTab(
-        tab.id,
-        { section: tab.pinned ? 'pinned' : 'regular', index: Math.max(0, Math.round(index) - 1) },
-        win
-      )
+      const tab = ctx.agents.resolveTab(s, ref)
+      const current = folderOf(ctx, tab)
+      const group = groupRef !== undefined ? ctx.agents.resolveGroup(s, groupRef) : current
+      if (!group) throw new RpcError(-32002, `Tab ${tab.id} is in no group of yours any more`)
+      ctx.agents.moveToGroup(s, tab, group, index)
+      const slot = index === undefined ? '' : ` to slot ${Math.max(1, Math.round(index))}`
       return text(
-        `Moved tab ${tab.id} to position ${Math.max(1, Math.round(index))} in its space.\n\n${listing()}`
+        `Moved tab ${tab.id}${group.id !== current?.id ? ` into your group ${JSON.stringify(group.name)} (${group.id})` : ` within your group ${JSON.stringify(group.name)}`}${slot}.\n\n${own()}`
       )
     }
     if (action === 'group') {
@@ -970,58 +1336,49 @@ const browserTabs: AgentTool = {
       if (!refs.length)
         throw new RpcError(
           -32602,
-          `group needs tabIds (the tabs to put together) and name (the folder name).\n\n${listing()}`
+          `group needs tabIds (the tabs of yours to put together) and name (the group name). Deprecated alias: zen_groups create + browser_tabs move do the same.\n\n${own()}`
         )
-      const ids = refs.map((r) => resolveTabRef(ctx, r))
-      const members = ids.map((id) => ctx.agents.claim(s, id))
-      const pinned = members.filter((t) => t.pinned || t.essential)
-      if (pinned.length)
-        throw new RpcError(
-          -32602,
-          `Pinned and Essential tabs cannot be put in folders (${pinned.map((t) => t.id).join(', ')})`
-        )
-      const spaceId = members[0].spaceId ?? ctx.agents.agentWindow().activeSpace().id
-      const foreign = members.filter((t) => (t.spaceId ?? spaceId) !== spaceId)
-      if (foreign.length)
-        throw new RpcError(
-          -32602,
-          `All tabs of a folder must be in the same space; ${foreign.map((t) => t.id).join(', ')} are elsewhere`
-        )
-      const name = str(args, 'name') ?? 'Agent tabs'
-      const m = ctx.browser.state.model
-      const existing = Object.values(m.folders).find(
-        (f) => f.spaceId === spaceId && f.name.toLowerCase() === name.toLowerCase()
-      )
-      const folder = existing ?? createFolder(m, spaceId, name, '📁')
-      for (const t of members) tabs.moveToFolder(t.id, folder.id)
-      ctx.browser.state.commit()
+      const members = refs.map((r) => ctx.agents.resolveTab(s, r))
+      const name = str(args, 'name')
+      const existing = name
+        ? ctx.agents.groupsOf(s).find((g) => g.name.toLowerCase() === name.toLowerCase())
+        : undefined
+      const group =
+        existing ?? ctx.agents.createGroup(s, name ?? `${s.name} · ${s.id.slice(-4)} · ${ctx.agents.groupsOf(s).length + 1}`, ctx.agents.agentsSpace().id)
+      for (const t of members) ctx.agents.moveToGroup(s, t, group)
       return text(
-        `${existing ? 'Added' : 'Created folder'} ${JSON.stringify(folder.name)} ${existing ? 'to' : 'with'} ${members.length} tab(s): ${members.map((t) => t.id).join(', ')}.\n\n${listing()}`
+        `${existing ? 'Added' : 'Created group'} ${JSON.stringify(group.name)} (${group.id}) ${existing ? 'got' : 'with'} ${members.length} tab${members.length === 1 ? '' : 's'}: ${members.map((t) => t.id).join(', ')}. (Deprecated alias of zen_groups create + browser_tabs move.)\n\n${own()}`
       )
     }
     if (action === 'ungroup') {
       const ref = pick(args, 'tabId')
-      if (ref === undefined) throw new RpcError(-32602, `ungroup needs tabId.\n\n${listing()}`)
-      const tab = ctx.agents.claim(s, resolveTabRef(ctx, ref))
-      if (!tab.folderId) return text(`Tab ${tab.id} is not in a folder.\n\n${listing()}`)
-      tabs.moveToFolder(tab.id, null)
-      return text(`Took tab ${tab.id} out of its folder.\n\n${listing()}`)
+      if (ref === undefined) throw new RpcError(-32602, `ungroup needs tabId.\n\n${own()}`)
+      const tab = ctx.agents.resolveTab(s, ref)
+      const home = ctx.agents.homeGroup(s)
+      if (tab.folderId === home.id)
+        return text(
+          `Tab ${tab.id} is already in your home group ${JSON.stringify(home.name)}. A tab of yours always sits in one of your groups; zen_groups close removes a whole group.\n\n${own()}`
+        )
+      ctx.agents.moveToGroup(s, tab, home)
+      return text(
+        `Moved tab ${tab.id} to your home group ${JSON.stringify(home.name)} (a tab of yours always sits in one of your groups). (Deprecated alias of browser_tabs move.)\n\n${own()}`
+      )
     }
     throw new RpcError(-32602, `action must be one of ${TAB_ACTIONS.join(', ')}`)
   }
 }
 
+// ---------------------------------------------------------------------------
+// Tools: navigation and the page
+// ---------------------------------------------------------------------------
+
 const browserNavigate: AgentTool = {
   definition: {
     name: 'browser_navigate',
     title: 'Navigate',
-    description:
-      "Load a URL in your current tab (or in tabId – this is also how you change the URL of an existing tab). Plain words are searched with the user's default search engine. Opens a tab for you when you have none. Returns a snapshot of the loaded page. Related: browser_navigate_back, browser_navigate_forward, browser_reload.",
-    inputSchema: schema(
-      {
-        url: { type: 'string', description: 'Full URL (https://…) or search words' },
-        tabId: TAB_ID
-      },
+    description: `Load a URL in the tab tabId (this is also how you change the URL of an existing tab of yours). Plain words are searched with the user's default search engine. When you own no tab yet, one is opened for you in your home group and the result names it. Returns a snapshot of the loaded page. Related: browser_navigate_back, browser_navigate_forward, browser_reload. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema(
+      { url: { type: 'string', description: 'Full URL (https://…) or search words' } },
       ['url']
     ),
     annotations: { openWorldHint: true }
@@ -1032,14 +1389,14 @@ const browserNavigate: AgentTool = {
       need(args, 'url', 'the address to open, e.g. "https://example.com"')
     )
     const s = ctx.session
-    const explicit = tabArg(ctx, args)
     let tab: Tab
-    if (explicit || s.currentTabId) tab = ctx.agents.resolveTab(s, explicit)
-    else {
+    let opened = ''
+    if (pick(args, 'tabId') === undefined && !ctx.agents.ownedTabs(s).length) {
       const win = ctx.agents.agentWindow()
-      tab = ctx.browser.tabs.createTab({ active: s.mode === 'foreground', load: false }, win)
-      ctx.agents.claim(s, tab.id)
-    }
+      const group = ctx.agents.homeGroup(s)
+      tab = ctx.agents.openTab(s, group, { active: ctx.agents.foreground(s, win) }, win)
+      opened = ` Opened tab ${tab.id} in your home group ${JSON.stringify(group.name)} for it – pass tabId: ${JSON.stringify(tab.id)} to page tools.`
+    } else tab = targetTab(ctx, args)
     await ctx.agents.prepare(s, tab.id)
     ctx.browser.tabs.navigate(tab.id, url)
     const loaded = await ctx.agents.waitForLoad(tab.id, LOAD_TIMEOUT_MS, { expectNavigation: true })
@@ -1051,7 +1408,7 @@ const browserNavigate: AgentTool = {
       ctx,
       tab,
       view,
-      `Navigated to ${url}${loaded ? '' : ' (still loading after 15 s – browser_wait_for can wait for content)'}.`
+      `Navigated to ${url}${loaded ? '' : ' (still loading after 15 s – browser_wait_for can wait for content)'}.${opened}`
     )
   }
 }
@@ -1060,9 +1417,8 @@ const browserNavigateBack: AgentTool = {
   definition: {
     name: 'browser_navigate_back',
     title: 'Go back',
-    description:
-      "Go back one page in the tab's history (like the Back button) and return a snapshot. Undo with browser_navigate_forward.",
-    inputSchema: schema({ tabId: TAB_ID }),
+    description: `Go back one page in the tab's history (like the Back button) and return a snapshot. Undo with browser_navigate_forward. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({}),
     annotations: { openWorldHint: true }
   },
   async run(ctx, args) {
@@ -1081,9 +1437,8 @@ const browserNavigateForward: AgentTool = {
   definition: {
     name: 'browser_navigate_forward',
     title: 'Go forward',
-    description:
-      "Go forward one page in the tab's history (like the Forward button, after browser_navigate_back) and return a snapshot.",
-    inputSchema: schema({ tabId: TAB_ID }),
+    description: `Go forward one page in the tab's history (like the Forward button, after browser_navigate_back) and return a snapshot. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({}),
     annotations: { openWorldHint: true }
   },
   async run(ctx, args) {
@@ -1102,10 +1457,8 @@ const browserReload: AgentTool = {
   definition: {
     name: 'browser_reload',
     title: 'Reload',
-    description:
-      'Reload the current page of the tab (like the Reload button) and return a snapshot. ignoreCache: true forces a fresh download of every resource.',
-    inputSchema: schema({
-      tabId: TAB_ID,
+    description: `Reload the current page of the tab (like the Reload button) and return a snapshot. ignoreCache: true forces a fresh download of every resource. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({
       ignoreCache: { type: 'boolean', description: 'Hard reload, bypassing the cache' }
     }),
     annotations: { openWorldHint: true }
@@ -1122,10 +1475,8 @@ const browserSnapshot: AgentTool = {
   definition: {
     name: 'browser_snapshot',
     title: 'Page snapshot',
-    description:
-      "Read the page as an accessibility-style tree (roles, names, values, links). Each element carries a [ref=eN] handle: pass the eN as target to browser_click / browser_type / browser_hover / browser_select_option / browser_take_screenshot. Prefer this over screenshots for finding things to act on; refs stay valid until the element leaves the page. For long pages use filter or interactiveOnly; boxes adds each element's viewport rectangle when you need coordinates.",
-    inputSchema: schema({
-      tabId: TAB_ID,
+    description: `Read the page as an accessibility-style tree (roles, names, values, links). Each element carries a [ref=eN] handle: pass the eN as target to browser_click / browser_type / browser_hover / browser_select_option / browser_take_screenshot. Prefer this over screenshots for finding things to act on; refs stay valid until the element leaves the page. For long pages use filter or interactiveOnly; boxes adds each element's viewport rectangle when you need coordinates. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({
       filter: { type: 'string', description: 'Only lines containing this text (case-insensitive)' },
       interactiveOnly: { type: 'boolean', description: 'Only links, buttons, fields and headings' },
       boxes: {
@@ -1154,12 +1505,11 @@ const browserClick: AgentTool = {
   definition: {
     name: 'browser_click',
     title: 'Click',
-    description: `Click an element (target) or a point (x, y). Scrolls the element into view, moves your cursor there and clicks; returns a snapshot afterwards. ${XY_NOTE}`,
-    inputSchema: schema({
+    description: `Click an element (target) or a point (x, y). Scrolls the element into view, moves your cursor there and clicks; returns a snapshot afterwards. ${XY_NOTE} ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({
       target: TARGET,
       x: { type: 'number', description: 'Viewport x in CSS px (with y, instead of target)' },
       y: { type: 'number', description: 'Viewport y in CSS px (with x, instead of target)' },
-      tabId: TAB_ID,
       doubleClick: { type: 'boolean' },
       button: { type: 'string', enum: ['left', 'right', 'middle'] },
       modifiers: {
@@ -1204,12 +1554,11 @@ const browserHover: AgentTool = {
   definition: {
     name: 'browser_hover',
     title: 'Hover',
-    description: `Move the mouse over an element (target) or to a point (x, y) without clicking – opens hover menus, shows tooltips – and return a snapshot with whatever appeared. ${XY_NOTE}`,
-    inputSchema: schema({
+    description: `Move the mouse over an element (target) or to a point (x, y) without clicking – opens hover menus, shows tooltips – and return a snapshot with whatever appeared. ${XY_NOTE} ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({
       target: TARGET,
       x: { type: 'number', description: 'Viewport x in CSS px (with y, instead of target)' },
-      y: { type: 'number', description: 'Viewport y in CSS px (with x, instead of target)' },
-      tabId: TAB_ID
+      y: { type: 'number', description: 'Viewport y in CSS px (with x, instead of target)' }
     }),
     annotations: { openWorldHint: false }
   },
@@ -1234,13 +1583,11 @@ const browserType: AgentTool = {
   definition: {
     name: 'browser_type',
     title: 'Type text',
-    description:
-      'Type text into an editable element (text field, textarea, rich editor): clicks it, then enters the text. Replaces the current value unless clear is false. submit: true presses Enter afterwards. Returns a snapshot. Use browser_click for checkboxes and browser_select_option for <select> menus.',
-    inputSchema: schema(
+    description: `Type text into an editable element (text field, textarea, rich editor): clicks it, then enters the text. Replaces the current value unless clear is false. submit: true presses Enter afterwards. Returns a snapshot. Use browser_click for checkboxes and browser_select_option for <select> menus. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema(
       {
         target: TARGET,
         text: { type: 'string', description: 'The text to enter' },
-        tabId: TAB_ID,
         submit: { type: 'boolean', description: 'Press Enter after typing' },
         clear: { type: 'boolean', description: 'Replace the existing value (default true)' }
       },
@@ -1306,12 +1653,10 @@ const browserPressKey: AgentTool = {
   definition: {
     name: 'browser_press_key',
     title: 'Press a key',
-    description:
-      'Press one keyboard key in the page (Enter, Tab, Escape, ArrowDown, PageDown, a, …) with optional modifiers; it goes to the focused element. Returns a snapshot. To enter a whole text use browser_type.',
-    inputSchema: schema(
+    description: `Press one keyboard key in the page (Enter, Tab, Escape, ArrowDown, PageDown, a, …) with optional modifiers; it goes to the focused element. Returns a snapshot. To enter a whole text use browser_type. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema(
       {
         key: { type: 'string', description: 'Key name (Enter, Escape, ArrowDown, Tab, a, …)' },
-        tabId: TAB_ID,
         modifiers: {
           type: 'array',
           items: { type: 'string', enum: ['Shift', 'Control', 'Alt', 'Meta'] }
@@ -1340,10 +1685,8 @@ const browserScroll: AgentTool = {
   definition: {
     name: 'browser_scroll',
     title: 'Scroll',
-    description:
-      'Scroll the page: by a viewport in a direction (default: down), by amount pixels, to an element (target), or to: "top" / "bottom". Returns a snapshot that states the new scroll position. Content that only loads when scrolled into view appears after scrolling.',
-    inputSchema: schema({
-      tabId: TAB_ID,
+    description: `Scroll the page: by a viewport in a direction (default: down), by amount pixels, to an element (target), or to: "top" / "bottom". Returns a snapshot that states the new scroll position. Content that only loads when scrolled into view appears after scrolling. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
       amount: { type: 'number', description: 'Pixels (default: 80% of the viewport)' },
       target: { ...TARGET, description: 'Scroll this element into view instead' },
@@ -1405,17 +1748,15 @@ const browserSelectOption: AgentTool = {
   definition: {
     name: 'browser_select_option',
     title: 'Select option',
-    description:
-      'Choose option(s) of a <select> drop-down (role combobox in snapshots) by value or visible label. Returns a snapshot.',
-    inputSchema: schema(
+    description: `Choose option(s) of a <select> drop-down (role combobox in snapshots) by value or visible label. Returns a snapshot. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema(
       {
         target: TARGET,
         values: {
           type: 'array',
           items: { type: 'string' },
           description: 'Option value(s) or visible label(s); a single string is accepted too'
-        },
-        tabId: TAB_ID
+        }
       },
       ['target', 'values']
     ),
@@ -1453,10 +1794,8 @@ const browserTakeScreenshot: AgentTool = {
   definition: {
     name: 'browser_take_screenshot',
     title: 'Screenshot',
-    description:
-      'Take a screenshot and return it as an image. Default: the visible viewport. fullPage: true captures the whole scrollable page in one image; target captures just that element (a ref from browser_snapshot or a CSS selector). Use browser_snapshot to find elements to act on; screenshots are for checking layout and images.',
-    inputSchema: schema({
-      tabId: TAB_ID,
+    description: `Take a screenshot and return it as an image. Default: the visible viewport. fullPage: true captures the whole scrollable page in one image; target captures just that element (a ref from browser_snapshot or a CSS selector). Use browser_snapshot to find elements to act on; screenshots are for checking layout and images. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({
       fullPage: { type: 'boolean', description: 'Capture the entire page, not only the viewport' },
       target: { ...TARGET, description: 'Capture only this element (ref, CSS selector or text=…)' },
       type: { type: 'string', enum: ['jpeg', 'png'], description: 'Image format (default jpeg)' }
@@ -1555,10 +1894,8 @@ const browserReadPage: AgentTool = {
   definition: {
     name: 'browser_read_page',
     title: 'Read page text',
-    description:
-      'The readable text of the page as plain text: the article (title, byline, body) when the page looks like one, otherwise all visible text. Much cheaper than a snapshot when you only need to read or answer questions about the content; use browser_snapshot when you need to click or type.',
-    inputSchema: schema({
-      tabId: TAB_ID,
+    description: `The readable text of the page as plain text: the article (title, byline, body) when the page looks like one, otherwise all visible text. Much cheaper than a snapshot when you only need to read or answer questions about the content; use browser_snapshot when you need to click or type. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({
       maxChars: {
         type: 'number',
         description: 'Truncate after this many characters (default 20000)'
@@ -1610,10 +1947,8 @@ const browserWaitFor: AgentTool = {
   definition: {
     name: 'browser_wait_for',
     title: 'Wait',
-    description:
-      'Wait until text appears (text) or disappears (textGone), until a CSS selector matches (selector), or simply for a number of seconds (time). Returns a snapshot.',
-    inputSchema: schema({
-      tabId: TAB_ID,
+    description: `Wait until text appears (text) or disappears (textGone), until a CSS selector matches (selector), or simply for a number of seconds (time). Returns a snapshot. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema({
       text: { type: 'string', description: 'Wait until this text is on the page' },
       textGone: { type: 'string', description: 'Wait until this text is gone from the page' },
       selector: { type: 'string', description: 'Wait until this CSS selector matches an element' },
@@ -1669,16 +2004,14 @@ const browserEvaluate: AgentTool = {
   definition: {
     name: 'browser_evaluate',
     title: 'Run JavaScript',
-    description:
-      'Run JavaScript in the page and return the JSON-serialised result: an expression ("document.title"), or a function ("() => document.body.dataset.build"). Use it to read attributes, computed values or anything the snapshot does not show. Off by default: the tool only works after the user enables "Allow agents to run JavaScript in pages" in Zenium Settings → AI Agents.',
-    inputSchema: schema(
+    description: `Run JavaScript in the page and return the JSON-serialised result: an expression ("document.title"), or a function ("() => document.body.dataset.build"). Use it to read attributes, computed values or anything the snapshot does not show. Off by default: the tool only works after the user enables "Allow agents to run JavaScript in pages" in Zenium Settings → AI Agents. ${PAGE_CHANGED}`,
+    inputSchema: pageSchema(
       {
         expression: {
           type: 'string',
           description:
             'JavaScript expression or arrow function, e.g. "document.querySelectorAll(\'p\').length"'
-        },
-        tabId: TAB_ID
+        }
       },
       ['expression']
     ),
@@ -1798,21 +2131,36 @@ export const AGENT_TOOLS: AgentTool[] = [
   browserTakeScreenshot,
   browserReadPage,
   browserEvaluate,
+  zenGroups,
+  zenSession,
   zenSpaces,
   zenMode,
   zenHistory
 ]
 
-export function agentInstructions(mode: AgentMode, allowScripts: boolean): string {
+/**
+ * The server's `instructions`: how to behave in a browser the user and other agents share. `others`
+ * is how many other agents are connected right now – with any, background mode is the
+ * recommendation.
+ */
+export function agentInstructions(mode: AgentMode, allowScripts: boolean, others = 0): string {
+  const company =
+    others > 0
+      ? `${others} other agent${others === 1 ? ' is' : 's are'} connected right now`
+      : 'no other agent is connected right now, but one may join at any time'
   return [
-    "You are controlling the user's Zenium browser (Chromium) through its built-in MCP server. The user – and possibly other agents – share this browser, so:",
-    '- Call zen_status first: it tells you your name and colour, your mode, the spaces, every open tab (position, id, title, URL) and which agent drives which tab.',
-    '- Open your own tab with browser_tabs {"action":"new","url":"…"} (or just browser_navigate) instead of taking over tabs you do not own. Tabs driven by another agent are refused. Page tools act on your current tab unless you pass tabId (an id, a unique id prefix, or the tab\'s position in the list).',
+    "You are controlling the user's Zenium browser (Chromium) through its built-in MCP server. The user and other agents share this browser, and every agent works in tab groups of its own, so:",
+    '- Address everything by id. Every page tool takes tabId – a tab id from browser_tabs (a unique prefix is enough); there is no current tab, and list positions are refused because they shift whenever another agent or the user opens or closes a tab. Only while you own exactly one tab may you omit tabId.',
+    '- Create your group and stay inside it. browser_tabs {"action":"new","url":"…"} makes your home group (in the shared "Agents" space, never in the user\'s spaces) and opens a tab in it – copy the id it returns. zen_groups create makes more groups (space: "own" gives you a space of your own); browser_tabs move moves your tabs between your groups. Call zen_status first: it shows your groups and tabs, the other agents and the spaces.',
+    `- Others exist (${company}). Another live agent's tabs cannot be addressed at all. The user's tabs are theirs: act on one only when the user asked you to work on their page, and then pass allowForeign: true (browser_tabs {"action":"list","scope":"all"} shows every tab with its owner). It never makes the tab yours, and the user's Essentials and pinned tabs are never closed, moved or grouped.`,
+    '- Never close, move or navigate what you did not create. A group whose agent is gone is orphaned: adopt it with zen_groups {"action":"adopt","groupId":"…"} if you are continuing that work, otherwise leave it.',
+    '- Clean up. When you are done, zen_session {"action":"end","closeTabs":true} closes your groups and tabs – unless the user wants the results kept; then end without closeTabs and your groups stay as orphaned groups.',
+    '- Expect notices. When the user or another agent closes or moves one of your tabs or groups, a "Notice:" line tops your next result: read it and re-list (browser_tabs list) instead of retrying blindly.',
     '- browser_snapshot returns the page as an accessibility tree whose elements carry [ref=eN] handles; pass the eN as target to browser_click, browser_type, browser_hover, browser_select_option and browser_take_screenshot. target also takes a CSS selector or text=Visible label, and browser_click / browser_hover take x,y viewport coordinates instead. Every action returns a fresh snapshot.',
-    '- Navigation: browser_navigate (also changes the URL of an existing tab via tabId), browser_navigate_back, browser_navigate_forward, browser_reload. Tabs: browser_tabs list / new / select / close / move (reorder) / group (folder) / ungroup.',
+    '- Navigation: browser_navigate (also changes the URL of a tab of yours via tabId; opens a tab in your home group when you have none), browser_navigate_back, browser_navigate_forward, browser_reload. Tabs: browser_tabs list / new / close / move. Groups: zen_groups list / create / rename / close / adopt (browser_tabs group / ungroup are deprecated aliases).',
     '- browser_read_page is the cheap way to read an article; browser_take_screenshot (viewport, fullPage: true, or target for one element) only when the layout or an image matters.',
-    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action, a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open). Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen or had not painted its first frame yet (then wait a moment and retry). Switch with zen_mode.`,
-    '- browser_navigate accepts URLs or search words. Use zen_spaces to keep your work in its own space when it is more than a quick lookup.',
+    `- You start in ${mode.toUpperCase()} mode. Foreground: your tab is brought in front of the user before each action, a cursor with your name shows what you do, and clicks, hovers and keys are real input (trusted user gestures: pop-ups and downloads open) – but the screen is a lease: your first foreground action takes it, and while another agent holds it (active within the last ${LEASE_SECONDS} s) your call runs in the background and the result says so. Background: you work in your tabs without changing what the user sees, and input is synthetic – the result says "input: synthetic" whenever that happened, also in foreground when the page could not be brought on screen or had not painted its first frame yet (then wait a moment and retry). Background is the recommended mode whenever other agents are connected or the user is browsing; switch with zen_mode.`,
+    '- browser_navigate accepts URLs or search words. zen_spaces lists and creates spaces; switching the space the user sees (zen_spaces switch) needs the foreground lease.',
     allowScripts
       ? '- browser_evaluate runs JavaScript in the page (an expression or an arrow function) when nothing else does the job, e.g. to read attributes.'
       : `- ${SCRIPTING_DISABLED}`
