@@ -20,6 +20,7 @@ import {
   type ReceivedHeaders
 } from './headerCondition'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
+import { isExtensionPageUrl } from '../extensions/runtime/extensionUrls'
 import {
   applyRegexSubstitution,
   compileRegexFilter,
@@ -783,8 +784,15 @@ export class RuleEngine implements BlockingEngine {
    * caps the header stage, a header-stage allow caps the request stage's header edits, a
    * header-stage block or redirect wins over header edits of either stage, and the
    * `modifyHeaders` rules of both stages apply together, highest priority first.
+   *
+   * A request for an extension's own page – `chrome-extension://<id>/…`, or the origin the
+   * Android runtime serves it on – is allowed before any rule is looked at, as Chrome's
+   * `RulesetManager` never evaluates its rules against an extension's pages (contract 1.11).
+   * Only the request's URL is read: a request an extension page makes to the web is evaluated
+   * like any other, and a redirect whose target is an extension page still fires.
    */
   decide(ctx: RequestContext): Decision {
+    if (isExtensionPageUrl(ctx.url)) return ALLOW
     if (!this.indexing) this.startIndexing()
     // The `||host^` matcher can meet its host in the user information of a URL, where the index
     // does not look: such requests (which Chromium's network stack does not make) are scanned.
@@ -819,6 +827,7 @@ export class RuleEngine implements BlockingEngine {
    * must agree with, rule for rule; slower by the size of the sets.
    */
   decideLinear(ctx: RequestContext): Decision {
+    if (isExtensionPageUrl(ctx.url)) return ALLOW
     const resolution = new Resolution(ctx, factsFor(ctx))
     const ordered = this.orderedSets()
     for (let i = 0; i < ordered.length; i++) {

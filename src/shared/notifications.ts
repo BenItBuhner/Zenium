@@ -22,6 +22,18 @@ export function isNotificationPermissionStatus(
 export const NOTIFICATION_PERMISSION_CHANNEL = 'zen:notification-permission'
 
 /**
+ * Renderer → main, once per `Notification.requestPermission()` call, sent before the engine's
+ * own permission request leaves the page: whether the document holds a user activation at that
+ * moment (`navigator.userActivation.isActive`, read by the preload's isolated world), or
+ * undefined where the engine cannot say. The host's permission request handler hears no gesture
+ * from the engine (Electron's request details carry the frame and its URL alone), so this is
+ * how the core's quiet rule (NOT-03, `webNotifications.asksQuietly`) learns of the gesture on a
+ * host whose engine raises the request itself; the page script's polyfill carries it inside
+ * its `request` message instead.
+ */
+export const NOTIFICATION_REQUEST_CHANNEL = 'zen:notification-request'
+
+/**
  * DOM events joining the page's main world (where the shim redefines `Notification`) with the
  * preload's isolated world (which has the browser's ear). Both worlds share the document, and a
  * `CustomEvent.detail` string crosses worlds as a copy.
@@ -33,12 +45,19 @@ export interface NotificationShimEvents {
   update: string
   /** Main world → isolated world: the page called `window.focus()` while it had a gesture. */
   focus: string
+  /**
+   * Main world → isolated world: the page is calling `Notification.requestPermission()`; the
+   * isolated world reads the frame's activation itself and tells the browser
+   * (`NOTIFICATION_REQUEST_CHANNEL`) before the engine's request leaves.
+   */
+  request: string
 }
 
 export const NOTIFICATION_SHIM_EVENTS: NotificationShimEvents = {
   query: 'zenium:notification-permission-query',
   update: 'zenium:notification-permission',
-  focus: 'zenium:focus'
+  focus: 'zenium:focus',
+  request: 'zenium:notification-request'
 }
 
 // ---------------------------------------------------------------------------

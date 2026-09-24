@@ -46,10 +46,13 @@ interface Fixture {
   browser: Browser
   views: Recorded[]
   io: StoreIO
+  /** The events the window's chrome was sent, in order. */
+  sent: Array<{ name: string; payload: unknown }>
 }
 
 function fixture(io: StoreIO = memoryIo()): Fixture {
   const views: Recorded[] = []
+  const sent: Fixture['sent'] = []
   const platform: Platform = {
     info: { os: 'linux', version: '0.0.0' },
     capabilities: stub<HostCapabilities>({ windows: true, nativeMenus: true }),
@@ -58,6 +61,9 @@ function fixture(io: StoreIO = memoryIo()): Fixture {
       create: () =>
         stub<WindowHost>({
           alive: true,
+          send: (name, payload) => {
+            sent.push({ name, payload })
+          },
           contentSize: () => ({ width: 1280, height: 800 }),
           normalBounds: () => null,
           isFullScreen: () => false,
@@ -99,8 +105,11 @@ function fixture(io: StoreIO = memoryIo()): Fixture {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
-  return { browser, views, io }
+  return { browser, views, io, sent }
 }
+
+/** One turn of the event loop: the deferred state broadcast, and what was queued behind it. */
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 const PAGE = 'https://slow.example/article'
 
@@ -194,6 +203,38 @@ describe('the throbber’s phases (tabs-41)', () => {
     expect(phase(tab())).toBe('loading')
     events.onStopLoading()
     expect(phase(tab())).toBe('none')
+  })
+
+  it('tells the window a load finished as a fact of its own (`tab.loaded`), after the broadcast, for a load it saw start – a start and its stop in one tick included', async () => {
+    const f = fixture()
+    const { tab, events } = page(f)
+    const loaded = (): unknown[] =>
+      f.sent.filter((e) => e.name === 'tab.loaded').map((e) => e.payload)
+    // The start and the stop land in one tick, as a reload off the loopback does on Android: the
+    // window's one snapshot never shows `loading` on – the event is what tells it (A11Y-02).
+    events.onStartLoading()
+    events.onStopLoading()
+    expect(phase(tab())).toBe('none')
+    // Not before the state showing the tab settled has gone out.
+    expect(loaded()).toEqual([])
+    await tick()
+    expect(loaded()).toEqual([{ tabId: tab().id }])
+    // A stop that ends no load says nothing: a same-document navigation's toggle, a second stop.
+    events.onStartLoading()
+    events.onStartNavigation?.(`${PAGE}#section-2`, true)
+    events.onStopLoading()
+    events.onStopLoading()
+    await tick()
+    expect(loaded()).toHaveLength(1)
+    // A load across ticks is told once, at its stop.
+    events.onStartLoading()
+    events.onNavigated(PAGE, false)
+    await tick()
+    expect(loaded()).toHaveLength(1)
+    events.onProgress(0.5)
+    events.onStopLoading()
+    await tick()
+    expect(loaded()).toHaveLength(2)
   })
 
   it('a failed load and a crash end the throbber', () => {

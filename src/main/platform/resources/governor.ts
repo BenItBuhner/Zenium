@@ -1,7 +1,7 @@
 import { app, powerMonitor, type WebContents } from 'electron'
 import { availableParallelism, totalmem } from 'node:os'
 import type { Governor, TabView } from '../../../core/platform'
-import { ElectronTabView } from '../views'
+import { ElectronTabView, ElectronTabViewHost } from '../views'
 import type { ElectronWindow } from '../window'
 import type {
   GovernorAction,
@@ -16,6 +16,8 @@ import { getDomain } from '../../../shared/url'
 import type { Browser } from '../../../core/browser'
 import type { ZenWindow } from '../../../core/window'
 import { TabLifecycle } from './lifecycle'
+import { ConcurrencyClamp } from './clamp'
+import { hostMetrics } from './hostMetrics'
 import { LoadScheduler } from '../../../core/resources/scheduler'
 import {
   MAX_RECENT_ACTIONS,
@@ -57,6 +59,12 @@ const PAUSE_MEDIA_SCRIPT = `(() => {
  */
 export class ResourceGovernor implements Governor {
   readonly lifecycle = new TabLifecycle()
+  /**
+   * The CPU clamp (`navigator.hardwareConcurrency` at the budget's share of the cores) on
+   * background pages only: a page in front carries no session of the governor's, so Chromium's
+   * hang monitor reports it and it has its full core count (`clamp.ts`).
+   */
+  readonly clamp = new ConcurrencyClamp(this.lifecycle, () => this.concurrencyOverride())
   readonly scheduler: LoadScheduler
   snapshot: ResourceSnapshot = emptyResourceSnapshot()
 
@@ -96,10 +104,22 @@ export class ResourceGovernor implements Governor {
       onDeferred: (tabId) => this.record('defer', tabId, 'waiting for a free load slot'),
       onChange: () => this.publishCounts()
     })
+    // A background page's session went with the clamp on it (a hold it was shared with ended,
+    // another client took the page): the clamp is put back.
+    this.lifecycle.onSessionLost = (wc) => {
+      const view = this.viewHost()?.viewForWebContents(wc)
+      if (view) this.clamp.touch(view)
+    }
   }
 
   private get settings(): ResourceSettings {
     return this.browser.state.settings.resources
+  }
+
+  /** The Electron tab views, when the platform is Electron's (the tests may give another). */
+  private viewHost(): ElectronTabViewHost | null {
+    const views = this.browser.platform.views
+    return views instanceof ElectronTabViewHost ? views : null
   }
 
   /** The Electron web contents behind a tab's live view. */
@@ -143,6 +163,9 @@ export class ResourceGovernor implements Governor {
     listen('unlock-screen', () => this.wakeVisible())
     listen('on-battery', () => this.sampleSoon())
     listen('on-ac', () => this.sampleSoon())
+    // Every page shown or hidden by a window's layout: the clamp goes on or comes off.
+    const views = this.viewHost()
+    if (views) this.cleanups.push(views.onVisibilityChanged((view) => this.clamp.touch(view)))
     for (const win of this.browser.allWindows()) this.watchWindow(win)
     this.schedule(1_000)
   }
@@ -174,6 +197,8 @@ export class ResourceGovernor implements Governor {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     this.scheduler.clear()
+    this.clamp.stop()
+    hostMetrics.forget('governor')
     for (const cleanup of this.cleanups.splice(0)) cleanup()
   }
 
@@ -220,11 +245,15 @@ export class ResourceGovernor implements Governor {
   // ---------------------------------------------------------------------------
 
   onViewCreated(_tabId: string, view: TabView): void {
-    if (view instanceof ElectronTabView) void this.applyConcurrency(view.webContents)
+    // Born hidden: the clamp goes on unless the layout shows the page within the settle.
+    if (view instanceof ElectronTabView) this.clamp.touch(view)
   }
 
   onViewDestroyed(tabId: string, view: TabView): void {
-    if (view instanceof ElectronTabView) this.lifecycle.forget(view.webContentsId)
+    if (view instanceof ElectronTabView) {
+      this.clamp.forget(view)
+      this.lifecycle.forget(view.webContentsId)
+    }
     this.scheduler.finished(tabId)
     this.mediaPlaying.delete(tabId)
     this.lastPurgedAt.delete(tabId)
@@ -270,9 +299,8 @@ export class ResourceGovernor implements Governor {
 
   onSettingsChanged(): void {
     const { tabs } = this.browser
-    for (const [id] of tabs.allViews()) {
-      const wc = this.wc(id)
-      if (wc) void this.applyConcurrency(wc)
+    for (const [, view] of tabs.allViews()) {
+      if (view instanceof ElectronTabView) this.clamp.touch(view)
     }
     this.scheduler.pump()
     this.sampleSoon()
@@ -398,7 +426,9 @@ export class ResourceGovernor implements Governor {
   private collect(force: boolean): PlannerInput {
     const { state } = this.browser
     const now = Date.now()
-    const processes: ProcessSample[] = app.getAppMetrics().map((m) => ({
+    // Through the shared sampler: the CPU share is over the governor's own window, however
+    // often the task manager page reads the engine meanwhile (`hostMetrics.ts`).
+    const processes: ProcessSample[] = hostMetrics.sample('governor').map((m) => ({
       pid: m.pid,
       type: m.type as ProcessKind,
       memoryMb: m.memory.workingSetSize / 1024,
@@ -636,15 +666,12 @@ export class ResourceGovernor implements Governor {
     }
   }
 
+  /** The cores a background page reports under the CPU budget; null with no clamp. */
   private concurrencyOverride(): number | null {
     const s = this.settings
     if (!s.enabled || s.cpuPercent >= 100) return null
     const cores = cpuCount()
     return Math.max(1, Math.min(cores, Math.round((cores * s.cpuPercent) / 100)))
-  }
-
-  private async applyConcurrency(wc: WebContents): Promise<void> {
-    await this.lifecycle.setHardwareConcurrency(wc, this.concurrencyOverride())
   }
 
   // ---------------------------------------------------------------------------

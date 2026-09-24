@@ -475,6 +475,24 @@ export interface Tab {
    * toolbox is up, and absent on hosts without one (Android: `capabilities.devtools` false).
    */
   devtools?: TabDevtools | null
+  /**
+   * A pinned or essential tab whose page changed its title while the tab was not in front
+   * (tabs-11, Chrome's attention indicator on a pinned tab – a mail count, a new message): the
+   * row's favicon wears an accent dot until the tab is activated. Set by the core on the page's
+   * title update (`TabViewEvents.onTitleUpdated`), cleared by `activateTab`; a session's own
+   * (not persisted). Absent on regular tabs and on records older than the field. The desktop's
+   * pinned row and Essentials tile draw it; the phone's chrome reads it or not as it likes.
+   */
+  attention?: true
+  /**
+   * The page's renderer stopped answering (tabs-45, Chrome's "Page unresponsive"): the host's
+   * hang monitor said so (`TabViewEvents.onUnresponsive`), and the chrome asks whether to wait
+   * for it or exit the page. Cleared when the page answers again (`onResponsive`), when the user
+   * chooses to wait (`tab.waitUnresponsive` – the next report asks again), when a navigation
+   * commits, and when the renderer goes. A session's own (not persisted); absent on hosts
+   * without a hang monitor (Android's WebView) and on records older than the field.
+   */
+  unresponsive?: true
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**
@@ -3185,6 +3203,25 @@ export interface TabDragOver {
   y: number
 }
 
+/**
+ * Where a tab landed after the keyboard moved it one place (tabs-34: Ctrl+Shift+PgUp / PgDn,
+ * `tab.moved`). The chrome's live region says it – "Moved to position 2 of 5", with the group
+ * it entered or left – and puts the keyboard back on the row when the move was the strip's.
+ */
+export interface TabMoveResult {
+  tabId: string
+  /** One-based place in the tab's run of rows – the pinned rows, its group's, or the loose rows. */
+  position: number
+  /** How many tabs that run holds. */
+  count: number
+  /** The group the tab was in before the move; null for none (a pinned or loose tab). */
+  from: { folderId: string; name: string } | null
+  /** The group the tab is in after the move; null for none. */
+  to: { folderId: string; name: string } | null
+  /** The move was the focused strip row's (`strip.focus`), not the active tab's. */
+  focused: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Security: blocked pop-ups, site rules, HTTP authentication, client certificates
 // ---------------------------------------------------------------------------
@@ -4102,6 +4139,13 @@ export interface Commands {
   'tab.toggleEssential': { args: { tabId: string }; result: void }
   'tab.resetPinned': { args: { tabId: string }; result: void }
   'tab.editPinnedUrl': { args: { tabId: string; url: string }; result: void }
+  /**
+   * The "Page unresponsive" prompt's answers (tabs-45): exit the pages – their renderer is ended
+   * and each shows the crash page for a page ended for not responding – or wait, which takes the
+   * prompt down until the host reports the hang again.
+   */
+  'tab.exitUnresponsive': { args: { tabIds: string[] }; result: void }
+  'tab.waitUnresponsive': { args: { tabIds: string[] }; result: void }
   'tab.rename': { args: { tabId: string; title: string | null }; result: void }
   'tab.duplicate': { args: { tabId: string }; result: void }
   'tab.unload': { args: { tabId: string }; result: void }
@@ -4579,6 +4623,13 @@ export interface Commands {
    * chrome are captured by the renderer and no shortcut runs.
    */
   'shortcuts.recording': { args: { recording: boolean }; result: void }
+  /**
+   * The tab strip's keyboard is on the row of this tab (tabs-34), or on no tab row (null: it
+   * left the strip, or sits on a header or an Essentials tile). The move chords – Ctrl+Shift+PgUp
+   * / PgDn, `tab.moveBackward` / `tab.moveForward` – act on that row while one is named; the
+   * host consumes the chord before the chrome sees it, so the chrome says where the keyboard is.
+   */
+  'strip.focus': { args: { tabId: string | null }; result: void }
   'sidebar.setWidth': { args: { width: number }; result: void }
   'sidebar.toggleExpanded': { args: void; result: void }
 
@@ -5710,6 +5761,16 @@ export interface Events {
    */
   'focus.page': { tabId: string }
   /**
+   * A load the model saw start on `tabId` finished (`did-stop-loading` with the tab's `loading`
+   * on): the phone's screen reader hears "<name> loaded" (A11Y-02; `lib/announce.ts`). Sent
+   * once the state broadcast that turned `loading` off has gone out, so the window holds the
+   * page's title, and as a fact of its own because the finish cannot be read off the state's
+   * snapshots: a start and its stop in one tick (a reload off the loopback, a cached page)
+   * coalesce into one broadcast that never shows `loading` on. A stop without a start (a
+   * same-document navigation's) is no load and sends nothing.
+   */
+  'tab.loaded': { tabId: string }
+  /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`
    * the site the factor is remembered for, null for a page that zooms on its own.
@@ -5776,6 +5837,12 @@ export interface Events {
   'theme.open': { spaceId: string }
   'space.new': void
   'tab.startRename': { tabId: string }
+  /**
+   * The keyboard moved a tab one place (tabs-34; `tab.moveBackward` / `tab.moveForward`): the
+   * chrome's live region says where it landed, and when the move was the focused strip row's the
+   * keyboard goes back onto the row where it now stands.
+   */
+  'tab.moved': TabMoveResult
   /**
    * A tab dragged from another window hovers this one: show its ghost at the given chrome
    * coordinates and light up the drop target under it (null once it leaves or the drag ends).
