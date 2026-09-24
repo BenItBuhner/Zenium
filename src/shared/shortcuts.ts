@@ -1160,6 +1160,16 @@ const DEFS: Def[] = [
     chrome: UNBOUND
   },
   {
+    id: 'key_taskManager',
+    action: 'tasks.open',
+    group: 'devTools',
+    label: 'Task Manager',
+    // Chrome's chord in both presets (`shortcutReference.ts` resolves the row to this action);
+    // the page is desktop-only, so the touch shells' listings leave the row out.
+    layouts: ['desktop'],
+    ...both({ key: 'Escape', mods: SHIFT })
+  },
+  {
     id: 'key_openAddons',
     action: 'addons.open',
     group: 'devTools',

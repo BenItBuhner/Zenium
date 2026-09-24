@@ -47,6 +47,7 @@ import type {
   SyncScope,
   SyncStatus,
   Tab,
+  TaskKind,
   ThumbnailPicture,
   WindowChrome,
   WindowMaterial
@@ -2489,6 +2490,51 @@ export interface ImportHost {
   safeStorageSecret(browser: 'chrome' | 'chromium' | 'edge'): Promise<string | null>
 }
 
+/**
+ * One live process as the host sees it (`TaskHost.sample`). The host only places the process –
+ * which tabs its renderer hosts, which extension it belongs to, which tab's DevTools it draws –
+ * by the ids it shares with the core; the naming (tab titles and favicons, extension names,
+ * "GPU process", "Network service") is the core's (`core/tasks.ts`), so the task manager page
+ * reads the same on every host that has one.
+ */
+export interface TaskSample {
+  pid: number
+  /** The engine's process type folded to the page's kinds; `renderer` for a web contents the host cannot place. */
+  kind: TaskKind
+  /** The tabs this renderer hosts – several when the engine put them in one process. */
+  tabIds: string[]
+  /** The extension whose background page / pages this renderer hosts. */
+  extensionId: string | null
+  /** The tab whose DevTools this frontend inspects, when it is a tab's (null for the chrome's own). */
+  devtoolsForTabId: string | null
+  /** The engine's name for a helper ("Network Service", "Audio Service"), when it has one. */
+  serviceName: string | null
+  /** The working set, in bytes. */
+  memoryBytes: number
+  /** Private (non-shared) bytes where the OS reports them cheaply (Windows); null elsewhere. */
+  privateBytes: number | null
+  /** The share of one core since the previous sample, 0…100 (and above on several cores). */
+  cpuPercent: number
+  /** Bytes received over the network per second since the previous sample; null where the host does not count. */
+  networkBytesPerSecond: number | null
+}
+
+/**
+ * The per-process view the task manager page (`zen://tasks`) draws from, on hosts that have
+ * one (the desktop's `app.getAppMetrics()` mapped through every live web contents). Android has
+ * no process list to give and omits the host; the page id is desktop-only with it.
+ */
+export interface TaskHost {
+  /** Every live process, a fresh sample per call; the page asks every second or two while visible. */
+  sample(): TaskSample[]
+  /**
+   * End a process the user picked: a tab's renderer crashed in place (the tab shows its crashed
+   * page and reloads on demand), a helper killed. False when the host refuses – the browser
+   * process itself, a pid that is not one of ours any more.
+   */
+  end(pid: number): boolean
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -2568,6 +2614,8 @@ export interface Platform {
   readonly performance?: PerformanceHost
   /** The device's connectivity (Android); hosts without it are online for good. */
   readonly connectivity?: ConnectivityHost
+  /** The per-process list behind the task manager page (desktop); hosts without it list nothing. */
+  readonly tasks?: TaskHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

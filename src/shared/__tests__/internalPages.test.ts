@@ -34,7 +34,8 @@ describe('the page registry', () => {
       'downloads',
       'licences',
       'print',
-      'pdf'
+      'pdf',
+      'tasks'
     ])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
@@ -117,6 +118,27 @@ describe('the page registry', () => {
     expect(INTERNAL_PAGES.licences.layouts).toBeUndefined()
     expect(pageOpensAsTab(INTERNAL_PAGES.licences, { pageTabs: true }, 'phone')).toBe(true)
     expect(pageOpensAsTab(INTERNAL_PAGES.licences, { pageTabs: false }, 'desktop')).toBe(false)
+  })
+
+  it('registers the Task Manager as a singleton chrome page of the desktop layout alone, no panel form (shortcuts-menus-121)', () => {
+    expect(INTERNAL_PAGES.tasks).toMatchObject({
+      id: 'tasks',
+      title: 'Task Manager',
+      render: 'chrome',
+      singleton: true,
+      glyph: 'activity',
+      pill: { showStar: false },
+      splittable: false,
+      layouts: ['desktop'],
+      sections: []
+    })
+    // The processes are the desktop host's: no overlay to fall back on, so the touch layouts
+    // and a host without page tabs drop the ask rather than open an empty panel.
+    expect(INTERNAL_PAGES.tasks.overlay).toBeUndefined()
+    expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: true }, 'desktop')).toBe(true)
+    expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: true }, 'tablet')).toBe(false)
+    expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: true }, 'phone')).toBe(false)
+    expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: false }, 'desktop')).toBe(false)
   })
 
   it('opens a chrome page as a tab where the host draws page tabs and the layout is one of its own', () => {

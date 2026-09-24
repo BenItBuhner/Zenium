@@ -128,6 +128,7 @@ import type { VoiceStartOutcome } from '../shared/voice'
 import type { QrStartOutcome } from '../shared/qrScan'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
+import { TaskService } from './tasks'
 import {
   buildSearchUrl,
   isPickableSearchEngine,
@@ -276,6 +277,8 @@ export class Browser {
   readonly mods: ModService
   readonly sync: SyncHost
   readonly governor: Governor
+  /** The task manager page's process list and its End process (`zen://tasks`). */
+  readonly tasks: TaskService
   /** The MCP server AI agents connect to. */
   readonly agents: AgentService
   /** Release checks against GitHub and the download / install flow. */
@@ -455,6 +458,7 @@ export class Browser {
     })
     this.newTab = new NewTabService(this)
     this.governor = platform.createGovernor?.(this) ?? new NoopGovernor(this)
+    this.tasks = new TaskService(this, platform.tasks ?? null)
     this.actions = new Actions(this)
     this.keys = new KeyboardHandler(this)
     this.menus = new Menus(this)
@@ -3010,6 +3014,9 @@ export class Browser {
       'resources.snapshot': () => this.governor.sample(),
       'resources.trim': () => this.governor.trim(),
       'resources.relaunch': () => this.governor.relaunch(),
+
+      'tasks.list': () => this.tasks.list(),
+      'tasks.end': ({ pid }) => this.tasks.end(pid),
 
       'settings.update': (patch, win) => this.updateSettings(patch, win),
       'shortcuts.update': ({ id, binding }) => {
