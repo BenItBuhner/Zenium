@@ -1129,8 +1129,11 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val SCROLLER = ".zen-overview-grid[data-pane=\"tabs\"]"
         private const val CELL = ".zen-overview-grid[data-pane=\"tabs\"] [data-cell]"
         private const val NEW_TAB_CELL = "new-tab"
-        /** A tab's card in the grid – the first that is one (not the New Tab card) – and the active tab's. */
-        private const val CARD_CELL = "$CELL:not([data-cell=\"$NEW_TAB_CELL\"])"
+        /**
+         * A tab's card in the grid – the first cell that is one: a tab's cell carries `data-tab-id`,
+         * a group's `col-span-full` card and the New Tab card do not – and the active tab's.
+         */
+        private const val CARD_CELL = "$CELL[data-tab-id]"
         private const val ACTIVE_CELL = "$CELL > .zen-overview-card[data-active=\"true\"]"
         /** The card's box, its title row's height, and the ratio set on the layer's box for the cells (`--zen-overview-card-aspect`). */
         private const val CARD_WIDTH = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().width:NaN})()"
