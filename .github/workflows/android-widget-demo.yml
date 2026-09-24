@@ -26,10 +26,6 @@ name: Android widget demo
 # dispatch: the theme matrix has no single emulator-died output to key a second boot on.
 on:
   workflow_dispatch:
-  # TEMPORARY (W5-9): the coordinator's last authorised run for #422, on the toast fix; removed after it.
-  push:
-    branches:
-      - cursor/android-widgets-deep-links-06fd
 
 permissions:
   contents: read
