@@ -348,9 +348,9 @@ const SITE_SETTINGS_INTRO =
  * Site settings as rows: the catalogue's content types this host honours, grouped as Chrome
  * groups them, each an item row (its default's meaning under it) whose sheet holds the default
  * as a value row – the §9.13 picker over it – and the sites with an answer of their own for
- * that type, each an action that forgets the answer after a confirmation (Chrome's per-type
- * pages); a type with one possible default is a fact. Then the sites with settings of their
- * own, each a sheet of its answers with a Reset, and Reset all.
+ * that type, each an item row whose one action, Forget, runs at once (the lead's #418 ruling 5;
+ * Chrome's per-type pages); a type with one possible default is a fact. Then the sites with
+ * settings of their own, each a sheet of its answers with a Reset, and Reset all.
  */
 export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
   const platform = state.platform === 'android' ? 'android' : 'desktop'
