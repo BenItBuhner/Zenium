@@ -427,8 +427,19 @@ describe('a control never leaves its row’s box (the lead’s #391 ruling 4)', 
       const message = field.querySelector<HTMLElement>('.zen-settings-inline-error')!
       expect(message.getAttribute('role')).toBe('alert')
       expect(message.textContent).toBe('Keys start with AIza.')
+      // §9.12's validation line, the one every form draws (`ValidationMessage`): the 16 glyph
+      // out of the reading, then the words; the field names the line, and is marked invalid.
+      expect(message.classList.contains('zen-settings-validation')).toBe(true)
+      const glyph = message.firstElementChild!
+      expect(glyph.tagName.toLowerCase()).toBe('svg')
+      expect(glyph.classList.contains('lucide-circle-alert')).toBe(true)
+      expect(glyph.getAttribute('aria-hidden')).toBe('true')
+      const input = field.querySelector<HTMLInputElement>('input')!
+      expect(message.id).not.toBe('')
+      expect(input.getAttribute('aria-describedby')).toBe(message.id)
+      expect(input.getAttribute('aria-invalid')).toBe('true')
       // The column's order is field, then message: the message is beneath the field.
-      expect(field.children[0]).toBe(field.querySelector('input'))
+      expect(field.children[0]).toBe(input)
       expect(field.children[1]).toBe(message)
       expect(h.querySelector(REFUSED)).toBe(field)
       // Seated: the column starts at the box's top, which is the field's own box on a control
@@ -437,10 +448,12 @@ describe('a control never leaves its row’s box (the lead’s #391 ruling 4)', 
       expect(style(field).marginTop).toBe('')
       expect(declarations(stylesheet(), [REFUSED])).toBe('align-self: flex-start;')
       expect(style(row.querySelector(':scope > .zen-settings-trailing')!).height).toBe('32px')
-      // An accepted commit takes the message, and the seat, away again.
+      // An accepted commit takes the message, and the seat, away again – and the field's description.
       commit(row, 'AIzaSyExample')
       expect(field.querySelector('.zen-settings-inline-error')).toBeNull()
       expect(style(field).alignSelf).toBe('')
+      expect(input.hasAttribute('aria-describedby')).toBe(false)
+      expect(input.hasAttribute('aria-invalid')).toBe(false)
     } finally {
       sheet.remove()
     }

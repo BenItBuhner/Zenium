@@ -11417,12 +11417,14 @@
 .zen-settings-field-text {
   width: 160px;
 }
+/*
+ * The inline field's refused commit: §9.12's validation line (`.zen-settings-validation`, the
+ * glyph, the danger ink and the small type are its) capped at the field's width or so, hugging
+ * the field's right edge as the column's item (`align-items: flex-end` above); the words read on
+ * from the glyph, so they are not right-aligned within the line.
+ */
 .zen-settings-inline-error {
   max-width: 240px;
-  color: var(--v2-danger);
-  font-size: var(--v2-font-small);
-  line-height: var(--v2-line-small);
-  text-align: right;
 }
 /*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
