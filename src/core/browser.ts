@@ -3091,7 +3091,8 @@ export class Browser {
       'clipboard.peek': () => this.searchEngines.peekClipboard(),
       'clipboard.read': () => this.searchEngines.readClipboard(),
       'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
-      'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
+      'search.addEngine': ({ name, url, keyword }, win) =>
+        this.searchEngines.add(name, url, win, keyword),
       'search.updateEngine': ({ id, name, searchUrl, keyword }, win) =>
         this.searchEngines.update(id, { name, searchUrl, keyword }, win),
       'search.setEngineActive': ({ id, active }, win) =>
@@ -3655,7 +3656,7 @@ export class Browser {
         s.downloads = { ...s.downloads, ...rest }
         if (typeof askWhereToSave === 'boolean') s.askWhereToSave = askWhereToSave
       } else if (key === 'toolbarPins') {
-        // The Customize toolbar dialog writes the whole record; only known controls' folds stay.
+        // The Customise toolbar dialog writes the whole record; only known controls' folds stay.
         s.toolbarPins = sanitizeToolbarPins(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
