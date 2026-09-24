@@ -917,10 +917,31 @@ export interface SyncRemoteTab {
   windowId: string | null
 }
 
+/**
+ * What a synced device is, as its own platform reports it – Chrome's `DeviceFormFactor`
+ * (`sync_enums.proto`: desktop, phone, tablet; the older `DeviceType` names an OS, and every
+ * desktop OS draws one computer glyph). Android tells a phone from a tablet by its form factor
+ * (the 600 dp line); a desktop reports `desktop` unless its platform has a reliable signal that
+ * it is a laptop – Electron has none, so today no desktop says `laptop`, and the two kinds draw
+ * one glyph (`DeviceGlyph`). Absent from an older device's announcement: its rows show a
+ * stand-in glyph beside devices that announced one, and none where no device did.
+ */
+export type SyncDeviceKind = 'desktop' | 'laptop' | 'phone' | 'tablet'
+
+/** Another device seen in the sync folder, as its announcement names it. */
+export interface SyncDevice {
+  id: string
+  name: string
+  lastSeen: number
+  kind?: SyncDeviceKind
+}
+
 /** Another device's open tabs, newest activity first ("Tabs from other devices"). */
 export interface SyncDeviceTabs {
   deviceId: string
   deviceName: string
+  /** The device's kind, when its announcement carried one. */
+  deviceKind?: SyncDeviceKind
   /** When the device last published its list (epoch ms). */
   updatedAt: number
   tabs: SyncRemoteTab[]
@@ -948,7 +969,7 @@ export interface SyncStatus {
   lastError: string | null
   syncing: boolean
   /** Other devices seen in the sync folder. */
-  devices: Array<{ id: string; name: string; lastSeen: number }>
+  devices: SyncDevice[]
   /** Set while the first sync waits for the user to confirm merging with existing cloud data. */
   pendingMerge: boolean
   /**
@@ -1495,6 +1516,18 @@ export interface HistoryVisit {
   visitTime: number
   transition: HistoryTransition
   tabId?: string
+  /**
+   * A hop of a redirect chain the navigation passed through, not the page it landed on (Chrome's
+   * visit without `PAGE_TRANSITION_CHAIN_END`, history-23): recorded at the landing's time,
+   * counted as visited, hidden from the history page's lists and searches. Absent on a landing
+   * and on every visit an older store wrote.
+   */
+  redirectSource?: true
+  /**
+   * On a landing reached through redirects: the chain's earlier addresses, first hop to last
+   * (each stored as a `redirectSource` visit at the same time) – where the user landed from.
+   */
+  redirectedFrom?: string[]
 }
 
 export interface HistoryQuery {
@@ -1509,6 +1542,12 @@ export interface HistoryQuery {
   toMs?: number
   /** Only visits of this host (or its subdomains). */
   host?: string
+  /**
+   * List the redirect chains' hops too (`HistoryVisit.redirectSource`). Off by default: the
+   * history page shows where the user landed, as Chrome's `QueryHistory` does; `chrome.history`'s
+   * `getVisits` and `onVisited` read every visit of a page, as Chrome's do.
+   */
+  includeRedirectSources?: boolean
   limit: number
   offset?: number
 }
@@ -3546,15 +3585,16 @@ export interface PageDialogResponse {
 
 /**
  * A question the chrome asks about a window as a whole (window-modal): whether to close the
- * window with its tabs, or to quit Zenium with every open tab.
+ * window with its tabs, to quit Zenium with every open tab, or to open a bookmark folder's many
+ * pages at once (`open-bookmarks`: the desktop's form of Chrome's "Open all bookmarks?").
  */
 export interface WindowPrompt {
   id: string
-  kind: 'close-tabs' | 'quit'
+  kind: 'close-tabs' | 'quit' | 'open-bookmarks'
   /**
    * How many tabs close, for the warning about them ("You are about to quit with N tabs open");
    * 0 when that warning is not part of the question – a single tab, or the setting off – and the
-   * downloads alone are asked about.
+   * downloads alone are asked about. For `open-bookmarks`, how many tabs would open.
    */
   count: number
   /**
@@ -3873,6 +3913,20 @@ export interface MenuGroupMark {
   saved: boolean
 }
 
+/**
+ * Another device's mark before a row's label (the app menu's Send to Your Devices submenu;
+ * services pass 4): the device's kind glyph (`DeviceGlyph`, the one every device row draws) –
+ * the kind its announcement carried, or `null` for a device whose build announced none, drawn
+ * as the 69 % stand-in – so every row of the submenu has the glyph and the labels share one
+ * edge while any device of the submenu announced a kind; a submenu in which none did draws no
+ * glyph column at all (the renderer's `anyDeviceKind`, §10.4's condition – the mark carries the
+ * fact, the renderer the rule). A native menu host has no glyph in the platform's menu ink and
+ * draws the row as text.
+ */
+export interface MenuDeviceMark {
+  kind: SyncDeviceKind | null
+}
+
 export interface MenuItemDescriptor {
   id: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -3883,6 +3937,8 @@ export interface MenuItemDescriptor {
   icon?: string | null
   /** A tab group's mark in the glyph slot (the Tab Folders submenu's rows). */
   group?: MenuGroupMark
+  /** Another device's kind in the glyph slot (the Send to Your Devices submenu's rows). */
+  device?: MenuDeviceMark
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */
   danger?: boolean
@@ -4827,6 +4883,20 @@ export interface Commands {
    */
   'bookmark.undo': {
     args: { token?: number }
+    result: {
+      kind: 'remove' | 'move' | 'update'
+      token: number
+      ids: string[]
+      parentId: string | null
+    } | null
+  }
+  /**
+   * Do the newest undone edit again (the bar menu's Redo, the manager's Ctrl+Shift+Z / Ctrl+Y):
+   * the same word as `bookmark.undo`'s, the token the edit's new one on the undo stack; null for
+   * nothing. A delete done again tells the window `bookmark.deleted` as the first one did.
+   */
+  'bookmark.redo': {
+    args: void
     result: {
       kind: 'remove' | 'move' | 'update'
       token: number

@@ -118,3 +118,18 @@ describe('with downloads in progress', () => {
     })
   })
 })
+
+describe("Open all bookmarks? (bookmarks-41: Chrome's question at `OPEN_ALL_PROMPT_AT`)", () => {
+  it('names the tabs that would open in one sentence, the verb the menu row’s word in sentence case, no checkbox', () => {
+    expect(windowPromptText(prompt({ kind: 'open-bookmarks', count: 15 }))).toEqual({
+      title: 'Open all bookmarks?',
+      description: 'You are about to open 15 tabs.',
+      verb: 'Open all',
+      tabsWarning: false
+    })
+    // Not "Are you sure?": the title asks once (§9.23, one description).
+    expect(windowPromptText(prompt({ kind: 'open-bookmarks', count: 40 })).description).not.toMatch(
+      /sure/i
+    )
+  })
+})

@@ -1,5 +1,5 @@
 import type { FocusEvent, JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
@@ -149,7 +149,14 @@ export function GroupList({
           {group.rows.length === 0 ? (
             <p className="zen-settings-empty">{group.empty}</p>
           ) : (
-            group.rows.map((row) => <RowView key={row.id} row={row} ctx={ctx} variant={variant} />)
+            group.rows.map((row, index) => (
+              <Fragment key={row.id}>
+                {/* A row that closes a run stands under the builder's hairline (`RowBase.hairline`):
+                    the landing's run separator, never over a group's first row. */}
+                {index > 0 && row.hairline && <hr className="zen-settings-hairline" />}
+                <RowView row={row} ctx={ctx} variant={variant} />
+              </Fragment>
+            ))
           )}
         </section>
       ))}
@@ -450,6 +457,7 @@ function DesktopRowView({
         />
       )
     case 'field':
+      if (row.form === 'stacked') return <StackedFieldRow row={row} caption={caption} />
       return (
         <ControlRow row={row} caption={caption} description={row.description}>
           <InlineField row={row} />
@@ -783,6 +791,47 @@ function ControlRow({
 }
 
 /**
+ * A field row in the stacked form (`FieldRow.form: 'stacked'`, §9.12's form in a row): the text
+ * block – the label, the description on its lines – then the field UNDER it across the row's
+ * content width, 32 tall (`.zen-v2-field`), and a commit the row refuses puts §9.12's validation
+ * line under the field, spanning the field's box. The row is a column of one block, the form's
+ * own (`.zen-settings-field-block`: its 4 from the text to the field), holding the text and
+ * `InlineField`'s column (its 4 from the field to the message), so a stacked row stands
+ * 6 + 20 + 20 n + 4 + 32 + 6 = 68 + 20 n tall at rest for n lines of description (108 with
+ * two) and a line of validation adds 4 + 20. No control trails the text, so nothing is seated
+ * (§9.18) and the row counts no lines; it keeps `.zen-v2-row`'s own `--v2-row-pad` above and
+ * below as a plain row does, `data-static` as the control row has it, and the disabled .4 the
+ * same way. The label is the field's `<label for>` (§9.12's association for the label-above
+ * form; the #453 lead check): a click on the label lands in the field under it, and the label
+ * names the field in place of the inline form's `aria-label`. The phone is unchanged: its field
+ * row shows the value and opens the field sheet.
+ */
+function StackedFieldRow({ row, caption }: { row: FieldRow; caption?: string }): JSX.Element {
+  const fieldId = `${useId()}-field`
+  return (
+    <div
+      data-row={row.id}
+      data-static=""
+      data-tone={row.tone}
+      className={cn(
+        'zen-settings-row zen-settings-stacked-row zen-v2-row',
+        row.disabled && 'zen-settings-row-disabled'
+      )}
+    >
+      <div className="zen-settings-field-block">
+        <RowText
+          label={row.label}
+          labelFor={fieldId}
+          description={row.description}
+          caption={caption}
+        />
+        <InlineField row={row} stacked fieldId={fieldId} />
+      </div>
+    </div>
+  )
+}
+
+/**
  * A boolean on the desktop (§10.5, §6): Zen's 16 px checkbox left of the label, the description
  * under the label; the whole row is the checkbox's label, so a press anywhere on it toggles.
  * A row with a `leading` glyph seats it between the box and the label in the shared slot
@@ -821,9 +870,22 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
  * or when the field loses focus; Escape puts the row's value back. A commit the row refuses
  * keeps the typed value, marks the field and shows the message under it as §9.12's validation
  * line (`ValidationMessage`: 13 in the danger ink with its 16 glyph), which the field names
- * (`aria-describedby`) so a reader on the field hears the error.
+ * (`aria-describedby`) so a reader on the field hears the error. Trailing the text (the inline
+ * form) the column hugs the field's width, 160 or 96, the message capped near it; `stacked`
+ * (`StackedFieldRow`) the column spans the row's content width and the field and its message
+ * with it. The inline field is named by `aria-label` (the builder's convention for a control
+ * beside its text); a `fieldId` says a visible `<label for>` names the field instead (the
+ * stacked row's), so the input carries the id and no `aria-label` to override it.
  */
-function InlineField({ row }: { row: FieldRow }): JSX.Element {
+function InlineField({
+  row,
+  stacked,
+  fieldId
+}: {
+  row: FieldRow
+  stacked?: boolean
+  fieldId?: string
+}): JSX.Element {
   const errorId = `${useId()}-error`
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
@@ -854,8 +916,9 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
     } else settle(result)
   }
   return (
-    <span className="zen-settings-inline-field">
+    <span className={cn('zen-settings-inline-field', stacked && 'zen-settings-stacked-field')}>
       <input
+        id={fieldId}
         className={cn(
           'zen-settings-input zen-v2-field',
           row.input === 'number' ? 'zen-settings-field-number' : 'zen-settings-field-text',
@@ -866,7 +929,7 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
         min={row.min}
         max={row.max}
         placeholder={row.placeholder}
-        aria-label={row.label}
+        aria-label={fieldId ? undefined : row.label}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
         autoCapitalize="off"
@@ -996,21 +1059,31 @@ function PressableRow({
 /**
  * Label on the first line, the description under it at 13/69 %, at most two lines (§9.2) – in
  * a §1 status ink when the row carries a `tone` (`data-tone` on the row, the primitive's one
- * attribute; the description's rule reads it through the row).
+ * attribute; the description's rule reads it through the row). With `labelFor` the label is a
+ * `<label for>` of the control with that id (the stacked field row's, §9.12), the same class
+ * and so the same line; every style hangs on the class, so the element makes no difference.
  */
 export function RowText({
   label,
+  labelFor,
   description,
   caption
 }: {
   label: string
+  labelFor?: string
   description?: string
   caption?: string
 }): JSX.Element {
   return (
     <span className="zen-settings-row-text">
       {caption && <span className="zen-settings-caption">{caption}</span>}
-      <span className="zen-settings-label">{label}</span>
+      {labelFor ? (
+        <label className="zen-settings-label" htmlFor={labelFor}>
+          {label}
+        </label>
+      ) : (
+        <span className="zen-settings-label">{label}</span>
+      )}
       {description && <span className="zen-settings-description">{description}</span>}
     </span>
   )

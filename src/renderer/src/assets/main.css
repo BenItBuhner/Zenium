@@ -1853,10 +1853,11 @@
     opacity: 0.6;
   }
   /*
-   * The address dragged out of the URL pill (omnibox-43; SidebarTop's slot, lib/addressDrag.ts).
-   * The card Chromium snapshots for the drag image: the page's icon and name on the window's
-   * solid colour at level 2 and 90 % (§9.4's lifted item), a 28 px row at the control radius,
-   * no wider than 280 – kept off screen, since the drag image is a picture of it.
+   * The address dragged out of the URL pill (omnibox-43; SidebarTop's slot, lib/addressDrag.ts)
+   * and a bookmark dragged off the bar (bookmarks-15; BookmarksBar's chips). The card Chromium
+   * snapshots for the drag image: the page's icon and name on the window's solid colour at
+   * level 2 and 90 % (§9.4's lifted item), a 28 px row at the control radius, no wider than 280
+   * – kept off screen, since the drag image is a picture of it.
    */
   .zen-link-ghost {
     position: fixed;
@@ -11455,6 +11456,34 @@
   max-width: 240px;
 }
 /*
+ * The stacked field row (`FieldRow.form: 'stacked'`, `rows.tsx`'s `StackedFieldRow`): §9.12's
+ * form in a row. The row is a column – the text block on its lines, then the field UNDER it
+ * across the row's content width – so no control trails the text and nothing is seated (§9.18);
+ * the row keeps `.zen-v2-row`'s own `--v2-row-pad` above and below, as a plain row does. The
+ * block between is the form's (`.zen-settings-field-block`, its 4 from the text to the field)
+ * and the field's column the inline field's above (its 4 from the field to the message), the
+ * column stretched so the field is the row's content width – the field's own `--v2-control`
+ * tall – and the message spans the field's box instead of the inline form's 240:
+ * 6 + 20 + 20 n + 4 + 32 + 6 = 68 + 20 n for n lines of description (108 with two), a line of
+ * validation +4 + 20. Only the two rules' existing gaps and the tokens size it.
+ */
+.zen-settings-stacked-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+.zen-settings-stacked-row .zen-settings-row-text {
+  flex: none;
+}
+.zen-settings-stacked-field {
+  align-items: stretch;
+}
+.zen-settings-stacked-field > .zen-settings-input {
+  width: 100%;
+}
+.zen-settings-stacked-field > .zen-settings-inline-error {
+  max-width: none;
+}
+/*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
  * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text in
  * `tabular-nums`. On a phone the block is the row's text – the label with the value on its
@@ -12035,6 +12064,35 @@
   font-weight: var(--v2-weight-body);
   font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-small);
+}
+/*
+ * A heading's leading glyph (`PageGroup.lead`: the History page's device groups, whose kind
+ * glyph leads the device's name – services pass 4). The rows under it lead with a 16 favicon
+ * at the gutter and their text 12 on (§9.21's 44), so the glyph's box adds 4 to the heading's
+ * 8 gap: the name starts on its rows' text edge and the glyph on their favicon column – one
+ * glyph column for the group (§10.4).
+ */
+.zen-page-heading-lead {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  align-items: center;
+  justify-content: center;
+  margin-inline-end: 4px;
+}
+/*
+ * A device's kind glyph (`DeviceGlyph`, services pass 4; §10.4's leading slot at the full ink):
+ * the icon size and stroke of the layout it stands on – 16 at 1.5 on a mouse, 20 at 1.75 on a
+ * phone – so the one component serves a Settings row, a phone sheet's row, a heading and a menu
+ * row alike. The stand-in for a device that announced no kind carries `.zen-list-standin`'s
+ * 69 % besides, the deemphasis of a missing favicon's globe (phonePanels.css).
+ */
+.zen-device-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
 }
 .zen-page-heading > .zen-v2-icon-button {
   margin-block: calc((var(--v2-line-body-box) - var(--v2-icon-button)) / 2);

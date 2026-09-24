@@ -90,6 +90,13 @@ export interface ViewEventPayloads {
   navigation: NavigationReport
   /** HTTPS-only mode's rule sent the navigation to `to` instead of `from` (before it loads). */
   upgraded: { from: string; to: string }
+  /**
+   * The server redirected the main-frame navigation under way from `from` to `to`
+   * (`shouldOverrideUrlLoading` with `request.isRedirect`, `TabWebView.kt`), before the commit
+   * `doUpdateVisitedHistory` reports as `navigated`: the core records the hops with the landing
+   * as one redirect chain (history-23).
+   */
+  redirected: { from: string; to: string }
   /** The Safe Browsing guard refused the navigation (a `failLoad` of the URL follows). */
   unsafe: { url: string; hit: SafeBrowsingHit }
   /**
@@ -201,6 +208,12 @@ export class AndroidTabView implements TabView {
       case 'upgraded': {
         const p = payload as ViewEventPayloads['upgraded']
         if (typeof p.from === 'string' && typeof p.to === 'string') ev.onUpgraded(p.from, p.to)
+        return
+      }
+      case 'redirected': {
+        const p = payload as ViewEventPayloads['redirected']
+        if (typeof p.from === 'string' && typeof p.to === 'string' && p.from !== p.to)
+          ev.onRedirected?.(p.from, p.to)
         return
       }
       case 'unsafe': {

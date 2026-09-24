@@ -13,6 +13,12 @@
  * A node goes back before the sibling that followed it (its old index when that sibling is
  * gone; the end when it was last), so a delete undone from its toast after other edits still
  * lands beside the rows it stood among.
+ *
+ * Redo (context-menus-109, the bar menu's Redo row and the manager's Ctrl+Shift+Z): an undone
+ * edit is kept as its inverse – the delete to do again, the spots a move had put its rows on,
+ * the words a rename had given – and doing it again goes through the same verbs, so it lands on
+ * the undo stack once more. A new edit of the user's own forgets what was left to redo, as
+ * Chrome's `UndoManager` does.
  */
 import type { BookmarkNode } from '../shared/types'
 import { topLevelSelection } from '../shared/bookmarks'
@@ -43,6 +49,12 @@ export type BookmarkUndoEntry =
   | { kind: 'move'; token: number; placements: Placement[] }
   | { kind: 'update'; token: number; id: string; title: string; url: string | undefined }
 
+/** An undone edit as it is done again: the inverse of what `undo` did, captured as it did it. */
+type BookmarkRedoEntry =
+  | { kind: 'remove'; ids: string[] }
+  | { kind: 'move'; placements: Placement[] }
+  | { kind: 'update'; id: string; title: string; url: string | undefined }
+
 /** What a delete removed, for the toast that offers to undo it. */
 export interface BookmarkRemoval {
   /** The entry's token: the toast's Undo names it, so it undoes this delete and no later edit. */
@@ -66,8 +78,18 @@ export interface BookmarkUndone {
   parentId: string | null
 }
 
+/**
+ * What a redo did: the edit as it stands again on the undo stack (`token` is its new one), and
+ * for a delete done again what went, for the toast that offers to undo it once more.
+ */
+export interface BookmarkRedone extends BookmarkUndone {
+  removal: BookmarkRemoval | null
+}
+
 export class BookmarkUndoStack {
   private readonly entries: BookmarkUndoEntry[] = []
+  /** The undone edits, the newest last, as `redo` does them again. */
+  private readonly redoEntries: BookmarkRedoEntry[] = []
   /**
    * A restored node's old id → the new one it came back under, for the node whose id was taken
    * meanwhile alone (chains when that befell it more than once); empty otherwise, a node coming
@@ -83,18 +105,27 @@ export class BookmarkUndoStack {
     return this.entries.length
   }
 
+  /** How many undone edits can be done again. */
+  get redoDepth(): number {
+    return this.redoEntries.length
+  }
+
   /**
    * Delete `ids` (subtrees and all) so that the delete can be undone; null when nothing went
    * (roots, unknown ids).
    */
   remove(ids: readonly string[]): BookmarkRemoval | null {
+    return this.removeNodes(ids, false)
+  }
+
+  private removeNodes(ids: readonly string[], redoing: boolean): BookmarkRemoval | null {
     const top = this.topLevel(ids)
     if (top.length === 0) return null
     const placements = top.map((n) => this.placementOf(n))
     const tree = this.bookmarks.tree
     const nodes = top.flatMap((n) => [n, ...tree.descendants(n.id)].map((x) => ({ ...x })))
     if (this.bookmarks.removeMany(top.map((n) => n.id)) === 0) return null
-    const token = this.push({ kind: 'remove', token: 0, nodes, placements })
+    const token = this.push({ kind: 'remove', token: 0, nodes, placements }, redoing)
     const folders = top.filter((n) => n.type === 'folder').length
     return {
       token,
@@ -136,20 +167,79 @@ export class BookmarkUndoStack {
         : this.entries.findIndex((e) => e.token === token)
     if (at < 0) return null
     const [entry] = this.entries.splice(at, 1)
-    const undone = this.takeBack(entry)
-    return undone ? { ...undone, token: entry.token } : null
+    const taken = this.takeBack(entry)
+    if (!taken) return null
+    this.redoEntries.push(taken.redo)
+    if (this.redoEntries.length > BOOKMARK_UNDO_DEPTH) this.redoEntries.shift()
+    return { ...taken.undone, token: entry.token }
   }
 
-  private takeBack(entry: BookmarkUndoEntry): Omit<BookmarkUndone, 'token'> | null {
+  /**
+   * Take back an edit, and say how to do it again: the rows a delete's undo brought back are
+   * the ones to delete; a move's rows go back to the spots they stand on now; a rename's node
+   * takes the words it wears now.
+   */
+  private takeBack(
+    entry: BookmarkUndoEntry
+  ): { undone: Omit<BookmarkUndone, 'token'>; redo: BookmarkRedoEntry } | null {
     switch (entry.kind) {
-      case 'remove':
-        return this.restore(entry.nodes, entry.placements)
-      case 'move':
-        return this.replace(entry.placements)
+      case 'remove': {
+        const undone = this.restore(entry.nodes, entry.placements)
+        return undone ? { undone, redo: { kind: 'remove', ids: undone.ids } } : null
+      }
+      case 'move': {
+        const now = this.topLevel(entry.placements.map((p) => this.resolve(p.id)))
+        const placements = now.map((n) => this.placementOf(n))
+        const undone = this.replace(entry.placements)
+        return undone ? { undone, redo: { kind: 'move', placements } } : null
+      }
       case 'update': {
         const id = this.resolve(entry.id)
-        const node = this.bookmarks.update(id, { title: entry.title, url: entry.url })
-        return node ? { kind: 'update', ids: [id], parentId: node.parentId } : null
+        const now = this.bookmarks.get(id)
+        const node = now && this.bookmarks.update(id, { title: entry.title, url: entry.url })
+        if (!now || !node) return null
+        return {
+          undone: { kind: 'update', ids: [id], parentId: node.parentId },
+          redo: { kind: 'update', id, title: now.title, url: now.url }
+        }
+      }
+    }
+  }
+
+  /**
+   * Do the newest undone edit again – it goes back on the undo stack under a new token – or
+   * null when nothing was undone, or its nodes are gone for good. A delete done again says what
+   * went (`removal`), so the window can put its toast up once more.
+   */
+  redo(): BookmarkRedone | null {
+    const entry = this.redoEntries.pop()
+    if (!entry) return null
+    switch (entry.kind) {
+      case 'remove': {
+        const ids = entry.ids.map((id) => this.resolve(id))
+        const parentId = this.bookmarks.get(ids[0])?.parentId ?? null
+        const removal = this.removeNodes(ids, true)
+        return removal ? { kind: 'remove', token: removal.token, ids, parentId, removal } : null
+      }
+      case 'move': {
+        const before = this.topLevel(entry.placements.map((p) => this.resolve(p.id))).map((n) =>
+          this.placementOf(n)
+        )
+        const moved = this.replace(entry.placements)
+        if (!moved) return null
+        const token = this.push({ kind: 'move', token: 0, placements: before }, true)
+        return { ...moved, token, removal: null }
+      }
+      case 'update': {
+        const id = this.resolve(entry.id)
+        const before = this.bookmarks.get(id)
+        const node = before && this.bookmarks.update(id, { title: entry.title, url: entry.url })
+        if (!before || !node) return null
+        const token = this.push(
+          { kind: 'update', token: 0, id, title: before.title, url: before.url },
+          true
+        )
+        return { kind: 'update', token, ids: [id], parentId: node.parentId, removal: null }
       }
     }
   }
@@ -157,13 +247,16 @@ export class BookmarkUndoStack {
   /** Forget every edit (a profile switch, the tests). */
   clear(): void {
     this.entries.length = 0
+    this.redoEntries.length = 0
     this.aliases.clear()
   }
 
-  private push(entry: BookmarkUndoEntry): number {
+  /** An edit onto the stack; the user's own (not a redo) forgets what was left to redo. */
+  private push(entry: BookmarkUndoEntry, redoing = false): number {
     entry.token = ++this.seq
     this.entries.push(entry)
     if (this.entries.length > BOOKMARK_UNDO_DEPTH) this.entries.shift()
+    if (!redoing) this.redoEntries.length = 0
     return entry.token
   }
 

@@ -199,11 +199,14 @@ export function PageSearchField({
  * element (the bookmarks manager's breadcrumb, whose last segment is the `h2`) hands it in as
  * `headingElement` instead. A heading line with a menu of its own (History's device groups) takes
  * it through `onHeadingContextMenu`: a right-click anywhere on the line, or the menu key while the
- * focus is in it (Chromium raises `contextmenu` at the focused element – the line's control).
+ * focus is in it (Chromium raises `contextmenu` at the focused element – the line's control). A
+ * heading whose subject has a glyph (a device's kind) leads with it through `lead`: a decorative
+ * box on the rows' favicon column (`.zen-page-heading-lead`), the heading's text on their text edge.
  */
 export function PageGroup({
   heading,
   headingElement,
+  lead,
   aside,
   control,
   headingId,
@@ -214,6 +217,7 @@ export function PageGroup({
 }: {
   heading?: ReactNode
   headingElement?: ReactNode
+  lead?: ReactNode
   aside?: ReactNode
   control?: ReactNode
   headingId?: string
@@ -224,6 +228,11 @@ export function PageGroup({
   return (
     <section className={cn('zen-page-group', className)} aria-labelledby={headingId} {...data}>
       <div className="zen-v2-heading zen-page-heading" onContextMenu={onHeadingContextMenu}>
+        {lead && (
+          <span className="zen-page-heading-lead" aria-hidden>
+            {lead}
+          </span>
+        )}
         {headingElement ?? (
           <h2 id={headingId} className="zen-page-heading-text">
             {heading}

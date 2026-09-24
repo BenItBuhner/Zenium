@@ -26,6 +26,7 @@ import type {
   KeyBinding,
   LongCapture,
   LongCaptureCrop,
+  MenuDeviceMark,
   MenuGlyph,
   MenuGroupMark,
   MenuHeader,
@@ -46,6 +47,7 @@ import type {
   ShortcutAction,
   SidePanelInfo,
   Suggestion,
+  SyncDeviceKind,
   SyncDeviceTabs,
   SyncScope,
   SyncStatus,
@@ -569,6 +571,14 @@ export interface TabViewEvents {
    * it: the throbber then waits from `onStartLoading` to the commit.
    */
   onStartNavigation?(url: string, sameDocument: boolean): void
+  /**
+   * The main-frame navigation under way was redirected by the server from `fromUrl` to `toUrl`
+   * (Electron's `did-redirect-navigation`, Android's `shouldOverrideUrlLoading` with
+   * `isRedirect`), before it commits: the core keeps the hops and records them with the commit
+   * as one redirect chain (history-23). Hosts that cannot tell need not call it: the visit is
+   * then the landing alone.
+   */
+  onRedirected?(fromUrl: string, toUrl: string): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
   /**
@@ -1112,6 +1122,12 @@ export interface MenuItemTemplate {
    * colour and icon, the ring for a saved group. Native menu hosts draw the row as text.
    */
   group?: MenuGroupMark
+  /**
+   * Another device's mark before the label of a renderer-drawn menu's row (the app menu's Send
+   * to Your Devices submenu; services pass 4): the chrome draws the device's kind glyph, the
+   * stand-in for a kind it did not announce. Native menu hosts draw the row as text.
+   */
+  device?: MenuDeviceMark
   /**
    * An icon-row item of a renderer-drawn menu (the phone app menu's first group, design language
    * v2 §9.3): the chrome draws the glyph in a 44 px button named by `label`. Native menu hosts
@@ -1953,6 +1969,14 @@ export interface SyncPlatformHost {
   folderName?(folder: string): Promise<string>
   /** What this device is called until the user renames it (the hostname; `Build.MODEL`). */
   deviceNameDefault(): string
+  /**
+   * What this device is, for the other devices' rows (`SyncDeviceKind`): Android tells a phone
+   * from a tablet by its form factor; a desktop says `desktop` unless the platform has a
+   * reliable signal that it is a laptop (Electron's `powerMonitor` only says whether the
+   * machine is on battery right now, so the Electron host never guesses `laptop`). A host
+   * without the method announces no kind, as builds before it did.
+   */
+  deviceKind?(): SyncDeviceKind
   createTransport(folder: string): SyncTransport
   /** Native scrypt, when the host has one; must equal the shared implementation bit for bit. */
   scrypt?: SyncScryptFn
