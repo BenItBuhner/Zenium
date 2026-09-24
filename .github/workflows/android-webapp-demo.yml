@@ -23,9 +23,6 @@ name: Android web app window demo
 # when the driver failed: a run is then spent on the demo rather than on the runner.
 on:
   workflow_dispatch:
-  # TEMPORARY (W5-15): fires the acts on the feature branch; removed before the PR is ready.
-  push:
-    branches: [cursor/android-pwa-display-0740]
 
 permissions:
   contents: read
