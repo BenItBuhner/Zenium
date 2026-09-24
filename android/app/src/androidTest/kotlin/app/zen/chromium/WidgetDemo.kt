@@ -473,11 +473,15 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
      * sent as the widget sends it – `send` defaults to the face's own PendingIntent – with a frame
      * grabber on the new window from its first buffer until `landed` answers, and the window's
      * draws counted with whether the previous tab's view was shown in them. The previous tab must
-     * never paint: no grabbed frame carries its orange, no drawn frame had its view shown; the
-     * landing's tab is the active one, the previous tab still in the state behind it; the previous
-     * tab's view, if the platform made one, is not shown at the landing. The grabber must have
-     * read at [MIN_GRAB_RATE] frames a second at least for its pass to mean anything. On record:
-     * the send-to-landing wall time, the main thread's CPU time over it, the grab rate, the draw
+     * never paint: no drawn frame had its view shown (the frame-exact claim: every draw of the
+     * window is counted), no grabbed frame carries its orange (the pixels' corroboration, read
+     * from the window's first buffer to past the landing); the landing's tab is the active one,
+     * the previous tab still in the state behind it; the previous tab's view, if the platform made
+     * one, is not shown at the landing. The grabber's rate is REPORTED, not gated: on the CI
+     * emulator the cold boot saturates the CPU and `PixelCopy` runs at 1.5–6.5 frames a second
+     * while the app boots (18–19 once it is idle – run 35947928467), so a cadence gate fails for
+     * the emulator's reason; the draw watch is what makes a pass evidence. On record: the
+     * send-to-landing wall time, the main thread's CPU time over it, the grab rate, the draw
      * counts, the frames' timeline (the sheet).
      */
     private fun coldLanding(
@@ -540,9 +544,10 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val flashes = frames.filter { it.orange >= FLASH_SHARE }
         val previousView = onMain { host.tabs.get(PREVIOUS_TAB) }
         val previousShown = onMain { previousView?.isShown == true && previousView.visibility == View.VISIBLE }
-        // A read of two frames a second says nothing about a half-second page; the pass below is
-        // evidence only at a rate that would catch it several times over.
-        expect("the grabber read the new window at $MIN_GRAB_RATE frames a second or more ($grabs)", rate >= MIN_GRAB_RATE)
+        // The pixel read must span the whole landing (the window's first buffer to past the landing)
+        // to corroborate anything; its cadence is the emulator's during a boot and is reported.
+        val lastGrabAt = frames.lastOrNull()?.at ?: -1L
+        expect("the grabber's read spans the window's first buffer to the landing ($grabs, the last at +$lastGrabAt ms, landed at +$landedAt ms)", grabber.windowAt >= 0 && lastGrabAt >= landedAt)
         if (result == PRIVATE_TOAST) {
             // No profiles on this WebView: there is nothing private to land in, so the restored tab
             // is the right page to paint, under the toast that says why (the same as the warm mask).
@@ -550,8 +555,8 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             finding("  the frame read is not applied to this landing: the restored tab is the page to paint here")
         } else {
             expect("the active tab is the landing's own, not the restored one", tab != null && tab.optString("id") != PREVIOUS_TAB && tab.optBoolean("fromIntent"))
-            expect("no frame from the window's first buffer to the landing shows the previous tab's page ($grabs)", frames.isNotEmpty() && flashes.isEmpty())
             expect("no frame the window drew had the previous tab's view shown ($drawnWithPrevious of $drawn frames drawn)", drawn > 0 && drawnWithPrevious == 0)
+            expect("no grabbed frame from the window's first buffer to the landing carries the previous tab's page ($grabs)", frames.isNotEmpty() && flashes.isEmpty())
             expect("the previous tab's view is not the one shown at the landing", !previousShown)
         }
         expect("the previous tab is restored behind it, not closed", previous != null && previous.optString("url").endsWith(PREVIOUS_PATH))
@@ -1269,8 +1274,6 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         private const val GRAB_PERIOD_MS = 50L
         /** Grabs kept with a thumbnail (thirty seconds at the cap); the read stops there. */
         private const val MAX_FRAMES = 600
-        /** The rate under which a frame read is no evidence: a half-second page would show in five grabs at this. */
-        private const val MIN_GRAB_RATE = 10f
         /** Frames with the previous tab's page listed one by one in the findings, the rest counted. */
         private const val MAX_FLASH_LINES = 12
         /** `PixelCopy.request` threw for a window without a surface yet (not one of its result codes). */
