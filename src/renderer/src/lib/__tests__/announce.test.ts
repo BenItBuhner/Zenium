@@ -12,9 +12,11 @@ import {
   ANNOUNCE_CLEAR_MS,
   ANNOUNCE_REPEAT_MS,
   announce,
+  announcementVoice,
   announcerStore,
   downloadAnnouncement,
   findAnnouncement,
+  loadCompleteAnnouncement,
   muteAnnouncements,
   resetAnnouncer,
   startAnnouncer,
@@ -213,6 +215,89 @@ describe('announcement text', () => {
   })
 })
 
+describe('the phone’s voice (A11Y-02)', () => {
+  it('is the phone’s alone: the tablet’s strip and the desktop read as the desktop', () => {
+    expect(announcementVoice('phone')).toBe('phone')
+    expect(announcementVoice('tablet')).toBe('desktop')
+    expect(announcementVoice('desktop')).toBe('desktop')
+  })
+
+  it('names the front tab first, then its place, as the overview’s cards read (Chrome’s grid switcher)', () => {
+    const s = state({})
+    expect(tabSwitchAnnouncement(s, 'e', 'phone')).toBe('Mail, tab 1 of 6')
+    expect(tabSwitchAnnouncement(s, 'a', 'phone')).toBe('Example Domain, tab 4 of 6')
+    expect(tabSwitchAnnouncement(s, 'b', 'phone')).toBe('https://b.example/path, tab 5 of 6')
+    expect(tabSwitchAnnouncement(s, 'c', 'phone')).toBe('My notes, tab 6 of 6')
+    const popup = state({ tabs: { x: tab('x', { title: 'Popup' }) } })
+    expect(tabSwitchAnnouncement(popup, 'x', 'phone')).toBe('Popup, tab')
+    expect(tabSwitchAnnouncement(popup, 'nope', 'phone')).toBeNull()
+    // The desktop's words are untouched.
+    expect(tabSwitchAnnouncement(s, 'a')).toBe('Tab 4 of 6, Example Domain')
+  })
+
+  it('says the front tab’s load finishing by its title on the core’s `tab.loaded` – in the phone’s voice, for the tab in front, in the focused window', () => {
+    const s = state({ active: 'a' })
+    expect(loadCompleteAnnouncement(s, 'a', 'phone')).toBe('Example Domain loaded')
+    // A tab behind finishing is not the reader's news (the switch's, once it comes to the front).
+    expect(loadCompleteAnnouncement(s, 'c', 'phone')).toBeNull()
+    // A page still without a title reads by its address; a user's title wins.
+    expect(loadCompleteAnnouncement(state({ active: 'b' }), 'b', 'phone')).toBe(
+      'https://b.example/path loaded'
+    )
+    expect(loadCompleteAnnouncement(state({ active: 'c' }), 'c', 'phone')).toBe('My notes loaded')
+    // The desktop's voice hears no load; a background window's reader is not listening.
+    expect(loadCompleteAnnouncement(s, 'a')).toBeNull()
+    expect(loadCompleteAnnouncement(s, 'a', 'desktop')).toBeNull()
+    expect(
+      loadCompleteAnnouncement(state({ active: 'a', focused: false }), 'a', 'phone')
+    ).toBeNull()
+    // An id the state does not know says nothing.
+    expect(loadCompleteAnnouncement(s, 'nope', 'phone')).toBeNull()
+  })
+
+  it('reads a switch as the switch alone – a tab that arrives loading or loaded says nothing of its load – and reads no load off two snapshots (a fast load’s start and stop reach the chrome as one)', () => {
+    const before = state({
+      active: 'a',
+      tabs: {
+        ...state({}).tabs,
+        c: tab('c', { title: 'Third', customTitle: 'My notes', loading: true })
+      }
+    })
+    const switched = state({
+      active: 'c',
+      tabs: {
+        ...state({}).tabs,
+        c: tab('c', { title: 'Third', customTitle: 'My notes', loading: false })
+      }
+    })
+    expect(stateAnnouncements(before, switched, 'phone')).toEqual(['My notes, tab 6 of 6'])
+    const loaded = state({
+      active: 'a',
+      tabs: {
+        ...state({}).tabs,
+        c: tab('c', { title: 'Third', customTitle: 'My notes', loading: false })
+      }
+    })
+    const frontLoading = state({
+      active: 'a',
+      tabs: { ...state({}).tabs, a: tab('a', { title: 'Example Domain', loading: true }) }
+    })
+    const frontLoaded = state({
+      active: 'a',
+      tabs: { ...state({}).tabs, a: tab('a', { title: 'Example Domain', loading: false }) }
+    })
+    expect(stateAnnouncements(before, loaded, 'phone')).toEqual([])
+    // The front tab's `loading` going off is the `tab.loaded` event's to say, in either voice.
+    expect(stateAnnouncements(frontLoading, frontLoaded, 'phone')).toEqual([])
+    expect(stateAnnouncements(frontLoading, frontLoaded)).toEqual([])
+    expect(stateAnnouncements(frontLoading, frontLoaded, 'desktop')).toEqual([])
+    // A background window's snapshot says nothing in either voice.
+    expect(
+      stateAnnouncements(before, { ...switched, window: { focused: false } } as UIState, 'phone')
+    ).toEqual([])
+  })
+})
+
 describe('the status region', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -260,5 +345,32 @@ describe('the status region', () => {
     stop()
     browserStore.set({ state: state({ active: 'a' }) })
     expect(announcerStore.get().seq).toBe(1)
+  })
+
+  it('speaks in the voice it is given per change: the phone’s words for a switch; the load finishing on the tab in front waits for the core’s event', () => {
+    let voice: 'desktop' | 'phone' = 'phone'
+    const loading = state({
+      active: 'b',
+      tabs: { ...state({}).tabs, b: tab('b', { title: 'Second', loading: true }) }
+    })
+    browserStore.set({ state: state({ active: 'a' }) })
+    const stop = startAnnouncer(() => voice)
+    browserStore.set({ state: loading })
+    expect(announcerStore.get().text).toBe('Second, tab 5 of 6')
+    const settled = state({
+      active: 'b',
+      tabs: { ...state({}).tabs, b: tab('b', { title: 'Second', loading: false }) }
+    })
+    browserStore.set({ state: settled })
+    // `loading` going off in a snapshot says nothing of itself: the `tab.loaded` event does
+    // (`useMainEvents`), with these words off the settled state.
+    expect(announcerStore.get()).toEqual({ text: 'Second, tab 5 of 6', seq: 1 })
+    expect(announce(loadCompleteAnnouncement(settled, 'b', voice) ?? '')).toBe(true)
+    expect(announcerStore.get()).toEqual({ text: 'Second loaded', seq: 2 })
+    // The layout moved (the phone docked): the desktop's words from the next change on.
+    voice = 'desktop'
+    browserStore.set({ state: state({ active: 'a' }) })
+    expect(announcerStore.get().text).toBe('Tab 4 of 6, Example Domain')
+    stop()
   })
 })
