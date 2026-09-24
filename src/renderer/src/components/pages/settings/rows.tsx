@@ -1,5 +1,5 @@
 import type { FocusEvent, JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
@@ -149,7 +149,14 @@ export function GroupList({
           {group.rows.length === 0 ? (
             <p className="zen-settings-empty">{group.empty}</p>
           ) : (
-            group.rows.map((row) => <RowView key={row.id} row={row} ctx={ctx} variant={variant} />)
+            group.rows.map((row, index) => (
+              <Fragment key={row.id}>
+                {/* A row that closes a run stands under the builder's hairline (`RowBase.hairline`):
+                    the landing's run separator, never over a group's first row. */}
+                {index > 0 && row.hairline && <hr className="zen-settings-hairline" />}
+                <RowView row={row} ctx={ctx} variant={variant} />
+              </Fragment>
+            ))
           )}
         </section>
       ))}

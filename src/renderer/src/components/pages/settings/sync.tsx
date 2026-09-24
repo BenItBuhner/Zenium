@@ -296,7 +296,10 @@ function deviceRows(devices: SyncStatus['devices']): SettingsRow[] {
  * once per `remoteTabsVersion` by the page's `useRemoteTabs`, never read here. `held` is this
  * device's own tabs: the Open tabs scope also carries the tab records (ID-10), so a tab another
  * device lists may already sit in this sidebar under the same id, and its row then brings that
- * tab to the front rather than opening a second one.
+ * tab to the front rather than opening a second one. The row stands under the builder's
+ * hairline (`hairline`, the #453 lead check): the device run above it leads with glyphs and
+ * this action row has none, and the one `--v2-border` line closes the run where the leading
+ * edges part – a separator, not an empty slot drawn for alignment.
  */
 function remoteTabsRow(sync: SyncStatus, held: UIState['tabs']): SettingsRow {
   const wanted = remoteTabsWanted(sync)
@@ -309,6 +312,7 @@ function remoteTabsRow(sync: SyncStatus, held: UIState['tabs']): SettingsRow {
     description: wanted ? remoteTabsSummary(devices) : SYNC_COPY.remoteTabsOff,
     keywords: ['open tabs', 'synced tabs', 'other devices', 'remote tabs'],
     disabled: !wanted || count === 0,
+    hairline: true,
     sheet: {
       title: SYNC_COPY.remoteTabs,
       groups: [...devices]

@@ -38,6 +38,15 @@ export interface RowBase {
    * Absent, the row is on every layout; a context without a form factor keeps every row.
    */
   layouts?: readonly FormFactor[]
+  /**
+   * A `--v2-border` hairline stands over this row, closing the run of rows above it: the
+   * builder's `.zen-settings-hairline`, the landing's run separator, drawn by `GroupList`
+   * between the run and the row (Settings › Sync's "Tabs from other devices" under the device
+   * run: the glyph-less action row after a run of glyph rows would otherwise read as a ragged
+   * edge – the #453 lead check; §10.4). A separator, not an empty leading slot for alignment.
+   * Nothing for a group's first row (no run above it) or a row shown alone (a search result).
+   */
+  hairline?: boolean
 }
 
 export interface RowOption {
