@@ -216,6 +216,7 @@ export class FakeKotlin implements RuntimeBridge {
         return undefined
       }
       case 'ext.observeRequests':
+      case 'ext.observeResponses':
       case 'ext.popup.open':
       case 'ext.popup.close':
         return undefined

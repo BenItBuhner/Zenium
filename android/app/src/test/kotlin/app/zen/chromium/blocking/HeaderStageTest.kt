@@ -880,4 +880,230 @@ class HeaderStageTest {
         assertEquals(204, moved.relay(snap, tab2, navigation("https://whatsmyua.example/"), emptyMap(), null, snap.decide(navigation("https://whatsmyua.example/")))!!.status)
         assertEquals(listOf("https://whatsmyua.example/home"), tab2.redirects)
     }
+
+    // --- The response stage for media requests (contract 7, services pass 2) -------------------
+
+    /** An observer that keeps what it hears of the response stage (and ignores the decisions). */
+    private class ResponseObserver : DecisionObserver {
+        val heard = ArrayList<Pair<Request, RelayedResponse>>()
+
+        override fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long) = Unit
+
+        override fun onResponse(tab: BlockingTab, request: Request, response: RelayedResponse) {
+            heard.add(request to response)
+        }
+
+        val stages: List<RelayedResponse.Stage> get() = heard.map { it.second.at }
+    }
+
+    /** A body that says whether it was closed, and can fail on read. */
+    private class TrackedBody(bytes: ByteArray, private val failAfter: Int = -1) : java.io.InputStream() {
+        private val inner = ByteArrayInputStream(bytes)
+        var closed = false
+        private var served = 0
+
+        override fun read(): Int {
+            if (failAfter >= 0 && served >= failAfter) throw java.io.IOException("reset by peer")
+            val b = inner.read()
+            if (b != -1) served++
+            return b
+        }
+
+        override fun close() {
+            closed = true
+            inner.close()
+        }
+    }
+
+    private fun media(url: String = "https://news.example/clip.mp4", thirdParty: Boolean? = null) =
+        Request(url, ResourceType.MEDIA, "https://news.example/story", "GET", thirdParty = thirdParty, tabId = "tab-1", partition = "default")
+
+    private val mediaRequestHeaders = mapOf(
+        "Accept" to "*/*", "Range" to "bytes=0-", "If-Range" to "\"v1\"", "Accept-Encoding" to "gzip, deflate, br",
+        "Host" to "news.example", "Connection" to "keep-alive", "User-Agent" to "Zenium"
+    )
+
+    private fun partial(body: java.io.InputStream?, vararg extra: Pair<String, String>): HeaderStage.Response {
+        val map = LinkedHashMap<String?, List<String>?>()
+        map[null] = listOf("HTTP/1.1 206 Partial Content")
+        map["Content-Type"] = listOf("video/mp4")
+        map["Content-Range"] = listOf("bytes 0-9/1000")
+        map["Accept-Ranges"] = listOf("bytes")
+        map["Content-Length"] = listOf("10")
+        map["Connection"] = listOf("keep-alive")
+        for ((name, value) in extra) map[name] = (map[name] ?: emptyList()) + value
+        return HeaderStage.Response(206, "", map, body)
+    }
+
+    @Test
+    fun theMediaRelayPassesTheRangeThroughAndServesTheStatusAsItIs() {
+        val store = FakeCookies().apply { jar = "session=abc" }
+        val body = TrackedBody("0123456789".toByteArray())
+        val fetcher = FakeFetcher(partial(body, "Set-Cookie" to "seen=1; Path=/", "Set-Cookie" to "two=2", "X-Kept" to "1"))
+        val observer = ResponseObserver()
+        val req = media()
+        val answer = HeaderStage(store, fetcher).relayMedia(FakeTab(), req, mediaRequestHeaders, observer)
+        assertNotNull(answer)
+        // The request went out as the element sent it – Range and If-Range included, the jar's
+        // cookie attached (first party, with cookies) – minus the connection's own headers, and
+        // asking for identity bytes in place of the encodings WebView would take.
+        val sent = fetcher.headers!!
+        assertEquals("bytes=0-", sent["Range"])
+        assertEquals("\"v1\"", sent["If-Range"])
+        assertEquals("*/*", sent["Accept"])
+        assertEquals("Zenium", sent["User-Agent"])
+        assertEquals("session=abc", sent["Cookie"])
+        assertEquals("identity", sent["Accept-Encoding"])
+        assertFalse(sent.keys.any { it.equals("Host", ignoreCase = true) || it.equals("Connection", ignoreCase = true) })
+        assertEquals("GET", fetcher.method)
+        // The origin's answer as it is: the 206, its range headers and length kept, the framing
+        // and the cookies (stored by the relay) gone, the type split as a document's is.
+        assertEquals(206, answer!!.status)
+        assertEquals("Partial Content", answer.reason)
+        assertEquals("video/mp4", answer.mime)
+        assertNull(answer.encoding)
+        assertEquals("bytes 0-9/1000", answer.headers["Content-Range"])
+        assertEquals("bytes", answer.headers["Accept-Ranges"])
+        assertEquals("10", answer.headers["Content-Length"])
+        assertEquals("1", answer.headers["X-Kept"])
+        assertFalse(answer.headers.keys.any { it.equals("Set-Cookie", ignoreCase = true) || it.equals("Connection", ignoreCase = true) })
+        assertEquals(listOf(Triple("default", req.url, listOf("seen=1; Path=/", "two=2"))), store.stored)
+        // The observer heard the headers before the body streamed – the same request instance
+        // the request stage reported, every header line, the cookies included (nothing filtered).
+        assertEquals(listOf(RelayedResponse.Stage.HEADERS), observer.stages)
+        val (reported, headers) = observer.heard[0]
+        assertSame(req, reported)
+        assertEquals(206, headers.statusCode)
+        assertEquals("HTTP/1.1 206 Partial Content", headers.statusLine)
+        assertNull(headers.error)
+        assertTrue(headers.headers.contains("Content-Range" to "bytes 0-9/1000"))
+        assertTrue(headers.headers.contains("Set-Cookie" to "seen=1; Path=/"))
+        assertTrue(headers.headers.contains("Set-Cookie" to "two=2"))
+        assertFalse(headers.headers.any { it.first.isEmpty() || it.second.startsWith("HTTP/") })
+        // The body streams: read to its end it is complete, once; the close after that adds nothing.
+        assertEquals("0123456789", answer.data.bufferedReader().readText())
+        assertEquals(listOf(RelayedResponse.Stage.HEADERS, RelayedResponse.Stage.COMPLETE), observer.stages)
+        val complete = observer.heard[1].second
+        assertEquals(206, complete.statusCode)
+        assertEquals(headers.statusLine, complete.statusLine)
+        assertEquals(headers.headers, complete.headers)
+        assertNull(complete.error)
+        answer.data.close()
+        assertTrue(body.closed)
+        assertEquals(2, observer.heard.size)
+    }
+
+    @Test
+    fun theMediaRelayReportsAnAbortedAndAFailedBodyOnce() {
+        // WebView closes the stream before its end (the element sought, the page went): aborted.
+        val aborted = ResponseObserver()
+        val body = TrackedBody("0123456789".toByteArray())
+        val answer = HeaderStage(FakeCookies(), FakeFetcher(partial(body))).relayMedia(FakeTab(), media(), mediaRequestHeaders, aborted)!!
+        val buffer = ByteArray(4)
+        assertEquals(4, answer.data.read(buffer))
+        assertEquals(listOf(RelayedResponse.Stage.HEADERS), aborted.stages)
+        answer.data.close()
+        assertTrue(body.closed)
+        assertEquals(listOf(RelayedResponse.Stage.HEADERS, RelayedResponse.Stage.ERROR), aborted.stages)
+        assertEquals(HeaderStage.ERR_ABORTED, aborted.heard[1].second.error)
+        assertEquals(206, aborted.heard[1].second.statusCode)
+        answer.data.close()
+        assertEquals(2, aborted.heard.size)
+        // A read that fails mid-stream: the connection's error, the exception still WebView's to see.
+        val failed = ResponseObserver()
+        val failing = HeaderStage(FakeCookies(), FakeFetcher(partial(TrackedBody("0123456789".toByteArray(), failAfter = 4)))).relayMedia(FakeTab(), media(), mediaRequestHeaders, failed)!!
+        assertEquals(4, failing.data.read(ByteArray(4)))
+        val thrown = runCatching { failing.data.read() }.exceptionOrNull()
+        assertTrue(thrown is java.io.IOException)
+        assertEquals(listOf(RelayedResponse.Stage.HEADERS, RelayedResponse.Stage.ERROR), failed.stages)
+        assertEquals(HeaderStage.ERR_CONNECTION_CLOSED, failed.heard[1].second.error)
+        failing.data.close()
+        assertEquals(2, failed.heard.size)
+        // A response without a body (a 416 the origin sent bare): complete as it stands, served as it is.
+        val bare = ResponseObserver()
+        val map = LinkedHashMap<String?, List<String>?>()
+        map["Content-Range"] = listOf("bytes */1000")
+        val unsatisfiable = HeaderStage(FakeCookies(), FakeFetcher(HeaderStage.Response(416, "Range Not Satisfiable", map, null))).relayMedia(FakeTab(), media(), mediaRequestHeaders, bare)!!
+        assertEquals(416, unsatisfiable.status)
+        assertEquals("Range Not Satisfiable", unsatisfiable.reason)
+        assertEquals("application/octet-stream", unsatisfiable.mime)
+        assertEquals("bytes */1000", unsatisfiable.headers["Content-Range"])
+        assertEquals(-1, unsatisfiable.data.read())
+        assertEquals(listOf(RelayedResponse.Stage.HEADERS, RelayedResponse.Stage.COMPLETE), bare.stages)
+        assertEquals("HTTP/1.1 416 Range Not Satisfiable", bare.heard[0].second.statusLine)
+    }
+
+    @Test
+    fun theMediaRelayHandsBackWhatItCannotServeAndSaysSo() {
+        val tab = FakeTab()
+        // A fetch that cannot be made: WebView loads the request itself; the observer told the relay's observation ended there.
+        val failed = ResponseObserver()
+        assertNull(HeaderStage(FakeCookies(), FakeFetcher(null)).relayMedia(tab, media(), mediaRequestHeaders, failed))
+        assertEquals(listOf(RelayedResponse.Stage.ERROR), failed.stages)
+        assertEquals(HeaderStage.ERR_CONNECTION_FAILED, failed.heard[0].second.error)
+        assertEquals(0, failed.heard[0].second.statusCode)
+        assertEquals("", failed.heard[0].second.statusLine)
+        assertTrue(failed.heard[0].second.headers.isEmpty())
+        // A redirect: reported with its Location, not served (WebView cannot take a 3xx), the
+        // connection closed, the request handed back – no terminal report, no tab redirect; WebView
+        // follows the hop itself and the target is decided afresh.
+        val moved = ResponseObserver()
+        val body = TrackedBody(ByteArray(0))
+        val map = LinkedHashMap<String?, List<String>?>()
+        map[null] = listOf("HTTP/1.1 302 Found")
+        map["Location"] = listOf("https://cdn.example/clip.mp4")
+        assertNull(HeaderStage(FakeCookies(), FakeFetcher(HeaderStage.Response(302, "Found", map, body))).relayMedia(tab, media(), mediaRequestHeaders, moved))
+        assertEquals(listOf(RelayedResponse.Stage.HEADERS), moved.stages)
+        assertEquals(302, moved.heard[0].second.statusCode)
+        assertTrue(moved.heard[0].second.headers.contains("Location" to "https://cdn.example/clip.mp4"))
+        assertTrue(body.closed)
+        assertTrue(tab.redirects.isEmpty())
+        // A 304 is a 3xx to WebView too: the same way.
+        val revalidated = ResponseObserver()
+        val notModified = LinkedHashMap<String?, List<String>?>()
+        notModified["ETag"] = listOf("\"v1\"")
+        assertNull(HeaderStage(FakeCookies(), FakeFetcher(HeaderStage.Response(304, "Not Modified", notModified, null))).relayMedia(tab, media(), mediaRequestHeaders, revalidated))
+        assertEquals(listOf(RelayedResponse.Stage.HEADERS), revalidated.stages)
+        assertEquals("HTTP/1.1 304 Not Modified", revalidated.heard[0].second.statusLine)
+        // A status WebView cannot carry at all.
+        val odd = ResponseObserver()
+        val oddBody = TrackedBody(ByteArray(0))
+        assertNull(HeaderStage(FakeCookies(), FakeFetcher(HeaderStage.Response(101, "Switching Protocols", LinkedHashMap(), oddBody))).relayMedia(tab, media(), mediaRequestHeaders, odd))
+        assertEquals(listOf(RelayedResponse.Stage.ERROR), odd.stages)
+        assertEquals(HeaderStage.ERR_INVALID_RESPONSE, odd.heard[0].second.error)
+        assertTrue(oddBody.closed)
+        // Not a GET: never fetched, nothing said.
+        val posted = ResponseObserver()
+        val fetcher = FakeFetcher(partial(TrackedBody(ByteArray(0))))
+        val post = Request("https://news.example/clip.mp4", ResourceType.MEDIA, "https://news.example/story", "POST", tabId = "tab-1", partition = "default")
+        assertNull(HeaderStage(FakeCookies(), fetcher).relayMedia(tab, post, mediaRequestHeaders, posted))
+        assertNull(fetcher.url)
+        assertTrue(posted.heard.isEmpty())
+        // Without an observer the relay still serves (nobody is told).
+        assertNotNull(HeaderStage(FakeCookies(), FakeFetcher(partial(TrackedBody("0".toByteArray())))).relayMedia(tab, media(), mediaRequestHeaders, null))
+    }
+
+    @Test
+    fun theMediaRelayFollowsTheCookieWord() {
+        // The cookie policy withholds: the request's own Cookie goes too, the jar is not asked, Set-Cookie is not kept.
+        val withheld = FakeCookies().apply { jar = "session=abc" }
+        val strip = FakeFetcher(partial(TrackedBody(ByteArray(0)), "Set-Cookie" to "t=1"))
+        assertNotNull(HeaderStage(withheld, strip).relayMedia(FakeTab(), media(), mediaRequestHeaders + ("Cookie" to "stale=1"), null, withCookies = false))
+        assertFalse(strip.headers!!.keys.any { it.equals("Cookie", ignoreCase = true) })
+        assertEquals("bytes=0-", strip.headers!!["Range"])
+        assertTrue(withheld.stored.isEmpty())
+        // A third-party media request: WebView would apply the third-party cookie policy at the
+        // network layer; the relay sends no jar and keeps no Set-Cookie (the request's own header stays).
+        val crossSite = FakeCookies().apply { jar = "session=abc" }
+        val cross = FakeFetcher(partial(TrackedBody(ByteArray(0)), "Set-Cookie" to "t=1"))
+        assertNotNull(HeaderStage(crossSite, cross).relayMedia(FakeTab(), media("https://cdn.example/clip.mp4", thirdParty = true), mediaRequestHeaders + ("Cookie" to "own=1"), null))
+        assertEquals("own=1", cross.headers!!["Cookie"])
+        assertTrue(crossSite.stored.isEmpty())
+        // First party with a Cookie of its own: the jar is not consulted over it.
+        val own = FakeCookies().apply { jar = "session=abc" }
+        val kept = FakeFetcher(partial(TrackedBody(ByteArray(0)), "Set-Cookie" to "t=1"))
+        assertNotNull(HeaderStage(own, kept).relayMedia(FakeTab(), media(), mediaRequestHeaders + ("Cookie" to "own=1"), null))
+        assertEquals("own=1", kept.headers!!["Cookie"])
+        assertEquals(1, own.stored.size)
+    }
 }
