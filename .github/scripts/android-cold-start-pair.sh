@@ -14,9 +14,10 @@
 #                   the install's dexopt and the profile's first run)
 #   DEMO_OUT      – where the record goes (cold-start-pair.txt and the raw am start output)
 #
-# Each build is installed over the other (`adb install -r`; the same applicationId and version,
-# so the profile stays: both boot the same state), started once to settle, then force-stopped
-# and started P0_RUNS times. The table is written to the job summary too.
+# Each build is installed over the other (`adb install -r -d`: the same applicationId, so the
+# profile stays and both boot the same state; -d since the base may carry the newer version code
+# when main has moved past the branch), started once to settle, then force-stopped and started
+# P0_RUNS times. The table is written to the job summary too.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
@@ -76,7 +77,7 @@ cold_start() {
 measure() {
   local name=$1 apk=$2 label=$3
   echo "== $name ($label): $apk"
-  adb install -r -g "$apk"
+  adb install -r -d -g "$apk"
   : > "$out/$name-am-start.txt"
   cold_start > /dev/null
   sleep 8
