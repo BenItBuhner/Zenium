@@ -760,6 +760,18 @@ class TabWebView(
     private fun sendFlags() {
         postToPage(json("type" to "flags", "flags" to currentFlags).toString())
         postToPage(formsConfig())
+        // The extension runtime's word on the response stage (contract 7.10): a new document
+        // learns it at hello; a flip while the document lives comes through [setExtObserve].
+        if (host.blocking.observeResponses) setExtObserve(true)
+    }
+
+    /**
+     * Whether the page script observes the page's `fetch` / XHR responses for the extension
+     * runtime's `webRequest` emulation (`requestObserver.ts`): on while a response-stage
+     * listener exists somewhere (`Extensions.kt`, `ext.observeResponses`), off otherwise.
+     */
+    fun setExtObserve(on: Boolean) {
+        postToPage(json("type" to "extObserve", "on" to on).toString())
     }
 
     /**

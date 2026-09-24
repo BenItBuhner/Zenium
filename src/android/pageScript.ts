@@ -15,6 +15,7 @@ import { focusEdge } from '@shared/focusEdge'
 import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
 import { rememberClearedSelection } from './selectionMemory'
 import { installViewportController, type PageRulesConfig } from './viewport'
+import { installRequestObserver, type RequestObserver } from './requestObserver'
 
 /**
  * Injected by Kotlin into every page WebView (document-start). Transport is the
@@ -131,6 +132,12 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   let onHint: ((hint: PageHint | null) => void) | null = null
   let onShareResult: ((id: string, result: ShareOutcome) => void) | null = null
   let onTextFragment: ((message: TextFragmentHostMessage) => void) | null = null
+  // The extension runtime's observer of the page's fetch / XHR responses (`requestObserver.ts`,
+  // blocking-rule-interface.md 7.10): laid over `fetch` and `XMLHttpRequest` only once the host
+  // says a response-stage `webRequest` listener exists (`extObserve`: the hello reply carries
+  // the current word, a flip comes as a message of its own), in every frame – an embedded
+  // player's requests are its frame's – and passing through while the word is off.
+  let requestObserver: RequestObserver | null = null
   const selectionMemory = rememberClearedSelection(document)
   const onMessage = (event: { data: string }): void => {
     try {
@@ -153,6 +160,14 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
+      else if (data.type === 'extObserve') {
+        if (data.on) {
+          requestObserver ??= installRequestObserver(window, {
+            send: (observation) => up(observation)
+          })
+          requestObserver.setOn(true)
+        } else requestObserver?.setOn(false)
+      }
       // The browser's fullscreen hint, drawn over the page in its top layer (null takes it down).
       else if (data.type === 'hint') onHint?.(data.hint ?? null)
       else if (data.type === 'forms' && data.command) onForms?.(data.command)
