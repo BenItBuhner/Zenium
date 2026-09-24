@@ -104,9 +104,20 @@ export class Actions {
       case 'tab.selectLast':
         return tabs.selectTabByIndex(-1, win)
       case 'tab.moveBackward':
-        return tabs.moveActiveTabBy(-1, win)
-      case 'tab.moveForward':
-        return tabs.moveActiveTabBy(1, win)
+      case 'tab.moveForward': {
+        // From the chrome with the keyboard on a strip row (tabs-34), the row's tab moves; from
+        // a page, or with the keyboard elsewhere in the chrome, the active tab does. The chrome
+        // hears where it landed once it holds the state that draws it there: the live region says
+        // it and the keyboard goes back onto the moved row.
+        const row = ctx.sourceTabId === null ? tabs.tab(win.stripFocusTabId) : undefined
+        const moving = row ?? active
+        if (!moving) return
+        const moved = tabs.moveTabBy(moving.id, action === 'tab.moveBackward' ? -1 : 1, win)
+        if (!moved) return
+        const result = { ...moved, focused: row !== undefined }
+        state.afterBroadcast(() => this.browser.emit('tab.moved', result, win))
+        return
+      }
       case 'tab.moveToStart':
         return tabs.moveActiveTabToEdge('start', win)
       case 'tab.moveToEnd':

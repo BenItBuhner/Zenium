@@ -1,7 +1,12 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { UIState } from '@shared/types'
-import { hoverCard, hoverCardHost, placeHoverCard } from '@renderer/lib/hoverCard'
+import {
+  hoverCard,
+  hoverCardHost,
+  hoverCardPreviews,
+  placeHoverCard
+} from '@renderer/lib/hoverCard'
 import {
   ChromePortal,
   POPOVER_WIDTH,
@@ -11,6 +16,7 @@ import {
   type PopoverBox
 } from '@renderer/lib/portals'
 import { activeTab, tabStateLines, tabTitle } from '@renderer/lib/selectors'
+import { useThumbnail } from '@renderer/lib/thumbnails'
 import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from '@renderer/lib/ui'
 
 /**
@@ -21,6 +27,13 @@ import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from '@renderer/lib/
  * lands on one; one at a time; it never takes the pointer. Any press, a drag, a scroll,
  * Escape, the window losing focus, another tab coming to the front, or a popover, menu or
  * dialog opening takes it down.
+ *
+ * For a page in the background the card previews it (tabs-19, Chrome's tab hover card
+ * preview): the tab's picture above the title, a 16:10 frame at the card's inner width with
+ * the card's radius and the hairline of a picture in this language, the page's top kept and
+ * the rest cropped. Only when a picture exists (the controller captures the hovered page fresh
+ * before the card shows; a sleeping tab has none) and never for the active tab – its page is
+ * under the card itself.
  */
 export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null {
   const card = uiStore.use((s) => s.hoverCard)
@@ -38,6 +51,10 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
   const host = tab ? hoverCardHost(tab.url) : ''
   const lines = tab ? tabStateLines(tab, agent?.name ?? null) : []
   const stateText = lines.join('\n')
+  // The page's picture, read from the covers the chrome holds (no read from a host's disk: the
+  // card is up for a moment, and the controller has just captured the page).
+  const picture = useThumbnail(tab?.id, { cover: true, visible: false })
+  const preview = tab && picture && hoverCardPreviews(state, tab.id) ? picture : null
 
   // The card's own size decides where it fits; measured once it has rendered its text, at the
   // height its content wants (a height cap from the last placement is lifted for the reading).
@@ -52,7 +69,7 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
     const size = { width: el.offsetWidth, height: el.offsetHeight }
     el.style.maxHeight = capped
     setBox(placeHoverCard(card.anchor, card.sidebar, viewportSize(), size, card.axis))
-  }, [shown, card.anchor, card.sidebar, card.axis, title, host, stateText])
+  }, [shown, card.anchor, card.sidebar, card.axis, title, host, stateText, preview])
 
   // The page behind the card is a capture of the active tab; another tab coming to the front
   // (Enter on a focused row, a shortcut) would leave the frame blank under it. A drag (its own
@@ -117,12 +134,18 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
         data-surface="page"
         data-tab-id={tab.id}
         data-side={box?.side}
+        data-preview={preview ? 'true' : undefined}
         style={{
           width: POPOVER_WIDTH.list,
           ...(box ? popoverStyle(box) : { left: 0, top: 0 }),
           visibility: box ? 'visible' : 'hidden'
         }}
       >
+        {preview && (
+          <div className="zen-tab-hover-card-preview">
+            <img src={preview} alt="" draggable={false} />
+          </div>
+        )}
         <div className="zen-tab-hover-card-title">{title}</div>
         {(host || lines.length > 0) && (
           <div className="zen-tab-hover-card-meta">

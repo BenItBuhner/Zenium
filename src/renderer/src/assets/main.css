@@ -1461,6 +1461,31 @@
     opacity: 0.69;
   }
   /*
+   * The attention dot on a pinned row or Essentials tile (tabs-11, Chrome's seat): a 6 px disc
+   * of the accent at full ink (§9.29, never dimmed with a sleeping row's icon) at the favicon's
+   * top-right corner, its edges 1 px outside the icon's box, the icon punched out 1 px around it
+   * so the dot reads as its own mark on any icon (Chrome's ring). The seat is the icon's box,
+   * the dot takes neither the pointer nor the layout.
+   */
+  .zen-favicon-seat {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .zen-favicon-seat[data-attention] > .zen-tab-favicon {
+    mask-image: radial-gradient(circle 4px at calc(100% - 2px) 2px, transparent 98%, #000 100%);
+  }
+  .zen-attention-dot {
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--zen-accent);
+    pointer-events: none;
+  }
+  /*
    * The row in the hand: its slot stays open under the ghost (lib/drag.ts draws the ghost) and
    * the ghost comes back to it on Escape, so the row itself must not show twice.
    */
@@ -2050,10 +2075,11 @@
     right: 0;
     background: var(--zen-row-fill);
   }
-  /* The leading glyph: the row's favicon or mask, the folder's mark, the New Tab row's +. */
+  /* The leading glyph: the row's favicon (or its seat, on a pinned row) or mask, the folder's
+     mark, the New Tab row's +. */
   .zen-rail-flyout[data-flyout-rows]
     .zen-tab:not(.zen-split-seg)
-    > :is(.zen-tab-favicon, .zen-group-row-glyph),
+    > :is(.zen-tab-favicon, .zen-favicon-seat, .zen-group-row-glyph),
   .zen-rail-flyout[data-flyout-rows] .zen-tab[data-new-tab] > svg {
     margin-left: var(--zen-glyph-lead);
     margin-right: calc(var(--zen-rail-rest) + 10px - 16px - 9px - var(--zen-glyph-lead));
@@ -2124,7 +2150,7 @@
   }
   .zen-rail-flyout[data-flyout-rows][data-side='right']
     .zen-tab:not(.zen-split-seg)
-    > :is(.zen-tab-favicon, .zen-group-row-glyph),
+    > :is(.zen-tab-favicon, .zen-favicon-seat, .zen-group-row-glyph),
   .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-tab[data-new-tab] > svg {
     margin-right: var(--zen-glyph-lead);
     margin-left: calc(var(--zen-rail-rest) + 10px - 16px - 9px - var(--zen-glyph-lead));
@@ -4976,7 +5002,33 @@
    * 4 below its line box the host and the row's state lines at 13 on a 20 line (§4: 13 → 20,
    * `--v2-line-small`) in the deemphasised ink. Its height is capped by the placement (never taller than the window minus 16), and it
    * takes no pointer.
+   *
+   * The page preview above the title (tabs-19): a 16:10 frame at the card's inner width – 286
+   * inside the 320 card's border and padding, so 286 × 179 – as an inner box inside the card
+   * (§2's inner box, `.zen-capture-picture-box`'s precedent; the lead's #436 ruling 2): r6
+   * (`--v2-radius-inner`) and no squircle – the squircle is for 8 and up – inside the card's own
+   * r8, ringed by a 1 px `--v2-border` (a light page's picture on the light panel has no edge of
+   * its own; Chrome frames its preview the same way, §9.31), 12 above the title's line box. The
+   * picture fills it, the page's top kept and the rest cropped (`object-fit: cover` from the
+   * top), so a tall page reads as its first screen.
    */
+  .zen-tab-hover-card-preview {
+    box-sizing: border-box;
+    width: 286px;
+    height: 179px;
+    margin-bottom: 12px;
+    border-radius: var(--v2-radius-inner);
+    border: 1px solid var(--v2-border);
+    overflow: hidden;
+    background: var(--v2-page);
+  }
+  .zen-tab-hover-card-preview > img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+  }
   .zen-tab-hover-card {
     position: fixed;
     z-index: 80;
