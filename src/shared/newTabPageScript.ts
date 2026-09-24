@@ -205,8 +205,21 @@ class NewTabPage {
     if (!this.drag) this.renderGrid()
   }
 
-  /** The chrome's tile menu picked Remove: the page removes the tile itself, with Undo. */
+  /**
+   * The chrome's tile menu picked Remove: the page removes the tile itself, with Undo. The
+   * page menu hid a section (NTP-18): the state push already took it off; the toast offers
+   * Undo, which asks for it back.
+   */
   private onCommand(command: NewTabPageCommand): void {
+    if (command.type === 'section-hidden') {
+      const { section } = command
+      this.showToast(
+        section === 'greeting' ? 'Greeting hidden' : 'Shortcuts hidden',
+        () => this.transport.send({ type: 'show-section', section }),
+        false
+      )
+      return
+    }
     if (command.type !== 'remove-tile') return
     const tile = this.tiles.find((t) => t.id === command.id)
     if (tile) this.remove(tile)

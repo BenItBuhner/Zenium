@@ -14,6 +14,7 @@ import type {
 import type {
   DevtoolsDock,
   NewTabDeviceState,
+  NewTabHideableSection,
   NewTabPageAction,
   NewTabPageShortcut,
   NewTabPageState,
@@ -43,6 +44,7 @@ import {
   removeSite,
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
+  setNewTabSection,
   siteHost,
   toggleNewTabModule,
   unhideSite,
@@ -190,6 +192,17 @@ export class ForwardingEvents implements TabViewEvents {
   onNewTabAction(action: NewTabPageAction): void {
     this.target?.onNewTabAction(action)
   }
+}
+
+/** Whether two settings documents say the same thing (the Undo of a hidden section reads it). */
+function sameNewTabSettings(a: NewTabSettings, b: NewTabSettings): boolean {
+  if (a.enabled !== b.enabled || a.mode !== b.mode) return false
+  if (a.preset !== b.preset || a.background !== b.background) return false
+  const keys = new Set([...Object.keys(a.modules), ...Object.keys(b.modules)]) as Set<
+    keyof NewTabSettings['modules']
+  >
+  for (const key of keys) if (a.modules[key] !== b.modules[key]) return false
+  return true
 }
 
 /** Title and address a shortcut is stored with; null when the address is not one. */
@@ -533,6 +546,10 @@ export class NewTabService {
       case 'undo-restore-default-shortcuts':
         this.undoRestoreDefaultShortcuts()
         return
+      case 'show-section':
+        if (action.section === 'greeting' || action.section === 'shortcuts')
+          this.showSection(action.section)
+        return
       case 'edit-shortcut':
         this.openShortcutDialog(tabId, action.id, win)
         return
@@ -577,6 +594,40 @@ export class NewTabService {
   removeTileFromPage(tabId: string, id: string): void {
     this.browser.tabs.view(tabId)?.sendNewTabCommand?.({ type: 'remove-tile', id })
   }
+
+  /**
+   * The page menu's "Hide Greeting" / "Hide Shortcuts" (NTP-18): the section off through the one
+   * model (`setNewTabSection`, as Settings' switch writes it – so a named layout becomes Custom
+   * with that section off), the commit's push taking it off every page, and this page's toast
+   * raised with Undo (v2 §9.33: 8 s; §10.5: a reversible action asks nothing). What the
+   * settings were is kept for the Undo, which puts them back whole – the layout's name
+   * included – while nothing else has changed them since; otherwise it turns the section on.
+   */
+  hideSection(tabId: string, section: NewTabHideableSection): void {
+    const before = this.settings
+    const after = setNewTabSection(before, section, false)
+    if (after === before) return
+    this.setSettings(after)
+    this.hidden = { section, before, after: this.settings }
+    this.browser.tabs.view(tabId)?.sendNewTabCommand?.({ type: 'section-hidden', section })
+  }
+
+  /** The Undo of `hideSection` (`show-section`): the section back, as it was when it went. */
+  showSection(section: NewTabHideableSection): void {
+    const hidden = this.hidden
+    this.hidden = null
+    const current = this.settings
+    if (hidden?.section === section && sameNewTabSettings(current, hidden.after))
+      this.setSettings(hidden.before)
+    else this.setSettings(setNewTabSection(current, section, true))
+  }
+
+  /** The last `hideSection`, for its Undo. */
+  private hidden: {
+    section: NewTabHideableSection
+    before: NewTabSettings
+    after: NewTabSettings
+  } | null = null
 
   /** Whether a tile id names one of the user's shortcuts (the chrome's tile menu offers Edit). */
   isShortcut(id: string): boolean {

@@ -2326,6 +2326,8 @@ export type NewTabPageAction =
    */
   | { type: 'restore-default-shortcuts' }
   | { type: 'undo-restore-default-shortcuts' }
+  /** The Undo of a section the chrome's menu hid (`section-hidden`): it comes back as it was. */
+  | { type: 'show-section'; section: NewTabHideableSection }
   /** Open the chrome's add (`id` null) or edit shortcut dialog over the page. */
   | { type: 'edit-shortcut'; id: string | null }
   /**
@@ -2351,9 +2353,16 @@ export type NewTabPageAction =
 
 /**
  * What the browser tells a new tab page besides its state: a menu item picked in the chrome
- * that the page carries out itself, so its Undo toast works the same as for the Delete key.
+ * that the page carries out itself, so its Undo toast works the same as for the Delete key;
+ * and a section the chrome's menu hid (NTP-18) – the state push takes it off the page, and the
+ * command raises the page's toast ("Greeting hidden" / "Shortcuts hidden") with Undo, which
+ * asks for `show-section`.
  */
-export type NewTabPageCommand = { type: 'remove-tile'; id: string }
+export type NewTabPageCommand =
+  { type: 'remove-tile'; id: string } | { type: 'section-hidden'; section: NewTabHideableSection }
+
+/** The sections the page's menu hides with Undo (NTP-18): the greeting and the tile grid. */
+export type NewTabHideableSection = 'greeting' | 'shortcuts'
 
 export interface Settings {
   colorScheme: ColorScheme

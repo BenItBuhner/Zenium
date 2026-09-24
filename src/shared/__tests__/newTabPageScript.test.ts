@@ -322,6 +322,19 @@ describe('zen://newtab: the toast\'s "Restore default shortcuts" link', () => {
     expect(toast().hidden).toBe(true)
   })
 
+  it('a section the chrome hid (NTP-18) raises the toast with Undo alone; Undo asks for the section back', () => {
+    const { h, command } = mountWithCommands(state({ greeting: true, shortcuts }))
+    ;(command as (c: unknown) => void)({ type: 'section-hidden', section: 'greeting' })
+    expect(toast().hidden).toBe(false)
+    expect(toast().querySelector('span')?.textContent).toBe('Greeting hidden')
+    expect(buttons()).toEqual(['Undo'])
+    toast().querySelector('button')!.click()
+    expect(h.sent.at(-1)).toEqual({ type: 'show-section', section: 'greeting' })
+    expect(toast().hidden).toBe(true)
+    ;(command as (c: unknown) => void)({ type: 'section-hidden', section: 'shortcuts' })
+    expect(toast().querySelector('span')?.textContent).toBe('Shortcuts hidden')
+  })
+
   it("Undo on a removal restores the tile as before; the toast's link is not sent with it", () => {
     const { h, command } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
     command({ type: 'remove-tile', id: 's2' })

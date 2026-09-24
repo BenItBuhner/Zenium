@@ -21,10 +21,12 @@ import {
   getHost,
   inputToUrl,
   isNavigableUrl,
+  isNewTabUrl,
   isWebPageUrl
 } from '../shared/url'
 import {
   DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
   type AppWindowInfo,
   type BookmarkNode,
   type BookmarksBarMode,
@@ -47,6 +49,7 @@ import {
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
 import { phoneBarHas } from '../shared/phoneBar'
+import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
@@ -384,7 +387,13 @@ export class Menus {
     } else if (selection) {
       groups.push(this.selectionGroup(tab, selection, win, { x: params.x, y: params.y }))
     }
-    if (plainPage) groups.push(this.navigationGroup(tab, view, win), this.pageGroup(tab, win))
+    if (plainPage) {
+      // The new tab page's own rows lead its menu (NTP-18): what the page shows, hidden with
+      // the page's Undo toast, and the way to its customise surface.
+      const ownRows = isNewTabUrl(tab.url) ? this.newTabPageGroup(tab, win) : []
+      if (ownRows.length > 0) groups.push(ownRows)
+      groups.push(this.navigationGroup(tab, view, win), this.pageGroup(tab, win))
+    }
     // Extension items sit where Chrome puts them: after the browser's own entries, before the
     // developer group.
     const extensionItems = this.browser.extensions.pageContextMenuItems(tabId, params, win)
@@ -532,6 +541,30 @@ export class Menus {
       ? { x: rect.x + tile.x, y: rect.y + tile.y, keyboard: tile.keyboard }
       : { keyboard: tile.keyboard }
     this.popup(joinGroups([open, manage]), win, 'page', anchor)
+  }
+
+  /**
+   * The served new tab page's own rows (NTP-18), on a right-click on the page itself: "Hide
+   * Greeting" and "Hide Shortcuts" for the sections it shows – each hidden through the one
+   * settings model with the page's Undo toast (`NewTabService.hideSection`), so a slip costs one
+   * press and the customise surface keeps the switch either way – and "Customise New Tab Page…",
+   * the Customise button's route. A private page has neither section (its explainer stands
+   * where the grid would) and gets no rows.
+   */
+  private newTabPageGroup(tab: Tab, win: ZenWindow): Template {
+    if (tab.containerId === PRIVATE_CONTAINER_ID) return []
+    const { newTab } = this.browser
+    const sections = newTabSections(this.browser.state.settings.newTab)
+    const rows: Template = []
+    if (sections.greeting)
+      rows.push({ label: 'Hide Greeting', click: () => newTab.hideSection(tab.id, 'greeting') })
+    if (sections.shortcuts)
+      rows.push({ label: 'Hide Shortcuts', click: () => newTab.hideSection(tab.id, 'shortcuts') })
+    rows.push({
+      label: 'Customise New Tab Page…',
+      click: () => this.browser.pages.open('settings', 'newtab', win, tab.id)
+    })
+    return rows
   }
 
   /**

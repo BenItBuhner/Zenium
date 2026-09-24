@@ -920,6 +920,72 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(commands).toEqual([{ type: 'remove-tile', id: 'site:news.example' }])
   })
 
+  describe('hide a section with Undo (NTP-18)', () => {
+    function page(f: Fixture): { tab: Tab; commands: unknown[] } {
+      const commands: unknown[] = []
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'newtab.open', undefined)
+      const tab = activeTab(f)!
+      f.browser.tabs.view(tab.id)!.sendNewTabCommand = (command) => {
+        commands.push(command)
+      }
+      return { tab, commands }
+    }
+
+    it('Hide Greeting turns the section off through the model and raises the page toast; Undo restores the layout whole', () => {
+      const f = fixture()
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'settings.update', { newTab: { preset: 'inspirational' } })
+      const { tab, commands } = page(f)
+      const svc = f.browser.newTab
+      svc.hideSection(tab.id, 'greeting')
+      expect(f.browser.state.settings.newTab).toMatchObject({
+        preset: 'custom',
+        modules: { greeting: false }
+      })
+      expect(svc.stateFor(tab.id)!.greeting).toBe(false)
+      expect(commands).toEqual([{ type: 'section-hidden', section: 'greeting' }])
+      svc.handleAction(tab.id, { type: 'show-section', section: 'greeting' })
+      expect(f.browser.state.settings.newTab.preset).toBe('inspirational')
+      expect(svc.stateFor(tab.id)!.greeting).toBe(true)
+      // A section that is off already: nothing changes and no toast is raised.
+      svc.hideSection(tab.id, 'greeting')
+      f.browser.handleCommand(win, 'settings.update', { newTab: { preset: 'focused' } })
+      svc.hideSection(tab.id, 'greeting')
+      expect(commands).toHaveLength(2)
+    })
+
+    it('Hide Shortcuts keeps the mode for its Undo; a change in between makes Undo turn the section on only', () => {
+      const f = fixture()
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: { ...f.browser.state.settings.newTab, mode: 'my-shortcuts' }
+      })
+      const { tab, commands } = page(f)
+      const svc = f.browser.newTab
+      svc.hideSection(tab.id, 'shortcuts')
+      expect(svc.stateFor(tab.id)!.shortcutsMode).toBe('hidden')
+      expect(commands).toEqual([{ type: 'section-hidden', section: 'shortcuts' }])
+      svc.showSection('shortcuts')
+      expect(svc.stateFor(tab.id)!.shortcutsMode).toBe('my-shortcuts')
+      expect(f.browser.state.settings.newTab.preset).toBe('focused')
+      // Hidden, then the greeting turned on from Settings: Undo does not take that back.
+      svc.hideSection(tab.id, 'shortcuts')
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: {
+          ...f.browser.state.settings.newTab,
+          modules: { ...f.browser.state.settings.newTab.modules, greeting: true }
+        }
+      })
+      svc.handleAction(tab.id, { type: 'show-section', section: 'shortcuts' })
+      expect(f.browser.state.settings.newTab).toMatchObject({
+        preset: 'custom',
+        mode: 'my-shortcuts',
+        modules: { greeting: true, shortcuts: true }
+      })
+    })
+  })
+
   it('Customise opens Settings at the New Tab section', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
