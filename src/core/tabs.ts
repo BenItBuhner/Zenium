@@ -546,14 +546,24 @@ export class TabManager {
         }, true),
       onStopLoading: () => {
         this.browser.governor.onLoadFinished(tabId)
+        let finished = false
         update((t) => {
           const v = view()
+          finished = t.loading
           t.loading = false
           t.waiting = false
           t.progress = 1
           t.canGoBack = v?.canGoBack() ?? false
           t.canGoForward = v?.canGoForward() ?? false
         })
+        // A load the model saw start has finished: the window hears it as a fact of its own once
+        // the broadcast with `loading` off has gone out (A11Y-02's "<name> loaded" on the phone).
+        // A start and its stop in one tick coalesce into one broadcast that never shows
+        // `loading` on, so the finish cannot be read off the snapshots; a stop that ends no load
+        // (a same-document navigation's toggle) says nothing.
+        if (finished) {
+          state.afterBroadcast(() => this.browser.emit('tab.loaded', { tabId }, ownerWindow()))
+        }
       },
       onProgress: (progress) =>
         update((t) => {
