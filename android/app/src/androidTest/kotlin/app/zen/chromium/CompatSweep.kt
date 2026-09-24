@@ -5343,8 +5343,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val controlFetch = control?.optString("webFetch") ?: "not read"
         val note = "session rules ${rule.optInt("session", -1)}${rule.optString("error").takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: ""}; " +
             "a fixture page in a tab under the rule: \"${webTitle ?: "no view"}\"; the options page ${if (optionsTab != null) "opened in a tab" else "did not open in a tab"}" +
-            (report?.let { ": stylesheet ${if (it.optBoolean("css")) "applied" else "missing"}, script ${if (it.optBoolean("script")) "run" else "not run"}, own image ${it.optString("ownImage")}, web fetch ${it.optString("webFetch")}, web image ${it.optString("webImage")} (an IP-literal host: mixed content the engine blocks whatever the mode, not graded)" } ?: "") +
-            (control?.let { "; the rule removed and the page reloaded: web fetch ${it.optString("webFetch")}, web image ${it.optString("webImage")}" } ?: (removed?.optString("error")?.takeIf { it.isNotEmpty() }?.let { "; the rule's removal: $it" } ?: ""))
+            (report?.let { ": stylesheet ${if (it.optBoolean("css")) "applied" else "missing"}, script ${if (it.optBoolean("script")) "run" else "not run"}, own image ${it.optString("ownImage")}, web fetch ${it.optString("webFetch")}, web image ${it.optString("webImage")} (an IP-literal host: mixed content the engine blocks whatever the mode, not graded), the same image from the public name ${it.optString("webImageNamed", "not read")}" } ?: "") +
+            (control?.let { "; the rule removed and the page reloaded: web fetch ${it.optString("webFetch")}, web image ${it.optString("webImage")}, from the public name ${it.optString("webImageNamed", "not read")}" } ?: (removed?.optString("error")?.takeIf { it.isNotEmpty() }?.let { "; the rule's removal: $it" } ?: ""))
         return when {
             page.ext == null -> Grade("n/m", "the second fixture did not install (${page.note}); $note", extra)
             !ruleOn -> Grade("F", "the blocker's session rule is not in force: $note", extra)
@@ -6794,17 +6794,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // 9.3 MB, GPTZero 13.1 MB, Forest 14.9 MB, Emoji Keyboard 59.7 MB, Ultimate Car 62.0 MB),
         // so a run that dies keeps the rest.
         // AdGuard VPN: the emulator's host renderer goes under WebView 113's paint of the row's
-        // first documents on the API 34 Google image with -gpu swangle, four of four attempts in
-        // round 16 (§7.0 there): twice the guest froze whole at consent.html's first paint and
-        // qemu left with no record (after three minutes, after fifty seconds), twice the app hung
-        // at popup.html's with WebView's in-process GPU thread in the goldfish pipe read under
-        // eglCreateSyncKHR waiting on the host, the guest otherwise up; no chromium crash, no
-        // render process gone, no runtime frame in any stack. The same row passed whole three of
-        // three times on the AOSP lane (WebView 156). Not run on the Google image; read on the
-        // AOSP lane.
+        // first documents on the API 34 Google image with -gpu swangle, six of six attempts in
+        // round 16 (§7.0 there): four times the guest froze whole at consent.html's first paint
+        // and qemu left with no record (after three minutes once, within fifty seconds after),
+        // twice the app hung at popup.html's with WebView's in-process GPU thread in the goldfish
+        // pipe read under eglCreateSyncKHR waiting on the host, the guest otherwise up; no
+        // chromium crash, no render process gone, no runtime frame in any stack. The same row
+        // passed whole three of three times on the AOSP lane (WebView 156). Not run on the Google
+        // image; read on the AOSP lane.
         Row(
             "hhdobjgopfphlmjbmnpglhfcgppchgje", "AdGuard VPN", "adguard-vpn",
-            notOnGoogleImage = "the emulator's host renderer stopped answering under WebView 113's first paint of this row's documents (popup.html, consent.html) on every attempt on the API 34 Google image with -gpu swangle (four in round 16 §7.0: twice the guest frozen whole and qemu gone without a record, twice the app hung with WebView's GPU thread in the goldfish pipe under eglCreateSyncKHR; no chromium crash, no runtime frame); the row is read on the AOSP lane (156), where it passed whole three of three times",
+            notOnGoogleImage = "the emulator's host renderer stopped answering under WebView 113's first paint of this row's documents (popup.html, consent.html) on every attempt on the API 34 Google image with -gpu swangle (six in round 16 §7.0: four times the guest frozen whole and qemu gone without a record, twice the app hung with WebView's GPU thread in the goldfish pipe under eglCreateSyncKHR; no chromium crash, no runtime frame); the row is read on the AOSP lane (156), where it passed whole three of three times",
             core = vpn("AdGuard VPN", pac = true)
         ),
         Row("adlpodnneegcnbophopdmhedicjbcgco", "Free VPN for Chrome - Troywell VPN", "troywell-vpn", core = vpn("Troywell VPN", pac = true, consent = true)),
@@ -8634,7 +8634,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * an IP-literal host is mixed content Blink blocks whatever the embedder's mode (its
          * optionally-blockable branch reads `!strict_mode && !is_ip_address`), so the image's error
          * says nothing about the rule, while a `fetch` is blockable content the tab's
-         * `MIXED_CONTENT_ALWAYS_ALLOW` for extension documents lets through.
+         * `MIXED_CONTENT_ALWAYS_ALLOW` for extension documents lets through. The same image asked
+         * for under the fixture's public-looking name ([PUBLIC_NAME_BASE]) is the observation's
+         * control (round 16 §4.3.3): the named host takes the optionally-blockable branch and loads
+         * once the rule is gone, where the IP literal stays blocked.
          */
         private const val PROOF_PAGE_NAME = "Zenium compat proof: own pages"
         private val PROOF_PAGE_ID = fixtureId(PROOF_PAGE_NAME)
@@ -8646,14 +8649,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "<body><h1>An extension's own page under a rule that blocks every request</h1><p id=\"status\">reading\u2026</p><div id=\"images\"></div></body></html>",
             "options.css" to "body{font:16px system-ui,sans-serif;margin:24px;background:#eef;color:#123}h1{font-size:20px}img{display:block;margin:8px 0;width:64px;height:64px;border:1px solid #89a}",
             "options.js" to
-                "(function(){var p=window.__zenProof={done:false,script:true,css:false,ownImage:'pending',webFetch:'pending',webFetchUrl:null,webImage:'pending',webUrl:null,error:null};\n" +
-                "function settle(){if(p.ownImage==='pending'||p.webFetch==='pending'||p.webImage==='pending')return;p.css=getComputedStyle(document.body).backgroundColor==='rgb(238, 238, 255)';p.done=true;" +
-                "document.getElementById('status').textContent='own image '+p.ownImage+', web fetch '+p.webFetch+', web image '+p.webImage+', stylesheet '+(p.css?'applied':'missing')}\n" +
+                "(function(){var p=window.__zenProof={done:false,script:true,css:false,ownImage:'pending',webFetch:'pending',webFetchUrl:null,webImage:'pending',webUrl:null,webImageNamed:'pending',webNamedUrl:null,error:null};\n" +
+                "function settle(){if(p.ownImage==='pending'||p.webFetch==='pending'||p.webImage==='pending'||p.webImageNamed==='pending')return;p.css=getComputedStyle(document.body).backgroundColor==='rgb(238, 238, 255)';p.done=true;" +
+                "document.getElementById('status').textContent='own image '+p.ownImage+', web fetch '+p.webFetch+', web image '+p.webImage+', web image from the public name '+p.webImageNamed+', stylesheet '+(p.css?'applied':'missing')}\n" +
                 "function img(src,key){var i=document.createElement('img');i.alt=key;i.onload=function(){p[key]='loaded';settle()};i.onerror=function(){p[key]='error';settle()};i.src=src;document.getElementById('images').appendChild(i)}\n" +
                 "img('own.svg?t='+Date.now(),'ownImage');p.webUrl='$BASE/pixel.png?proof='+Date.now();img(p.webUrl,'webImage');\n" +
+                "p.webNamedUrl='$PUBLIC_NAME_BASE/pixel.png?proof='+Date.now();img(p.webNamedUrl,'webImageNamed');\n" +
                 "p.webFetchUrl='$BASE/cors/pixel.png?proof='+Date.now();\n" +
                 "try{fetch(p.webFetchUrl,{cache:'no-store'}).then(function(r){p.webFetch='status '+r.status;settle()},function(e){p.webFetch='error: '+String(e&&e.message||e);settle()})}catch(e){p.webFetch='threw: '+String(e&&e.message||e);settle()}\n" +
-                "setTimeout(function(){if(!p.done){if(p.ownImage==='pending')p.ownImage='timeout';if(p.webFetch==='pending')p.webFetch='timeout';if(p.webImage==='pending')p.webImage='timeout';settle()}},15000)})();\n",
+                "setTimeout(function(){if(!p.done){if(p.ownImage==='pending')p.ownImage='timeout';if(p.webFetch==='pending')p.webFetch='timeout';if(p.webImage==='pending')p.webImage='timeout';if(p.webImageNamed==='pending')p.webImageNamed='timeout';settle()}},15000)})();\n",
             "own.svg" to "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#3a6\"/><circle cx=\"32\" cy=\"32\" r=\"18\" fill=\"#fff\"/></svg>"
         )
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
