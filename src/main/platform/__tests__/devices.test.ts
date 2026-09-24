@@ -16,10 +16,12 @@ import type { Browser } from '../../../core/browser'
 import { DeviceChooserService } from '../../../core/deviceChooser'
 import { PermissionService } from '../../../core/permissions'
 import type { PermissionPromptHost, StoreIO } from '../../../core/platform'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../../shared/types'
 import {
   attachBluetoothChooser,
   attachBluetoothChoosers,
   attachDeviceHandlers,
+  deviceGrantDetails,
   serialCandidate,
   serialIdentity,
   unknownDeviceName,
@@ -116,7 +118,14 @@ const PORT: SerialPort = {
   serialNumber: 'FT1'
 }
 
-function fixture(os = 'linux'): {
+/**
+ * The handlers on one session of `containerId` (the private one for `PRIVATE_CONTAINER_ID`);
+ * `tab-1`, the page's tab, is in that container too, as the Bluetooth chooser looks it up.
+ */
+function fixture(
+  os = 'linux',
+  containerId: string = DEFAULT_CONTAINER_ID
+): {
   permissions: PermissionService
   devices: DeviceChooserService
   ses: FakeSession
@@ -127,7 +136,11 @@ function fixture(os = 'linux'): {
   chooserId(): string
 } {
   const permissions = new PermissionService(fakeIo(), prompts, () => 1_000)
-  const browser = { permissions, state: { commitVolatile: vi.fn() } } as unknown as Browser
+  const browser = {
+    permissions,
+    state: { commitVolatile: vi.fn() },
+    tabs: { tab: (tabId: string | null) => (tabId === 'tab-1' ? { containerId } : undefined) }
+  } as unknown as Browser
   const devices = new DeviceChooserService(browser, () => 42)
   ;(browser as { devices: DeviceChooserService }).devices = devices
   const ses = new FakeSession()
@@ -146,7 +159,7 @@ function fixture(os = 'linux'): {
       return () => undefined
     }
   }
-  attachDeviceHandlers(browser, views, ses as unknown as Session, os)
+  attachDeviceHandlers(browser, views, ses as unknown as Session, os, containerId)
   return {
     permissions,
     devices,
@@ -591,6 +604,102 @@ describe('attachBluetoothChooser', () => {
     f.views.created[0]({ webContents: f.wc } as unknown as ElectronTabView)
     f.wc.emit('select-bluetooth-device', { preventDefault: vi.fn() }, [HEART], vi.fn())
     expect(f.devices.list()[0]).toMatchObject({ kind: 'bluetooth', tabId: 'tab-1' })
+  })
+
+  it('grants a pick in a private tab to the private session alone, the container being the tab’s', async () => {
+    const f = fixture('linux', PRIVATE_CONTAINER_ID)
+    attachBluetoothChooser(f.browser, f.views, f.wc)
+    const callback = vi.fn()
+    f.wc.emit('select-bluetooth-device', { preventDefault: vi.fn() }, [HEART], callback)
+    f.devices.respond(f.chooserId(), 'aa:bb')
+    await tick()
+    expect(callback).toHaveBeenCalledWith('aa:bb')
+    expect(f.permissions.deviceGrants()).toEqual([])
+    const heart = { deviceId: 'aa:bb', name: 'Heart rate', vendorId: null, productId: null }
+    expect(
+      f.permissions.hasDeviceGrant('bluetooth', 'https://app.example', heart, {
+        privateContainerId: PRIVATE_CONTAINER_ID
+      })
+    ).toBe(true)
+    expect(f.permissions.hasDeviceGrant('bluetooth', 'https://app.example', heart)).toBe(false)
+  })
+})
+
+describe('attachDeviceHandlers: the private session', () => {
+  const pick = async (f: ReturnType<typeof fixture>): Promise<void> => {
+    f.ses.emit(
+      'select-hid-device',
+      { preventDefault: vi.fn() },
+      { deviceList: [MOUSE], frame: f.frame },
+      vi.fn()
+    )
+    f.devices.respond(f.chooserId(), 'hid-1')
+    await tick()
+  }
+  const asks = (ses: FakeSession): boolean =>
+    ses.devicePermission!({ deviceType: 'hid', origin: 'https://app.example', device: MOUSE })
+
+  it('names the private container to the core and no other', () => {
+    expect(deviceGrantDetails(PRIVATE_CONTAINER_ID)).toEqual({
+      privateContainerId: PRIVATE_CONTAINER_ID
+    })
+    expect(deviceGrantDetails(DEFAULT_CONTAINER_ID)).toEqual({})
+    expect(deviceGrantDetails('work')).toEqual({})
+    expect(deviceGrantDetails(undefined)).toEqual({})
+  })
+
+  it('grants a pick in the private session to that session: its handler says yes, the store and a regular session say no', async () => {
+    const f = fixture('linux', PRIVATE_CONTAINER_ID)
+    const regular = new FakeSession()
+    attachDeviceHandlers(
+      f.browser,
+      f.views,
+      regular as unknown as Session,
+      'linux',
+      DEFAULT_CONTAINER_ID
+    )
+    await pick(f)
+    expect(f.permissions.deviceGrants()).toEqual([])
+    expect(f.permissions.deviceGrantsFor('https://app.example')).toEqual([])
+    expect(asks(f.ses)).toBe(true)
+    expect(asks(regular)).toBe(false)
+  })
+
+  it('forgets the private session’s grants with the session, and on the page’s own forget()', async () => {
+    const f = fixture('linux', PRIVATE_CONTAINER_ID)
+    await pick(f)
+    expect(asks(f.ses)).toBe(true)
+    f.ses.emit('hid-device-revoked', {}, { device: MOUSE, origin: 'https://app.example' })
+    expect(asks(f.ses)).toBe(false)
+
+    await pick(f)
+    expect(asks(f.ses)).toBe(true)
+    f.permissions.forgetContainer(PRIVATE_CONTAINER_ID)
+    expect(asks(f.ses)).toBe(false)
+  })
+
+  it('reads the regular profile’s grants in private, and leaves them alone', async () => {
+    const f = fixture('linux', PRIVATE_CONTAINER_ID)
+    const regular = new FakeSession()
+    attachDeviceHandlers(
+      f.browser,
+      f.views,
+      regular as unknown as Session,
+      'linux',
+      DEFAULT_CONTAINER_ID
+    )
+    f.permissions.grantDevice('hid', 'https://app.example', {
+      deviceId: 'hid-1',
+      name: 'Gaming Mouse',
+      vendorId: 0x046d,
+      productId: 0xc52b,
+      serialNumber: 'S1'
+    })
+    expect(asks(f.ses)).toBe(true)
+    // A private page's forget() touches nothing of the regular profile's.
+    f.ses.emit('hid-device-revoked', {}, { device: MOUSE, origin: 'https://app.example' })
+    expect(asks(regular)).toBe(true)
+    expect(f.permissions.deviceGrants()).toHaveLength(1)
   })
 })
 

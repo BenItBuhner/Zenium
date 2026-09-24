@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { SiteInfoSnapshot } from '@shared/siteInfo'
-import { DEFAULT_CONTAINER_ID, type Tab, type UIState } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, type CertificateError, type Tab, type UIState } from '@shared/types'
 
 const cmd = vi.fn<(name: string, args?: unknown) => Promise<unknown>>()
 const run = vi.fn<(name: string, args?: unknown) => void>()
@@ -223,5 +223,178 @@ describe('the level the popover opens on (omnibox-38)', () => {
     act(() => back.click())
     expect(dialog().getAttribute('data-level')).toBe('overview')
     expect(SITE_INFO_LEVELS).toContain('permissions')
+  })
+})
+
+/*
+ * A certificate that failed verification (W5-2 (c), Android's #382): the Connection row and the
+ * level's headline name the fault in the shared module's words – `certificateFault`, the phone
+ * sheet's – in the danger tier's ink, never the refused certificate's issuer; the certificate's
+ * rows stand under "Certificate that was refused".
+ */
+const DANGER_INK = 'text-[var(--v2-danger)]'
+
+function refused(code: number, patch: Partial<CertificateError> = {}): CertificateError {
+  return {
+    code,
+    url: page.url,
+    certificate: {
+      subjectName: 'meet.example',
+      issuerName: 'Example Root CA',
+      validStart: Date.UTC(2019, 0, 1),
+      validExpiry: Date.UTC(2020, 0, 1),
+      fingerprint: 'sha256/abc'
+    },
+    bypassed: false,
+    ...patch
+  }
+}
+
+function refusedSnapshot(error: CertificateError): SiteInfoSnapshot {
+  return {
+    ...snapshot([]),
+    security: {
+      state: 'insecure',
+      certificate: {
+        subject: 'meet.example',
+        issuer: 'Example Root CA',
+        validFrom: error.certificate?.validStart ?? null,
+        validTo: error.certificate?.validExpiry ?? null,
+        protocol: null
+      },
+      mixedContent: null,
+      certificateError: error
+    }
+  }
+}
+
+const connectionRow = (): HTMLElement =>
+  Array.from(dialog().querySelectorAll<HTMLElement>('.zen-v2-row')).find((row) =>
+    row.textContent?.startsWith('Connection')
+  )!
+
+const titleLine = (): string => dialog().querySelector('h2 + p')?.textContent ?? ''
+
+describe('a certificate named by its fault (W5-2 (c), #382)', () => {
+  it.each([
+    [-200, 'Certificate not valid for this site'],
+    [-201, 'Certificate expired'],
+    [-202, 'Certificate not trusted'],
+    [-206, 'Certificate revoked'],
+    [-213, 'Certificate not valid']
+  ])(
+    'ERR_CERT %d: the Connection row’s value is the fault in the danger ink, never the issuer',
+    async (code, fault) => {
+      cmd.mockImplementation(async (name) => {
+        if (name === 'siteInfo.snapshot') return refusedSnapshot(refused(code))
+        return null
+      })
+      render(<Popover onDismiss={() => undefined} />)
+      await settle()
+      const value = connectionRow().querySelector<HTMLElement>('[data-fault]')!
+      expect(value).not.toBeNull()
+      expect(value.getAttribute('data-fault')).toBe(fault)
+      expect(value.textContent).toBe(fault)
+      expect(value.classList.contains(DANGER_INK)).toBe(true)
+      expect(value.classList.contains('text-[var(--v2-text-deemphasized)]')).toBe(false)
+      expect(connectionRow().textContent).not.toContain('Example Root CA')
+      // The title block's line says the same (the phone sheet's line).
+      expect(titleLine()).toBe(`Not secure · ${fault}`)
+    }
+  )
+
+  it('the Connection level: the fault as the headline in the danger ink, the shared sentence under it, the certificate’s rows under "Certificate that was refused"', async () => {
+    cmd.mockImplementation(async (name) => {
+      if (name === 'siteInfo.snapshot') return refusedSnapshot(refused(-201))
+      return null
+    })
+    render(<Popover onDismiss={() => undefined} />)
+    await settle()
+    act(() => connectionRow().click())
+    expect(dialog().getAttribute('data-level')).toBe('connection')
+    const headline = dialog().querySelector<HTMLElement>('[data-fault]')!
+    expect(headline.textContent).toBe('Certificate expired')
+    expect(headline.classList.contains(DANGER_INK)).toBe(true)
+    expect(headline.nextElementSibling?.textContent).toBe(
+      'The certificate this site sent could not be verified, so Zenium did not load the page.'
+    )
+    const text = dialog().textContent ?? ''
+    // The heading stands before the certificate's rows; the issuer is a fact of the certificate
+    // there, not the row's credential.
+    expect(text.indexOf('Certificate that was refused')).toBeGreaterThan(-1)
+    expect(text.indexOf('Certificate that was refused')).toBeLessThan(text.indexOf('Issued by'))
+    const issuedBy = Array.from(dialog().querySelectorAll<HTMLElement>('.zen-v2-row')).find((row) =>
+      row.textContent?.startsWith('Issued by')
+    )!
+    expect(issuedBy.textContent).toContain('Example Root CA')
+  })
+
+  it('proceeded past the warning: the bypassed sentence, the fault still the word', async () => {
+    cmd.mockImplementation(async (name) => {
+      if (name === 'siteInfo.snapshot') return refusedSnapshot(refused(-202, { bypassed: true }))
+      return null
+    })
+    render(<Popover level="connection" onDismiss={() => undefined} />)
+    await settle()
+    const headline = dialog().querySelector<HTMLElement>('[data-fault]')!
+    expect(headline.textContent).toBe('Certificate not trusted')
+    expect(headline.nextElementSibling?.textContent).toBe(
+      'You chose to proceed past a certificate warning. What you send to this site could be read or changed on the way.'
+    )
+  })
+
+  it('a sound certificate keeps the headline, muted, and no refused heading', async () => {
+    cmd.mockImplementation(async (name) => {
+      if (name === 'siteInfo.snapshot')
+        return {
+          ...snapshot([]),
+          security: {
+            state: 'secure',
+            certificate: {
+              subject: 'meet.example',
+              issuer: 'Example CA',
+              validFrom: null,
+              validTo: null,
+              protocol: 'TLS 1.3'
+            },
+            mixedContent: null
+          }
+        } as SiteInfoSnapshot
+      return null
+    })
+    render(<Popover onDismiss={() => undefined} />)
+    await settle()
+    expect(dialog().querySelector('[data-fault]')).toBeNull()
+    const value = connectionRow().querySelector<HTMLElement>('span.truncate')!
+    expect(value.textContent).toBe('Secure')
+    expect(value.classList.contains('text-[var(--v2-text-deemphasized)]')).toBe(true)
+    expect(value.classList.contains(DANGER_INK)).toBe(false)
+    expect(titleLine()).toBe('Secure · Example CA')
+    act(() => connectionRow().click())
+    expect(dialog().textContent).not.toContain('Certificate that was refused')
+    expect(dialog().querySelector('[data-fault]')).toBeNull()
+  })
+
+  it('reads the tab’s refused certificate from the first frame, before the reading lands', async () => {
+    // The reading never lands: the tab alone is the word.
+    cmd.mockImplementation(() => new Promise(() => undefined))
+    const error = refused(-201)
+    const tab = { ...page, certificateError: error } as Tab
+    render(
+      <SiteInfoPopover
+        tab={tab}
+        state={{ ...state, tabs: { t1: tab } } as UIState}
+        anchor={{ x: 40, y: 8, width: 24, height: 24 }}
+        bar={{ x: 20, y: 4, width: 300, height: 32 }}
+        closing={false}
+        onDismiss={() => undefined}
+        onClosed={() => undefined}
+      />
+    )
+    await settle()
+    expect(titleLine()).toBe('Not secure · Certificate expired')
+    const value = connectionRow().querySelector<HTMLElement>('[data-fault]')!
+    expect(value.textContent).toBe('Certificate expired')
+    expect(value.classList.contains(DANGER_INK)).toBe(true)
   })
 })

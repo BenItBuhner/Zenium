@@ -1014,6 +1014,39 @@ describe('the v2 primitives (§9.34)', () => {
     expect(rule('.zen-phone-field:focus-within')).toMatch(/outline: 2px solid var\(--v2-ring\)/)
   })
 
+  it('give the pairing PIN its digits’ look on a class of the prompt’s (#425’s `className` slot), no rule reaching into the field by its label', () => {
+    // The Bluetooth `providePin` prompt (devices/DeviceChooserDialog.tsx) hands `PromptField`
+    // `inputMode: 'numeric'`, `pattern: '[0-9]*'` and `className: 'zen-device-pairing-field'`;
+    // the class carries the value's look – tabular digits, letter-spaced so six read as six – and
+    // nothing of the field's box, which is the primitive's. The rule main.css once aimed at the
+    // primitive from outside (`.zen-confirm-dialog[data-pairing-kind='providePin']
+    // .zen-v2-field[aria-label='PIN']`) is gone, and so is the `data-pairing-kind` handle it hung
+    // on (the prompt's root carries the primitive's `data-confirm` alone): no stylesheet names
+    // either, so the field's name can change without its look.
+    expect(bare.match(/\.zen-device-pairing-field \{/g)).toHaveLength(1)
+    expect(block('.zen-device-pairing-field').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  font-variant-numeric: tabular-nums;',
+      '  letter-spacing: 0.25em;'
+    ])
+    expect(nesting(ruleAt('.zen-device-pairing-field'))).toBe(0)
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => f.endsWith('.css'))) {
+      const text = readFileSync(join(root, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      expect(text, `${file} reaches into the pairing prompt's field`).not.toMatch(
+        /data-pairing-kind|\.zen-v2-field\[aria-label/
+      )
+    }
+    const prompt = readFileSync(
+      fileURLToPath(new URL('../../components/devices/DeviceChooserDialog.tsx', import.meta.url)),
+      'utf8'
+    )
+    expect(prompt).toMatch(
+      /inputMode: 'numeric',\n\s*pattern: '\[0-9\]\*',\n\s*className: 'zen-device-pairing-field'/
+    )
+  })
+
   it('gate the row’s hover fill, press fill and pointer cursor on [data-static], as part of the one row rule', () => {
     // The static row (§9.34) is the row primitive with `data-static`: the attribute is read in
     // exactly three places, all in the row's own rule set – the static rule, and the `:not()` of
@@ -1201,6 +1234,23 @@ describe('the v2 primitives (§9.34)', () => {
       // column (every row fills it), a lone status row's glyph trails (§9.33).
       expect(bare).not.toContain(`.zen-settings-row[data-tone='${tone}'] .zen-settings-leading`)
     }
+  })
+
+  it('hand the phone row’s glyph the text token the desktop lead names (§10.4; the twin of #425’s lead-slot pin)', () => {
+    // The desktop row anatomy's lead (`.zen-v2-row-lead`, extensions.css) is pinned at
+    // `--v2-text` by the W5-3 audit below (#425), with no stylesheet softening the slot. This is
+    // the phone twin the lead's #418 ruling 4 matched it to: the phone row (`.zen-sheet-item`)
+    // colours itself with the same token and its glyph rule (`.zen-sheet-item-glyph`) sets no
+    // colour of its own, so the glyph inherits it – the two hosts' leading glyphs read one token.
+    const declarations = (text: string, selector: string): string[] => {
+      const at = text.indexOf(`\n  ${selector} {`)
+      expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+      return text.slice(at, text.indexOf('\n  }', at)).match(/^ {4}[a-z-]+:[^;]+;/gm) ?? []
+    }
+    expect(declarations(css, '.zen-sheet-item')).toContain('    color: var(--v2-text);')
+    expect(declarations(css, '.zen-sheet-item-glyph')).not.toContainEqual(
+      expect.stringMatching(/^ {4}color:/)
+    )
   })
 
   it('draw an inline link as text with a 40 % underline, the accent on hover and focus-visible (§9.10): one unlayered rule, the old forms gone', () => {
