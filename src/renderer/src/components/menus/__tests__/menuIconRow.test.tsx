@@ -6,6 +6,7 @@ import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
 import { MenuSheet } from '../MenuSheet'
+import { applyAccessibilityState, resetAccessibilityState } from '@renderer/lib/accessibilityState'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { isIconRow } from '@renderer/lib/menuIconRow'
 import { SheetPresence } from '@renderer/lib/motion/presence'
@@ -188,6 +189,152 @@ afterEach(() => {
   delete (window as { matchMedia?: unknown }).matchMedia
   frames.now = 0
   act(() => viewportStore.set({ ...viewportStore.get(), coarse: false, formFactor: 'desktop' }))
+  act(() => resetAccessibilityState())
+})
+
+// --- the list pose (A11Y-04) -------------------------------------------------------------------
+
+const list = (): HTMLElement | null => document.querySelector<HTMLElement>('.zen-menu-icon-list')
+const listRows = (): HTMLButtonElement[] => [
+  ...document.querySelectorAll<HTMLButtonElement>('.zen-menu-icon-list .zen-sheet-item')
+]
+const listRow = (label: string): HTMLButtonElement =>
+  listRows().find((b) => b.textContent === label)!
+
+describe('as a list under touch exploration or large text (A11Y-04)', () => {
+  it('under touch exploration the row is a list of §10.3 rows: the same items in the same order, each a full-width button whose visible text is the name the icon button carried, the glyph leading and hidden from the tree', async () => {
+    act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
+    await show(appMenu({ forward: false, pageInfo: false }))
+    expect(row()).toBeNull()
+    expect(list()).not.toBeNull()
+    expect(list()!.getAttribute('aria-label')).toBe('Page actions')
+    // The list is the sheet's first group, where the row stood; the text rows follow it.
+    expect(list()!.parentElement!.firstElementChild).toBe(list())
+    expect(listRows().map((b) => b.textContent)).toEqual([
+      'Forward',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload'
+    ])
+    expect(listRows().map((b) => b.dataset.glyph)).toEqual([
+      'forward',
+      'star',
+      'download',
+      'info',
+      'reload'
+    ])
+    expect(textRows()).toEqual([
+      'Forward',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload',
+      'New Tab',
+      'New Private Tab'
+    ])
+    for (const b of listRows()) {
+      expect(b.tagName).toBe('BUTTON')
+      expect(b.getAttribute('type')).toBe('button')
+      // The name is the text (A11Y-10: what Voice Access hears is what the eye reads), not a
+      // second string on the row; the glyph is a drawing in the leading slot.
+      expect(b.hasAttribute('aria-label')).toBe(false)
+      const glyph = b.querySelector<HTMLElement>('.zen-sheet-item-glyph')!
+      expect(glyph).not.toBeNull()
+      expect(glyph.getAttribute('aria-hidden')).toBe('true')
+      expect(glyph.querySelector('svg')).not.toBeNull()
+      expect(b.firstElementChild).toBe(glyph)
+    }
+    expect(listRow('Forward').disabled).toBe(true)
+    expect(listRow('Page Info').disabled).toBe(true)
+    expect(listRow('Bookmark').disabled).toBe(false)
+    expect(listRow('Reload').disabled).toBe(false)
+  })
+
+  it('at large text (font scale 1.3) the list stands too; at 1.15 the row does', async () => {
+    act(() => applyAccessibilityState({ touchExploration: false, fontScale: 1.3 }))
+    await show(appMenu())
+    expect(list()).not.toBeNull()
+    expect(row()).toBeNull()
+    act(() => root!.unmount())
+    root = null
+    act(() => applyAccessibilityState({ touchExploration: false, fontScale: 1.15 }))
+    await show(appMenu())
+    expect(list()).toBeNull()
+    expect(row()).not.toBeNull()
+  })
+
+  it('the pose follows the state live while the sheet stands: TalkBack coming on turns the row into the list, and off turns it back', async () => {
+    await show(appMenu())
+    expect(row()).not.toBeNull()
+    act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
+    expect(row()).toBeNull()
+    expect(list()).not.toBeNull()
+    expect(listRows().map((b) => b.textContent)).toEqual([
+      'Forward',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload'
+    ])
+    act(() => applyAccessibilityState({ touchExploration: false, fontScale: 1 }))
+    expect(list()).toBeNull()
+    expect(buttons().map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Forward',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload'
+    ])
+  })
+
+  it('a press on a list row slides the sheet away and then picks the item, as the icon button does; a disabled row takes no press', async () => {
+    act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
+    await show(appMenu({ forward: false }))
+    click(listRow('Forward'))
+    runAll()
+    expect(picks()).toEqual([])
+    click(listRow('Reload'))
+    expect(picks()).toEqual([])
+    runAll()
+    expect(picks()).toEqual([['menu.click', { menuId: 'menu_1', itemId: 'menu_1_5' }]])
+    expect(uiStore.get().menu).toBeNull()
+  })
+
+  it('the star row keeps the fill: "Bookmark" outlined, filling on the press as the sheet leaves; "Edit Bookmark" filled at rest', async () => {
+    act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
+    await show(appMenu({ bookmarked: false }))
+    const star = listRow('Bookmark')
+    expect(star.dataset.glyph).toBe('star')
+    expect(star.dataset.filled).toBe('false')
+    expect(fillOpacity()).toBe(0)
+    click(star)
+    expect(star.dataset.filled).toBe('true')
+    runAll()
+    expect(fillOpacity()).toBe(1)
+    expect(picks()).toEqual([['menu.click', { menuId: 'menu_1', itemId: 'menu_1_2' }]])
+    act(() => root!.unmount())
+    root = null
+    uiStore.set({ menu: null })
+    await show(appMenu({ bookmarked: true }))
+    expect(listRow('Edit Bookmark').dataset.filled).toBe('true')
+    expect(fillOpacity()).toBe(1)
+  })
+
+  it('the list’s rule draws in tokens alone: the rows are the sheet’s own, the glyphs the row tokens, no literal hue', () => {
+    const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    const glyph = /\.zen-menu-icon-list \.zen-sheet-item-glyph svg \{([^}]*)\}/.exec(css)![1]
+    expect(glyph).toContain('width: var(--v2-icon)')
+    expect(glyph).toContain('stroke-width: var(--v2-icon-stroke)')
+    const block = css.slice(css.indexOf('.zen-menu-icon-list {'), css.indexOf('.zen-star-glyph {'))
+    expect(block).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i)
+    // The row's metrics are `.zen-sheet-item`'s (§10.3: 44 from the line box, the 16 gutter, the
+    // 12 gap to the label), stated once for every sheet.
+    const item = /^\s*\.zen-sheet-item \{([^}]*)\}/m.exec(css)![1]
+    expect(item).toContain('height: var(--v2-row)')
+    expect(item).toContain('gap: 12px')
+    expect(item).toContain('padding: 0 16px')
+  })
 })
 
 describe('the icon row', () => {

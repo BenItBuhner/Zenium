@@ -19,7 +19,11 @@ object AccessibilityState {
     fun payload(touchExploration: Boolean, fontScale: Float): JSONObject =
         json("touchExploration" to touchExploration, "fontScale" to fontScaleOf(fontScale))
 
-    /** The font scale as a finite positive factor; 1 for anything else. */
+    /**
+     * The font scale as a finite positive factor to the hundredth; 1 for anything else. The
+     * setting is a float (1.3f widens to 1.2999999523…), and the chrome's large-text line is a
+     * decimal threshold: the payload carries the number the user set, not the float's remainder.
+     */
     fun fontScaleOf(fontScale: Float): Double =
-        if (fontScale.isFinite() && fontScale > 0f) fontScale.toDouble() else 1.0
+        if (fontScale.isFinite() && fontScale > 0f) Math.round(fontScale * 100f) / 100.0 else 1.0
 }

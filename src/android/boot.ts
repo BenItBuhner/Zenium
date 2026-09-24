@@ -20,6 +20,7 @@ import {
   type BackEventPayload,
   type BackPhase
 } from '@renderer/lib/back'
+import { applyAccessibilityState } from '@renderer/lib/accessibilityState'
 import { applyPrivateLock, setPrivateLockHost } from '@renderer/lib/privateLock'
 import { privateSurfaceNow, subscribePrivateSurface } from '@renderer/lib/privateSurface'
 import {
@@ -167,6 +168,15 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   // The chrome's text at the system font size (A11Y-05): the host drew it at `textZoom` already;
   // the line boxes follow from here. Changes arrive with the `environment` event (platform.ts).
   applyTextScale(boot.environment)
+  // Touch exploration and the font scale for the chrome's accessibility variants (A11Y-04): the
+  // `accessibility` field of a current host, the older flag and the environment's scale before
+  // it. Changes arrive as the `accessibility` event (below).
+  applyAccessibilityState(
+    boot.accessibility ?? {
+      touchExploration: boot.touchExploration,
+      fontScale: boot.environment?.fontScale
+    }
+  )
   browser.start()
   hostGlobal.flush()
 
@@ -442,6 +452,12 @@ function installHostGlobal(
       // host's word as it comes, the core having no part in it.
       if (name === 'private.lock') {
         applyPrivateLock(parse<HostEventPayloads['private.lock'] | undefined>(json) ?? {})
+        return
+      }
+      // So is the accessibility state (`lib/accessibilityState.ts`): touch exploration and the
+      // font scale, for the phone menu's list variant.
+      if (name === 'accessibility') {
+        applyAccessibilityState(parse<HostEventPayloads['accessibility'] | undefined>(json))
         return
       }
       withPlatform((platform) => {

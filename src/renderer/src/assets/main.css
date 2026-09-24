@@ -4238,6 +4238,24 @@
     stroke-width: var(--v2-icon-stroke);
   }
   /*
+   * The same six as a list (A11Y-04; `lib/accessibilityState.ts`): under touch exploration or at
+   * large text each is a §10.3 sheet row – `.zen-sheet-item`'s 44 (the line box's height above
+   * scale 1), the 20 glyph in the leading slot at the 16 gutter, the label 12 after it so the
+   * labels align at 48 as the site-information sheet's do, the row's full width the target, the
+   * press fill – in the body's rhythm: the list's first row flush under the header and the group
+   * hairline 8 below its last, where the icon row's would be. The glyphs keep the row's tokens
+   * (20 at stroke 1.75); the star's stacked pair sizes itself.
+   */
+  .zen-menu-icon-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .zen-menu-icon-list .zen-sheet-item-glyph svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  /*
    * The stateful bookmark star (`BarGlyphs.tsx`), the menu row's and the bar's optional Bookmark
    * alike: the icon token's square, the outline and the filled star stacked in it, each star the
    * square's size – so in the bar, where no row rule sizes the svgs, the star is the 20 of its

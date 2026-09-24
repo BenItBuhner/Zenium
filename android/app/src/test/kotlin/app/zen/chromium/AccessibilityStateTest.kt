@@ -14,7 +14,9 @@ class AccessibilityStateTest {
     fun theDeviceStateTravelsAsIs() {
         val payload = AccessibilityState.payload(touchExploration = true, fontScale = 1.3f)
         assertTrue(payload.getBoolean("touchExploration"))
-        assertEquals(1.3, payload.getDouble("fontScale"), 1e-6)
+        // Exactly the decimal the setting names: the float's remainder would read below 1.3.
+        assertEquals(1.3, payload.getDouble("fontScale"), 0.0)
+        assertEquals("1.3", payload.get("fontScale").toString())
     }
 
     @Test
@@ -30,7 +32,8 @@ class AccessibilityStateTest {
         assertEquals(1.0, AccessibilityState.fontScaleOf(-1f), 0.0)
         assertEquals(1.0, AccessibilityState.fontScaleOf(Float.NaN), 0.0)
         assertEquals(1.0, AccessibilityState.fontScaleOf(Float.POSITIVE_INFINITY), 0.0)
-        assertEquals(0.85, AccessibilityState.fontScaleOf(0.85f), 1e-6)
+        assertEquals(0.85, AccessibilityState.fontScaleOf(0.85f), 0.0)
+        assertEquals(1.15, AccessibilityState.fontScaleOf(1.15f), 0.0)
         assertEquals(2.0, AccessibilityState.fontScaleOf(2f), 0.0)
     }
 }
