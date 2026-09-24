@@ -766,6 +766,40 @@ describe('the tablet switcher comes down from the toolbar`s edge over the page (
     expect(parseFloat(layer().style.transform.slice('translateY('.length))).toBeLessThan(-0.8 * 744)
   })
 
+  it('the active card is drawn in its slot through the descent and the close – nothing flies into it; the phone`s stays hidden until its hero lands', () => {
+    const state = stateOf(pages())
+    pageOff('ex')
+    // Mid-descent: the hero's card is a card, not an empty slot the settle fills by a cut.
+    overview({ phase: 'dragging', progress: 0.5, heroTabId: 'ex', target: 1 })
+    mountStage(state, true)
+    expect(card('ex').getAttribute('data-active')).toBe('true')
+    expect(card('ex').style.opacity).toBe('')
+    expect(hero()).not.toBeNull()
+    // Every other card is drawn as well; the grid comes down whole.
+    for (const id of ['coffee', 'pulls', 'tea', 'hn']) expect(card(id).style.opacity).toBe('')
+    overview({ phase: 'settling', progress: 0.9, target: 1 })
+    expect(card('ex').style.opacity).toBe('')
+    overview({ phase: 'open', progress: 1 })
+    expect(card('ex').style.opacity).toBe('')
+    // The close: the picked card stays in its slot for the rise, from its first frame.
+    overview({ phase: 'settling', progress: 0.98, heroTabId: 'ex', target: 0 })
+    expect(card('ex').style.opacity).toBe('')
+    overview({ progress: 0.3 })
+    expect(card('ex').style.opacity).toBe('')
+    expect(hero()).not.toBeNull()
+  })
+
+  it('the phone`s hero card is hidden until the morph lands on it: the flying hero stands in for it', () => {
+    viewportStore.set(PHONE)
+    const state = stateOf(pages())
+    overview({ phase: 'settling', progress: 0.5, heroTabId: 'ex', target: 1 })
+    mountStage(state, false)
+    expect(card('ex').style.opacity).toBe('0')
+    expect(card('coffee').style.opacity).toBe('')
+    overview({ phase: 'open', progress: 1 })
+    expect(card('ex').style.opacity).toBe('')
+  })
+
   it('under reduced motion the slide is the fade at scale 1 (§11.3)', () => {
     reduced = true
     const state = stateOf(pages())

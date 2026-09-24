@@ -1432,7 +1432,12 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       active={tab.id === active?.id}
       position={placeOf(tab)}
       count={ordered.length}
-      hidden={tab.id === heroTabId && p < 1}
+      // The phone's hero flies into its own card's slot, so the card is hidden until the morph
+      // lands on it pixel-for-pixel. On the tablet nothing flies: the hero is the page's still
+      // under the layer, and its card is part of the grid that comes down whole – drawn from the
+      // descent's first frame and through the close's rise (§9.36; a slot that fills by a cut at
+      // the settle is no motion of §11's).
+      hidden={!tablet && tab.id === heroTabId && p < 1}
       onPick={pick}
       onClose={(t) => closeTabs([t])}
       onSwipeClose={swipedAway}
