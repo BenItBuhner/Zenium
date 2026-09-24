@@ -45,7 +45,11 @@ export function ScreenPickerLayer({ state }: { state: UIState }): JSX.Element | 
   const capable = state.capabilities.screenCapture
   useChromeSurface('screenCapture', capable)
   const request = capable ? currentScreenCaptureRequest(state) : null
-  return request ? <ScreenPicker key={request.id} request={request} /> : null
+  if (!request) return null
+  // The requesting tab's favicon, live from the tab state (the request's own `sources` carry the
+  // tab's card, a snapshot taken as the request was made).
+  const favicon = request.extension ? null : (state.tabs[request.tabId]?.favicon ?? null)
+  return <ScreenPicker key={request.id} request={request} favicon={favicon} />
 }
 
 /**
@@ -63,14 +67,22 @@ export function ScreenPickerLayer({ state }: { state: UIState }): JSX.Element | 
  * switch panes on the segment; focus starts on the calling tab's card, Tab wraps (§9.22), Escape
  * is Cancel. Cancel is the page's refusal (NotAllowedError), as Chrome's.
  *
- * An extension's request (`chrome.desktopCapture.chooseDesktopMedia`) is the same dialog with
- * the extension's icon at the title's start (§9.23: the requester's identity as the glyph) and
- * its name where the site's goes – "with <site>" when it captures for a site's tab – and only
- * the panes it asked for: one pane stands alone, with no segment over it, as Chrome's does. A
- * host in that line is never elided (§9.23): it wraps at its dots when it is too long for the
- * line (`Host`).
+ * The title block's 16 glyph is the requester's identity (§9.23; the lead's #330 ruling): a
+ * site's request carries the requesting tab's favicon (`RequesterFavicon` – the stand-in globe
+ * where the tab offered none). An extension's request (`chrome.desktopCapture.chooseDesktopMedia`)
+ * is the same dialog with the extension's icon there and its name where the site's goes – "with
+ * <site>" when it captures for a site's tab – and only the panes it asked for: one pane stands
+ * alone, with no segment over it, as Chrome's does. A host in that line is never elided
+ * (§9.23): it wraps at its dots when it is too long for the line (`Host`).
  */
-function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Element {
+function ScreenPicker({
+  request,
+  favicon
+}: {
+  request: ScreenCaptureRequest
+  /** The requesting tab's favicon, or null for a tab without one (or an extension's request). */
+  favicon: string | null
+}): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const answered = useRef(false)
   const [busy, setBusy] = useState(false)
@@ -215,7 +227,9 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
         glyph={
           request.extension ? (
             <ExtensionIcon icon={request.extension.icon} size={16} box={16} />
-          ) : undefined
+          ) : (
+            <RequesterFavicon src={favicon} />
+          )
         }
         description={
           <span id={DESCRIPTION_ID}>
@@ -355,6 +369,38 @@ function Host({ host }: { host: string }): JSX.Element {
         </Fragment>
       ))}
     </span>
+  )
+}
+
+/**
+ * The requesting site's identity in the title block's 16 glyph slot (§9.23; the lead's #330
+ * ruling – the requester's icon, as the extension form carries the extension's): the requesting
+ * tab's favicon at 16, and where the tab offered none or the image fails to load, the stand-in
+ * globe at 69% in the deemphasised ink (§10.4: a stand-in for a picture the site does not have
+ * draws as the absence it is, not as a site's mark). Decorative either way – the description
+ * names the site in words – so neither reaches the reading.
+ */
+function RequesterFavicon({ src }: { src: string | null }): JSX.Element {
+  const [broken, setBroken] = useState<string | null>(null)
+  const icon = src && broken !== src ? src : null
+  return icon ? (
+    <img
+      className="zen-scpick-requester"
+      data-testid="screen-picker-favicon"
+      src={icon}
+      alt=""
+      width={16}
+      height={16}
+      draggable={false}
+      referrerPolicy="no-referrer"
+      onError={() => setBroken(icon)}
+    />
+  ) : (
+    <Globe
+      className="zen-scpick-requester zen-scpick-requester-globe"
+      data-testid="screen-picker-globe"
+      aria-hidden="true"
+    />
   )
 }
 

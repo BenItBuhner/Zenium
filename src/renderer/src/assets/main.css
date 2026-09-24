@@ -6746,6 +6746,19 @@
     flex-shrink: 0;
     stroke-width: var(--v2-icon-stroke);
   }
+  /*
+   * The requester's favicon in the title block's glyph slot (§9.23; the slot's size is the
+   * title block's own rule): the stand-in globe for a site without one draws at 69%, §10.4's
+   * deemphasised ink for a picture the row does not have.
+   */
+  .zen-scpick-requester {
+    display: block;
+    object-fit: contain;
+  }
+  .zen-scpick-requester-globe {
+    color: var(--v2-text-deemphasized);
+    stroke-width: var(--v2-icon-stroke);
+  }
   .zen-scpick-footer {
     display: flex;
     flex-shrink: 0;
