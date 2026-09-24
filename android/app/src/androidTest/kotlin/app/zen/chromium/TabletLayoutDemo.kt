@@ -478,6 +478,20 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         // page's height, `overviewTravel`).
         f.down(pill.centerX(), pill.centerY())
         f.moveBy(0f, 0.16f * height, 300)
+        // The chrome lies under the page views: the layer is unseen until the host has drawn the
+        // frame without the live page (the page's still, under the layer, stands in from that
+        // frame), so the finger holds here until it shows – the capture behind it takes about a
+        // second on the software GPU – and the reads and the picture are of the layer risen over
+        // the still at the finger's progress. The wait is a reading (the harness's wall clock).
+        val pullAt = SystemClock.uptimeMillis()
+        val layerShown = awaitJs(OVERVIEW_VISIBLE, true, 8_000)
+        val heroPagePhase = jsText(HERO_PAGE_PHASE)
+        finding("mid-pull the layer showed ${SystemClock.uptimeMillis() - pullAt} ms after the pull's first stretch (the harness's wall clock; the page's capture and the host's frame behind it – a reading, not a claim)")
+        check(
+            "mid-pull the layer shows once the hero page's view is off the screen, and not before (the chrome lies under the pages)",
+            layerShown && heroPagePhase == "hidden",
+            "layer ${if (layerShown) "shown" else "unseen"}, hero page view '$heroPagePhase'"
+        )
         val midPull = jsText(OVERVIEW_TRANSFORM)
         val midPhase = jsText(OVERVIEW_PHASE)
         check(
@@ -1020,6 +1034,10 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val OVERVIEW_LAYER = ".zen-overview[data-tablet]"
         private const val OVERVIEW_TRANSFORM = "((document.querySelector('.zen-overview')||{style:{}}).style.transform||'')"
         private const val OVERVIEW_OPACITY = "((document.querySelector('.zen-overview')||{style:{}}).style.opacity||'')"
+        /** Whether the tablet's layer is seen: unseen (`visibility: hidden`) until the live page is off the screen. */
+        private const val OVERVIEW_VISIBLE = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');return !!l&&getComputedStyle(l).visibility==='visible'})()"
+        /** The hero page's view, as the chrome knows it (`lib/pageView.ts`): shown, hiding, hidden or showing. */
+        private const val HERO_PAGE_PHASE = "(function(){var id=window.__zenStores.stage.get().overview.heroTabId;if(!id)return 'no hero';return window.__zenStores['page-view'].get().phases.get(id)||'shown'})()"
         /** The page's still the layer rises over (the hero card in the page's frame). */
         private const val OVERVIEW_HERO = ".zen-overview-hero"
         /** The Tabs pane's grid (the scroller's inner grid carries the column template) and its cells. */

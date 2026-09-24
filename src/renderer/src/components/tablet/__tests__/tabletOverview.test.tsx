@@ -47,6 +47,8 @@ const { OVERVIEW_UI_OFF, overviewUiStore, resetOverviewUi } =
   await import('@renderer/lib/overviewUi')
 const { overviewColumns } = await import('@renderer/lib/layout')
 const { dispatchBackEvent, pushBackSurface, topBackSurface } = await import('@renderer/lib/back')
+const { COVERED_TIMEOUT_MS, onLayoutApplied, onViewDrawn, pageViewStore } =
+  await import('@renderer/lib/pageView')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -333,6 +335,7 @@ afterEach(() => {
   })
   act(() => resetOverviewPane())
   act(() => resetOverviewUi())
+  pageViewStore.set({ phases: new Map(), lastApplied: null })
   for (const [name, descriptor] of sizes) {
     if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
     else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
@@ -429,6 +432,14 @@ async function pick(text: string): Promise<void> {
 
 function overview(patch: Partial<OverviewState>): void {
   act(() => stageStore.set({ overview: { ...stageStore.get().overview, ...patch } }))
+}
+
+/** The core took `tabId`'s page view down and the host drew the frame without it. */
+function pageOff(tabId: string): void {
+  act(() => {
+    onLayoutApplied({ contentHidden: true, hid: [tabId], shown: [] })
+    onViewDrawn(tabId, false)
+  })
 }
 
 // --- (A) the grid --------------------------------------------------------------------------------
@@ -697,9 +708,11 @@ describe("the phone switcher's gates hold on the tablet mount", () => {
 describe('the tablet switcher slides up over the page (MOT-04)', () => {
   it('the layer rises on the progress, the page`s still under it in the page`s frame; open lands untransformed', () => {
     const state = stateOf(pages())
+    pageOff('ex')
     overview({ phase: 'settling', progress: 0.3, heroTabId: 'ex', target: 1 })
     mountStage(state, true)
     const root = layer()
+    expect(root.style.visibility).toBe('')
     expect(root.style.opacity).toBe('1')
     expect(root.style.transform).toBe(`translateY(${(1 - 0.3) * 744}px)`)
     // The still: the hero in the page's frame, before the layer's box in the tree (under it).
@@ -739,6 +752,56 @@ describe('the tablet switcher slides up over the page (MOT-04)', () => {
     mountStage(state, false)
     expect(layer().style.transform).toBe(`scale(${0.94 + 0.06 * 0.3})`)
     expect(Number(layer().style.opacity)).toBeCloseTo(Math.min(1, 0.3 * 1.6), 6)
+    expect(layer().hasAttribute('data-tablet')).toBe(false)
+  })
+
+  it('the layer stays unseen until the host has drawn the frame without the live page, then shows at the finger`s progress', async () => {
+    const state = stateOf(pages())
+    overview({ phase: 'dragging', progress: 0.3, heroTabId: 'ex', target: 1 })
+    mountStage(state, true)
+    // On Android the chrome lies under the page: a layer risen now would show beside it, in
+    // the sidebar's column. The still stands in the page's frame from this first frame.
+    expect(layer().style.visibility).toBe('hidden')
+    expect(layer().style.transform).toBe(`translateY(${(1 - 0.3) * 744}px)`)
+    expect(hero()!.style.left).toBe(`${AREA.x}px`)
+    expect(hero()!.style.width).toBe(`${AREA.width}px`)
+    // The finger moves while the view is on its way down: the layer follows, still unseen.
+    act(() => onLayoutApplied({ contentHidden: true, hid: ['ex'], shown: [] }))
+    overview({ progress: 0.5 })
+    await settle()
+    expect(layer().style.visibility).toBe('hidden')
+    expect(layer().style.transform).toBe(`translateY(${(1 - 0.5) * 744}px)`)
+    // The host drew the frame without the page: the layer shows where the finger has it.
+    act(() => onViewDrawn('ex', false))
+    await settle()
+    expect(layer().style.visibility).toBe('')
+    expect(layer().style.transform).toBe(`translateY(${(1 - 0.5) * 744}px)`)
+    expect(layer().style.opacity).toBe('1')
+  })
+
+  it('a host that never says the page is gone: the layer shows after the cover hold`s timeout', async () => {
+    const state = stateOf(pages())
+    overview({ phase: 'settling', progress: 0.3, heroTabId: 'ex', target: 1 })
+    mountStage(state, true)
+    expect(layer().style.visibility).toBe('hidden')
+    act(() => vi.advanceTimersByTime(COVERED_TIMEOUT_MS - 1))
+    await settle()
+    expect(layer().style.visibility).toBe('hidden')
+    act(() => vi.advanceTimersByTime(1))
+    await settle()
+    expect(layer().style.visibility).toBe('')
+  })
+
+  it('with the page already off the screen, or no hero page, the layer shows from its first frame; the phone never writes it', () => {
+    const state = stateOf(pages())
+    overview({ phase: 'settling', progress: 0.3, heroTabId: null, target: 1 })
+    mountStage(state, true)
+    expect(layer().style.visibility).toBe('')
+    act(() => ensureRoot().render(null))
+    viewportStore.set(PHONE)
+    overview({ phase: 'settling', progress: 0.3, heroTabId: 'ex', target: 1 })
+    mountStage(state, false)
+    expect(layer().style.visibility).toBe('')
     expect(layer().hasAttribute('data-tablet')).toBe(false)
   })
 })

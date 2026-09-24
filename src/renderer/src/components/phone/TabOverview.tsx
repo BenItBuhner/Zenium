@@ -29,6 +29,7 @@ import { announce } from '@renderer/lib/announce'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { closeWithUndo } from '@renderer/lib/closeUndo'
+import { chromeUnderPages } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import type { DropOutcome } from '@renderer/lib/gestures/dropTarget'
@@ -87,6 +88,7 @@ import {
   setOverviewSheet,
   type OverviewSheet as Sheet
 } from '@renderer/lib/overviewUi'
+import { coveredNow, pageCovered, pageViewStore } from '@renderer/lib/pageView'
 import { PRIVATE_TAB_PLACEHOLDER, privateLockStore } from '@renderer/lib/privateLock'
 import {
   isPrivateTab,
@@ -1443,6 +1445,40 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // – from the store when the stage's overview is up, from the prop otherwise (the tests, a
   // preview render), so a component outside the stage still draws the progress it is given.
   const morph = useRef<(p: number) => void>(() => {})
+  // The tablet's layer stays unseen until the live page is off the screen (MOT-04). On Android
+  // the chrome lies under the page views (`lib/cover.ts`): a layer rising before the host took
+  // the view down would show beside the page – in the sidebar's column – and hide under it, a
+  // torn picture. The page's still (the hero, outside this layer, at the page's frame) is drawn
+  // under the page from the first frame, so the view's going is a pixel-identical swap, and the
+  // layer shows from the frame after, at the finger's progress: `pageCovered`, the rule a sheet
+  // recedes the cover by, with its timeout for a host that never answers. The phone's morph
+  // waits the same way, unseen, its hero card standing exactly where the page is. A host whose
+  // chrome lies over its pages has nothing to wait for. Declared before the morph effect so that
+  // effect's first write reads the answer.
+  const covered = useRef(true)
+  const latestOverview = useRef(overview)
+  useLayoutEffect(() => {
+    latestOverview.current = overview
+  })
+  useLayoutEffect(() => {
+    if (!tablet) return
+    covered.current =
+      !chromeUnderPages(state.platform) ||
+      heroTabId === null ||
+      coveredNow(pageViewStore.get(), heroTabId)
+    if (covered.current) return
+    let live = true
+    const hold = pageCovered(heroTabId, state.platform)
+    void hold.promise.then(() => {
+      if (!live) return
+      covered.current = true
+      morph.current(liveProgress(latestOverview.current))
+    })
+    return () => {
+      live = false
+      hold.cancel()
+    }
+  }, [tablet, heroTabId, state.platform])
   useLayoutEffect(() => {
     const contentRadius =
       parseFloat(
@@ -1462,6 +1498,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     morph.current = (p) => {
       const root = rootRef.current
       if (root) {
+        // Unseen until the live page is off the screen (the hold above); the phone never writes it.
+        if (tablet) root.style.visibility = covered.current ? '' : 'hidden'
         if (tablet && !reduced) {
           root.style.opacity = '1'
           root.style.transform = p >= 1 ? '' : `translateY(${(1 - p) * slide}px)`
