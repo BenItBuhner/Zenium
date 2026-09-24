@@ -45,7 +45,12 @@ function hingeOf(payload: unknown): FoldHinge | null {
   const raw = payload as Partial<Record<string, unknown>>
   const sides = [raw.left, raw.top, raw.right, raw.bottom].map((value) => Number(value))
   if (sides.some((side) => !Number.isFinite(side))) return null
-  const orientation = raw.orientation === 'horizontal' ? 'horizontal' : raw.orientation === 'vertical' ? 'vertical' : null
+  const orientation =
+    raw.orientation === 'horizontal'
+      ? 'horizontal'
+      : raw.orientation === 'vertical'
+        ? 'vertical'
+        : null
   if (!orientation) return null
   const [left, top, right, bottom] = sides as [number, number, number, number]
   if (right < left || bottom < top) return null
