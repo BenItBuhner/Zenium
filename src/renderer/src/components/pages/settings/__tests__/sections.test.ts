@@ -4810,6 +4810,8 @@ describe('searching the rows', () => {
     const key = row(privacy, 'safe-browsing-api-key')
     if (key.kind !== 'field') throw new Error('not a field')
     expect(key.secret).toBe(true)
+    // A 39-character key: the desktop's field stands under the label (§9.12's stacked form).
+    expect(key.form).toBe('stacked')
     expect(key.display).toBe('Not set · optional, adds Google Safe Browsing lookups')
     expect(rowText(key)).not.toContain('AIza')
     // Update feeds now runs the service; each feed is an item whose sheet refreshes it alone.

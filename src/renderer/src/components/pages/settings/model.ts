@@ -198,6 +198,16 @@ export interface FieldRow extends RowBase {
   display?: string
   /** `url`: a text field that brings up the address keyboard (§9.12; `inputMode="url"`). */
   input: 'text' | 'number' | 'url'
+  /**
+   * The desktop row's form. `inline` (the default, §9.21): the field trails the text block at
+   * its width – 160 for text, 96 for a number – with a refused commit's validation line under
+   * it in the trailing column. `stacked` (§9.12's form in a row): the label and description
+   * keep their lines and the field stands UNDER them across the row's content width, the
+   * validation line under the field spanning the field's box – for a value that is long (an
+   * API key) and unreadable at 160. The phone has one form for both: the row shows the value
+   * (`display`) and a field sheet edits it.
+   */
+  form?: 'inline' | 'stacked'
   placeholder?: string
   min?: number
   max?: number

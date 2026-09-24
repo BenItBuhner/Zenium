@@ -450,6 +450,7 @@ function DesktopRowView({
         />
       )
     case 'field':
+      if (row.form === 'stacked') return <StackedFieldRow row={row} caption={caption} />
       return (
         <ControlRow row={row} caption={caption} description={row.description}>
           <InlineField row={row} />
@@ -783,6 +784,38 @@ function ControlRow({
 }
 
 /**
+ * A field row in the stacked form (`FieldRow.form: 'stacked'`, §9.12's form in a row): the text
+ * block – the label, the description on its lines – then the field UNDER it across the row's
+ * content width, 32 tall (`.zen-v2-field`), and a commit the row refuses puts §9.12's validation
+ * line under the field, spanning the field's box. The row is a column of one block, the form's
+ * own (`.zen-settings-field-block`: its 4 from the text to the field), holding the text and
+ * `InlineField`'s column (its 4 from the field to the message), so a stacked row stands
+ * 6 + 20 + 20 n + 4 + 32 + 6 = 68 + 20 n tall at rest for n lines of description (108 with
+ * two) and a line of validation adds 4 + 20. No control trails the text, so nothing is seated
+ * (§9.18) and the row counts no lines; it keeps `.zen-v2-row`'s own `--v2-row-pad` above and
+ * below as a plain row does, `data-static` as the control row has it, and the disabled .4 the
+ * same way. The phone is unchanged: its field row shows the value and opens the field sheet.
+ */
+function StackedFieldRow({ row, caption }: { row: FieldRow; caption?: string }): JSX.Element {
+  return (
+    <div
+      data-row={row.id}
+      data-static=""
+      data-tone={row.tone}
+      className={cn(
+        'zen-settings-row zen-settings-stacked-row zen-v2-row',
+        row.disabled && 'zen-settings-row-disabled'
+      )}
+    >
+      <div className="zen-settings-field-block">
+        <RowText label={row.label} description={row.description} caption={caption} />
+        <InlineField row={row} stacked />
+      </div>
+    </div>
+  )
+}
+
+/**
  * A boolean on the desktop (§10.5, §6): Zen's 16 px checkbox left of the label, the description
  * under the label; the whole row is the checkbox's label, so a press anywhere on it toggles.
  * A row with a `leading` glyph seats it between the box and the label in the shared slot
@@ -821,9 +854,12 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
  * or when the field loses focus; Escape puts the row's value back. A commit the row refuses
  * keeps the typed value, marks the field and shows the message under it as §9.12's validation
  * line (`ValidationMessage`: 13 in the danger ink with its 16 glyph), which the field names
- * (`aria-describedby`) so a reader on the field hears the error.
+ * (`aria-describedby`) so a reader on the field hears the error. Trailing the text (the inline
+ * form) the column hugs the field's width, 160 or 96, the message capped near it; `stacked`
+ * (`StackedFieldRow`) the column spans the row's content width and the field and its message
+ * with it.
  */
-function InlineField({ row }: { row: FieldRow }): JSX.Element {
+function InlineField({ row, stacked }: { row: FieldRow; stacked?: boolean }): JSX.Element {
   const errorId = `${useId()}-error`
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
@@ -854,7 +890,7 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
     } else settle(result)
   }
   return (
-    <span className="zen-settings-inline-field">
+    <span className={cn('zen-settings-inline-field', stacked && 'zen-settings-stacked-field')}>
       <input
         className={cn(
           'zen-settings-input zen-v2-field',
