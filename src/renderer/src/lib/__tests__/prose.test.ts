@@ -86,6 +86,14 @@ describe('parseSpans', () => {
       { kind: 'text', text: ',' },
       { kind: 'text', text: ' then.' }
     ])
+    // A quote closing round an address is the sentence's too: "https://example.org/a".
+    expect(parseSpans('at "https://example.org/a" or \'https://example.org/b\'')).toEqual([
+      { kind: 'text', text: 'at "' },
+      { kind: 'link', text: 'https://example.org/a', href: 'https://example.org/a' },
+      { kind: 'text', text: '" or \'' },
+      { kind: 'link', text: 'https://example.org/b', href: 'https://example.org/b' },
+      { kind: 'text', text: "'" }
+    ])
     // No other scheme rides the notes into the chrome: the text stays text.
     expect(parseSpans('[run](javascript:void%200) and [file](file:///etc/passwd)')).toEqual([
       { kind: 'text', text: 'run' },

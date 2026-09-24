@@ -8,7 +8,9 @@ import {
   Download,
   Globe,
   House,
-  Info
+  Info,
+  Mail,
+  Phone
 } from 'lucide-react'
 import type { MenuDescriptor, MenuGlyph, MenuHeader, MenuItemDescriptor } from '@shared/types'
 import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
@@ -236,16 +238,26 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
 /**
  * What a link's or an image's menu opens on: a §10.3 two-line row in the §9.16 header's place –
  * the site's favicon at 20 (the globe at 69% when the cache holds none, as a list row's
- * stand-in) or the image itself as a 40 thumbnail, the title 15/600 over the address 13 in the
- * deemphasised ink, one line each. A tap expands the address to its full length (the row grows;
- * the sheet measures its detents again); a long-press copies it, the host's toast or Android
- * 13's clipboard chip saying so. The title names the sheet (`aria-labelledby`).
+ * stand-in; a number's or an email address's own glyph at full ink, since it is a kind and not
+ * a page without a picture – §9.31) or the image itself as a 40 thumbnail, the title 15/600
+ * over the address 13 in the deemphasised ink, one line each. A tap expands the address to its
+ * full length (the row grows; the sheet measures its detents again); a long-press copies it, the
+ * host's toast or Android 13's clipboard chip saying so. The title names the sheet
+ * (`aria-labelledby`).
  */
 function LinkHeader({ header, titleId }: { header: MenuHeader; titleId: string }): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const press = useLongPress(() =>
     run('clipboard.writeText', { text: header.url, confirmation: header.copied })
   )
+  const standIn =
+    header.scheme === 'tel' ? (
+      <Phone className="h-5 w-5" strokeWidth={1.75} />
+    ) : header.scheme === 'mailto' ? (
+      <Mail className="h-5 w-5" strokeWidth={1.75} />
+    ) : (
+      <Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />
+    )
   return (
     <button
       type="button"
@@ -268,10 +280,7 @@ function LinkHeader({ header, titleId }: { header: MenuHeader; titleId: string }
         />
       ) : (
         <span className="zen-menu-link-favicon" aria-hidden>
-          <RowFavicon
-            src={header.favicon}
-            fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
-          />
+          <RowFavicon src={header.favicon} fallback={standIn} />
         </span>
       )}
       <span className="zen-menu-link-text">

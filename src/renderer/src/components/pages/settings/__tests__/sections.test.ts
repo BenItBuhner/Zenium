@@ -539,7 +539,7 @@ describe('the section model', () => {
     expect(whatsNew).toMatchObject({
       kind: 'action',
       label: 'What’s new',
-      description: 'The highlights of Zenium 0.3.0-test',
+      description: 'The highlights of Zenium 0.3.0-test.',
       leaves: 'chevron'
     })
     if (whatsNew.kind !== 'action') throw new Error('not an action row')
@@ -595,7 +595,7 @@ describe('the section model', () => {
       state({ defaultBrowser: { isDefault: true, prompt: null, appLinks: 'allowed' } })
     )
     expect(row(allowed, 'open-by-default').description).toBe(
-      'Web links from other apps can open in Zenium.'
+      'Zenium is set to open web links from other apps.'
     )
     const disallowed = section(
       'about',

@@ -106,7 +106,7 @@ export function parseProse(text: string): ProseBlock[] {
 }
 
 const INLINE =
-  /(\*\*([^*]+?)\*\*)|(`([^`]+?)`)|(\[([^\]]+?)\]\(([^)\s]+?)\))|(https?:\/\/[^\s<>()[\]]+)/g
+  /(\*\*([^*]+?)\*\*)|(`([^`]+?)`)|(\[([^\]]+?)\]\(([^)\s]+?)\))|(https?:\/\/[^\s<>()[\]"']+)/g
 
 /** The spans of one line of markdown: text, bold, code and links, in order. */
 export function parseSpans(text: string): ProseSpan[] {

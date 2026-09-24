@@ -3801,10 +3801,16 @@ export interface MenuHeader {
   copied: string
   /** The line over the address: the link's text, or the address's host. */
   title: string
-  /** The site's favicon (`data:` or remote URL); null draws the globe. */
+  /** The site's favicon (`data:` or remote URL); null draws the globe, or the scheme's glyph. */
   favicon: string | null
   /** An image's own source, drawn as the header's thumbnail in the favicon's place. */
   thumbnail: string | null
+  /**
+   * The scheme of an address that names no site – a number, an email address – for the glyph
+   * that stands where a favicon would (§9.31: the phone for `tel:`, the envelope for `mailto:`,
+   * a kind and not a stand-in); null for a page's or an image's address.
+   */
+  scheme: 'tel' | 'mailto' | null
 }
 
 export interface MenuDescriptor {

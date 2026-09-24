@@ -1,10 +1,9 @@
 /**
  * The legal pages' text (SET-55): the Privacy notice and the Terms Settings › Legal opens as
- * `zen://privacy-notice` and `zen://terms`, in the markdown `lib/prose.ts` reads. The
- * repository carries no legal text of its own beyond its Apache-2.0 licence, so this is a plain
- * first statement of what the program does with data and on what terms it is provided – every
- * sentence a fact of the code as it stands – for the project to replace with its own words; the
- * pages render whatever stands here.
+ * `zen://privacy-notice` and `zen://terms`, in the markdown `lib/prose.ts` reads. The project's
+ * own words: a statement of what the program does with data and on what terms it is provided,
+ * every sentence a fact of the code as it stands, so a change to what the code does with data
+ * is a change here too. The pages render what stands here.
  */
 
 export const PRIVACY_NOTICE = `Zenium is a browser that keeps what it knows about your browsing on your device.
@@ -20,7 +19,7 @@ export const PRIVACY_NOTICE = `Zenium is a browser that keeps what it knows abou
 
 - Pages load from the sites you visit, and requests to those sites carry what the web engine needs to load them. Content blocking, when it is on, removes the tracking and advertising requests its lists name.
 - Typing in the address bar asks your chosen search engine for suggestions when Settings › Search allows it, and a search goes to that engine.
-- Checking for updates fetches the release list from this project's GitHub repository. Nothing about you rides with the request.
+- Checking for updates fetches the release list from this project's GitHub repository. No identifier of yours rides with the request; GitHub sees it as any web request.
 - Password checkup and the sign-in leak warning look a password up in the Have I Been Pwned range API by the first characters of its hash alone; the password itself never leaves the device.
 - Sync, when you set it up, writes your data as AES-256-GCM ciphertext under your own passphrase into the folder you choose; the project runs no sync service and holds no key.
 - Zenium has no analytics, telemetry or crash reporting of its own, and no account.
@@ -43,7 +42,7 @@ As the licence states, the software is provided "as is", without warranties or c
 
 ## Web content and third parties
 
-The pages, services and extensions you use through Zenium are provided by others, under their own terms. Zenium is a port of the Zen Browser's design onto Chromium's engine; it is not affiliated with the Zen team, with Google or with the Chromium project.
+The pages, services and extensions you use through Zenium are provided by others, under their own terms. Zenium takes its design from the Zen Browser and runs on Chromium's engine; it is not affiliated with the Zen team, with Google or with the Chromium project.
 
 ## Changes
 

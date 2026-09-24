@@ -280,7 +280,9 @@ function useCopyOnHold(copy: RowCopy | undefined): {
  * fill and no pointer cursor, no role – a div, since static text is not a button. A row whose
  * label is the status takes the danger row class the destructive action has: its label rule
  * puts the ink on the sentence, the description keeps its 69%. A row with a `copy` copies it
- * on a long-press (`data-copies` for the style's touch-callout).
+ * on a long-press; `data-copies` marks it for the readers that need to find such a row – the
+ * preview host's `hold:` finder and the tests – and no style hangs on it (the chrome root's
+ * `user-select: none` already keeps the hold from raising a selection).
  */
 function InfoRowView({ row, caption }: { row: InfoRow; caption?: string }): JSX.Element {
   const hold = useCopyOnHold(row.copy)

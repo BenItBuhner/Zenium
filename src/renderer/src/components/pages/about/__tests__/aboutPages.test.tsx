@@ -123,6 +123,46 @@ describe('What’s new', () => {
     })
   })
 
+  it('renders the notes’ text as text: markup in what GitHub sent is escaped, never parsed – no element, handler or link comes of it', async () => {
+    // The notes are fetched text (the release list's `body`): a renderer that put them through
+    // `innerHTML` would run this. Every span kind carries the payload, so each is pinned.
+    const el = await mountPage(
+      'zen://whats-new',
+      state({
+        version: '0.4.35',
+        text: [
+          'Hello <img src=x onerror=alert(1)> & co <a href="https://evil.example">not a link</a>.',
+          '',
+          '## <b>Bold</b> heading &amp; more',
+          '',
+          '- **<i>italic</i>** `<script>alert(2)</script>` [<u>text</u>](https://zenium.example/ok)',
+          '',
+          '```',
+          '<svg onload=alert(3)>',
+          '```'
+        ].join('\n')
+      })
+    )
+    const notes = el.querySelector('[data-testid="whats-new-notes"]')!
+    expect(notes.querySelector('img, script, svg, b, i, u')).toBeNull()
+    expect(notes.querySelector('[onerror], [onload]')).toBeNull()
+    expect(notes.querySelector('p.zen-page-prose-p')?.textContent).toBe(
+      'Hello <img src=x onerror=alert(1)> & co <a href="https://evil.example">not a link</a>.'
+    )
+    expect(notes.querySelector('h2')?.textContent).toBe('<b>Bold</b> heading &amp; more')
+    expect(notes.querySelector('li > strong')?.textContent).toBe('<i>italic</i>')
+    expect(notes.querySelector('li > code')?.textContent).toBe('<script>alert(2)</script>')
+    expect(notes.querySelector('pre > code')?.textContent).toBe('<svg onload=alert(3)>')
+    // The raw anchor became text; the address inside it is a bare address and links as one, to
+    // itself alone (the quote that closed the attribute is the text's, not the address's), and
+    // the markdown link goes to its own address.
+    const links = [...notes.querySelectorAll('a')]
+    expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['https://evil.example', 'https://evil.example'],
+      ['<u>text</u>', 'https://zenium.example/ok']
+    ])
+  })
+
   it('shows §9.17’s one sentence until a check has brought the running version’s notes, the release page one tap off', async () => {
     const el = await mountPage('zen://whats-new', state(null))
     const empty = el.querySelector('[data-testid="whats-new-empty"]')!

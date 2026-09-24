@@ -13,7 +13,8 @@ import { uiStore } from '@renderer/lib/ui'
 /*
  * The link menu's header (PUI-18; Chrome for Android's context-menu header), rendered for real
  * in happy-dom: a link's or an image's menu on the phone opens on what was held – the site's
- * favicon (the globe when the cache holds none) or the image as a thumbnail, the title over the
+ * favicon (the globe when the cache holds none; a number's or an address's scheme glyph) or the
+ * image as a thumbnail, the title over the
  * address, in the §9.16 header's place, naming the sheet – a tap expands the address, a
  * long-press copies it through the clipboard command with the toast's word, and the click that
  * follows the hold changes nothing. A drill into a submenu shows the row's label as the title, as
@@ -82,7 +83,8 @@ const LINK: MenuHeader = {
   copied: 'Link copied',
   title: 'Getting started',
   favicon: 'data:image/png;base64,AAAA',
-  thumbnail: null
+  thumbnail: null,
+  scheme: null
 }
 
 /** A link's context menu as the core serialises it on the phone: the header, then the rows (`null`: none). */
@@ -206,7 +208,8 @@ describe('the link menu’s header', () => {
         copied: 'Image address copied',
         title: 'cdn.example.org',
         favicon: null,
-        thumbnail: 'https://cdn.example.org/photos/1.jpg'
+        thumbnail: 'https://cdn.example.org/photos/1.jpg',
+        scheme: null
       })
     )
     const thumb = header()!.querySelector<HTMLImageElement>('img.zen-menu-link-thumbnail')
@@ -252,22 +255,48 @@ describe('the link menu’s header', () => {
     expect(copies()).toHaveLength(1)
   })
 
-  it('a phone number’s or an address’s header carries the bare number and its own toast word', async () => {
+  it('a phone number’s or an address’s header carries the bare number and its own toast word, under the scheme’s glyph at full ink – the phone, the envelope – and not the globe stand-in (§9.31)', async () => {
     await show(
       linkMenu({
         url: '+44 20 7946 0958',
         copied: 'Phone number copied',
         title: 'Phone number',
         favicon: null,
-        thumbnail: null
+        thumbnail: null,
+        scheme: 'tel'
       })
     )
     expect(title()!.textContent).toBe('Phone number')
     expect(address()!.textContent).toBe('+44 20 7946 0958')
+    const phone = header()!.querySelector<SVGElement>('.zen-menu-link-favicon svg')
+    expect(phone).not.toBeNull()
+    expect(phone!.classList.contains('lucide-phone')).toBe(true)
+    expect(phone!.classList.contains('zen-list-standin')).toBe(false)
+    expect(header()!.querySelector('.lucide-globe')).toBeNull()
     fire(header()!, 'contextmenu')
     expect(copies()).toEqual([
       ['clipboard.writeText', { text: '+44 20 7946 0958', confirmation: 'Phone number copied' }]
     ])
+    act(() => root!.unmount())
+    root = null
+    mount?.remove()
+    mount = null
+
+    await show(
+      linkMenu({
+        url: 'hello@example.org',
+        copied: 'Email address copied',
+        title: 'Write to us',
+        favicon: null,
+        thumbnail: null,
+        scheme: 'mailto'
+      })
+    )
+    const mail = header()!.querySelector<SVGElement>('.zen-menu-link-favicon svg')
+    expect(mail).not.toBeNull()
+    expect(mail!.classList.contains('lucide-mail')).toBe(true)
+    expect(mail!.classList.contains('zen-list-standin')).toBe(false)
+    expect(address()!.textContent).toBe('hello@example.org')
   })
 
   it('a drill into a submenu shows the row’s label as the title, the header gone until Back', async () => {

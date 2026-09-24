@@ -2217,7 +2217,8 @@ describe('the page context menu', () => {
       copied: 'Link copied',
       title: 'Next page',
       favicon: 'data:image/png;base64,TAB',
-      thumbnail: null
+      thumbnail: null,
+      scheme: null
     })
     // A link without text names its host; another site's favicon comes from history's cache.
     h.menu(pageParams({ linkURL: 'https://other.example/a/b' }))
@@ -2235,7 +2236,8 @@ describe('the page context menu', () => {
       url: 'https://example.com/a.png',
       title: 'example.com',
       favicon: null,
-      thumbnail: 'https://example.com/a.png'
+      thumbnail: 'https://example.com/a.png',
+      scheme: null
     })
     h.menu(
       pageParams({
@@ -2248,20 +2250,24 @@ describe('the page context menu', () => {
       url: 'https://example.com/gallery',
       thumbnail: 'https://example.com/a.png'
     })
-    // A number or an address shows bare, as its copy item copies it, under the scheme's name.
+    // A number or an address shows bare, as its copy item copies it, under the scheme's name,
+    // with the scheme for the glyph in the favicon's place (§9.31).
     h.menu(pageParams({ linkURL: 'tel:+1-555-0100' }))
     expect(h.where()?.header).toEqual({
       url: '+1-555-0100',
       copied: 'Phone number copied',
       title: 'Phone number',
       favicon: null,
-      thumbnail: null
+      thumbnail: null,
+      scheme: 'tel'
     })
     h.menu(pageParams({ linkURL: 'mailto:hello@example.com?subject=Hi', linkText: 'Write to us' }))
     expect(h.where()?.header).toMatchObject({
       url: 'hello@example.com',
       copied: 'Email address copied',
-      title: 'Write to us'
+      title: 'Write to us',
+      favicon: null,
+      scheme: 'mailto'
     })
     // The plain page opens on its title; a javascript: link is no link.
     h.menu(pageParams())

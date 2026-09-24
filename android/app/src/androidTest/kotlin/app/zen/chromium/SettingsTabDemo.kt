@@ -512,7 +512,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             // Open by default (DEF-06): the row reads the host's state; its tap leaves for the
             // system's screen, and the app is brought back for the rest of the recording.
             val openByText = rowText("open-by-default")
-            val known = openByText.contains("can open in Zenium") || openByText.contains("not to open") || openByText.contains("Choose which links")
+            val known = openByText.contains("is set to open") || openByText.contains("is set not to open") || openByText.contains("Choose which links")
             finding("  Open by default row reads '$openByText' ${verdict(openByText.isNotEmpty() && known)}")
             if (openByText.isNotEmpty() && tapRow("open-by-default")) {
                 val left = awaitLeftApp(8_000)

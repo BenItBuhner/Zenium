@@ -420,8 +420,9 @@ export class Menus {
    * PUI-18): the address held – the link's, or the image's own when there is no link – under a
    * title: the link's text, or the address's host for a link without one. A `tel:` or `mailto:`
    * link shows the number or the address bare, as its copy item copies it, under "Phone number"
-   * or "Email address". The favicon is the tab's own for a link within its site, else the last
-   * one history saw on the link's site (the favicon cache); an image is its own thumbnail.
+   * or "Email address", with its scheme for the glyph in the favicon's place. The favicon is the
+   * tab's own for a link within its site, else the last one history saw on the link's site (the
+   * favicon cache); an image is its own thumbnail.
    */
   private linkHeader(
     tab: Tab,
@@ -449,7 +450,9 @@ export class Menus {
       copied: copy.confirmation,
       title,
       favicon: thumbnail || contact ? null : this.linkFavicon(tab, url),
-      thumbnail
+      thumbnail,
+      // A number or an address is no site: the sheet draws its scheme's glyph (§9.31).
+      scheme: scheme === 'tel' || scheme === 'mailto' ? scheme : null
     }
   }
 

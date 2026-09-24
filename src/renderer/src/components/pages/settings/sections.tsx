@@ -4798,11 +4798,15 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
 // About
 // ---------------------------------------------------------------------------
 
-/** The Open by default row's second line: the state as the host read it, or the screen's promise. */
+/**
+ * The Open by default row's second line: the state of the system's switch as the host read it
+ * (a fact of the switch, not a promise of what comes – with no default role most links still go
+ * elsewhere), or the screen's own offer when the host has no reading.
+ */
 function appLinksDescription(state: AppLinkState | undefined): string {
   switch (state) {
     case 'allowed':
-      return 'Web links from other apps can open in Zenium.'
+      return 'Zenium is set to open web links from other apps.'
     case 'disallowed':
       return 'Zenium is set not to open web links from other apps.'
     default:
@@ -4939,7 +4943,7 @@ function aboutSection({ state, navigate, formFactor }: SectionContext): RowGroup
       kind: 'action',
       id: 'whats-new',
       label: 'What’s new',
-      description: `The highlights of Zenium ${state.version}`,
+      description: `The highlights of Zenium ${state.version}.`,
       leaves: 'chevron',
       keywords: ["what's new", 'release notes', 'highlights', 'changes'],
       onPress: () => openPage('whats-new')
