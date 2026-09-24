@@ -259,7 +259,8 @@ export function tooltipMayCover(target: HTMLElement): boolean {
  * not other chrome to it (a focused control's tooltip and the card the pointer rests a row for
  * may stand together), and neither is the page's cover the tooltip itself holds
  * (`floatingChrome`, see components/Tooltip.tsx): `ownHolds` are taken off the count before it
- * is read.
+ * is read. In one line, the lead's W5-1 ruling 5: a tooltip is "blocked from behind a surface,
+ * never inside it".
  */
 export function tooltipBlocked(target: HTMLElement, ownHolds = 0): boolean {
   const ui = uiStore.get()
