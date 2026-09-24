@@ -496,9 +496,20 @@ class ChromeA11yDemo : DemoHarness(
      * the fade. Returns what it saw and how long it took, for the finding.
      */
     private fun awaitPane(pane: String, card: (String) -> Boolean): String {
+        // Read past UiAutomation's cache with a frame asked of the document each poll, as
+        // [awaitTreeOnBar] does: on the software GPU the tree trailed the screen past 12 s once
+        // (W5-13's run 1: the still had the Tabs pane up, the tree still listed the private one,
+        // 70 frames skipped around the touch), and the cache serves the stale nodes until the
+        // batched content-changed event lands.
         val start = SystemClock.uptimeMillis()
-        val settled = awaitChrome(12_000) {
-            findNode(card) != null && walk().any { it.control && it.label == pane && "selected" in it.states }
+        val deadline = start + PANE_TREE_MS
+        var settled: Boolean
+        while (true) {
+            dropTreeCache()
+            settled = findNode(card) != null && walk().any { it.control && it.label == pane && "selected" in it.states }
+            if (settled || SystemClock.uptimeMillis() >= deadline) break
+            nudgeFrame()
+            SystemClock.sleep(300)
         }
         val took = SystemClock.uptimeMillis() - start
         if (settled) SystemClock.sleep(600)
@@ -1257,33 +1268,36 @@ class ChromeA11yDemo : DemoHarness(
             if (awaitSettingsRowInTree("Back to Settings") == null) finding("  [settings-look] the tree had no Back to Settings ${TREE_WINDOW_MS / 1000} s after the section came up again")
         }
         SystemClock.sleep(1_200)
+        // The Layout row (the toolbar layout's picture cards) is the desktop's alone since #409:
+        // the phone's Look page carries the Colour scheme choice, the Tabs on the right switch and
+        // the app icon's radios. The value row's picker is audited on Colour scheme.
         audit(
             "settings-look",
             listOf(
                 Want("Back to Settings", "Button"),
                 Want("Colour scheme", "Button", listOf("hasPopup"), prefix = true),
-                Want("Toolbar layout", "Button", listOf("hasPopup"), prefix = true),
                 Want("Tabs on the right", "", listOf("checked=false"), prefix = true),
                 Want("Indigo app icon", "RadioButton", listOf("checked=true"), optional = true)
             )
         )
         val switch = walk().firstOrNull { it.control && it.label.startsWith("Tabs on the right") }
         if (switch != null) finding("  a switch row is exposed as ${switch.cls} ${switch.states}")
-        if (touchTapLabelExpecting("Toolbar layout", "the picker sheet is up", prefix = true, took = { findNode { it == "Single toolbar" } != null })) {
+        // The row names its value after the comma ("Colour scheme, Light"): the option the picker
+        // opens with checked.
+        val schemeRow = walk().firstOrNull { it.control && it.label.startsWith("Colour scheme, ") }
+        val scheme = schemeRow?.label?.removePrefix("Colour scheme, ") ?: "Light"
+        if (touchTapLabelExpecting("Colour scheme", "the picker sheet is up", prefix = true, took = { findNode { it == "Follow system" } != null })) {
             SystemClock.sleep(1_200)
             audit(
                 "settings-picker",
-                listOf(
-                    Want("Resize sheet", "Button"),
-                    Want("Single toolbar", "RadioButton", listOf("checked=true")),
-                    Want("Multiple toolbars", "RadioButton", listOf("checked=false")),
-                    Want("Collapsed toolbar", "RadioButton", listOf("checked=false"))
-                )
+                listOf(Want("Resize sheet", "Button")) + SCHEME_OPTIONS.map { option ->
+                    Want(option, "RadioButton", listOf(if (option == scheme) "checked=true" else "checked=false"))
+                }
             )
             val dialog = walk().firstOrNull { !it.control && it.cls.endsWith("Dialog") }
-            expect("the picker is a dialog named after the row: '${dialog?.label}'", dialog?.label == "Toolbar layout")
+            expect("the picker is a dialog named after the row: '${dialog?.label}'", dialog?.label == "Colour scheme")
             dismiss()
-            awaitChrome(6_000) { findNode { it == "Single toolbar" } == null }
+            awaitChrome(6_000) { findNode { it == "Follow system" } == null }
         }
     }
 
@@ -2850,6 +2864,10 @@ class ChromeA11yDemo : DemoHarness(
         /** androidx's extras key for a supplemental description below Android 16 (`AccessibilityNodeInfoCompat.SUPPLEMENTAL_DESCRIPTION_KEY`). */
         const val SUPPLEMENTAL_KEY = "androidx.view.accessibility.AccessibilityNodeInfoCompat.SUPPLEMENTAL_DESCRIPTION_KEY"
         const val WALK_LIMIT = 5_000
+        /** How long the overview's other pane is given to reach the tree on the software GPU ([awaitPane]). */
+        const val PANE_TREE_MS = 20_000L
+        /** The Colour scheme picker's options in the sheet's order (`settings/sections.tsx`). */
+        val SCHEME_OPTIONS = listOf("Follow system", "Light", "Dark")
         /** A WebView's class name in the tree – the view's, and Chromium's for the document under it. */
         const val WEBVIEW_CLASS = "android.webkit.WebView"
         const val TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
