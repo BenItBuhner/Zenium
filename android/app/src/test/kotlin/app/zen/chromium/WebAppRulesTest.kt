@@ -113,6 +113,26 @@ class WebAppRulesTest {
     }
 
     @Test
+    fun aPageElementsFullscreenIsReportedWhileItLastsAndTheStandingModeAfter() {
+        // The media feature's rule (Chrome's `isFullscreen()` first): `fullscreen` while an element
+        // of the page is fullscreen through the Fullscreen API, whatever the manifest said and
+        // wherever the page stands – in scope with the bars up, or out of scope under the toolbar.
+        for (display in Display.entries) {
+            assertEquals(Display.FULLSCREEN, WebAppRules.reportedDisplay(display, inScope = true, barsHidden = false, elementFullscreen = true))
+            assertEquals(Display.FULLSCREEN, WebAppRules.reportedDisplay(display, inScope = false, barsHidden = false, elementFullscreen = true))
+        }
+        // The element's exit: the mode as it stands, the window's own pose having never moved.
+        assertEquals(Display.STANDALONE, WebAppRules.reportedDisplay(Display.STANDALONE, inScope = true, barsHidden = false, elementFullscreen = false))
+        assertEquals(Display.STANDALONE, WebAppRules.reportedDisplay(Display.MINIMAL_UI, inScope = true, barsHidden = false, elementFullscreen = false))
+        assertEquals(Display.FULLSCREEN, WebAppRules.reportedDisplay(Display.FULLSCREEN, inScope = true, barsHidden = true, elementFullscreen = false))
+        assertEquals(Display.BROWSER, WebAppRules.reportedDisplay(Display.STANDALONE, inScope = false, barsHidden = false, elementFullscreen = false))
+        // The three-argument form is the window's own answer, with no element's fullscreen counted:
+        // what the bars follow and what the next document's script starts with.
+        assertEquals(Display.STANDALONE, WebAppRules.reportedDisplay(Display.STANDALONE, inScope = true, barsHidden = false))
+        assertEquals(Display.BROWSER, WebAppRules.reportedDisplay(Display.FULLSCREEN, inScope = false, barsHidden = false))
+    }
+
+    @Test
     fun taskUriNamesTheShortcut() {
         val id = Shortcuts.shortcutId("https://app.example/app/")
         assertEquals("zen-webapp://$id", WebAppRules.taskUri(id))

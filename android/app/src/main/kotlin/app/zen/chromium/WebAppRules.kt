@@ -49,11 +49,16 @@ object WebAppRules {
 
     /**
      * The mode the page's `matchMedia('(display-mode: …)')` should answer, as Chrome's
-     * `CustomTabDelegateFactory.getDisplayMode`: `fullscreen` while the bars are hidden,
-     * `browser` on a page out of scope (the browser's controls are up), `standalone` for a
-     * `minimal-ui` whose controls are not rendered (a phone), else the manifest's word.
+     * `CustomTabDelegateFactory.getDisplayMode`: `fullscreen` while the document is fullscreen
+     * through the Fullscreen API (a video's; `isFullscreen()` is Chrome's first answer – the
+     * media feature's rule, whatever the manifest and the scope say) or while the bars are
+     * hidden, `browser` on a page out of scope (the browser's controls are up), `standalone` for
+     * a `minimal-ui` whose controls are not rendered (a phone), else the manifest's word.
+     * `elementFullscreen` is the live page's state alone: the window's own mode (the bars, the
+     * script the next document starts with) is the three-argument answer.
      */
-    fun reportedDisplay(display: Display, inScope: Boolean, barsHidden: Boolean): Display = when {
+    fun reportedDisplay(display: Display, inScope: Boolean, barsHidden: Boolean, elementFullscreen: Boolean = false): Display = when {
+        elementFullscreen -> Display.FULLSCREEN
         !inScope -> Display.BROWSER
         barsHidden -> Display.FULLSCREEN
         display == Display.MINIMAL_UI -> Display.STANDALONE

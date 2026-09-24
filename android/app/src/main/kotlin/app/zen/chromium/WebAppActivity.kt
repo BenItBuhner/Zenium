@@ -221,11 +221,10 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
      */
     private fun applyBars() {
         // The window's own pose from the display rule alone: a page element's fullscreen (a
-        // video) hides the bars too, but `barsHidden` – and with it the mode `reportedDisplay`
-        // answers – does not follow it; the manifest's mode holds until the element's exit
-        // restores this pose (onFullscreenChanged). Chrome's `CustomTabWebContentsDelegate.getDisplayMode`
-        // answers `fullscreen` there (`isFullscreen()`, the tab's HTML fullscreen) – a difference
-        // the PR names.
+        // video) hides the bars too, but `barsHidden` – and with it `reportedDisplay`, the mode
+        // the next document starts with – does not follow it; the element's exit restores this
+        // pose (onFullscreenChanged, which is also where the live page's media feature is told
+        // `fullscreen` while the element is up and the mode as it stands after).
         val hide = WebAppRules.immersive(record.display) && inScope
         barsHidden = hide
         if (host.fullscreenTab != null) return
@@ -234,8 +233,16 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         if (hide) controller.hide(WindowInsetsCompat.Type.systemBars()) else controller.show(WindowInsetsCompat.Type.systemBars())
     }
 
+    /**
+     * A page element's fullscreen (the Fullscreen API, a video) enters or exits. The window's
+     * own pose does not move – the bars return to the display rule's on exit, [reportedDisplay]
+     * keeps the manifest's mode for the next document – but the live page's `display-mode`
+     * answers `fullscreen` while the element is up and the mode as it stands after: the media
+     * feature's rule, Chrome's `isFullscreen()` first in `getDisplayMode`.
+     */
     override fun onFullscreenChanged(active: Boolean) {
         if (!active) applyBars()
+        page?.let { tellDisplayMode(it, WebAppRules.reportedDisplay(record.display, inScope, barsHidden, elementFullscreen = active)) }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -285,9 +292,10 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         }
     }
 
-    private fun tellDisplayMode(view: TabWebView) {
+    /** The live document told its mode: the window's ([reportedDisplay]) unless a page element's fullscreen says otherwise. */
+    private fun tellDisplayMode(view: TabWebView, mode: WebAppRules.Display = reportedDisplay) {
         if (displayScript == null) view.evaluateJavascript(WebAppRules.displayModeScript(reportedDisplay), null)
-        view.evaluateJavascript(WebAppRules.displayModeUpdate(reportedDisplay), null)
+        view.evaluateJavascript(WebAppRules.displayModeUpdate(mode), null)
     }
 
     /** What the page reports through [CustomTabHost.viewEvent]. */
