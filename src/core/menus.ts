@@ -3043,7 +3043,21 @@ export class Menus {
         {
           label: 'Export Bookmarks…',
           click: () => void this.browser.exportBookmarks(win)
-        }
+        },
+        // Chrome's Tab groups ▸ (shortcuts-menus-111), the saved groups by name with their mark,
+        // seated as the submenu's last group – Chrome's own seat for a list beside the
+        // bookmarks (Reading list ▸ in Bookmarks and lists ▸) – and not as Chrome's top-level
+        // row: a twenty-first row gives 692 at rest and 732 folded (Now Playing…) against the
+        // 718 of room on an 800 px window, the numbers the #396 review turned down, where the
+        // Bookmarks submenu has the room (289 for eight rows). The desktop's alone: the phone's
+        // and the tablet's Tab groups pane is the overview's (TAB-16), and a private or blank
+        // window (`local`) shows no synced space for a restored group to open in.
+        ...desktop(
+          ...when(!local, separator, {
+            label: 'Tab Groups',
+            submenu: this.tabGroupsSubmenu(win)
+          })
+        )
       ]
     }
     /** The History page (Ctrl+H): the phone's row, the head of the sidebar layouts' submenu. */
@@ -3491,6 +3505,34 @@ export class Menus {
       { label: 'Update Zenium', click: () => void this.browser.updates.install() },
       { type: 'separator' }
     ]
+  }
+
+  /**
+   * Chrome's Tab groups submenu (shortcuts-menus-111; `IDS_SAVED_TAB_GROUPS_MENU`): the SAVED
+   * groups of the synced spaces – a folder whose tabs closed and whose pages are kept (TAB-16,
+   * `isSavedFolder`) – one row each, named by the group and marked by the one group glyph
+   * (`group`: the ring of its colour, or the folder's own icon; §9.37, #360's pair), the most
+   * recently used first as the Tab groups pane orders them (`groupRows`), the name breaking
+   * ties. A row's pick opens the group in this window – its pages back as its tabs at the end
+   * of their space, the first made active, the window switched to the space where it is
+   * another (`Browser.openFolder`). A blank or private window's local space has no saved group
+   * (its tabs keep no pages), and the row is left out of such a window's menu. With nothing
+   * saved, §9.17's empty state: "No saved tab groups" as the note row (the History submenu's
+   * "No recently closed tabs" form). An open group is the sidebar's, not this list's: Chrome's
+   * list is of what is not in the strip.
+   */
+  private tabGroupsSubmenu(win: ZenWindow): Template {
+    const m = this.browser.state.model
+    const synced = new Set(m.spaces.map((space) => space.id))
+    const saved = Object.values(m.folders)
+      .filter((folder) => synced.has(folder.spaceId) && isSavedFolder(m, folder))
+      .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0) || a.name.localeCompare(b.name))
+    if (saved.length === 0) return [{ label: 'No saved tab groups', enabled: false, note: true }]
+    return saved.map((folder) => ({
+      label: folder.name,
+      group: { color: folder.color ?? null, icon: folder.icon, saved: true },
+      click: () => void this.browser.openFolder(folder.id, win)
+    }))
   }
 
   /**
