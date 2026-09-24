@@ -201,7 +201,7 @@ async function press(target: Element, x: number, y: number): Promise<void> {
 /** The pointer moving (or lifting) after the press, as Blink dispatches it before `dragstart`. */
 async function pointer(
   target: Element,
-  type: 'pointermove' | 'pointerup',
+  type: 'pointermove' | 'pointerup' | 'pointercancel',
   x: number,
   y: number
 ): Promise<void> {
@@ -348,6 +348,48 @@ describe('a chip dragged off the bar is the page’s link (bookmarks-15, dnd-13)
     const stale = transfer()
     expect(await drag(chip('docs'), 'dragstart', stale, 20, 10)).toBe(true)
     expect([...stale.data.keys()]).toEqual([])
+  })
+
+  it('a press that lifts as a click leaves no link card behind', async () => {
+    await mountBar(state('synced'))
+    await press(chip('docs'), 20, 10)
+    expect(document.querySelector('.zen-bm-strip .zen-link-ghost')).not.toBeNull()
+    await pointer(chip('docs'), 'pointerup', 20, 10)
+    expect(document.querySelector('.zen-bm-strip .zen-link-ghost')).toBeNull()
+  })
+
+  it('a press that became the reorder leaves no link card behind once it ends', async () => {
+    await mountBar(state('synced'))
+    await press(chip('docs'), 20, 10)
+    await pointer(chip('docs'), 'pointermove', 26, 11)
+    // Along the bar: the native drag refused, the card still standing for the press.
+    expect(await drag(chip('docs'), 'dragstart', transfer(), 20, 10)).toBe(true)
+    expect(document.querySelector('.zen-bm-strip .zen-link-ghost')).not.toBeNull()
+    await pointer(chip('docs'), 'pointerup', 60, 11)
+    expect(document.querySelector('.zen-bm-strip .zen-link-ghost')).toBeNull()
+
+    // The reorder's own cancel (a second button, the keyboard) puts it away as well.
+    await press(chip('docs'), 20, 10)
+    await pointer(chip('docs'), 'pointermove', 26, 11)
+    expect(await drag(chip('docs'), 'dragstart', transfer(), 20, 10)).toBe(true)
+    await pointer(chip('docs'), 'pointercancel', 26, 11)
+    expect(document.querySelector('.zen-bm-strip .zen-link-ghost')).toBeNull()
+  })
+
+  it('a link drag begun keeps its card through Chromium’s pointercancel, until dragend', async () => {
+    await mountBar(state('synced'))
+    await press(chip('docs'), 20, 10)
+    await pointer(chip('docs'), 'pointermove', 20, 14)
+    const dt = transfer()
+    expect(await drag(chip('docs'), 'dragstart', dt, 20, 10)).toBe(false)
+    const ghost = document.querySelector<HTMLElement>('.zen-bm-strip .zen-link-ghost')
+    expect(dt.image?.el).toBe(ghost)
+    // The native drag begun, Chromium takes the pointer from the press: the card stays with
+    // the drag in flight.
+    await pointer(chip('docs'), 'pointercancel', 20, 14)
+    expect(document.querySelector('.zen-bm-strip .zen-link-ghost')).toBe(ghost)
+    await drag(chip('docs'), 'dragend', dt)
+    expect(document.querySelector('.zen-bm-strip .zen-link-ghost')).toBeNull()
   })
 
   it('in a private window every direction lifts the link (the bar has no reorder), and the bar takes no chip back', async () => {

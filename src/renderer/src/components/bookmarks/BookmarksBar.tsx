@@ -284,6 +284,15 @@ export function BookmarksBar({
   const pressAt = useRef<{ x: number; y: number } | null>(null)
   const lastPointer = useRef<{ x: number; y: number } | null>(null)
   const stopFollowing = useRef<(() => void) | null>(null)
+  // The card Chromium snapshots as the drag's image (§9.4's lifted item, the URL pill's link
+  // card): drawn off screen for the chip under the press, so it stands when `dragstart` asks,
+  // and put away when the press ends without a link drag (a click, the reorder) or when the
+  // drag it served ends.
+  const [linkCard, setLinkCard] = useState<{ node: BookmarkNode; drag: AddressDrag } | null>(null)
+  const linkGhost = useRef<HTMLDivElement>(null)
+  // The chip of this window in flight, for the strip's insertion line while it hovers: the line
+  // is measured without it, as the drop counts without it (`slotAt`'s `except`).
+  const dragOut = useRef<string | null>(null)
   const followPress = (e: React.PointerEvent): void => {
     stopFollowing.current?.()
     pressAt.current = { x: e.clientX, y: e.clientY }
@@ -291,25 +300,27 @@ export function BookmarksBar({
     const move = (ev: PointerEvent): void => {
       lastPointer.current = { x: ev.clientX, y: ev.clientY }
     }
-    const stop = (): void => {
+    const unfollow = (): void => {
       window.removeEventListener('pointermove', move, true)
-      window.removeEventListener('pointerup', stop, true)
-      window.removeEventListener('pointercancel', stop, true)
-      if (stopFollowing.current === stop) stopFollowing.current = null
+      window.removeEventListener('pointerup', lift, true)
+      window.removeEventListener('pointercancel', lift, true)
+      if (stopFollowing.current === unfollow) stopFollowing.current = null
+    }
+    // The press is over: it lifted (a click, the reorder's end), or the pointer was taken from
+    // it – the reorder's own cancel, or Chromium's `pointercancel` once a native drag has begun
+    // (it follows the `dragstart` that started it, so the card has been snapshotted by then).
+    // With no link drag begun the card drawn for the press goes; one in flight keeps its card
+    // until `dragend`.
+    const lift = (): void => {
+      unfollow()
+      if (dragOut.current === null) setLinkCard(null)
     }
     window.addEventListener('pointermove', move, true)
-    window.addEventListener('pointerup', stop, true)
-    window.addEventListener('pointercancel', stop, true)
-    stopFollowing.current = stop
+    window.addEventListener('pointerup', lift, true)
+    window.addEventListener('pointercancel', lift, true)
+    stopFollowing.current = unfollow
   }
   useEffect(() => () => stopFollowing.current?.(), [])
-  // The card Chromium snapshots as the drag's image (§9.4's lifted item, the URL pill's link
-  // card): drawn off screen for the chip under the press, so it stands when `dragstart` asks.
-  const [linkCard, setLinkCard] = useState<{ node: BookmarkNode; drag: AddressDrag } | null>(null)
-  const linkGhost = useRef<HTMLDivElement>(null)
-  // The chip of this window in flight, for the strip's insertion line while it hovers: the line
-  // is measured without it, as the drop counts without it (`slotAt`'s `except`).
-  const dragOut = useRef<string | null>(null)
 
   const onChipDragStart = (e: React.DragEvent, node: BookmarkNode, link: AddressDrag): void => {
     const press = pressAt.current
