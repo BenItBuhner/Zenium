@@ -1726,7 +1726,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * surface: `n/m`, the account being the gate (`gate` names another gate: Avast's cloud
      * verdict, IE Tab's Windows companion). A row whose click runs into the gate in its worker
      * instead (`gateLog`: Save to Google Drive's `identity.getAuthToken`, refused as Zenium
-     * refuses it without a signed-in browser account) is `n/m` on that line. A row whose click
+     * refuses it without a signed-in browser account) is `n/m` on that line. A new tab the click
+     * opened whose site sent it elsewhere before a poll read its URL (Vimeo Record's vimeo.com
+     * start page, which sends a phone's UA on to the Play Store) is read where it landed: `n/m`
+     * with text on the page, `F` blank. A row whose click
      * does nothing and whose page shows nothing is `F`, with the bridge trace. The click lands
      * on the fixture tab, or on `site` (Klarna enables its action per tab on its merchant hosts
      * alone, so its click is read on one of them, as the desktop's round 6 read it).
@@ -1785,6 +1788,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         }
                         ?: injects?.let { selector -> json(tabEval(view, INJECTED_UI.replace("__SELECTOR__", JSONObject.quote(selector)))).takeIf { it.optBoolean("pass") } }
                         ?: seenBefore?.let { base -> newLabels(base, seenInView(view)).takeIf { it.size >= 2 }?.let { InjectedSeen(it) } }
+                        // A new tab the click opened whose site took it elsewhere before a poll read
+                        // it (Vimeo Record on WebView 156, round 15: its `tabs.create` of
+                        // vimeo.com/record/start-recording, which the site sends a phone's UA on to
+                        // the Play Store within two seconds; the core's tab list, read every 500 ms
+                        // and answering over a second late on that lane, never showed the vimeo.com
+                        // URL, and the row read "opened nothing"). The last resort, so every surface
+                        // above is preferred; the grade reads the page's text, the record its URL.
+                        ?: now.entries.firstOrNull { (id, url) -> id !in before && id != tab && url.startsWith("http") && listOf(BASE, LOCALHOST_BASE, PUBLIC_NAME_BASE).none { base -> url.startsWith(base) } }
                 }
                 coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
                 var hit: Any? = poll(scaled(20_000, factor), 500, watch)
