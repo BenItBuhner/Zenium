@@ -844,26 +844,44 @@ describe('the tablet switcher comes down from the toolbar`s edge over the page (
 const box = (): HTMLElement => layer().parentElement!
 
 describe('the tablet card takes the frame`s aspect (§9.36)', () => {
-  it('a landscape picture on a landscape tablet: the column over the frame`s ratio plus the title row, the phone`s 3 / 4 kept on a phone', () => {
-    // The shard's frame beside the sidebar: 1040 × 744, four columns of 245 – the picture
-    // 245 × 175 at the frame's 1040 : 744, the card 245 × 219 with its 44 row.
-    const shard = tabletCardAspect({ width: 1040, height: 744 }, 4, 44)
-    expect(shard).toBeCloseTo(245 / (245 * (744 / 1040) + 44), 6)
+  it('a landscape picture on a landscape tablet: the grid`s column over the frame`s ratio plus the title row, the phone`s 3 / 4 kept on a phone', () => {
+    // The shard: the grid 1280 wide (the layer's box spans the window, over the sidebar), the
+    // page's frame beside the sidebar 1032 × 652 – four columns of 305, the picture 305 × 193 at
+    // the frame's 1032 : 652, the card 305 × 237 with its 44 row.
+    const shard = tabletCardAspect({ width: 1032, height: 652 }, 1280, 4, 44)
+    expect(shard).toBeCloseTo(305 / (305 * (652 / 1032) + 44), 6)
     expect(shard).toBeGreaterThan(1)
-    expect(shard).toBeCloseTo(1.117, 3)
+    expect(shard).toBeCloseTo(1.289, 3)
     // The picture under the row is the frame's: the cell's height less the row, over its width.
-    const column = 245
-    expect(column / (column / shard - 44)).toBeCloseTo(1040 / 744, 6)
-    // A portrait tablet's frame draws a portrait picture; a frame without a size yet, the phone's.
-    expect(tabletCardAspect({ width: 800, height: 1224 }, 4, 44)).toBeLessThan(1)
-    expect(tabletCardAspect({ width: 0, height: 0 }, 4, 44)).toBe(3 / 4)
+    const column = 305
+    expect(column / (column / shard - 44)).toBeCloseTo(1032 / 652, 6)
+    // The column is the grid's, not the frame's: a wider frame beside a narrower sidebar changes
+    // the picture's ratio, not the column.
+    const railed = tabletCardAspect({ width: 1200, height: 652 }, 1280, 4, 44)
+    expect(column / (column / railed - 44)).toBeCloseTo(1200 / 652, 6)
+    // A portrait tablet's frame draws a portrait picture; a frame or a grid without a size yet,
+    // the phone's.
+    expect(tabletCardAspect({ width: 800, height: 1224 }, 800, 4, 44)).toBeLessThan(1)
+    expect(tabletCardAspect({ width: 0, height: 0 }, 1280, 4, 44)).toBe(3 / 4)
+    expect(tabletCardAspect({ width: 1032, height: 652 }, 0, 4, 44)).toBe(3 / 4)
   })
 
-  it('the ratio is set on the layer`s box for every cell to read; the phone`s box sets none and its cells draw 3 / 4', () => {
+  it('the ratio is set on the layer`s box for every cell to read, the grid`s width the window`s less its side insets; the phone`s box sets none and its cells draw 3 / 4', () => {
     render(stateOf(pages()), true)
     const ratio = box().style.getPropertyValue('--zen-overview-card-aspect')
-    expect(Number(ratio)).toBeCloseTo(tabletCardAspect(AREA, 4, 44), 6)
+    expect(Number(ratio)).toBeCloseTo(tabletCardAspect(AREA, TABLET.width, 4, 44), 6)
     expect(Number(ratio)).toBeGreaterThan(1)
+    // A side inset (a landscape tablet's bar on its edge) narrows the box, and the column with it.
+    act(() => uiStore.set({ insets: { top: 0, right: 48, bottom: 0, left: 0 } }))
+    expect(Number(box().style.getPropertyValue('--zen-overview-card-aspect'))).toBeCloseTo(
+      tabletCardAspect(AREA, TABLET.width - 48, 4, 44),
+      6
+    )
+    act(() => uiStore.set({ insets: { top: 0, right: 0, bottom: 0, left: 0 } }))
+    expect(Number(box().style.getPropertyValue('--zen-overview-card-aspect'))).toBeCloseTo(
+      Number(ratio),
+      6
+    )
     // Every cell: a card, the New Tab card.
     const aspect = `var(--zen-overview-card-aspect, 3 / 4)`
     expect(document.querySelector<HTMLElement>('[data-cell="ex"]')!.style.aspectRatio).toBe(aspect)
@@ -886,7 +904,7 @@ describe('the tablet card takes the frame`s aspect (§9.36)', () => {
       )
     )
     expect(Number(box().style.getPropertyValue('--zen-overview-card-aspect'))).toBeCloseTo(
-      tabletCardAspect({ width: 600, height: 944 }, 3, 44),
+      tabletCardAspect({ width: 600, height: 944 }, 600, 3, 44),
       6
     )
     // The phone: nothing set, the cells' fallback is the ratio they draw.

@@ -384,13 +384,19 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const side = state.settings.sidebarSide
   const isDark = isDarkScheme(state)
   // A phone on its side gets a row of four smaller cards, as Chrome's grid does.
-  const columns = overviewColumns(useViewport().width)
+  const viewportWidth = useViewport().width
+  const columns = overviewColumns(viewportWidth)
   // On the tablet the cards take the frame's aspect (§9.36): the ratio is set on the layer's box
   // for its cells to read (`CARD_ASPECT` – a card, the New Tab card, a dissolving group's
-  // members); the phone sets nothing and its cells draw 3 / 4.
+  // members); the phone sets nothing and its cells draw 3 / 4. The column is the grid's – the
+  // box spans the window less its horizontal insets (the layer covers the sidebar) – and the
+  // picture's ratio the page frame's, which is `area`, beside the sidebar.
+  const sideInsets = uiStore.use((s) => s.insets.left + s.insets.right)
   const cardAspectStyle = tablet
     ? ({
-        '--zen-overview-card-aspect': String(tabletCardAspect(area, columns, cardHeaderHeight()))
+        '--zen-overview-card-aspect': String(
+          tabletCardAspect(area, viewportWidth - sideInsets, columns, cardHeaderHeight())
+        )
       } as CSSProperties)
     : undefined
 
