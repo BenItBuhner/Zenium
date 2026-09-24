@@ -976,6 +976,120 @@ describe('RuleEngine partition scope', () => {
   })
 })
 
+describe('RuleEngine extension pages', () => {
+  const extensionId = 'b'.repeat(32)
+  const chromeSpelling = `chrome-extension://${extensionId}/options.html?tab=2#top`
+  const servedSpelling = `https://${extensionId}.ext.zenium.invalid/options.html?tab=2#top`
+
+  /** An engine that blocks everything it is asked about, by rule and by filter text alike. */
+  function blockEverything(): { engine: RuleEngine; asked: string[] } {
+    const asked: string[] = []
+    const engine = new RuleEngine()
+    engine.setRuleSet(
+      set('user', [block(1, { urlFilter: '*' })], {
+        source: 'user',
+        priority: RULE_SET_PRIORITY.user
+      })
+    )
+    engine.setRuleSet(set('dnr', [block(1, { urlFilter: '*' })]))
+    engine.setTextMatcher({
+      match: (ctx) => {
+        asked.push(ctx.url)
+        return { action: 'block', filter: '*' }
+      }
+    })
+    return { engine, asked }
+  }
+
+  it("allows a request for an extension's own page before any rule, in either spelling (contract 1.11)", () => {
+    const { engine, asked } = blockEverything()
+    for (const url of [chromeSpelling, servedSpelling]) {
+      for (const type of ['main_frame', 'sub_frame', 'script', 'image'] as const) {
+        const ctx = req(url, {
+          type,
+          initiator: 'https://news.example',
+          documentUrl: 'https://news.example/'
+        })
+        // The default allow: nothing matched, so nothing is reported as having decided.
+        expect(engine.decide(ctx)).toEqual({ action: 'allow' })
+        expect(engine.decideLinear(ctx)).toEqual({ action: 'allow' })
+      }
+    }
+    // Neither the sets nor the filter text were consulted...
+    expect(asked).toEqual([])
+    // ...while the same engine still blocks the web, by rule...
+    expect(engine.decide(req('https://news.example/a.js'))).toMatchObject({
+      action: 'block',
+      matched: { setId: 'user' }
+    })
+    // ...and, the rules gone, by filter text – which an extension page still never reaches.
+    engine.removeRuleSet('user')
+    engine.removeRuleSet('dnr')
+    expect(engine.decide(req(chromeSpelling))).toEqual({ action: 'allow' })
+    expect(engine.decide(req(servedSpelling))).toEqual({ action: 'allow' })
+    expect(engine.decide(req('https://news.example/a.js')).action).toBe('block')
+    expect(asked).toEqual(['https://news.example/a.js'])
+  })
+
+  it('reads only the request URL: a request an extension page makes to the web is evaluated', () => {
+    const { engine } = blockEverything()
+    const fromPage = req('https://api.example/data.json', {
+      type: 'xmlhttprequest',
+      initiator: `chrome-extension://${extensionId}`,
+      documentUrl: chromeSpelling
+    })
+    expect(engine.decide(fromPage).action).toBe('block')
+    expect(engine.decideLinear(fromPage).action).toBe('block')
+    const fromServedPage = req('https://api.example/data.json', {
+      type: 'xmlhttprequest',
+      initiator: `https://${extensionId}.ext.zenium.invalid`,
+      documentUrl: servedSpelling
+    })
+    expect(engine.decide(fromServedPage).action).toBe('block')
+  })
+
+  it('leaves the two spellings to the id grammar: a look-alike host is a web host', () => {
+    const { engine } = blockEverything()
+    for (const url of [
+      // Not 32 letters a–p.
+      'https://abc.ext.zenium.invalid/options.html',
+      `https://${'z'.repeat(32)}.ext.zenium.invalid/options.html`,
+      // A web host that merely ends in the suffix's words, or nests the served origin.
+      'https://ext.zenium.invalid/options.html',
+      `https://${extensionId}.ext.zenium.invalid.attacker.example/options.html`,
+      `https://evil.example/${extensionId}.ext.zenium.invalid/options.html`,
+      `https://evil.example/?u=chrome-extension://${extensionId}/options.html`
+    ]) {
+      expect(engine.decide(req(url)).action, url).toBe('block')
+    }
+  })
+
+  it('still redirects a web request to an extension page: the target is not what is exempt', () => {
+    const e = new RuleEngine()
+    e.setRuleSet(
+      set('stylus', [
+        {
+          id: 1,
+          action: {
+            type: 'redirect',
+            redirect: { regexSubstitution: `chrome-extension://${extensionId}/install.html#\\0` }
+          },
+          condition: { regexFilter: '^.*\\.user\\.css$', resourceTypes: ['main_frame'] }
+        }
+      ])
+    )
+    const decision = e.decide(req('https://a.example/theme.user.css', { type: 'main_frame' }))
+    expect(decision.action).toBe('redirect')
+    expect(decision.redirectUrl).toBe(
+      `chrome-extension://${extensionId}/install.html#https://a.example/theme.user.css`
+    )
+    // And the redirected-to page's own request is then the exempt one.
+    expect(e.decide(req(decision.redirectUrl!, { type: 'main_frame' }))).toEqual({
+      action: 'allow'
+    })
+  })
+})
+
 describe('RuleEngine indexes', () => {
   /** A set over the inline limit: `||hostN.example^` blocks plus a few token and wildcard rules. */
   function large(id: string, count: number, extra: Partial<RuleSet> = {}): RuleSet {

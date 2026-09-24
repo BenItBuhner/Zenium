@@ -971,7 +971,9 @@ describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => 
     expect(page.querySelector('[data-row]')).toBe(clearAll)
     // The origins under the heading with the count aside, each an item row (a button whose
     // sheet the chevron promises), nothing pressable inside it.
-    expect(page.querySelector('h3')?.textContent).toContain('Sites')
+    // The drill-in bar is the page's h1: the heading follows it at h2 (axe heading-order).
+    expect(page.querySelector('h2.zen-settings-heading')?.textContent).toContain('Sites')
+    expect(page.querySelector('h3')).toBeNull()
     expect(page.querySelector('[data-testid="site-data-count"]')?.textContent).toBe('3 sites')
     const rows = pageRows(el)
     expect(rows.map((r) => r.querySelector('.zen-settings-label')?.textContent)).toEqual([
