@@ -125,25 +125,60 @@ describe('ElectronScreenCapture permission stage', () => {
 
   it('a cancelled picker refuses at the permission stage (NotAllowedError) and leaves nothing behind', async () => {
     const s = stages()
+    s.host.intent(s.wc, false)
     await expect(s.host.permission(s.wc, 'tab-1', 'https://meet.example/room')).resolves.toBe(false)
     expect(s.asked).toEqual([{ tabId: 'tab-1', url: 'https://meet.example/room', audio: false }])
-    // Were the engine to ask anyway, the picker would run afresh rather than reuse a refusal.
-    s.answers.push({ sourceId: null, audio: false })
+    // Were the engine to ask anyway, it is refused without a picker: a refusal is not reused,
+    // and no picker runs at the display-media stage, where a cancel would read as AbortError.
+    s.answers.push({ sourceId: 'screen:0:0', audio: false })
     expect(await s.displayMedia()).toEqual({})
-    expect(s.asked).toHaveLength(2)
+    expect(s.asked).toHaveLength(1)
   })
 
-  it('an announcement is consumed once and expires; without one the picker offers no audio', async () => {
+  it('an announcement is consumed once and expires; without one the picker runs with audio unknown, offering the choice', async () => {
     const s = stages()
     s.answers.push(
       { sourceId: 'screen:0:0', audio: false },
+      { sourceId: 'screen:0:0', audio: false },
       { sourceId: 'screen:0:0', audio: false }
     )
-    s.host.intent(s.wc, true)
+    s.host.intent(s.wc, false)
+    await s.host.permission(s.wc, 'tab-1', 'https://meet.example/room')
+    s.host.intent(s.wc, false)
     s.clock.now += 11_000
     await s.host.permission(s.wc, 'tab-1', 'https://meet.example/room')
     await s.host.permission(s.wc, 'tab-1', 'https://meet.example/room')
-    expect(s.asked.map((a) => a.audio)).toEqual([false, false])
+    // The fresh announcement said no audio; the stale one and none at all leave it unknown.
+    expect(s.asked.map((a) => a.audio)).toEqual([false, true, true])
+  })
+
+  it('with no announcement the picker still runs at the permission stage, and Cancel refuses there (callback(false))', async () => {
+    const s = stages()
+    // The shim did not reach the page: no intent. The picker is asked, with audio unknown.
+    await expect(s.host.permission(s.wc, 'tab-1', 'https://meet.example/room')).resolves.toBe(false)
+    expect(s.asked).toEqual([{ tabId: 'tab-1', url: 'https://meet.example/room', audio: true }])
+  })
+
+  it('audio unknown: the picked audio counts only when the engine says the page asked for it', async () => {
+    // A screen picked with "Also share system audio", no announcement, the engine not asking
+    // for audio: the grant carries no audio.
+    const quiet = stages()
+    quiet.answers.push({ sourceId: 'screen:0:0', audio: true })
+    await quiet.host.permission(quiet.wc, 'tab-1', 'https://meet.example/room')
+    expect(await quiet.displayMedia(false)).toEqual({ video: { id: 'screen:0:0', name: '' } })
+    // The same pick with the engine confirming the page asked for audio: loopback rides along.
+    const loud = stages()
+    loud.answers.push({ sourceId: 'screen:0:0', audio: true })
+    await loud.host.permission(loud.wc, 'tab-1', 'https://meet.example/room')
+    expect(await loud.displayMedia(true)).toEqual({
+      video: { id: 'screen:0:0', name: '' },
+      audio: 'loopback'
+    })
+    // A tab pick, audio unknown: the tab's sound goes only when the engine says so.
+    const tab = stages()
+    tab.answers.push({ sourceId: 'tab:tab-1', audio: false })
+    await tab.host.permission(tab.wc, 'tab-1', 'https://meet.example/room')
+    expect(await tab.displayMedia(false)).toEqual({ video: { tag: 'main frame of tab-1' } })
   })
 
   it('a tab pick carries the tab audio when the page asked for it, in the announcement or the request', async () => {
@@ -157,15 +192,15 @@ describe('ElectronScreenCapture permission stage', () => {
     expect(streams.video).toEqual({ tag: 'main frame of tab-1' })
   })
 
-  it('a call that reaches the display-media stage with no answer waiting still gets the picker', async () => {
+  it('a call that reaches the display-media stage with no answer waiting is refused; the picker never runs there', async () => {
     const s = stages()
     s.answers.push({ sourceId: 'window:3:0', audio: false })
     const streams = await s.displayMedia(true)
-    expect(s.asked).toEqual([{ tabId: 'tab-1', url: 'https://meet.example', audio: true }])
-    expect(streams).toEqual({ video: { id: 'window:3:0', name: '' } })
+    expect(s.asked).toEqual([])
+    expect(streams).toEqual({})
   })
 
-  it('a stored answer older than its window is not reused', async () => {
+  it('a stored answer older than its window is not reused: the request is refused, not asked again', async () => {
     const s = stages()
     s.answers.push(
       { sourceId: 'screen:0:0', audio: false },
@@ -174,8 +209,18 @@ describe('ElectronScreenCapture permission stage', () => {
     await s.host.permission(s.wc, 'tab-1', 'https://meet.example/room')
     s.clock.now += 31_000
     const streams = await s.displayMedia()
-    expect(streams).toEqual({ video: { id: 'window:3:0', name: '' } })
-    expect(s.asked).toHaveLength(2)
+    expect(streams).toEqual({})
+    expect(s.asked).toHaveLength(1)
+  })
+
+  it('a stored answer is consumed once: a second display-media request for the page is refused', async () => {
+    const s = stages()
+    s.answers.push({ sourceId: 'screen:0:0', audio: false })
+    s.host.intent(s.wc, false)
+    await s.host.permission(s.wc, 'tab-1', 'https://meet.example/room')
+    expect(await s.displayMedia()).toEqual({ video: { id: 'screen:0:0', name: '' } })
+    expect(await s.displayMedia()).toEqual({})
+    expect(s.asked).toHaveLength(1)
   })
 })
 

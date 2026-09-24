@@ -42,8 +42,11 @@ interface Intent {
 /** The picker's answer from the permission stage, waiting for the engine's display-media stage. */
 interface StoredAnswer {
   answer: ScreenCaptureAnswer
-  /** The page asked for audio (from its announcement): decides whether a tab share carries sound. */
-  audio: boolean
+  /**
+   * Whether the page asked for audio, from its announcement; null when there was none (the
+   * shim did not reach the page's main world) – the engine's own word decides then.
+   */
+  audio: boolean | null
   at: number
 }
 
@@ -57,12 +60,15 @@ interface StoredAnswer {
  * The picker is Chrome's consent, so cancelling it must refuse the call the way Chrome does:
  * `NotAllowedError: Permission denied`. On Electron only the permission stage can say that (a
  * refusal from `setDisplayMediaRequestHandler` surfaces as `AbortError: Invalid capture
- * constraints`), so the picker runs at the permission stage (`permission`), where Electron does
- * not yet say whether the page asked for audio; the page's own call does, through the shim in
- * its main world (`shared/screenCapture`), announced synchronously before the engine sees the
- * call (`intent`). The answer waits for the engine's display-media request (`handle`), which
- * hands it over without asking again. A call that reaches the display-media stage without one
- * (a page whose main world the shim could not reach) still gets the picker there.
+ * constraints`), so the picker runs at the permission stage (`permission`) – always – where
+ * Electron does not yet say whether the page asked for audio; the page's own call does, through
+ * the shim in its main world (`shared/screenCapture`), announced synchronously before the
+ * engine sees the call (`intent`). Without an announcement (a page whose main world the shim
+ * could not reach) the picker is put up with audio unknown: it offers the audio choice, and
+ * the choice counts only if the engine's request then says the page asked for audio. The
+ * answer waits for the engine's display-media request (`handle`), which only ever hands over
+ * a stored answer, never asks itself: a request with none waiting (the answer expired, or a
+ * call this host never saw at the permission stage) is refused there.
  *
  * On Wayland `desktopCapturer.getSources` goes through the desktop portal, whose own dialog is
  * what the user sees; the list then holds the one source it granted. macOS 15's system picker
@@ -97,20 +103,23 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
   /**
    * The permission stage of a page's call: the picker. Resolves true when a source was picked
    * (the answer waits for the engine's display-media request) and false when the picker was
-   * cancelled – the engine then refuses the call with `NotAllowedError`.
+   * cancelled – the engine then refuses the call with `NotAllowedError`. With no announcement
+   * to go by, the picker offers the audio choice (`audio: true`); whether it counts is decided
+   * at the display-media stage, where the engine says if the page asked for audio.
    */
   async permission(wc: WebContents, tabId: string, url: string): Promise<boolean> {
-    const audio = this.takeIntent(wc.id)
-    const answer = await this.service().request({ tabId, url, audio })
+    const intent = this.takeIntent(wc.id)
+    const answer = await this.service().request({ tabId, url, audio: intent ?? true })
     if (!answer.sourceId) return false
-    this.answers.set(wc.id, { answer, audio, at: this.now() })
+    this.answers.set(wc.id, { answer, audio: intent, at: this.now() })
     return true
   }
 
-  private takeIntent(id: number): boolean {
+  /** The page's fresh announcement, consumed; null when there is none to go by. */
+  private takeIntent(id: number): boolean | null {
     const intent = this.intents.get(id)
     this.intents.delete(id)
-    return Boolean(intent && this.now() - intent.at <= INTENT_TTL_MS && intent.audio)
+    return intent && this.now() - intent.at <= INTENT_TTL_MS ? intent.audio : null
   }
 
   private takeAnswer(id: number): StoredAnswer | undefined {
@@ -183,21 +192,18 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
       deny(callback)
       return
     }
-    // The picker normally ran at the permission stage; its answer is handed over here. The
-    // engine's own word on audio wins over the page's announcement when it has one.
+    // The picker ran at the permission stage; its answer is handed over here, and a request
+    // with none waiting is refused (the picker never runs at this stage: a cancel here could
+    // only read as an `AbortError`). The page asked for audio when the engine says so or its
+    // own announcement did; with no announcement the engine's word is the only one, and the
+    // picker's audio choice – offered on the chance – is dropped unless the engine confirms it.
     const stored = this.takeAnswer(wc.id)
-    const audioRequested = request.audioRequested || Boolean(stored?.audio)
-    const answer =
-      stored?.answer ??
-      (await this.service().request({
-        tabId,
-        url: request.securityOrigin || frame.url,
-        audio: request.audioRequested
-      }))
-    if (!answer.sourceId) {
+    if (!stored || !stored.answer.sourceId) {
       deny(callback)
       return
     }
+    const { answer } = stored
+    const audioRequested = request.audioRequested || stored.audio === true
     const targetTab = tabIdOfSource(answer.sourceId)
     try {
       if (targetTab) {
@@ -217,7 +223,7 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
       }
       callback({
         video: { id: answer.sourceId, name: this.names.get(answer.sourceId) ?? '' },
-        ...(answer.audio ? { audio: 'loopback' } : {})
+        ...(answer.audio && audioRequested ? { audio: 'loopback' } : {})
       })
     } catch (error) {
       // The frame went away between the answer and the grant.
@@ -227,9 +233,10 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
 }
 
 /**
- * The engine refuses the page's call. Only reached when the picker had to run at this stage
- * (or the picked tab vanished): Electron words this refusal as an `AbortError`, so the ordinary
- * cancel – a `NotAllowedError`, as Chrome's – is given at the permission stage instead.
+ * The engine refuses the page's call. Only reached when no answer of the picker's was waiting
+ * (a call this host never saw at the permission stage, an answer that expired) or the picked
+ * tab vanished: Electron words this refusal as an `AbortError`, so the ordinary cancel – a
+ * `NotAllowedError`, as Chrome's – is given at the permission stage instead.
  */
 function deny(callback: DisplayMediaCallback): void {
   try {
