@@ -590,7 +590,81 @@ describe('the overview across a shell swap (TABLET-08)', () => {
   })
 })
 
-// --- (D) the slide-up --------------------------------------------------------------------------
+// --- (D) the phone's gates on the tablet mount ---------------------------------------------------
+
+describe("the phone switcher's gates hold on the tablet mount", () => {
+  it('the Private pane stands under the lock cover, its grid inert, the cards masked (INC-05)', async () => {
+    const { applyPrivateLock, resetPrivateLock } = await import('@renderer/lib/privateLock')
+    const { pickOverviewPane } = await import('@renderer/lib/privateTabs')
+    const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
+    const state = stateOf([
+      tab('a', 'https://a.example/'),
+      tab('p1', 'https://one.example/', { containerId: PRIVATE_CONTAINER_ID, title: 'one' })
+    ])
+    ;(state.capabilities as { privateTabs?: boolean }).privateTabs = true
+    try {
+      act(() => applyPrivateLock({ locked: true, screenLock: true }))
+      render(state, true)
+      expect(byTestId('private-lock-cover')).toBeNull()
+      act(() => pickOverviewPane('private'))
+      const cover = byTestId('private-lock-cover')
+      expect(cover).not.toBeNull()
+      expect(cover!.getAttribute('aria-label')).toBe('Private tabs locked')
+      const privateGrid = document.querySelector<HTMLElement>(
+        '.zen-overview-grid[data-pane="private"]'
+      )!
+      expect(privateGrid.hasAttribute('inert')).toBe(true)
+      expect(privateGrid.getAttribute('aria-hidden')).toBe('true')
+      expect(document.body.textContent).not.toContain('one.example')
+      // The header's field is the Private pane's too (a card pane), still in the header row.
+      expect(header().contains(field())).toBe(true)
+    } finally {
+      act(() => resetPrivateLock())
+    }
+  })
+
+  it('the Inactive tabs entry is absent at 0 and the segment row`s trailing button otherwise (TAB-20, §9.34)', () => {
+    const state = stateOf(pages())
+    ;(state as unknown as { archivedTabCount: number }).archivedTabCount = 0
+    render(state, true)
+    expect(byTestId('overview-inactive-tabs')).toBeNull()
+    const withArchive = { ...state, archivedTabCount: 2 } as UIState
+    render(withArchive, true)
+    const entry = byTestId('overview-inactive-tabs')
+    expect(entry).not.toBeNull()
+    expect(entry!.getAttribute('aria-label')).toBe('Inactive tabs, 2')
+    // Never a fourth segment: the pane segments stay two (Tabs, Groups) beside it.
+    expect(document.querySelectorAll('[data-testid^="overview-pane-"]').length).toBeLessThan(4)
+  })
+
+  it('a group is a card spanning the grid`s columns, its members in it (TAB-16)', () => {
+    const research = {
+      id: 'research',
+      spaceId: SPACE,
+      name: 'Research',
+      icon: '',
+      collapsed: false,
+      color: 'blue'
+    }
+    const state = stateOf([
+      tab('m1', 'https://en.wikipedia.org/wiki/Coffee', { title: 'Coffee', folderId: 'research' }),
+      tab('m2', 'https://github.com/BenItBuhner/Zenium', { title: 'Zenium', folderId: 'research' }),
+      tab('a', 'https://a.example/', { title: 'A' })
+    ])
+    ;(state.folders as Record<string, unknown>).research = research
+    render(state, true)
+    const group = document.querySelector<HTMLElement>('[data-cell="group:research"]')
+    expect(group).not.toBeNull()
+    expect(group!.classList.contains('col-span-full')).toBe(true)
+    expect(byTestId('group-card-count')?.textContent?.trim()).toBe('2')
+    expect(cellKeys()).toEqual(['group:research', 'm1', 'm2', 'a', 'new-tab'])
+    // And the field narrows into the group: a query keeps the group's matching member alone.
+    type('zen')
+    expect(cellKeys()).toEqual(['group:research', 'm2'])
+  })
+})
+
+// --- (E) the slide-up --------------------------------------------------------------------------
 
 describe('the tablet switcher slides up over the page (MOT-04)', () => {
   it('the layer rises on the progress, the page`s still under it in the page`s frame; open lands untransformed', () => {
