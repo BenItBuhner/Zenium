@@ -1,0 +1,26 @@
+diff --git a/node_modules/app-builder-lib/out/targets/LinuxTargetHelper.js b/node_modules/app-builder-lib/out/targets/LinuxTargetHelper.js
+index 5261919..22be4ce 100644
+--- a/node_modules/app-builder-lib/out/targets/LinuxTargetHelper.js
++++ b/node_modules/app-builder-lib/out/targets/LinuxTargetHelper.js
+@@ -279,7 +279,10 @@ class LinuxTargetHelper {
+         if (!(0, builder_util_1.isEmptyOrSpaces)(description)) {
+             desktopMeta.Comment = desktopStringEscape(description);
+         }
+-        const mimeTypes = (0, builder_util_1.asArray)(targetSpecificOptions.mimeTypes);
++        // A copy: asArray returns the configuration's own `mimeTypes` array by reference, and this
++        // runs once per Linux target of a build, so appending to it in place gave every target
++        // after the first the file-association and protocol types once more each time.
++        const mimeTypes = [...(0, builder_util_1.asArray)(targetSpecificOptions.mimeTypes)];
+         for (const fileAssociation of packager.fileAssociations) {
+             if (fileAssociation.mimeType != null) {
+                 mimeTypes.push(fileAssociation.mimeType);
+@@ -291,7 +294,8 @@ class LinuxTargetHelper {
+             }
+         }
+         if (mimeTypes.length !== 0) {
+-            desktopMeta.MimeType = mimeTypes.join(";") + ";";
++            // Each type once, in order: desktop-file-validate warns about a repeated one.
++            desktopMeta.MimeType = Array.from(new Set(mimeTypes)).join(";") + ";";
+         }
+         let category = targetSpecificOptions.category;
+         if ((0, builder_util_1.isEmptyOrSpaces)(category)) {
