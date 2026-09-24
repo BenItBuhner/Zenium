@@ -156,6 +156,40 @@ describe('the popover menu', () => {
     expect(menus()[0].dataset.context).toBeUndefined()
   })
 
+  it("a saved group's row draws the one group glyph in the slot – the ring of its colour, or the folder's own icon – and gives the level the slot (the Tab Folders submenu, shortcuts-menus-111)", () => {
+    show(
+      tabMenu({
+        source: 'app',
+        items: [
+          item('trip', 'Trip', { group: { color: 'green', icon: '✈️', saved: true } }),
+          item('research', 'Research', { group: { color: 'blue', icon: '📁', saved: true } }),
+          item('none', 'No saved tab folders', { enabled: false, note: true })
+        ]
+      })
+    )
+    const [menu] = menus()
+    // The rows read by their names alone: the mark is no part of what a row says.
+    expect(rows(menu).map((r) => r.textContent)).toEqual(['Trip', 'Research'])
+    const research = rowOf('research').querySelector<HTMLElement>(
+      '.zen-v2-menu-glyph [data-testid="group-row-glyph"]'
+    )!
+    expect(research).not.toBeNull()
+    expect(research.dataset.saved).toBe('true')
+    expect(research.querySelector('.zen-group-row-dot')).not.toBeNull()
+    // §9.14's pair on the glyph itself (`groupColorVars`, `data-group-rgb`): the theme's rule
+    // picks one, so a flip recolours the mark with the rest of the chrome.
+    expect(research.dataset.groupRgb).toBe('')
+    expect(research.style.getPropertyValue('--zen-group-rgb-light')).not.toBe('')
+    expect(research.style.getPropertyValue('--zen-group-rgb-dark')).not.toBe('')
+    const trip = rowOf('trip').querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
+    expect(trip.querySelector<HTMLElement>('.zen-group-row-icon')?.dataset.icon).toBe('✈️')
+    expect(trip.style.getPropertyValue('--zen-group-rgb-light')).not.toBe(
+      research.style.getPropertyValue('--zen-group-rgb-light')
+    )
+    // The note keeps the labels' edge with an empty slot of its own.
+    expect(menu.querySelector('[data-menu-note] .zen-v2-menu-glyph')).not.toBeNull()
+  })
+
   it('opened by the pointer the panel holds the focus and Down starts at the first row; from the keyboard the first row has it', () => {
     show(tabMenu())
     expect(document.activeElement).toBe(menus()[0])

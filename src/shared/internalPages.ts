@@ -37,8 +37,9 @@ export const INTERNAL_ALIAS_SCHEME = 'zenium'
  * with no panel form), the What's new page (`zen://whats-new`, the running version's release
  * notes, from Settings › About), the two legal pages (`zen://privacy-notice`, `zen://terms`,
  * from Settings › Legal), the print preview (`zen://print`, a chrome page that is the desktop's
- * print dialog) and the PDF viewer (`zen://pdf?id=…`, a document page on hosts whose engine
- * cannot draw a PDF). Widened as pages move onto the mechanism.
+ * print dialog), the PDF viewer (`zen://pdf?id=…`, a document page on hosts whose engine
+ * cannot draw a PDF) and the task manager (`zen://tasks`, Chrome's Shift+Esc: a desktop-only
+ * chrome page with no panel form). Widened as pages move onto the mechanism.
  */
 export type InternalPageId =
   | 'settings'
@@ -51,6 +52,7 @@ export type InternalPageId =
   | 'terms'
   | 'print'
   | 'pdf'
+  | 'tasks'
 
 /**
  * How a page's tab holds its page.
@@ -72,10 +74,10 @@ export type InternalPageRender = 'chrome' | 'document'
  * The glyph a page tab shows in its favicon slot – the pill, the sidebar row, the tab strip, the
  * overview card – named for the renderer to draw (Lucide's `settings`, `history`, `star`,
  * `download`, `scale` for the Licences page, `sparkles` for What's new, `file-text` for the
- * legal pages); a page tab never fetches a favicon.
+ * legal pages, `activity` for the task manager); a page tab never fetches a favicon.
  */
 export type InternalPageGlyph =
-  'settings' | 'history' | 'star' | 'download' | 'scale' | 'sparkles' | 'file-text'
+  'settings' | 'history' | 'star' | 'download' | 'scale' | 'sparkles' | 'file-text' | 'activity'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
 export interface InternalPageSection {
@@ -323,6 +325,19 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     label: 'Extensions',
     keywords: ['add-ons', 'addons', 'chrome web store'],
     requires: 'extensions'
+  },
+  /**
+   * Apps (shortcuts-menus-138; Edge's Apps › Manage apps, Chrome's chrome://apps): the web apps
+   * installed on this computer – the launchers the host pinned – each opened or uninstalled
+   * from its row. The desktop OSes' alone: Android's installed apps are the launcher's tiles,
+   * which the Home screen manages.
+   */
+  {
+    id: 'apps',
+    label: 'Apps',
+    keywords: ['web apps', 'installed', 'install', 'shortcut', 'launcher', 'uninstall', 'pwa'],
+    requires: 'pinShortcuts',
+    platforms: ['win32', 'darwin', 'linux']
   },
   {
     id: 'agents',
@@ -588,6 +603,28 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     pill: { showStar: true },
     splittable: true,
     requires: 'pdfViewer',
+    sections: []
+  },
+  /**
+   * The task manager (`zen://tasks`, shortcuts-menus-121 / -149 / -32): every process the app
+   * runs – the browser, each tab's renderer, each extension's host, the DevTools frontends, the
+   * GPU and the utility processes – with its memory, CPU and network, and End process
+   * (`core/tasks.ts`, `Commands['tasks.list']`). Chrome's is a separate window on Shift+Esc; here
+   * it is a page tab like every other list page (the wave-5 plan's default until Bennett says
+   * otherwise), on the same chord and the More Tools row. Desktop layouts only, with no panel
+   * form: the processes are the desktop host's (Android's WebView runs no process of the app's
+   * own to list), so the page opens nowhere else – `pageOpensAsTab` says no on a tablet or a
+   * phone and, with no `overlay`, the ask is dropped. No star: a page of the browser's own.
+   */
+  tasks: {
+    id: 'tasks',
+    title: 'Task Manager',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'activity',
+    pill: { showStar: false },
+    splittable: false,
+    layouts: ['desktop'],
     sections: []
   }
 }

@@ -38,7 +38,7 @@
     <script>
       var v = document.getElementById('clip')
       var state = document.getElementById('state')
-      window.__media = { playing: false, seeked: 0, duration: null, streamMeta: false, xhr: null, fetch: null, error: null, events: [] }
+      window.__media = { playing: false, seeked: 0, duration: null, streamMeta: false, xhr: null, fetch: null, error: null, events: [], xhrHeaders: null, fetchHeaders: null }
       var stream = document.getElementById('stream')
       stream.addEventListener('loadedmetadata', function () {
         window.__media.streamMeta = true
@@ -86,6 +86,16 @@
       xhr.open('GET', '/data.json?xhr=1')
       xhr.onload = function () {
         window.__media.xhr = xhr.status
+        // The response headers the page can read of its own XHR (what a page script observing it would see).
+        var h = {}
+        xhr.getAllResponseHeaders()
+          .trim()
+          .split(/[\r\n]+/)
+          .forEach(function (line) {
+            var i = line.indexOf(':')
+            if (i > 0) h[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim()
+          })
+        window.__media.xhrHeaders = h
         document.getElementById('xhr').textContent = 'status ' + xhr.status
       }
       xhr.onerror = function () {
@@ -97,6 +107,11 @@
       fetch('/data.json?fetch=1', { cache: 'no-store' })
         .then(function (r) {
           window.__media.fetch = r.status
+          var h = {}
+          r.headers.forEach(function (v, k) {
+            h[k] = v
+          })
+          window.__media.fetchHeaders = h
           document.getElementById('fetch').textContent = 'status ' + r.status
         })
         .catch(function (e) {

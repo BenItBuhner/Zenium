@@ -16,6 +16,7 @@ import { PassphraseDialog } from './autofill/PassphraseDialog'
 import { ExtensionPromptDialog } from './extensions/ExtensionPromptDialog'
 import { ClearBrowsingDataDialog } from './siteControls/ClearBrowsingDataDialog'
 import { ImportDialog } from './import/ImportDialog'
+import { MemorySaverBubble } from './siteControls/MemorySaverBubble'
 import { PermissionPrompts } from './siteControls/PermissionPromptBubble'
 import { PageDialogs } from './dialogs/PageDialog'
 import { UnresponsiveDialog } from './dialogs/UnresponsiveDialog'
@@ -39,6 +40,7 @@ import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
 import { DeviceChooserLayer } from './devices/DeviceChooserDialog'
 import { ShareLayer } from './share/SharePopover'
 import { FolderDeleteDialog } from './sidebar/FolderDeleteDialog'
+import { DeleteSearchHistoryDialog } from './urlbar/DeleteSearchHistoryDialog'
 import { NameWindowDialog } from './windowName/NameWindowDialog'
 import { ZoomBubble } from './zoom/ZoomBubble'
 import { ReaderPreferencesPanel } from './reader/ReaderPreferencesPanel'
@@ -71,7 +73,7 @@ const TAB_ICONS = [
  * renderer stopped answering (`UnresponsiveDialog`), the questions asked before a window closes or
  * Zenium quits, Chrome's Name window prompt, the new tab page's add / edit shortcut dialog, the extension install and
  * permission prompts, the site-information popover's "Clear site data?" confirmation, the
- * sidebar's "Delete <folder>?" prompt, the Clear browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
+ * sidebar's "Delete <folder>?" prompt, the omnibox row menu's "Delete search history?" prompt, the Clear browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
  * password", `LeakWarnings`), the autofill prompts (save / update a login,
  * save an address or a card, choose a passkey account), the address and card editors of
  * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from
@@ -85,7 +87,8 @@ const TAB_ICONS = [
  * that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop it portals
  * to the chrome layer, anchored under the star; on phones it is a sheet in the host. The zoom
  * bubble is a desktop popover too, under the pill's zoom chip, and so are the blocked pop-ups
- * list under its chip and Reader View's text preferences under theirs (sheets on phones). This is the frame's host: a dialog whose state lives
+ * list under its chip, the Memory Saver bubble under the slot's leaf (omnibox-40) and Reader
+ * View's text preferences under theirs (sheets on phones). This is the frame's host: a dialog whose state lives
  * inside the frame (a phone panel's sheets, the new tab page's customise sheet) reaches it
  * through `FrameDialogPortal`.
  */
@@ -94,11 +97,13 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
   const star = uiStore.use((s) => s.starDialog)
   const zoom = uiStore.use((s) => s.zoomBubble)
+  const memorySaver = uiStore.use((s) => s.memorySaverBubble)
   const readerPrefs = uiStore.use((s) => s.readerPreferences)
   const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
   const folderDelete = uiStore.use((s) => s.folderDeleteConfirm)
+  const deleteSearchHistory = uiStore.use((s) => s.deleteSearchHistoryOpen)
   const phone = useViewport().formFactor === 'phone'
   const popups = uiStore.use((s) => s.blockedPopupsPanel)
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
@@ -120,6 +125,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       {folderDelete && (
         <FolderDeleteDialog key={folderDelete.folderId} state={state} request={folderDelete} />
       )}
+      {deleteSearchHistory && <DeleteSearchHistoryDialog />}
       {popups && <BlockedPopupsPanel state={state} panel={popups} />}
       <SecurityPrompts state={state} />
       <PermissionPrompts state={state} />
@@ -132,6 +138,9 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <ImportDialog state={state} />
       <PrintPreviewDialog state={state} />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
+      {memorySaver && (
+        <MemorySaverBubble key={memorySaver.tabId} state={state} bubble={memorySaver} />
+      )}
       {readerPrefs && (
         <ReaderPreferencesPanel key={readerPrefs.tabId} state={state} panel={readerPrefs} />
       )}

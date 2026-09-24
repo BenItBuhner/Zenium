@@ -133,8 +133,14 @@ export interface ActionRow extends RowBase {
    */
   busy?: boolean
   destructive?: boolean
-  /** The confirmation sheet a destructive action shows first; `onPress` runs on its button. */
-  confirm?: { title: string; description?: string; action: string }
+  /**
+   * The confirmation sheet a destructive action shows first; `onPress` runs on its button.
+   * `verbTone: 'plain'` is the desktop prompt's third form (the primitive's `verbTone`): the
+   * verb a second secondary in the plain ink with no default key – §9.23's notice for an act
+   * that costs a window but no data (Settings › Apps' Uninstall with a window of the app open;
+   * the #435 lead check). The phone's sheet keeps its two forms: no phone row names it.
+   */
+  confirm?: { title: string; description?: string; action: string; verbTone?: 'plain' }
   /**
    * `onPress` opens a confirmation the builder draws itself (the site-data page's prompts, whose
    * container takes the focus, §9.22): the row says so as one with `confirm` does
@@ -331,11 +337,14 @@ export interface ItemRow extends RowBase {
 /**
  * The desktop ⋯ menu of an item row (`ItemRow.menu`, §10.5): the action rows of its sheet, in
  * their order, each an item – disabled where the row is (Move Up on the first row, at .4),
- * in the danger ink where the row is destructive – running the row's press. Rows of other
- * kinds (a value to set) take the row out of the menu's form; a builder that has them keeps
- * the item's dialog instead.
+ * in the danger ink where the row is destructive – running the row's press; a row with a
+ * `confirm` opens its prompt through `confirm` instead (the desktop rows' `ctx.open`, naming
+ * the item row as the way back for the focus: its ⋯ is the control that opened the prompt,
+ * §9.5), as the phone's item sheet opens the same row's sheet. Rows of other kinds (a value to
+ * set) take the row out of the menu's form; a builder that has them keeps the item's dialog
+ * instead.
  */
-export function itemMenuItems(row: ItemRow): RowMenuItem[] {
+export function itemMenuItems(row: ItemRow, confirm: (action: ActionRow) => void): RowMenuItem[] {
   return allRows(row.sheet.groups).flatMap((r) =>
     r.kind === 'action'
       ? [
@@ -344,7 +353,7 @@ export function itemMenuItems(row: ItemRow): RowMenuItem[] {
             label: r.label,
             disabled: r.disabled,
             danger: r.destructive,
-            onSelect: () => r.onPress?.()
+            onSelect: r.confirm ? () => confirm(r) : () => r.onPress?.()
           }
         ]
       : []

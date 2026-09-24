@@ -1,0 +1,795 @@
+{
+ "$comment": "Compatibility sweep round 11 list (compiled by Android compat round 14; no desktop sweep ran for these ranks, the desktop sweep having moved to a per-release cadence after its round 7): the next 30 Chrome Web Store extensions by install count after the top 30 of round 1, the 30 of next30.json and the 30 of each of next30-round3.json to next30-round10.json (ranks 301-330; manifests under the project store internal/extensions/next30-round11/). Counts are the store detail pages' rounded figures read 2026-09-24; ties inside one rounded bucket are ordered by the page's rating count, equal rounded rating counts by name. Candidates came from the store's category listings and keyword searches, about 16,000 detail pages probed across rounds 3 to 11 (this round added 326 search terms and 1,544 new detail pages; two of them, Dragon (DMO, DMD, DPA, DLA) Web Extension and Keep Awake your System or Display, read 1,000,000 users, a count that would have placed them in the earlier lists had the store's listings or the earlier rounds' terms surfaced them, so they are ranks 301 and 302 as the highest-count items not yet listed, the earlier lists standing as compiled; the other 1,542 are all below the rounded 500,000 bucket except Bitly and Tag Assistant Companion at 500,000). Every unlisted candidate at or above the rounded 500,000 bucket (119 detail pages) was read again on 2026-09-24; against round 13's read of 2026-09-23 Eneba moved from the rounded 600,000 bucket to 700,000, ChatbotsPlace from 1,000,000 to 700,000, Earth View from Google Earth from 700,000 to 600,000 and edpuzzle from 700,000 to 600,000, and no rating count moved a rank. Ranks 303-323 are the rounded 700,000 bucket's 21 rankable items in rating order (round 13's cut fell between Voice In at 2.8K ratings and Window Resizer at 2.3K, so Window Resizer is rank 303) and ranks 324-330 the rounded 600,000 bucket's seven items with the most ratings; the cut falls between Talend API Tester at 4.3K ratings and RoboForm Password Manager at 3.8K. PIXM Phishing Protection and Nearpod for Classroom, whose detail pages hide the user count today, are ranked by the round 3 probe's read of 2026-09-20, as round 13 ranked EasyBib Toolbar; their rating counts (16 and 15) place them last in the 700,000 bucket. Dragon Web Extension, Copyfish, Postman Interceptor, GNOME Shell integration, Assinatura Digital no Navegador and PIXM declare nativeMessaging and are ranked as round 13 ranked Foxit PDF Creator. Not ranked: themes (Morpheon Dark, Dark Theme for Google Chrome), Chrome Apps (Google Classroom; Postman, whose package is a Chrome App manifest of manifest version 2 - its 600,000-user, 8.7K-rating detail page would otherwise be rank 327), organisation-managed or organisation-login-only items (ClassLink OneClick, Clever, Mobility Print, Endpoint Verification, Lightspeed Insight Agent, Okta Browser Plugin, Trellix Endpoint Security Web Control, LearnPlatform for Students, OpenText Content Server Browser Web Extension, My Apps Secure Sign-in Extension, MasteryConnect LockDown Browser, HID Credential Management Extension, Snow Web Application Metering, iboss Cloud Connector, LanSchool Web Helper, Browser Security Plus, Browser Redirection Extension, ActivID CMS extension, Britannica School Insights, Securly for Chromebooks, and from this round's 700,000 bucket Idira Identity Browser Extension, CyberArk Identity's tenant-login companion, and Citrix Web Extension, the Citrix Workspace store's companion) and Google items whose detail pages publish no user count.",
+ "measuredAt": "2026-09-24",
+ "baseline": "7258f589",
+ "rows": [
+  {
+   "rank": 301,
+   "id": "feolagkacappiaieohahjkeaikhjjcfa",
+   "name": "Dragon (DMO, DMD, DPA, DLA) Web Extension",
+   "version": "26.1.81.1",
+   "mv": 3,
+   "users": 1000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/dragon-dmo-dmd-dpa-dla-we/feolagkacappiaieohahjkeaikhjjcfa), \"1,000,000 users\", read 2026-09-24; 25 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "nativeMessaging",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": true,
+   "crxBytes": 244306
+  },
+  {
+   "rank": 302,
+   "id": "kioaomfokioenhackhaijiebhhkkcojo",
+   "name": "Keep Awake your System or Display",
+   "version": "1.2.32",
+   "mv": 3,
+   "users": 1000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/keep-awake-your-system-or/kioaomfokioenhackhaijiebhhkkcojo), \"1,000,000 users\", read 2026-09-24; 3 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "contextMenus",
+    "notifications",
+    "power",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 66945,
+   "minimumChromeVersion": "135"
+  },
+  {
+   "rank": 303,
+   "id": "kkelicaakdanhinjdeammmilcgefonfh",
+   "name": "Window Resizer",
+   "version": "2.7.0.2169",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/window-resizer/kkelicaakdanhinjdeammmilcgefonfh), \"700,000 users\", read 2026-09-24; 2.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "views/popup.html",
+   "options": "views/settings.html",
+   "permissions": [
+    "scripting",
+    "activeTab",
+    "contextMenus",
+    "storage",
+    "offscreen"
+   ],
+   "optionalPermissions": [
+    "tabs",
+    "webNavigation"
+   ],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 515514,
+   "minimumChromeVersion": "100"
+  },
+  {
+   "rank": 304,
+   "id": "nbdedfhlakcdbjeepmdkbbobcmgcbeid",
+   "name": "Eneba - Seamless Keys Activation and Cheap Games Offers",
+   "version": "1.1.15",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/eneba-seamless-keys-activ/nbdedfhlakcdbjeepmdkbbobcmgcbeid), \"700,000 users\", read 2026-09-24; 2.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "src/templates/popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "scripting"
+   ],
+   "optionalPermissions": [
+    "cookies"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 4,
+   "nativeMessaging": false,
+   "crxBytes": 316471
+  },
+  {
+   "rank": 305,
+   "id": "bekkpoinfafbjglppgdobfdeckghdhlo",
+   "name": "CRX Emulator",
+   "version": "1.1.0",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/crx-emulator/bekkpoinfafbjglppgdobfdeckghdhlo), \"700,000 users\", read 2026-09-24; 1.9K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "opt.html",
+   "permissions": [
+    "alarms",
+    "storage",
+    "unlimitedStorage",
+    "offscreen",
+    "scripting",
+    "sidePanel",
+    "declarativeNetRequestWithHostAccess"
+   ],
+   "optionalPermissions": [
+    "tabs",
+    "downloads",
+    "downloads.open",
+    "webRequest"
+   ],
+   "hostPermissions": [
+    "*://crxemulator.com/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 349845,
+   "minimumChromeVersion": "120"
+  },
+  {
+   "rank": 306,
+   "id": "cpgaheeihidjmolbakklolchdplenjai",
+   "name": "Turbo Downloader for Instagram",
+   "version": "4.12.16",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/turbo-downloader-for-inst/cpgaheeihidjmolbakklolchdplenjai), \"700,000 users\", read 2026-09-24; 1.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*.instagram.com/*",
+    "*://*.cdninstagram.com/*",
+    "*://*.cdninstagram.net/*",
+    "*://*.fbcdn.net/*"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 262696
+  },
+  {
+   "rank": 307,
+   "id": "gjfpmkejnolcfklaaddjnckanhhgegla",
+   "name": "Guardio Protection for Chrome",
+   "version": "26.8.2.4049",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/guardio-protection-for-ch/gjfpmkejnolcfklaaddjnckanhhgegla), \"700,000 users\", read 2026-09-24; 1.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "declarativeNetRequestWithHostAccess",
+    "cookies",
+    "management",
+    "notifications",
+    "tabs",
+    "storage",
+    "idle",
+    "contextMenus",
+    "scripting",
+    "alarms"
+   ],
+   "optionalPermissions": [
+    "contentSettings",
+    "history",
+    "downloads"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 643149
+  },
+  {
+   "rank": 308,
+   "id": "kdbmhfkmnlmbkgbabkdealhhbfhlmmon",
+   "name": "SteamDB",
+   "version": "4.37",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/steamdb/kdbmhfkmnlmbkgbabkdealhhbfhlmmon), \"700,000 users\", read 2026-09-24; 1.2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "options/popup.html",
+   "options": "options/options.html",
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://steamdb.info/*",
+    "https://steamcommunity.com/*",
+    "https://*.steampowered.com/*"
+   ],
+   "contentScripts": 31,
+   "nativeMessaging": false,
+   "crxBytes": 368221
+  },
+  {
+   "rank": 309,
+   "id": "eenjdnjldapjajjofmldgmkjaienebbj",
+   "name": "Copyfish Free OCR Software",
+   "version": "7.0.12",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/copyfish-free-ocr-softwar/eenjdnjldapjajjofmldgmkjaienebbj), \"700,000 users\", read 2026-09-24; 999 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "contextMenus",
+    "activeTab",
+    "scripting",
+    "storage",
+    "notifications",
+    "nativeMessaging",
+    "clipboardRead",
+    "offscreen"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": true,
+   "crxBytes": 263331
+  },
+  {
+   "rank": 310,
+   "id": "aicmkgpgakddgnaphhhpliifpcfhicfo",
+   "name": "Postman Interceptor",
+   "version": "3.2.1",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/postman-interceptor/aicmkgpgakddgnaphhhpliifpcfhicfo), \"700,000 users\", read 2026-09-24; 949 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "html/index.html",
+   "options": null,
+   "permissions": [
+    "webRequest",
+    "nativeMessaging",
+    "storage",
+    "cookies",
+    "scripting",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/**"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": true,
+   "crxBytes": 490504
+  },
+  {
+   "rank": 311,
+   "id": "jpbjcnkcffbooppibceonlgknpkniiff",
+   "name": "Global Speed - Video Speed Control",
+   "version": "3.4.120",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/global-speed-video-speed/jpbjcnkcffbooppibceonlgknpkniiff), \"700,000 users\", read 2026-09-24; 851 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "storage",
+    "tabCapture",
+    "webNavigation",
+    "scripting",
+    "offscreen",
+    "userScripts",
+    "contextMenus"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*/*",
+    "http://*/*",
+    "file://*/*"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 641774
+  },
+  {
+   "rank": 312,
+   "id": "gbdjcgalliefpinpmggefbloehmmknca",
+   "name": "Ad block & Adblocker - No Ads extension",
+   "version": "1.9.8",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/ad-block-adblocker-no-ads/gbdjcgalliefpinpmggefbloehmmknca), \"700,000 users\", read 2026-09-24; 526 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback",
+    "storage",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 4,
+   "nativeMessaging": false,
+   "crxBytes": 3901769
+  },
+  {
+   "rank": 313,
+   "id": "cpcifbdmkopohnnofedkjghjiclmhdah",
+   "name": "NeatDownloadManager Extension",
+   "version": "1.9.92",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/neatdownloadmanager-exten/cpcifbdmkopohnnofedkjghjiclmhdah), \"700,000 users\", read 2026-09-24; 423 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "webRequest",
+    "webNavigation",
+    "cookies",
+    "contextMenus",
+    "storage",
+    "downloads"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 36607
+  },
+  {
+   "rank": 314,
+   "id": "gphhapmejobijbbhgpjhcjognlahblep",
+   "name": "GNOME Shell integration",
+   "version": "12.1",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/gnome-shell-integration/gphhapmejobijbbhgpjhcjognlahblep), \"700,000 users\", read 2026-09-24; 328 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "nativeMessaging",
+    "notifications",
+    "storage"
+   ],
+   "optionalPermissions": [
+    "idle"
+   ],
+   "hostPermissions": [
+    "https://extensions.gnome.org/",
+    "https://extensions-next.gnome.org/"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": true,
+   "crxBytes": 143516
+  },
+  {
+   "rank": 315,
+   "id": "bnchicpgbdgahiecgofdabidjihblaff",
+   "name": "Stacker - Falling tetra blocks!",
+   "version": "2.2.44",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/stacker-falling-tetra-blo/bnchicpgbdgahiecgofdabidjihblaff), \"700,000 users\", read 2026-09-24; 281 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 111259
+  },
+  {
+   "rank": 316,
+   "id": "cbapcdnkcgiajboppakkhjmdolbkinge",
+   "name": "ChatbotsPlace: All-in-One AI Sidebar (ChatGPT, Claude & Gemini)",
+   "version": "2.8.0",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/chatbotsplace-all-in-one/cbapcdnkcgiajboppakkhjmdolbkinge), \"700,000 users\", read 2026-09-24; 183 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "sidePanel"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://chatbotsplace.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 328374,
+   "minimumChromeVersion": "116"
+  },
+  {
+   "rank": 317,
+   "id": "jbbplnpkjmmeebjpijfedlgcdilocofh",
+   "name": "WAVE Evaluation Tool",
+   "version": "3.3.1.0",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/wave-evaluation-tool/jbbplnpkjmmeebjpijfedlgcdilocofh), \"700,000 users\", read 2026-09-24; 161 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "contextMenus",
+    "scripting",
+    "webNavigation"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "file:///*",
+    "http://*/*",
+    "https://*/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 400684
+  },
+  {
+   "rank": 318,
+   "id": "cbhilkcodigmigfbnphipnnmamjfkipp",
+   "name": "Calendly Browser Extension",
+   "version": "5.0.0.0",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/calendly-browser-extensio/cbhilkcodigmigfbnphipnnmamjfkipp), \"700,000 users\", read 2026-09-24; 153 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "pages/frame.html?id=options",
+   "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 8,
+   "nativeMessaging": false,
+   "crxBytes": 5789370
+  },
+  {
+   "rank": 319,
+   "id": "ldnheaepmnmbjjjahokphckbpgciiaed",
+   "name": "html.to.design",
+   "version": "0.0.207",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/htmltodesign/ldnheaepmnmbjjjahokphckbpgciiaed), \"700,000 users\", read 2026-09-24; 137 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "src/entries/popup/index.html",
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "scripting",
+    "debugger",
+    "downloads",
+    "identity",
+    "storage",
+    "webNavigation"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 897078
+  },
+  {
+   "rank": 320,
+   "id": "nemmanchfojaehgkbgcfmdiidbopakpp",
+   "name": "Virtru Email Protection",
+   "version": "12.8.1",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/virtru-email-protection/nemmanchfojaehgkbgcfmdiidbopakpp), \"700,000 users\", read 2026-09-24; 114 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*.virtru.com/*",
+    "https://*.virtru.com/*",
+    "http://*.google.com/*",
+    "https://*.google.com/*",
+    "http://*.googleusercontent.com/*",
+    "https://*.googleusercontent.com/*"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 9615067
+  },
+  {
+   "rank": 321,
+   "id": "mbpaklahifpfndjiefdfjhmkefppocfm",
+   "name": "Assinatura Digital no Navegador",
+   "version": "2.2.8",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/assinatura-digital-no-nav/mbpaklahifpfndjiefdfjhmkefppocfm), \"700,000 users\", read 2026-09-24; 100 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "main.html",
+   "options": "options.html",
+   "permissions": [
+    "nativeMessaging",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 2,
+   "nativeMessaging": true,
+   "crxBytes": 264878
+  },
+  {
+   "rank": 322,
+   "id": "flomofhkchlalfciiibgbfcpolhmglai",
+   "name": "PIXM Phishing Protection",
+   "version": "0.2.1.0",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/pixm-phishing-protection/flomofhkchlalfciiibgbfcpolhmglai), \"700,000 users\", read 2026-09-20 by the round 3 probe; the detail page has hidden the count since 2026-09-22 at the latest (the users slot reads empty on 2026-09-22, 2026-09-23 and 2026-09-24), the ratings read 2026-09-24; 16 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "pages/popup.html",
+   "options": null,
+   "permissions": [
+    "tabs",
+    "webNavigation",
+    "storage",
+    "alarms",
+    "nativeMessaging",
+    "identity",
+    "identity.email",
+    "webRequest",
+    "downloads",
+    "enterprise.deviceAttributes",
+    "enterprise.networkingAttributes"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": true,
+   "crxBytes": 3152785
+  },
+  {
+   "rank": 323,
+   "id": "gcoekeoenehjmndhkdnoomdjeaclkhbe",
+   "name": "Nearpod for Classroom",
+   "version": "0.0.11",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/nearpod-for-classroom/gcoekeoenehjmndhkdnoomdjeaclkhbe), \"700,000 users\", read 2026-09-20 by the round 3 probe; the detail page has hidden the count since 2026-09-22 at the latest (the users slot reads empty on 2026-09-22, 2026-09-23 and 2026-09-24), the ratings read 2026-09-24; 15 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "identity",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 13660
+  },
+  {
+   "rank": 324,
+   "id": "eclbecdgdoahkliaijlpkigldlkojjdn",
+   "name": "Screen Recorder for Google Chrome™",
+   "version": "4.3.11",
+   "mv": 3,
+   "users": 600000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/screen-recorder-for-googl/eclbecdgdoahkliaijlpkigldlkojjdn), \"600,000 users\", read 2026-09-24; 18.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "offscreen",
+    "storage",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 1534217,
+   "minimumChromeVersion": "116"
+  },
+  {
+   "rank": 325,
+   "id": "cpaibbcbodhimfnjnakiidgbpiehfgci",
+   "name": "True Key™ by McAfee",
+   "version": "5.0.0.288",
+   "mv": 3,
+   "users": 600000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/true-key-by-mcafee/cpaibbcbodhimfnjnakiidgbpiehfgci), \"600,000 users\", read 2026-09-24; 15.8K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "alarms",
+    "contextMenus",
+    "privacy",
+    "scripting",
+    "storage",
+    "tabs",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 14542796,
+   "minimumChromeVersion": "88.0"
+  },
+  {
+   "rank": 326,
+   "id": "hgmhmanijnjhaffoampdlllchpolkdnj",
+   "name": "Hunter - Email Finder Extension",
+   "version": "3.2.0",
+   "mv": 3,
+   "users": 600000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/hunter-email-finder-exten/hgmhmanijnjhaffoampdlllchpolkdnj), \"600,000 users\", read 2026-09-24; 12.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "tabs",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*.hunter.io/"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 1137694
+  },
+  {
+   "rank": 327,
+   "id": "bcocdbombenodlegijagbhdjbifpiijp",
+   "name": "INSSIST | Web Client for Instagram",
+   "version": "39.6.2",
+   "mv": 3,
+   "users": 600000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/inssist-web-client-for-in/bcocdbombenodlegijagbhdjbifpiijp), \"600,000 users\", read 2026-09-24; 8.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "alarms",
+    "background",
+    "cookies",
+    "declarativeNetRequest",
+    "offscreen",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [
+    "downloads",
+    "downloads.ui"
+   ],
+   "hostPermissions": [
+    "*://*.instagram.com/*",
+    "*://*.inssist.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 10084770,
+   "minimumChromeVersion": "123"
+  },
+  {
+   "rank": 328,
+   "id": "kcnhkahnjcbndmmehfkdnkjomaanaooo",
+   "name": "Google Voice (by Google)",
+   "version": "3.0.11",
+   "mv": 3,
+   "users": 600000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/google-voice-by-google/kcnhkahnjcbndmmehfkdnkjomaanaooo), \"600,000 users\", read 2026-09-24; 6.2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "storage",
+    "activeTab",
+    "contextMenus"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 987486
+  },
+  {
+   "rank": 329,
+   "id": "bhloflhklmhfpedakmangadcdofhnnoh",
+   "name": "Earth View from Google Earth",
+   "version": "3.1.1",
+   "mv": 3,
+   "users": 600000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/earth-view-from-google-ea/bhloflhklmhfpedakmangadcdofhnnoh), \"600,000 users\", read 2026-09-24; 5.2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://www.gstatic.com/prettyearth/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 168949
+  },
+  {
+   "rank": 330,
+   "id": "aejoelaoggembcahagimdiliamlcdmfm",
+   "name": "Talend API Tester - Free Edition",
+   "version": "25.17.0",
+   "mv": 3,
+   "users": 600000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/talend-api-tester-free-ed/aejoelaoggembcahagimdiliamlcdmfm), \"600,000 users\", read 2026-09-24; 4.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "application_launcher.html",
+   "options": "application_launcher.html#settings",
+   "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "webRequest",
+    "declarativeNetRequest",
+    "clipboardWrite",
+    "identity",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 5300353,
+   "minimumChromeVersion": "89"
+  }
+ ]
+}
