@@ -1275,8 +1275,28 @@ describe('the section model', () => {
     const models = buildSections(availableSections(PAGE, c.ctx.state.capabilities, 'phone'), c.ctx)
     expect(models.map((m) => m.section.id).slice(0, 3)).toEqual(['look', 'newtab', 'tabs'])
     const newtab = models[1]
-    expect(newtab.groups.map((g) => g.heading)).toEqual(['New tab page', 'My shortcuts', null])
+    expect(newtab.groups.map((g) => g.heading)).toEqual([
+      'New tab page',
+      'My shortcuts',
+      null,
+      null
+    ])
     expect(newtab.groups.every(groupShows)).toBe(true)
+
+    // NTP-12 / NTP-22: the background's own reset is one row and asks nothing – disabled on the
+    // default already; the whole page's reset is bulk, behind the row's destructive confirmation.
+    const resetBackground = row(newtab, 'newtab-reset-background')
+    if (resetBackground.kind !== 'action') throw new Error('not an action')
+    expect(resetBackground.disabled).toBe(true)
+    expect(resetBackground.confirm).toBeUndefined()
+    resetBackground.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.resetBackground', undefined)
+    const reset = row(newtab, 'newtab-reset')
+    if (reset.kind !== 'action') throw new Error('not an action')
+    expect(reset.destructive).toBe(true)
+    expect(reset.confirm).toMatchObject({ title: 'Reset the new tab page?', action: 'Reset' })
+    reset.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.reset', undefined)
 
     // The page's preferences patch inside `newTab`, keeping the rest of it. The rows write the
     // one model's sections as the phone's sheet does: a background other than the space gradient
@@ -1351,6 +1371,20 @@ describe('the section model', () => {
     expect(row(synced, 'newtab-greeting')).toMatchObject({ checked: true })
     expect(row(synced, 'newtab-background')).toMatchObject({ value: 'space' })
     expect(row(synced, 'newtab-shortcuts')).toMatchObject({ value: 'most-visited' })
+    // A background other than the default – as the page shows it, so a solid colour under a
+    // layout with its wallpaper section on – arms its reset row.
+    const solid = section(
+      'newtab',
+      state({ capabilities: { ...ANDROID, newTabPage: true } } as Partial<UIState>, {
+        newTab: {
+          ...DEFAULT_SETTINGS.newTab,
+          preset: 'custom',
+          modules: { ...DEFAULT_SETTINGS.newTab.modules, wallpaper: true },
+          background: 'solid'
+        }
+      })
+    )
+    expect(row(solid, 'newtab-reset-background')).toMatchObject({ disabled: false })
 
     // A shortcut without a name is listed by its address; its sheet edits, moves and removes it.
     expect(row(newtab, 'shortcut:b').label).toBe('https://b.test/')

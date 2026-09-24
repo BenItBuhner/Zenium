@@ -3128,6 +3128,8 @@ export class Browser {
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
+      'newtab.resetBackground': () => this.newTab.resetBackground(),
+      'newtab.reset': () => this.newTab.reset(),
       'newtab.backgroundImage': () => this.newTab.backgroundImage(),
       'newtab.setBackgroundImage': ({ dataUrl }) => this.newTab.setBackgroundImage(dataUrl),
 

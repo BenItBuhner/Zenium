@@ -8,6 +8,7 @@ import type {
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
+import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
 import { Browser } from '../browser'
 import type { RequestContext } from '../blocking/rules'
 import { MAX_NEW_TAB_SHORTCUTS, normalizeShortcutInput } from '../newtab'
@@ -973,6 +974,90 @@ describe('NewTabService: my shortcuts and most visited', () => {
     await svc.clearBackgroundImage()
     expect(f.browser.state.settings.newTab.background).toBe('space')
     expect(svc.stateFor(tab.id)?.backgroundImage).toBeNull()
+  })
+
+  describe('reset (NTP-22 / NTP-12)', () => {
+    it('restore-default-shortcuts: no pins, no removed sites, the most visited mode; Undo puts the three back', () => {
+      const f = fixture()
+      f.browser.history.visit('https://news.example/a', 'News', null)
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'newtab.open', undefined)
+      const tab = activeTab(f)!
+      const svc = f.browser.newTab
+      // The default grid: the link does nothing and keeps nothing.
+      expect(svc.restoreDefaultShortcuts()).toBe(false)
+      expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
+      svc.addShortcut('Docs', 'docs.example')
+      svc.handleAction(tab.id, { type: 'hide-site', url: 'https://news.example/a' })
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: { ...f.browser.state.settings.newTab, mode: 'my-shortcuts' }
+      })
+      const before = f.browser.state.newTabDevice
+      svc.handleAction(tab.id, { type: 'restore-default-shortcuts' })
+      expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+      expect(f.browser.state.settings.newTab.mode).toBe('most-visited')
+      expect(svc.stateFor(tab.id)!.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
+      svc.handleAction(tab.id, { type: 'undo-restore-default-shortcuts' })
+      expect(f.browser.state.newTabDevice).toEqual(before)
+      expect(f.browser.state.settings.newTab.mode).toBe('my-shortcuts')
+      // Undo is one-shot, and a later change to the grid forgets the snapshot.
+      expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
+      expect(svc.restoreDefaultShortcuts()).toBe(true)
+      svc.addShortcut('Again', 'again.example')
+      expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
+      expect(f.browser.state.newTabDevice.shortcuts.map((s) => s.url)).toEqual([
+        'https://again.example/'
+      ])
+    })
+
+    it('resetBackground: the space gradient with the picked image let go; nothing else moves', async () => {
+      const f = fixture({ withBackground: true })
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'newtab.open', undefined)
+      const svc = f.browser.newTab
+      svc.addShortcut('Docs', 'docs.example')
+      await svc.pickBackgroundImage(win)
+      expect(f.browser.state.settings.newTab.background).toBe('image')
+      await f.browser.handleCommand(win, 'newtab.resetBackground', undefined)
+      expect(f.background.current).toBeNull()
+      expect(f.browser.state.settings.newTab.background).toBe('space')
+      expect(f.browser.state.settings.newTab.preset).toBe('custom')
+      expect(f.browser.state.newTabDevice.shortcuts).toHaveLength(1)
+      // A solid colour resets the same way without an image on the device.
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: { ...f.browser.state.settings.newTab, background: 'solid' }
+      })
+      await svc.resetBackground()
+      expect(f.browser.state.settings.newTab.background).toBe('space')
+    })
+
+    it('reset: the page as DEFAULT_NEW_TAB_SETTINGS has it, the device sets cleared, `enabled` kept', async () => {
+      const f = fixture({ withBackground: true })
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'newtab.open', undefined)
+      const tab = activeTab(f)!
+      const svc = f.browser.newTab
+      svc.addShortcut('Docs', 'docs.example')
+      svc.handleAction(tab.id, { type: 'hide-site', url: 'https://news.example/a' })
+      await svc.pickBackgroundImage(win)
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: {
+          ...f.browser.state.settings.newTab,
+          enabled: false,
+          mode: 'my-shortcuts',
+          modules: { ...f.browser.state.settings.newTab.modules, greeting: true }
+        }
+      })
+      await f.browser.handleCommand(win, 'newtab.reset', undefined)
+      expect(f.browser.state.settings.newTab).toEqual({
+        ...DEFAULT_NEW_TAB_SETTINGS,
+        enabled: false
+      })
+      expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+      expect(f.background.current).toBeNull()
+      // No restore snapshot survives a reset.
+      expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
+    })
   })
 
   it('a picked image is shown: on a layout without a wallpaper the section comes on', async () => {

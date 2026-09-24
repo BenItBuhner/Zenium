@@ -50,6 +50,7 @@ import {
 import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '@shared/downloads'
 import { TOOLBAR_CONTROLS, toolbarPinned, withToolbarPin } from '@shared/toolbarPins'
 import {
+  DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
   newTabPresetChoices,
   newTabSections,
@@ -1355,6 +1356,18 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
               } satisfies SettingsRow
             ]
           : []),
+        // Chrome's "Reset to default" for the theme (NTP-12): the background alone, back to the
+        // space gradient with the picked image let go. One row's reset asks nothing (§10.5).
+        {
+          kind: 'action',
+          id: 'newtab-reset-background',
+          label: 'Reset background to default',
+          description: 'The space gradient; an image kept on this device is removed.',
+          keywords: ['restore', 'theme', 'wallpaper'],
+          button: 'Reset',
+          disabled: background === DEFAULT_NEW_TAB_SETTINGS.background && !image,
+          onPress: () => run('newtab.resetBackground', undefined)
+        },
         {
           kind: 'switch',
           id: 'newtab-greeting',
@@ -1459,6 +1472,32 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
               />
             )
           }
+        }
+      ]
+    },
+    {
+      id: 'newtab-reset',
+      heading: null,
+      rows: [
+        // The whole page (NTP-22): a bulk reset, so the row's §9.23 confirmation stands before
+        // it – Cancel | Reset in the danger ink, no primary, Enter inert (§9.22). Whether a new
+        // tab opens the page at all (the first switch) is not the page's content and stays.
+        {
+          kind: 'action',
+          id: 'newtab-reset',
+          label: 'Reset new tab page',
+          description:
+            'Layout, shortcuts, background and greeting return to their defaults; removed sites come back.',
+          keywords: ['restore', 'defaults'],
+          button: 'Reset…',
+          destructive: true,
+          confirm: {
+            title: 'Reset the new tab page?',
+            description:
+              'Your shortcuts and a background image kept on this device are removed; the layout, background and greeting return to their defaults.',
+            action: 'Reset'
+          },
+          onPress: () => run('newtab.reset', undefined)
         }
       ]
     }

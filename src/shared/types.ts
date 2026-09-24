@@ -2319,6 +2319,13 @@ export type NewTabPageAction =
   /** "Most visited": remove a site's tile (its host goes on a local block list) and undo that. */
   | { type: 'hide-site'; url: string }
   | { type: 'unhide-site'; url: string }
+  /**
+   * The toast's "Restore default shortcuts" link (Chrome's, NTP-22): the grid as it was on first
+   * run – the most visited mode, no pinned shortcuts, no removed sites – and the Undo of that,
+   * which puts the three back as they were before the restore.
+   */
+  | { type: 'restore-default-shortcuts' }
+  | { type: 'undo-restore-default-shortcuts' }
   /** Open the chrome's add (`id` null) or edit shortcut dialog over the page. */
   | { type: 'edit-shortcut'; id: string | null }
   /**
@@ -4734,6 +4741,17 @@ export interface Commands {
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }
+  /**
+   * Settings › New Tab's "Reset to default" for the background alone (NTP-12): the space
+   * gradient, the device's picked image let go. One row's reset asks nothing (v2 §10.5).
+   */
+  'newtab.resetBackground': { args: void; result: void }
+  /**
+   * The whole page back to its defaults (NTP-22, a bulk action behind the row's §9.23
+   * confirmation): layout, shortcuts mode, background, greeting, the pinned shortcuts, the
+   * removed sites and the picked image. Whether the page opens at all (`enabled`) is kept.
+   */
+  'newtab.reset': { args: void; result: void }
   /**
    * The background image's address for a chrome that paints the page itself (the phone's; a data
    * URL there), or null when none is set.

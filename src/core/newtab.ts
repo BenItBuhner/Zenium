@@ -32,7 +32,9 @@ import { resolveTheme, themeCssVariables } from '../shared/theme'
 import { engineFieldFavicon } from '../shared/search'
 import { newId } from '../shared/ids'
 import {
+  DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
+  emptyNewTabDevice,
   hideSite,
   newTabBackground,
   newTabSections,
@@ -261,8 +263,17 @@ export class NewTabService {
   private updateDevice(mutate: (device: NewTabDeviceState) => NewTabDeviceState): void {
     const { state } = this.browser
     state.newTabDevice = sanitizeNewTabDevice(mutate(state.newTabDevice))
+    // A change after "Restore default shortcuts" is the user's; the restore's Undo would undo it.
+    this.restoredFrom = null
     state.commit()
   }
+
+  /** What "Restore default shortcuts" replaced, for its Undo; null once anything else changed. */
+  private restoredFrom: {
+    shortcuts: NewTabShortcut[]
+    hiddenHosts: string[]
+    mode: NewTabSettings['mode']
+  } | null = null
 
   /** The one write path of the settings from this service: sanitised on every write. */
   private setSettings(patch: Partial<NewTabSettings>): void {
@@ -516,6 +527,12 @@ export class NewTabService {
       case 'unhide-site':
         this.unhideSite(action.url)
         return
+      case 'restore-default-shortcuts':
+        this.restoreDefaultShortcuts()
+        return
+      case 'undo-restore-default-shortcuts':
+        this.undoRestoreDefaultShortcuts()
+        return
       case 'edit-shortcut':
         this.openShortcutDialog(tabId, action.id, win)
         return
@@ -640,6 +657,65 @@ export class NewTabService {
     for (const shortcut of list) if (!next.includes(shortcut)) next.push(shortcut)
     if (next.every((s, i) => s === list[i])) return
     this.updateDevice((d) => ({ ...d, shortcuts: next }))
+  }
+
+  /**
+   * The toast's "Restore default shortcuts" (Chrome's link, NTP-22): the grid as a fresh profile
+   * has it – the most visited mode, no pinned shortcuts, no removed sites. Not a confirmation
+   * but an Undo (v2 §10.5, §9.33): what the three were is kept for `undoRestoreDefaultShortcuts`
+   * until the next change to any of them. False when the grid is the default already.
+   */
+  restoreDefaultShortcuts(): boolean {
+    const device = this.device
+    const mode = this.settings.mode
+    const isDefault =
+      device.shortcuts.length === 0 &&
+      device.hiddenHosts.length === 0 &&
+      mode === DEFAULT_NEW_TAB_SETTINGS.mode
+    if (isDefault) return false
+    this.updateDevice((d) => ({ ...d, shortcuts: [], hiddenHosts: [] }))
+    if (mode !== DEFAULT_NEW_TAB_SETTINGS.mode)
+      this.setSettings({ mode: DEFAULT_NEW_TAB_SETTINGS.mode })
+    // After the writes: a device write forgets the snapshot, since a later change is not undone.
+    this.restoredFrom = { shortcuts: device.shortcuts, hiddenHosts: device.hiddenHosts, mode }
+    return true
+  }
+
+  /** Undo of the restore: the pins, the removed sites and the mode as they were. */
+  undoRestoreDefaultShortcuts(): boolean {
+    const from = this.restoredFrom
+    if (!from) return false
+    this.restoredFrom = null
+    this.updateDevice((d) => ({ ...d, shortcuts: from.shortcuts, hiddenHosts: from.hiddenHosts }))
+    if (from.mode !== this.settings.mode) this.setSettings({ mode: from.mode })
+    return true
+  }
+
+  /**
+   * Settings' "Reset to default" for the background alone (NTP-12): the space gradient, and the
+   * device's picked image let go – a single row's reset, so nothing is asked (§10.5).
+   */
+  async resetBackground(): Promise<void> {
+    const host = this.browser.platform.newTabBackground
+    if (host?.current()) await host.clear()
+    if (this.settings.background !== DEFAULT_NEW_TAB_SETTINGS.background)
+      this.setSettings({ background: DEFAULT_NEW_TAB_SETTINGS.background })
+    else this.browser.state.commit()
+  }
+
+  /**
+   * The whole page back to its defaults (NTP-22; the row's §9.23 confirmation stands before
+   * this): the layout preset and its sections, the shortcuts mode, the background and the
+   * greeting as `DEFAULT_NEW_TAB_SETTINGS` has them, the pinned shortcuts and removed sites
+   * cleared, the picked image let go. `enabled` – whether a new tab opens the page at all – is
+   * not the page's content and stays.
+   */
+  async reset(): Promise<void> {
+    const host = this.browser.platform.newTabBackground
+    if (host?.current()) await host.clear()
+    this.restoredFrom = null
+    this.browser.state.newTabDevice = emptyNewTabDevice()
+    this.setSettings({ ...DEFAULT_NEW_TAB_SETTINGS, enabled: this.settings.enabled })
   }
 
   /**

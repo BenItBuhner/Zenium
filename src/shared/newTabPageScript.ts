@@ -165,7 +165,8 @@ class NewTabPage {
   private custom = false
   private focusIndex = 0
   private toastTimer: ReturnType<typeof setTimeout> | null = null
-  private pendingUndo: Removed | null = null
+  /** What the toast's Undo does while it stands (a removal's restore, a move's reversal). */
+  private pendingUndo: (() => void) | null = null
   private drag: Drag | null = null
   private suppressClick = false
   private greetingTimer: ReturnType<typeof setInterval> | null = null
@@ -601,33 +602,59 @@ class NewTabPage {
   }
 
   private showUndo(removed: Removed): void {
-    this.pendingUndo = removed
+    this.showToast(removed.custom ? 'Shortcut removed' : 'Site removed', () => {
+      if (removed.custom) {
+        this.transport.send({
+          type: 'restore-shortcut',
+          id: removed.tile.id,
+          title: removed.tile.title,
+          url: removed.tile.url,
+          index: removed.index
+        })
+      } else this.transport.send({ type: 'unhide-site', url: removed.tile.url })
+    })
+  }
+
+  /**
+   * The toast (v2 §9.21, §9.33: 8 s while it offers Undo): a sentence, Undo, and – after a
+   * change to the grid – Chrome's "Restore default shortcuts" link (NTP-22), which puts the grid
+   * back to a fresh profile's (the most visited mode, no pins, no removed sites) and offers its
+   * own Undo in turn, so no confirmation stands before it (§10.5).
+   */
+  private showToast(message: string, undo: () => void, restoreLink = true): void {
+    this.pendingUndo = undo
     this.toast.textContent = ''
-    this.toast.appendChild(
-      el('span', undefined, removed.custom ? 'Shortcut removed' : 'Site removed')
-    )
-    const undo = el('button', 'zen-v2-button', 'Undo')
-    undo.type = 'button'
-    undo.addEventListener('click', () => this.undo())
-    this.toast.appendChild(undo)
+    this.toast.appendChild(el('span', undefined, message))
+    const undoButton = el('button', 'zen-v2-button', 'Undo')
+    undoButton.type = 'button'
+    undoButton.addEventListener('click', () => this.undo())
+    this.toast.appendChild(undoButton)
+    if (restoreLink) {
+      const restore = el('button', 'zen-v2-button', 'Restore default shortcuts')
+      restore.type = 'button'
+      restore.id = 'zen-restore-defaults'
+      restore.addEventListener('click', () => this.restoreDefaults())
+      this.toast.appendChild(restore)
+    }
     this.toast.hidden = false
     if (this.toastTimer !== null) clearTimeout(this.toastTimer)
     this.toastTimer = setTimeout(() => this.hideToast(), UNDO_MS)
   }
 
   private undo(): void {
-    const removed = this.pendingUndo
+    const undo = this.pendingUndo
     this.hideToast()
-    if (!removed) return
-    if (removed.custom) {
-      this.transport.send({
-        type: 'restore-shortcut',
-        id: removed.tile.id,
-        title: removed.tile.title,
-        url: removed.tile.url,
-        index: removed.index
-      })
-    } else this.transport.send({ type: 'unhide-site', url: removed.tile.url })
+    undo?.()
+  }
+
+  private restoreDefaults(): void {
+    this.hideToast()
+    this.transport.send({ type: 'restore-default-shortcuts' })
+    this.showToast(
+      'Default shortcuts restored',
+      () => this.transport.send({ type: 'undo-restore-default-shortcuts' }),
+      false
+    )
   }
 
   private hideToast(): void {
@@ -894,6 +921,11 @@ class NewTabPage {
       this.tiles = order.map((id) => byId.get(id)).filter((t): t is Tile => Boolean(t))
       this.focusIndex = drag.to
       this.transport.send({ type: 'reorder-shortcuts', ids: order })
+      // A move is undone by asking for the order it left; the browser's push redraws the grid.
+      const before = drag.ids
+      this.showToast('Shortcut moved', () =>
+        this.transport.send({ type: 'reorder-shortcuts', ids: before })
+      )
     }
     this.renderGrid()
     this.setFocusIndex(this.focusIndex, false)
