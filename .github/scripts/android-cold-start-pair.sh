@@ -2,8 +2,10 @@
 # The P0 rule's record for a change near the boot path: MainActivity's cold start under a BASE
 # build and under the HEAD build on the same emulator boot – `am start -W` after `am force-stop`,
 # P0_RUNS times each (five by default), the medians of TotalTime (the system's time from the
-# start request to the activity's first frame) and WaitTime side by side. Runs on the workflow
-# runner once the emulator has booted (android-emulator-demo.yml's `script`), like the demo
+# start request to the activity's first frame) and WaitTime side by side, with the chrome's own
+# READY mark (`Fully drawn`), the splash's hold, the boot's marks and the boot's frame statistics
+# (`dumpsys gfxinfo`: ruling 5's main-thread long tasks, none new) where a build has them. Runs
+# on the workflow runner once the emulator has booted (android-emulator-demo.yml's `script`), like the demo
 # drivers; the device is prepared the way android-gesture-demo.sh prepares it (the same display,
 # three-button navigation, the bundled Google apps disabled) so the numbers are the recipe's own.
 #
@@ -109,6 +111,19 @@ splash_held() {
 boot_marks() {
   adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'boot marks: .*' | tail -n 1 | sed 's/^boot marks: //'
 }
+# Ruling 5: the process's frame statistics since its start (`dumpsys gfxinfo`, the render thread's
+# own count), read at the same point of every run – after the READY wait – as `name=value` words:
+# frames rendered, janky, the UI thread slow (the main thread's long tasks during the boot), the
+# frame deadline missed, the 90th and 99th percentile frame times (ms). Empty when the process is gone.
+frame_stats() {
+  adb shell dumpsys gfxinfo "$app_id" 2> /dev/null | tr -d '\r' | awk -F': ' '
+    /^Total frames rendered:/ { printf "frames=%s ", $2 }
+    /^Janky frames:/ { split($2, a, " "); printf "janky=%s ", a[1] }
+    /^Number Slow UI thread:/ { printf "slowui=%s ", $2 }
+    /^Number Frame deadline missed:/ { printf "missed=%s ", $2 }
+    /^90th percentile:/ { sub(/ms/, "", $2); printf "p90=%s ", $2 }
+    /^99th percentile:/ { sub(/ms/, "", $2); printf "p99=%s ", $2 }'
+}
 # The names in the given marks lines, in order of first appearance, one per line.
 mark_names() {
   printf '%s\n' "$@" | tr ' ' '\n' | sed -n 's/=.*//p' | awk 'NF && !seen[$0]++'
@@ -136,6 +151,7 @@ measure() {
   drawn=()
   helds=()
   marks=()
+  fstats=()
   for i in $(seq 1 "$runs"); do
     adb logcat -c > /dev/null 2>&1 || true
     seen=$(fully_drawn_count)
@@ -146,17 +162,19 @@ measure() {
     fully=$(fully_drawn_wait 15 "$seen")
     held=$(splash_held)
     marks_=$(boot_marks)
-    printf 'run %s\n%s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\n\n' "$i" "$answer" "$fully" "$held" "$marks_" >> "$out/$name-am-start.txt"
+    stats_=$(frame_stats)
+    printf 'run %s\n%s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\nFrameStats: %s\n\n' "$i" "$answer" "$fully" "$held" "$marks_" "$stats_" >> "$out/$name-am-start.txt"
     total=$(printf '%s\n' "$answer" | sed -n 's/^TotalTime: *//p' | head -n 1)
     wait_=$(printf '%s\n' "$answer" | sed -n 's/^WaitTime: *//p' | head -n 1)
     state=$(printf '%s\n' "$answer" | sed -n 's/^LaunchState: *//p' | head -n 1)
-    echo "  run $i: TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held${marks_:+; marks $marks_}"
+    echo "  run $i: TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held${marks_:+; marks $marks_}${stats_:+; frames $stats_}"
     totals+=("${total:-0}")
     waits+=("${wait_:-0}")
     states+=("${state:-?}")
     drawn+=("$fully")
     helds+=("$held")
     marks+=("$marks_")
+    fstats+=("$stats_")
     sleep 6
   done
   adb shell am force-stop "$app_id"
@@ -178,9 +196,9 @@ delta() {
 join() { local IFS=' '; echo "$*"; }
 
 measure before "$base_apk" "${P0_BASE_LABEL:-base}"
-before_totals=("${totals[@]}"); before_waits=("${waits[@]}"); before_states=("${states[@]}"); before_drawn=("${drawn[@]}"); before_helds=("${helds[@]}"); before_marks=("${marks[@]}")
+before_totals=("${totals[@]}"); before_waits=("${waits[@]}"); before_states=("${states[@]}"); before_drawn=("${drawn[@]}"); before_helds=("${helds[@]}"); before_marks=("${marks[@]}"); before_fstats=("${fstats[@]}")
 measure after "$head_apk" "${P0_HEAD_LABEL:-head}"
-after_totals=("${totals[@]}"); after_waits=("${waits[@]}"); after_states=("${states[@]}"); after_drawn=("${drawn[@]}"); after_helds=("${helds[@]}"); after_marks=("${marks[@]}")
+after_totals=("${totals[@]}"); after_waits=("${waits[@]}"); after_states=("${states[@]}"); after_drawn=("${drawn[@]}"); after_helds=("${helds[@]}"); after_marks=("${marks[@]}"); after_fstats=("${fstats[@]}")
 
 before_total=$(median "${before_totals[@]}")
 after_total=$(median "${after_totals[@]}")
@@ -216,6 +234,23 @@ after_fully=$(median "${after_drawn[@]}")
       am=$(median $(mark_values "$n" "${after_marks[@]}"))
       # shellcheck disable=SC2046
       echo "| $n | $bm | $am | $(delta "$am" "$bm") | $(join $(mark_values "$n" "${before_marks[@]}")) | $(join $(mark_values "$n" "${after_marks[@]}")) |"
+    done
+  fi
+  # Ruling 5: the boot's frame statistics, the medians over the runs, the same helpers (name=value words).
+  names=$(mark_names "${before_fstats[@]}" "${after_fstats[@]}")
+  if [ -n "$names" ]; then
+    echo
+    echo "frame statistics (dumpsys gfxinfo, the process since its start, read after the READY wait): frames rendered, janky, slowui the UI thread slow (the main thread's long tasks during the boot), missed the frame deadline missed, p90 / p99 the frame time percentiles in ms; medians over the runs."
+    echo
+    echo "| statistic | before median | after median | delta | before runs | after runs |"
+    echo "| --- | --- | --- | --- | --- | --- |"
+    for n in $names; do
+      # shellcheck disable=SC2046
+      bm=$(median $(mark_values "$n" "${before_fstats[@]}"))
+      # shellcheck disable=SC2046
+      am=$(median $(mark_values "$n" "${after_fstats[@]}"))
+      # shellcheck disable=SC2046
+      echo "| $n | $bm | $am | $(delta "$am" "$bm") | $(join $(mark_values "$n" "${before_fstats[@]}")) | $(join $(mark_values "$n" "${after_fstats[@]}")) |"
     done
   fi
 } | tee "$out/cold-start-pair.txt"
