@@ -1320,7 +1320,17 @@ const browserTabs: AgentTool = {
           -32602,
           'move needs groupId (one of your groups to move the tab into) and/or index (its new 1-based slot in the group)'
         )
-      const tab = ctx.agents.resolveTab(s, ref)
+      // Resolved with foreign tabs in scope so the refusal can say why a foreign one is not
+      // movable at all: into one of your groups it would become yours, and allowForeign never
+      // transfers ownership. Another live agent's tab still fails inside resolveTab.
+      const tab = ctx.agents.resolveTab(s, ref, true)
+      if (tab.folderId === null || !s.groupIds.has(tab.folderId)) {
+        const whose = ctx.agents.describeOwner(s, tab) ?? "the user's"
+        throw new RpcError(
+          UNAUTHORIZED,
+          `Tab ${tab.id} is not one of yours (${whose}) – browser_tabs move works on your own tabs only, with or without allowForeign: moving a foreign tab into one of your groups would make it yours, and allowForeign never transfers ownership. An orphaned group is taken over whole with zen_groups {"action":"adopt","groupId":"…"}; the user's tabs stay where the user put them.\n\n${own()}`
+        )
+      }
       const current = folderOf(ctx, tab)
       const group = groupRef !== undefined ? ctx.agents.resolveGroup(s, groupRef) : current
       if (!group) throw new RpcError(-32002, `Tab ${tab.id} is in no group of yours any more`)

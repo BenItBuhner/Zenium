@@ -643,6 +643,18 @@ describe('compatibility paths', () => {
     })
     expect(moveForeign.isError).toBe(true)
     expect(textOf(moveForeign)).toMatch(/owned by agent "B"/)
+    // The user's tab is not movable either, allowForeign or not: it would become the agent's.
+    const moveUsers = await fake.call(A, 'browser_tabs', {
+      action: 'move',
+      tabId: user.id,
+      groupId: 'home',
+      allowForeign: true
+    })
+    expect(moveUsers.isError).toBe(true)
+    expect(textOf(moveUsers)).toMatch(
+      /is not one of yours \(the user's\) – browser_tabs move works on your own tabs only, with or without allowForeign/
+    )
+    expect(fake.model.tabs[user.id].folderId).toBeNull()
     // Moving into B's group is refused too.
     const intoB = await fake.call(A, 'browser_tabs', {
       action: 'move',
