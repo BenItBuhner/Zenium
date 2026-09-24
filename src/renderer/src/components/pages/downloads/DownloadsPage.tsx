@@ -14,6 +14,7 @@ import { run } from '@renderer/lib/api'
 import { browserStore } from '@renderer/lib/browserStore'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
+import { useViewport } from '@renderer/lib/formFactor'
 import {
   downloadStatus,
   filterDownloads,
@@ -33,10 +34,10 @@ import {
   IconAction,
   StatusText
 } from '../../downloads/DownloadParts'
+import { ConfirmDialog } from '../../dialogs/ConfirmDialog'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { walkRows } from '../rowKeys'
-import { SheetActions } from '../settings/blocks'
-import { SettingsDialog } from '../settings/dialogs'
+import { ConfirmSheet } from '../settings/sheets'
 import { usePageSearch } from '../usePageSearch'
 
 /**
@@ -61,7 +62,7 @@ import { usePageSearch } from '../usePageSearch'
  * finished file can be dragged out to the OS, its folder opens from here); single-window hosts
  * show the list only. As the page opens, the finished files are checked for being on disk
  * (Chrome does the same), so a row whose file went since reads Deleted. "Clear all" asks first,
- * in a v2 prompt over the content frame (§9.23).
+ * on the program's confirmation primitive (§9.23; `ClearAllConfirm` below).
  */
 export function DownloadsPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const urlQuery = parseInternalPageUrl(tab.url)?.query?.q ?? ''
@@ -155,13 +156,10 @@ export function DownloadsPage({ state, tab }: { state: UIState; tab: Tab }): JSX
         </div>
       </PageColumn>
       {clearing !== null && (
-        <ClearAllDialog
+        <ClearAllConfirm
           count={clearing}
-          onCancel={() => setClearing(null)}
-          onConfirm={() => {
-            setClearing(null)
-            downloadsEngine.removeCompleted()
-          }}
+          close={() => setClearing(null)}
+          confirm={() => downloadsEngine.removeCompleted()}
         />
       )}
     </>
@@ -378,32 +376,73 @@ function DownloadPageRow({
 // Clear all
 // ---------------------------------------------------------------------------
 
+/** The prompt's name on its root: `data-confirm` on the desktop, the sheet's register name on the phone. */
+const CLEAR_ALL_PROMPT = 'downloads:clear-all'
+
 /**
- * "Clear all" asks before it empties the list, saying what goes and that the files stay (the
- * engine's `removeCompleted` leaves transfers still running alone): a v2 prompt (§9.23) over
- * the content frame on the frame's dialog host – Escape, the scrim and Cancel keep the list,
- * the destructive action clears it; focus starts on Cancel so a stray Enter does no harm.
+ * "Clear all" asks before it empties the list, saying how many rows go and that the files stay
+ * (the engine's `removeCompleted` leaves transfers still running alone), on the program's
+ * confirmation primitive: the desktop's `ConfirmDialog` (components/dialogs – §9.20's 320
+ * notice on the frame's dialog host, the question as the title block over its one paragraph,
+ * Cancel | Clear all as §9.11 peers) and on the phone its sheet mirror, `ConfirmSheet`
+ * (pages/settings/sheets.tsx – the form every phone confirmation takes, `SiteDataPrompt`'s
+ * sheet form among them), chosen the way the Settings chassis chooses its host, by the
+ * viewport's form factor. The keyboard is the primitive's on both (§9.22 as amended on #392):
+ * the container holds the focus as the prompt opens, named by the question and described by
+ * the paragraph; Tab reaches Cancel then the verb; Escape and the scrim are Cancel and the
+ * focus goes back to Clear all.
+ *
+ * The clear is DESTRUCTIVE (§6, §10.5): it is the bulk action – the list emptied, which §10.5
+ * says confirms – and a download record is a history-class record (Chrome keeps it in the
+ * History database and clears it as "Download history"; §6 names "remove a history entry" among
+ * the data-destroying verbs), whose facts – the source URL, the referrer, the time – the file
+ * on disk cannot give back, so the lead's plain reading for a preference the user can re-derive
+ * (#418 ruling 5, #431 Q1) does not reach it. The verb is in the danger ink beside Cancel,
+ * there is no primary and no default key: Enter from the held container is inert.
  */
-function ClearAllDialog({
+function ClearAllConfirm({
   count,
-  onCancel,
-  onConfirm
+  close,
+  confirm
 }: {
   count: number
-  onCancel: () => void
-  onConfirm: () => void
+  /** The prompt has gone (Cancel, Escape, the scrim; on the phone after the verb too). */
+  close: () => void
+  /** The verb. */
+  confirm: () => void
 }): JSX.Element {
+  const phone = useViewport().formFactor === 'phone'
   const rows = count === 1 ? '1 download' : `${count} downloads`
+  const title = 'Clear all downloads?'
+  const description = `${rows} will be removed from the list. The files stay where they were saved, and downloads still running are not touched.`
+  if (phone) {
+    // The sheet leaves with its motion first, then the clear runs and the page hears the close.
+    return (
+      <ConfirmSheet
+        name={CLEAR_ALL_PROMPT}
+        title={title}
+        description={description}
+        action="Clear all"
+        destructive
+        under={false}
+        onClose={close}
+        onConfirm={confirm}
+      />
+    )
+  }
+  // The prompt closes first and the clear runs at once (the dialog has no motion to wait for).
   return (
-    <SettingsDialog
-      name="downloads:clear-all"
-      title="Clear all downloads?"
-      description={`${rows} will be removed from the list. The files stay where they were saved, and downloads still running are not touched.`}
-      under={false}
-      onClose={onCancel}
-      className="zen-settings-dialog-prompt"
-    >
-      <SheetActions action="Clear all" destructive onCancel={onCancel} onAction={onConfirm} />
-    </SettingsDialog>
+    <ConfirmDialog
+      name={CLEAR_ALL_PROMPT}
+      title={title}
+      description={description}
+      action="Clear all"
+      destructive
+      onCancel={close}
+      onConfirm={() => {
+        close()
+        confirm()
+      }}
+    />
   )
 }

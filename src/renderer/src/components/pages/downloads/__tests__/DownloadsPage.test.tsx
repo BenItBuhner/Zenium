@@ -527,7 +527,11 @@ describe('the Downloads page tab (§10.1)', () => {
     )
   })
 
-  it('Clear all asks first in a v2 prompt over the frame; the primary clears the settled rows, Cancel keeps them', async () => {
+  /** The prompt standing on the frame's host (one on its way out, `data-leaving`, is gone for the user). */
+  const prompt = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[data-confirm="downloads:clear-all"]:not([data-leaving])')
+
+  it('Clear all asks first on the confirmation primitive (§9.23, §9.20’s 320 notice over the frame): the question over how many rows go and that the files stay, Cancel | Clear all in the danger ink with no primary, the container holding the focus; Enter from it inert, Escape Cancel with the focus back on the opener; the verb clears the settled rows', async () => {
     const el = await mountPage()
     const clear = el.querySelector<HTMLButtonElement>('[data-testid="downloads-clear-all"]')!
     expect(clear.disabled).toBe(false)
@@ -536,41 +540,207 @@ describe('the Downloads page tab (§10.1)', () => {
       clear.focus()
       clear.click()
     })
-    const dialog = document.querySelector<HTMLElement>('[data-dialog="downloads:clear-all"]')!
+    const dialog = prompt()!
     expect(dialog).not.toBeNull()
-    expect(dialog.classList.contains('zen-v2-dialog')).toBe(true)
-    expect(dialog.getAttribute('role')).toBe('dialog')
-    expect(text(dialog.querySelector('.zen-v2-title-block-title'))).toBe('Clear all downloads?')
+    // The program's prompt primitive (`ConfirmDialog`), not a Settings dialog of its own.
+    expect(dialog.classList.contains('zen-confirm-dialog')).toBe(true)
+    expect(dialog.getAttribute('role')).toBe('alertdialog')
+    expect(dialog.hasAttribute('data-destructive')).toBe(true)
+    expect(dialog.style.width).toBe('320px')
+    const title = dialog.querySelector('.zen-v2-title-block-title')
+    const line = dialog.querySelector('.zen-v2-title-block-description')
+    expect(text(title)).toBe('Clear all downloads?')
     // Three settled rows go (the running one stays); the files stay where they were saved.
-    expect(text(dialog.querySelector('.zen-v2-title-block-description'))).toContain(
-      '3 downloads will be removed from the list. The files stay where they were saved'
+    expect(text(line)).toBe(
+      '3 downloads will be removed from the list. The files stay where they were saved, and downloads still running are not touched.'
     )
     // It is placed by the frame's dialog host, not inside the page.
     expect(dialog.closest('.zen-frame-dialogs')).not.toBeNull()
     expect(dialog.closest('[data-testid="downloads-page"]')).toBeNull()
-    // Focus starts on Cancel so a stray Enter does no harm.
+    // §9.20's notice: the title block and the two footer buttons, nothing else; the clear is
+    // destructive (§6, §10.5), so the verb is in the danger ink beside Cancel and nothing is primary.
     const buttons = [...dialog.querySelectorAll<HTMLButtonElement>('button')]
     expect(buttons.map(text)).toEqual(['Cancel', 'Clear all'])
-    expect(document.activeElement).toBe(buttons[0])
-    await act(async () => buttons[0]!.click())
-    // Cancel: the host keeps the panel for its way out (§9.5) and drops it as the pop ends;
-    // nothing was cleared, and focus is back on the opener.
+    expect(buttons[0]!.getAttribute('data-action')).toBe('cancel')
+    expect(buttons[1]!.getAttribute('data-action')).toBe('confirm')
+    expect(buttons[1]!.hasAttribute('data-danger')).toBe(true)
+    expect(dialog.querySelector('[data-primary], .zen-settings-row, input')).toBeNull()
+    // §9.22 as amended on #392: the container holds the focus – no verb preselected – named by
+    // the question and described by the paragraph.
+    expect(document.activeElement).toBe(dialog)
+    expect(dialog.getAttribute('tabindex')).toBe('-1')
+    expect(dialog.getAttribute('aria-labelledby')).toBe(title?.id)
+    expect(dialog.getAttribute('aria-describedby')).toBe(line?.id)
+    // A destructive prompt has no default: Enter from the held container is consumed and clears nothing.
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    await act(async () => {
+      dialog.dispatchEvent(enter)
+    })
+    expect(enter.defaultPrevented).toBe(true)
+    expect(prompt()).toBe(dialog)
+    expect(calls('download.removeCompleted')).toEqual([])
+    // Escape is Cancel: the host keeps the panel for its way out (§9.5) and drops it as the pop
+    // ends; nothing was cleared, and the focus is back on the opener.
+    await act(async () => {
+      dialog.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(prompt()).toBeNull()
     expect(dialog.hasAttribute('data-leaving')).toBe(true)
     await endLeave()
-    expect(document.querySelector('[data-dialog="downloads:clear-all"]')).toBeNull()
+    expect(document.querySelector('[data-confirm="downloads:clear-all"]')).toBeNull()
     expect(calls('download.removeCompleted')).toEqual([])
     expect(document.activeElement).toBe(clear)
+    // Cancel's button keeps the list the same way.
     await act(async () => clear.click())
-    const again = document.querySelector<HTMLElement>('[data-dialog="downloads:clear-all"]')!
-    expect(again.hasAttribute('data-leaving')).toBe(false)
-    await act(async () =>
-      [...again.querySelectorAll<HTMLButtonElement>('button')]
-        .find((b) => text(b) === 'Clear all')!
-        .click()
-    )
-    expect(calls('download.removeCompleted')).toEqual([undefined])
+    await act(async () => prompt()!.querySelector<HTMLButtonElement>('[data-action="cancel"]')!.click())
+    expect(prompt()).toBeNull()
     await endLeave()
-    expect(document.querySelector('[data-dialog="downloads:clear-all"]')).toBeNull()
+    expect(calls('download.removeCompleted')).toEqual([])
+    // The verb clears the settled rows; the prompt closes first.
+    await act(async () => clear.click())
+    const again = prompt()!
+    expect(again.hasAttribute('data-leaving')).toBe(false)
+    await act(async () => again.querySelector<HTMLButtonElement>('[data-action="confirm"]')!.click())
+    expect(calls('download.removeCompleted')).toEqual([undefined])
+    expect(prompt()).toBeNull()
+    await endLeave()
+    expect(document.querySelector('[data-confirm="downloads:clear-all"]')).toBeNull()
+  })
+
+  it('counts the rows that go in the singular when one settled download is all there is', async () => {
+    const el = await mountPage(tab(), state([done, running]))
+    await act(async () =>
+      el.querySelector<HTMLButtonElement>('[data-testid="downloads-clear-all"]')!.click()
+    )
+    expect(text(prompt()!.querySelector('.zen-v2-title-block-description'))).toBe(
+      '1 download will be removed from the list. The files stay where they were saved, and downloads still running are not touched.'
+    )
+  })
+
+  describe('on the phone', () => {
+    let sizes: Array<[string, PropertyDescriptor | undefined]> = []
+    let windowSize: [number, number] = [0, 0]
+    beforeEach(() => {
+      // The viewport store re-reads the window as the browser store changes (`mountPage` sets
+      // it): the window itself is a phone's, so the layout stays the phone's through the mount.
+      windowSize = [window.innerWidth, window.innerHeight]
+      window.innerWidth = 412
+      window.innerHeight = 915
+      act(() =>
+        viewportStore.set({
+          ...viewportStore.get(),
+          formFactor: 'phone',
+          width: 412,
+          height: 915,
+          coarse: true,
+          hover: false
+        })
+      )
+      // The sheet chassis measures its layer and its content (happy-dom lays nothing out): a
+      // layer 800 tall and a sheet of 300, so a sheet has room to stand rather than landing down.
+      sizes = ['clientHeight', 'offsetHeight'].map((name) => [
+        name,
+        Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+      ])
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.classList.contains('zen-sheet-scroll') ? 300 : 800
+        }
+      })
+      Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+        configurable: true,
+        get: () => 300
+      })
+    })
+    afterEach(() => {
+      for (const [name, descriptor] of sizes) {
+        if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+      }
+      ;[window.innerWidth, window.innerHeight] = windowSize
+    })
+
+    /** The confirmation sheet standing (one on its way out is gone for the user). */
+    const sheet = (): HTMLElement | null => {
+      const all = [...document.querySelectorAll<HTMLElement>('.zen-sheet[role="dialog"]')]
+      return (
+        all.find((d) => !d.closest('[data-leaving]') && !d.hasAttribute('data-leaving')) ?? null
+      )
+    }
+    /** A sheet's leave is a spring (§11.2): wait, a frame at a time, until `done`. */
+    async function until(done: () => boolean): Promise<void> {
+      for (let i = 0; i < 100 && !done(); i++) {
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 25))
+        })
+      }
+      expect(done()).toBe(true)
+    }
+    const labels = (el: ParentNode): string[] =>
+      [...el.querySelectorAll<HTMLButtonElement>('button')]
+        .map((b) => text(b))
+        .filter((t) => t !== '')
+
+    it('Clear all asks in the confirmation sheet (`ConfirmSheet`, the primitive’s phone mirror): the same words, Cancel | Clear all in the danger ink, the sheet holding the focus, Enter inert, Escape Cancel; the verb clears once the sheet has gone', async () => {
+      const el = await mountPage(tab(), state(ITEMS, 'android'))
+      const clear = el.querySelector<HTMLButtonElement>('[data-testid="downloads-clear-all"]')!
+      await act(async () => {
+        clear.focus()
+        clear.click()
+      })
+      // No desktop notice: the phone's form is the sheet.
+      expect(document.querySelector('[data-confirm="downloads:clear-all"]')).toBeNull()
+      const s = sheet()!
+      expect(s).not.toBeNull()
+      const title = s.querySelector('.zen-sheet-title-block h2')
+      const line = s.querySelector('.zen-sheet-title-block p')
+      expect(text(title)).toBe('Clear all downloads?')
+      expect(text(line)).toBe(
+        '3 downloads will be removed from the list. The files stay where they were saved, and downloads still running are not touched.'
+      )
+      // §9.20's notice: the title block and the two buttons (the chassis's handle aside).
+      expect(labels(s)).toEqual(['Cancel', 'Clear all'])
+      expect(s.querySelector('.zen-settings-row, input')).toBeNull()
+      const verb = [...s.querySelectorAll<HTMLButtonElement>('button')].find(
+        (b) => text(b) === 'Clear all'
+      )!
+      expect(verb.classList.contains('zen-settings-danger-button')).toBe(true)
+      expect(s.querySelector('[data-primary]')).toBeNull()
+      // §9.22 as amended on #392: the container takes the focus, named and described.
+      expect(document.activeElement).toBe(s)
+      expect(s.getAttribute('tabindex')).toBe('-1')
+      expect(s.getAttribute('aria-labelledby')).toBe(title?.id)
+      expect(s.getAttribute('aria-describedby')).toBe(line?.id)
+      // Destructive: no default – Enter from the held container is consumed and clears nothing.
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      await act(async () => {
+        s.dispatchEvent(enter)
+      })
+      expect(enter.defaultPrevented).toBe(true)
+      expect(sheet()).toBe(s)
+      expect(calls('download.removeCompleted')).toEqual([])
+      // Escape is Cancel: the sheet leaves; nothing was cleared.
+      await act(async () => {
+        s.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+      })
+      await until(() => document.querySelector('.zen-sheet[role="dialog"]') === null)
+      expect(calls('download.removeCompleted')).toEqual([])
+      // The verb: the sheet leaves first, the clear runs as it lands.
+      await act(async () => clear.click())
+      const again = sheet()!
+      await act(async () =>
+        [...again.querySelectorAll<HTMLButtonElement>('button')]
+          .find((b) => text(b) === 'Clear all')!
+          .click()
+      )
+      await until(() => calls('download.removeCompleted').length === 1)
+      await until(() => document.querySelector('.zen-sheet[role="dialog"]') === null)
+    })
   })
 
   it('Open downloads folder asks the host for the folder; a host without files has neither it nor Show in folder', async () => {
