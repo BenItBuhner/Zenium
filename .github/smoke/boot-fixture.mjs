@@ -53,6 +53,20 @@ export const DOWNLOAD_FIXTURE = {
   file: { path: '/files/smoke-attachment.bin', filename: 'smoke-attachment.bin', size: 4096 }
 }
 
+/**
+ * The article the `features` scenario reads (parity row ci-04's reader leg): a page Readability's
+ * `isProbablyReaderable` says yes to – it scores the `<p>` elements of 140 characters and more by
+ * the square root of what they carry past that, and asks for a score over 20 – so the reader chip
+ * comes up on it and Reader View has an article to extract. Not one of {@link BOOT_PAGES}: the
+ * boot family never opens it, and the fixture's page table stays the three pages.
+ */
+export const ARTICLE_FIXTURE = {
+  path: '/article.html',
+  title: 'Smoke fixture: an article for Reader View',
+  /** The words the reader's document has to carry, from the article's first paragraph. */
+  marker: 'loopback interface of the runner'
+}
+
 const html = (title, body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head>` +
   `<body style="margin:0;font:18px/1.5 sans-serif;color:#222">` +
@@ -100,6 +114,28 @@ export function downloadPage(address) {
   )
 }
 
+/**
+ * The article page ({@link ARTICLE_FIXTURE}): a heading, a byline and five paragraphs of plain
+ * prose, each well past Readability's 140-character floor, inside an `<article>`. The first
+ * paragraph carries the marker the reader leg looks for in the extracted document.
+ */
+export function articlePage(origin) {
+  const paragraphs = [
+    `This page is the harness's own article, served at <code>${origin}</code> on the ${ARTICLE_FIXTURE.marker}, so that the desktop smoke can enter Reader View on a document it controls end to end. Nothing on it is fetched from the internet, and its words change only when the fixture does.`,
+    'Reader View strips a page down to the article it carries: the heading, the byline when there is one, and the body text, set in the reading preferences the user keeps. For that the browser first asks whether the page looks like an article at all, and this page is written to be an easy yes.',
+    'The check behind that question is Readability\'s isProbablyReaderable: it walks the paragraphs, keeps those with at least one hundred and forty characters of text, and adds the square root of the surplus of each to a running score. A page passes once the score is over twenty.',
+    'Five paragraphs of this length clear the bar comfortably, which is the point: the leg is about the toggle and its accessible state, not about the edge of the detector. A shorter page would put the detector on trial instead, and a failure there would say nothing about the chip.',
+    'When the leg is done it leaves Reader View again, and the tab shows this page as it was, so the bookmarks leg that follows has an ordinary web page to star, to open from the bar and to remove.'
+  ]
+  return html(
+    ARTICLE_FIXTURE.title,
+    `<article>${heading('An article for Reader View')}` +
+      `<p style="color:#666;margin:0 0 20px">By the desktop smoke</p>` +
+      paragraphs.map((p) => `<p>${p}</p>`).join('') +
+      `</article>`
+  )
+}
+
 /** {@link BOOT_PAGES} with each page's URL on `origin`. */
 export function bootPageUrls(origin) {
   return Object.fromEntries(
@@ -124,8 +160,9 @@ export function isWebPage(url) {
  * was fetched (path, Host header, Sec-Fetch-Dest) so a run can show the pages came from here;
  * `hanging` is the address that never answers ({@link HANGING_PATH}: `{ path, url }`) with
  * `held()` the number of its requests the server is sitting on; `download` is the attachment and
- * the page linking to it ({@link DOWNLOAD_FIXTURE}, each with its `url`); `close()` stops the
- * server, the held connections included.
+ * the page linking to it ({@link DOWNLOAD_FIXTURE}, each with its `url`); `article` the page
+ * Reader View reads ({@link ARTICLE_FIXTURE}, with its `url`); `close()` stops the server, the
+ * held connections included.
  */
 export function startBootFixture() {
   const requests = []
@@ -165,6 +202,11 @@ export function startBootFixture() {
       res.end(downloadPage(server.address()))
       return
     }
+    if (pathname === ARTICLE_FIXTURE.path) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(articlePage(`http://${req.headers.host ?? '127.0.0.1'}`))
+      return
+    }
     const page = pages && pages[pathname]
     if (!page) {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
@@ -189,6 +231,7 @@ export function startBootFixture() {
           page: { ...DOWNLOAD_FIXTURE.page, url: `${origin}${DOWNLOAD_FIXTURE.page.path}` },
           file: { ...DOWNLOAD_FIXTURE.file, url: `${origin}${DOWNLOAD_FIXTURE.file.path}` }
         },
+        article: { ...ARTICLE_FIXTURE, url: `${origin}${ARTICLE_FIXTURE.path}` },
         held: () => held.length,
         requests,
         close: () =>
