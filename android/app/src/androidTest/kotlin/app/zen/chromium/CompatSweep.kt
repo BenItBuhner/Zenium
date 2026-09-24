@@ -6793,7 +6793,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // last (Scrolling screenshot tool 6.0 MB, Boxel 3D 6.6 MB, Simplify 8.4 MB, SellerSprite
         // 9.3 MB, GPTZero 13.1 MB, Forest 14.9 MB, Emoji Keyboard 59.7 MB, Ultimate Car 62.0 MB),
         // so a run that dies keeps the rest.
-        Row("hhdobjgopfphlmjbmnpglhfcgppchgje", "AdGuard VPN", "adguard-vpn", core = vpn("AdGuard VPN", pac = true)),
+        // AdGuard VPN: the emulator's host renderer goes under WebView 113's paint of the row's
+        // first documents on the API 34 Google image with -gpu swangle, four of four attempts in
+        // round 16 (§7.0 there): twice the guest froze whole at consent.html's first paint and
+        // qemu left with no record (after three minutes, after fifty seconds), twice the app hung
+        // at popup.html's with WebView's in-process GPU thread in the goldfish pipe read under
+        // eglCreateSyncKHR waiting on the host, the guest otherwise up; no chromium crash, no
+        // render process gone, no runtime frame in any stack. The same row passed whole three of
+        // three times on the AOSP lane (WebView 156). Not run on the Google image; read on the
+        // AOSP lane.
+        Row(
+            "hhdobjgopfphlmjbmnpglhfcgppchgje", "AdGuard VPN", "adguard-vpn",
+            notOnGoogleImage = "the emulator's host renderer stopped answering under WebView 113's first paint of this row's documents (popup.html, consent.html) on every attempt on the API 34 Google image with -gpu swangle (four in round 16 §7.0: twice the guest frozen whole and qemu gone without a record, twice the app hung with WebView's GPU thread in the goldfish pipe under eglCreateSyncKHR; no chromium crash, no runtime frame); the row is read on the AOSP lane (156), where it passed whole three of three times",
+            core = vpn("AdGuard VPN", pac = true)
+        ),
         Row("adlpodnneegcnbophopdmhedicjbcgco", "Free VPN for Chrome - Troywell VPN", "troywell-vpn", core = vpn("Troywell VPN", pac = true, consent = true)),
         Row("kmhkepipobnjllejbafajoemahjejdcm", "iGraal", "igraal", core = accountGate("iGraal", Regex("igraal", RegexOption.IGNORE_CASE), injects = "[id*='igraal'], [class*='igraal']", gate = "an iGraal account and a partner merchant's page (its popup signs in)")),
         Row("nhocmlminaplaendbabmoemehbpgdemn", "Fathom AI Note Taker for Google Meet, Zoom & Teams", "fathom", core = accountGate("Fathom", Regex("fathom\\.video|accounts\\.google", RegexOption.IGNORE_CASE), gate = "a Fathom account and a meeting page (its scripts run on zoom.us and meet.google.com)")),
