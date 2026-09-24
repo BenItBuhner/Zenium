@@ -134,10 +134,94 @@ export function displayPath(home: string, dir: string): string {
   return `~/${rel.split(sep).join('/')}`
 }
 
+/** The operation a failure sentence opens with: `Could not install: …`. */
+export type SkillOperation = 'install' | 'remove' | 'refresh'
+
+/** The Node error's `code` (`EACCES`), or null when the error carries none. */
+function errorCode(error: unknown): string | null {
+  const e = error as { code?: unknown } | null
+  return e && typeof e.code === 'string' && e.code ? e.code : null
+}
+
+/**
+ * Why a folder could not be written, in the words a row carries. `at` says whether the folder
+ * follows an "at"; `code` is appended in brackets only when the words do not already say it.
+ */
+function reasonOf(
+  error: unknown,
+  operation: SkillOperation
+): { text: string; at: boolean; code: string | null } {
+  const code = errorCode(error)
+  switch (code) {
+    case 'EACCES':
+    case 'EPERM':
+      return {
+        text: operation === 'remove' ? 'no permission to change' : 'no permission to write',
+        at: false,
+        code: null
+      }
+    case 'EROFS':
+      return { text: 'the disk is read-only', at: true, code: null }
+    case 'ENOSPC':
+      return { text: 'the disk is full', at: true, code: null }
+    case 'ENOTDIR':
+    case 'EEXIST':
+      return { text: 'something else is in the way', at: true, code: null }
+    default:
+      return {
+        text: operation === 'remove' ? 'it could not be changed' : 'it could not be written',
+        at: true,
+        code
+      }
+  }
+}
+
+/**
+ * The sentence a failed target shows – on its row and, as the first failure, on the status
+ * line: `Could not install: no permission to write ~/.codex/skills/zenium-browser`. It names the
+ * folder the row already names, never a temp file or an absolute path.
+ */
+export function failedAt(operation: SkillOperation, error: unknown, folder: string): string {
+  const reason = reasonOf(error, operation)
+  const where = `${reason.text}${reason.at ? ' at' : ''} ${folder}`
+  return `Could not ${operation}: ${where}${reason.code ? ` (${reason.code})` : ''}`
+}
+
+/**
+ * The sentence for the manifest that could not be written: the copies an install or refresh
+ * wrote went again, so the folders and Zenium's record agree; a removal's copies are gone
+ * already and only the record lags.
+ */
+export function failedToRecord(operation: SkillOperation, error: unknown): string {
+  const reason = reasonOf(error, operation)
+  const why = reason.code ?? reason.text
+  const tail = operation === 'remove' ? '.' : '; the copies were removed again.'
+  return `Could not ${operation}: Zenium could not save its record in its profile folder (${why})${tail}`
+}
+
+/** What one operation has to say: a note per target, and the first failure as the status line. */
+class Outcome {
+  readonly notes = new Map<string, string>()
+  error: string | null = null
+
+  fail(target: string, sentence: string): void {
+    this.notes.set(target, sentence)
+    this.error ??= sentence
+  }
+}
+
+function sameFiles(a: readonly ManifestFile[], b: readonly ManifestFile[]): boolean {
+  return (
+    a.length === b.length && a.every((f, i) => f.path === b[i].path && f.sha256 === b[i].sha256)
+  )
+}
+
 /**
  * The installer behind Settings → AI Agents → Agent skill. Every operation ends with a fresh
- * status; failures land in `status.error` (or a target's `note`) rather than being thrown, since
- * the startup refresh runs unattended.
+ * status; failures land in `status.error` (the first one, also a target's) and in that target's
+ * `note` rather than being thrown, since the startup refresh runs unattended. When the manifest
+ * cannot be written after copies were, those copies go again: the folders and Zenium's record
+ * never disagree about what is installed.
  */
 export class SkillInstaller implements AgentSkillsHost {
   private readonly home: string
@@ -159,53 +243,58 @@ export class SkillInstaller implements AgentSkillsHost {
   status(options: { sync?: boolean } = {}): Promise<AgentSkillStatus> {
     return this.serial(async () => {
       const manifest = await this.readManifest()
-      if (options.sync && manifest.installed.length && manifest.version !== this.version) {
-        // An update: every installed copy is rewritten once, then the manifest follows.
-        const notes = new Map<string, string>()
-        for (const entry of manifest.installed) {
-          const spec = this.targets.find((t) => t.id === entry.target)
-          if (!spec) continue
-          try {
-            const written = await this.writeSkill(this.skillDir(spec))
-            entry.dir = written.dir
-            entry.files = written.files
-          } catch (error) {
-            notes.set(entry.target, `Could not refresh: ${(error as Error).message}`)
-          }
+      if (!(options.sync && manifest.installed.length && manifest.version !== this.version))
+        return this.describe(manifest)
+      // An update: every installed copy is rewritten once, then the manifest follows.
+      const outcome = new Outcome()
+      const written: ManifestEntry[] = []
+      for (const entry of manifest.installed) {
+        const spec = this.targets.find((t) => t.id === entry.target)
+        if (!spec) continue
+        try {
+          const fresh = await this.writeSkill(this.skillDir(spec))
+          if (!sameFiles(entry.files, fresh.files)) written.push({ ...entry, ...fresh })
+          entry.dir = fresh.dir
+          entry.files = fresh.files
+        } catch (error) {
+          outcome.fail(entry.target, failedAt('refresh', error, this.shownDir(spec)))
         }
-        manifest.version = this.version
-        await this.writeManifest(manifest)
-        return this.describe(manifest, notes)
       }
-      return this.describe(manifest)
+      manifest.version = this.version
+      return this.record('refresh', manifest, written, outcome)
     })
   }
 
   install(targets?: readonly string[]): Promise<AgentSkillStatus> {
     return this.serial(async () => {
       const manifest = await this.readManifest()
-      const notes = new Map<string, string>()
+      const outcome = new Outcome()
+      const written: ManifestEntry[] = []
       for (const spec of await this.chosen(targets)) {
         try {
-          const written = await this.writeSkill(this.skillDir(spec))
-          const entry: ManifestEntry = { target: spec.id, ...written }
+          const entry: ManifestEntry = {
+            target: spec.id,
+            ...(await this.writeSkill(this.skillDir(spec)))
+          }
           const at = manifest.installed.findIndex((e) => e.target === spec.id)
+          // What this operation changed on disk: a copy rewritten with the same bytes is already
+          // in the record as it is.
+          if (at < 0 || !sameFiles(manifest.installed[at].files, entry.files)) written.push(entry)
           if (at >= 0) manifest.installed[at] = entry
           else manifest.installed.push(entry)
         } catch (error) {
-          notes.set(spec.id, `Could not install: ${(error as Error).message}`)
+          outcome.fail(spec.id, failedAt('install', error, this.shownDir(spec)))
         }
       }
       manifest.version = this.version
-      await this.writeManifest(manifest)
-      return this.describe(manifest, notes)
+      return this.record('install', manifest, written, outcome)
     })
   }
 
   uninstall(targets?: readonly string[]): Promise<AgentSkillStatus> {
     return this.serial(async () => {
       const manifest = await this.readManifest()
-      const notes = new Map<string, string>()
+      const outcome = new Outcome()
       const wanted = new Set((await this.chosen(targets)).map((t) => t.id))
       const keep: ManifestEntry[] = []
       for (const entry of manifest.installed) {
@@ -216,18 +305,24 @@ export class SkillInstaller implements AgentSkillsHost {
         try {
           const left = await this.removeSkill(entry)
           if (left.length)
-            notes.set(
+            outcome.notes.set(
               entry.target,
               `Left in place: ${left.join(', ')} – it was edited since Zenium installed it`
             )
         } catch (error) {
-          notes.set(entry.target, `Could not remove: ${(error as Error).message}`)
+          outcome.fail(entry.target, failedAt('remove', error, displayPath(this.home, entry.dir)))
           keep.push(entry)
         }
       }
       manifest.installed = keep
-      await this.writeManifest(manifest)
-      return this.describe(manifest, notes)
+      try {
+        await this.writeManifest(manifest)
+      } catch (error) {
+        // The copies are gone and only the record lags: the rows read them as not installed
+        // from the disk itself, so no note is needed – the status line says what is left.
+        return this.describe(manifest, outcome.notes, failedToRecord('remove', error))
+      }
+      return this.describe(manifest, outcome.notes, outcome.error)
     })
   }
 
@@ -241,6 +336,36 @@ export class SkillInstaller implements AgentSkillsHost {
 
   private skillDir(spec: SkillTargetSpec): string {
     return join(this.home, ...spec.skillsDir, SKILL_NAME)
+  }
+
+  /** The folder as the row shows it (`~/.codex/skills/zenium-browser`). */
+  private shownDir(spec: SkillTargetSpec): string {
+    return displayPath(this.home, this.skillDir(spec))
+  }
+
+  /**
+   * Write the manifest after copies were written. When that fails, the copies this operation
+   * changed go again – hash-matched, so one edited meanwhile stays – and the status reads from
+   * the record still on disk with the reason on its status line; every rolled-back target is
+   * simply not installed, with nothing else to say.
+   */
+  private async record(
+    operation: 'install' | 'refresh',
+    manifest: SkillsManifest,
+    written: readonly ManifestEntry[],
+    outcome: Outcome
+  ): Promise<AgentSkillStatus> {
+    try {
+      await this.writeManifest(manifest)
+    } catch (error) {
+      for (const entry of written) await this.removeSkill(entry).catch(() => undefined)
+      return this.describe(
+        await this.readManifest(),
+        outcome.notes,
+        failedToRecord(operation, error)
+      )
+    }
+    return this.describe(manifest, outcome.notes, outcome.error)
   }
 
   /** The named targets, or every detected one when none are named. */
@@ -316,7 +441,8 @@ export class SkillInstaller implements AgentSkillsHost {
 
   private async describe(
     manifest: SkillsManifest,
-    notes: Map<string, string> = new Map()
+    notes: Map<string, string> = new Map(),
+    error: string | null = null
   ): Promise<AgentSkillStatus> {
     const targets: AgentSkillTarget[] = []
     for (const spec of this.targets) {
@@ -343,7 +469,7 @@ export class SkillInstaller implements AgentSkillsHost {
         note
       })
     }
-    return { version: this.version, targets, error: null }
+    return { version: this.version, targets, error }
   }
 
   private async readManifest(): Promise<SkillsManifest> {

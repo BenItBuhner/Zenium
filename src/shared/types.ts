@@ -2992,7 +2992,10 @@ export interface AgentSkillStatus {
   /** The skill version this app installs (the app's version). */
   version: string
   targets: AgentSkillTarget[]
-  /** The last operation's failure, when it failed as a whole. */
+  /**
+   * The last operation's first failure – a target's (the same sentence as its `note`) or the
+   * whole operation's (its record could not be saved) – as the status line shows it.
+   */
   error: string | null
 }
 

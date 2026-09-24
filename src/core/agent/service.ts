@@ -309,9 +309,10 @@ export class AgentService implements SessionStore, McpHandlers {
   }
 
   /**
-   * One host operation, its outcome into the state: the host reports failures inside the status,
-   * and anything it throws all the same lands in `error` rather than in the caller (the startup
-   * refresh has none).
+   * One host operation, its outcome into the state: the host reports failures inside the status
+   * (`AgentSkillsHost`), so anything it throws all the same is the last resort – logged whole,
+   * and in `error` as a plain sentence with the code, never a message carrying paths – rather
+   * than the caller's (the startup refresh has none).
    */
   private async runSkills(
     operation: (host: AgentSkillsHost) => Promise<AgentSkillStatus>
@@ -321,9 +322,14 @@ export class AgentService implements SessionStore, McpHandlers {
     try {
       this.skills = await operation(host)
     } catch (error) {
+      console.error('[zenium] agent skill host threw:', error)
+      const code = (error as { code?: unknown } | null)?.code
       this.skills = {
         ...this.skills,
-        error: (error as Error).message || 'The agent skill could not be updated'
+        error:
+          typeof code === 'string' && code
+            ? `The agent skill could not be updated (${code})`
+            : 'The agent skill could not be updated'
       }
     }
     this.browser.state.commitVolatile()
