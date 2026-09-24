@@ -176,7 +176,7 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
             if (i > 0 && abs(centres.getJSONArray(i).getDouble(0) - centres.getJSONArray(i - 1).getDouble(0) - 44) > 1) pitch = false
         }
         check("the toolbar's leading buttons are 40 px in flow on a 44 pitch", centres.length() >= 4 && size && pitch, "centres ${centres.joinToString(",")}")
-        check("the toolbar has no Home button", jsNumber("document.querySelectorAll('$TOOLBAR button[title^=\"Home\"]').length") == 0.0, "")
+        check("the toolbar has no Home button", jsNumber("document.querySelectorAll('$TOOLBAR button[aria-label^=\"Home\"]').length") == 0.0, "")
         check("no sleep glyph trails a sidebar row", jsNumber("[...document.querySelectorAll('$SIDEBAR .zen-tab-sleeping')].filter(function(e){return getComputedStyle(e).display!=='none'}).length") == 0.0, "")
         shot("01-sidebar-expanded")
     }
@@ -994,10 +994,10 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val CHROME_ROOT = "[data-testid=\"chrome-root\"]"
         private const val TOOLBAR = ".zen-tablet-toolbar"
         /** The toolbar's leading buttons: the sidebar toggle, Back, Forward, Reload (in flow on the 44 pitch). */
-        private const val TOOLBAR_BUTTONS = ".zen-tablet-toolbar [data-tablet-sidebar-toggle], .zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Back\"], .zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Forward\"], .zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Reload\"]"
-        private const val TOOLBAR_BACK = ".zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Back\"]"
-        private const val TOOLBAR_FORWARD = ".zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Forward\"]"
-        private const val TOOLBAR_RELOAD = ".zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Reload\"]"
+        private const val TOOLBAR_BUTTONS = ".zen-tablet-toolbar [data-tablet-sidebar-toggle], .zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Back\"], .zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Forward\"], .zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Reload\"]"
+        private const val TOOLBAR_BACK = ".zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Back\"]"
+        private const val TOOLBAR_FORWARD = ".zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Forward\"]"
+        private const val TOOLBAR_RELOAD = ".zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Reload\"]"
         private const val SIDEBAR_TOGGLE = ".zen-tablet-toolbar [data-tablet-sidebar-toggle]"
         private const val ADDRESS_PILL = ".zen-tablet-toolbar [data-address-pill]"
         private const val STAR = ".zen-tablet-toolbar .zen-bm-star"
