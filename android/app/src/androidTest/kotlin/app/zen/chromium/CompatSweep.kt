@@ -6031,8 +6031,173 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("mhnlakgilnojmhinhkckjpncpbhabphi", "MaxAI", "maxai", core = accountGate("MaxAI", Regex("maxai|accounts\\.google", RegexOption.IGNORE_CASE), injects = "#USE_CHAT_GPT_AI_ROOT, [id*='MAXAI'], [id*='maxai'], [class*='maxai']", gate = "a MaxAI account")),
         Row("gekdekpbfehejjiecgonmgmepbdnaggp", "Total Adblock", "total-adblock", core = gatedAdBlocker("Total Adblock", Regex("sign ?in|log ?in|activat|subscri|trial|account|get started|protect|upgrade", RegexOption.IGNORE_CASE))),
         Row("bhhhlbepdkbapadjdnnojkbgioiodbic", "Solflare Wallet", "solflare-wallet", core = domMarker("Solflare's provider injected into the page world", "wallet.html?solflare", WALLET_STANDARD.replace("__RE__", "/solflare/i").replace("__GLOBALS__", "o.solflare!=='undefined'||o.isSolflare===true"), settleMs = 30_000)),
-        Row("kjchkpkjpiloipaonppkmepcbhcncedo", "Adobe Photoshop", "adobe-photoshop", core = accountGate("Adobe Photoshop", Regex("adobe\\.com|photoshop", RegexOption.IGNORE_CASE), page = "sidepanel.html", gate = "an Adobe account (its side panel signs in)"))
+        Row("kjchkpkjpiloipaonppkmepcbhcncedo", "Adobe Photoshop", "adobe-photoshop", core = accountGate("Adobe Photoshop", Regex("adobe\\.com|photoshop", RegexOption.IGNORE_CASE), page = "sidepanel.html", gate = "an Adobe account (its side panel signs in)")),
+        // Compat round 14: ranks 301-330 by installs (`.github/scripts/ext-compat/next30-round11.json`,
+        // compiled by round 10's method for a future desktop release round to reuse), graded with
+        // the phone's feasibility classes as rounds 4-13 graded theirs: a desktop host over native
+        // messaging (Dragon Web Extension, Postman Interceptor, GNOME Shell integration, Assinatura
+        // Digital) or over a local HTTP port (NeatDownloadManager) is `n/m` once the connection
+        // fails as Chrome's does without the host; an account or a vendor's service is `n/m` with
+        // its gate surface rendered (Guardio, ChatbotsPlace's side panel, html.to.design, Virtru on
+        // Gmail, PIXM, Nearpod, True Key, Hunter, INSSIST on instagram.com, Google Voice); a site
+        // the phone has no fixture for is read live (Eneba and SteamDB over a Steam store page,
+        // Turbo Downloader over instagram.com's sign-in wall); the rest read a real effect: Keep
+        // Awake's action relabelled ON through `chrome.power` (a namespace the runtime had not got
+        // when the round started, measured as such), Window Resizer's preset through the window
+        // calls, Copyfish's capture overlay after the action click, Global Speed's rate on the
+        // fixture's clip, Stacker's canvas in its popup, WAVE's sidebar and Calendly's frame drawn
+        // into the fixture by the click, Screen Recorder's own recorder page (n/a without
+        // getDisplayMedia, as WeVideo's popup was), Earth View's new tab, Talend API Tester's
+        // `index.html` opened by its launcher, CRX Emulator's upload page (its core needs a CRX
+        // file: n/m). Six rows declare a `minimum_chrome_version` above WebView 113's (Keep Awake
+        // 135, INSSIST 123, CRX Emulator 120, ChatbotsPlace 116, Screen Recorder 116, and no
+        // other): the runtime holds the field against Zenium's platform version, installs them and
+        // warns once where the WebView's engine is below it; the 113 column measures them on that
+        // engine. The two largest downloads (True Key 14.5 MB, INSSIST 10 MB) last among the new
+        // rows; Cuponomia's lane stays last of all.
+        Row("feolagkacappiaieohahjkeaikhjjcfa", "Dragon (DMO, DMD, DPA, DLA) Web Extension", "dragon-web-extension", core = serviceBacked("Dragon Web Extension", "it relays dictation from the Dragon desktop application over native messaging (com.nuance.sodria); without the host, connectNative disconnects as Chrome's does", native = true)),
+        Row("kioaomfokioenhackhaijiebhhkkcojo", "Keep Awake your System or Display", "keep-awake", core = keepAwake("Keep Awake", Regex("\\bON\\b"))),
+        Row("kkelicaakdanhinjdeammmilcgefonfh", "Window Resizer", "window-resizer", core = windowLayout("Window Resizer", "wr-preset, #presets [class*='preset'], #quickResize button")),
+        Row("nbdedfhlakcdbjeepmdkbbobcmgcbeid", "Eneba", "eneba", core = liveMarker("Eneba", "https://store.steampowered.com/app/570/", injectedAny("eneba"))),
+        Row("bekkpoinfafbjglppgdobfdeckghdhlo", "CRX Emulator", "crx-emulator", core = ownPage("CRX Emulator", "opt.html", CRX_EMULATOR_UPLOAD, gate = "a CRX file to upload (it emulates one in a tab)")),
+        Row("cpgaheeihidjmolbakklolchdplenjai", "Turbo Downloader for Instagram", "turbo-downloader-instagram", core = siteGate("Turbo Downloader for Instagram", "https://www.instagram.com/instagram/", ".post-download-button, .story-download-button, .reels-feed-download-button, .bulk-download-button, .account-download-button, [class*='download-button']", Regex("^https://(www\\.)?instagram\\.com/", RegexOption.IGNORE_CASE), "an Instagram session (its buttons mount on a signed-in feed)")),
+        Row("gjfpmkejnolcfklaaddjnckanhhgegla", "Guardio Protection for Chrome", "guardio", core = accountGate("Guardio", Regex("guard\\.io", RegexOption.IGNORE_CASE), gate = "a Guardio account (its click opens app.guard.io)")),
+        Row("kdbmhfkmnlmbkgbabkdealhhbfhlmmon", "SteamDB", "steamdb", core = liveMarker("SteamDB", "https://store.steampowered.com/app/570/", injectedAny("steamdb"))),
+        Row("eenjdnjldapjajjofmldgmkjaienebbj", "Copyfish Free OCR Software", "copyfish", core = ::copyfish),
+        Row("aicmkgpgakddgnaphhhpliifpcfhicfo", "Postman Interceptor", "postman-interceptor", core = serviceBacked("Postman Interceptor", "it relays the browser's requests and cookies to the Postman desktop application over native messaging; without the host, connectNative disconnects as Chrome's does", native = true)),
+        Row("jpbjcnkcffbooppibceonlgknpkniiff", "Global Speed", "global-speed", core = popupFlow("Global Speed", "video.html?gspeed", clicks = listOf("/^\\s*2(\\.0+)?x?\\s*$/"), expr = GLOBAL_SPEED_RATE, settleMs = 20_000)),
+        Row("gbdjcgalliefpinpmggefbloehmmknca", "Ad block & Adblocker - No Ads extension", "no-ads-adblocker", core = ::adBlocker),
+        Row("cpcifbdmkopohnnofedkjghjiclmhdah", "NeatDownloadManager Extension", "neatdownloadmanager", core = serviceBacked("NeatDownloadManager Extension", "it hands downloads to the NeatDownloadManager desktop application over a local HTTP port (no native messaging); without the application, its requests fail as Chrome's do")),
+        Row("gphhapmejobijbbhgpjhcjognlahblep", "GNOME Shell integration", "gnome-shell-integration", core = serviceBacked("GNOME Shell integration", "it installs shell extensions through the GNOME Shell native connector over native messaging; without the host, connectNative disconnects as Chrome's does", native = true)),
+        Row("bnchicpgbdgahiecgofdabidjihblaff", "Stacker", "stacker", core = popupMarker("Stacker", STACKER_CANVAS, settleMs = 25_000)),
+        Row("cbapcdnkcgiajboppakkhjmdolbkinge", "ChatbotsPlace", "chatbotsplace", core = accountGate("ChatbotsPlace", Regex("chatgpt|openai|claude|gemini|google|accounts|login|sign", RegexOption.IGNORE_CASE), page = "index.html", gate = "a chatbot account (its side panel frames the vendors' sign-ins)")),
+        Row("jbbplnpkjmmeebjpijfedlgcdilocofh", "WAVE Evaluation Tool", "wave", core = actionMarker("WAVE", "page-a.html?wave", WAVE_MARKERS, settleMs = 30_000)),
+        Row("cbhilkcodigmigfbnphipnnmamjfkipp", "Calendly Browser Extension", "calendly", core = actionMarker("Calendly", "page-a.html?calendly", CALENDLY_FRAME, settleMs = 30_000)),
+        Row("ldnheaepmnmbjjjahokphckbpgciiaed", "html.to.design", "html-to-design", core = accountGate("html.to.design", Regex("html\\.to\\.design|divriots|figma|accounts\\.google", RegexOption.IGNORE_CASE), gate = "an html.to.design account and Figma (its capture signs in and runs over chrome.debugger)")),
+        Row("nemmanchfojaehgkbgcfmdiidbopakpp", "Virtru Email Protection", "virtru", core = accountGate("Virtru Email Protection", Regex("mail\\.google|accounts\\.google|virtru", RegexOption.IGNORE_CASE), gate = "a Gmail session and a Virtru account (its scripts run on mail.google.com)")),
+        Row("mbpaklahifpfndjiefdfjhmkefppocfm", "Assinatura Digital no Navegador", "assinatura-digital", core = serviceBacked("Assinatura Digital no Navegador", "it signs documents through a desktop signer over native messaging; without the host, connectNative disconnects as Chrome's does", native = true)),
+        Row("flomofhkchlalfciiibgbfcpolhmglai", "PIXM Phishing Protection", "pixm", core = accountGate("PIXM Phishing Protection", Regex("pixm|accounts\\.google", RegexOption.IGNORE_CASE), gate = "a PIXM account (its popup signs in through identity)")),
+        Row("gcoekeoenehjmndhkdnoomdjeaclkhbe", "Nearpod for Classroom", "nearpod", core = accountGate("Nearpod for Classroom", Regex("nearpod\\.com", RegexOption.IGNORE_CASE), gate = "a Nearpod account (its click opens nearpod.com/account)")),
+        Row("eclbecdgdoahkliaijlpkigldlkojjdn", "Screen Recorder for Google Chrome™", "screen-recorder", core = recorderPage("Screen Recorder for Google Chrome", Regex("/pages/popup/popup\\.html"), "/capture|record|screen|camera|microphone|stop capturing/i")),
+        Row("hgmhmanijnjhaffoampdlllchpolkdnj", "Hunter", "hunter", core = accountGate("Hunter", Regex("hunter\\.io", RegexOption.IGNORE_CASE), gate = "a Hunter account (its popup signs in; its lookups run on hunter.io)")),
+        Row("kcnhkahnjcbndmmehfkdnkjomaanaooo", "Google Voice (by Google)", "google-voice", core = accountGate("Google Voice", Regex("voice\\.google|accounts\\.google", RegexOption.IGNORE_CASE), gate = "a Google Voice account (its popup signs in)")),
+        Row("bhloflhklmhfpedakmangadcdofhnnoh", "Earth View from Google Earth", "earth-view", core = ::momentum),
+        Row("aejoelaoggembcahagimdiliamlcdmfm", "Talend API Tester - Free Edition", "talend-api-tester", core = actionPage("Talend API Tester", Regex("/index\\.html"), TALEND_TESTER, fixtures = listOf("page-a.html?talend"))),
+        Row("cpaibbcbodhimfnjnakiidgbpiehfgci", "True Key™ by McAfee", "true-key", core = accountGate("True Key", Regex("truekey|mcafee|/html/(main|dashboard)\\.html", RegexOption.IGNORE_CASE), gate = "a True Key account (its click opens its dashboard page, which signs in)")),
+        Row("bcocdbombenodlegijagbhdjbifpiijp", "INSSIST", "inssist", core = accountGate("INSSIST", Regex("instagram\\.com|inssist", RegexOption.IGNORE_CASE), gate = "an Instagram session (its click opens instagram.com, where its script runs)"))
     )
+
+    // --- the core checks of compat round 14 (ranks 301-330 by installs) --------------------------
+
+    /**
+     * Keep Awake: an `action.onClicked` row without a popup whose click turns the keep-awake on
+     * (`chrome.power.requestKeepAwake('display')` or `'system'`, `background.js`) and relabels its
+     * action with its `statusOn` line ("Keep Awake is ON"). The action is clicked; the pass is the
+     * action's title turning to a line matching `on` with a `power.requestKeepAwake` call in the
+     * bridge's trace and no refusal; a refusal, or the worker's uncaught error on `chrome.power`,
+     * is F, ours (the runtime had no `power` namespace when the round started).
+     */
+    private fun keepAwake(label: String, on: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?keepawake", factor, 1_500)
+        val titleBefore = extensionAction(row.id)?.optString("title") ?: ""
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val title = poll(scaled(20_000, factor), 500) { extensionAction(row.id)?.optString("title")?.takeIf { on.containsMatchIn(it) } }
+        val titleAfter = extensionAction(row.id)?.optString("title") ?: ""
+        since.record(extra, "atEnd")
+        val trace = since.trace()
+        val powerCalls = trace.filter { " call power." in it }.map { it.substringAfter(" call ") }
+        val (errors, notImplemented) = bridgeErrors(trace)
+        val workerErrors = backgroundView(row.id)?.let { consoleOf(it).filter(::isUncaught).takeLast(3) } ?: emptyList()
+        extra.put("titleBefore", titleBefore).put("titleAfter", titleAfter).put("powerCalls", JSONArray(powerCalls.take(8))).put("bridgeErrors", JSONArray(errors.take(6))).put("workerUncaught", JSONArray(workerErrors))
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val note = "title \"$titleBefore\" -> \"$titleAfter\"; power calls ${powerCalls.groupingBy { it }.eachCount()}; bridge errors ${errors.take(3)}"
+        when {
+            title != null && notImplemented.isEmpty() && workerErrors.isEmpty() -> Grade("P", "$label: the click turned it on: $note", extra)
+            title != null -> Grade("PARTIAL", "$label: the click relabelled the action, but the runtime refused a call or the worker threw: ${(notImplemented + workerErrors).first().take(160)}; $note", extra)
+            workerErrors.any { "power" in it } -> Grade("F", "$label: its worker threw on chrome.power: ${workerErrors.last { "power" in it }.take(160)}; $note", extra)
+            notImplemented.isNotEmpty() -> Grade("F", "$label: the bridge refused ${notImplemented.first().take(120)}; $note", extra)
+            workerErrors.isNotEmpty() -> Grade("F", "$label: its worker threw after the click: ${workerErrors.last().take(160)}; $note", extra)
+            else -> Grade("F", "$label: the click left the action's title unchanged within ${scaled(20_000, factor) / 1000} s: $note", extra)
+        }
+    }
+
+    /**
+     * Copyfish: an `action.onClicked` row without a popup. Its first click may open its what's-new
+     * page on ocr.space (`openWhatsNewIfPending`) instead of the capture, so a tab landing there is
+     * closed and the action clicked again; the capture overlay its `cs.js` draws on the fixture
+     * (`.ocrext-wrapper`, `.ocrext-mask`) is the pass. The OCR itself runs on ocr.space's service.
+     */
+    private fun copyfish(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("page-a.html?copyfish", factor, 2_500)
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val whatsNew = poll(scaled(8_000, factor), 500) { tabUrls().entries.firstOrNull { it.key !in before && it.value.contains("ocr.space") } }
+        if (whatsNew != null) {
+            extra.put("whatsNew", whatsNew.value.take(120))
+            closeTab(whatsNew.key)
+            showTab(tab)
+            SystemClock.sleep(scaled(1_500, factor))
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        }
+        val found = pollExpr(view, COPYFISH_OVERLAY, scaled(25_000, factor))
+        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        since.record(extra, "atEnd")
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return Grade(if (found.optBoolean("pass")) "P" else "F", "Copyfish: after the action click${if (whatsNew != null) " (its what's-new tab closed and the action clicked again)" else ""} ${found.toString().take(220)}", extra)
+    }
+
+    /**
+     * A recorder whose action click opens its own recorder page as a tab (Screen Recorder for
+     * Google Chrome's `pages/popup/popup.html` through `tabs.create`): the click, the page waited
+     * for, its controls (`controls`, a JS regex literal over the page's text) polled and
+     * `getDisplayMedia` read in it. The controls up with no capture to offer is `n/a` as
+     * [recorderPopup] grades it; a page that never opens or shows no controls is F.
+     */
+    private fun recorderPage(label: String, page: Regex, controls: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("audio.html?recorder", factor, 2_000)
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val opened = poll(scaled(30_000, factor), 700) { openedPage(before, row, page) }
+        var found = JSONObject()
+        if (opened != null) {
+            val view = waitForView(opened.key)
+            showTab(opened.key)
+            SystemClock.sleep(scaled(3_000, factor))
+            found = pollExpr(view, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:$controls.test(text),controls:$controls.test(text),buttons:document.querySelectorAll('button, [role=button]').length,getDisplayMedia:typeof (navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia),text:"), scaled(25_000, factor))
+            found.put("url", opened.value.take(160)).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        } else {
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+            extra.put("tabs", JSONArray(tabUrls().values.toList()))
+        }
+        extra.put("page", found)
+        since.record(extra, "atEnd")
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-recorder-page")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val note = "page ${if (opened == null) "absent" else "\"${found.optString("text").take(100)}\" (${found.optInt("buttons")} buttons)"}; getDisplayMedia in the page: ${found.optString("getDisplayMedia")}"
+        when {
+            opened == null -> Grade("F", "$label: the action click opened no ${page.pattern} page within ${scaled(30_000, factor) / 1000} s: $note", extra)
+            found.optBoolean("controls") && found.optString("getDisplayMedia") == "undefined" -> Grade("n/a", "$label: its recorder page renders its capture controls, but the WebView has no screen, window or tab capture to offer them (getDisplayMedia absent; getUserMedia reaches the camera and microphone alone): WebView limit. $note", extra)
+            found.optBoolean("controls") -> Grade("PARTIAL", "$label: its recorder page renders its capture controls and this WebView has getDisplayMedia; the recording itself was not driven: $note", extra)
+            else -> Grade("F", "$label: its recorder page shows no capture controls: $note", extra)
+        }
+    }
 
     // --- stages and evidence ---------------------------------------------------------------------
 
@@ -7617,6 +7782,27 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var re=new RegExp(__PATTERN__,'i');var found=[];var shown=0;var walk=function(root){var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var key=e.tagName+' '+(e.id||'')+' '+(typeof e.className==='string'?e.className:'');" +
                 "if(re.test(key)){found.push(key.replace(/\\s+/g,' ').trim().slice(0,40));var r=e.getBoundingClientRect();if(r.width>0&&r.height>0)shown++}if(e.shadowRoot)walk(e.shadowRoot)}};if(document.documentElement)walk(document.documentElement);" +
                 "return JSON.stringify({pass:found.length>0,n:found.length,visible:shown,tags:found.slice(0,6)})})()"
+        /** Copyfish's capture overlay (`cs.js`) drawn on the page after the action click. */
+        private const val COPYFISH_OVERLAY =
+            "JSON.stringify({pass:!!document.querySelector('.ocrext-wrapper, .ocrext-mask, [class^=ocrext]'),n:document.querySelectorAll('[class*=ocrext]').length,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)})"
+        /** WAVE's sidebar and its icons drawn into the page by the action click (`wave.min.js`). */
+        private const val WAVE_MARKERS =
+            "JSON.stringify({pass:!!document.querySelector('#wave_sidebar_container, #wave_sidebar_toggle, #wave5topbar, #wave5bottombar, [id^=wave5], .wave5icon, iframe[src*=\"sidebar.html\"]'),ids:Array.prototype.slice.call(document.querySelectorAll('[id^=wave]')).map(function(e){return e.id}).slice(0,6),frames:document.querySelectorAll('iframe').length})"
+        /** Calendly's sidebar frame (`pages/frame.html`) mounted in the tab by the action click. */
+        private const val CALENDLY_FRAME =
+            "JSON.stringify({pass:!!document.querySelector('iframe[src*=\"pages/frame.html\"], iframe[src^=\"chrome-extension://cbhilkcodigmigfbnphipnnmamjfkipp\"]'),frames:Array.prototype.slice.call(document.querySelectorAll('iframe')).map(function(f){return String(f.src).slice(0,80)}).slice(0,4)})"
+        /** Stacker's game canvas drawn in its popup (`index.html`: `canvas#canvas`, `#restart`, `#pause`). */
+        private const val STACKER_CANVAS =
+            "JSON.stringify({pass:(function(){var c=document.querySelector('canvas#canvas, canvas');if(!c)return false;var r=c.getBoundingClientRect();return r.width>50&&r.height>50})(),canvas:!!document.querySelector('canvas'),restart:!!document.querySelector('#restart'),pause:!!document.querySelector('#pause')})"
+        /** CRX Emulator's `opt.html`: its React root drawn with the upload or get-started copy, or a file input. */
+        private const val CRX_EMULATOR_UPLOAD =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var root=document.querySelector('#root');return JSON.stringify({pass:(!!root&&root.children.length>0&&t.length>20)||!!document.querySelector('input[type=file]'),upload:/upload|get started|drop|\\.crx/i.test(t),fileInput:!!document.querySelector('input[type=file]'),text:t.slice(0,160)})})()"
+        /** Talend API Tester's `index.html` opened by its launcher popup: its request editor drawn. */
+        private const val TALEND_TESTER =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var fields=document.querySelectorAll('input, select, textarea, [contenteditable]').length;return JSON.stringify({pass:(/api tester|request|send|talend|environment|project/i.test(t)&&t.length>40)||fields>2,fields:fields,text:t.slice(0,160)})})()"
+        /** Global Speed's rate on the fixture's clip (`main.js` sets `playbackRate` on the tab's media). */
+        private const val GLOBAL_SPEED_RATE =
+            "JSON.stringify((function(){var m=document.querySelector('video, audio');return {pass:!!m&&Math.abs(m.playbackRate-1)>0.05,rate:m?m.playbackRate:null,paused:m?m.paused:null}})())"
         /** A live page that is not serving the runner: a challenge, a refusal, a block page. */
         // Amazon's interstitial for an automated visitor ("Click the button below to continue
         // shopping") is a challenge page too: the product page behind it never reaches Keepa.
