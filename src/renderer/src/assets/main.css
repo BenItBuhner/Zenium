@@ -5487,7 +5487,7 @@
   /*
    * The glyph sits on the first text line, (line − glyph) / 2 below its top (§9.2), in the
    * row's ink (§10.4: a leading glyph is full ink like the name it introduces); a record whose
-   * file is gone dims it to .4 (`DownloadGlyph`'s `gone`), the one ink a spent row takes (§9.30).
+   * file is gone dims it to .4 (`FileTypeGlyph`'s `gone`, DownloadParts.tsx).
    */
   .zen-dl-glyph {
     display: flex;

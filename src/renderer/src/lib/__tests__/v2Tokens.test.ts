@@ -1881,9 +1881,9 @@ describe('the leading glyph’s ink (§10.4; the W5-3 audit)', () => {
     }
   })
 
-  it('draws the downloads glyph in the row’s ink, the spent record’s .4 the one dimming (§9.30)', () => {
+  it('draws the downloads glyph in the row’s ink, a gone record’s glyph dimmed to .4 as before', () => {
     // The bubble's and the page's rows share `.zen-dl-glyph`; the record whose file is gone
-    // takes `opacity-40` on the glyph in `DownloadGlyph` – one ink at .4, the token untouched.
+    // takes `opacity-40` on the glyph in `FileTypeGlyph` (DownloadParts.tsx) – the token untouched.
     expect(declarations(css, '.zen-dl-glyph')).toContain('color: var(--v2-text);')
     expect(declarations(css, '.zen-dl-glyph')).not.toContain('color: var(--v2-text-deemphasized);')
     expect(read('components/downloads/DownloadParts.tsx')).toMatch(

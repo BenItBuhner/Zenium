@@ -131,14 +131,15 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
  * touch host raises (`inputMode`), what the value must match (`pattern`), what the host may
  * fill in (`autoComplete`), and a class of the consumer's on the `<input>` itself
  * (`className`) for what the field's look needs that the shared `.zen-v2-field` does not draw.
- * The case that asked for them (#418's Bluetooth `providePin` prompt): six digits typed into
- * the field – `inputMode: 'numeric'` so a phone or a tablet raises the digit keyboard,
- * `pattern: '[0-9]*'`, and a class carrying `font-variant-numeric: tabular-nums` and the
- * letter-spacing that sets digits apart, which until these options existed had to reach into
- * the primitive from outside (`.zen-confirm-dialog[data-pairing-kind='providePin']
- * .zen-v2-field[aria-label='PIN']`). The field stays `type="text"` whatever the options say: a
- * number field's spinner and a `tel` field's semantics are not a prompt's (§9.12), and the
- * keyboard on a touch host is `inputMode`'s to choose.
+ * The case that asked for them (#418's Bluetooth `providePin` prompt,
+ * `devices/DeviceChooserDialog.tsx`): six digits typed into the field – `inputMode: 'numeric'`
+ * so a phone or a tablet raises the digit keyboard, `pattern: '[0-9]*'`, and a class carrying
+ * `font-variant-numeric: tabular-nums` and the letter-spacing that sets digits apart. That
+ * prompt passes none of them yet: its look still reaches into the primitive from outside
+ * (main.css's `.zen-confirm-dialog[data-pairing-kind='providePin'] .zen-v2-field[aria-label='PIN']`),
+ * a rule that retires as the prompt adopts these options. The field stays `type="text"`
+ * whatever the options say: a number field's spinner and a `tel` field's semantics are not a
+ * prompt's (§9.12), and the keyboard on a touch host is `inputMode`'s to choose.
  */
 export interface PromptField {
   /**
