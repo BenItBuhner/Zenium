@@ -177,8 +177,11 @@ export function safetyCheckGroups({ state, tab, navigate }: SectionContext): Row
 
 /**
  * The permissions review (Chrome's "Review site permissions"): every site holding a granted
- * permission, the ones the check flagged first with why, each an action that forgets the site's
- * answers after a confirmation.
+ * permission, the ones the check flagged first with why, each an item row in the grant rows'
+ * shape (`ruleRow`) whose one action, Reset, forgets the site's answers at once – "Reset <host>"
+ * to a reader, plain ink, no confirmation – and runs the check again. The lead's #431 Q1 ruling:
+ * a per-site reset is the same plain act as one Forget and costs nothing but that site asking
+ * again; §10.5's bulk is the list emptied, which Reset all sites is and confirms.
  */
 function permissionsReview(
   id: string,
@@ -209,26 +212,36 @@ function permissionsReview(
         {
           id: `${id}:sites`,
           heading: null,
-          rows: sites.map((site): ActionRow => {
+          rows: sites.map((site): ItemRow => {
             const host = hostOf(site.origin)
             const flag = flagged.get(site.origin)
             const names = site.rules.map((r) => permissionName(r.permission)).join(', ')
-            return {
+            const description = flag
+              ? `${names} · ${flag.reason === 'unused' ? 'Not used for weeks' : 'Several at once'}`
+              : names
+            const rowId = `${id}:${site.origin}`
+            const onPress = (): void => {
+              run('permissions.resetOrigin', { origin: site.origin })
+              recheck()
+            }
+            const reset: ActionRow = {
               kind: 'action',
-              id: `${id}:${site.origin}`,
+              id: `${rowId}:reset`,
+              label: 'Reset',
+              description: 'The site asks again the next time it needs a permission.',
+              button: 'Reset',
+              onPress
+            }
+            return {
+              kind: 'item',
+              id: rowId,
               label: host,
-              description: flag
-                ? `${names} · ${flag.reason === 'unused' ? 'Not used for weeks' : 'Several at once'}`
-                : names,
-              button: 'Reset…',
-              confirm: {
-                title: `Reset ${host}?`,
-                description: 'The site asks again the next time it needs a permission.',
-                action: 'Reset'
-              },
-              onPress: () => {
-                run('permissions.resetOrigin', { origin: site.origin })
-                recheck()
+              description,
+              action: { label: 'Reset', onPress },
+              sheet: {
+                title: host,
+                description,
+                groups: [{ id: `${rowId}:actions`, heading: null, rows: [reset] }]
               }
             }
           }),
@@ -350,7 +363,8 @@ const SITE_SETTINGS_INTRO =
  * as a value row – the §9.13 picker over it – and the sites with an answer of their own for
  * that type, each an item row whose one action, Forget, runs at once (the lead's #418 ruling 5;
  * Chrome's per-type pages); a type with one possible default is a fact. Then the sites with
- * settings of their own, each a sheet of its answers with a Reset, and Reset all.
+ * settings of their own, each a sheet of its answers with a Reset that runs at once (the lead's
+ * #431 Q1 ruling), and Reset all, the one confirmed act: the list emptied.
  */
 export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
   const platform = state.platform === 'android' ? 'android' : 'desktop'
@@ -396,17 +410,15 @@ export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
                 description: rule.decision === 'allow' ? 'Allowed' : 'Blocked'
               })),
               {
+                // Plain and at once, no ellipsis and no confirmation (the lead's #431 Q1
+                // ruling): a site's answers forgotten together cost that site asking again,
+                // one Forget's recovery; the bulk Reset all sites below is the list emptied.
                 kind: 'action',
                 id: `sites:site:${site.origin}:reset`,
                 label: 'Reset site settings',
                 description:
                   'The site follows the defaults again and asks when it needs something.',
-                button: 'Reset…',
-                confirm: {
-                  title: `Reset ${host}?`,
-                  description: 'Every answer the site keeps is forgotten.',
-                  action: 'Reset'
-                },
+                button: 'Reset',
                 onPress: () => run('permissions.resetOrigin', { origin: site.origin })
               }
             ]
