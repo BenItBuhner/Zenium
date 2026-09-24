@@ -41,6 +41,13 @@ class WebAppRulesTest {
         assertTrue(WebAppRules.inScope("https://APP.example:443/app/settings", scope))
         assertFalse(WebAppRules.inScope("https://app.example/", scope))
         assertFalse(WebAppRules.inScope("https://app.example/other/", scope))
+        // A sibling path that merely shares the scope's letters is outside it: the prefix is the
+        // scope string's, slash included, so `/app/` does not cover `/app2/`.
+        assertFalse(WebAppRules.inScope("https://app.example/app2/", scope))
+        assertFalse(WebAppRules.inScope("https://app.example/app2/inbox", scope))
+        // A scope without the trailing slash is the plain string prefix the spec and Chrome apply
+        // (`IsInScope`: `StartsWith(url.spec(), scope.spec())`), so `/app` does cover `/app2`.
+        assertTrue(WebAppRules.inScope("https://app.example/app2", "https://app.example/app"))
         assertFalse(WebAppRules.inScope("http://app.example/app/", scope))
         assertFalse(WebAppRules.inScope("https://evil.example/app/", scope))
         assertFalse(WebAppRules.inScope("https://app.example:8443/app/", scope))
