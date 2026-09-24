@@ -13,6 +13,8 @@ import {
   viewportSize,
   type DismissReason
 } from '@renderer/lib/portals'
+import { isPrivateTab } from '@renderer/lib/privateTabs'
+import { isPrivateWindow } from '@renderer/lib/selectors'
 import { browserStore, closeBookmarkChrome } from '@renderer/lib/ui'
 import { V2Button, V2Field, V2FormField, V2TitleBlock } from '../extensions/v2'
 import { FolderField } from './FolderField'
@@ -33,8 +35,18 @@ export interface StarTarget {
 /** The form width (§9.20): the bubble is a form – a field, a menulist and a footer. */
 const WIDTH = POPOVER_WIDTH.form
 const TITLE_ID = 'zen-bm-star-title'
+const DESCRIPTION_ID = 'zen-bm-star-description'
 const NAME_ID = 'zen-bm-star-name'
 const FOLDER_ID = 'zen-bm-star-folder'
+
+/**
+ * The bubble's first line for a bookmark a private tab made (bookmarks-43): a private window
+ * files into the profile's store, as Chrome's Incognito does, and the bubble says so where
+ * Chrome's says only "Bookmark added" – the bookmark is never a private window's secret.
+ */
+export const PRIVATE_STAR_TITLE = 'Bookmark saved from a private window'
+export const PRIVATE_STAR_DESCRIPTION =
+  'It is kept with your other bookmarks and shows in every window.'
 /** How long a bubble waits for the node its event names before giving up on it. */
 const ARRIVAL_GRACE_MS = 2000
 
@@ -82,7 +94,9 @@ export function StarDialog({
   }, [node])
 
   if (!node) return null
-  return <StarBubble tree={tree} node={node} star={star} />
+  const tab = state.tabs[star.tabId]
+  const fromPrivate = isPrivateWindow(state) || Boolean(tab && isPrivateTab(tab))
+  return <StarBubble tree={tree} node={node} star={star} fromPrivate={fromPrivate} />
 }
 
 /**
@@ -99,15 +113,21 @@ export function StarDialog({
  * press closes it and hands it the focus, scroll and resize close it; Escape too returns the
  * focus to the star (§9.22). A phone never opens it: its star flow is the toast with Edit and
  * the editor sheet (`starredOnPhone`, `BookmarkEditSheet`; HB-19).
+ *
+ * Made from a private tab (`fromPrivate`, bookmarks-43) the title block's first line is
+ * `PRIVATE_STAR_TITLE` with a line under it saying where the bookmark went; the form is the
+ * same – Ctrl+D in a private window never files a page without saying so.
  */
 function StarBubble({
   tree,
   node,
-  star
+  star,
+  fromPrivate
 }: {
   tree: BookmarkTree
   node: BookmarkNode
   star: StarTarget
+  fromPrivate: boolean
 }): JSX.Element {
   const [name, setName] = useState(node.title)
   const [nested, setNested] = useState(false)
@@ -151,7 +171,10 @@ function StarBubble({
     { anchor: starChip }
   )
 
-  const title = star.created ? 'Bookmark added' : 'Edit bookmark'
+  // A page a private tab has just filed is named as such; an existing bookmark starred again
+  // there is edited, not saved anew, whichever window made it.
+  const privateSave = star.created && fromPrivate
+  const title = privateSave ? PRIVATE_STAR_TITLE : star.created ? 'Bookmark added' : 'Edit bookmark'
   const remove = (): void => {
     removed.current = true
     run('bookmark.remove', { ids: [node.id] })
@@ -172,7 +195,13 @@ function StarBubble({
 
   const body = (
     <>
-      <V2TitleBlock id={TITLE_ID} title={title} scrolled={scrolled} />
+      <V2TitleBlock
+        id={TITLE_ID}
+        title={title}
+        description={privateSave ? PRIVATE_STAR_DESCRIPTION : undefined}
+        descriptionId={privateSave ? DESCRIPTION_ID : undefined}
+        scrolled={scrolled}
+      />
       <form
         ref={bodyRef}
         className="zen-bm-popover-body zen-bm-form"
@@ -232,6 +261,8 @@ function StarBubble({
         ref={panelRef}
         role="dialog"
         aria-labelledby={TITLE_ID}
+        aria-describedby={privateSave ? DESCRIPTION_ID : undefined}
+        data-private-save={privateSave || undefined}
         className="zen-v2 zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
         style={popoverStyle(box)}
         onKeyDown={onKeyDown}

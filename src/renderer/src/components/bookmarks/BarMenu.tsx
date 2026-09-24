@@ -55,6 +55,11 @@ interface Props {
    * chip's focus ring decides (`openedFromKeyboard`).
    */
   keyboard?: boolean
+  /**
+   * A private window's panel (bookmarks-43): its rows open and nothing else – no drop files a
+   * link in it, Delete on a row does nothing. The menus lose their editing rows in the core.
+   */
+  readOnly?: boolean
   /** `focusAnchor`: the keyboard closed the panel, so the chip it hung from takes focus back. */
   onClose: (opts?: { focusAnchor: boolean }) => void
   /**
@@ -115,7 +120,8 @@ type PanelTarget = Exclude<BarDropTarget, { kind: 'slot' }>
  *
  * A chip drag (`useBarDrag`) or a link from a page files its drop at a row, into a folder row
  * or at the end of a level (§9.4): the target row or panel is marked, and resting on a folder
- * row for `HOLD_TO_OPEN_MS` opens its panel beside, as on a chip.
+ * row for `HOLD_TO_OPEN_MS` opens its panel beside, as on a chip. A private window's panel
+ * takes no drop and no Delete (`readOnly`, bookmarks-43).
  */
 export function BarMenu({
   tree,
@@ -127,6 +133,7 @@ export function BarMenu({
   dropTarget,
   liftedId,
   keyboard = false,
+  readOnly = false,
   onClose,
   onStep
 }: Props): JSX.Element {
@@ -300,6 +307,7 @@ export function BarMenu({
         if (current) activate(depth, current, e.ctrlKey || e.metaKey, true)
         break
       case 'Delete':
+        if (readOnly) return
         if (current) run('bookmark.remove', { ids: [current.id] })
         break
       default:
@@ -339,7 +347,7 @@ export function BarMenu({
     return panelTargetFor(tree, el, y)
   }
   const onDragOver = (e: React.DragEvent): void => {
-    if (payloadKind(e.dataTransfer.types) === null) return
+    if (readOnly || payloadKind(e.dataTransfer.types) === null) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     const next = externalTargetAt(e.clientX, e.clientY)
@@ -350,7 +358,7 @@ export function BarMenu({
     setExternal(null)
   }
   const onDrop = (e: React.DragEvent): void => {
-    if (payloadKind(e.dataTransfer.types) === null) return
+    if (readOnly || payloadKind(e.dataTransfer.types) === null) return
     e.preventDefault()
     setExternal(null)
     const target = externalTargetAt(e.clientX, e.clientY)

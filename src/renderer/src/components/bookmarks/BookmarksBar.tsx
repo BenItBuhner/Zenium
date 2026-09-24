@@ -9,6 +9,7 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore } from '@renderer/lib/drag'
 import { droppedBookmark, payloadKind } from '@renderer/lib/dropIntent'
 import { ChromePortal, toRect } from '@renderer/lib/portals'
+import { isPrivateWindow } from '@renderer/lib/selectors'
 import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
@@ -34,6 +35,12 @@ type ExternalHover = { kind: 'slot'; index: number } | { kind: 'folder'; folderI
  * the »'s) with its first row under the keyboard, and Up from the panel's first row or from
  * the chip closes it; with a panel open, Left and Right walk the bar as a menu bar's arrows
  * walk its menus, the neighbour folder's panel opening in its place.
+ *
+ * In a private window the bar reads and opens, never writes (bookmarks-43): the bookmarks are
+ * the profile's, so an edit made there would land in the regular store as if made in a regular
+ * window. No drop (a tab, a link, a file), no paste, no reorder, no Delete, F2 or Cut on a chip;
+ * the menus carry no editing row (the core's `showBookmarkContextMenu`). Ctrl+D still files the
+ * page – through the star bubble, which names it as a private window's.
  */
 export function BookmarksBar({
   state,
@@ -57,6 +64,8 @@ export function BookmarksBar({
     return roots
   }, [mobile, other, tree])
   const tabId = tab?.id ?? null
+  /** A private window's bar takes no edit (bookmarks-43); opening is all it does. */
+  const readOnly = isPrivateWindow(state)
   const stripRef = useRef<HTMLDivElement>(null)
   const [motion] = useState(() => new ChipMotion())
   useEffect(() => () => motion.dispose(), [motion])
@@ -246,7 +255,9 @@ export function BookmarksBar({
   // Drops from outside: a sidebar tab (pointer drag) or a link / URL text (HTML5 drag)
   // ---------------------------------------------------------------------------
 
-  const tabDrag = uiStore.use((s) => s.drag)
+  // A tab drag has slots on the strip to land in only where the bar takes a drop at all.
+  const liveTabDrag = uiStore.use((s) => s.drag)
+  const tabDrag = readOnly ? null : liveTabDrag
   const dropKey = dropStore.use((s) => s.key)
   const [external, setExternal] = useState<ExternalHover | null>(null)
   const tabHover = useMemo((): ExternalHover | null => {
@@ -288,8 +299,10 @@ export function BookmarksBar({
   const overStrip = (e: React.DragEvent): boolean =>
     Boolean(barRef.current?.contains(e.target as Node | null))
 
+  // A private window's strip is no drop target (bookmarks-43): the drag is not accepted, so the
+  // pointer shows the OS's no-drop cursor and the drop goes nowhere.
   const onDragOver = (e: React.DragEvent): void => {
-    if (!overStrip(e) || !carriesUrl(e.dataTransfer)) return
+    if (readOnly || !overStrip(e) || !carriesUrl(e.dataTransfer)) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     const { index, folderId } = slotAt(e.clientX)
@@ -300,7 +313,7 @@ export function BookmarksBar({
     setExternal(null)
   }
   const onDrop = (e: React.DragEvent): void => {
-    if (!overStrip(e) || !carriesUrl(e.dataTransfer)) return
+    if (readOnly || !overStrip(e) || !carriesUrl(e.dataTransfer)) return
     e.preventDefault()
     setExternal(null)
     const dropped = droppedBookmark(e.dataTransfer, pathForFile)
@@ -422,11 +435,13 @@ export function BookmarksBar({
         closeMenu({ focusAnchor: true })
         break
       case 'Delete': {
+        if (readOnly) return
         const node = items[focusIndex]
         if (node && focusIndex < visibleCount) run('bookmark.remove', { ids: [node.id] })
         break
       }
       case 'F2': {
+        if (readOnly) return
         const node = items[focusIndex]
         if (node && focusIndex < visibleCount)
           void openBookmarkChrome(
@@ -438,6 +453,8 @@ export function BookmarksBar({
       case 'c':
       case 'x': {
         if (!(e.ctrlKey || e.metaKey)) return
+        // Copy reads; Cut is an edit a private window's bar does not make.
+        if (readOnly && e.key === 'x') return
         const node = items[focusIndex]
         if (node && focusIndex < visibleCount)
           run(e.key === 'x' ? 'bookmark.cut' : 'bookmark.copy', { ids: [node.id] })
@@ -452,6 +469,7 @@ export function BookmarksBar({
   // Ctrl+V with a chip focused: bookmarks cut or copied in the app land after it; failing that,
   // a URL on the clipboard becomes a new chip there (Chrome).
   const onStripPaste = (e: React.ClipboardEvent): void => {
+    if (readOnly) return
     const pasted = droppedBookmark(e.clipboardData, pathForFile)
     const index = Math.min(focusIndex + 1, visibleCount)
     e.preventDefault()
@@ -531,7 +549,8 @@ export function BookmarksBar({
             className="absolute inset-0"
           />
         )}
-        {items.length === 0 && !tabDrag && !external && (
+        {items.length === 0 && !tabDrag && !external && !readOnly && (
+          // An invitation to write, so a private window's empty bar stays bare (bookmarks-43).
           <span className="zen-bm-empty">
             Drag a tab or a link here, or right-click to add a page.
           </span>
@@ -556,7 +575,8 @@ export function BookmarksBar({
             className="zen-bm-chip"
             data-tooltip={node.url ?? undefined}
             onPointerDown={(e) => {
-              if ((e.target as HTMLElement).closest('[data-drop]')) return
+              // A reorder is an edit: a private window's chips stay where they are.
+              if (readOnly || (e.target as HTMLElement).closest('[data-drop]')) return
               startDrag(e, node, e.currentTarget)
             }}
             onPointerEnter={() => {
@@ -663,6 +683,7 @@ export function BookmarksBar({
           dropTarget={target}
           liftedId={liftedId}
           keyboard={menu.keyboard}
+          readOnly={readOnly}
           onClose={closeMenu}
           onStep={stepMenu}
         />

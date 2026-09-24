@@ -2408,6 +2408,14 @@ export class Menus {
     const bar = surface === 'bar'
     /** The desktop's rows alone (W5-11): the phone's bookmark menu is untouched by them. */
     const desktop = (...items: Template): Template => (win.formFactor === 'desktop' ? items : [])
+    /**
+     * A private window's bar reads and opens, never writes (bookmarks-43): its menus carry no
+     * row that edits the profile's store – Edit, Cut, Paste, Delete, Undo, Redo, Add, Sort –
+     * only the opening rows, Copy, the bar's setting and the manager. The manager's own menu is
+     * the manager's whatever the window.
+     */
+    const readOnly = bar && win.isPrivate
+    const edit = (...items: Template): Template => (readOnly ? [] : items)
     const template: Template = []
     if (single?.type === 'url') {
       template.push({
@@ -2479,20 +2487,26 @@ export class Menus {
     }
     if (nodes.length) {
       template.push(
+        ...edit(
+          { type: 'separator' },
+          {
+            label: single?.type === 'url' ? 'Edit…' : 'Rename…',
+            enabled: Boolean(single) && editable,
+            click: () =>
+              single &&
+              this.browser.emit(
+                'bookmark.edit',
+                { id: single.id, parentId: single.parentId ?? folderId, type: single.type },
+                win
+              )
+          }
+        ),
         { type: 'separator' },
-        {
-          label: single?.type === 'url' ? 'Edit…' : 'Rename…',
-          enabled: Boolean(single) && editable,
-          click: () =>
-            single &&
-            this.browser.emit(
-              'bookmark.edit',
-              { id: single.id, parentId: single.parentId ?? folderId, type: single.type },
-              win
-            )
-        },
-        { type: 'separator' },
-        { label: 'Cut', enabled: editable, click: () => this.browser.clipBookmarks(ids, 'cut') },
+        ...edit({
+          label: 'Cut',
+          enabled: editable,
+          click: () => this.browser.clipBookmarks(ids, 'cut')
+        }),
         { label: 'Copy', enabled: editable, click: () => this.browser.clipBookmarks(ids, 'copy') }
       )
       // Touch users have no drag and drop; the nested chooser moves the selection anywhere.
@@ -2501,63 +2515,78 @@ export class Menus {
     }
     // Pasting next to a chip lands right after it; on empty space it appends.
     const pasteIndex = bar && single && single.parentId === folderId ? single.index + 1 : undefined
-    template.push({
-      label: 'Paste',
-      enabled: bookmarks.canPaste(),
-      click: () => void bookmarks.paste(folderId, pasteIndex)
-    })
+    template.push(
+      ...edit({
+        label: 'Paste',
+        enabled: bookmarks.canPaste(),
+        click: () => void bookmarks.paste(folderId, pasteIndex)
+      })
+    )
     if (nodes.length) {
       template.push(
-        { type: 'separator' },
-        {
-          label: nodes.length > 1 ? `Delete ${nodes.length} Items` : 'Delete',
-          enabled: editable,
-          click: () => this.browser.deleteBookmarks(ids, win)
-        }
+        ...edit(
+          { type: 'separator' },
+          {
+            label: nodes.length > 1 ? `Delete ${nodes.length} Items` : 'Delete',
+            enabled: editable,
+            click: () => this.browser.deleteBookmarks(ids, win)
+          }
+        )
       )
       // Chrome's Undo / Redo of the last bookmark edit (context-menus-109), the bar's rows for
       // #357's undo stack; each enabled while it has a step to take.
       if (bar) {
         const { bookmarkUndo } = this.browser
         template.push(
-          ...desktop(
-            { type: 'separator' },
-            {
-              label: 'Undo',
-              enabled: bookmarkUndo.depth > 0,
-              click: () => void this.browser.undoBookmarkEdit()
-            },
-            {
-              label: 'Redo',
-              enabled: bookmarkUndo.redoDepth > 0,
-              click: () => void this.browser.redoBookmarkEdit(win)
-            }
+          ...edit(
+            ...desktop(
+              { type: 'separator' },
+              {
+                label: 'Undo',
+                enabled: bookmarkUndo.depth > 0,
+                click: () => void this.browser.undoBookmarkEdit()
+              },
+              {
+                label: 'Redo',
+                enabled: bookmarkUndo.redoDepth > 0,
+                click: () => void this.browser.redoBookmarkEdit(win)
+              }
+            )
           )
         )
       }
     }
     template.push(
-      { type: 'separator' },
-      {
-        label: bar ? 'Add Page…' : 'Add New Bookmark…',
-        click: () =>
-          this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'url' }, win)
-      },
-      {
-        label: bar ? 'Add Folder…' : 'Add New Folder',
-        click: () =>
-          this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'folder' }, win)
-      }
+      ...edit(
+        { type: 'separator' },
+        {
+          label: bar ? 'Add Page…' : 'Add New Bookmark…',
+          click: () =>
+            this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'url' }, win)
+        },
+        {
+          label: bar ? 'Add Folder…' : 'Add New Folder',
+          click: () =>
+            this.browser.emit(
+              'bookmark.edit',
+              { id: null, parentId: folderId, type: 'folder' },
+              win
+            )
+        }
+      )
     )
     if (bar) {
       if (single?.type === 'folder') {
         template.push(
-          { type: 'separator' },
-          { label: 'Sort by Name', click: () => this.browser.sortBookmarkFolder(single.id) }
+          ...edit(
+            { type: 'separator' },
+            { label: 'Sort by Name', click: () => this.browser.sortBookmarkFolder(single.id) }
+          )
         )
       }
+      // The empty strip of a private window has nothing above this group: no separator to lead.
+      if (template.length) template.push({ type: 'separator' })
       template.push(
-        { type: 'separator' },
         { label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) },
         {
           label: 'Bookmark Manager',

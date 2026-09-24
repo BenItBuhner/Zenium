@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import { BOOKMARKS_BAR_ID } from '../../shared/bookmarks'
 import { Browser } from '../browser'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import type { ZenWindow } from '../window'
@@ -115,5 +116,21 @@ describe('bookmarks from a private window', () => {
     expect(f.browser.bookmarks.findByUrl('https://r.test/')[0]?.favicon).toBe(
       'https://r.test/icon.png'
     )
+  })
+
+  it('a private tab dropped on another window’s bookmarks bar files the page without its favicon too', () => {
+    const f = fixture()
+    const priv = f.browser.createWindow({ kind: 'private', from: f.win })!
+    const secret = f.browser.tabs.createTab({ url: 'https://d.test/', active: true }, priv)
+    secret.favicon = 'https://d.test/icon.png'
+    secret.title = 'D'
+    // The regular window's bar slot, as the sidebar's drag names it (`bookmark:<folder>:<index>`).
+    expect(f.browser.tabs.dropTab(secret.id, `bookmark:${BOOKMARKS_BAR_ID}:0`, f.win)).toBe(true)
+    const [node] = f.browser.bookmarks.findByUrl('https://d.test/')
+    expect(node.title).toBe('D')
+    expect(node.parentId).toBe(BOOKMARKS_BAR_ID)
+    expect(node.favicon).toBeUndefined()
+    // The tab stays where it was: a bar drop files the page, it does not move the tab.
+    expect(f.browser.tabs.windowFor(secret.id)).toBe(priv)
   })
 })

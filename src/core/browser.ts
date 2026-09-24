@@ -48,7 +48,7 @@ import { SecurityPromptService } from './security'
 import { DeviceChooserService } from './deviceChooser'
 import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
-import { TabManager, isTabSection } from './tabs'
+import { TabManager, bookmarkFaviconOf, isTabSection } from './tabs'
 import { TabDragController, parseDropKey } from './tabDrag'
 import { surfaceMounted, ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
@@ -3818,16 +3818,6 @@ export class Browser {
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0.5))
-}
-
-/**
- * The favicon a new bookmark takes from the tab it is made from: none from a private tab. A
- * private window bookmarks into the profile's store as Chrome's Incognito does (bookmarks-43),
- * but writes nothing of the visit – the favicon backfill already skips private tabs (`tabs.ts`),
- * and the star and Ctrl+D must not slip the icon in by the other door.
- */
-function bookmarkFaviconOf(tab: Tab, isPrivate: boolean): string | null {
-  return isPrivate ? null : tab.favicon
 }
 
 /**

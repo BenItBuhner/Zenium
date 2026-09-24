@@ -406,3 +406,87 @@ describe("the bar item menu's rows (context-menus-109)", () => {
     expect(f.browser.bookmarks.get(a)).not.toBeNull()
   })
 })
+
+describe("a private window's bar reads and opens, never writes (bookmarks-43)", () => {
+  function privateMenu(f: Fixture, ids: string[], surface: 'bar' | 'manager' = 'bar'): string[] {
+    const priv = f.browser.createWindow({ kind: 'private', from: f.win })!
+    f.browser.tabs.createTab({ url: 'https://open.test/', active: true }, priv)
+    f.browser.handleCommand(priv, 'bookmark.contextMenu', {
+      ids,
+      folderId: BOOKMARKS_BAR_ID,
+      x: 10,
+      y: 10,
+      surface
+    })
+    return labels(f.shown())
+  }
+
+  it("a page's menu keeps the opening rows and Copy, and loses Edit, Cut, Paste, Delete, Undo, Redo and Add", () => {
+    const f = fixture()
+    const id = f.browser.bookmarks.create({
+      parentId: BOOKMARKS_BAR_ID,
+      title: 'A',
+      url: 'https://a.test/'
+    })!.id
+    expect(privateMenu(f, [id])).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      'Open in Split View',
+      '-',
+      'Copy',
+      '-',
+      'Show Bookmarks Bar',
+      'Bookmark Manager'
+    ])
+    // Already private: no second private window from here (as before).
+    expect(item(f.shown(), 'Open in New Private Window').enabled).toBe(false)
+    expect(item(f.shown(), 'Open in Split View').enabled).toBe(true)
+  })
+
+  it("a folder's menu opens – all, in a window, in a tab folder – and copies; no Rename, Sort, Add or Delete", () => {
+    const f = fixture()
+    const id = folderWith(f, 'Reading', 2)
+    expect(privateMenu(f, [id])).toEqual([
+      'Open All (2)',
+      'Open All (2) in New Window',
+      'Open All (2) in New Private Window',
+      'Open All (2) in New Tab Folder',
+      '-',
+      'Copy',
+      '-',
+      'Show Bookmarks Bar',
+      'Bookmark Manager'
+    ])
+  })
+
+  it("the strip's own menu has no Paste and no Add, and starts on its first row rather than a separator", () => {
+    const f = fixture()
+    f.browser.bookmarks.create({ parentId: BOOKMARKS_BAR_ID, title: 'A', url: 'https://a.test/' })
+    expect(privateMenu(f, [])).toEqual(['Show Bookmarks Bar', 'Bookmark Manager'])
+  })
+
+  it("the regular window's bar and the manager in the private window keep every editing row", () => {
+    const f = fixture()
+    const id = f.browser.bookmarks.create({
+      parentId: BOOKMARKS_BAR_ID,
+      title: 'A',
+      url: 'https://a.test/'
+    })!.id
+    const regular = menuFor(f, [id])
+    for (const row of [
+      'Edit…',
+      'Cut',
+      'Paste',
+      'Delete',
+      'Undo',
+      'Redo',
+      'Add Page…',
+      'Add Folder…'
+    ])
+      expect(regular).toContain(row)
+    const manager = privateMenu(f, [id], 'manager')
+    for (const row of ['Edit…', 'Cut', 'Paste', 'Delete', 'Add New Bookmark…'])
+      expect(manager).toContain(row)
+  })
+})
