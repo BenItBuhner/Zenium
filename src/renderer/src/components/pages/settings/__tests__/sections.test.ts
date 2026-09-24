@@ -8,6 +8,7 @@ import type {
   FormFactor,
   HostCapabilities,
   ImportSource,
+  Platform,
   SafetyCheckResult,
   Settings,
   SyncStatus,
@@ -15,6 +16,7 @@ import type {
   ToolbarLayout,
   UIState
 } from '@shared/types'
+import type { PinnedWebApp } from '@shared/webApp'
 import { defaultScope } from '@core/sync/records'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import {
@@ -272,6 +274,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     liveFolders: {},
     extensions: [],
     mods: [],
+    webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
@@ -4385,6 +4388,110 @@ describe('the Extensions category', () => {
     expect(searchRows(models, '4.9.132').map((h) => h.row.id)).toEqual([`extension:${EXT_ID}`])
     // The rows of the details and detail sheets are reached from the item row, not as hits.
     expect(searchRows(models, 'clear errors')).toEqual([])
+  })
+})
+
+describe('the Apps category (shortcuts-menus-138)', () => {
+  /** A desktop host that writes launchers (`pinShortcuts`), the Linux build's shape. */
+  const PINS: HostCapabilities = {
+    ...ANDROID,
+    windows: true,
+    extensions: true,
+    pinShortcuts: true
+  }
+  const NOTES: PinnedWebApp = {
+    id: 'notes',
+    name: 'Notes',
+    startUrl: 'https://notes.example/today',
+    scope: 'https://notes.example/',
+    pinnedAt: 2,
+    icon: 'file:///icons/notes.png',
+    bounds: null
+  }
+  const ATLAS: PinnedWebApp = {
+    id: 'atlas',
+    name: 'Atlas',
+    startUrl: 'https://atlas.example/',
+    scope: 'https://atlas.example/',
+    pinnedAt: 1
+  }
+  const appsState = (webApps: PinnedWebApp[]): UIState =>
+    state({ platform: 'linux', capabilities: PINS, webApps })
+
+  it('is a section of the desktop OSes on a host that pins launchers, after Extensions; Android has none', () => {
+    const ids = (caps: HostCapabilities, platform: Platform): string[] =>
+      availableSections(PAGE, caps, 'desktop', platform).map((s) => s.id)
+    for (const platform of ['linux', 'win32', 'darwin'] as const) {
+      const listed = ids(PINS, platform)
+      expect(listed.indexOf('apps'), platform).toBe(listed.indexOf('extensions') + 1)
+    }
+    // Without the launchers there is nothing to list; Android's apps are the launcher's tiles.
+    expect(ids({ ...PINS, pinShortcuts: false }, 'linux')).not.toContain('apps')
+    expect(ids(PINS, 'android')).not.toContain('apps')
+    expect(availableSections(PAGE, PINS, 'phone', 'android').map((s) => s.id)).not.toContain('apps')
+  })
+
+  it('lists the installed apps by name, A to Z, each with its icon, its site and the row’s ⋯ of Open and Uninstall', () => {
+    const model = section('apps', appsState([NOTES, ATLAS]))
+    expect(model.groups.map((g) => g.id)).toEqual(['apps'])
+    const list = model.groups[0]!
+    expect(list.heading).toBe('Installed apps')
+    expect(list.description).toContain('Save and Share')
+    expect(list.rows.map((r) => r.id)).toEqual(['app:atlas', 'app:notes'])
+    const notes = row(model, 'app:notes')
+    expect(notes).toMatchObject({
+      kind: 'item',
+      label: 'Notes',
+      description: 'notes.example',
+      menu: 'Options for Notes'
+    })
+    if (notes.kind !== 'item') throw new Error('not an item')
+    // The icon the host kept, else the globe (FaviconGlyph's own fallback).
+    const iconOf = (r: Row): string | null | undefined => {
+      if (r.kind !== 'item' || !isValidElement<{ src?: string | null }>(r.leading))
+        throw new Error('no glyph')
+      return r.leading.props.src
+    }
+    expect(iconOf(notes)).toBe(NOTES.icon)
+    expect(iconOf(row(model, 'app:atlas'))).toBeUndefined()
+    // The ⋯'s menu is the sheet's two action rows: Open launches the app, Uninstall – in the
+    // danger ink, acting at once (§10.5) – removes its launcher and record.
+    const menu = itemMenuItems(notes)
+    expect(menu.map((i) => ({ label: i.label, danger: i.danger ?? false }))).toEqual([
+      { label: 'Open', danger: false },
+      { label: 'Uninstall', danger: true }
+    ])
+    menu[0]!.onSelect()
+    expect(invoke).toHaveBeenLastCalledWith('webapp.launch', { appId: 'notes' })
+    menu[1]!.onSelect()
+    expect(invoke).toHaveBeenLastCalledWith('webapp.uninstall', { appId: 'notes' })
+    const uninstall = allRows(notes.sheet.groups).find((r) => r.id === 'app:notes:uninstall')
+    if (uninstall?.kind !== 'action') throw new Error('not an action')
+    expect(uninstall.destructive).toBe(true)
+    expect(uninstall.confirm).toBeUndefined()
+  })
+
+  it('with nothing installed: the one group’s empty line, naming where an app is installed from', () => {
+    const model = section('apps', appsState([]))
+    const list = model.groups[0]!
+    expect(list.rows).toEqual([])
+    expect(list.empty).toBe('No apps installed')
+    expect(groupShows(list)).toBe(true)
+  })
+
+  it('the landing search finds an app by name and by its site', () => {
+    // The page less Extensions, whose builder wants the update check the bare fixture lacks.
+    const caps: HostCapabilities = { ...PINS, extensions: false }
+    const s = state({ platform: 'linux', capabilities: caps, webApps: [NOTES, ATLAS] })
+    const models = buildSections(availableSections(PAGE, caps, 'desktop', 'linux'), {
+      ...context(s).ctx,
+      formFactor: 'desktop'
+    })
+    expect(searchRows(models, 'notes').map((h) => h.row.id)).toContain('app:notes')
+    expect(searchRows(models, 'atlas.example').map((h) => h.row.id)).toEqual(['app:atlas'])
+    expect(searchRows(models, 'notes').find((h) => h.row.id === 'app:notes')?.caption).toBe(
+      'Apps › Installed apps'
+    )
   })
 })
 

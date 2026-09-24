@@ -28,7 +28,7 @@ import type {
   SiteDataStatus
 } from './siteData'
 import type { InternalPageId, InternalPageQuery } from './internalPages'
-import type { InstallSurface, WebAppInfo } from './webApp'
+import type { InstallSurface, PinnedWebApp, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
@@ -3551,6 +3551,12 @@ export interface UIState {
   /** The extension side panel this window shows beside the page, if one is open for its tab. */
   sidePanel: SidePanelInfo | null
   mods: Mod[]
+  /**
+   * The web apps installed on this host (the launchers it pinned, `WebAppService.allPinned`),
+   * in the order they were installed: Settings › Apps lists, opens and uninstalls them
+   * (shortcuts-menus-138); the app menu's Open in <app> and Install rows read the core's own.
+   */
+  webApps: PinnedWebApp[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]

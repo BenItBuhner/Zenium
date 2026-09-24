@@ -311,6 +311,19 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     keywords: ['add-ons', 'addons', 'chrome web store'],
     requires: 'extensions'
   },
+  /**
+   * Apps (shortcuts-menus-138; Edge's Apps › Manage apps, Chrome's chrome://apps): the web apps
+   * installed on this computer – the launchers the host pinned – each opened or uninstalled
+   * from its row. The desktop OSes' alone: Android's installed apps are the launcher's tiles,
+   * which the Home screen manages.
+   */
+  {
+    id: 'apps',
+    label: 'Apps',
+    keywords: ['web apps', 'installed', 'install', 'shortcut', 'launcher', 'uninstall', 'pwa'],
+    requires: 'pinShortcuts',
+    platforms: ['win32', 'darwin', 'linux']
+  },
   {
     id: 'agents',
     label: 'AI Agents',

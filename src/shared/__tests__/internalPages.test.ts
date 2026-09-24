@@ -37,7 +37,8 @@ describe('the page registry', () => {
       'pdf'
     ])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
-    // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
+    // Zen's features, Autofill, Languages and then Privacy after Search; Apps (the installed web
+    // apps, the desktop OSes alone; shortcuts-menus-138) after Extensions; Agents, Passwords and
     // Security (the remembered per-site answers and the session's sign-ins) last among them; then
     // the browser-wide group past the first hairline: Sync, then Import beside it as Chrome keeps
     // its "Import bookmarks and settings" (ID-23), Accessibility, Keyboard Shortcuts, Default
@@ -58,6 +59,7 @@ describe('the page registry', () => {
       'boosts',
       'mods',
       'extensions',
+      'apps',
       'agents',
       'passwords',
       'security',

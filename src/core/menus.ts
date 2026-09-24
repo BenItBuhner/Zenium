@@ -3181,6 +3181,16 @@ export class Menus {
     // The sidebar layouts split the phone's pair: the install row is a save, Open in <app> a
     // window action.
     const createShortcut = sidebar(...this.installItems(active, win))
+    // Edge's Apps › Manage apps under the install row (shortcuts-menus-138): Settings › Apps,
+    // the installed apps by name with Open and Uninstall. The list's row, not the page's: it
+    // stands whatever the page shows, on a host that pins launchers (`webApps.supported`); the
+    // desktop's alone, the section being the desktop OSes' (Android's apps are the launcher's).
+    const manageApps = desktop(
+      ...when(this.browser.webApps.supported, {
+        label: 'Manage Apps',
+        click: () => void this.browser.pages.open('settings', 'apps', win)
+      })
+    )
     const openInApp = sidebar(...this.openAppItems(active, win))
     const print = when(caps.print, {
       label: 'Print…',
@@ -3406,14 +3416,16 @@ export class Menus {
         // folded into a submenu as Chrome folds it (the #396 review's ruling 1): the saves first
         // – Save Page As…, the install row (Create Shortcut…, or Install <app>…), Web Capture…
         // between the save and the print where Edge's menu keeps it, Print… – then the shares,
-        // Share… and Send to Your Devices. No Cast row: Zenium has no cast target. Folded, the
-        // top level keeps #299's count whatever the host gates – twenty rows and three
+        // Share… and Send to Your Devices. No Cast row: Zenium has no cast target. Manage Apps
+        // rides under the install row as Edge's Apps pairs them (shortcuts-menus-138). Folded,
+        // the top level keeps #299's count whatever the host gates – twenty rows and three
         // separators on the Linux build, 661 px – and stands whole on an 800 px window (§6).
         {
           label: 'Save and Share',
           submenu: [
             savePageAs,
             ...createShortcut,
+            ...manageApps,
             ...webCapture,
             ...print,
             ...share,

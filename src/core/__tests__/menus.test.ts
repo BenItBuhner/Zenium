@@ -744,7 +744,8 @@ describe('the app menu', () => {
   it('folds Chrome’s Save and Share into a submenu closing the page’s group, before the app’s separator: the saves, then the shares (shortcuts-menus-120)', () => {
     // A host that shares and pins shortcuts, with a page up and the install surface mounted,
     // syncing with another device: every row of the group stands – Save Page As…, Create
-    // Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – and no Cast row.
+    // Shortcut…, Manage Apps (shortcuts-menus-138), Web Capture…, Print…, Share…, Send to Your
+    // Devices – and no Cast row.
     const h = pageHarness({ ...DESKTOP, share: true, pinShortcuts: true }, { shortcuts: true })
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
     vi.spyOn(h.browser.sync, 'status').mockReturnValue({
@@ -766,6 +767,7 @@ describe('the app menu', () => {
     expect(topLabels(group)).toEqual([
       'Save Page As…',
       'Create Shortcut…',
+      'Manage Apps',
       'Web Capture…',
       'Print…',
       'Share…',
@@ -799,6 +801,39 @@ describe('the app menu', () => {
       'Web Capture…',
       'Print…'
     ])
+  })
+
+  it('seats Edge’s Manage Apps under the install row, whatever the page shows, on a desktop host that pins launchers; its pick opens Settings › Apps (shortcuts-menus-138)', () => {
+    // The install row is the page's (an installable page, the surface up); Manage Apps is the
+    // list's, so it stands with no page up and no surface, on any host that writes launchers –
+    // the way to the installed apps by name, with Open and Uninstall.
+    const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
+    appMenu(h)
+    let group = item(h.shown(), 'Save and Share').submenu!
+    expect(topLabels(group)).toEqual(['Save Page As…', 'Manage Apps', 'Web Capture…', 'Print…'])
+    const open = vi.spyOn(h.browser.pages, 'open')
+    item(group, 'Manage Apps').click?.()
+    expect(open).toHaveBeenCalledWith('settings', 'apps', h.win)
+    // With the install row up the pair reads as Edge's Apps does: install, then manage.
+    h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+    appMenu(h)
+    group = item(h.shown(), 'Save and Share').submenu!
+    expect(topLabels(group).slice(0, 3)).toEqual([
+      'Save Page As…',
+      'Create Shortcut…',
+      'Manage Apps'
+    ])
+    // A host that pins no launchers has no list to manage: the bare desktop, the tablet and the
+    // phone show no row (the section is the desktop OSes'; Android's apps are the launcher's).
+    for (const other of [
+      harness(DESKTOP),
+      harness({ ...DESKTOP, pinShortcuts: true }, { formFactor: 'tablet', shortcuts: true }),
+      harness({ ...ANDROID, pinShortcuts: true }, { formFactor: 'phone', shortcuts: true })
+    ]) {
+      appMenu(other)
+      expect(allItems(other.shown()).map((i) => i.label)).not.toContain('Manage Apps')
+    }
   })
 
   it('carries Chrome’s Delete Browsing Data… row at the top level, closing the library group with its chord, and runs the dialog’s request from it', () => {
