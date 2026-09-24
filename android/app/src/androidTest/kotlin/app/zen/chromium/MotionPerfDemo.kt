@@ -1531,7 +1531,11 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * a departing group's frame against its cards' exits.
      */
     private fun installProbe(): String = chromeJs(
-        "(function(){if(window.__motion)return 'kept';" +
+        // The bridge's flag-gated marks (`bridge:port:<method>` / `bridge:call:<method>`,
+        // src/android/bridge.ts): one `blink.user_timing` mark per call of the chrome into Kotlin
+        // by the channel it took, counted by name into the trace's `marks` – the scene's own count
+        // of the hop and of the port. Off in production; on for the whole run from here.
+        "(function(){window.__zenBridgeTrace=true;if(window.__motion)return 'kept';" +
             "var p=window.__motion={};" + RESET_JS +
             "var inPill=function(n){return !!(n&&n.closest&&n.closest('.zen-phone-pill'))};" +
             "var isStage=function(n){return n.nodeType===1&&(n.classList.contains('zen-stage-card')||(n.querySelector&&!!n.querySelector('.zen-stage-card')))};" +

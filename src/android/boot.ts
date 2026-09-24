@@ -44,7 +44,7 @@ import {
 } from '@renderer/lib/pull'
 import { applyTextScale } from '@renderer/lib/textScale'
 import { pushToast, uiStore } from '@renderer/lib/ui'
-import { Bridge, getNativeBridge } from './bridge'
+import { Bridge, getNativeBridge, openBridgePort } from './bridge'
 import { captureUpdates, type CapturesHeld } from './captureRelay'
 import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
@@ -149,6 +149,10 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   const hostGlobal = installHostGlobal(bridge, platformRef, readyRef)
 
   const boot = bridge.callSync<BootInfo>('boot', {})
+  // The host's asynchronous channel for the storage calls (`bridge.ts` PORTED): asked for here,
+  // taken when the host posts it to the document – the writes before that take the synchronous
+  // hop, as they always did; the order holds across the switch (`Bridge.adoptPort`).
+  if (!preview) openBridgePort(bridge, window)
   const handoffFetch: HandoffFetch = (url, init) => fetch(url, init)
   const io = new AndroidStoreIO(bridge, boot.files, boot.deferred, handoffFetch)
   io.adopt(
