@@ -105,6 +105,7 @@ import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { webViewProxyOverride } from './extensionProxy'
+import type { KeepAwakeLevel } from '@core/extensions/api/power'
 import type { RawCpuReading, RawMemoryReading } from '@core/extensions/api/systemInfo'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
 import type { ViewEventPayloads } from './views'
@@ -1395,6 +1396,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   memory(): Promise<RawMemoryReading> {
     return this.bridge.call<RawMemoryReading>('ext.system.memory')
+  }
+
+  keepAwake(id: string, level: KeepAwakeLevel | null): Promise<void> {
+    return this.bridge.call<void>('ext.power.keepAwake', { id, level })
   }
 
   async detectTextLanguage(text: string): Promise<DetectedLanguage> {

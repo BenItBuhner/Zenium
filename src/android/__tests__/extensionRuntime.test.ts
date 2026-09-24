@@ -2704,6 +2704,52 @@ describe('AndroidExtensionRuntime: chrome.system.cpu and chrome.system.memory', 
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.power', () => {
+  it('holds the screen on for an extension asking, the last level winning, released by the call or the detach', async () => {
+    // Keep Awake's worker: `chrome.power.requestKeepAwake(system ? 'system' : 'display')` on the
+    // action click, `releaseKeepAwake()` on the next; nothing awaited, nothing read back.
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['power', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'power', 'requestKeepAwake', ['display'])).toMatchObject({
+      ok: true
+    })
+    expect(h.kt.keepAwake.get(ID)).toBe('display')
+    expect(await call(h, 'bg1', 'power', 'requestKeepAwake', ['system'])).toMatchObject({
+      ok: true
+    })
+    expect(h.kt.keepAwake.get(ID)).toBe('system')
+    expect(await call(h, 'bg1', 'power', 'reportActivity', [])).toMatchObject({ ok: true })
+    expect(await call(h, 'bg1', 'power', 'releaseKeepAwake', [])).toMatchObject({ ok: true })
+    expect(h.kt.keepAwake.has(ID)).toBe(false)
+    // A held request goes with the extension (Chrome releases on unload).
+    await call(h, 'bg1', 'power', 'requestKeepAwake', ['display'])
+    expect(h.kt.keepAwake.get(ID)).toBe('display')
+    await h.runtime.detach(ID)
+    expect(h.kt.keepAwake.has(ID)).toBe(false)
+  })
+
+  it("refuses a level outside Chrome's enum with the bindings' error, and an extension without the permission", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['power', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'power', 'requestKeepAwake', ['screen'])).toMatchObject({
+      ok: false,
+      error:
+        "Error in invocation of power.requestKeepAwake(power.Level level): Error at parameter 'level': Value must be one of display, system."
+    })
+    expect(h.kt.keepAwake.size).toBe(0)
+    const other = harness()
+    await other.runtime.attach(record(other, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(other, 'bg1')
+    expect(await call(other, 'bg1', 'power', 'requestKeepAwake', ['display'])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'power' permission."
+    })
+    expect(other.kt.keepAwake.size).toBe(0)
+  })
+})
+
 describe('AndroidExtensionRuntime: chrome.tabCapture on a WebView that captures nothing', () => {
   it("answers getCapturedTabs with Chrome's empty list for an extension holding the permission", async () => {
     // Mobile simulator's action click: `getCapturedTabs(tabs => tabs.some(...))` before it opens

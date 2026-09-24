@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import android.view.Choreographer
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -206,6 +207,12 @@ class Extensions(private val host: Host) {
     /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
     private val offscreens = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
+    /**
+     * `chrome.power`: the extensions holding a keep-awake request right now (`ext.power.keepAwake`),
+     * with the level each asked. The window keeps its screen on while the set is not empty;
+     * a request goes with its extension when it detaches, and with the runtime (main thread).
+     */
+    private val keepAwake = LinkedHashMap<String, String>()
     /** The user agent extension pages send (set when the first extension view is built), for the CORS proxy's requests. */
     @Volatile var userAgent: String? = null
     /** Optional host permissions granted at runtime (`chrome.permissions.request`), per extension; read on request threads. */
@@ -464,8 +471,35 @@ class Extensions(private val host: Host) {
                 }
             }
             "ext.system.memory" -> reply(SystemInfo.memory(host.activity))
+            "ext.power.keepAwake" -> {
+                setKeepAwake(args.str("id"), args.strOrNull("level"))
+                reply(null)
+            }
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
+    }
+
+    /**
+     * `chrome.power`: hold (`level` `system` or `display`) or release (null) the extension's
+     * keep-awake request and set the window's screen-on flag from what is held. Both levels keep
+     * the screen on: the phone has no wake lock an app may hold for a user with the screen off.
+     * The window flag is the app's own holder; WebView's fullscreen video keeps the screen on
+     * through its view's flag, which the framework ORs with this one, so neither clears the other.
+     */
+    private fun setKeepAwake(id: String, level: String?) {
+        val before = keepAwake.isNotEmpty()
+        if (level == null) keepAwake.remove(id) else keepAwake[id] = level
+        val after = keepAwake.isNotEmpty()
+        if (before == after) return
+        val window = host.activity.window
+        if (after) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Log.i(TAG, "keep awake ${if (after) "on" else "off"} (${keepAwake.keys.joinToString { it.take(8) }})")
+    }
+
+    /** Every keep-awake request released: the runtime is going, or starting from nothing. */
+    private fun releaseKeepAwake() {
+        for (id in keepAwake.keys.toList()) setKeepAwake(id, null)
     }
 
     /**
@@ -670,6 +704,7 @@ class Extensions(private val host: Host) {
         notifications.forget(id)
         pendingNotificationEvents.remove(id)
         closeAuthSheets(id)
+        setKeepAwake(id, null)
         Log.i(TAG, "detached ${id.take(8)}")
     }
 
@@ -688,6 +723,7 @@ class Extensions(private val host: Host) {
         configureStats.clear()
         observeRequests = false
         closeAuthSheets()
+        releaseKeepAwake()
     }
 
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
@@ -1863,6 +1899,7 @@ class Extensions(private val host: Host) {
     fun destroy() {
         closePopup()
         closeAuthSheets()
+        releaseKeepAwake()
         for (id in backgrounds.keys.toList()) stopBackground(id)
         for (id in offscreens.keys.toList()) closeOffscreen(id)
         notifications.destroy()
