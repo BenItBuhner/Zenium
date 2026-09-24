@@ -57,10 +57,14 @@ import kotlin.math.roundToInt
  *
  * The accessibility pass 2 scenes sit between the zoom panel and the font scale: the app menu's
  * icon row as a labelled list under touch exploration (A11Y-04, [menuListScene]; and at font
- * scale 1.3 inside [measureScale]), the tab switch and load-complete announcements caught as
- * `TYPE_ANNOUNCEMENT` events with the accessibility focus held still (A11Y-02, [announceScene]),
- * the hidden page layers' flags and their absence from the reader's tree (A11Y-03,
- * [layersScene]), and the spoken names against the visible text (A11Y-10, [namesScene]).
+ * scale 1.3 inside [measureScale], where every sheet label is read against §4's two-line rule,
+ * [sheetLabelsCheck]), a group card's actions as a reader reaches them – the header's
+ * `actionList` against TalkBack's actions menu, and the card's own controls under touch
+ * exploration (A11Y-10, [groupActionsScene]) – the tab switch and load-complete announcements
+ * caught as `TYPE_ANNOUNCEMENT` events with the accessibility focus held still (A11Y-02,
+ * [announceScene]), the hidden page layers' flags and their absence from the reader's tree
+ * (A11Y-03, [layersScene]), and the spoken names against the visible text (A11Y-10,
+ * [namesScene]).
  *
  * TalkBack itself is not the proof: the emulator has no audio, and the API 34 Google APIs image
  * may or may not carry it. When `com.google.android.marvin.talkback` is installed the last scene
@@ -194,6 +198,7 @@ class ChromeA11yDemo : DemoHarness(
         scene("find") { findScene() }
         scene("zoom") { zoomScene() }
         scene("menu list") { menuListScene() }
+        scene("group actions") { groupActionsScene() }
         scene("announce") { announceScene() }
         scene("layers") { layersScene() }
         scene("names") { namesScene() }
@@ -833,6 +838,154 @@ class ChromeA11yDemo : DemoHarness(
                 bringToFront()
             }
             SystemClock.sleep(500)
+        }
+    }
+
+    /**
+     * A group card's actions for a reader (A11Y-10; the lead's gate on #440, item c). What the
+     * card's header advertises in `AccessibilityNodeInfo.actionList` is written down against
+     * what TalkBack's actions menu would make of it: the menu lists a node's custom actions and
+     * its Expand / Collapse / Dismiss (`RuleCustomAction`; a custom action is one above
+     * [SYSTEM_ACTION_MAX]), and Chromium's bridge marks no web node long-clickable – a
+     * `contextmenu` listener reaches the tree as `ACTION_CONTEXT_CLICK` (0x102003c), an action
+     * TalkBack has no gesture for – while ARIA has no custom-action vocabulary, so the menu on
+     * the header lists its fold and nothing of the hold sheet's rows; the hold that opens the
+     * sheet is the double-tap-and-hold TalkBack passes through to the page. The route the card
+     * gives (`GroupCardControls`, `groupActions.ts`): under touch exploration the sheet's rows as
+     * accessible controls – Rename, Ungroup, Close Group (N Tabs), Delete Group, by the sheet's
+     * names (the fold is the header's own tap and its `aria-expanded`) – right after the header
+     * in the reading order and out of sight (`sr-only`, a one-pixel box); without the mode
+     * nothing is drawn. The scene reads the header's actions, wants the controls absent, turns
+     * touch exploration on, wants them present and next after the header in the walk, runs
+     * Rename through `ACTION_CLICK` and wants the name field, then wants them gone with the
+     * mode. The reading is `a11y-chrome-group-actions.txt`, the walk `a11y-chrome-tree-group-actions.txt`.
+     */
+    private fun groupActionsScene() {
+        if (!ensureExample()) return
+        if (!openOverview()) return
+        val card = groupCard("Research")
+        val controls = listOf("Rename", "Ungroup", "Close Group (3 Tabs)", "Delete Group")
+        val report = StringBuilder()
+        report.appendLine("# group actions – the Research card's header, its actionList, and the reader's route")
+        val manager = app.getSystemService(AccessibilityManager::class.java)
+        var talkBackOn = false
+        var sheetInMenu = false
+        var reachable = false
+        try {
+            chromeJs("(function(){var h=document.querySelector(${JSONObject.quote(card.selector)});if(h)h.scrollIntoView({block:'nearest',behavior:'instant'});return !!h})()")
+            awaitChrome(6_000) { findNodeWhere { it.isVisibleToUser && card(label(it)) } != null }
+            SystemClock.sleep(800)
+            val header = freshNodes { card(it) }.firstOrNull()
+            if (header == null) {
+                fail("[group actions] no node for the Research group's header in the tree")
+                return
+            }
+            // 1. The header's actions, and what TalkBack's menu would list of them.
+            val actions = header.actionList
+            val custom = actions.filter { it.id > SYSTEM_ACTION_MAX }
+            val menu = actions.mapNotNull { action ->
+                when {
+                    action.id > SYSTEM_ACTION_MAX -> action.label?.toString() ?: "a custom action 0x${Integer.toHexString(action.id)} without a label"
+                    action.id == AccessibilityNodeInfo.ACTION_EXPAND -> "Expand"
+                    action.id == AccessibilityNodeInfo.ACTION_COLLAPSE -> "Collapse"
+                    action.id == AccessibilityNodeInfo.ACTION_DISMISS -> "Dismiss"
+                    else -> null
+                }
+            }
+            val longClick = header.isLongClickable || actions.any { it.id == AccessibilityNodeInfo.ACTION_LONG_CLICK }
+            val contextClick = actions.any { it.id == AccessibilityAction.ACTION_CONTEXT_CLICK.id }
+            sheetInMenu = controls.all { name -> menu.any { it.equals(name, ignoreCase = true) } }
+            finding("  [group actions] the header: ${describe(header)}")
+            finding(
+                "  [group actions] the header is ${if (longClick) "" else "not "}long-clickable, ${if (contextClick) "advertises" else "does not advertise"} CONTEXT_CLICK, carries ${custom.size} custom action(s); " +
+                    "TalkBack's actions menu would list ${menu.ifEmpty { listOf("nothing") }}${if (sheetInMenu) " – the sheet's rows among them" else " – none of the hold sheet's rows (Rename, Ungroup, Close Group, Delete Group)"}"
+            )
+            report.appendLine("## The header's node")
+            report.appendLine(describe(header))
+            report.appendLine("actionList: ${actions.map { "${actionName(it.id)}${it.label?.let { l -> " '$l'" } ?: ""}" }}")
+            report.appendLine("long-clickable: $longClick; CONTEXT_CLICK: $contextClick; custom actions (id > 0x01FFFFFF): ${custom.size}")
+            report.appendLine("TalkBack's actions menu (custom actions + Expand / Collapse / Dismiss) would list: ${menu.ifEmpty { listOf("nothing") }}")
+            report.appendLine("The hold sheet's rows reach that menu: $sheetInMenu")
+            // 2. Without touch exploration nothing is drawn (a keyboard's Tab would stop on
+            // controls it cannot see).
+            val before = controls.associateWith { name -> freshNodes { it == name }.size }
+            val domBefore = chromeValue("document.querySelectorAll('[data-testid=\"group-card-controls\"]').length")
+            expect("[group actions] without touch exploration the card draws no such controls (tree $before; DOM $domBefore)", before.values.all { it == 0 } && domBefore == "0")
+            // 3. Touch exploration on: the controls come with the state.
+            setTouchExploration(true)
+            var on = awaitChrome(6_000) { manager.isTouchExplorationEnabled }
+            var how = "UiAutomation's FLAG_REQUEST_TOUCH_EXPLORATION_MODE"
+            if (!on && talkBackInstalled()) {
+                note("[group actions] UiAutomation's touch exploration request alone did not turn the mode on within 6 s; TalkBack switched on for the scene")
+                enableTalkBack()
+                bringToFront()
+                talkBackOn = true
+                how = "TalkBack"
+                on = awaitChrome(10_000) { manager.isTouchExplorationEnabled }
+            }
+            val heard = awaitChrome(6_000) { chromeAccessibilityState().optBoolean("touchExploration") }
+            finding("  [group actions] touch exploration by $how: manager $on; the chrome heard it $heard; state ${chromeAccessibilityState()}")
+            expect("[group actions] touch exploration is on for the scene (by $how) and the chrome hears it", on && heard)
+            val listed = awaitChrome(10_000) {
+                nudgeFrame()
+                controls.all { name -> freshNodes { it == name }.isNotEmpty() }
+            }
+            val nodes = controls.map { name -> freshNodes { it == name }.firstOrNull() }
+            finding("  [group actions] the card's controls in the tree: ${controls.zip(nodes).joinToString("; ") { (name, n) -> "$name: ${n?.let { describe(it) } ?: "missing"}" }}")
+            expect("[group actions] under touch exploration the card gives the sheet's rows as controls by the sheet's names ($controls)", listed)
+            report.appendLine()
+            report.appendLine("## Under touch exploration (by $how)")
+            for ((name, node) in controls.zip(nodes)) report.appendLine("$name: ${node?.let { describe(it) } ?: "missing"}")
+            // 4. The walk: the header, then the four, buttons every one.
+            val stops = walk()
+            dumpTree("group-actions", stops)
+            val headerAt = stops.indexOfFirst { it.control && card(it.label) }
+            val next = stops.drop(headerAt + 1).filter { it.control }.take(controls.size)
+            finding("  [group actions] the walk: the header at #${stops.getOrNull(headerAt)?.index ?: "none"}, then ${next.map { "${it.label} (${roleOf(it)}${if (it.node.isVisibleToUser) "" else ", not visible to user"})" }}")
+            expect(
+                "[group actions] the controls are the next stops after the header in the reading order, buttons every one (${next.map { it.label }})",
+                headerAt >= 0 && next.map { it.label } == controls && next.all { it.cls.endsWith("Button") && it.node.isClickable && it.node.isEnabled && it.node.isVisibleToUser }
+            )
+            report.appendLine("The walk after the header: ${next.map { "${it.label} ${roleOf(it)} ${it.bounds.toShortString()} visible=${it.node.isVisibleToUser}" }}")
+            reachable = listed && headerAt >= 0 && next.map { it.label } == controls
+            // 5. ACTION_CLICK on Rename: the header takes the group's name field, as the sheet's row would.
+            val rename = nodes.firstOrNull()
+            val clicked = rename?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+            val field = clicked && awaitChrome(6_000) { chromeValue("!!document.querySelector('input[aria-label=\"Group name\"]')") == "true" }
+            expect("[group actions] ACTION_CLICK on the Rename control opens the group's name field, as the sheet's row does (clicked $clicked)", field)
+            report.appendLine("ACTION_CLICK on Rename: performed $clicked; the name field came $field")
+            snap("group-actions")
+            if (field) {
+                // The field left as a blur leaves it: the name stands.
+                chromeJs("(function(){var i=document.querySelector('input[aria-label=\"Group name\"]');if(i)i.blur();return !!i})()")
+                awaitChrome(4_000) { chromeValue("!!document.querySelector('input[aria-label=\"Group name\"]')") == "false" }
+                if (!awaitIme(shown = false, timeoutMs = 3_000)) {
+                    back()
+                    awaitIme(shown = false, timeoutMs = 4_000)
+                }
+            }
+        } finally {
+            setTouchExploration(false)
+            if (talkBackOn) {
+                disableTalkBack()
+                bringToFront()
+            }
+            awaitChrome(6_000) { !manager.isTouchExplorationEnabled }
+        }
+        // 6. Gone with the mode.
+        val gone = awaitChrome(8_000) {
+            nudgeFrame()
+            controls.none { name -> freshNodes { it == name }.isNotEmpty() }
+        }
+        expect("[group actions] with touch exploration off the controls leave the tree", gone)
+        expect("[group actions] A11Y-10 on the card: the group's actions reach a reader – TalkBack's menu lists them ($sheetInMenu) or the card's controls under touch exploration do ($reachable)", sheetInMenu || reachable)
+        report.appendLine()
+        report.appendLine("With touch exploration off the controls left the tree: $gone")
+        report.appendLine("A11Y-10 on the card: the sheet's rows in TalkBack's menu $sheetInMenu; as the card's controls under touch exploration $reachable")
+        File(out, "a11y-chrome-group-actions.txt").writeText(report.toString())
+        if (overviewOpen()) {
+            dismiss()
+            awaitChrome(6_000) { !overviewOpen() }
         }
     }
 
@@ -1607,6 +1760,7 @@ class ChromeA11yDemo : DemoHarness(
             val row = bounds("New Tab")
             finding("  [$label] menu row ${row?.let { sz(it) }} (line box ${20 * factor} + 24)")
             expect("[$label] a menu row grows from the line box", row != null && abs(dp(row.height()) - (20 * factor + 24)) <= 2.5)
+            sheetLabelsCheck(label, factor)
             val state = chromeAccessibilityState()
             val wantList = Math.round(fontScale * 100) >= 130
             val pose = awaitPose(if (wantList) "list" else "row")
@@ -1618,12 +1772,25 @@ class ChromeA11yDemo : DemoHarness(
                 expect("[$label] the list carries the row's items by the same names ($names vs $iconRowNames)", names.isNotEmpty() && (iconRowNames.isEmpty() || names == iconRowNames))
                 val rows = runCatching { JSONArray(chromeValue(LIST_ROWS_JS)) }.getOrDefault(JSONArray())
                 val heights = List(rows.length()) { rows.getJSONObject(it).optDouble("h") }
-                finding("  [$label] the list's rows: $heights tall (line box ${20 * factor} + 24 = ${20 * factor + 24})")
-                expect("[$label] the list's rows grow from the line box like every row ($heights vs ${20 * factor + 24})", heights.isNotEmpty() && heights.all { abs(it - (20 * factor + 24)) <= 0.5 })
+                // One line's box plus 24, or two lines' where a label took §4's second line
+                // ([sheetLabelsCheck] says which, per row); never between, never more.
+                val oneLine = 20 * factor + 24
+                val twoLines = 40 * factor + 24
+                finding("  [$label] the list's rows: $heights tall (line box ${20 * factor} + 24 = $oneLine; two lines $twoLines)")
+                expect("[$label] the list's rows grow from the line box like every row ($heights vs $oneLine, or $twoLines for two lines)", heights.isNotEmpty() && heights.all { abs(it - oneLine) <= 0.5 || abs(it - twoLines) <= 0.5 })
                 nameAudit("$label-menu-list")
             }
             overflowCheck(label, "menu")
             snap(if (wantList) "$label-menu-list" else "$label-sheet")
+            // At the largest scale the sheet runs past the phone: its end scrolled up too, so
+            // the last rows (Passwords, Add-ons and Themes) are seen whole – run 2's still
+            // showed Passwords cut at the sheet's scroll edge, which reads like an ellipsis.
+            if (wantList && fontScale >= 1.99) {
+                val scrolled = chromeJs("(function(){var s=document.querySelector('.zen-sheet-scroll');if(!s)return false;s.scrollTop=s.scrollHeight;return s.scrollTop>0})()") == "true"
+                finding("  [$label] the sheet scrolled to its end for the second still: $scrolled")
+                SystemClock.sleep(800)
+                snap("$label-menu-list-end")
+            }
             dismiss()
             awaitSurface(up = false, timeoutMs = 6_000)
             // The large-text list in dark, once: the lead's gate is on the pose, light and dark.
@@ -1640,6 +1807,51 @@ class ChromeA11yDemo : DemoHarness(
             }
         }
         clearChrome()
+    }
+
+    /**
+     * §4's two-line rule on the open sheet's row labels (the lead's nit on #440): above scale 1
+     * every `.zen-sheet-item > .truncate` label is the clamp's – wrapping on, two lines at most,
+     * `-webkit-box` – and its row grows from one line's box plus 24 to two lines' where the label
+     * takes the second; nothing is cut; at scale 1 the labels are one line with wrapping off.
+     * Which labels take the second line is written down with the widest label's text width
+     * against its room: on this phone none of the app menu's does at any scale (the widest,
+     * Listen to This Page, is well inside its room at 2.0), so the rule's proof is the computed
+     * style on every label and the rows' heights, the stills the rows whole.
+     */
+    private fun sheetLabelsCheck(label: String, factor: Double) {
+        val read = runCatching { JSONObject(chromeValue(SHEET_LABELS_JS)) }.getOrNull()
+        if (read == null) {
+            note("[$label] the sheet's row labels could not be read for the two-line rule")
+            return
+        }
+        val rows = read.getJSONArray("rows")
+        val labels = List(rows.length()) { rows.getJSONObject(it) }
+        val step = read.optString("step")
+        val wantStep = when {
+            factor >= 1.5 -> "larger"
+            factor > 1 -> "large"
+            else -> ""
+        }
+        val twoLine = labels.filter { it.optInt("lines") >= 2 }.map { it.optString("name") }
+        val cut = labels.filter { it.optBoolean("clipped") }.map { it.optString("name") }
+        val widest = labels.maxByOrNull { it.optDouble("textW") }
+        finding(
+            "  [$label] the sheet's ${labels.size} row labels under data-text-scale '$step': on two lines ${twoLine.ifEmpty { listOf("none – every label fits its line") }}; cut ${cut.ifEmpty { listOf("none") }}; " +
+                "the widest '${widest?.optString("name")}' ${widest?.optDouble("textW")?.roundToInt()} px in ${widest?.optInt("room")} px of room; rows ${labels.map { it.optDouble("rowH").roundToInt() }} tall"
+        )
+        expect("[$label] the root carries data-text-scale '$wantStep' ('$step')", step == wantStep)
+        if (factor > 1) {
+            val off = labels.filter { !(it.optString("disp") == "-webkit-box" && it.optString("ws") == "normal" && it.optString("clamp") == "2") }.map { it.optString("name") }
+            expect("[$label] every row label is the two-line clamp's: -webkit-box, white-space normal, -webkit-line-clamp 2 (${off.ifEmpty { listOf("all are") }})", labels.isNotEmpty() && off.isEmpty())
+        } else {
+            val off = labels.filter { it.optString("ws") != "nowrap" || it.optInt("lines") != 1 }.map { it.optString("name") }
+            expect("[$label] at the default size every row label is one line with wrapping off (${off.ifEmpty { listOf("all are") }})", labels.isNotEmpty() && off.isEmpty())
+        }
+        expect("[$label] no row label is cut: two lines hold every name (${cut.ifEmpty { listOf("none cut") }})", cut.isEmpty())
+        val wrong = labels.filter { abs(it.optDouble("rowH") - (it.optInt("lines") * 20 * factor + 24)) > 0.5 }
+            .map { "${it.optString("name")} ${it.optDouble("rowH")} for ${it.optInt("lines")} line(s)" }
+        expect("[$label] every row is its label's lines' boxes plus 24 (${wrong.ifEmpty { listOf("all are") }})", labels.isNotEmpty() && wrong.isEmpty())
     }
 
     /** Text that spills out of its box in the chrome: a soft read, the stills are the proof. */
@@ -2823,8 +3035,11 @@ class ChromeA11yDemo : DemoHarness(
         AccessibilityNodeInfo.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY -> "PREVIOUS_GRANULARITY"
         AccessibilityNodeInfo.ACTION_NEXT_HTML_ELEMENT -> "NEXT_HTML"
         AccessibilityNodeInfo.ACTION_PREVIOUS_HTML_ELEMENT -> "PREVIOUS_HTML"
+        AccessibilityNodeInfo.ACTION_DISMISS -> "DISMISS"
         AccessibilityAction.ACTION_SHOW_ON_SCREEN.id -> "SHOW_ON_SCREEN"
         AccessibilityAction.ACTION_SET_PROGRESS.id -> "SET_PROGRESS"
+        // What Chromium's bridge hands a `contextmenu` listener (run 2 read it as 0x102003c).
+        AccessibilityAction.ACTION_CONTEXT_CLICK.id -> "CONTEXT_CLICK"
         else -> "0x${Integer.toHexString(id)}"
     }
 
@@ -2864,6 +3079,12 @@ class ChromeA11yDemo : DemoHarness(
         /** androidx's extras key for a supplemental description below Android 16 (`AccessibilityNodeInfoCompat.SUPPLEMENTAL_DESCRIPTION_KEY`). */
         const val SUPPLEMENTAL_KEY = "androidx.view.accessibility.AccessibilityNodeInfoCompat.SUPPLEMENTAL_DESCRIPTION_KEY"
         const val WALK_LIMIT = 5_000
+        /**
+         * The last id of the framework's own accessibility actions (TalkBack's
+         * `AccessibilityNodeInfoUtils.SYSTEM_ACTION_MAX`): an action above it is an app's custom
+         * action, the kind TalkBack's actions menu lists by its label.
+         */
+        const val SYSTEM_ACTION_MAX = 0x01FFFFFF
         /** How long the overview's other pane is given to reach the tree on the software GPU ([awaitPane]). */
         const val PANE_TREE_MS = 20_000L
         /** The Colour scheme picker's options in the sheet's order (`settings/sections.tsx`). */
@@ -2920,6 +3141,46 @@ class ChromeA11yDemo : DemoHarness(
                   glyphHidden: !!(glyph && glyph.getAttribute('aria-hidden') === 'true')
                 };
               }));
+            })()
+        """.trimIndent()
+
+        /**
+         * Every row label of the open sheet (`.zen-sheet-item > .truncate`: the list pose's rows
+         * and the rows of text alike) against §4's two-line rule (`:root[data-text-scale] …`,
+         * main.css): the root's step, and per label its text, the row's height, the lines it
+         * takes (its box over its line height), the room it has, the width its text would take on
+         * one line (measured with wrapping off for the moment of the read), whether anything is
+         * cut (a box shorter than its content, the clamp's ellipsis) and the computed display,
+         * white-space and line clamp; '' without a sheet.
+         */
+        val SHEET_LABELS_JS = """
+            (function () {
+              var sheet = document.querySelector('.zen-sheet-scroll') || document.querySelector('[role="dialog"]');
+              if (!sheet) return '';
+              var labels = sheet.querySelectorAll('.zen-sheet-item > .truncate');
+              var rows = Array.prototype.map.call(labels, function (label) {
+                var row = label.parentElement;
+                var cs = getComputedStyle(label);
+                var lineH = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2 || 0;
+                var rect = label.getBoundingClientRect();
+                var was = label.style.whiteSpace;
+                label.style.whiteSpace = 'nowrap';
+                var textW = label.scrollWidth;
+                label.style.whiteSpace = was;
+                return {
+                  name: (label.textContent || '').replace(/\s+/g, ' ').trim(),
+                  rowH: row.getBoundingClientRect().height,
+                  lines: lineH ? Math.round(rect.height / lineH) : 1,
+                  lineH: lineH,
+                  room: label.clientWidth,
+                  textW: textW,
+                  clipped: label.scrollHeight > label.clientHeight + 1,
+                  clamp: cs.getPropertyValue('-webkit-line-clamp'),
+                  ws: cs.whiteSpace,
+                  disp: cs.display
+                };
+              });
+              return JSON.stringify({ step: document.documentElement.getAttribute('data-text-scale') || '', rows: rows });
             })()
         """.trimIndent()
 

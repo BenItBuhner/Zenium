@@ -11,6 +11,7 @@ import { applyAccessibilityState, resetAccessibilityState } from '@renderer/lib/
 import { viewportStore } from '@renderer/lib/formFactor'
 import { isIconRow } from '@renderer/lib/menuIconRow'
 import { SheetPresence } from '@renderer/lib/motion/presence'
+import { applyTextScale } from '@renderer/lib/textScale'
 import { uiStore } from '@renderer/lib/ui'
 
 /*
@@ -191,6 +192,7 @@ afterEach(() => {
   frames.now = 0
   act(() => viewportStore.set({ ...viewportStore.get(), coarse: false, formFactor: 'desktop' }))
   act(() => resetAccessibilityState())
+  applyTextScale(null)
 })
 
 // --- the list pose (A11Y-04) -------------------------------------------------------------------
@@ -320,6 +322,61 @@ describe('as a list under touch exploration or large text (A11Y-04)', () => {
     await show(appMenu({ bookmarked: true }))
     expect(listRow('Edit Bookmark').dataset.filled).toBe('true')
     expect(fillOpacity()).toBe(1)
+  })
+
+  it('at large text a row’s label wraps to §9.2’s second line before it truncates: every row’s label is the `.truncate` child the §4 rule reaches, the rule clamps at two lines with wrapping on, and the row grows from its line box to hold them', async () => {
+    // Font scale 2.0 on the host: the chrome's zoom is clamped at 1.8 (`ChromeTextScale.kt`),
+    // which the host sends with the configuration change and the root wears as
+    // `data-text-scale='larger'` (`lib/textScale.ts`) – the step the stylesheet's rule keys on.
+    act(() => applyAccessibilityState({ touchExploration: false, fontScale: 2 }))
+    applyTextScale({ textZoom: 1.8 })
+    expect(document.documentElement.dataset.textScale).toBe('larger')
+    expect(document.documentElement.matches('[data-text-scale]')).toBe(true)
+    await show(appMenu())
+    expect(list()).not.toBeNull()
+    const rows = [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')]
+    expect(rows.map((r) => r.textContent)).toEqual([
+      'Forward',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload',
+      'New Tab',
+      'New Private Tab'
+    ])
+    for (const row of rows) {
+      // The label is the row's own `.truncate` child – the list's rows and the rows of text
+      // alike – so `:root[data-text-scale] .zen-sheet-item > .truncate` reaches it and no
+      // second selector is needed for the list pose; the whole of the row's text is in it.
+      const label = row.querySelector<HTMLElement>(':scope > .truncate')
+      expect(label, row.textContent ?? '').not.toBeNull()
+      expect(label!.matches('.zen-sheet-item > .truncate')).toBe(true)
+      expect(label!.textContent).toBe(row.textContent)
+    }
+    // The rule itself (`main.css`, §4 / §9.2, the ruling on #237): above scale 1 the row's label
+    // is a two-line box that wraps – `white-space: normal` undoing `truncate`'s `nowrap`, the
+    // clamp at two, the ellipsis after – and the row's fixed height becomes a floor, so the
+    // second line has room (line box + the 24, two line boxes + the 24 with a wrapped label).
+    const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    const clamp = /:root\[data-text-scale\]\s+:is\(([^)]*)\)\s+>\s+\.truncate[^{]*\{([^}]*)\}/.exec(
+      css
+    )
+    expect(clamp).not.toBeNull()
+    expect(clamp![1]).toContain('.zen-sheet-item')
+    expect(clamp![2]).toContain('white-space: normal')
+    expect(clamp![2]).toContain('-webkit-line-clamp: 2')
+    expect(clamp![2]).toContain('display: -webkit-box')
+    expect(clamp![2]).toContain('-webkit-box-orient: vertical')
+    expect(clamp![2]).toContain('overflow: hidden')
+    const grow = /:root\[data-text-scale\] \.zen-sheet-item \{([^}]*)\}/.exec(css)![1]
+    expect(grow).toContain('height: auto')
+    expect(grow).toContain('min-height: var(--v2-row)')
+    expect(grow).toContain('padding-block: var(--v2-row-pad)')
+    // The rule is not layered (it has to win over Tailwind's `truncate`, `nowrap` and the
+    // ellipsis): it opens at the stylesheet's top level, no block around it.
+    const before = css.slice(0, clamp!.index).replace(/\/\*[\s\S]*?\*\//g, '')
+    const depth = (before.match(/\{/g) ?? []).length - (before.match(/\}/g) ?? []).length
+    expect(depth).toBe(0)
   })
 
   it('the list’s rule draws in tokens alone: the rows are the sheet’s own, the glyphs the row tokens, no literal hue', () => {
