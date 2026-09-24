@@ -946,7 +946,7 @@ describe('the AI Agents › Agent skill group', () => {
     if (all.kind === 'action') {
       expect(all.button).toBe('Install')
       expect(all.confirm).toBeUndefined()
-      all.onPress()
+      all.onPress?.()
       expect(invoke).toHaveBeenLastCalledWith('agent.installSkill', {})
     }
   })
@@ -987,7 +987,7 @@ describe('the AI Agents › Agent skill group', () => {
     if (remove.kind === 'action') {
       expect(remove.destructive).toBe(true)
       expect(remove.confirm?.action).toBe('Remove')
-      remove.onPress()
+      remove.onPress?.()
       expect(invoke).toHaveBeenLastCalledWith('agent.uninstallSkill', {})
     }
   })
@@ -1008,7 +1008,7 @@ describe('the AI Agents › Agent skill group', () => {
     const again = findRow([group], 'skill-all')!
     if (again.kind === 'action') {
       expect(again.button).toBe('Check again')
-      again.onPress()
+      again.onPress?.()
       expect(invoke).toHaveBeenLastCalledWith('agent.refreshSkill', undefined)
     }
   })
