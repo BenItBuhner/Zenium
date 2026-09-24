@@ -513,6 +513,9 @@ export class ElectronPlatform implements Platform {
       onChanged: (listener) => void nativeTheme.on('updated', listener),
       setSource: (scheme) => {
         nativeTheme.themeSource = scheme
+        // The setting itself, for the `zen://` documents and the page views on a platform whose
+        // engine does not carry the source to pages (Linux: `emulatedColorScheme`).
+        this.views.applyColorScheme(scheme)
       }
     }
     this.languages = {
@@ -642,7 +645,8 @@ export class ElectronPlatform implements Platform {
         ses,
         (id) => browser.reader.pageHtml(id),
         () => this.newTabBackground.response(),
-        chromiumLicences
+        chromiumLicences,
+        () => this.views.colorScheme
       )
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
