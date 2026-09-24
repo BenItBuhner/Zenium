@@ -498,8 +498,11 @@ describe('the pairing prompt', () => {
     expect(uiStore.get().deviceChooserOpen).toBe(true)
     const p = pairing()!
     expect(p.getAttribute('role')).toBe('alertdialog')
-    expect(p.dataset.pairingKind).toBe('confirm')
-    expect(p.dataset.devicePairing).toBe('pair-1')
+    // The primitive's `data-confirm` is the prompt's one handle; it hangs no `data-*` of its own
+    // on the root (the kind and the prompt's id had none reading them).
+    expect(p.dataset.confirm).toBe('device-pairing')
+    expect(p.dataset.pairingKind).toBeUndefined()
+    expect(p.dataset.devicePairing).toBeUndefined()
     expect(p.style.width).toBe('320px')
     expect(p.querySelector('.zen-v2-title-block-title')!.textContent).toBe(
       'Pair with Heart Rate Monitor'
@@ -538,7 +541,6 @@ describe('the pairing prompt', () => {
     await settle()
     const p = pairing()!
     expect(p.getAttribute('role')).toBe('dialog')
-    expect(p.dataset.pairingKind).toBe('providePin')
     // Alone it carries a field: §9.20's 400.
     expect(p.style.width).toBe('400px')
     expect(p.querySelector('.zen-v2-title-block-description')!.textContent).toBe(

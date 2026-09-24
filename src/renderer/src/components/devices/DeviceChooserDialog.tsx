@@ -362,7 +362,6 @@ export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.
 
   const shared = {
     name: 'device-pairing',
-    data: { 'data-pairing-kind': prompt.kind, 'data-device-pairing': prompt.id },
     glyph: <Bluetooth aria-hidden />,
     title: pairingTitle(prompt),
     description: pairingDescription(prompt),

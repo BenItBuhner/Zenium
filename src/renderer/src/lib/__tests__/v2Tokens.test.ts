@@ -1020,8 +1020,9 @@ describe('the v2 primitives (§9.34)', () => {
     // the class carries the value's look – tabular digits, letter-spaced so six read as six – and
     // nothing of the field's box, which is the primitive's. The rule main.css once aimed at the
     // primitive from outside (`.zen-confirm-dialog[data-pairing-kind='providePin']
-    // .zen-v2-field[aria-label='PIN']`) is gone: no stylesheet selects the prompt's field by its
-    // `data-pairing-kind` or by its `aria-label`, so the field's name can change without its look.
+    // .zen-v2-field[aria-label='PIN']`) is gone, and so is the `data-pairing-kind` handle it hung
+    // on (the prompt's root carries the primitive's `data-confirm` alone): no stylesheet names
+    // either, so the field's name can change without its look.
     expect(bare.match(/\.zen-device-pairing-field \{/g)).toHaveLength(1)
     expect(block('.zen-device-pairing-field').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
       '  font-variant-numeric: tabular-nums;',
