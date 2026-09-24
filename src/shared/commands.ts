@@ -208,13 +208,23 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'bookmark.toggleBar'
   },
   { id: 'history', label: 'Show History', keywords: ['history', 'recent'], action: 'history.open' },
-  // Chrome's "Delete browsing data" action chip (its Ctrl+Shift+Delete dialog).
+  // Chrome's "Delete browsing data" action (its Ctrl+Shift+Delete dialog; omnibox-39): "clear
+  // browsing data", "delete browsing data" and "clear history" all name this row.
   {
     id: 'clear-browsing-data',
     label: 'Delete Browsing Data',
     keywords: ['delete', 'clear', 'browsing data', 'history', 'cookies', 'cache'],
     action: 'privacy.clearBrowsingData',
     layouts: SIDEBAR_LAYOUTS
+  },
+  // Chrome's "Manage search engines" action (omnibox-39): Settings › Search, the page the pill
+  // menu's Manage Search Engines… row opens – on every host, since the section is a page tab or
+  // a sheet wherever Settings is.
+  {
+    id: 'manage-search-engines',
+    label: 'Manage Search Engines',
+    keywords: ['search engines', 'engines', 'manage', 'change', 'edit', 'default', 'keyword'],
+    action: 'search.manageEngines'
   },
   {
     id: 'downloads',
@@ -234,6 +244,14 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     keywords: ['devtools', 'inspect', 'developer'],
     action: 'devtools.toggle',
     requires: 'devtools'
+  },
+  {
+    // Chrome's More Tools › Task Manager (Shift+Esc): the `zen://tasks` page, desktop alone.
+    id: 'task-manager',
+    label: 'Task Manager',
+    keywords: ['task manager', 'tasks', 'processes', 'memory', 'cpu', 'end process'],
+    action: 'tasks.open',
+    layouts: DESKTOP_LAYOUT
   },
   {
     id: 'print',

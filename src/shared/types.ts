@@ -28,7 +28,7 @@ import type {
   SiteDataStatus
 } from './siteData'
 import type { InternalPageId, InternalPageQuery } from './internalPages'
-import type { InstallSurface, WebAppInfo } from './webApp'
+import type { InstallSurface, InstalledWebApp, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
 import type { QrEvent, QrStartOutcome } from './qrScan'
@@ -482,6 +482,17 @@ export interface Tab {
    * when the host could not tell (or the tab was never loaded this session).
    */
   sleepSavedMb?: number
+  /**
+   * The tab woke from the sleep the unload pass put it into (omnibox-40, Chrome's Memory Saver
+   * chip): the memory (MB) its page held at the discard – `sleepSavedMb`'s number, carried past
+   * the wake – and when it was loaded again. The pill's site-information slot shows the leaf
+   * for a while from `wokeAt` and the leaf's bubble names the number. Set by `Tabs.load` for a
+   * tab `discard` slept this session with a number; gone at the next discard; a session's own
+   * (never persisted – a tab restored asleep from disk carries no number, and its first load
+   * says nothing: the saving was another session's). Absent on hosts and records older than
+   * the field.
+   */
+  memorySaver?: { savedMb: number; wokeAt: number } | null
   /** Page lifecycle frozen by the resource governor (no timers, no script) – Chromium tab freezing. */
   frozen: boolean
   /** CPU throttling factor the governor applied to the renderer (1 = none, 4 = four times slower). */
@@ -2048,6 +2059,11 @@ export type ShortcutAction =
   | 'devtools.inspector'
   | 'devtools.console'
   | 'devtools.browserConsole'
+  /**
+   * Chrome's task manager (Shift+Esc; More Tools › Task Manager): the `zen://tasks` page tab –
+   * every process with its memory and CPU, End process (`core/tasks.ts`); desktop layouts only.
+   */
+  | 'tasks.open'
   | 'settings.open'
   | 'addons.open'
   | 'boost.new'
@@ -2969,6 +2985,58 @@ export interface GovernorAction {
   reason: string
 }
 
+// ---------------------------------------------------------------------------
+// The task manager (`zen://tasks`, Chrome's Shift+Esc; `core/tasks.ts`)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a process in the task manager runs, as Chrome's task manager tells its tasks apart and
+ * as Electron's `ProcessMetric.type` lets a host tell them: the browser process itself; a tab's
+ * renderer – one process per tab, or one for several tabs when the engine puts same-site
+ * documents together; an extension's host (its background page or service worker, its popups
+ * and pages); a DevTools frontend (the toolbox of one tab); the GPU process; a utility process
+ * (the network service, audio, storage – Electron names the service); a renderer the browser
+ * attributes to none of its tabs (a chrome window's own document, a new tab page loading ahead
+ * of its tab); and anything else Electron reports (a zygote, a sandbox helper).
+ */
+export type TaskKind =
+  'browser' | 'tab' | 'extension' | 'devtools' | 'gpu' | 'utility' | 'renderer' | 'other'
+
+/** One task-manager row: a process and what it runs, as of the list's `sampledAt`. */
+export interface TaskInfo {
+  /** The OS process id: the row's key, and what `tasks.end` names. */
+  pid: number
+  kind: TaskKind
+  /**
+   * The row's title, the core's words: the tab's title (the titles joined when tabs share the
+   * process), the extension's name, the utility's service ("Network service"), "GPU process",
+   * "Browser"; the description under it is the kind and the pid, drawn by the page.
+   */
+  title: string
+  /** The row's picture: the tab's favicon, the extension's icon; null for the kind's glyph. */
+  icon: string | null
+  /** The tabs the process serves (kind `tab`), or the one a `devtools` frontend inspects. */
+  tabIds: readonly string[]
+  /** The extension the process hosts (kind `extension`), by its id. */
+  extensionId: string | null
+  /** The process's working set in bytes (Chrome's "Memory footprint"). */
+  memoryBytes: number
+  /** Private (unshared) bytes where the platform reports them (Windows); null elsewhere. */
+  privateBytes: number | null
+  /** CPU use since the last sample as a percentage of one core (Chrome's CPU column; may pass 100). */
+  cpuPercent: number
+  /** Bytes received per second since the last sample, where the host counts them; null where it does not. */
+  networkBytesPerSecond: number | null
+  /** Whether End process may act on it: never the browser process. */
+  endable: boolean
+}
+
+/** The task manager's list: every process, sampled at `sampledAt` (`Date.now()` on the host). */
+export interface TaskList {
+  sampledAt: number
+  tasks: TaskInfo[]
+}
+
 export interface ResourceSnapshot {
   /** 0 until the governor has taken its first sample. */
   sampledAt: number
@@ -3616,6 +3684,12 @@ export interface UIState {
   /** The extension side panel this window shows beside the page, if one is open for its tab. */
   sidePanel: SidePanelInfo | null
   mods: Mod[]
+  /**
+   * The web apps installed on this host (`WebAppService.installed`), in the order they were
+   * installed, each with how many of its windows stand open: Settings › Apps lists, opens and
+   * uninstalls them (shortcuts-menus-138), asking first when a window would close (§9.23; #435).
+   */
+  webApps: InstalledWebApp[]
   sync: SyncStatus
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]
@@ -3778,6 +3852,7 @@ export interface CommandDescriptor {
     | 'resources.open'
     | 'passwords.open'
     | 'translate.open'
+    | 'search.manageEngines'
   /** The host capability the command needs; not offered where it is false. */
   requires?: keyof HostCapabilities
   /** The layouts the command does something in; absent means all of them. */
@@ -3796,6 +3871,20 @@ export interface CommandDescriptor {
  */
 export type MenuGlyph = 'forward' | 'home' | 'star' | 'download' | 'info' | 'reload' | 'stop'
 
+/**
+ * A tab group's mark before a row's label (the app menu's Tab Folders submenu, where every row
+ * is a saved group; shortcuts-menus-111): the one group glyph (`GroupGlyph`, design language
+ * v2 §9.37) drawn from the group's colour and its own icon – the 10 ring at a 2 stroke for a
+ * SAVED group, the 10 dot for an open one – in the favicon's 16 box, so the row reads as the
+ * sidebar's header and the strip's chip do. A native menu host has no such glyph and draws
+ * the row as text.
+ */
+export interface MenuGroupMark {
+  color: FolderColor | null
+  icon: string
+  saved: boolean
+}
+
 export interface MenuItemDescriptor {
   id: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -3804,6 +3893,8 @@ export interface MenuItemDescriptor {
   checked: boolean
   /** A favicon (`data:` or remote URL) the renderer may show before the label. */
   icon?: string | null
+  /** A tab group's mark in the glyph slot (the Tab Folders submenu's rows). */
+  group?: MenuGroupMark
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */
   danger?: boolean
@@ -4393,6 +4484,18 @@ export interface Commands {
   'urlbar.cancel': { args: void; result: void }
   /** Delete on a row its owner marked `deletable` (`omnibox.onDeleteSuggestion`). */
   'urlbar.deleteSuggestion': { args: { input: string }; result: void }
+  /**
+   * A right-click on a removable row of the desktop popup (context-menus-115): the host's native
+   * menu – Remove, and on a remembered search Delete Search History – where the event says
+   * (`MenuAnchor`). A pick comes back to the bar as `urlbar.suggestionAction`, the list being
+   * the bar's to edit; the core knows the row by the id the bar drew it under.
+   */
+  'urlbar.suggestionContextMenu': {
+    args: { id: string; kind: SuggestionKind } & MenuAnchor
+    result: void
+  }
+  /** Delete Search History (the suggestion menu's second row): every remembered search goes. */
+  'urlbar.clearSearchHistory': { args: void; result: void }
 
   /**
    * A picture of the tab's page for the chrome to stand in for it under an overlay. Only a page
@@ -4500,6 +4603,25 @@ export interface Commands {
   'resources.trim': { args: void; result: void }
   /** Restart the browser so changed startup switches take effect. */
   'resources.relaunch': { args: void; result: void }
+
+  // ---- The task manager (`zen://tasks`, `core/tasks.ts`) --------------------------------------
+  /**
+   * Every process the app runs right now, as the task manager page lists them (`TaskList`):
+   * the browser process, each tab's renderer named by its tab(s), each extension's host by the
+   * extension's name, the DevTools frontends, the GPU and the utility processes, with memory,
+   * CPU and – where the host counts it – network. Sampled on each call (the page asks every
+   * 1–2 s while it is visible): a host without a `TaskHost` answers an empty list, which the
+   * page shows as its one-sentence empty state.
+   */
+  'tasks.list': { args: void; result: TaskList }
+  /**
+   * End the process `pid` (Chrome's End process): a tab's renderer is crashed in place
+   * (`forcefullyCrashRenderer`, so the tab shows its crashed page and reloads on the user's
+   * word), an extension's or a helper process is killed. The browser process is refused, as is
+   * a pid that is not in the last list; the chrome asks first (a §9.23 destructive prompt). True
+   * when the process was told to go.
+   */
+  'tasks.end': { args: { pid: number }; result: boolean }
 
   'settings.update': { args: Partial<Settings>; result: void }
   'shortcuts.update': { args: { id: string; binding: KeyBinding | null }; result: void }
@@ -5537,6 +5659,12 @@ export interface Events {
   state: UIState
   'urlbar.toggle': { mode: UrlbarOpenMode; text?: string }
   'urlbar.close': void
+  /**
+   * A pick in a suggestion row's native menu (`urlbar.suggestionContextMenu`): the bar removes
+   * the row through the core's removes as Shift+Delete does (`remove`), or has every remembered
+   * search forgotten and takes their rows out of its list (`delete-search-history`).
+   */
+  'urlbar.suggestionAction': { id: string; action: 'remove' | 'delete-search-history' }
   /**
    * A new tab page was opened (and activated) for the user: the chrome waits for the tab to
    * appear in its state, lets it paint, then opens the URL bar in new-tab mode over it.

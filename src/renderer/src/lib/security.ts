@@ -234,10 +234,15 @@ export async function openPermissionPrompt(tabId: string | null): Promise<void> 
   uiStore.set({ permissionPromptOpen: true })
 }
 
-export function closePermissionPrompt(): void {
+/**
+ * The prompt's surface has left. Focus goes back to the page unless the caller keeps it in the
+ * chrome (`keepFocus`: Escape on the quiet prompt's bubble hands it to the bell it hung from,
+ * §9.22, as the Memory Saver bubble's does).
+ */
+export function closePermissionPrompt(opts: { keepFocus?: boolean } = {}): void {
   if (uiStore.get().permissionPromptOpen) uiStore.set({ permissionPromptOpen: false })
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!opts.keepFocus) returnFocusToPage()
 }
 
 /** Answer a permission prompt; the core remembers what needs remembering and resumes the page. */

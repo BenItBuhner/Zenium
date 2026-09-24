@@ -349,6 +349,13 @@ export interface UiState {
    */
   zoomBubble: { tabId: string; factor: number; seq: number; source: 'auto' | 'chip' } | null
   /**
+   * The Memory Saver bubble (omnibox-40, Chrome's): a 320 popover under the pill's
+   * site-information slot, opened by a click on the leaf the slot shows for a tab just woken
+   * from sleep – "Memory Saver freed up N MB" and the Never unload this site row. Up for the
+   * tab named; the leaf stays in the slot while it is (`lib/siteChips.ts`).
+   */
+  memorySaverBubble: { tabId: string } | null
+  /**
    * Reader View's text preferences for a reader tab (CT-20): a popover under the pill's chip on
    * a mouse (`anchor` is the chip; null hangs it under the frame's top edge), the shared sheet
    * on a phone. Opened by the chip or the app menu's "Text Preferences…" (the reader document
@@ -381,6 +388,12 @@ export interface UiState {
    * pages goes. `keyboard`: the folder's header had the keyboard, so Cancel hands it back there.
    */
   folderDeleteConfirm: { folderId: string; keyboard: boolean } | null
+  /**
+   * "Delete search history?" (the desktop omnibox row menu's Delete Search History; §10.5's
+   * bulk case, pr-434 ruling 3): a §9.23 destructive frame dialog over the open bar and the
+   * page's picture, asked before every remembered search goes.
+   */
+  deleteSearchHistoryOpen: boolean
   /** A folder panel of the bookmarks bar hangs over the page. */
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
@@ -614,11 +627,13 @@ export const uiStore = createStore<UiState>(
     windowPromptOpen: false,
     starDialog: null,
     zoomBubble: null,
+    memorySaverBubble: null,
     readerPreferences: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
     folderDeleteConfirm: null,
+    deleteSearchHistoryOpen: false,
     barMenuOpen: false,
     permissionPromptOpen: false,
     quietPromptId: null,
@@ -1198,9 +1213,11 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.autofillPassphrase &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.memorySaverBubble &&
     !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui)
   )
 }
@@ -1263,10 +1280,12 @@ export function invalidateSnapshot(): void {
     !ui.autofillPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.memorySaverBubble &&
     !ui.readerPreferences &&
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
+    !ui.deleteSearchHistoryOpen &&
     !bookmarkChromeOpen(ui) &&
     ui.frameDialogCover === 0
   ) {
@@ -2025,10 +2044,12 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.autofillPrompt !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
+    ui.memorySaverBubble !== null ||
     ui.readerPreferences !== null ||
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
     ui.folderDeleteConfirm !== null ||
+    ui.deleteSearchHistoryOpen ||
     // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
   )
@@ -2122,6 +2143,52 @@ export function closeFolderDeleteConfirm(toChrome = false): void {
   uiStore.set({ folderDeleteConfirm: null })
   invalidateSnapshot()
   if (!toChrome) returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The Delete Search History confirmation over the page (desktop)
+// ---------------------------------------------------------------------------
+
+/**
+ * Window event the "Delete search history?" prompt sends as its Delete is answered: the open
+ * URL bar takes the remembered searches' rows out of its list – the core has forgotten them
+ * (`urlbar.clearSearchHistory`).
+ */
+export const URLBAR_SEARCHES_FORGOTTEN_EVENT = 'zen-urlbar-searches-forgotten'
+
+/**
+ * "Delete search history?" from a suggestion row's native menu (context-menus-115; §10.5's bulk
+ * case, pr-434 ruling 3): a frame dialog (design language v2 §9.23, §9.5) over the open bar and
+ * the active page's picture – the bar's own capture, already held – through TabDialogs'
+ * `FrameDialogHost`. The bar stays up under it, inert with the frame while the prompt stands.
+ */
+export async function openDeleteSearchHistoryConfirm(activeTabId: string | null): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ deleteSearchHistoryOpen: true })
+}
+
+/**
+ * Put the prompt away. The keyboard stays in the chrome while the bar is up
+ * (`returnFocusToPage` asks for the page's only once no chrome surface has it); the prompt's
+ * own return (§9.5, one hop down) hands it to the bar's field.
+ */
+export function closeDeleteSearchHistoryConfirm(): void {
+  if (!uiStore.get().deleteSearchHistoryOpen) return
+  uiStore.set({ deleteSearchHistoryOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The prompt's Delete: the core forgets every remembered search (`urlbar.clearSearchHistory`),
+ * the open bar hears of it and drops their rows (`URLBAR_SEARCHES_FORGOTTEN_EVENT`), and the
+ * prompt goes.
+ */
+export function confirmDeleteSearchHistory(): void {
+  run('urlbar.clearSearchHistory', undefined)
+  window.dispatchEvent(new CustomEvent(URLBAR_SEARCHES_FORGOTTEN_EVENT))
+  closeDeleteSearchHistoryConfirm()
 }
 
 // ---------------------------------------------------------------------------
@@ -2342,6 +2409,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
       ui.zoomBubble !== null ||
+      ui.memorySaverBubble !== null ||
       ui.readerPreferences !== null ||
       ui.hoverCard.tabId !== null ||
       ui.downloadsOpen ||
@@ -2373,6 +2441,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       barMenuOpen: false,
       starDialog: null,
       zoomBubble: null,
+      memorySaverBubble: null,
       readerPreferences: null,
       hoverCard: HOVER_CARD_HIDDEN,
       downloadsOpen: false,
@@ -2445,6 +2514,32 @@ export async function openZoomBubble(tabId: string, factor: number): Promise<voi
 export function closeZoomBubble(opts: { keepFocus?: boolean } = {}): void {
   if (!uiStore.get().zoomBubble) return
   uiStore.set({ zoomBubble: null })
+  invalidateSnapshot()
+  if (!opts.keepFocus) returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The Memory Saver bubble under the pill's leaf
+// ---------------------------------------------------------------------------
+
+/**
+ * The pill's leaf was pressed (omnibox-40): the bubble opens under the slot over a picture of
+ * the page – the live view gives way under chrome that overlaps it, as under the zoom bubble –
+ * and the keyboard goes into it (§9.22: a surface the user opened).
+ */
+export async function openMemorySaverBubble(tabId: string): Promise<void> {
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ memorySaverBubble: { tabId } })
+}
+
+/**
+ * Put the bubble away. Focus goes back to the page unless the caller keeps it in the chrome
+ * (`keepFocus`: Escape hands it to the slot the bubble hung from, §9.22).
+ */
+export function closeMemorySaverBubble(opts: { keepFocus?: boolean } = {}): void {
+  if (!uiStore.get().memorySaverBubble) return
+  uiStore.set({ memorySaverBubble: null })
   invalidateSnapshot()
   if (!opts.keepFocus) returnFocusToPage()
 }
