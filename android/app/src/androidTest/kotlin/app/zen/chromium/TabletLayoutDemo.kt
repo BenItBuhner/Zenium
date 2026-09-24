@@ -478,11 +478,16 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         val f = Finger()
         // The first stretch of the pull, off the record: the layer comes down from the toolbar's
         // edge with the finger (MOT-04's slide, a negative `translateY` of the overview on its
-        // progress – §9.36's "pulled down from the toolbar"; the phone morphs instead), read and
-        // pictured with the finger held about two fifths of the way (the travel is 0.42 of the
-        // page's height, `overviewTravel`).
-        f.down(pill.centerX(), pill.centerY())
-        f.moveBy(0f, 0.16f * height, 300)
+        // progress – §9.36's "pulled down from the toolbar"; the phone morphs instead), 1:1 – the
+        // layer's foot moves as far as the finger (§11's input rule, the gate's ruling: the travel
+        // is the layer's height on the tablet, the phone's 0.42 reach the phone's) – read and
+        // pictured with the finger held 0.34 of the window down: the foot that far below the
+        // toolbar's edge, less the drag's slop, about two fifths of the layer.
+        val fingerY0 = pill.centerY()
+        val firstStretch = 0.34f * height
+        val secondStretch = 0.22f * height
+        f.down(pill.centerX(), fingerY0)
+        f.moveBy(0f, firstStretch, 400)
         // The chrome lies under the page views: the layer is unseen until the host has drawn the
         // frame without the live page (the page's still, under the layer, stands in from that
         // frame), so the finger holds here until it shows – the capture behind it takes about a
@@ -533,13 +538,40 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
             midCardOpacity == "1",
             "active card opacity '$midCardOpacity', card ${domRect(ACTIVE_CELL)}, layer ${domRect(OVERVIEW_LAYER)}"
         )
+        // 1:1 (§11: "a drag tracks the finger 1:1 – that is input, not animation"; the gate's
+        // ruling on §9.36's drag): the foot's position against the finger's. The finger has come
+        // `firstStretch` since the touch; the drag began past its slop (the dead zone every drag
+        // of the chrome begins past, 8 px and the step that crossed it), so the foot stands that
+        // much short of the whole – the reading; the claim is the displacement between two holds,
+        // below, which the slop does not enter.
+        val fingerTravel1 = firstStretch / density
+        val boxTop = jsNumber(LAYER_BOX_TOP)
+        val footScreenY = offsetY + (boxTop + layerFoot).toFloat() * density
+        finding(
+            "1:1 at the first hold: the foot ${layerFoot.toInt()} px below the toolbar's edge against the finger's ${"%.1f".format(fingerTravel1)} px since the touch – " +
+                "${"%.1f".format(fingerTravel1 - layerFoot)} px short, the drag's slop; on the screen the foot at y ${footScreenY.roundToInt()} under the finger at y ${(fingerY0 + firstStretch).roundToInt()} (a reading, not a claim)"
+        )
         shot("13a-overview-mid-slide")
         // The rest of the pull is the jank record's gesture scene; the release and its spring come
         // after, as their own: the spring carries the layer the rest of the way (§11's gentle
         // spring, about Chrome's 300 ms). Long tasks are read by their sequence (RULING 5), never timed.
         traceFrames("tablet-overview-pull", JankBudget.Kind.GESTURE) {
-            f.moveBy(0f, 0.39f * height, 500)
+            f.moveBy(0f, secondStretch, 500)
         }
+        // The finger holds again: the foot has moved as far as the finger did between the two
+        // holds – equal within a frame of the finger's motion (one frame's worth of the move at the
+        // pull's pace; the reads are of a held finger, so the two should agree to the pixel).
+        SystemClock.sleep(250)
+        val layerFoot2 = jsNumber(LAYER_FOOT)
+        val fingerTravel2 = secondStretch / density
+        val footTravel = layerFoot2 - layerFoot
+        val framePx = fingerTravel2 / (500f / 16.7f)
+        check(
+            "the pull is 1:1: between two holds the layer's foot moved as far as the finger, no farther and no less (§11's input rule; the gate's ruling on §9.36's drag)",
+            !layerFoot.isNaN() && !layerFoot2.isNaN() && abs(footTravel - fingerTravel2) <= framePx,
+            "foot ${layerFoot.toInt()} -> ${layerFoot2.toInt()} px below the toolbar's edge (${"%.1f".format(footTravel)} px) against the finger's ${"%.1f".format(fingerTravel2)} px; " +
+                "${"%.2f".format(footTravel - fingerTravel2)} px apart, a frame of the finger ${"%.1f".format(framePx)} px; transform '${jsText(OVERVIEW_TRANSFORM)}', the box ${boxHeight.toInt()} tall"
+        )
         traceFrames("tablet-overview-slide", JankBudget.Kind.SPRING) {
             f.up()
             SystemClock.sleep(SLIDE_MS)
@@ -1143,6 +1175,8 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
          */
         private const val LAYER_FOOT = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;var b=l.parentElement.getBoundingClientRect();return Math.round(l.getBoundingClientRect().bottom-b.top)})()"
         private const val LAYER_BOX_HEIGHT = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;return Math.round(l.parentElement.getBoundingClientRect().height)})()"
+        /** The box's head in CSS px from the window's top: the toolbar's edge the layer comes down from. */
+        private const val LAYER_BOX_TOP = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;return Math.round(l.parentElement.getBoundingClientRect().top)})()"
         /**
          * The Tabs pane's scroller – what moves: its `scrollTop` is the opening scroll – its inner
          * grid (which carries the column template and never scrolls itself), and the cells.
