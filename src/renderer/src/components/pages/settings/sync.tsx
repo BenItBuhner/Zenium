@@ -17,7 +17,7 @@ import {
   syncStatusLine
 } from '@renderer/lib/syncSetup'
 import { relativeTime } from '@renderer/lib/utils'
-import { DeviceGlyph } from '../../DeviceGlyph'
+import { DeviceGlyph, anyDeviceKind } from '../../DeviceGlyph'
 import { FaviconGlyph } from './blocks'
 import type { RowGroup, SettingsRow } from './model'
 import type { SectionContext } from './sections'
@@ -201,21 +201,7 @@ function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
       // one number on the page that says the state, and the sentence explains it.
       aside: sync.devices.length.toLocaleString(),
       rows: [
-        ...[...sync.devices]
-          .sort((a, b) => b.lastSeen - a.lastSeen)
-          .map((device): SettingsRow => ({
-            kind: 'info',
-            id: `sync-device:${device.id}`,
-            label: device.name,
-            keywords: ['device', 'last seen', ...(device.kind ? [device.kind] : [])],
-            // The device's kind leads the name at the full ink (§10.4; services pass 4): the
-            // monitor, laptop, phone or tablet its announcement carried, the 69 % stand-in for a
-            // device whose build carried none – every row has the glyph, so the list keeps one
-            // glyph column.
-            leading: <DeviceGlyph kind={device.kind} />,
-            // The last-seen age trails the name in the summary's 13 at 69 %, `tabular-nums` (§4).
-            trailing: <span className="zen-settings-summary">{relativeTime(device.lastSeen)}</span>
-          })),
+        ...deviceRows(sync.devices),
         // The devices' tabs follow the devices (§9.17: a group's next row is its action); with
         // no device there is nothing to list, so the row is not drawn disabled on the first
         // screen – it appears when its state does (§10.4).
@@ -274,6 +260,29 @@ function deviceNameRow(sync: SyncStatus): SettingsRow {
       return undefined
     }
   }
+}
+
+/**
+ * The other devices, most recently seen first: each an info row with the device's name and,
+ * trailing, when it was last seen. The device's kind leads the name at the full ink (§10.4;
+ * services pass 4): the laptop, phone or tablet its announcement carried (`DeviceGlyph`), the
+ * 69 % stand-in for a device whose build carried none – while ANY device of the list announced
+ * one (`anyDeviceKind`, the #453 lead check's condition on §10.4): a list in which no device did
+ * has no glyph column at all, the names at the gutter, rather than a column of stand-ins.
+ */
+function deviceRows(devices: SyncStatus['devices']): SettingsRow[] {
+  const glyphs = anyDeviceKind(devices)
+  return [...devices]
+    .sort((a, b) => b.lastSeen - a.lastSeen)
+    .map((device): SettingsRow => ({
+      kind: 'info',
+      id: `sync-device:${device.id}`,
+      label: device.name,
+      keywords: ['device', 'last seen', ...(device.kind ? [device.kind] : [])],
+      leading: glyphs ? <DeviceGlyph kind={device.kind} /> : undefined,
+      // The last-seen age trails the name in the summary's 13 at 69 %, `tabular-nums` (§4).
+      trailing: <span className="zen-settings-summary">{relativeTime(device.lastSeen)}</span>
+    }))
 }
 
 /**

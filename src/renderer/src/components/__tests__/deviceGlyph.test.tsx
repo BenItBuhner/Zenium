@@ -6,16 +6,19 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Laptop, Monitor, MonitorSmartphone, Smartphone, Tablet } from 'lucide-react'
 import type { SyncDeviceKind } from '@shared/types'
-import { DeviceGlyph } from '../DeviceGlyph'
+import { DeviceGlyph, anyDeviceKind } from '../DeviceGlyph'
 
 /*
  * The one device glyph (services pass 4; the #418 ruling 4 and design language v2 §10.4): a
- * device row or heading leads with the kind the device announced – monitor, laptop, phone,
- * tablet, Chrome's `GetIconType` mapping – at the full ink, and a device that announced none
- * with the stand-in at 69 %, the deemphasis a missing favicon's globe takes. Every consumer
- * (Settings › Sync's rows, the phone's Send to your devices sheet, the History page's device
- * headings on both layouts, the app menu's Send to Your Devices rows) draws this component, so
- * what it renders is tested once here and each consumer's test checks it is there.
+ * device row or heading leads with the kind the device announced – the laptop for a desktop of
+ * any OS and for a laptop (Chrome's one "computer" glyph, `GetIconType`), phone, tablet – at the
+ * full ink, and a device that announced none with the stand-in at 69 %, the deemphasis a missing
+ * favicon's globe takes; a list where no device announced a kind draws no glyph column at all
+ * (`anyDeviceKind`, the #453 lead check's condition on §10.4). Every consumer (Settings › Sync's
+ * rows, the phone's Send to your devices sheet, the History page's device headings on both
+ * layouts, the app menu's Send to Your Devices rows) draws this component and asks this
+ * predicate, so what they render and decide is tested once here and each consumer's test checks
+ * it is there – and, with no kind in the list, that it is not.
  */
 
 const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
@@ -36,9 +39,9 @@ const lucide = (Icon: typeof Monitor): string =>
 const picture = (markup: string): string => markup.slice(markup.indexOf('>') + 1)
 
 describe('DeviceGlyph', () => {
-  it("draws each kind's lucide glyph – Monitor, Laptop, Smartphone, Tablet – at the full ink, decorative, named by its kind", () => {
-    const expected: Record<SyncDeviceKind, typeof Monitor> = {
-      desktop: Monitor,
+  it("draws each kind's lucide glyph – the Laptop for a desktop and for a laptop, Smartphone, Tablet – at the full ink, decorative, named by its kind", () => {
+    const expected: Record<SyncDeviceKind, typeof Laptop> = {
+      desktop: Laptop,
       laptop: Laptop,
       phone: Smartphone,
       tablet: Tablet
@@ -51,6 +54,39 @@ describe('DeviceGlyph', () => {
       expect(markup, kind).toContain('aria-hidden="true"')
       expect(markup, kind).toMatch(/class="[^"]*\bzen-device-glyph\b/)
       expect(markup, kind).not.toContain('zen-list-standin')
+    }
+    // The desktop class draws Chrome's one computer glyph, the laptop (`stts_button.cc`'s
+    // `GetIconType`: every desktop OS the same picture; the #453 lead check): no host can tell a
+    // laptop from a tower, so the monitor is not drawn for either kind until one can. The two
+    // kinds still name themselves apart (`data-kind`), so the day a host can, only the picture
+    // changes.
+    expect(picture(glyphOf('desktop'))).toBe(picture(glyphOf('laptop')))
+    expect(picture(glyphOf('desktop'))).not.toBe(picture(lucide(Monitor)))
+    expect(glyphOf('desktop')).toContain('data-kind="desktop"')
+    expect(glyphOf('laptop')).toContain('data-kind="laptop"')
+    // Three pictures for the four kinds; the stand-in a fourth, none of them.
+    const pictures = new Set(
+      (['desktop', 'laptop', 'phone', 'tablet', null] as const).map((kind) =>
+        picture(glyphOf(kind))
+      )
+    )
+    expect(pictures.size).toBe(4)
+  })
+
+  it('anyDeviceKind: a list draws a glyph column while any record carries a kind – under either name – and none at all when no record does (§10.4’s condition)', () => {
+    // No devices, or devices that all announced none (an older build's peers, whichever field
+    // the surface's record keeps the kind in): no column – the labels stand at the gutter rather
+    // than behind a column of stand-ins.
+    expect(anyDeviceKind([])).toBe(false)
+    expect(anyDeviceKind([{}, { kind: undefined }, { kind: null }])).toBe(false)
+    expect(anyDeviceKind([{ deviceKind: undefined }, { deviceKind: null }])).toBe(false)
+    // One kind among them and every row has the slot: the kinds at the full ink, the rest the
+    // stand-in – the same rule for a device list (`kind`) and a tab list (`deviceKind`).
+    expect(anyDeviceKind([{ kind: null }, { kind: 'desktop' }])).toBe(true)
+    expect(anyDeviceKind([{ deviceKind: undefined }, { deviceKind: 'phone' }])).toBe(true)
+    for (const kind of ['desktop', 'laptop', 'phone', 'tablet'] as const) {
+      expect(anyDeviceKind([{ kind }]), kind).toBe(true)
+      expect(anyDeviceKind([{ deviceKind: kind }]), kind).toBe(true)
     }
   })
 

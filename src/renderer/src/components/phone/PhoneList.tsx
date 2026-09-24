@@ -243,7 +243,8 @@ export interface PhoneListRowProps {
    * – the text from the gutter – rather than an empty column (§10.4: a list in which only some
    * rows would have a leading element has none; a list whose rows all name a subject with a
    * glyph, the Send to your devices picker's devices, gives every row one – the stand-in where
-   * the subject's kind is not known).
+   * the subject's kind is not known, so long as SOME row's is: a list in which no device
+   * announced a kind gives no row a box, `anyDeviceKind`).
    */
   icon?: ReactNode
   title: string

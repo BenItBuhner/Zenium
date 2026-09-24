@@ -223,8 +223,9 @@ describe('the phone Send to your devices sheet', () => {
       'Work laptop, Last active 2 h ago'
     ])
     // Every row leads with the device's kind glyph (services pass 4; §10.4's one glyph column):
-    // the monitor for the desktop, the phone for the Pixel, and for the laptop – a build that
-    // announced no kind – the stand-in at 69 %, decorative all three. Two-line rows.
+    // the laptop for the desktop (Chrome's one computer glyph), the phone for the Pixel, and
+    // for the laptop – a build that announced no kind – the stand-in at 69 %, decorative all
+    // three. Two-line rows.
     const glyphs = rows().map((row) => {
       const lead = row.querySelector<HTMLElement>('.zen-list-lead')!
       const glyph = lead.querySelector<SVGElement>('svg[data-testid="device-glyph"]')!
@@ -241,6 +242,16 @@ describe('the phone Send to your devices sheet', () => {
     ])
     for (const row of rows()) expect(row.getAttribute('data-two-line')).toBe('true')
     expect(commands()).toEqual([])
+  })
+
+  it('a list in which no device announced a kind – every peer an older build – has no glyph column: the names at the gutter, no stand-in column (§10.4’s condition, anyDeviceKind)', async () => {
+    await show([LAPTOP, { ...DESK, kind: undefined }])
+    expect(rows().map((r) => rowText(r).title)).toEqual(['Home desktop', 'Work laptop'])
+    // No leading box on any row – the rows read from the gutter, as a list with nothing to
+    // lead with does – and no glyph, stand-in or otherwise.
+    expect(document.querySelector('.zen-frame-dialogs .zen-list-lead')).toBeNull()
+    expect(document.querySelector('.zen-frame-dialogs [data-testid="device-glyph"]')).toBeNull()
+    for (const row of rows()) expect(row.getAttribute('data-two-line')).toBe('true')
   })
 
   it('opens on its first row (§9.22, a list sheet), the dialog named by its title behind it', async () => {

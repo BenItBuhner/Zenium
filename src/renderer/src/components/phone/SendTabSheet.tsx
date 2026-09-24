@@ -5,7 +5,7 @@ import { run } from '@renderer/lib/api'
 import { SYNC_COPY } from '@renderer/lib/syncSetup'
 import { browserStore, closeSendTabSheet, uiStore } from '@renderer/lib/ui'
 import { relativeTime } from '@renderer/lib/utils'
-import { DeviceGlyph } from '../DeviceGlyph'
+import { DeviceGlyph, anyDeviceKind } from '../DeviceGlyph'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { PhoneEmptyNote, PhoneListRow } from './PhoneList'
 import { PhoneSheet } from './PhoneSheet'
@@ -18,10 +18,12 @@ import { PhoneSheet } from './PhoneSheet'
  * Settings › Sync device rows trail). A tap sends the tab's page to that device once the sheet
  * has gone (`sync.sendTab`; the engine's toast, "Sent to Laptop", confirms the hand-over, and the
  * target opens it as a tab when it next syncs). Each row leads with the device's kind glyph
- * (`DeviceGlyph`, services pass 4: `devices[].kind` – the monitor, laptop, phone or tablet the
- * device announced, as Chrome's picker draws them; the 69 % stand-in for a device whose build
+ * (`DeviceGlyph`, services pass 4: `devices[].kind` – the laptop, phone or tablet the device
+ * announced, as Chrome's picker draws them; the 69 % stand-in for a device whose build
  * announced none), the row's subject in §9.3's leading slot, so the sheet keeps one glyph
- * column as the Settings › Sync device rows do. A list sheet, it opens on its first row (§9.22;
+ * column as the Settings › Sync device rows do – while any device of the list announced a kind
+ * (`anyDeviceKind`, §10.4's condition): with none the rows have no leading box and the names
+ * stand at the gutter. A list sheet, it opens on its first row (§9.22;
  * the #314 lead's ruling: the container is for a title-and-notice sheet and the form-sheet
  * exception only), the dialog's title read ahead of it. With one other device the menu names it
  * and sends outright, so this sheet is for two or more; should the list have emptied meanwhile
@@ -40,6 +42,7 @@ function SendTabSheet({ state, tab }: { state: UIState; tab: Tab }): JSX.Element
   // The ages are judged as the sheet opens; it is never up for long.
   const [now] = useState(() => Date.now())
   const devices = [...state.sync.devices].sort((a, b) => b.lastSeen - a.lastSeen)
+  const glyphs = anyDeviceKind(devices)
   const send = (device: SyncStatus['devices'][number]): void => {
     sheet.current?.dismiss(() => {
       void run('sync.sendTab', {
@@ -71,7 +74,7 @@ function SendTabSheet({ state, tab }: { state: UIState; tab: Tab }): JSX.Element
             return (
               <PhoneListRow
                 key={device.id}
-                icon={<DeviceGlyph kind={device.kind} />}
+                icon={glyphs ? <DeviceGlyph kind={device.kind} /> : undefined}
                 title={device.name}
                 subtitle={when}
                 ariaLabel={`${device.name}, ${when}`}

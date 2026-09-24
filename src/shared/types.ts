@@ -922,8 +922,9 @@ export interface SyncRemoteTab {
  * (`sync_enums.proto`: desktop, phone, tablet; the older `DeviceType` names an OS, and every
  * desktop OS draws one computer glyph). Android tells a phone from a tablet by its form factor
  * (the 600 dp line); a desktop reports `desktop` unless its platform has a reliable signal that
- * it is a laptop – Electron has none, so today no desktop says `laptop`. Absent from an older
- * device's announcement: its rows show a stand-in glyph.
+ * it is a laptop – Electron has none, so today no desktop says `laptop`, and the two kinds draw
+ * one glyph (`DeviceGlyph`). Absent from an older device's announcement: its rows show a
+ * stand-in glyph beside devices that announced one, and none where no device did.
  */
 export type SyncDeviceKind = 'desktop' | 'laptop' | 'phone' | 'tablet'
 
@@ -3917,7 +3918,10 @@ export interface MenuGroupMark {
  * services pass 4): the device's kind glyph (`DeviceGlyph`, the one every device row draws) –
  * the kind its announcement carried, or `null` for a device whose build announced none, drawn
  * as the 69 % stand-in – so every row of the submenu has the glyph and the labels share one
- * edge. A native menu host has no glyph in the platform's menu ink and draws the row as text.
+ * edge while any device of the submenu announced a kind; a submenu in which none did draws no
+ * glyph column at all (the renderer's `anyDeviceKind`, §10.4's condition – the mark carries the
+ * fact, the renderer the rule). A native menu host has no glyph in the platform's menu ink and
+ * draws the row as text.
  */
 export interface MenuDeviceMark {
   kind: SyncDeviceKind | null

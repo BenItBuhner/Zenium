@@ -371,9 +371,10 @@ describe("the History page's other devices' groups (TAB-02)", () => {
       'Work laptop, Last active 2 h ago'
     ])
     expect(headings.map((h) => h.getAttribute('aria-haspopup'))).toEqual(['menu', 'menu'])
-    // Each heading leads with the device's kind glyph (services pass 4): the desktop's monitor
-    // at the full ink, the laptop's – its build announced no kind – the stand-in at 69 %.
-    // Decorative: the headings' text above is the name and the aside alone.
+    // Each heading leads with the device's kind glyph (services pass 4): the desktop's laptop
+    // (Chrome's one computer glyph) at the full ink, the laptop's – its build announced no kind
+    // – the stand-in at 69 %. Decorative: the headings' text above is the name and the aside
+    // alone.
     expect(
       headings.map((h) => {
         const glyph = h.firstElementChild as SVGElement
@@ -391,6 +392,21 @@ describe("the History page's other devices' groups (TAB-02)", () => {
     // A row reads the title over the host.
     expect(rowByTitle('Internet Archive').textContent).toContain('archive.org')
     expect(rowByTitle('Zenium').textContent).toContain('github.com')
+  })
+
+  it('headings of a list in which no device announced a kind lead with the name itself – no glyph column, no stand-in (§10.4’s condition, anyDeviceKind)', async () => {
+    remote = devices().map((device) => ({ ...device, deviceKind: undefined }))
+    await show(stateOf(pages(), { sync: sync(true) }))
+    const headings = [...document.querySelectorAll<HTMLElement>('.zen-device-heading-button')]
+    expect(headings.map((h) => h.getAttribute('aria-label'))).toEqual([
+      'Home desktop, Last active 3 min ago',
+      'Work laptop, Last active 2 h ago'
+    ])
+    for (const heading of headings) {
+      expect(heading.querySelector('[data-testid="device-glyph"]')).toBeNull()
+      expect(heading.firstElementChild?.tagName).toBe('SPAN')
+      expect(heading.firstElementChild?.textContent).toMatch(/^(Home desktop|Work laptop)$/)
+    }
   })
 
   it("a row opens the device's tab here and the page leaves; a tab this device holds under the same id comes to the front instead (ID-10)", async () => {
