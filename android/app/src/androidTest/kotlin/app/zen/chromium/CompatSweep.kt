@@ -23,12 +23,14 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import androidx.webkit.WebViewCompat
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.blocking.Domains
 import app.zen.chromium.blocking.ListenerOptions
 import app.zen.chromium.blocking.WebRequestEvent
 import app.zen.chromium.blocking.WebRequestListener
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.Extensions
+import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -5038,47 +5040,88 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * round 9 has one), so a popup that lists nothing is F, with the worker's console beside it.
      * With `probe`, the [WebRequestProbe] measures what the runtime's `webRequest` gave the
      * sniffer while the page loaded (compat round 13's item 4), and a failing grade carries the
-     * measurement beside `listener`, the events the sniffer asked for (read off its code).
+     * measurement beside `listener`, the events the sniffer asked for (read off its code). A
+     * fixture under a public-looking name ([PUBLIC_NAME_BASE]) is allowed over plaintext for the
+     * row ([allowPlaintext]); HTTPS-only mode would upgrade it otherwise.
      */
     private fun mediaPopup(label: String, page: String, listing: String, panel: String? = null, settleMs: Long = 25_000, probe: Boolean = false, listener: String? = null, observer: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val webRequest = if (probe) WebRequestProbe(row, factor).also { it.start() } else null
-        val (fixtureTab, view) = fixture(page, factor, 2_500)
-        runCatching { tabEval(view, "(function(){var v=document.querySelector('video');if(v){v.muted=true;v.play().catch(function(){})}return 'played'})()") }
-        webRequest?.let { extra.put("webRequest", it.read(view)) }
-        SystemClock.sleep(scaled(5_000, factor))
-        extra.put("fixture", json(tabEval(view, "(function(){var v=document.querySelector('video');return JSON.stringify({video:v?(v.paused?'paused':'playing'):'none',src:v?(v.currentSrc||v.src||'').slice(-48):null,readyState:document.readyState})})()")))
-        showTab(fixtureTab)
-        val since = StepEvidence(row)
-        val popup = openPopup(row, factor)
-        val steps = JSONArray()
-        var found = JSONObject()
-        val listExpr = DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:$listing.test(text)&&!/no (video|media|download)s? (found|detected|yet)/i.test(text.slice(0,80)),controls:document.querySelectorAll('a[download], [class*=\"download\"], [id*=\"download\"], button').length,text:")
-        if (popup != null) {
-            SystemClock.sleep(scaled(3_000, factor))
-            extra.put("popupFirst", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
-            if (panel != null) tapLabel(panel, factor, steps, "panel")
-            popupView()?.takeIf { it.context == "popup" }?.let { live ->
-                found = pollExpr(live, listExpr, scaled(settleMs, factor))
-                found.put("console", JSONArray(consoleOf(live).takeLast(10)))
+        val restorePlaintext = allowPlaintext(listOfNotNull(page, observer), factor, extra)
+        try {
+            val webRequest = if (probe) WebRequestProbe(row, factor).also { it.start() } else null
+            val (fixtureTab, view) = fixture(page, factor, 2_500)
+            runCatching { tabEval(view, "(function(){var v=document.querySelector('video');if(v){v.muted=true;v.play().catch(function(){})}return 'played'})()") }
+            webRequest?.let { extra.put("webRequest", it.read(view)) }
+            SystemClock.sleep(scaled(5_000, factor))
+            extra.put("fixture", json(tabEval(view, "(function(){var v=document.querySelector('video');return JSON.stringify({video:v?(v.paused?'paused':'playing'):'none',src:v?(v.currentSrc||v.src||'').slice(-48):null,readyState:document.readyState})})()")))
+            showTab(fixtureTab)
+            val since = StepEvidence(row)
+            val popup = openPopup(row, factor)
+            val steps = JSONArray()
+            var found = JSONObject()
+            val listExpr = DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:$listing.test(text)&&!/no (video|media|download)s? (found|detected|yet)/i.test(text.slice(0,80)),controls:document.querySelectorAll('a[download], [class*=\"download\"], [id*=\"download\"], button').length,text:")
+            if (popup != null) {
+                SystemClock.sleep(scaled(3_000, factor))
+                extra.put("popupFirst", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+                if (panel != null) tapLabel(panel, factor, steps, "panel")
+                popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                    found = pollExpr(live, listExpr, scaled(settleMs, factor))
+                    found.put("console", JSONArray(consoleOf(live).takeLast(10)))
+                }
             }
+            extra.put("steps", steps).put("popup", found)
+            backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+            since.record(extra, "atEnd")
+            SystemClock.sleep(600)
+            snap("${entry.optString("slug")}-media-popup")
+            runCatching { coreCall("extension.closePopup", "null") }
+            val observed = observer?.let { observerPathListing(row, factor, it, listExpr, panel, settleMs, extra, entry.optString("slug")) }
+            webRequest?.stop()
+            val measured = webRequest?.let { "; its sniffer listens to ${listener ?: "webRequest"}; the runtime gave it: ${it.summary()}" } ?: ""
+            val paths = observed?.let { "; relay path (media.html): ${if (found.optBoolean("pass")) "listed" else "not listed"}; observer path ($observer): ${if (it.optBoolean("pass")) "listed" else "not listed"} ${it.toString().take(160)}" } ?: ""
+            when {
+                found.optBoolean("pass") && (observed == null || observed.optBoolean("pass")) -> Grade("P", "$label: popup over the playing clip lists it: ${found.toString().take(220)}$paths${if (webRequest != null) "; measured: ${webRequest.summary()}" else ""}", extra)
+                popup == null -> Grade("F", "$label: popup did not render in the core check$paths$measured", extra)
+                found.optBoolean("pass") -> Grade("F", "$label: popup over the relay-fed clip lists it, over the fetch/XHR-fed clip it lists nothing$paths$measured", extra)
+                else -> Grade("F", "$label: popup over the playing clip lists no clip: ${found.toString().take(220)}$paths$measured", extra)
+            }
+        } finally {
+            restorePlaintext?.invoke()
         }
-        extra.put("steps", steps).put("popup", found)
-        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
-        since.record(extra, "atEnd")
-        SystemClock.sleep(600)
-        snap("${entry.optString("slug")}-media-popup")
-        runCatching { coreCall("extension.closePopup", "null") }
-        val observed = observer?.let { observerPathListing(row, factor, it, listExpr, panel, settleMs, extra, entry.optString("slug")) }
-        webRequest?.stop()
-        val measured = webRequest?.let { "; its sniffer listens to ${listener ?: "webRequest"}; the runtime gave it: ${it.summary()}" } ?: ""
-        val paths = observed?.let { "; relay path (media.html): ${if (found.optBoolean("pass")) "listed" else "not listed"}; observer path ($observer): ${if (it.optBoolean("pass")) "listed" else "not listed"} ${it.toString().take(160)}" } ?: ""
-        when {
-            found.optBoolean("pass") && (observed == null || observed.optBoolean("pass")) -> Grade("P", "$label: popup over the playing clip lists it: ${found.toString().take(220)}$paths${if (webRequest != null) "; measured: ${webRequest.summary()}" else ""}", extra)
-            popup == null -> Grade("F", "$label: popup did not render in the core check$paths$measured", extra)
-            found.optBoolean("pass") -> Grade("F", "$label: popup over the relay-fed clip lists it, over the fetch/XHR-fed clip it lists nothing$paths$measured", extra)
-            else -> Grade("F", "$label: popup over the playing clip lists no clip: ${found.toString().take(220)}$paths$measured", extra)
+    }
+
+    /**
+     * HTTPS-only mode (`ask`, the default) upgrades an `http://` navigation to any host that is
+     * unique on the public Internet – [NonUniqueHost] leaves private addresses, loopback and
+     * names without a registrable suffix alone, a `nip.io` name it does not. A fixture under the
+     * public-looking name a sniffer page demands ([PUBLIC_NAME_BASE]) was sent to https://, met
+     * the plain fixture server (its log holds the TLS hellos, `net_error -107` in logcat) and
+     * never loaded, so the row measured an empty page (round 15, run 36017645161: Chrono Download
+     * Manager's two fixtures on both WebViews). Such names are allowed over plaintext for the row
+     * the way a user allows a site from the mode's warning page (`privacy.httpsOnlyAllowed`), the
+     * pushed flags are waited for (the tab consults them ahead of the engine's rule reload,
+     * `Blocking.applyUpgrade`), and the list goes back afterwards. Null when nothing in `urls`
+     * needs it; else the restore.
+     */
+    private fun allowPlaintext(urls: List<String>, factor: Double, extra: JSONObject): (() -> Unit)? {
+        val names = urls.filter { it.startsWith("http://") }
+            .mapNotNull { Domains.hostnameOf(it) }
+            .filterNot { NonUniqueHost.isNonUnique(it) }
+            .distinct()
+        if (names.isEmpty()) return null
+        val privacy = coreSnapshot().getJSONObject("settings").getJSONObject("privacy")
+        val before = privacy.optJSONArray("httpsOnlyAllowed") ?: JSONArray()
+        val allowed = JSONArray(before.toString())
+        names.filterNot { name -> (0 until before.length()).any { before.optString(it) == name } }.forEach { allowed.put(it) }
+        coreCall("settings.update", JSONObject().put("privacy", JSONObject(privacy.toString()).put("httpsOnlyAllowed", allowed)).toString())
+        val landed = poll(scaled(10_000, factor), 200) {
+            urls.filter { it.startsWith("http://") }.all { host.privacy.flags.plaintextAllowed(it) }.takeIf { it }
+        } == true
+        extra.put("plaintextAllowed", JSONObject().put("names", JSONArray(names)).put("landed", landed))
+        if (!landed) Log.w(TAG, "allowPlaintext: the flags did not carry ${names.joinToString(", ")} within the wait; the fixtures may be upgraded")
+        return {
+            runCatching { coreCall("settings.update", JSONObject().put("privacy", JSONObject(privacy.toString()).put("httpsOnlyAllowed", before)).toString()) }
         }
     }
 
