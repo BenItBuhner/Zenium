@@ -46,6 +46,7 @@ import type {
   ShortcutAction,
   SidePanelInfo,
   Suggestion,
+  SyncDeviceKind,
   SyncDeviceTabs,
   SyncScope,
   SyncStatus,
@@ -1961,6 +1962,14 @@ export interface SyncPlatformHost {
   folderName?(folder: string): Promise<string>
   /** What this device is called until the user renames it (the hostname; `Build.MODEL`). */
   deviceNameDefault(): string
+  /**
+   * What this device is, for the other devices' rows (`SyncDeviceKind`): Android tells a phone
+   * from a tablet by its form factor; a desktop says `desktop` unless the platform has a
+   * reliable signal that it is a laptop (Electron's `powerMonitor` only says whether the
+   * machine is on battery right now, so the Electron host never guesses `laptop`). A host
+   * without the method announces no kind, as builds before it did.
+   */
+  deviceKind?(): SyncDeviceKind
   createTransport(folder: string): SyncTransport
   /** Native scrypt, when the host has one; must equal the shared implementation bit for bit. */
   scrypt?: SyncScryptFn

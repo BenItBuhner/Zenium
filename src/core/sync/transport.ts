@@ -1,3 +1,4 @@
+import type { SyncDeviceKind } from '../../shared/types'
 import type { EncryptedEnvelope } from './crypto'
 import { isEnvelope } from './crypto'
 
@@ -24,8 +25,17 @@ passphrase, and deleting the folder only removes the shared copy, never your loc
 export interface DeviceFile {
   deviceId: string
   deviceName: string
+  /** What the device is (`SyncDeviceKind`); absent from a file an older build wrote. */
+  kind?: SyncDeviceKind
   updatedAt: number
   envelope: EncryptedEnvelope
+}
+
+const DEVICE_KINDS: ReadonlySet<string> = new Set(['desktop', 'laptop', 'phone', 'tablet'])
+
+/** A device kind as another device announced it; undefined for anything this build does not know. */
+export function deviceKindOf(raw: unknown): SyncDeviceKind | undefined {
+  return typeof raw === 'string' && DEVICE_KINDS.has(raw) ? (raw as SyncDeviceKind) : undefined
 }
 
 /**
@@ -97,9 +107,11 @@ export function parseDeviceFile(text: string): DeviceFile | null {
     !isEnvelope(raw.envelope)
   )
     return null
+  const kind = deviceKindOf(raw.kind)
   return {
     deviceId: raw.deviceId,
     deviceName: typeof raw.deviceName === 'string' ? raw.deviceName : raw.deviceId,
+    ...(kind ? { kind } : {}),
     updatedAt: raw.updatedAt,
     envelope: raw.envelope
   }

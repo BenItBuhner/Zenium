@@ -917,10 +917,30 @@ export interface SyncRemoteTab {
   windowId: string | null
 }
 
+/**
+ * What a synced device is, as its own platform reports it – Chrome's `DeviceFormFactor`
+ * (`sync_enums.proto`: desktop, phone, tablet; the older `DeviceType` names an OS, and every
+ * desktop OS draws one computer glyph). Android tells a phone from a tablet by its form factor
+ * (the 600 dp line); a desktop reports `desktop` unless its platform has a reliable signal that
+ * it is a laptop – Electron has none, so today no desktop says `laptop`. Absent from an older
+ * device's announcement: its rows show a stand-in glyph.
+ */
+export type SyncDeviceKind = 'desktop' | 'laptop' | 'phone' | 'tablet'
+
+/** Another device seen in the sync folder, as its announcement names it. */
+export interface SyncDevice {
+  id: string
+  name: string
+  lastSeen: number
+  kind?: SyncDeviceKind
+}
+
 /** Another device's open tabs, newest activity first ("Tabs from other devices"). */
 export interface SyncDeviceTabs {
   deviceId: string
   deviceName: string
+  /** The device's kind, when its announcement carried one. */
+  deviceKind?: SyncDeviceKind
   /** When the device last published its list (epoch ms). */
   updatedAt: number
   tabs: SyncRemoteTab[]
@@ -948,7 +968,7 @@ export interface SyncStatus {
   lastError: string | null
   syncing: boolean
   /** Other devices seen in the sync folder. */
-  devices: Array<{ id: string; name: string; lastSeen: number }>
+  devices: SyncDevice[]
   /** Set while the first sync waits for the user to confirm merging with existing cloud data. */
   pendingMerge: boolean
   /**
