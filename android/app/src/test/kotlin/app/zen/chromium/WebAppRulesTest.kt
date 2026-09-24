@@ -57,6 +57,42 @@ class WebAppRulesTest {
     }
 
     @Test
+    fun theUrlsTheWebViewCommitsAreReadAsWritten() {
+        // The WHATWG serialisation leaves `|` in a query and `[`, `]`, `^` in a path as they are
+        // (only `{` and `}` are percent-encoded there) and takes `_` in a host. `java.net.URI`
+        // (RFC 2396) refused each – `Illegal character in query`, `in path`, a null host – and
+        // every such page read as outside every scope, the X toolbar up on an in-scope page. The
+        // rule reads with `java.net.URL` now; these rows kill a parser that goes back.
+        val scope = "https://app.example/app/"
+        assertTrue(WebAppRules.inScope("https://app.example/app/?filter=a|b", scope))
+        assertTrue(WebAppRules.inScope("https://app.example/app/[x]", scope))
+        assertTrue(WebAppRules.inScope("https://app.example/app/a^b", scope))
+        assertTrue(WebAppRules.inScope("https://app.example/app/%7Bx%7D?q=[1]|{2}^3#h", scope))
+        assertTrue(WebAppRules.inScope("https://my_app.example/app/", "https://my_app.example/app/"))
+        assertFalse(WebAppRules.inScope("https://my_app.example/app/", scope))
+        // Credentials in the authority, and a query carrying `://` and `@` of its own.
+        assertTrue(WebAppRules.inScope("https://user:pw@app.example/app/inbox", scope))
+        assertTrue(WebAppRules.inScope("https://app.example/app/?next=https://other.example/@me", scope))
+        assertFalse(WebAppRules.inScope("https://app.example/other/?next=https://app.example/app/", scope))
+        // An IPv6 literal keeps its brackets; its port is read past them.
+        assertTrue(WebAppRules.inScope("http://[::1]:8123/pwa/", "http://[::1]:8123/"))
+        assertFalse(WebAppRules.inScope("http://[::1]:8124/pwa/", "http://[::1]:8123/"))
+        // What is no URL at all.
+        assertFalse(WebAppRules.inScope("https://app.example:port/app/", scope))
+        assertFalse(WebAppRules.inScope("https:///app/", scope))
+        assertFalse(WebAppRules.inScope("app.example/app/", scope))
+        assertFalse(WebAppRules.inScope("about:blank", scope))
+        // The parts themselves: the scheme and host folded, the port and the path as written.
+        val parts = WebAppRules.parse("HTTPS://User@APP.Example:8443/App/[x]?y=1#z")!!
+        assertEquals("https", parts.scheme)
+        assertEquals("app.example", parts.host)
+        assertEquals(8443, parts.port)
+        assertEquals("/App/[x]", parts.path)
+        assertEquals(-1, WebAppRules.parse("https://app.example")!!.port)
+        assertEquals("", WebAppRules.parse("https://app.example?x=1")!!.path)
+    }
+
+    @Test
     fun aRootScopeCoversTheWholeOrigin() {
         assertTrue(WebAppRules.inScope("https://app.example", "https://app.example/"))
         assertTrue(WebAppRules.inScope("https://app.example/anything/at/all", "https://app.example/"))

@@ -1,6 +1,6 @@
 package app.zen.chromium
 
-import java.net.URI
+import java.net.URL
 
 /**
  * The rules of an installed web app's window (PWA-07), pure so they have a JVM test: which
@@ -35,14 +35,16 @@ object WebAppRules {
     fun immersive(display: Display): Boolean = display == Display.FULLSCREEN
 
     /**
-     * The W3C rule the core applies too (`shared/webApp.ts` `isWithinScope`): same origin and a
-     * path that starts with the scope's. A URL that does not parse is outside every scope.
+     * The W3C rule the core applies too (`shared/webApp.ts` `isWithinScope`): same origin (the
+     * scheme and host compared without case, a default port folded) and a path that starts with
+     * the scope's, slash included – Chrome's `IsInScope`, `StartsWith(url.spec(), scope.spec())`.
+     * A string that is no URL is outside every scope.
      */
     fun inScope(url: String?, scope: String): Boolean {
         val u = parse(url) ?: return false
         val s = parse(scope) ?: return false
-        if (!originOf(u).equals(originOf(s), ignoreCase = true)) return false
-        return (u.rawPath.ifEmpty { "/" }).startsWith(s.rawPath.ifEmpty { "/" })
+        if (originOf(u) != originOf(s)) return false
+        return (u.path.ifEmpty { "/" }).startsWith(s.path.ifEmpty { "/" })
     }
 
     /**
@@ -122,17 +124,36 @@ object WebAppRules {
     fun displayModeUpdate(display: Display): String =
         "window.__zenSetDisplayMode && window.__zenSetDisplayMode('${display.manifestWord}');"
 
-    private fun parse(url: String?): URI? = runCatching { URI(url ?: return null) }.getOrNull()?.takeIf { it.scheme != null && it.host != null }
+    /**
+     * The parts of a URL the scope rule reads: the scheme and host in lower case, the port (-1
+     * for none) and the path as written, without the query and the fragment.
+     */
+    class Parts(val scheme: String, val host: String, val port: Int, val path: String)
 
-    private fun originOf(uri: URI): String {
-        val scheme = uri.scheme.lowercase()
+    /**
+     * The URL read with `java.net.URL`, the platform's lenient parser: it takes the WHATWG
+     * serialisation the WebView commits as written – `|` in a query, `[`, `]` and `^` in a path
+     * (only `{` and `}` are percent-encoded there), `_` in a host, an IPv6 literal in brackets –
+     * where `java.net.URI`'s RFC 2396 grammar refuses each (and reads a `_` host as none), which
+     * put every such page outside every scope, the X toolbar up over an in-scope filter link.
+     * Null for a string that is no `http` or `https` URL: an unknown or missing scheme, no host, a
+     * port that is not a number. Only the parts are read; `URL.equals` (a name lookup) is never.
+     */
+    fun parse(url: String?): Parts? {
+        if (url.isNullOrEmpty()) return null
+        val u = runCatching { URL(url) }.getOrNull() ?: return null
+        val host = u.host?.takeIf { it.isNotEmpty() } ?: return null
+        return Parts(u.protocol.lowercase(), host.lowercase(), u.port, u.path ?: "")
+    }
+
+    private fun originOf(parts: Parts): String {
         val port = when {
-            uri.port == -1 -> ""
-            scheme == "https" && uri.port == 443 -> ""
-            scheme == "http" && uri.port == 80 -> ""
-            else -> ":" + uri.port
+            parts.port == -1 -> ""
+            parts.scheme == "https" && parts.port == 443 -> ""
+            parts.scheme == "http" && parts.port == 80 -> ""
+            else -> ":" + parts.port
         }
-        return "$scheme://${uri.host.lowercase()}$port"
+        return "${parts.scheme}://${parts.host}$port"
     }
 
     const val TASK_SCHEME = "zen-webapp"
