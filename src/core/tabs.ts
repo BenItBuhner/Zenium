@@ -9,6 +9,7 @@ import type {
   Space,
   SplitLayout,
   Tab,
+  TabMoveResult,
   TabSearchCandidate,
   TabSection,
   WindowKind
@@ -21,6 +22,7 @@ import {
   dissolveSplitGroup,
   essentialsForSpace,
   folderOpened,
+  foldersOf,
   folderTabs,
   getSpace,
   insertTabIntoSpace,
@@ -3145,19 +3147,119 @@ export class TabManager {
     return win
   }
 
-  moveActiveTabBy(delta: number, win: ZenWindow): void {
-    const tab = this.activeTabFor(win)
-    if (!tab || tab.essential) return
-    const idx = sectionIndexOf(this.model, tab)
+  /**
+   * Move a tab one row along the strip as the keyboard does (tabs-34: Ctrl+Shift+PgUp / PgDn,
+   * `tab.moveBackward` / `tab.moveForward`), `direction` being the way: past the row before it
+   * or the row after it, in the order `win`'s strip draws them – the pinned rows; each group's
+   * rows, group by group; the loose rows – and as a drag past that row would land it (`dropTab`):
+   * beside a row of its own run it swaps places with it; at the edge of a group the next row is
+   * another run's, and the tab crosses the boundary one row at a time – into the group beside it
+   * at its near end, or out of its own to the row beside it – taking that row's group
+   * (`moveToFolder`, which unfolds a collapsed group as a drop into it does) or losing its own.
+   * At the strip's ends – the first pinned row, the last loose row – nothing moves. A pinned tab
+   * stays among the pinned rows, as Chrome keeps its pinned tabs; Essentials tiles are no rows of
+   * the strip and are not moved. A pane of a split is one segment of the split's row (§9.35):
+   * moved, it passes the row beside the split's and leaves the split, as a segment dragged out
+   * of the row does. Returns where the tab now stands – its place among the tabs of the run it
+   * is in – or null when nothing moved.
+   */
+  moveTabBy(
+    tabId: string,
+    direction: -1 | 1,
+    win: ZenWindow = this.windowFor(tabId)
+  ): TabMoveResult | null {
+    const m = this.model
+    const tab = this.tab(tabId)
+    if (!tab || tab.essential) return null
+    const space = getSpace(m, tab.spaceId)
+    if (!space) return null
+    const groupOf = (t: Tab): string | null => this.groupIdOf(t)
+    const run = tab.pinned ? pinnedTabs(m, space, win.id) : this.drawnRegular(space, win.id)
+    const rows = this.rowsOf(run)
+    const from = groupOf(tab)
+    const at = rows.findIndex(
+      (row) =>
+        row.id === tabId ||
+        (Boolean(tab.splitGroupId) &&
+          row.splitGroupId === tab.splitGroupId &&
+          groupOf(row) === from)
+    )
+    const neighbour = at === -1 ? undefined : rows[at + direction]
+    if (!neighbour) return null
+    const to = groupOf(neighbour)
+    // Past a row of its own run: the far side of it. At a run's edge the next row is another
+    // run's: the near side of it – one row over the boundary, not two.
+    const after = from === to ? direction > 0 : direction < 0
     this.moveTab(
-      tab.id,
+      tabId,
       {
-        spaceId: tab.spaceId ?? undefined,
+        spaceId: space.id,
         section: tab.pinned ? 'pinned' : 'regular',
-        index: Math.max(0, idx + delta)
+        index: this.indexRelativeTo(neighbour, after, tabId)
       },
       win
     )
+    if (!tab.pinned && to !== (tab.folderId ?? null)) this.moveToFolder(tabId, to)
+    if (neighbour.splitGroupId !== tab.splitGroupId) this.leaveSplitOnDrop(tab)
+    const landed = tab.pinned
+      ? pinnedTabs(m, space, win.id)
+      : regularTabs(m, space, win.id).filter((t) => groupOf(t) === to)
+    const group = (id: string | null): TabMoveResult['from'] =>
+      id && m.folders[id] ? { folderId: id, name: m.folders[id].name } : null
+    return {
+      tabId,
+      position: landed.findIndex((t) => t.id === tabId) + 1,
+      count: landed.length,
+      from: group(from),
+      to: group(to),
+      focused: false
+    }
+  }
+
+  /**
+   * A space's regular tabs in the order `win`'s strip draws them: each group's tabs in the
+   * groups' order (`foldersOf`), then the loose ones – the renderer's `tabOrderOf` without the
+   * Essentials and the pinned rows.
+   */
+  private drawnRegular(space: Space, windowId: string): Tab[] {
+    const m = this.model
+    const regular = regularTabs(m, space, windowId)
+    const grouped = foldersOf(m, space.id).flatMap((f) =>
+      regular.filter((t) => t.folderId === f.id)
+    )
+    const loose = regular.filter((t) => !t.folderId || !m.folders[t.folderId])
+    return [...grouped, ...loose]
+  }
+
+  /** The group (folder) a regular tab's row is drawn under, if it still exists; null for a loose or pinned tab. */
+  private groupIdOf(tab: Tab): string | null {
+    return !tab.pinned && tab.folderId && this.model.folders[tab.folderId] ? tab.folderId : null
+  }
+
+  /**
+   * A run's rows as the strip draws them (`stripRows` in the renderer, list by list): a split
+   * group's panes in one list – the pinned rows, one group's rows, the loose rows – fold into
+   * one row where the first of them stands, named here by that pane; a pane whose split has no
+   * other pane in its list is a row of its own.
+   */
+  private rowsOf(run: Tab[]): Tab[] {
+    const m = this.model
+    const rows: Tab[] = []
+    const folded = new Set<string>()
+    for (const tab of run) {
+      const group = tab.splitGroupId ? m.splitGroups[tab.splitGroupId] : undefined
+      const list = this.groupIdOf(tab)
+      const panes = group
+        ? run.filter((t) => t.splitGroupId === group.id && this.groupIdOf(t) === list)
+        : []
+      if (group && panes.length > 1) {
+        const key = `${group.id}:${list ?? ''}`
+        if (folded.has(key)) continue
+        folded.add(key)
+      }
+      rows.push(tab)
+    }
+    return rows
   }
 
   moveActiveTabToEdge(edge: 'start' | 'end', win: ZenWindow): void {

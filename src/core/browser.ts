@@ -3027,6 +3027,9 @@ export class Browser {
       'shortcuts.recording': ({ recording }, win) => {
         win.recordingShortcut = recording
       },
+      'strip.focus': ({ tabId }, win) => {
+        win.stripFocusTabId = tabId
+      },
       'sidebar.setWidth': ({ width }) => {
         state.settings.sidebarWidth = Math.max(160, Math.min(520, Math.round(width)))
         state.commit()
