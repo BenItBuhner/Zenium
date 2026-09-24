@@ -12,8 +12,10 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
  * primary and no default key – for the window looking at a page whose renderer stopped
  * answering. Cancel is the wait (`tab.waitUnresponsive`), the verb ends the pages
  * (`tab.exitUnresponsive`), each with every hung page's id; several pages are one prompt with
- * their titles in the description; the prompt goes by itself when the mark goes. The drive's
- * handles: `data-confirm="unresponsive"`, `data-unresponsive` listing the tabs.
+ * their titles in the description; the prompt goes by itself when the mark goes. The page in
+ * front gives way to its picture while the prompt is up (`unresponsivePromptOpen`, the view
+ * composites above the chrome) and comes back live as it leaves. The drive's handles:
+ * `data-confirm="unresponsive"`, `data-unresponsive` listing the tabs.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -27,6 +29,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { FrameDialogHost } = await import('@renderer/lib/portals')
+const { overlayCoversContent, uiStore } = await import('@renderer/lib/ui')
 const { UnresponsiveDialog } = await import('../UnresponsiveDialog')
 
 function tab(id: string, over: Partial<Tab> = {}): Tab {
@@ -81,10 +84,13 @@ function render(el: ReactElement): void {
 
 async function settle(): Promise<void> {
   await act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
+    for (let i = 0; i < 8; i++) await Promise.resolve()
   })
 }
+
+/** The answers given: the tab commands, apart from the keyboard's moves the cover makes. */
+const answers = (): unknown[][] =>
+  run.mock.calls.filter(([name]) => typeof name === 'string' && name.startsWith('tab.'))
 
 const dialog = (): HTMLElement | null =>
   document.querySelector<HTMLElement>('[data-confirm="unresponsive"]:not([data-leaving])')
@@ -151,13 +157,13 @@ describe('the Page unresponsive prompt', () => {
 
     press(dialog()!, 'Escape')
     expect(run).toHaveBeenLastCalledWith('tab.waitUnresponsive', { tabIds: ['a'] })
-    expect(run).toHaveBeenCalledTimes(2)
+    expect(answers()).toHaveLength(2)
 
     click(button(dialog()!, 'confirm'))
     expect(run).toHaveBeenLastCalledWith('tab.exitUnresponsive', { tabIds: ['a'] })
     // Enter from the held container answers nothing on a destructive prompt (§9.22 as amended).
     press(dialog()!, 'Enter')
-    expect(run).toHaveBeenCalledTimes(3)
+    expect(answers()).toHaveLength(3)
   })
 
   it('is one prompt for several pages sharing the hung renderer, their titles in the description', async () => {
@@ -197,6 +203,54 @@ describe('the Page unresponsive prompt', () => {
     render(<Dialogs state={state([tab('a'), tab('b')], 'a')} />)
     await settle()
     expect(dialog()).toBeNull()
-    expect(run).not.toHaveBeenCalled()
+    expect(answers()).toEqual([])
+  })
+
+  it('hides the page in front behind its picture while it is up, and brings it back live as it leaves', async () => {
+    expect(uiStore.get().unresponsivePromptOpen).toBe(false)
+    render(<Dialogs state={state([tab('a', { unresponsive: true }), tab('b')], 'a')} />)
+    await settle()
+    // The prompt captured the page (`overlay.snapshot`), took the keyboard and raised its flag:
+    // the view hides and the frame shows the picture (the prompt is over it, not under it).
+    expect(cmd).toHaveBeenCalledWith('overlay.snapshot', { tabId: 'a' })
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+    expect(uiStore.get().unresponsivePromptOpen).toBe(true)
+    expect(overlayCoversContent(uiStore.get())).toBe(true)
+
+    // A second page of the renderer joins the prompt: the words change, the cover holds.
+    cmd.mockClear()
+    render(
+      <Dialogs
+        state={state([tab('a', { unresponsive: true }), tab('b', { unresponsive: true })], 'a')}
+      />
+    )
+    await settle()
+    expect(dialog()!.dataset.unresponsive).toBe('a b')
+    expect(uiStore.get().unresponsivePromptOpen).toBe(true)
+    expect(cmd).not.toHaveBeenCalledWith('overlay.snapshot', expect.anything())
+
+    // The pages answer: the prompt goes, the flag clears, the page gets the keyboard back.
+    run.mockClear()
+    render(<Dialogs state={state([tab('a'), tab('b')], 'a')} />)
+    await settle()
+    expect(dialog()).toBeNull()
+    expect(uiStore.get().unresponsivePromptOpen).toBe(false)
+    expect(overlayCoversContent(uiStore.get())).toBe(false)
+    expect(run).toHaveBeenCalledWith('focus.content', undefined)
+  })
+
+  it('covers the page of a split pane’s hung neighbour: the page in front is the one pictured', async () => {
+    render(
+      <Dialogs
+        state={state(
+          [tab('a', { splitGroupId: 'g' }), tab('b', { splitGroupId: 'g', unresponsive: true })],
+          'a'
+        )}
+      />
+    )
+    await settle()
+    expect(dialog()!.dataset.unresponsive).toBe('b')
+    expect(cmd).toHaveBeenCalledWith('overlay.snapshot', { tabId: 'a' })
+    expect(uiStore.get().unresponsivePromptOpen).toBe(true)
   })
 })

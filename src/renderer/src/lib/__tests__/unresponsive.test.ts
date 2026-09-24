@@ -1,13 +1,35 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../api', () => ({
+  cmd: vi.fn(async () => null),
+  run: vi.fn(),
+  onEvent: vi.fn(() => () => undefined)
+}))
+
 import type { Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { unresponsiveTabs, unresponsiveWords, unresponsiveWordsFor } from '../unresponsive'
+import { run } from '../api'
+import {
+  closeUnresponsivePrompt,
+  openUnresponsivePrompt,
+  unresponsiveTabs,
+  unresponsiveWords,
+  unresponsiveWordsFor
+} from '../unresponsive'
+import { chromeNeedsKeyboard, overlayCoversContent, panelAloneOverContent, uiStore } from '../ui'
 
 /*
  * The "Page unresponsive" prompt's facts (lib/unresponsive.ts, tabs-45): which pages the
  * window's prompt names – every hung page still loaded, for the window looking at one of them –
- * and Chrome's words for one page and for several.
+ * Chrome's words for one page and for several, and the page's way under the prompt: captured
+ * and hidden behind its picture while the prompt is up, live again as it leaves.
  */
+
+afterEach(() => {
+  closeUnresponsivePrompt()
+  vi.mocked(run).mockClear()
+  vi.unstubAllGlobals()
+})
 
 function tab(id: string, over: Partial<Tab> = {}): Tab {
   return {
@@ -105,5 +127,38 @@ describe('unresponsiveWords', () => {
     const words = unresponsiveWordsFor([tab('a', { customTitle: 'Mine' }), tab('b')])
     expect(words.description).toContain('“Mine”, “B”')
     expect(unresponsiveWordsFor([tab('a')])).toEqual(unresponsiveWords(['A']))
+  })
+})
+
+describe('openUnresponsivePrompt / closeUnresponsivePrompt', () => {
+  it('hides the page behind its picture once the capture is in, takes the keyboard, and gives both back on close', async () => {
+    vi.stubGlobal('window', { zen: { invoke: async () => null } })
+    expect(uiStore.get().unresponsivePromptOpen).toBe(false)
+    expect(overlayCoversContent(uiStore.get())).toBe(false)
+
+    await openUnresponsivePrompt('a')
+    expect(uiStore.get().unresponsivePromptOpen).toBe(true)
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+    // The prompt covers the page (the view hides, the capture stands in) and, a frame dialog,
+    // dims it: not one of the panels that leave the picture undimmed.
+    expect(overlayCoversContent(uiStore.get())).toBe(true)
+    expect(panelAloneOverContent(uiStore.get())).toBe(false)
+    expect(chromeNeedsKeyboard()).toBe(true)
+
+    vi.mocked(run).mockClear()
+    closeUnresponsivePrompt()
+    expect(uiStore.get().unresponsivePromptOpen).toBe(false)
+    expect(overlayCoversContent(uiStore.get())).toBe(false)
+    expect(chromeNeedsKeyboard()).toBe(false)
+    expect(run).toHaveBeenCalledWith('focus.content', undefined)
+  })
+
+  it('a close overtakes an open still waiting for the picture: the page answered first', async () => {
+    vi.stubGlobal('window', { zen: { invoke: async () => null } })
+    const opening = openUnresponsivePrompt('a')
+    closeUnresponsivePrompt()
+    await opening
+    expect(uiStore.get().unresponsivePromptOpen).toBe(false)
+    expect(run).not.toHaveBeenCalledWith('focus.chrome', undefined)
   })
 })

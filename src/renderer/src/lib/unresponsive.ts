@@ -1,13 +1,22 @@
 import type { Tab, UIState } from '@shared/types'
+import { run } from './api'
 import { activeTab, tabTitle } from './selectors'
+import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from './ui'
 
 /*
  * The "Page unresponsive" prompt's facts (tabs-45, Chrome's hung-renderer dialog): which pages
- * it names and what it says. The core marks a tab whose renderer stopped answering
- * (`Tab.unresponsive`, from the host's hang monitor – every page of the hung renderer at once);
- * the chrome of the window looking at one of them asks whether to wait or exit, and lists them
- * all, as Chrome's dialog lists the pages sharing the renderer.
+ * it names and what it says, and the page's way under it. The core marks a tab whose renderer
+ * stopped answering (`Tab.unresponsive`, from the host's hang monitor – every page of the hung
+ * renderer at once); the chrome of the window looking at one of them asks whether to wait or
+ * exit, and lists them all, as Chrome's dialog lists the pages sharing the renderer.
  */
+
+/**
+ * How long the prompt waits for the page's picture before it shows over a blank one. The hung
+ * renderer paints nothing new; the capture is the compositor's last frame of it, which is
+ * exactly what the user was looking at when the page stopped.
+ */
+const SNAPSHOT_WAIT_MS = 250
 
 /**
  * The pages the prompt is about, in the strip's order the state holds them: every tab marked
@@ -57,4 +66,36 @@ export function unresponsiveWords(titles: readonly string[]): UnresponsiveWords 
 /** The prompt's words for these tabs, their titles as the rows show them. */
 export function unresponsiveWordsFor(tabs: readonly Tab[]): UnresponsiveWords {
   return unresponsiveWords(tabs.map((t) => tabTitle(t)))
+}
+
+/**
+ * Which open of the prompt is current: an open that finishes after a close (the page answered,
+ * or was answered for, within the wait for its picture) must not hide the page under a prompt
+ * that has gone.
+ */
+let generation = 0
+
+/**
+ * The prompt is about to show over `tabId`, the page in front: the page's view composites above
+ * the chrome, so it gives way to its picture (the view hides behind the capture while
+ * `unresponsivePromptOpen` stands, `overlayCoversContent`) and the chrome takes the keyboard
+ * for the prompt.
+ */
+export async function openUnresponsivePrompt(tabId: string): Promise<void> {
+  const current = ++generation
+  await Promise.race([
+    captureActiveTab(tabId),
+    new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_WAIT_MS))
+  ])
+  if (current !== generation) return
+  run('focus.chrome', undefined)
+  uiStore.set({ unresponsivePromptOpen: true })
+}
+
+/** The prompt has left the screen: the live page comes back, and the keyboard with it. */
+export function closeUnresponsivePrompt(): void {
+  generation++
+  if (uiStore.get().unresponsivePromptOpen) uiStore.set({ unresponsivePromptOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
 }
