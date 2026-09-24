@@ -166,7 +166,6 @@ export const NEW_TAB_PAGE_STYLE = `
   .zen-ntp-field svg { width: 16px; height: 16px; color: var(--v2-text-deemphasized); flex: none; }
   .zen-ntp-engine-favicon { width: 16px; height: 16px; border-radius: 3px; flex: none; opacity: 0; transition: opacity 120ms var(--zen-ease); }
   .zen-ntp-engine-favicon[data-shown] { opacity: 1; }
-  @media (prefers-reduced-motion: reduce) { .zen-ntp-engine-favicon { transition: none; } }
   .zen-ntp-field input {
     flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent;
     font-size: var(--v2-font-body); font-weight: var(--v2-weight-body); line-height: var(--v2-line-body); color: var(--v2-text);
