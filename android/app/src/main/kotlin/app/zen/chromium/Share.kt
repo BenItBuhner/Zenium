@@ -374,16 +374,53 @@ class Share(private val host: Host, private val io: Executor) {
     private fun panelStandsIn(awaitOutcome: Boolean): Boolean =
         !awaitOutcome && Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
 
-    /** A share the panel is showing: its intent, kept for the chrome's answer. */
-    private class Panel(val send: Intent, val type: String, val url: String?, val tabId: String?, val private: Boolean)
+    /**
+     * A share the panel is showing: its intent, kept for the chrome's answer, and the `app.share`
+     * call still waiting on it – answered once the chrome has the request, or [PANEL_CANCELLED]
+     * when a fresh share supersedes it first. Answered once; later answers are nothing.
+     */
+    private class Panel(val send: Intent, val type: String, val url: String?, val tabId: String?, val private: Boolean, reply: (Any?) -> Unit) {
+        private var pending: ((Any?) -> Unit)? = reply
+
+        fun answer(result: Any?) {
+            val reply = pending ?: return
+            pending = null
+            reply(result)
+        }
+    }
 
     /** One app of the panel's row. */
     class PanelTarget(val component: String, val label: String, val icon: String)
 
+    /**
+     * The row's launcher icons as the panel draws them, kept per component and size: an icon
+     * through `loadIcon`, a canvas and WebP costs some 150–250 ms each on the emulator, so a row
+     * of seven drawn per open held the host's gather at 1.0–1.6 s; drawn once, a later open
+     * gathers in the time it takes to rank. Emptied when a package was installed, updated or
+     * removed since the last look (`PackageManager.getChangedPackages`, API 26), so an updated
+     * app's new icon comes through at its next share. Read on the IO executor; synchronised.
+     */
+    private class IconCache {
+        private val icons = HashMap<String, String>()
+        private var sequence = 0
+
+        /** Drop every icon when the installed packages changed since the last call. */
+        @Synchronized
+        fun refresh(pm: PackageManager) {
+            val changed = runCatching { pm.getChangedPackages(sequence) }.getOrNull() ?: return
+            icons.clear()
+            sequence = changed.sequenceNumber
+        }
+
+        @Synchronized
+        fun icon(component: String, side: Int, draw: () -> String): String = icons.getOrPut("$component@$side", draw)
+    }
+
     private var panelSeq = 0
-    /** The one panel up (a new share supersedes it: its chrome sheet is replaced). */
+    /** The one panel up (a new share supersedes it: its chrome sheet is replaced, its call answered). */
     private var panel: Pair<String, Panel>? = null
     private val history by lazy { ShareHistory(PrefsStore(activity.getSharedPreferences(PANEL_PREFS, Context.MODE_PRIVATE))) }
+    private val icons = IconCache()
 
     /** The preview the panel draws: what is shared, as the chrome shows it at the sheet's head. */
     private fun panelPreview(kind: String, title: String?, url: String?, text: String?, favicon: String?, image: String?): JSONObject =
@@ -393,12 +430,16 @@ class Share(private val host: Host, private val io: Executor) {
      * Put the panel up for `send`: the intent is held under the panel's id, the apps for its type
      * are found and ranked off the main thread, and the chrome hears `share.panel` with the
      * preview, the tab, whether it is private (nothing is recorded then) and the row. The answer
-     * to `app.share` comes as the event is sent, as it does when the system sheet is up.
+     * to `app.share` comes as the event is sent, as it does when the system sheet is up. A panel
+     * still up – or still gathering its row – is superseded: the chrome replaces its sheet under
+     * the new id, and its own call is answered [PANEL_CANCELLED] rather than left waiting.
      */
     private fun openPanel(send: Intent, type: String, preview: JSONObject, url: String?, tabId: String?, reply: (Any?) -> Unit) {
         val id = "share-panel-${++panelSeq}"
         val private = tabId?.let { host.tabs.get(it) }?.let { Profiles.isPrivate(it.containerId) } == true
-        panel = id to Panel(send, type, url, tabId, private)
+        panel?.second?.answer(PANEL_CANCELLED)
+        val entry = Panel(send, type, url, tabId, private, reply)
+        panel = id to entry
         io.execute {
             val targets = runCatching { panelTargets(send.type, type) }.getOrElse { emptyList() }
             main.post {
@@ -407,7 +448,7 @@ class Share(private val host: Host, private val io: Executor) {
                 for (target in targets) row.put(json("component" to target.component, "label" to target.label, "icon" to target.icon))
                 val payload = JSONObject(preview.toString()).put("id", id).put("tabId", tabId).put("private", private).put("targets", row)
                 host.chrome.hostEvent("share.panel", payload)
-                reply(null)
+                entry.answer(null)
             }
         }
     }
@@ -417,7 +458,8 @@ class Share(private val host: Host, private val io: Executor) {
      * on API 30+), Zenium and the CTS shims left out, sorted by package name as Chrome sorts them
      * (`ShareSheetUsageRankingHelper.ResolveInfoPackageNameComparator`), ranked by Zenium's own
      * history for the share's type, at most [MAX_PANEL_TARGETS] (Chrome's `MAX_NUM_APPS`), each
-     * with its launcher icon drawn at the row's [PANEL_ICON_DP] as a `data:` URL. IO thread.
+     * with its launcher icon drawn at the row's [PANEL_ICON_DP] as a `data:` URL – once per
+     * component and size ([IconCache]). IO thread.
      */
     fun panelTargets(mime: String?, type: String): List<PanelTarget> {
         val pm = activity.packageManager
@@ -429,10 +471,11 @@ class Share(private val host: Host, private val io: Executor) {
             if (!activityInfo.exported) continue
             byComponent[ComponentName(activityInfo.packageName, activityInfo.name).flattenToString()] = info
         }
+        icons.refresh(pm)
         val side = (PANEL_ICON_DP * activity.resources.displayMetrics.density).roundToInt()
         return history.rank(type, byComponent.keys.toList()).take(MAX_PANEL_TARGETS).map { component ->
             val info = byComponent.getValue(component)
-            PanelTarget(component, info.loadLabel(pm).toString(), iconDataUrl(info.loadIcon(pm), side))
+            PanelTarget(component, info.loadLabel(pm).toString(), icons.icon(component, side) { iconDataUrl(info.loadIcon(pm), side) })
         }
     }
 
@@ -448,9 +491,10 @@ class Share(private val host: Host, private val io: Executor) {
      * The chrome's answer to the panel (`share.panelAction`): an app gets the same intent direct
      * to its component, as Chrome sends it (`ShareHelper.shareDirectly`: `setComponent`,
      * `FLAG_ACTIVITY_FORWARD_RESULT | FLAG_ACTIVITY_PREVIOUS_IS_TOP`), and the choice is recorded
-     * unless the tab was private; More gets the system sheet; QR the code dialog; Copy image the
-     * image on the clipboard; a dismissal releases the intent. The chrome's own chips (Copy link,
-     * Long screenshot, Print) run in the chrome and end here as a dismissal.
+     * unless the tab was private (`ShareHistory.record` writes nothing for one); More gets the
+     * system sheet; QR the code dialog; Copy image the image on the clipboard; a dismissal
+     * releases the intent. The chrome's own chips (Copy link, Long screenshot, Print) run in the
+     * chrome and end here as a dismissal. What the user is told goes through the chrome's toast.
      */
     fun onPanelAction(args: JSONObject, reply: (Any?) -> Unit) {
         val id = args.str("id")
@@ -473,16 +517,16 @@ class Share(private val host: Host, private val io: Executor) {
                     .addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT or Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP)
                 try {
                     activity.startActivity(direct)
-                    if (!entry.private) io.execute { history.record(entry.type, flat) }
+                    io.execute { history.record(entry.type, flat, entry.private) }
                 } catch (e: ActivityNotFoundException) {
-                    Toast.makeText(activity, "That app is no longer installed", Toast.LENGTH_SHORT).show()
+                    toast("That app is no longer installed")
                     io.execute { history.forget(flat) }
                 } catch (e: SecurityException) {
-                    Toast.makeText(activity, "That app could not be opened", Toast.LENGTH_SHORT).show()
+                    toast("That app could not be opened")
                 }
             }
             "more" -> launchChooser(entry.send, entry.url, entry.tabId, { result ->
-                if (result is Host.Rejection) Toast.makeText(activity, result.message, Toast.LENGTH_SHORT).show()
+                if (result is Host.Rejection) toast(result.message)
             })
             "qr" -> entry.url?.let { showQrCode(it) }
             "copyImage" -> copyImage(entry.send)
@@ -496,7 +540,12 @@ class Share(private val host: Host, private val io: Executor) {
         val clipboard = activity.getSystemService(ClipboardManager::class.java) ?: return
         clipboard.setPrimaryClip(ClipData.newUri(activity.contentResolver, "Image", uri))
         // Android 13 shows its own chip for a copy; below it the app says so.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) Toast.makeText(activity, "Image copied", Toast.LENGTH_SHORT).show()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) toast("Image copied")
+    }
+
+    /** A word to the user through the chrome's toast (the one toast the app has; `BrowserActivity` says its the same way). */
+    private fun toast(message: String) {
+        host.chrome.hostEvent("toast", json("message" to message, "kind" to "info", "action" to null))
     }
 
     /** A launcher icon as a `data:` WebP of `side` px (adaptive icons draw their mask themselves). */
@@ -700,6 +749,11 @@ class Share(private val host: Host, private val io: Executor) {
         const val PANEL_LINK = "link"
         const val PANEL_TEXT = "text"
         const val PANEL_IMAGE = "image"
+        /**
+         * What a superseded panel's `app.share` is answered: the core awaits a share of its own for
+         * its failure alone (`Browser.share`), so the word is the bridge's record, not a rejection.
+         */
+        const val PANEL_CANCELLED = "cancelled"
         /** The panel's row shows at most this many apps (Chrome's `ShareSheetPropertyModelBuilder.MAX_NUM_APPS`). */
         const val MAX_PANEL_TARGETS = 7
         /** The row's launcher icons, in dp (the design's 40 in the §9.3 box). */

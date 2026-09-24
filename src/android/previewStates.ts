@@ -1090,7 +1090,10 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         id: 'preview-quiet',
         gesture: false
       })
-      untilState((s) => s.permissionPrompts.some((p) => p.tabId === tab.id && p.quiet === true), up)
+      untilState(
+        (s) => s.permissionPrompts.some((p) => p.tabId === tab.id && p.quiet === true),
+        up
+      )
     } else {
       // The active page asks, as its script would (`permissions.decide` is what the host calls
       // from the WebView's permission request); the answer is the prompt sheet's business.

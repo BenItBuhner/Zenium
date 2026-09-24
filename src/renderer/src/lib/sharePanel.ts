@@ -51,15 +51,18 @@ export function sharePanelChips(request: SharePanelRequest): SharePanelChip[] {
 export const SHARE_PANEL_MORE = { label: 'More', icon: Share } as const
 
 /**
- * The preview's two lines: the title (else the link, else the text; "Image" for a picture that
- * came without a name) over the link, else the text – whichever the title did not already say.
+ * The preview's two lines, by what is shared. A page or a link: its title over its link (the link
+ * alone, once, when it came without a title). A selection: the selected text leads, as Chrome's
+ * hub puts the text first, and the link to the highlight (`#:~:text=`, SH-11) is the line beneath
+ * – the host sends no title and no favicon for one (`Share.shareText`). An image: its name, or
+ * "Image" for a picture that came without one; the host sends no link with it.
  */
 export function sharePanelPreview(request: SharePanelRequest): { title: string; detail: string } {
   const title =
-    request.title || request.url || request.text || (request.kind === 'image' ? 'Image' : '')
-  let detail = ''
-  if (request.url && request.url !== title) detail = request.url
-  else if (request.text && request.text !== title) detail = request.text
+    request.kind === 'text'
+      ? request.text || request.url || ''
+      : request.title || (request.kind === 'image' ? 'Image' : request.url || '')
+  const detail = request.url && request.url !== title ? request.url : ''
   return { title, detail }
 }
 

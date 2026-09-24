@@ -4555,6 +4555,15 @@
   .zen-share-panel-preview:active {
     background: transparent;
   }
+  /* A selection's share leads with the selected text (Chrome's hub: the text first, the link to
+     the highlight under it), on two lines at most, then ellipsis; the link's line stays one. */
+  .zen-share-panel-preview[data-kind='text'] .zen-menu-link-title {
+    display: -webkit-box;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
   .zen-share-panel-row {
     display: flex;
     gap: 0;

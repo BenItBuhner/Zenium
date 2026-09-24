@@ -70,12 +70,21 @@ const PREVIEW_SHARE_IMAGE = `data:image/svg+xml;utf8,${encodeURIComponent(
 const PREVIEW_SHARE_TEXT =
   'The quick brown fox jumps over the lazy dog while the panel shows what a selection shares.'
 
+/**
+ * The link to the selection's highlight (`#:~:text=`, SH-11), as the core's `shareSelection`
+ * sends it with the text (`menus.ts`): the host relays the two and no title or favicon.
+ */
+function highlightLink(url: string): string {
+  return `${url}#:~:text=The%20quick%20brown%20fox,a%20selection%20shares.`
+}
+
 let seq = 0
 
 /**
  * The request for a share of `kind` from `tab` (the page, its favicon and its id; none when no
- * tab is open), as the host builds it: a page's share carries its title and link; a selection's
- * its text, with the page behind it; an image the picture alone.
+ * tab is open), as the host builds it (`Share.kt`): a page's share carries its title, link and
+ * favicon; a selection's its text and the link to its highlight, no title and no favicon; an
+ * image the picture alone.
  */
 export function previewShareRequest(
   kind: PreviewShareKind,
@@ -103,10 +112,12 @@ export function previewShareRequest(
     return {
       ...base,
       kind,
-      title: tab?.title ?? null,
-      url: null,
+      title: null,
+      url: highlightLink(
+        tab && /^https?:\/\//i.test(tab.url) ? tab.url : 'https://example.com/'
+      ),
       text: PREVIEW_SHARE_TEXT,
-      favicon: tab?.favicon ?? null,
+      favicon: null,
       image: null
     }
   }

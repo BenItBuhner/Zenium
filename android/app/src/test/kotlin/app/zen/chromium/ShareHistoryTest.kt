@@ -107,6 +107,56 @@ class ShareHistoryTest {
     }
 
     @Test
+    fun aPrivateTabsShareWritesNoRecord() {
+        var clock = 1_000_000L
+        val store = MemoryStore()
+        val history = ShareHistory(store) { clock }
+        history.record(ShareHistory.TYPE_TEXT, messages, private = true)
+        assertEquals(0, store.writes)
+        assertNull(store.value)
+        assertNull(history.use(ShareHistory.TYPE_TEXT, messages))
+        assertEquals(given, history.rank(ShareHistory.TYPE_TEXT, given))
+        // A record that stands is left as it stands: the private share neither adds to it nor touches it.
+        history.record(ShareHistory.TYPE_TEXT, notes)
+        clock += 1_000
+        val written = store.value
+        history.record(ShareHistory.TYPE_TEXT, notes, private = true)
+        history.record(ShareHistory.TYPE_IMAGE, mail, private = true)
+        assertEquals(1, store.writes)
+        assertEquals(written, store.value)
+        assertEquals(1, history.use(ShareHistory.TYPE_TEXT, notes)?.count)
+        // The default is a record: the same call without the flag is the public tab's.
+        history.record(ShareHistory.TYPE_TEXT, notes)
+        assertEquals(2, history.use(ShareHistory.TYPE_TEXT, notes)?.count)
+    }
+
+    @Test
+    fun theTargetsKeptPerTypeAreCapped() {
+        var clock = 1_000_000L
+        val store = MemoryStore()
+        val history = ShareHistory(store) { clock }
+        val targets = List(ShareHistory.MAX_COMPONENTS + 5) { "com.example.app$it/.Share" }
+        for (target in targets) {
+            history.record(ShareHistory.TYPE_TEXT, target)
+            clock += 1_000
+        }
+        // The least recently used went, the last recorded stayed; an image share's record is its own.
+        val kept = ShareHistory.parse(store.value)[ShareHistory.TYPE_TEXT]!!
+        assertEquals(ShareHistory.MAX_COMPONENTS, kept.size)
+        for (i in 0 until 5) assertNull(history.use(ShareHistory.TYPE_TEXT, targets[i]))
+        assertEquals(1, history.use(ShareHistory.TYPE_TEXT, targets.last())?.count)
+        assertEquals(1, history.use(ShareHistory.TYPE_TEXT, targets[5])?.count)
+        // A target used again is the most recent, and survives the next newcomer; the oldest goes instead.
+        history.record(ShareHistory.TYPE_TEXT, targets[5])
+        clock += 1_000
+        history.record(ShareHistory.TYPE_TEXT, "com.example.newcomer/.Share")
+        assertEquals(2, history.use(ShareHistory.TYPE_TEXT, targets[5])?.count)
+        assertNull(history.use(ShareHistory.TYPE_TEXT, targets[6]))
+        assertEquals(ShareHistory.MAX_COMPONENTS, ShareHistory.parse(store.value)[ShareHistory.TYPE_TEXT]!!.size)
+        assertTrue(ShareHistory.MAX_COMPONENTS > Share.MAX_PANEL_TARGETS)
+    }
+
+    @Test
     fun forgettingAnUninstalledTargetDropsItEverywhere() {
         val store = MemoryStore()
         val history = ShareHistory(store) { 5_000L }

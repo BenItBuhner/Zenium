@@ -22,7 +22,8 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
  * The browser's own share panel (Android below 14, where the system sheet has no row for the
  * sharing app's actions; SH-03), as Chrome 152's sharing hub stands in for the system sheet
  * there: a sheet on the menu's chassis with the share's preview in the header's place – the
- * favicon at 20, or the image itself at 40, the title over the link – then the apps the user
+ * favicon at 20, or the image itself at 40, the title over the link; a selection's text over
+ * its link to the highlight – then the apps the user
  * shares to, ranked by Zenium's own record, More for the system sheet at the row's end, a
  * hairline, and Zenium's own chips (Chrome's order: Copy, Long screenshot, Print, QR code). The
  * host holds the share's intent under the request's id until the sheet answers
@@ -157,9 +158,12 @@ function SharePanelSheet({ request }: { request: SharePanelRequest }): JSX.Eleme
 }
 
 /**
- * What is being shared (PUI-18's header, as a link's menu opens on its link): the favicon at 20
- * – the globe at 69 % for a page the cache holds none for – or the image itself at 40, the title
- * 15/600 over the link 13 in the deemphasised ink, one line each. The title names the sheet.
+ * What is being shared (PUI-18's header, as a link's menu opens on its link): for a page or a
+ * link the favicon at 20 – the globe at 69 % for a page the cache holds none for – the title
+ * 15/600 over the link 13 in the deemphasised ink, one line each; for an image the picture itself
+ * at 40 in the favicon's place; for a selection the selected text leads, on two lines at most,
+ * the link to the highlight under it, and no favicon (Chrome's hub: the text, then the link). The
+ * first line names the sheet.
  */
 function Preview({
   request,
@@ -173,10 +177,10 @@ function Preview({
   titleId: string
 }): JSX.Element {
   return (
-    <div className="zen-menu-link-header zen-share-panel-preview">
+    <div className="zen-menu-link-header zen-share-panel-preview" data-kind={request.kind}>
       {request.image ? (
         <img src={request.image} alt="" className="zen-menu-link-thumbnail" draggable={false} />
-      ) : (
+      ) : request.kind === 'text' ? null : (
         <span className="zen-menu-link-favicon" aria-hidden>
           <RowFavicon
             src={request.favicon}

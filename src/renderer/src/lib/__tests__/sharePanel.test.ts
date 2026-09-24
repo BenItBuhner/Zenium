@@ -90,22 +90,41 @@ describe("the share panel's preview", () => {
     })
   })
 
-  it("puts a selection's text under its title, or on the first line when there is none", () => {
-    expect(sharePanelPreview(request({ kind: 'text', text: 'a passage', url: null }))).toEqual({
-      title: 'Example Domain',
-      detail: 'a passage'
-    })
+  it("leads with a selection's text and puts the link to its highlight beneath, as the host sends the two (no title, no favicon)", () => {
+    const highlight = 'https://example.com/#:~:text=a%20passage'
+    expect(
+      sharePanelPreview(
+        request({ kind: 'text', text: 'a passage', url: highlight, title: null, favicon: null })
+      )
+    ).toEqual({ title: 'a passage', detail: highlight })
+    // A title that came along anyway (a host's own share) does not displace the text.
+    expect(
+      sharePanelPreview(request({ kind: 'text', text: 'a passage', url: highlight }))
+    ).toEqual({ title: 'a passage', detail: highlight })
+  })
+
+  it("shows a selection's text alone when the page gave no link to the highlight (not a web page)", () => {
     expect(
       sharePanelPreview(request({ kind: 'text', text: 'a passage', url: null, title: null }))
     ).toEqual({ title: 'a passage', detail: '' })
   })
 
-  it('names a picture that came without one "Image"', () => {
+  it('names a picture that came without one "Image", with nothing under it (the host sends no link for an image)', () => {
     expect(
       sharePanelPreview(
         request({ kind: 'image', title: null, url: null, image: 'data:image/webp;base64,IMG' })
       )
     ).toEqual({ title: 'Image', detail: '' })
+    expect(
+      sharePanelPreview(
+        request({
+          kind: 'image',
+          title: 'A picture',
+          url: null,
+          image: 'data:image/webp;base64,IMG'
+        })
+      )
+    ).toEqual({ title: 'A picture', detail: '' })
   })
 })
 
