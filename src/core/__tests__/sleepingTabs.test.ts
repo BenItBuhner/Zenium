@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { Browser } from '../browser'
-import { SLEEP_CHECK_MS } from '../hostDefaults'
+import { NoopGovernor, SLEEP_CHECK_MS } from '../hostDefaults'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
-import { KEEP_UNDER_PRESSURE } from '../tabs'
+import { KEEP_UNDER_PRESSURE, neverUnloaded } from '../tabs'
 import type { ZenWindow } from '../window'
 
 function memoryIo(): StoreIO {
@@ -88,8 +88,28 @@ function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
   } as unknown as Platform & { live: Set<string> }
 }
 
-function start(): { browser: Browser; platform: ReturnType<typeof fakePlatform>; win: ZenWindow } {
-  const platform = fakePlatform(memoryIo())
+function start(io = memoryIo()): {
+  browser: Browser
+  platform: ReturnType<typeof fakePlatform>
+  win: ZenWindow
+} {
+  const platform = fakePlatform(io)
+  const browser = new Browser(platform)
+  browser.start()
+  const win = browser.allWindows()[0] as ZenWindow
+  return { browser, platform, win }
+}
+
+/** The desktop's shape for the one figure the leaf needs: a governor that has measured every page. */
+class MeasuringGovernor extends NoopGovernor {
+  memoryOf(): number | null {
+    return 312.4
+  }
+}
+
+function startMeasuring(io = memoryIo()): ReturnType<typeof start> {
+  const platform = fakePlatform(io)
+  platform.createGovernor = (browser) => new MeasuringGovernor(browser)
   const browser = new Browser(platform)
   browser.start()
   const win = browser.allWindows()[0] as ZenWindow
@@ -203,5 +223,114 @@ describe('sleeping tabs on a host without a resource governor', () => {
     expect(hidden.every((t) => browser.tabs.tab(t.id)!.discarded)).toBe(true)
     expect(browser.tabs.tab(kept.id)!.discarded).toBe(true)
     expect(browser.tabs.activeTabFor(win)!.discarded).toBe(false)
+  })
+
+  it('honours a never-sleep entry written as the registrable domain, not only as the host', () => {
+    // The desktop's Add current site and the pill's Never unload this site write `getDomain`
+    // (`google.com` for a page of `mail.google.com`); the phone's Add sheet writes a host. Both
+    // forms hold a page of the site.
+    const excluded = ['google.com', 'news.ycombinator.com', 'localhost']
+    expect(neverUnloaded('https://mail.google.com/mail/u/0/', excluded)).toBe(true)
+    expect(neverUnloaded('https://www.google.com/', excluded)).toBe(true)
+    expect(neverUnloaded('https://news.ycombinator.com/item?id=1', excluded)).toBe(true)
+    expect(neverUnloaded('https://www.news.ycombinator.com/', excluded)).toBe(true)
+    expect(neverUnloaded('http://localhost:5173/', excluded)).toBe(true)
+    // A different site of the same public suffix, an address, an empty list: no match.
+    expect(neverUnloaded('https://ycombinator.com/', excluded)).toBe(false)
+    expect(neverUnloaded('https://example.com/', excluded)).toBe(false)
+    expect(neverUnloaded('not a url', excluded)).toBe(false)
+    expect(neverUnloaded('https://google.com/', [])).toBe(false)
+
+    const { browser, win } = start()
+    browser.handleCommand(win, 'settings.update', {
+      unloadTimeoutMinutes: 1,
+      unloadExcludedDomains: ['google.com']
+    })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const mail = browser.tabs.createTab({ url: 'https://mail.google.com/', active: false }, win)
+    const other = browser.tabs.createTab({ url: 'https://other.example/', active: false }, win)
+    for (const t of [mail, other]) browser.tabs.load(t.id, win)
+    vi.advanceTimersByTime(2 * 60_000)
+    expect(browser.tabs.tab(other.id)!.discarded).toBe(true)
+    expect(browser.tabs.tab(mail.id)!.discarded).toBe(false)
+  })
+})
+
+describe('the wake from sleep (omnibox-40, the pill’s Memory Saver leaf)', () => {
+  it('carries what the discard recorded past the wake, with the time of the wake', async () => {
+    const io = memoryIo()
+    const { browser, win } = startMeasuring(io)
+    browser.handleCommand(win, 'settings.update', { unloadTimeoutMinutes: 1 })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const hidden = browser.tabs.createTab({ url: 'https://docs.example/', active: false }, win)
+    browser.tabs.load(hidden.id, win)
+    expect(browser.tabs.tab(hidden.id)!.memorySaver).toBeUndefined()
+
+    vi.advanceTimersByTime(2 * 60_000)
+    const asleep = browser.tabs.tab(hidden.id)!
+    expect(asleep.discarded).toBe(true)
+    // The sleeping row's line: the governor's figure, rounded.
+    expect(asleep.sleepSavedMb).toBe(312)
+    expect(asleep.memorySaver).toBeUndefined()
+
+    // The wake: the number moves to the leaf's record with the moment it woke; the sleeping
+    // row's line goes with the sleep.
+    vi.setSystemTime(new Date('2026-09-19T12:30:00Z'))
+    browser.tabs.activateTab(hidden.id, win)
+    const awake = browser.tabs.tab(hidden.id)!
+    expect(awake.discarded).toBe(false)
+    expect(awake.sleepSavedMb).toBeUndefined()
+    expect(awake.memorySaver).toEqual({ savedMb: 312, wokeAt: Date.parse('2026-09-19T12:30:00Z') })
+
+    // A session's own: the record on disk carries no wake.
+    await browser.state.flush()
+    const written = io.readSync('state.json')
+    if (!written) throw new Error('state.json was not written')
+    const persisted = JSON.parse(written) as { tabs: Array<Record<string, unknown>> }
+    const record = persisted.tabs.find((t) => t.url === 'https://docs.example/')
+    expect(record).toBeDefined()
+    expect(record).not.toHaveProperty('memorySaver')
+
+    // Asleep again: the last wake's leaf is over.
+    browser.tabs.discard(hidden.id)
+    expect(browser.tabs.tab(hidden.id)!.memorySaver).toBeUndefined()
+    expect(browser.tabs.tab(hidden.id)!.sleepSavedMb).toBe(312)
+  })
+
+  it('says nothing for a tab restored asleep from disk, or slept without a figure', async () => {
+    const io = memoryIo()
+    const first = startMeasuring(io)
+    first.browser.handleCommand(first.win, 'settings.update', { unloadTimeoutMinutes: 1 })
+    first.browser.tabs.createTab({ url: 'https://example.com/', active: true }, first.win)
+    const hidden = first.browser.tabs.createTab(
+      { url: 'https://docs.example/', active: false },
+      first.win
+    )
+    first.browser.tabs.load(hidden.id, first.win)
+    vi.advanceTimersByTime(2 * 60_000)
+    expect(first.browser.tabs.tab(hidden.id)!.sleepSavedMb).toBe(312)
+    await first.browser.state.flush()
+
+    // The next launch restores the tab asleep, its number left behind: the wake is no saving of
+    // this session's, and the leaf stays away.
+    const second = startMeasuring(io)
+    const restored = second.browser.tabs.tab(hidden.id)!
+    expect(restored.discarded).toBe(true)
+    expect(restored.sleepSavedMb).toBeUndefined()
+    second.browser.tabs.activateTab(hidden.id, second.win)
+    expect(second.browser.tabs.tab(hidden.id)!.discarded).toBe(false)
+    expect(second.browser.tabs.tab(hidden.id)!.memorySaver).toBeUndefined()
+
+    // A host without a figure (no governor): the sleep records none, and the wake says nothing.
+    const { browser, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadTimeoutMinutes: 1 })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const plain = browser.tabs.createTab({ url: 'https://plain.example/', active: false }, win)
+    browser.tabs.load(plain.id, win)
+    vi.advanceTimersByTime(2 * 60_000)
+    expect(browser.tabs.tab(plain.id)!.discarded).toBe(true)
+    expect(browser.tabs.tab(plain.id)!.sleepSavedMb).toBeUndefined()
+    browser.tabs.activateTab(plain.id, win)
+    expect(browser.tabs.tab(plain.id)!.memorySaver).toBeUndefined()
   })
 })

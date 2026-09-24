@@ -32,8 +32,10 @@ const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
 const { TOOLBAR_STROKE } = await import('../v2/controls')
-const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
+const { browserStore, closeMemorySaverBubble, openUrlbar, uiStore } =
+  await import('@renderer/lib/ui')
 const { closeSiteInfo, openSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { MEMORY_SAVER_LEAF_MS } = await import('@renderer/lib/siteChips')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 const { DEFAULT_PAGE_CONTROLS } = await import('@shared/pageControls')
 
@@ -191,7 +193,13 @@ function expectChip(el: HTMLElement, label: string): void {
 }
 
 beforeEach(() => {
-  uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null, blockedPopupsPanel: null })
+  uiStore.set({
+    siteInfoOpen: false,
+    overlay: 'none',
+    starDialog: null,
+    blockedPopupsPanel: null,
+    memorySaverBubble: null
+  })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   siteInfoStore.set({ tabId: null, anchor: null, level: 'overview', openedBy: null })
   invoke.mockClear()
@@ -965,6 +973,155 @@ describe('desktop pill (NavRow)', () => {
       expect(hasPressedFill(slot)).toBe(true)
       expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
       await dismiss()
+    })
+
+    // omnibox-40 / tabs-40: Chrome's Memory Saver chip as the slot's glyph – the leaf for ten
+    // seconds after a tab the core slept wakes (`Tab.memorySaver`, written by `Tabs.load`),
+    // below a standing block and above the connection glyph or the private mask; its click
+    // opens the Memory Saver bubble, not the site information.
+    describe('the Memory Saver leaf (omnibox-40)', () => {
+      const woken = (patch: Partial<Tab> = {}, wokeAt = Date.now()): Tab =>
+        tab(page.url, { readerable: true, memorySaver: { savedMb: 312, wokeAt }, ...patch })
+      const hasPressedFill = (chip: HTMLElement): boolean =>
+        chip.className.split(/\s+/).includes('bg-[var(--v2-control-fill-hover)]')
+
+      it('draws the leaf for a tab just woken from sleep at the slot’s one size and rest ink, named with the number the discard recorded', () => {
+        const el = render(<NavRow state={state(woken())} tab={woken()} compact={false} />)
+        const slot = slotOf(el)
+        expectChip(slot, 'Site information · Memory Saver freed up 312 MB')
+        expect(slot.getAttribute('data-slot-state')).toBe('memory-saver')
+        expect(slot.getAttribute('data-slot-glyph')).toBe('leaf')
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        expect(slot.querySelectorAll('svg')).toHaveLength(1)
+        expect(slot.getAttribute('data-tooltip')).toBe('Memory Saver freed up 312 MB')
+        expect(slot.hasAttribute('title')).toBe(false)
+        expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        // §9.19's 16 in the 24 box at the row's stroke: the address's room is unchanged.
+        expectSlotGlyph(glyphOf(slot))
+        expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+        // A notice, not a live state: the slot's 69 % rest ink, the token once (§9.29).
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+        expect(restOpacity(slot)).toEqual([])
+        expect(hasPressedFill(slot)).toBe(false)
+        // Never a second chip for it.
+        expect(chipLabels(el).filter((l) => l?.includes('Memory Saver'))).toHaveLength(1)
+        // A tab that never slept this session, or one whose record the core cleared: no leaf.
+        act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(el.querySelector('svg.lucide-leaf')).toBeNull()
+      })
+
+      it('stands below a standing block and above the connection glyph and the private mask; a capture and a certificate error take the slot over it', () => {
+        // Over the mask: a private tab that woke shows the leaf, the mask gone from the box.
+        const secret = woken({ containerId: PRIVATE_CONTAINER_ID })
+        const el = render(<NavRow state={state(secret)} tab={secret} compact={false} />)
+        const slot = slotOf(el)
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('memory-saver')
+        expect(el.querySelector('svg.lucide-venetian-mask')).toBeNull()
+        expect(slot.querySelectorAll('svg')).toHaveLength(1)
+        // Under a standing block: the user's decision over the passing notice.
+        act(() =>
+          root!.render(
+            <NavRow state={withRules(woken(), [deny('camera')])} tab={woken()} compact={false} />
+          )
+        )
+        expect(glyphOf(slot).classList.contains('lucide-camera-off')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('blocked')
+        expect(slot.getAttribute('aria-label')).toBe('Site information · Camera blocked')
+        // Under a live capture.
+        const call = woken({ capture: { camera: true, microphone: false, display: false } })
+        act(() => root!.render(<NavRow state={state(call)} tab={call} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-camera')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('capture')
+        // Under the danger tier: the triangle in the danger ink, the leaf's name gone with it.
+        const broken = woken({
+          certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+        })
+        act(() => root!.render(<NavRow state={state(broken)} tab={broken} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-triangle-alert')).toBe(true)
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(slot.getAttribute('aria-label')).toBe('Site information')
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+        expect(el.querySelector('svg.lucide-leaf')).toBeNull()
+        // The states end: the leaf returns while its ten seconds run, in the same box.
+        act(() => root!.render(<NavRow state={state(woken())} tab={woken()} compact={false} />))
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      })
+
+      it('leaves the slot on its own ten seconds after the wake, the connection’s glyph back in the box', async () => {
+        // A wake most of the window ago: the leaf still up, its clock armed for what is left.
+        const late = woken({}, Date.now() - MEMORY_SAVER_LEAF_MS + 40)
+        const el = render(<NavRow state={state(late)} tab={late} compact={false} />)
+        const slot = slotOf(el)
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        // The clock runs out: nothing else changed – no new state, no re-render from outside.
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+        })
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(glyphOf(slot).classList.contains('lucide-lock')).toBe(true)
+        expect(slot.getAttribute('aria-label')).toBe('Site information')
+        expect(el.querySelector('svg.lucide-leaf')).toBeNull()
+        // A wake older than the window at the mount says nothing at all.
+        const stale = woken({}, Date.now() - MEMORY_SAVER_LEAF_MS - 1)
+        act(() => root!.render(<NavRow state={state(stale)} tab={stale} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      })
+
+      it('opens the Memory Saver bubble on a click – not the site information – with the slot as its pressed anchor, and holds the leaf for as long as the bubble is up', async () => {
+        const el = render(<NavRow state={state(woken())} tab={woken()} compact={false} />)
+        const slot = slotOf(el)
+        slot.focus()
+        await act(async () => {
+          slot.click()
+          await vi.waitFor(() => expect(uiStore.get().memorySaverBubble).toEqual({ tabId: 't1' }))
+        })
+        // The site information stayed shut; the chrome took the keyboard for the bubble.
+        expect(uiStore.get().siteInfoOpen).toBe(false)
+        expect(siteInfoStore.get().tabId).toBeNull()
+        expect(commands()).toContain('focus.chrome')
+        // The pressed anchor (§9.20): the window fill at full ink, `aria-expanded` on.
+        expect(slot.getAttribute('aria-expanded')).toBe('true')
+        expect(hasPressedFill(slot)).toBe(true)
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        // The ten seconds pass while the bubble is up: the leaf stays for it.
+        const held = woken({}, Date.now() - MEMORY_SAVER_LEAF_MS - 5_000)
+        act(() => root!.render(<NavRow state={state(held)} tab={held} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('memory-saver')
+        expect(glyphOf(slot).classList.contains('lucide-leaf')).toBe(true)
+        // A second press on the anchor opens nothing new (the layer's light dismiss closes it).
+        await act(async () => {
+          slot.click()
+        })
+        expect(uiStore.get().memorySaverBubble).toEqual({ tabId: 't1' })
+        // The bubble goes: the leaf's window is long over, so the connection glyph returns.
+        act(() => closeMemorySaverBubble({ keepFocus: true }))
+        expect(uiStore.get().memorySaverBubble).toBeNull()
+        expect(slot.getAttribute('data-slot-state')).toBe('connection')
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+        expect(hasPressedFill(slot)).toBe(false)
+        expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      })
+
+      it('puts the bubble away when a state takes the slot over the leaf', async () => {
+        const el = render(<NavRow state={state(woken())} tab={woken()} compact={false} />)
+        const slot = slotOf(el)
+        await act(async () => {
+          slot.click()
+          await vi.waitFor(() => expect(uiStore.get().memorySaverBubble).toEqual({ tabId: 't1' }))
+        })
+        // A capture starts on the page: the camera takes the slot, and the leaf's bubble goes
+        // with the leaf.
+        const call = woken({ capture: { camera: true, microphone: false, display: false } })
+        act(() => root!.render(<NavRow state={state(call)} tab={call} compact={false} />))
+        expect(slot.getAttribute('data-slot-state')).toBe('capture')
+        expect(uiStore.get().memorySaverBubble).toBeNull()
+        expect(slot.getAttribute('aria-expanded')).toBe('false')
+      })
     })
   })
 

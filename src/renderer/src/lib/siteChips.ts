@@ -8,10 +8,11 @@ import { originOf } from './security'
  * What the URL pill's site-information slot says of a site's permissions (omnibox-38, design
  * language v2 §9.29): the slot's glyph is the site's state, one at a time – a certificate
  * error's danger glyph, else the camera / microphone / screen the page is using right now, else
- * the crossed-out glyph of the first permission the user blocked on the site, else the
- * connection's own glyph – never a second chip for a state the slot can carry (at the 240
- * sidebar an added 28 px chip takes the address under its floor). The words and the readings
- * live here, apart from the chip that draws them, so they are tested without a DOM.
+ * the crossed-out glyph of the first permission the user blocked on the site, else the Memory
+ * Saver leaf of a tab just woken from sleep (omnibox-40), else the connection's own glyph –
+ * never a second chip for a state the slot can carry (at the 240 sidebar an added 28 px chip
+ * takes the address under its floor). The words and the readings live here, apart from the chip
+ * that draws them, so they are tested without a DOM.
  */
 
 /**
@@ -112,9 +113,23 @@ export function captureLabel(capture: TabCapture): string {
 export type BlockedGlyph = `${BlockedPermission}-off`
 
 /**
+ * How long the Memory Saver leaf stands in the slot after a tab wakes from sleep (omnibox-40):
+ * Chrome's chip collapses after about ten seconds; ours leaves the slot then, unless its bubble
+ * is open (`held`), when it stays for as long as the bubble does (§9.20: the anchor of an open
+ * popover keeps its place).
+ */
+export const MEMORY_SAVER_LEAF_MS = 10_000
+
+/** The leaf's name: Chrome's sentence, the number the discard recorded. */
+export function memorySaverLabel(savedMb: number): string {
+  return `Memory Saver freed up ${savedMb} MB`
+}
+
+/**
  * The state the site-information slot carries in place of the connection's glyph: a live
- * capture, or the site's standing blocks. `label` is the state's name – the chip's tooltip, and
- * what the chip's name appends to "Site information" (`siteChipName`).
+ * capture, the site's standing blocks, or the leaf of a tab just woken from sleep. `label` is
+ * the state's name – the chip's tooltip, and what the chip's name appends to "Site
+ * information" (`siteChipName`).
  */
 export type SiteSlotState =
   | { kind: 'capture'; glyph: CaptureGlyph; label: string }
@@ -125,19 +140,61 @@ export type SiteSlotState =
       permissions: BlockedPermission[]
       label: string
     }
+  | {
+      /** The tab woke from sleep a moment ago (`Tab.memorySaver`): the leaf, its bubble on a click. */
+      kind: 'memory-saver'
+      glyph: 'leaf'
+      savedMb: number
+      label: string
+    }
+
+/**
+ * What the slot's decision reads beyond the state: the clock, for the leaf's ten seconds, and
+ * whether the leaf's bubble is up, which holds the leaf past them.
+ */
+export interface SiteSlotOptions {
+  /** The moment the slot is read at; the wall clock when left out. */
+  now?: number
+  /** The Memory Saver bubble is open on this tab: its leaf stays for as long as it is. */
+  leafHeld?: boolean
+}
+
+/**
+ * The Memory Saver leaf for the tab, while it stands (omnibox-40): the tab woke from sleep
+ * within `MEMORY_SAVER_LEAF_MS` of `now`, or its bubble is open. Null otherwise – a record older
+ * than the window says nothing, however long it lingers on the tab (the core clears it at the
+ * next sleep).
+ */
+export function memorySaverLeaf(
+  tab: Tab | null | undefined,
+  options: SiteSlotOptions = {}
+): Extract<SiteSlotState, { kind: 'memory-saver' }> | null {
+  const saver = tab?.memorySaver ?? null
+  if (!saver) return null
+  const now = options.now ?? Date.now()
+  if (!options.leafHeld && now - saver.wokeAt >= MEMORY_SAVER_LEAF_MS) return null
+  return {
+    kind: 'memory-saver',
+    glyph: 'leaf',
+    savedMb: saver.savedMb,
+    label: memorySaverLabel(saver.savedMb)
+  }
+}
 
 /**
  * Which state the slot shows for the tab, by §9.29's precedence: a certificate error's danger
  * glyph beats everything (the identity is in question, so the connection's glyph stays and this
  * returns null); a live capture (`Tab.capture`, folded from the frames' reports) beats a
- * standing block; a stored site-level block beats the connection's own glyph; null where the
- * connection's glyph is all there is. A masked private tab is no page to the pill (the caller
- * passes no tab).
+ * standing block; a stored site-level block beats the leaf of a tab just woken from sleep (a
+ * decision of the user's over a passing notice); the leaf beats the connection's own glyph;
+ * null where the connection's glyph is all there is. A masked private tab is no page to the
+ * pill (the caller passes no tab).
  */
 export function siteSlotState(
   state: UIState,
   tab: Tab | null | undefined,
-  indicator: IndicatorState
+  indicator: IndicatorState,
+  options: SiteSlotOptions = {}
 ): SiteSlotState | null {
   if (!tab || indicator === 'certificate-error') return null
   const capture = tab.capture ?? null
@@ -145,13 +202,15 @@ export function siteSlotState(
     return { kind: 'capture', glyph: captureGlyph(capture), label: captureLabel(capture) }
   const permissions = blockedPermissionsOf(state, tab)
   const first = permissions[0]
-  if (!first) return null
-  return {
-    kind: 'blocked',
-    glyph: `${first}-off`,
-    permissions,
-    label: blockedPermissionsLabel(permissions)
+  if (first) {
+    return {
+      kind: 'blocked',
+      glyph: `${first}-off`,
+      permissions,
+      label: blockedPermissionsLabel(permissions)
+    }
   }
+  return memorySaverLeaf(tab, options)
 }
 
 /**

@@ -482,6 +482,17 @@ export interface Tab {
    * when the host could not tell (or the tab was never loaded this session).
    */
   sleepSavedMb?: number
+  /**
+   * The tab woke from the sleep the unload pass put it into (omnibox-40, Chrome's Memory Saver
+   * chip): the memory (MB) its page held at the discard – `sleepSavedMb`'s number, carried past
+   * the wake – and when it was loaded again. The pill's site-information slot shows the leaf
+   * for a while from `wokeAt` and the leaf's bubble names the number. Set by `Tabs.load` for a
+   * tab `discard` slept this session with a number; gone at the next discard; a session's own
+   * (never persisted – a tab restored asleep from disk carries no number, and its first load
+   * says nothing: the saving was another session's). Absent on hosts and records older than
+   * the field.
+   */
+  memorySaver?: { savedMb: number; wokeAt: number } | null
   /** Page lifecycle frozen by the resource governor (no timers, no script) – Chromium tab freezing. */
   frozen: boolean
   /** CPU throttling factor the governor applied to the renderer (1 = none, 4 = four times slower). */

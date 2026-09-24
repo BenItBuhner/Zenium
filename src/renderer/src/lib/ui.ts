@@ -347,6 +347,13 @@ export interface UiState {
    */
   zoomBubble: { tabId: string; factor: number; seq: number; source: 'auto' | 'chip' } | null
   /**
+   * The Memory Saver bubble (omnibox-40, Chrome's): a 320 popover under the pill's
+   * site-information slot, opened by a click on the leaf the slot shows for a tab just woken
+   * from sleep – "Memory Saver freed up N MB" and the Never unload this site row. Up for the
+   * tab named; the leaf stays in the slot while it is (`lib/siteChips.ts`).
+   */
+  memorySaverBubble: { tabId: string } | null
+  /**
    * Reader View's text preferences for a reader tab (CT-20): a popover under the pill's chip on
    * a mouse (`anchor` is the chip; null hangs it under the frame's top edge), the shared sheet
    * on a phone. Opened by the chip or the app menu's "Text Preferences…" (the reader document
@@ -605,6 +612,7 @@ export const uiStore = createStore<UiState>(
     windowPromptOpen: false,
     starDialog: null,
     zoomBubble: null,
+    memorySaverBubble: null,
     readerPreferences: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
@@ -1187,6 +1195,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.autofillPassphrase &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.memorySaverBubble &&
     !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.folderDeleteConfirm &&
@@ -1252,6 +1261,7 @@ export function invalidateSnapshot(): void {
     !ui.autofillPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.memorySaverBubble &&
     !ui.readerPreferences &&
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
@@ -1981,6 +1991,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.autofillPrompt !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
+    ui.memorySaverBubble !== null ||
     ui.readerPreferences !== null ||
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
@@ -2298,6 +2309,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
       ui.zoomBubble !== null ||
+      ui.memorySaverBubble !== null ||
       ui.readerPreferences !== null ||
       ui.hoverCard.tabId !== null ||
       ui.downloadsOpen ||
@@ -2329,6 +2341,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       barMenuOpen: false,
       starDialog: null,
       zoomBubble: null,
+      memorySaverBubble: null,
       readerPreferences: null,
       hoverCard: HOVER_CARD_HIDDEN,
       downloadsOpen: false,
@@ -2401,6 +2414,32 @@ export async function openZoomBubble(tabId: string, factor: number): Promise<voi
 export function closeZoomBubble(opts: { keepFocus?: boolean } = {}): void {
   if (!uiStore.get().zoomBubble) return
   uiStore.set({ zoomBubble: null })
+  invalidateSnapshot()
+  if (!opts.keepFocus) returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The Memory Saver bubble under the pill's leaf
+// ---------------------------------------------------------------------------
+
+/**
+ * The pill's leaf was pressed (omnibox-40): the bubble opens under the slot over a picture of
+ * the page – the live view gives way under chrome that overlaps it, as under the zoom bubble –
+ * and the keyboard goes into it (§9.22: a surface the user opened).
+ */
+export async function openMemorySaverBubble(tabId: string): Promise<void> {
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ memorySaverBubble: { tabId } })
+}
+
+/**
+ * Put the bubble away. Focus goes back to the page unless the caller keeps it in the chrome
+ * (`keepFocus`: Escape hands it to the slot the bubble hung from, §9.22).
+ */
+export function closeMemorySaverBubble(opts: { keepFocus?: boolean } = {}): void {
+  if (!uiStore.get().memorySaverBubble) return
+  uiStore.set({ memorySaverBubble: null })
   invalidateSnapshot()
   if (!opts.keepFocus) returnFocusToPage()
 }

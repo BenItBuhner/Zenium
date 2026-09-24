@@ -1,5 +1,12 @@
 import type { JSX, ReactNode, RefObject } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import {
   ALargeSmall,
   AppWindow,
@@ -13,6 +20,7 @@ import {
   File,
   Info,
   Languages,
+  Leaf,
   Lock,
   MapPinOff,
   Mic,
@@ -43,12 +51,19 @@ import { PRIVATE_TAB_PLACEHOLDER, unlockPrivateTabs, useTabMasked } from '@rende
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
-import { siteChipName, siteSlotState, type SiteSlotState } from '@renderer/lib/siteChips'
+import {
+  MEMORY_SAVER_LEAF_MS,
+  siteChipName,
+  siteSlotState,
+  type SiteSlotState
+} from '@renderer/lib/siteChips'
 import { openSiteInfo, siteInfoAnchoredOn, siteInfoStore } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
 import {
+  closeMemorySaverBubble,
   closeReaderPreferences,
+  openMemorySaverBubble,
   openOverlay,
   openReaderPreferences,
   openUrlbar,
@@ -339,9 +354,24 @@ export function NavRow({
   // permission blocked on the site (the engine's live rules) – by the ruled precedence, a
   // certificate error's glyph over both. Never a second chip: a state the slot can carry adds
   // nothing to the tier, so the address keeps its width at 240 whatever the state. A masked
-  // page and an extension's page (its icon in the slot) say nothing of it.
+  // page and an extension's page (its icon in the slot) say nothing of it. Below a standing
+  // block, the Memory Saver leaf of a tab just woken from sleep (omnibox-40): ten seconds from
+  // the wake on the slot's clock (`useLeafClock`), held while its bubble is up, its click
+  // opening that bubble rather than site information.
+  const memorySaverOpen = uiStore.use(
+    (s) => s.memorySaverBubble !== null && s.memorySaverBubble.tabId === tab?.id
+  )
+  const leafNow = useLeafClock(tab?.memorySaver?.wokeAt)
   const slot: SiteSlotState | null =
-    tab && !masked && !extension ? siteSlotState(state, tab, indicator.state) : null
+    tab && !masked && !extension
+      ? siteSlotState(state, tab, indicator.state, { now: leafNow, leafHeld: memorySaverOpen })
+      : null
+  // The leaf's bubble speaks for a leaf in the slot: a state coming over the leaf (a capture
+  // starting) takes the slot, and the bubble goes with the leaf.
+  const leafUp = slot?.kind === 'memory-saver'
+  useEffect(() => {
+    if (memorySaverOpen && !leafUp) closeMemorySaverBubble()
+  }, [memorySaverOpen, leafUp])
   // The mask draws in the slot on a private tab with a page (§9.19) at the connection glyph's
   // rank: a state in the slot (`slot`) and the danger tier of the connection itself – a
   // certificate error, a dangerous site – take the one 16 box over it (`maskYields`).
@@ -654,7 +684,7 @@ export function NavRow({
                       : indicator.title
                 }
                 popup="dialog"
-                expanded={siteAnchored}
+                expanded={siteAnchored || memorySaverOpen}
                 data-site-chip=""
                 data-indicator={indicator.state}
                 data-slot-state={slot?.kind ?? (maskDraws ? 'private' : 'connection')}
@@ -662,12 +692,19 @@ export function NavRow({
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--v2-control-text-deemphasized)] hover:bg-[var(--v2-control-fill-hover)] hover:text-[var(--v2-control-text)]',
                   slot?.kind === 'capture' && 'text-[var(--v2-control-text)]',
-                  siteAnchored && 'bg-[var(--v2-control-fill-hover)] text-[var(--v2-control-text)]',
+                  (siteAnchored || memorySaverOpen) &&
+                    'bg-[var(--v2-control-fill-hover)] text-[var(--v2-control-text)]',
                   indicator.state === 'certificate-error' && 'text-[var(--v2-danger)]'
                 )}
                 onActivate={(e) => {
                   const chip = e.currentTarget
                   const r = chip.getBoundingClientRect()
+                  // The leaf opens its own bubble (omnibox-40); the anchor's own press closes
+                  // it without reopening (§9.20), which the layer's light dismiss does.
+                  if (slot?.kind === 'memory-saver') {
+                    if (!memorySaverOpen) void openMemorySaverBubble(tab.id)
+                    return
+                  }
                   // A state in the slot leads straight to the Permissions level, where its row
                   // is changed (omnibox-38); the connection's glyph opens the overview.
                   void openSiteInfo(
@@ -968,9 +1005,10 @@ function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>, mounted: boole
 /**
  * The slot's state glyphs (omnibox-38; Chrome's location-bar icons): the camera, the microphone
  * or the sharing glyph while the page captures, the crossed-out camera, microphone, location or
- * bell for a permission blocked on the site. Drawn at the slot's one size (`SLOT_GLYPH`, §9.19's
- * 16 in the 24 box), at the row's stroke like every 16 px glyph in the row (§9.3); the ink is
- * the chip's.
+ * bell for a permission blocked on the site, Chrome's leaf for a tab just woken from sleep
+ * (omnibox-40). Drawn at the slot's one size (`SLOT_GLYPH`, §9.19's 16 in the 24 box), at the
+ * row's stroke like every 16 px glyph in the row (§9.3); the ink is the chip's – the leaf at the
+ * slot's rest 69 %, a notice and not a live state (§9.29).
  */
 const SLOT_GLYPHS = {
   camera: Camera,
@@ -979,8 +1017,34 @@ const SLOT_GLYPHS = {
   'camera-off': CameraOff,
   'microphone-off': MicOff,
   'geolocation-off': MapPinOff,
-  'notifications-off': BellOff
+  'notifications-off': BellOff,
+  leaf: Leaf
 } as const
+
+/**
+ * The clock the slot reads the Memory Saver leaf by (omnibox-40): the wall clock as an external
+ * store, read as the row renders and heard once more as the leaf's ten seconds run out –
+ * nothing ticks in between. The reading is as coarse as the slot's decision: the wake's moment
+ * while the window is open, the window's end once it has closed, so a wake that reaches the
+ * row late (a tab woken in the background and shown later) reads as over at its first render
+ * and no reading is kept from an earlier wake. `wokeAt` is the tab's (`Tab.memorySaver`); a
+ * new wake subscribes the clock again; a tab without a wake reads nothing.
+ */
+function useLeafClock(wokeAt: number | undefined): number {
+  const deadline = wokeAt === undefined ? 0 : wokeAt + MEMORY_SAVER_LEAF_MS
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const left = deadline - Date.now()
+      if (left <= 0) return () => undefined
+      const timer = window.setTimeout(onChange, left + 1)
+      return () => window.clearTimeout(timer)
+    },
+    [deadline]
+  )
+  return useSyncExternalStore(subscribe, () =>
+    wokeAt === undefined || Date.now() >= deadline ? deadline : wokeAt
+  )
+}
 
 function SlotGlyph({ glyph }: { glyph: SiteSlotState['glyph'] }): JSX.Element {
   const Glyph = SLOT_GLYPHS[glyph]

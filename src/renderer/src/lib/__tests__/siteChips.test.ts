@@ -3,11 +3,13 @@ import type { TabCapture } from '@shared/captureState'
 import type { Tab, UIState } from '@shared/types'
 import {
   BLOCKED_PERMISSIONS,
+  MEMORY_SAVER_LEAF_MS,
   blockedPermissionLabel,
   blockedPermissionsLabel,
   blockedPermissionsOf,
   captureGlyph,
   captureLabel,
+  memorySaverLeaf,
   permissionSiteOf,
   siteChipName,
   siteSlotState
@@ -132,6 +134,53 @@ describe('the site-information slot’s state (§9.29)', () => {
   it('a certificate error beats both: the slot keeps the danger glyph', () => {
     expect(siteSlotState(rules, tab('https://meet.example/', both), 'certificate-error')).toBeNull()
     expect(siteSlotState(rules, tab('https://meet.example/'), 'certificate-error')).toBeNull()
+  })
+
+  describe('the Memory Saver leaf of a tab just woken from sleep (omnibox-40)', () => {
+    const wokeAt = Date.parse('2026-09-24T04:00:00Z')
+    const woken = (url = 'https://docs.example/'): Tab =>
+      ({ id: 't1', url, capture: null, memorySaver: { savedMb: 312, wokeAt } }) as unknown as Tab
+    const leaf = {
+      kind: 'memory-saver',
+      glyph: 'leaf',
+      savedMb: 312,
+      label: 'Memory Saver freed up 312 MB'
+    }
+
+    it('stands for ten seconds from the wake, then leaves the slot to the connection’s glyph', () => {
+      expect(siteSlotState(none, woken(), 'secure', { now: wokeAt })).toEqual(leaf)
+      expect(siteSlotState(none, woken(), 'insecure', { now: wokeAt + 9_999 })).toEqual(leaf)
+      expect(
+        siteSlotState(none, woken(), 'secure', { now: wokeAt + MEMORY_SAVER_LEAF_MS })
+      ).toBeNull()
+      expect(siteSlotState(none, woken(), 'secure', { now: wokeAt + 60_000 })).toBeNull()
+      expect(memorySaverLeaf(woken(), { now: wokeAt + 60_000 })).toBeNull()
+      expect(siteChipName(memorySaverLeaf(woken(), { now: wokeAt }))).toBe(
+        'Site information · Memory Saver freed up 312 MB'
+      )
+      expect(MEMORY_SAVER_LEAF_MS).toBe(10_000)
+    })
+
+    it('stays while its bubble is open, whatever the clock says', () => {
+      expect(
+        siteSlotState(none, woken(), 'secure', { now: wokeAt + 60_000, leafHeld: true })
+      ).toEqual(leaf)
+    })
+
+    it('yields to a live capture, a standing block and a certificate error; a tab without a wake has none', () => {
+      const asleepBefore = { ...woken('https://meet.example/'), capture: both }
+      expect(siteSlotState(rules, asleepBefore, 'secure', { now: wokeAt })).toMatchObject({
+        kind: 'capture'
+      })
+      expect(
+        siteSlotState(rules, woken('https://meet.example/'), 'secure', { now: wokeAt })
+      ).toMatchObject({ kind: 'blocked', glyph: 'microphone-off' })
+      expect(siteSlotState(none, woken(), 'certificate-error', { now: wokeAt })).toBeNull()
+      expect(
+        siteSlotState(none, tab('https://docs.example/'), 'secure', { now: wokeAt })
+      ).toBeNull()
+      expect(memorySaverLeaf(null)).toBeNull()
+    })
   })
 })
 
