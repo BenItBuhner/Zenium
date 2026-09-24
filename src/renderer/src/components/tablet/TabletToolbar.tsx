@@ -34,9 +34,11 @@ interface Props {
  * the tablet's tab surface (expanded, or as the rail). The overview with the tabs as cards
  * (TABLET-14) has two ways in, both Chrome's tablet entries: the pull-down on this row (GN-27),
  * as the phone pulls it in from its pill, and the tab-count button before the menu – the phone
- * bar's `Tabs (N)` item, its badge filled while the overview is up – which is the entry a finger
- * finds without a gesture and a switch-access user finds at all. The row never hides on scroll
- * (the phone's bar does): a tablet has the room.
+ * bar's `Tabs (N)` item, pressed (`aria-pressed`) while the overview stands, from its opening
+ * through its close settle, the button on the window's pressed fill and its square never
+ * inverted (§9.36; the phone bar fills its badge, the tablet's row does not) – which is the
+ * entry a finger finds without a gesture and a switch-access user finds at all. The row never
+ * hides on scroll (the phone's bar does): a tablet has the room.
  */
 export function TabletToolbar({
   state,
@@ -46,6 +48,9 @@ export function TabletToolbar({
 }: Props): JSX.Element {
   const { style: handleStyle, ...handle } = useOverviewHandle({ edge: 'top', from: 'anywhere' })
   const side = state.settings.sidebarSide
+  // Pressed while the overview stands (§9.36): from the pull's or the tap's first frame until
+  // the close has settled – `closed` alone clears it, so the fill does not flip as the layer
+  // begins its way back up.
   const overviewOpen = stageStore.use((s) => s.overview.phase !== 'closed')
   const count = tabCount(state)
   const ToggleGlyph =
@@ -92,7 +97,9 @@ export function TabletToolbar({
         }
         trailing={
           // The name carries the count the badge draws, as the phone bar's item does (its
-          // TalkBack note in `barItems.tsx`); the badge fills while the overview is up.
+          // TalkBack note in `barItems.tsx`). Pressed, the button takes the window's pressed
+          // fill (`.zen-tablet-tabs[aria-pressed='true']`, main.css's tablet block), the square
+          // itself never inverted (§9.36) – the phone bar's fill of it is the phone's.
           <button
             type="button"
             className="zen-toolbar-button zen-tablet-tabs"
@@ -101,7 +108,7 @@ export function TabletToolbar({
             data-tablet-tabs
             onClick={() => toggleOverview(state)}
           >
-            <TabCountBadge count={count} active={overviewOpen} />
+            <TabCountBadge count={count} active={false} />
           </button>
         }
       />

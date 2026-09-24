@@ -8362,6 +8362,17 @@
   height: var(--v2-icon);
 }
 /*
+ * `Tabs (N)` pressed while the overview stands (§9.36): the window's pressed fill – §9.29's
+ * `--v2-control-fill-hover`, which on the row's window surface is `--v2-window-fill-hover`, the
+ * fill the row's other buttons take on a press and the menu's on `aria-expanded` (the toolbar
+ * rule above) – on `aria-pressed`, from the pull's first frame through the close settle. The
+ * count's square keeps its outline at the ink it has, never an inverted square: the phone bar
+ * fills its badge (`barItems.tsx`), the tablet's row does not.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-tablet-tabs[aria-pressed='true'] {
+  background: var(--v2-window-fill-hover);
+}
+/*
  * The address pill in the row: as tall as the row's buttons (40), radius 12, the address at the
  * phone pill's 14 px; its chips – the site glyph, the star, the blocked count – on 32 boxes with
  * the row's 20 glyph (the §9.29 sidebar-pill tiering keeps deciding which chips are in it).

@@ -13,14 +13,17 @@ vi.mock('@renderer/lib/api', () => ({
 import { defaultShortcuts } from '@shared/shortcuts'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { contentAreaStore } from '@renderer/lib/ui'
-import { dismissOverview, stageStore } from '@renderer/lib/gestures/stage'
+import { dismissOverview, stageStore, type OverviewState } from '@renderer/lib/gestures/stage'
 import { TabletToolbar } from '../TabletToolbar'
 
 /*
  * The tablet toolbar's tab-count button (TABLET-14; v2 §9.36): the second way into the overview
  * beside the row's pull-down (GN-27) – the phone bar's `Tabs (N)` item at the row's end, before
- * the menu, its badge filled and its pressed state on while the overview is up. Its accessible
- * name is a harness contract (`Tabs (N)`, `data-tablet-tabs`).
+ * the menu, pressed (`aria-pressed`) while the overview stands, from its first frame through the
+ * close settle; the button takes the window's pressed fill on the attribute (the stylesheet's
+ * `.zen-tablet-tabs[aria-pressed='true']`) and its count square is never inverted – the phone
+ * bar's fill of the badge is the phone's. Its accessible name is a harness contract (`Tabs (N)`,
+ * `data-tablet-tabs`).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -156,5 +159,41 @@ describe('the tablet toolbar’s tab-count button (TABLET-14)', () => {
     )
     act(() => tabsButton()!.click())
     expect(stageStore.get().overview.target).toBe(0)
+  })
+
+  it('pressed, the count square keeps its outline – never the phone bar`s inverted fill – and the pressed state is the attribute the stylesheet fills', () => {
+    render(stateOf())
+    const badge = (): HTMLElement => tabsButton()!.querySelector<HTMLElement>('span')!
+    const inverted = (el: HTMLElement): boolean =>
+      el.className.includes('bg-[var(--zen-fg)]') ||
+      el.className.includes('text-[var(--zen-bg-solid)]')
+    expect(inverted(badge())).toBe(false)
+    act(() => tabsButton()!.click())
+    expect(tabsButton()!.getAttribute('aria-pressed')).toBe('true')
+    expect(tabsButton()!.classList.contains('zen-tablet-tabs')).toBe(true)
+    expect(inverted(badge())).toBe(false)
+    expect(badge().className).toContain('border-current')
+    expect(badge().textContent?.trim()).toBe('3')
+  })
+
+  it('`aria-pressed` holds from the pull`s first frame through the close settle, and clears only at closed', () => {
+    render(stateOf())
+    const pressed = (): string | null => tabsButton()!.getAttribute('aria-pressed')
+    const phase = (patch: Partial<OverviewState>): void =>
+      act(() => stageStore.set({ overview: { ...stageStore.get().overview, ...patch } }))
+    // The pull down the toolbar: pressed as the layer starts down.
+    phase({ phase: 'dragging', progress: 0.05, heroTabId: 'a', target: 1 })
+    expect(pressed()).toBe('true')
+    phase({ phase: 'settling', progress: 0.6, target: 1 })
+    expect(pressed()).toBe('true')
+    phase({ phase: 'open', progress: 1 })
+    expect(pressed()).toBe('true')
+    // The close: the layer on its way back up is still the overview standing – no early flip.
+    phase({ phase: 'settling', progress: 0.5, target: 0 })
+    expect(pressed()).toBe('true')
+    phase({ phase: 'settling', progress: 0.02, target: 0 })
+    expect(pressed()).toBe('true')
+    phase({ phase: 'closed', progress: 0, heroTabId: null, target: 0 })
+    expect(pressed()).toBe('false')
   })
 })
