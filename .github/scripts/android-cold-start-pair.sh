@@ -103,6 +103,22 @@ fully_drawn_wait() {
 splash_held() {
   adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'splash held [0-9-]* ms, lifted by [a-z]*' | tail -n 1 | sed 's/splash held \([0-9-]*\) ms, lifted by \([a-z]*\)/\1 (\2)/' | grep . || echo "-"
 }
+# The boot's marks as the build logs them at the chrome's first frame (`ZenStartup: boot marks:
+# app=41 activity=312 … frame=2890`, ms since the process start; BootMarks.kt), the last such line;
+# empty for a build without them.
+boot_marks() {
+  adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'boot marks: .*' | tail -n 1 | sed 's/^boot marks: //'
+}
+# The names in the given marks lines, in order of first appearance, one per line.
+mark_names() {
+  printf '%s\n' "$@" | tr ' ' '\n' | sed -n 's/=.*//p' | awk 'NF && !seen[$0]++'
+}
+# One mark's value out of each of the given lines, one per line (a line without it gives none).
+mark_values() {
+  local name=$1 line
+  shift
+  for line in "$@"; do printf '%s\n' "$line" | tr ' ' '\n' | sed -n "s/^$name=//p"; done
+}
 
 # Measure one build: install, settle on one discarded start, then $runs measured cold starts.
 # Writes `<name>.txt` (every am start answer) and echoes the TotalTime, Fully drawn and WaitTime lists.
@@ -119,6 +135,7 @@ measure() {
   states=()
   drawn=()
   helds=()
+  marks=()
   for i in $(seq 1 "$runs"); do
     adb logcat -c > /dev/null 2>&1 || true
     seen=$(fully_drawn_count)
@@ -128,16 +145,18 @@ measure() {
     # start is cold from a quiet device rather than from a boot still in flight.
     fully=$(fully_drawn_wait 15 "$seen")
     held=$(splash_held)
-    printf 'run %s\n%s\nFullyDrawn: %s\nSplashHeld: %s\n\n' "$i" "$answer" "$fully" "$held" >> "$out/$name-am-start.txt"
+    marks_=$(boot_marks)
+    printf 'run %s\n%s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\n\n' "$i" "$answer" "$fully" "$held" "$marks_" >> "$out/$name-am-start.txt"
     total=$(printf '%s\n' "$answer" | sed -n 's/^TotalTime: *//p' | head -n 1)
     wait_=$(printf '%s\n' "$answer" | sed -n 's/^WaitTime: *//p' | head -n 1)
     state=$(printf '%s\n' "$answer" | sed -n 's/^LaunchState: *//p' | head -n 1)
-    echo "  run $i: TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held"
+    echo "  run $i: TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held${marks_:+; marks $marks_}"
     totals+=("${total:-0}")
     waits+=("${wait_:-0}")
     states+=("${state:-?}")
     drawn+=("$fully")
     helds+=("$held")
+    marks+=("$marks_")
     sleep 6
   done
   adb shell am force-stop "$app_id"
@@ -159,9 +178,9 @@ delta() {
 join() { local IFS=' '; echo "$*"; }
 
 measure before "$base_apk" "${P0_BASE_LABEL:-base}"
-before_totals=("${totals[@]}"); before_waits=("${waits[@]}"); before_states=("${states[@]}"); before_drawn=("${drawn[@]}"); before_helds=("${helds[@]}")
+before_totals=("${totals[@]}"); before_waits=("${waits[@]}"); before_states=("${states[@]}"); before_drawn=("${drawn[@]}"); before_helds=("${helds[@]}"); before_marks=("${marks[@]}")
 measure after "$head_apk" "${P0_HEAD_LABEL:-head}"
-after_totals=("${totals[@]}"); after_waits=("${waits[@]}"); after_states=("${states[@]}"); after_drawn=("${drawn[@]}"); after_helds=("${helds[@]}")
+after_totals=("${totals[@]}"); after_waits=("${waits[@]}"); after_states=("${states[@]}"); after_drawn=("${drawn[@]}"); after_helds=("${helds[@]}"); after_marks=("${marks[@]}")
 
 before_total=$(median "${before_totals[@]}")
 after_total=$(median "${after_totals[@]}")
@@ -182,6 +201,23 @@ after_fully=$(median "${after_drawn[@]}")
   echo "| after (${P0_HEAD_LABEL:-head}) | $after_total | $after_fully | $after_wait | $(join "${after_totals[@]}") | $(join "${after_drawn[@]}") | $(join "${after_states[@]}") | $(join "${after_helds[@]}") |"
   echo
   echo "delta (after - before): TotalTime $(delta "$after_total" "$before_total") ms, Fully drawn $(delta "$after_fully" "$before_fully") ms, WaitTime $(delta "$after_wait" "$before_wait") ms"
+  # The boot's marks, where a build logs them: one row per name, the medians over the runs.
+  names=$(mark_names "${before_marks[@]}" "${after_marks[@]}")
+  if [ -n "$names" ]; then
+    echo
+    echo "boot marks (BootMarks.kt): ms since the process start, medians over the runs; app ZenApplication.onCreate done, activity MainActivity.onCreate begins, host the Host built, content setContentView done, load the chrome's document asked for, created onCreate done, boot the core's boot call answered, ready chrome.ready heard, frame that frame drawn (the splash lifts). - for a build without the mark."
+    echo
+    echo "| mark | before median | after median | delta | before runs | after runs |"
+    echo "| --- | --- | --- | --- | --- | --- |"
+    for n in $names; do
+      # shellcheck disable=SC2046
+      bm=$(median $(mark_values "$n" "${before_marks[@]}"))
+      # shellcheck disable=SC2046
+      am=$(median $(mark_values "$n" "${after_marks[@]}"))
+      # shellcheck disable=SC2046
+      echo "| $n | $bm | $am | $(delta "$am" "$bm") | $(join $(mark_values "$n" "${before_marks[@]}")) | $(join $(mark_values "$n" "${after_marks[@]}")) |"
+    done
+  fi
 } | tee "$out/cold-start-pair.txt"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   { echo "### MainActivity cold start, before / after"; echo; cat "$out/cold-start-pair.txt"; } >> "$GITHUB_STEP_SUMMARY"

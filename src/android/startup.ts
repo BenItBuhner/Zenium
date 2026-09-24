@@ -76,7 +76,12 @@ export class ChromeReady {
   /** The host sent new insets (the `insets` event): what the chrome must have applied moves with them. */
   hostInsets(insets: ReadyInsets): void {
     if (this.sent) return
-    this.expected = { top: insets.top, right: insets.right, bottom: insets.bottom, left: insets.left }
+    this.expected = {
+      top: insets.top,
+      right: insets.right,
+      bottom: insets.bottom,
+      left: insets.left
+    }
     // A placement under the old insets is not one under these.
     if (!this.insetsApplied()) this.placedUnderInsets = false
     this.check()
@@ -98,7 +103,13 @@ export class ChromeReady {
   }
 
   /** The four facts as they stand, for the boot log. */
-  get state(): { armed: boolean; themePainted: boolean; insetsApplied: boolean; placed: boolean; sent: boolean } {
+  get state(): {
+    armed: boolean
+    themePainted: boolean
+    insetsApplied: boolean
+    placed: boolean
+    sent: boolean
+  } {
     return {
       armed: this.armed,
       themePainted: this.themePainted,

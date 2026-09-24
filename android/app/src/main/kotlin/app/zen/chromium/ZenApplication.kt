@@ -9,5 +9,6 @@ class ZenApplication : Application() {
         // Debug builds can be inspected from desktop Chrome (chrome://inspect) – the chrome WebView
         // shows the browser core's console, each tab WebView the page.
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+        BootMarks.mark("app")
     }
 }

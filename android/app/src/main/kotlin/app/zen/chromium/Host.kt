@@ -626,6 +626,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Synchronous methods (bridge thread!). Only cheap, thread-safe work belongs here. */
     fun dispatchSync(method: String, args: JSONObject): Any? = when (method) {
         "boot" -> {
+            BootMarks.mark("boot")
             // The core's documents: the small ones inline, the big ones listed for the chrome to
             // fetch through the document handler (`BootHandoff.kt`, `src/android/handoff.ts`).
             val documents = storage.bootDocuments(BootHandoff.BOOT_INLINE_LIMIT)

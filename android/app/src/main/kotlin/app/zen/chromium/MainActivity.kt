@@ -118,6 +118,7 @@ class MainActivity : BrowserActivity() {
         // The splash first (OS-26), before super.onCreate as the library requires: the window's
         // theme becomes Theme.Zen (Theme.Zen.Splash's postSplashScreenTheme) and the platform's
         // splash view comes to StartupSplash at the first frame, held until onChromeReady.
+        BootMarks.mark("activity")
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -130,6 +131,7 @@ class MainActivity : BrowserActivity() {
             visibility = View.GONE
         }
         host = Host(this, root, fullscreenLayer)
+        BootMarks.mark("host")
         posture = Posture(this) { report -> host.chrome.hostEvent("posture", report) }
         root.addView(host.chrome, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val shell = FrameLayout(this)
@@ -140,6 +142,7 @@ class MainActivity : BrowserActivity() {
         shell.addView(host.historyNavBubbleLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         shell.addView(fullscreenLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(shell)
+        BootMarks.mark("content")
 
         ViewCompat.setOnApplyWindowInsetsListener(shell) { _, windowInsets ->
             latestInsets = windowInsets
@@ -172,8 +175,10 @@ class MainActivity : BrowserActivity() {
 
         // Back is the host's PredictiveBack: it registers itself only while there is something to
         // pop, so an empty stack leaves the system's own back-to-home animation alone.
+        BootMarks.mark("load")
         host.chrome.load()
         handleIntent(intent)
+        BootMarks.mark("created")
     }
 
     fun currentInsets(): JSONObject = insets
@@ -403,10 +408,12 @@ class MainActivity : BrowserActivity() {
     fun onChromeReady() {
         if (chromeReadyHeard) return
         chromeReadyHeard = true
+        BootMarks.mark("ready")
         val posted = SystemClock.uptimeMillis()
         host.chrome.postVisualStateCallback(CHROME_READY_FRAME, object : WebView.VisualStateCallback() {
             override fun onComplete(requestId: Long) {
                 if (isDestroyed || isFinishing) return
+                BootMarks.mark("frame")
                 reportFullyDrawn()
                 startupSplash.ready()
                 Log.i(
@@ -414,6 +421,7 @@ class MainActivity : BrowserActivity() {
                     "chrome ready: frame drawn ${SystemClock.uptimeMillis() - posted} ms after the chrome's word; " +
                         "splash held ${startupSplash.heldForMs ?: -1} ms, lifted by ${startupSplash.hold.liftedBy ?: "nothing yet"}"
                 )
+                Log.i(StartupSplash.TAG, "boot marks: ${BootMarks.line()}")
             }
         })
     }
