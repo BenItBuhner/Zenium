@@ -25,10 +25,11 @@
 #   GUEST_PROBE_S    – seconds the `adb shell echo alive` probe of that check may take before the
 #                      guest counts as not answering (default 20; a frozen guest answers nothing,
 #                      so a lane racing a short-lived qemu sets it low)
-#   DONE_PROBE_S     – seconds the loop's `adb shell run-as … test -f done` probe (every 30 s) may
-#                      take (default 60); a frozen guest holds it for the whole timeout, so a lane
-#                      racing a short-lived qemu sets it low too, or the silence check above never
-#                      gets its turn
+#   DONE_PROBE_S     – seconds the loop's `adb shell run-as … test -f done` probe (every 30 s) and
+#                      the `pidof` probe after it may take (defaults 60 and 30); a frozen guest
+#                      holds each for the whole timeout, so a lane racing a short-lived qemu sets
+#                      it low too (and under GUEST_SILENCE_S both probes are skipped while the
+#                      guest's logcat stands past the freeze line)
 #   GFXINFO_EVERY_S  – `dumpsys gfxinfo` of the app every that many seconds into
 #                      gfxinfo-samples.txt (the render pipeline's own account up to the last
 #                      seconds before a death); unset: never
@@ -477,11 +478,15 @@ while kill -0 "$driver_pid" 2> /dev/null; do
     fi
   fi
   if [ $((tick % 6)) -ne 0 ]; then continue; fi
+  # A guest silent past the freeze line answers no adb probe: the two below would hold this loop
+  # for their whole timeouts (round 16's sixth sample: forty seconds, the emulator gone meanwhile)
+  # while the freeze check above waits for its next tick; they are skipped until the guest logs.
+  if [ "$guest_silence_s" -gt 0 ] && [ "${logcat_still:-0}" -ge "$guest_silence_s" ]; then continue; fi
   if timeout "${DONE_PROBE_S:-60}" adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
   if [ "$hung" -eq 0 ]; then
     # `pidof` exits 1 while the app is dead (a crash the instrumentation is still winding down):
     # under pipefail that would end the driver here, before `note_emulator_death` and `collect`.
-    app_pid=$(timeout 30 adb shell pidof "$app_id" 2> /dev/null | tr -d '\r' | awk '{print $1}' || true)
+    app_pid=$(timeout "${DONE_PROBE_S:-30}" adb shell pidof "$app_id" 2> /dev/null | tr -d '\r' | awk '{print $1}' || true)
     if [ -n "$app_pid" ]; then
       silence=$(app_silence "$app_pid")
       if [ "${silence:-0}" -ge "$hang_silence_s" ]; then dump_hang "$app_pid" "$silence"; fi
