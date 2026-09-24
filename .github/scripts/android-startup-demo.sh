@@ -453,6 +453,25 @@ warm_start() {
   rows+=("| warm, activity re-created ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully | $held | $splash_seen / - | - | - | - | - |")
 }
 
+# The web app's design still under $1: a screencap 0.5 s in, read by the frames script on its own
+# (the whole display the slot, as the recording is read), taken again until it reads as the
+# dressed splash or the attempts (3, about 3 s – the page's answer is held 4 s past the dress)
+# are spent; the last taken stays, and the reader's verdict on it comes with the recording's.
+dressed_still() {
+  local png=$1 attempts=3 k=1 reading
+  local size=${display%@*}
+  while :; do
+    sleep 0.5
+    adb exec-out screencap -p > "$png" || true
+    if ! command -v ffmpeg > /dev/null 2>&1; then return; fi
+    reading=$(node .github/scripts/android-startup-frames.mjs webapp - "0 0 ${size%x*} ${size#*x}" "$size" /dev/null --still "splash=$png" 2> /dev/null \
+      | sed -n 's/.*: \([a-z]*\) (left .*/\1/p' | tail -n 1 || true)
+    echo "  design still: screencap $k reads ${reading:-nothing}"
+    if [ "${reading:-}" = splash ] || [ "$k" -ge "$attempts" ]; then return; fi
+    k=$((k + 1))
+  done
+}
+
 # The web app's cold launch (PWA-06): the process gone, the app's launch intent fired as root
 # (the window is not exported; the tile's trampoline is the only other way in), the page's answer
 # held so the dressed splash stands to be seen, the page's first frame lifting it.
@@ -482,12 +501,15 @@ webapp_launch() {
   total=$(field TotalTime "$answer")
   wait_=$(field WaitTime "$answer")
   state=$(field LaunchState "$answer")
-  # The window's first frame is drawn (the answer came): the hand-over and the dress follow
-  # within a frame or two; the page's answer is still held – the design still.
+  # The window's first frame is drawn (the answer came) and the hand-over dressed the splash (its
+  # line). The dress's first VISIBLE frame waits on the main thread, which the hand-over frame
+  # itself can hold for most of a second on this emulator (run 36070182862's light launch: a
+  # 954 ms frame at the hand-over, the dress on screen about a second after its line, and a
+  # screencap 0.8 s after the line caught the fixed ground) – so the design still is the first
+  # screencap that reads as the dressed splash, within the held page's window.
   local dressed_line
   dressed_line=$(wait_line "web app splash: dressed at the hand-over" 10)
-  sleep 0.8
-  adb exec-out screencap -p > "$dir/android-startup-design-webapp-splash-$theme.png" || true
+  dressed_still "$dir/android-startup-design-webapp-splash-$theme.png"
   local painted_line
   painted_line=$(wait_line "web app page painted: first frame" $(( webapp_hold_ms / 1000 + 15 )))
   sleep 0.8
