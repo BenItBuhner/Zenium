@@ -211,7 +211,7 @@ function desktopState(): UIState {
     bookmarks: [],
     newTabShortcuts: [{ id: 'nt1', title: 'Zenium', url: 'https://zenium.example/' }],
     newTabHiddenHosts: [],
-    newTabBackground: { image: false, canPick: true },
+    newTabBackground: { image: false, canPick: true, accent: null },
     recentlyClosedCount: 0,
     recentlyClosed: [],
     media: [],

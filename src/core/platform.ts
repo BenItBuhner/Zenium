@@ -157,6 +157,12 @@ export interface PageFlags {
   glanceTrigger: 'alt' | 'ctrl' | 'shift'
   /** How plain clicks on third-party links behave on pinned/essential tabs (null = normal tab). */
   thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
+  /**
+   * The page is the left pane of a side-by-side split with the link rule on (split-13): a plain
+   * click on a link is sent back as `split-link` for the pane to its right to load, instead of
+   * navigating here. False for every other page.
+   */
+  linksToSplitPane: boolean
 }
 
 /**
@@ -179,6 +185,8 @@ export interface PageMessage {
     | 'glance'
     | 'open-tab'
     | 'navigate'
+    /** A link clicked in the left pane of a split with the link rule on: the right pane loads `url`. */
+    | 'split-link'
     | 'media'
     | 'zap'
     | 'activation'
@@ -984,6 +992,13 @@ export interface NewTabBackgroundHost {
    */
   set?(dataUrl: string | null): Promise<void>
   clear(): Promise<void>
+  /**
+   * The colour the current image suggests for the space's accent (NTP-14), as `#rrggbb` fitted
+   * by `shared/imageColor.ts`: the host decodes the picture (it holds the bytes) and hands the
+   * pixels of a small resample to `imageAccentHex`. Null with no image, or one the host cannot
+   * decode. Hosts without a decoder leave it out; the core then offers no suggestion.
+   */
+  accent?(): Promise<string | null>
 }
 
 // ---------------------------------------------------------------------------

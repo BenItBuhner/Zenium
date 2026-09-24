@@ -50,6 +50,7 @@ import {
 import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '@shared/downloads'
 import { TOOLBAR_CONTROLS, toolbarPinned, withToolbarPin } from '@shared/toolbarPins'
 import {
+  DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
   newTabPresetChoices,
   newTabSections,
@@ -847,6 +848,8 @@ function lookSection({
           checked: s.splitEdgeZones,
           onChange: (v) => set({ splitEdgeZones: v })
         }
+        // The left pane's link rule (split-13) is not a row here: it is each split's own, on the
+        // pane header's ⋯ menu – one home for the switch (v2 §9.35).
       ]
     })
   }
@@ -1267,7 +1270,8 @@ function voiceOptionDescription(voice: ReadAloudVoice, lang: string): string {
 function newTabSection({ state, set }: SectionContext): RowGroup[] {
   const prefs = state.settings.newTab
   const write = (next: NewTabSettings): void => set({ newTab: next })
-  const { image, canPick } = state.newTabBackground
+  const { image, canPick, accent } = state.newTabBackground
+  const activeSpace = state.spaces.find((s) => s.id === state.activeSpaceId)
   const backgroundOptions: Array<{ value: NewTabBackgroundKind; label: string }> = [
     { value: 'space', label: 'Space gradient' },
     { value: 'solid', label: 'Solid colour' }
@@ -1332,9 +1336,25 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
             else write(setNewTabBackground(prefs, v))
           }
         }),
-        // The image rows exist where a file can be picked; both depend on an image being set.
+        // The image rows exist where a file can be picked; each depends on an image being set.
         ...(canPick
           ? [
+              // The picture's colour as the space's accent (NTP-14): Chrome recolours the browser
+              // from the image on its own; here it is the user's switch, under the background it
+              // reads from. On, this space takes the picture's colour the moment it is flipped
+              // (§9.23) and follows each new picture; off, the colours stay. It rests at .4
+              // without a picture, and until the picture's colour is read.
+              {
+                kind: 'switch',
+                id: 'newtab-image-colour',
+                label: "Use the picture's colour",
+                description:
+                  'This space takes the colour your picture is mostly of, and follows a new one.',
+                keywords: ['theme', 'accent', 'colour', 'color', 'wallpaper'],
+                checked: activeSpace?.theme?.fromImage === true,
+                disabled: !image || !accent,
+                onChange: (v) => run('newtab.useImageColor', { on: v })
+              } satisfies SettingsRow,
               {
                 kind: 'action',
                 id: 'newtab-change-image',
@@ -1355,6 +1375,18 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
               } satisfies SettingsRow
             ]
           : []),
+        // Chrome's "Reset to default" for the theme (NTP-12): the background alone, back to the
+        // space gradient with the picked image let go. One row's reset asks nothing (§10.5).
+        {
+          kind: 'action',
+          id: 'newtab-reset-background',
+          label: 'Reset background to default',
+          description: 'The space gradient; an image kept on this device is removed.',
+          keywords: ['restore', 'theme', 'wallpaper'],
+          button: 'Reset',
+          disabled: background === DEFAULT_NEW_TAB_SETTINGS.background && !image,
+          onPress: () => run('newtab.resetBackground', undefined)
+        },
         {
           kind: 'switch',
           id: 'newtab-greeting',
@@ -1459,6 +1491,32 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
               />
             )
           }
+        }
+      ]
+    },
+    {
+      id: 'newtab-reset',
+      heading: null,
+      rows: [
+        // The whole page (NTP-22): a bulk reset, so the row's §9.23 confirmation stands before
+        // it – Cancel | Reset in the danger ink, no primary, Enter inert (§9.22). Whether a new
+        // tab opens the page at all (the first switch) is not the page's content and stays.
+        {
+          kind: 'action',
+          id: 'newtab-reset',
+          label: 'Reset new tab page',
+          description:
+            'Layout, shortcuts, background and greeting return to their defaults; removed sites come back.',
+          keywords: ['restore', 'defaults'],
+          button: 'Reset…',
+          destructive: true,
+          confirm: {
+            title: 'Reset the new tab page?',
+            description:
+              'Your shortcuts and a background image kept on this device are removed; the layout, background and greeting return to their defaults.',
+            action: 'Reset'
+          },
+          onPress: () => run('newtab.reset', undefined)
         }
       ]
     }

@@ -256,7 +256,7 @@ function state(
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     siteData: emptySiteDataStatus(),
     newTabShortcuts: [],
-    newTabBackground: { image: false, canPick: false },
+    newTabBackground: { image: false, canPick: false, accent: null },
     translate: TRANSLATE,
     spellcheck: UNAVAILABLE_SPELLCHECK
   } as unknown as UIState
