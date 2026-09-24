@@ -48,36 +48,67 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
     expect(at).toBeLessThan(css.indexOf('@layer components {'))
   })
 
-  it('rings a pane chord’s landing as a Tab’s: every ring rule in main.css carries `[data-keyboard-focus]:focus` beside its `:focus-visible`, in the same rule – never one override – save the phone’s (§1 as amended, a11y-09)', () => {
+  it('rings a pane chord’s landing as a Tab’s: every ring rule in main.css carries `[data-keyboard-focus]:focus` beside its `:focus-visible` – in the same rule, or as the rule right under a form another suite pins by name – never one override – save the phone’s (§1 as amended, a11y-09)', () => {
     // The chords (F6, Shift+F6, Shift+Alt+T, Shift+Alt+B) are the desktop main process's; the
     // mark never appears in a phone's document, and the coarse-pointer suppressor must not learn
-    // to hide a keyboard-made ring, so those forms stand as they are.
+    // to hide a keyboard-made ring, so those forms stand as they are: the phone pill's, the
+    // phone zoom slider's, the phone group strip's chip (PhoneShell's alone).
     const PHONES_OWN = [
       ":root[data-input='keyboard'] .zen-phone-pill:has(button:focus-visible)",
       '.zen-phone-pill button:focus-visible',
       ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) button:focus-visible, :root[data-pointer='coarse']:where(:not([data-input='keyboard'])) [role='button']:focus-visible",
       ":root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible",
-      ":root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible::before"
+      ":root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible::before",
+      '.zen-group-chip:focus-visible',
+      '.zen-group-chip:focus-visible .zen-group-chip-face'
     ]
+    // Two forms other suites pin by their text (the confirm chassis's and the phone sheet's on
+    // the dialog root's none, the confirm chassis's on the legacy button's ring): their twin is
+    // the rule right under them, its selector the twin of each form and its body the same.
+    const TWIN_UNDER = [
+      ":root [role='dialog'][tabindex='-1']:focus-visible, :root [role='alertdialog'][tabindex='-1']:focus-visible",
+      '.zen-button:focus-visible'
+    ]
+    const twinOf = (selector: string): string =>
+      selector
+        .split(/,\s*/)
+        .filter((f) => f.includes(':focus-visible'))
+        .map((f) => f.replace(/:focus-visible/g, '[data-keyboard-focus]:focus'))
+        .join(', ')
     const bare = new Set(ringRules(css).map((r) => r.selector))
-    expect([...bare].filter((s) => !s.includes('[data-keyboard-focus]:focus'))).toEqual(PHONES_OWN)
+    expect([...bare].filter((s) => !s.includes('[data-keyboard-focus]:focus')).sort()).toEqual(
+      [...PHONES_OWN, ...TWIN_UNDER].sort()
+    )
     // The twin is the `:focus-visible` form's own shape with the mark in its place: the same
     // compound (so the same specificity class), `:focus` not `:focus-visible`, and one per form.
     for (const selector of bare) {
-      if (PHONES_OWN.includes(selector)) continue
+      if (PHONES_OWN.includes(selector) || TWIN_UNDER.includes(selector)) continue
       const forms = selector.split(/,\s*/)
-      const visible = forms.filter((f) => f.includes(':focus-visible'))
       const marked = forms.filter((f) => f.includes('[data-keyboard-focus]:focus'))
-      expect(marked, selector).toEqual(
-        visible.map((f) => f.replace(/:focus-visible/g, '[data-keyboard-focus]:focus'))
-      )
+      expect(marked.join(', '), selector).toBe(twinOf(selector))
+    }
+    // Every rule of the sheet in order (a wrapper such as `@layer` or `@media` is skipped, its
+    // rules read): the pinned forms' twins stand right under them, the body the same to the byte.
+    const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]*)\{([^{}]*)\}/g)].map(
+      (m) => ({
+        selector: (m[1] ?? '').trim().replace(/\s+/g, ' '),
+        body: (m[2] ?? '').trim().replace(/\s+/g, ' ')
+      })
+    )
+    const twinsUnder = TWIN_UNDER.map(twinOf)
+    for (const [i, pinned] of TWIN_UNDER.entries()) {
+      const at = rules.findIndex((r) => r.selector === pinned)
+      expect(at, pinned).toBeGreaterThanOrEqual(0)
+      expect(rules[at + 1], `the twin under ${pinned}`).toEqual({
+        selector: twinsUnder[i],
+        body: rules[at]!.body
+      })
     }
     // And no rule reads the mark on its own: it is the ring's second trigger, not a state of
-    // its own, so nothing styles it that does not style `:focus-visible` the same way.
-    const alone = /([^{}]*)\{[^{}]*\}/g
-    for (const m of css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(alone)) {
-      const selector = (m[1] ?? '').trim().replace(/\s+/g, ' ')
-      if (!selector.includes('[data-keyboard-focus]')) continue
+    // its own, so nothing styles it that does not style `:focus-visible` the same way – the two
+    // twins under their pinned forms, checked above to the byte, are that same way written twice.
+    for (const { selector } of rules) {
+      if (!selector.includes('[data-keyboard-focus]') || twinsUnder.includes(selector)) continue
       expect(selector, 'reads the mark without :focus-visible beside it').toMatch(/:focus-visible/)
     }
     // The toolbar glyph's full ink under the keyboard (a11y-10: the ring is not drawn at the
@@ -131,8 +162,10 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
   it('draws none round a dialog container that holds the focus by design: one shared rule on [role=dialog][tabindex=-1], over the v2 ring at every pointer (§9.22)', () => {
     // The one rule, unlayered, `:root`-weighted to (0,4,0) so it also beats the v2 ring's
     // coarse-pointer form on a phone, where it wins the tie by standing after it.
+    // The pane chord's twin (§1 as amended) is the rule right under it – the form's own text is
+    // pinned by the confirm chassis's and the phone sheet's suites.
     const rule = css.match(
-      /:root \[role='dialog'\]\[tabindex='-1'\]:focus-visible,\n:root \[role='alertdialog'\]\[tabindex='-1'\]:focus-visible,\n:root \[role='dialog'\]\[tabindex='-1'\]\[data-keyboard-focus\]:focus,\n:root \[role='alertdialog'\]\[tabindex='-1'\]\[data-keyboard-focus\]:focus \{\n {2}outline: none;\n\}/
+      /:root \[role='dialog'\]\[tabindex='-1'\]:focus-visible,\n:root \[role='alertdialog'\]\[tabindex='-1'\]:focus-visible \{\n {2}outline: none;\n\}\n:root \[role='dialog'\]\[tabindex='-1'\]\[data-keyboard-focus\]:focus,\n:root \[role='alertdialog'\]\[tabindex='-1'\]\[data-keyboard-focus\]:focus \{\n {2}outline: none;\n\}/
     )
     expect(rule).not.toBeNull()
     const at = rule!.index!
@@ -146,7 +179,7 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
     expect(ringRules(css).filter((r) => r.selector.includes("[tabindex='-1']"))).toEqual([
       {
         selector:
-          ":root [role='dialog'][tabindex='-1']:focus-visible, :root [role='alertdialog'][tabindex='-1']:focus-visible, :root [role='dialog'][tabindex='-1'][data-keyboard-focus]:focus, :root [role='alertdialog'][tabindex='-1'][data-keyboard-focus]:focus",
+          ":root [role='dialog'][tabindex='-1']:focus-visible, :root [role='alertdialog'][tabindex='-1']:focus-visible",
         value: 'none'
       }
     ])

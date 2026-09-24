@@ -43,9 +43,13 @@ const RULES = [
   rule(
     "[class^='zen-v2-']:focus-visible,\n[class*=' zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible,\n[class^='zen-v2-'][data-keyboard-focus]:focus,\n[class*=' zen-v2-'][data-keyboard-focus]:focus,\n:root[data-pointer='coarse'] [class^='zen-v2-'][data-keyboard-focus]:focus,\n:root[data-pointer='coarse'] [class*=' zen-v2-'][data-keyboard-focus]:focus"
   ),
-  // A dialog root that holds the focus by design: no ring, for either trigger.
+  // A dialog root that holds the focus by design: no ring, for either trigger – the chord's twin
+  // the rule right under the `:focus-visible` form (other suites pin that form by its text).
   rule(
-    ":root [role='dialog'][tabindex='-1']:focus-visible,\n:root [role='alertdialog'][tabindex='-1']:focus-visible,\n:root [role='dialog'][tabindex='-1'][data-keyboard-focus]:focus,\n:root [role='alertdialog'][tabindex='-1'][data-keyboard-focus]:focus"
+    ":root [role='dialog'][tabindex='-1']:focus-visible,\n:root [role='alertdialog'][tabindex='-1']:focus-visible"
+  ),
+  rule(
+    ":root [role='dialog'][tabindex='-1'][data-keyboard-focus]:focus,\n:root [role='alertdialog'][tabindex='-1'][data-keyboard-focus]:focus"
   ),
   // The URL field: the pill rings whole for the keyboard on its address button; the button, none.
   rule(
