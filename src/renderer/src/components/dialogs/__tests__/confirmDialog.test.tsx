@@ -389,6 +389,38 @@ describe('the keyboard (§9.22)', () => {
     click(verb)
     expect(onConfirm).toHaveBeenCalledTimes(1)
   })
+
+  it('names the way out Cancel unless the consumer names it for what it does (`cancel`, §9.23 as amended on #436: Wait where nothing is cancelled) – the same button, and Escape and the scrim are still it', async () => {
+    const onCancel = vi.fn()
+    const onConfirm = vi.fn()
+    // Unnamed, the way out is Cancel: the default stays.
+    render(<Prompt onCancel={onCancel} onConfirm={onConfirm} />)
+    await settle()
+    const d = dialog()!
+    expect(buttons(d)[0].textContent).toBe('Cancel')
+    expect(buttons(d)[0].dataset.action).toBe('cancel')
+    // Named: the word changes, nothing else does – the button, its place, its answers.
+    render(<Prompt cancel="Wait" action="Exit page" destructive onCancel={onCancel} onConfirm={onConfirm} />)
+    await settle()
+    expect(dialog()).toBe(d)
+    const [wait, verb] = buttons(d)
+    expect(buttons(d)).toHaveLength(2)
+    expect(wait.textContent).toBe('Wait')
+    expect(wait.dataset.action).toBe('cancel')
+    expect(wait.hasAttribute('data-primary')).toBe(false)
+    expect(verb.textContent).toBe('Exit page')
+    click(wait)
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    pressEscape()
+    expect(onCancel).toHaveBeenCalledTimes(2)
+    pressScrim()
+    expect(onCancel).toHaveBeenCalledTimes(3)
+    expect(onConfirm).not.toHaveBeenCalled()
+    // Back to the default word on the same prompt.
+    render(<Prompt onCancel={onCancel} onConfirm={onConfirm} />)
+    await settle()
+    expect(buttons(d)[0].textContent).toBe('Cancel')
+  })
 })
 
 describe('the one-field prompt (PromptDialog, §9.12 on the primitive)', () => {

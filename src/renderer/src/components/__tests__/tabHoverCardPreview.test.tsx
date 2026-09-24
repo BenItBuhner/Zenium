@@ -10,8 +10,8 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 /*
  * The page preview in the tab hover card (tabs-19, Chrome's tab hover card preview): the
  * hovered background tab's picture above the title, in a 16:10 frame at the card's inner width
- * with the card's radius and a 1 px hairline; only when a picture exists and never for the
- * active tab. The app's controller captures the hovered page fresh before the card shows,
+ * – an inner box at r6, no squircle, ringed by a 1 px hairline; only when a picture exists and
+ * never for the active tab. The app's controller captures the hovered page fresh before the card shows,
  * beside the active page's cover.
  */
 
@@ -234,14 +234,23 @@ describe('the page preview in the hover card (tabs-19)', () => {
     hoverCard.hide()
   })
 
-  it('frames the picture 16:10 at the card’s inner width, the card’s radius, a 1 px hairline', () => {
+  it('frames the picture 16:10 at the card’s inner width as an inner box – r6 with no squircle inside the card’s own r8 (§2, the lead’s #436 ruling 2) – ringed by a 1 px hairline', () => {
     const frame = rule('.zen-tab-hover-card-preview')
     // 320 − 2 (border) − 32 (padding) = 286; 286 × 10 / 16 = 178.75 → 179.
     expect(frame).toContain('width: 286px')
     expect(frame).toContain('height: 179px')
     expect(frame).toContain('box-sizing: border-box')
     expect(frame).toContain('margin-bottom: 12px')
-    expect(frame).toContain('border-radius: 8px')
+    // The inner box's radius (`.zen-capture-picture-box`'s precedent), and the squircle is for
+    // 8 and up: none here.
+    expect(frame).toContain('border-radius: var(--v2-radius-inner)')
+    expect(frame).not.toContain('corner-shape')
+    expect(css).toContain('--v2-radius-inner: 6px')
+    expect(rule('.zen-capture-picture-box')).toContain('border-radius: var(--v2-radius-inner)')
+    // The card's own radius stays, squircle and all.
+    const card = rule('.zen-tab-hover-card')
+    expect(card).toContain('border-radius: 8px')
+    expect(card).toContain('corner-shape: var(--zen-corner)')
     expect(frame).toContain('border: 1px solid var(--v2-border)')
     expect(frame).toContain('overflow: hidden')
     const picture = rule('.zen-tab-hover-card-preview > img')

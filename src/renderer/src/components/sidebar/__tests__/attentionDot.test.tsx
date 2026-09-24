@@ -27,6 +27,7 @@ vi.mock('@renderer/lib/api', () => ({
 
 const { browserStore, HOVER_CARD_HIDDEN, uiStore } = await import('@renderer/lib/ui')
 const { defaultShortcuts } = await import('@shared/shortcuts')
+const { tabRowStates } = await import('@renderer/lib/tabRowAria')
 const { SpacePanel } = await import('../SpacePanel')
 const { Essentials } = await import('../Essentials')
 
@@ -198,6 +199,47 @@ describe('the attention dot on a pinned row', () => {
     expect(seat).not.toBeNull()
     expect(seat!.style.width).toBe('20px')
     expect(seat!.querySelector('.zen-attention-dot')).not.toBeNull()
+    expect(tile!.querySelector('[data-essential-audio]')).toBeNull()
+  })
+
+  it('yields to the audio disc on an Essentials tile – one disc per icon (§9.29, the lead’s #436 ruling 3): a playing tile draws its audio disc and no dot; muted, the disc goes and the dot draws', () => {
+    const playing = tab('radio', { essential: true, attention: true, audible: true })
+    const tile = (): HTMLElement => document.querySelector<HTMLElement>('.zen-essential')!
+    const seat = (): HTMLElement => tile().querySelector<HTMLElement>('.zen-favicon-seat')!
+    render(<Essentials essentials={[playing]} activeTabId={null} compact={false} />)
+    // Playing: the tile is marked already, so the seat draws no dot and punches no icon out.
+    expect(tile().querySelector('[data-essential-audio]')).not.toBeNull()
+    expect(seat()).not.toBeNull()
+    expect(seat().dataset.attention).toBeUndefined()
+    expect(seat().querySelector('.zen-attention-dot')).toBeNull()
+    // Muted: the audio disc goes and the flag – standing all along – draws its dot.
+    render(
+      <Essentials essentials={[{ ...playing, muted: true }]} activeTabId={null} compact={false} />
+    )
+    expect(tile().querySelector('[data-essential-audio]')).toBeNull()
+    expect(seat().dataset.attention).toBe('true')
+    expect(seat().querySelector('.zen-attention-dot')).not.toBeNull()
+    // The sound gone (the page stopped): the dot stays for the same reason.
+    render(
+      <Essentials essentials={[{ ...playing, audible: false }]} activeTabId={null} compact={false} />
+    )
+    expect(tile().querySelector('[data-essential-audio]')).toBeNull()
+    expect(seat().querySelector('.zen-attention-dot')).not.toBeNull()
+    // Playing again: the dot yields again.
+    render(<Essentials essentials={[playing]} activeTabId={null} compact={false} />)
+    expect(tile().querySelector('[data-essential-audio]')).not.toBeNull()
+    expect(seat().querySelector('.zen-attention-dot')).toBeNull()
+  })
+
+  it('keeps the dot on a pinned row that plays – its audio is a glyph in the trailing slot, not a disc on the icon – and the row’s words carry both states', () => {
+    panel([tab('front'), tab('radio', { pinned: true, attention: true, audible: true })], 'front')
+    const r = row('radio')
+    expect(r.querySelector('.zen-favicon-seat[data-attention] > .zen-attention-dot')).not.toBeNull()
+    expect(describedBy(r)).toEqual(['playing, updated in the background, pinned'])
+    expect(tabRowStates(tab('radio', { attention: true, audible: true, muted: true }), null)).toEqual([
+      'muted',
+      'updated in the background'
+    ])
   })
 
   it('draws a 6 px accent disc 1 px outside the icon’s top-right corner, the icon punched out', () => {

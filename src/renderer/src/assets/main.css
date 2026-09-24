@@ -4972,18 +4972,20 @@
    * takes no pointer.
    *
    * The page preview above the title (tabs-19): a 16:10 frame at the card's inner width – 286
-   * inside the 320 card's border and padding, so 286 × 179 – with the card's radius and a 1 px
-   * `--v2-border` hairline (a light page's picture on the light panel has no edge of its own),
-   * 12 above the title's line box. The picture fills it, the page's top kept and the rest
-   * cropped (`object-fit: cover` from the top), so a tall page reads as its first screen.
+   * inside the 320 card's border and padding, so 286 × 179 – as an inner box inside the card
+   * (§2's inner box, `.zen-capture-picture-box`'s precedent; the lead's #436 ruling 2): r6
+   * (`--v2-radius-inner`) and no squircle – the squircle is for 8 and up – inside the card's own
+   * r8, ringed by a 1 px `--v2-border` (a light page's picture on the light panel has no edge of
+   * its own; Chrome frames its preview the same way, §9.31), 12 above the title's line box. The
+   * picture fills it, the page's top kept and the rest cropped (`object-fit: cover` from the
+   * top), so a tall page reads as its first screen.
    */
   .zen-tab-hover-card-preview {
     box-sizing: border-box;
     width: 286px;
     height: 179px;
     margin-bottom: 12px;
-    border-radius: 8px;
-    corner-shape: var(--zen-corner);
+    border-radius: var(--v2-radius-inner);
     border: 1px solid var(--v2-border);
     overflow: hidden;
     background: var(--v2-page);

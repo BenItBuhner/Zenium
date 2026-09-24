@@ -46,7 +46,9 @@ export interface UnresponsiveWords {
  * Chrome's words: one page – "Page unresponsive / You can wait for it to become responsive or
  * exit the page. / Exit page"; several – "Pages unresponsive", the pages named in the one
  * description (§9.23's composed prompt: every fact as peers in one paragraph), "Exit pages".
- * The prompt's Cancel is the wait (the primitive's Cancel is always Cancel).
+ * The prompt's way out is Wait, not Cancel (the primitive's `cancel`, §9.23 as amended: named
+ * for what it does, since nothing is cancelled when the user waits) – the dialog's word, as the
+ * verb's counterpart is the primitive's to draw.
  */
 export function unresponsiveWords(titles: readonly string[]): UnresponsiveWords {
   if (titles.length <= 1)

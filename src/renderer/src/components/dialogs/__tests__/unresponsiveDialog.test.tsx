@@ -8,9 +8,10 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
 /*
  * The "Page unresponsive" prompt (components/dialogs/UnresponsiveDialog.tsx; lib/unresponsive.ts
  * has the facts and the words; tabs-45): Chrome's hung-renderer dialog on the shared §9.23
- * confirmation – the question, one description, Cancel and the danger verb "Exit page", no
+ * confirmation – the question, one description, Wait and the danger verb "Exit page", no
  * primary and no default key – for the window looking at a page whose renderer stopped
- * answering. Cancel is the wait (`tab.waitUnresponsive`), the verb ends the pages
+ * answering. Wait is the way out (the primitive's `cancel`, named for what it does – §9.23 as
+ * amended: nothing is cancelled by waiting; `tab.waitUnresponsive`), the verb ends the pages
  * (`tab.exitUnresponsive`), each with every hung page's id; several pages are one prompt with
  * their titles in the description; the prompt goes by itself when the mark goes. The page in
  * front gives way to its picture while the prompt is up (`unresponsivePromptOpen`, the view
@@ -106,6 +107,13 @@ const press = (from: Element, key: string): void => {
     from.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
   })
 }
+const pressScrim = (): void => {
+  act(() => {
+    document
+      .querySelector('.zen-frame-scrim')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+  })
+}
 
 beforeEach(() => {
   run.mockClear()
@@ -139,7 +147,8 @@ describe('the Page unresponsive prompt', () => {
     )
     const cancel = button(d, 'cancel')
     const verb = button(d, 'confirm')
-    expect(cancel.textContent).toBe('Cancel')
+    // The way out is named for what it does: nothing is cancelled by waiting (§9.23 as amended).
+    expect(cancel.textContent).toBe('Wait')
     expect(verb.textContent).toBe('Exit page')
     // The danger verb, no primary (§6): the app recommends neither answer.
     expect(verb.hasAttribute('data-danger')).toBe(true)
@@ -149,21 +158,27 @@ describe('the Page unresponsive prompt', () => {
     expect(document.activeElement).toBe(d)
   })
 
-  it('waits on Cancel and on Escape, ends the pages on the verb – each with the hung pages’ ids', async () => {
+  it('waits on Wait, on Escape and on the scrim – the way out is the wait – and ends the pages on the verb, each with the hung pages’ ids', async () => {
     render(<Dialogs state={state([tab('a', { unresponsive: true }), tab('b')], 'a')} />)
     await settle()
-    click(button(dialog()!, 'cancel'))
+    const wait = button(dialog()!, 'cancel')
+    expect(wait.textContent).toBe('Wait')
+    click(wait)
     expect(run).toHaveBeenLastCalledWith('tab.waitUnresponsive', { tabIds: ['a'] })
 
     press(dialog()!, 'Escape')
     expect(run).toHaveBeenLastCalledWith('tab.waitUnresponsive', { tabIds: ['a'] })
     expect(answers()).toHaveLength(2)
 
+    pressScrim()
+    expect(run).toHaveBeenLastCalledWith('tab.waitUnresponsive', { tabIds: ['a'] })
+    expect(answers()).toHaveLength(3)
+
     click(button(dialog()!, 'confirm'))
     expect(run).toHaveBeenLastCalledWith('tab.exitUnresponsive', { tabIds: ['a'] })
     // Enter from the held container answers nothing on a destructive prompt (§9.22 as amended).
     press(dialog()!, 'Enter')
-    expect(answers()).toHaveLength(3)
+    expect(answers()).toHaveLength(4)
   })
 
   it('is one prompt for several pages sharing the hung renderer, their titles in the description', async () => {

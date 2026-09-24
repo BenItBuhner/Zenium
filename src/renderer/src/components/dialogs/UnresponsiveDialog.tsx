@@ -16,10 +16,12 @@ import { ConfirmDialog } from './ConfirmDialog'
  * (`ConfirmDialog`) at §9.20's 320 over the page's picture in the content frame, for the
  * window looking at a page whose renderer stopped answering – the question at 17/600, one line
  * at 15 in the deemphasised ink ("You can wait for it to become responsive or exit the page."),
- * then Cancel and the danger verb "Exit page", no primary and no default key (§6, §9.22: the
- * app recommends neither answer). Cancel is the wait: the prompt goes and the host's hang
- * monitor brings it back should the page stay still, as Chrome's does. Exit page ends the
- * renderer; the page shows the crash page for a page ended for not responding (ERR-15).
+ * then Wait and the danger verb "Exit page", no primary and no default key (§6, §9.22: the app
+ * recommends neither answer). Wait is the way out – the primitive's `cancel`, named for what it
+ * does (§9.23 as amended: nothing is cancelled when the user waits, and the phone's sheet says
+ * Wait – the two hosts are one composition): the prompt goes and the host's hang monitor
+ * brings it back should the page stay still, as Chrome's does. Exit page ends the renderer;
+ * the page shows the crash page for a page ended for not responding (ERR-15).
  *
  * Several pages sharing the hung renderer are one prompt – "Pages unresponsive", the pages
  * named in the description, "Exit pages" – answered together, as Chrome lists them. The prompt
@@ -62,6 +64,7 @@ function UnresponsivePrompt({
       title={words.title}
       description={words.description}
       action={words.action}
+      cancel="Wait"
       destructive
       onCancel={() => run('tab.waitUnresponsive', { tabIds })}
       onConfirm={() => run('tab.exitUnresponsive', { tabIds })}
