@@ -54,6 +54,11 @@ export interface NotificationPageRequest {
   notification: 'query' | 'request' | 'show' | 'close'
   /** `request` / `show` / `close`: the page's id for the notification or the request. */
   id?: string
+  /**
+   * `request`: whether `requestPermission()` ran inside a user activation (`navigator.userActivation`).
+   * A request without one asks quietly (Chrome's rule, NOT-03); left out where the engine cannot say.
+   */
+  gesture?: boolean
   title?: string
   body?: string
   /** Absolute URL of the icon, '' for none. */

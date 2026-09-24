@@ -365,6 +365,14 @@ export type PreviewState =
       kind: 'permission'
       /** The permission the active page asks for (`camera`, `notifications`, `geolocation`, …). */
       permission: string
+      /**
+       * The page asks quietly (`prompt=notifications&quiet`, NOT-03): a request with no gesture
+       * behind it, which is the bell-off glyph in the pill's slot and no sheet until the bell is
+       * tapped – `then=tap:Notifications blocked` opens the quiet sheet for a still of it.
+       */
+      quiet?: true
+      /** Steps taken once the prompt is up (`then=tap:<text>;back;…`). */
+      then?: PreviewStep[]
     }
   | {
       kind: 'private'
@@ -829,7 +837,17 @@ export function parsePreviewSpec(spec: string): PreviewState {
   // (`http-auth`, `certificate`), which come up last in this order (below).
   const prompt = params.get('prompt')
   const securityPrompt = prompt === 'http-auth' || prompt === 'certificate'
-  if (prompt && !securityPrompt) return { kind: 'permission', permission: prompt }
+  if (prompt && !securityPrompt) {
+    const state: Extract<PreviewState, { kind: 'permission' }> = {
+      kind: 'permission',
+      permission: prompt
+    }
+    // Only a notification request has a quiet form (NOT-03): the other permissions ask aloud.
+    if (prompt === 'notifications' && params.has('quiet')) state.quiet = true
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
+  }
   const ntp = params.get('ntp')
   if (ntp !== null) {
     const state: Extract<PreviewState, { kind: 'ntp' }> = {
