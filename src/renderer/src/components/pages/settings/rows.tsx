@@ -845,6 +845,7 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
   return (
     <label
       data-row={row.id}
+      data-tone={row.tone}
       className="zen-settings-row zen-settings-check-row zen-v2-row zen-v2-check-row"
       aria-disabled={disabled || undefined}
     >
