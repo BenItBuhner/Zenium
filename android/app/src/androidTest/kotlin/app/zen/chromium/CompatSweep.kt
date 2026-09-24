@@ -6291,7 +6291,64 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("bhloflhklmhfpedakmangadcdofhnnoh", "Earth View from Google Earth", "earth-view", core = ::momentum),
         Row("aejoelaoggembcahagimdiliamlcdmfm", "Talend API Tester - Free Edition", "talend-api-tester", core = actionPage("Talend API Tester", Regex("/index\\.html"), TALEND_TESTER, fixtures = listOf("page-a.html?talend"))),
         Row("cpaibbcbodhimfnjnakiidgbpiehfgci", "True Key™ by McAfee", "true-key", core = accountGate("True Key", Regex("truekey|mcafee|/html/(main|dashboard)\\.html", RegexOption.IGNORE_CASE), gate = "a True Key account (its click opens its dashboard page, which signs in)")),
-        Row("bcocdbombenodlegijagbhdjbifpiijp", "INSSIST", "inssist", core = accountGate("INSSIST", Regex("instagram\\.com|inssist", RegexOption.IGNORE_CASE), gate = "an Instagram session (its click opens instagram.com, where its script runs)"))
+        Row("bcocdbombenodlegijagbhdjbifpiijp", "INSSIST", "inssist", core = accountGate("INSSIST", Regex("instagram\\.com|inssist", RegexOption.IGNORE_CASE), gate = "an Instagram session (its click opens instagram.com, where its script runs)")),
+        // Compat round 15: ranks 331-360 by installs (`.github/scripts/ext-compat/next30-round12.json`,
+        // compiled by round 10's method for a future desktop release round to reuse), graded with
+        // the phone's feasibility classes as rounds 4-14 graded theirs. An account or a vendor's
+        // service is `n/m` with its gate surface rendered (RoboForm, Vimeo Record, ContactOut,
+        // Amazon Quick's side panel, Karma, Lightning Autofill's rules page, Sicoob's bank page
+        // when it refuses the runner, wanteeed's partner merchants); a PAC-script VPN is the
+        // WebView's limit (Betternet, DotVPN); a tab-audio equalizer is `tabCapture`'s (Equalizer);
+        // Google's results page is read live (Ubersuggest, Keyword Surfer); the rest read a real
+        // effect on a fixture, in a popup or on the tab list: mega.nz redirected to MEGA's bundled
+        // client by its DNR rule, the two media sniffers' listings over the relay-fed clip AND the
+        // fetch/XHR-fed one (cat-catch beside the carried Chrono and Video Downloader PLUS rows:
+        // round 15's observer path), a saved copy of the fixture opened as a tab (SingleFile), a
+        // seeded proxy reaching ProxyController the popup's way and cleared again (FoxyProxy), the
+        // translate button on a selection (Translate for Chrome), the fixture's pictures listed
+        // through a menu item (ImageAssistant), the action's state flipped (Google Analytics
+        // Debugger), the citer frame mounted (Cite This For Me), TronLink's provider in the page
+        // world, the fixture's title in a popup (Detailed SEO), the fixture's pixel id in a popup
+        // (TikTok Pixel Helper), a recorder's controls (edpuzzle), the new tab taken over (Speed
+        // Dial [FVD], Tabby Cat), the app page opened by the click (Focus To-Do), the announced feed
+        // counted (RSS Feed Reader), a voice reading the fixture (Read Aloud TTS). Five rows declare
+        // a `minimum_chrome_version` above WebView 113's (FoxyProxy 126, Lightning Autofill 120,
+        // Keyword Surfer 119, MEGA 116, Speed Dial 114); the runtime installs them and warns once on
+        // the error console where the engine is below it; the 113 column measures them there. The
+        // seven largest downloads last (wanteeed 6.3 MB, DotVPN 7.2 MB, RoboForm 7.9 MB, Keyword
+        // Surfer 9.1 MB, MEGA 11.1 MB, TronLink 11.6 MB, Focus To-Do 27.4 MB), so a run that dies keeps the rest.
+        Row("gjbpjhlbcoeccolhmgcgamdepmcpekno", "Sicoob | Internet banking", "sicoob", core = liveAttached("Sicoob", "https://www.sicoob.com.br/sicoobnet/", "the bank's page (its script attaches there and fires its onExtensionReady handshake at document_idle)")),
+        // Over `media.html` and `fetch-player.html` with the webRequest probe: its sniffer is an
+        // `onResponseStarted` listener with `responseHeaders` beside `onBeforeRequest` (`js/background.js`).
+        Row("jfedfbgedapdagkghmgibemcoggfppbb", "cat-catch", "cat-catch", core = mediaPopup("cat-catch", "media.html?catcatch", "/clip|mp4|webm|video/i", probe = true, listener = "onResponseStarted with responseHeaders beside onBeforeRequest (a media content-type, or a media extension in the URL)", observer = "fetch-player.html?catcatch")),
+        Row("npdkkcjlmhcnnaoobfdjndibfkkhhdfn", "Read Aloud TTS: Text to Speech AI Voice Generator", "read-aloud-tts", core = ttsPopup("Read Aloud TTS", "/^(play|read|listen|start|read aloud|speak|play all)$/i")),
+        Row("nlmmgnhgdeffjkdckmikfpnddkbbfkkk", "Lightning Autofill", "lightning-autofill", core = ownPage("Lightning Autofill", "options.html", "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var fields=document.querySelectorAll('input, select, textarea, [contenteditable]').length;var rows=document.querySelectorAll('table tr, [class*=\"rule\"], [class*=\"profile\"]').length;return JSON.stringify({pass:fields>0||rows>0||t.length>40,fields:fields,rows:rows,text:t.slice(0,160)})})()", gate = "autofill rules (its options page holds them; the fill on the fixture's form needs one, and its rule store is a minified shape the sweep does not seed)")),
+        Row("ejfmffkmeigkphomnpabpdabfddeadcb", "Vimeo Record - Screen & Webcam Recorder", "vimeo-record", core = accountGate("Vimeo Record", Regex("vimeo\\.com", RegexOption.IGNORE_CASE), gate = "a Vimeo account (its recordings upload there)")),
+        Row("mpiodijhokgodhhofbcjdecpffjipkle", "SingleFile", "singlefile", core = savesPage("SingleFile", "page-a.html?singlefile", "Probe Page A")),
+        Row("nmpgaoofmjlimabncmnmnopjabbflegf", "Ubersuggest - SEO and Keyword Discovery", "ubersuggest", core = siteGate("Ubersuggest", "https://www.google.com/search?q=zenium+browser&hl=en", "[id*='ubersuggest'], [class*='ubersuggest'], [id*='uber-'], [class*='np-']", Regex("^https://(www\\.)?google\\."), "a Google results page served to the runner (and an Ubersuggest account for its metrics)")),
+        Row("gcknhkkoolaabfmlnjonogaaifnjlfnp", "FoxyProxy", "foxyproxy", core = ::foxyProxy),
+        Row("jjdemeiffadmmjhkbbpglgnlgeafomjo", "Email Finder by ContactOut", "contactout", core = accountGate("ContactOut", Regex("contactout", RegexOption.IGNORE_CASE), injects = "[id*='contactout'], [class*='contactout']", gate = "a ContactOut account and a LinkedIn profile page")),
+        Row("elpmkbbdldhoiggkjfpgibmjioncklbn", "Translate for Chrome -Translator, Dictionary", "translate-for-chrome", core = selectionTranslator("Translate for Chrome", "editor.html?translator", "#translator-icon", "#translatorForChrome-small-translator-div, #translatorForChrome-medium-translator-div, #translatorForChrome-translator-div-container")),
+        Row("dbjbempljhcmhlfpfacalomonjpalpko", "ImageAssistant Batch Image Downloader", "imageassistant", core = imageList("ImageAssistant", tap = "/extract current page/i")),
+        Row("jnkmfdileelhofjcijamephohjechhna", "Google Analytics Debugger", "ga-debugger", core = actionToggle("Google Analytics Debugger", "gtag.html?gadebug", Regex("GA Debug: ON|\\bON\\b"))),
+        Row("nnnmhgkokpalnmbeighfomegjfkklkle", "Cite This For Me: Web Citer", "cite-this-for-me", core = actionMarker("Cite This For Me", "page-a.html?cite", CITE_FRAME)),
+        Row("pfjdepjjfjjahkjfpkcgfmfhmnakjfba", "Detailed SEO Extension", "detailed-seo", core = popupMarker("Detailed SEO", DETAILED_SEO, page = "page-a.html?seo", settleMs = 25_000)),
+        Row("aelgobmabdmlfmiblddjfnjodalhidnn", "TikTok Pixel Helper", "tiktok-pixel-helper", core = popupMarker("TikTok Pixel Helper", TIKTOK_PIXEL_LISTED, page = "tiktok-pixel.html?ttq", settleMs = 25_000, fixtureSettleMs = 4_000)),
+        Row("oligonmocnihangdjlloenpndnniikol", "edpuzzle", "edpuzzle", core = recorderPopup("edpuzzle", "/record|screen|camera|webcam|tab/i")),
+        Row("innkphffipcmiflfibbeghfnkifiokgo", "Amazon Quick", "amazon-quick", core = accountGate("Amazon Quick", Regex("amazon\\.", RegexOption.IGNORE_CASE), page = "sidepanel.html", gate = "an Amazon session (its panel shops there)")),
+        Row("llaficoajjainaijghjlofdfmbjpebpa", "Speed Dial [FVD]", "speed-dial-fvd", core = ::momentum),
+        Row("gjknjjomckknofjidppipffbpoekiipm", "VPN Free - Betternet Unlimited VPN Proxy", "betternet", core = vpn("Betternet", pac = true)),
+        Row("abikfbojmghmfjdjlbagiamkinbmbaic", "Equalizer for Chrome browser", "equalizer", core = captureLimit("Equalizer for Chrome browser", "/equalizer|bass|treble|preset|volume|gain|hz|band/i", firstClickSetsPopup = true)),
+        Row("pnjaodmkngahhkoihejjehlcdlnohgmp", "RSS Feed Reader", "rss-feed-reader", core = feedDetector("RSS Feed Reader", "feed.html?rss", "Zenium fixture feed")),
+        Row("mefhakmgclhhfbdadeojlkbllmecialg", "Tabby Cat", "tabby-cat", core = ::momentum),
+        Row("emalgedpdlghbkikiaeocoblajamonoh", "Karma | Online shopping, but better", "karma", core = accountGate("Karma", Regex("karmanow|karma", RegexOption.IGNORE_CASE), injects = "[id*='karma'], [class*='karma']", gate = "a Karma account and a merchant page")),
+        Row("emnoomldgleagdjapdeckpmebokijail", "wanteeed", "wanteeed", core = contentAttached("wanteeed", "its widget shows on its partner merchants' pages (a list its service holds), which the fixture is not (not measurable here)", injects = "[id*='wanteeed'], [class*='wanteeed']", verdict = "n/m")),
+        Row("kpiecbcckbofpmkkkdibbllpinceiihk", "DotVPN: Fast & Private VPN", "dotvpn", core = vpn("DotVPN", pac = true)),
+        Row("pnlccmojcmeohlpggmfnbbiapkmbliob", "RoboForm Password Manager", "roboform", core = accountGate("RoboForm", Regex("roboform", RegexOption.IGNORE_CASE), gate = "a RoboForm account (its popup signs in; its fill needs a saved login)")),
+        Row("bafijghppfhdpldihckdcadbcobikaca", "Keyword Surfer", "keyword-surfer", core = siteGate("Keyword Surfer", "https://www.google.com/search?q=zenium+browser&hl=en", "[id*='surfer'], [class*='surfer'], [class*='keyword-surfer'], [id*='keyword-surfer']", Regex("^https://(www\\.)?google\\."), "a Google results page served to the runner (its volumes come from its service)")),
+        Row("bigefpfhnfcobdlfbedofhhaibnlghod", "MEGA", "mega", core = ::megaClient),
+        Row("ibnejdfjmmkpcnlpebklmnkoeoihofec", "TronLink", "tronlink", core = domMarker("TronLink's provider injected into the page world", "wallet.html?tronlink", WALLET_STANDARD.replace("__RE__", "/tronlink|tron/i").replace("__GLOBALS__", "typeof window.tronLink!=='undefined'||typeof window.tronWeb!=='undefined'"), settleMs = 30_000)),
+        Row("ngceodoilcgpmkijopinlkmohnfifjfb", "Focus To-Do: Pomodoro Timer & To Do List", "focus-to-do", core = actionPage("Focus To-Do", Regex("WebContent/index\\.html"), FOCUS_TODO_APP, listOf("page-a.html?focus")))
     )
 
     // --- the core checks of compat round 14 (ranks 301-330 by installs) --------------------------
@@ -6427,6 +6484,291 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             found.optBoolean("controls") && found.optString("getDisplayMedia") == "undefined" -> Grade("n/a", "$label: its recorder page renders its capture controls, but the WebView has no screen, window or tab capture to offer them (getDisplayMedia absent; getUserMedia reaches the camera and microphone alone): WebView limit. $note", extra)
             found.optBoolean("controls") -> Grade("PARTIAL", "$label: its recorder page renders its capture controls and this WebView has getDisplayMedia; the recording itself was not driven: $note", extra)
             else -> Grade("F", "$label: its recorder page shows no capture controls: $note", extra)
+        }
+    }
+
+    // --- the core checks of compat round 15 (ranks 331-360 by installs) --------------------------
+
+    /**
+     * MEGA: its `declarativeNetRequest` rules send `mega.nz` to its bundled client (the site's
+     * pages served from the extension's own), so a tab opened on `https://mega.nz/` that lands
+     * on the extension's page with the client rendered is the pass (the redirect applied at the
+     * intercept). The tab left on mega.nz names the rule not applied (`F`); mega.nz not loading
+     * for the runner leaves the redirect no request to act on (`n/m`).
+     */
+    private fun megaClient(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val tab = createTab("https://mega.nz/")
+        val landed = poll(scaled(30_000, factor), 700) { tabUrls()[tab]?.takeIf { extensionPage(it, row.id) } }
+        val url = tabUrls()[tab] ?: ""
+        extra.put("url", url.take(160))
+        var page = JSONObject()
+        runCatching { waitForView(tab) }.getOrNull()?.let { view ->
+            page = pollExpr(view, MEGA_CLIENT, scaled(20_000, factor))
+            page.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        }
+        extra.put("page", page)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-mega-client")
+        return when {
+            landed != null && page.optBoolean("pass") -> Grade("P", "MEGA: mega.nz redirected to its bundled client (${extensionPath(url).take(60)}) by its DNR rule, the client rendered: ${page.toString().take(160)}", extra)
+            landed != null -> Grade("F", "MEGA: mega.nz redirected to ${extensionPath(url).take(60)}, but the client did not render there: ${page.toString().take(200)}", extra)
+            page.optBoolean("errorPage") || url.startsWith("zen://error") -> Grade("n/m", "MEGA: mega.nz did not load for the runner (${url.take(80)}: ${page.optString("text").take(80)}); its redirect had no request to act on (not measurable here)", extra)
+            else -> Grade("F", "MEGA: the tab stayed on ${url.take(80)} (its DNR redirect of mega.nz to the bundled client did not apply): ${page.toString().take(160)}", extra)
+        }
+    }
+
+    /**
+     * A content script whose whole observable effect is on one live site (Sicoob's on the
+     * bank's `sicoobnet` pages: at `document_idle` it fires `onExtensionReady` on the document
+     * with `chrome.runtime.id` and its version, the bank's page reading the machine through it):
+     * the site opened, the runtime's world stats read for the row's scripts applied there (the
+     * handshake event fires before a listener could be placed; the applied script with the
+     * runtime id it carries is the reading). The site not loading for the runner, or an error
+     * page in its place, is `n/m`, the site's.
+     */
+    private fun liveAttached(label: String, url: String, gate: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val tab = createTab(url)
+        val view = waitForView(tab)
+        poll(scaled(20_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(3_000, factor))
+        var world = JSONObject()
+        poll(scaled(15_000, factor), 1_000) {
+            world = json((if (worlds) worldEval(view, row.id, WORLD_REPORT) else tabEval(view, WORLD_REPORT)) ?: "null")
+            if (attachedIn(world, row)) true else null
+        }
+        val state = json(tabEval(view, PAGE_OR_ERROR))
+        extra.put("world", world).put("page", state).put("url", (tabUrls()[tab] ?: "").take(120)).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-live-attached")
+        when {
+            attachedIn(world, row) -> Grade("P", "$label: its content script is in the site's page (${world.optJSONObject("stats")?.optInt("applied")} script group(s) applied, chrome.runtime.id ${if (world.optString("runtimeId").equals(row.id, ignoreCase = true)) "its own" else world.optString("runtimeId").take(40)}) on ${(tabUrls()[tab] ?: url).take(80)}", extra)
+            state.optBoolean("errorPage") -> Grade("n/m", "$label: the site did not load for the runner (${state.optString("code").ifEmpty { state.optString("text").take(80) }}); the core needs $gate (not measurable here)", extra)
+            else -> Grade("F", "$label: its content script did not attach on ${(tabUrls()[tab] ?: url).take(80)} within ${scaled(15_000, factor) / 1000} s: ${world.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * An action that toggles a state on its click (Google Analytics Debugger: `GA Debug: OFF`
+     * to `GA Debug: ON` in the action's title, its debug build of analytics.js swapped in by a
+     * ruleset it enables): the fixture opens, the action is clicked, the action's title and
+     * badge are polled for `on`; the enabled rulesets and the fixture's console after a reload
+     * (the debug build's own lines) go into the evidence, and the action is clicked once more
+     * to leave the state as found.
+     */
+    private fun actionToggle(label: String, page: String, on: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture(page, factor, 2_000)
+        extra.put("actionBefore", extensionAction(row.id))
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val toggled = poll(scaled(15_000, factor), 500) {
+            extensionAction(row.id)?.takeIf { on.containsMatchIn(it.optString("title") + " " + it.optString("badgeText")) }
+        }
+        extra.put("actionAfter", extensionAction(row.id))
+        backgroundView(row.id)?.let { bg ->
+            extra.put("rulesets", probe(bg, DNR_RULESETS_PROBE, "__zenRulesets", scaled(8_000, factor)))
+        }
+        showTab(tab)
+        coreCall("tab.reload", """{"tabId":${JSONObject.quote(tab)}}""")
+        SystemClock.sleep(scaled(6_000, factor))
+        val console = consoleOf(view).takeLast(20)
+        val debugLines = console.filter { Regex("analytics|gtag|debug|google", RegexOption.IGNORE_CASE).containsMatchIn(it) }
+        extra.put("console", JSONArray(console)).put("debugLines", debugLines.size)
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-action-toggle")
+        runCatching { coreCall("extension.closePopup", "null") }
+        if (toggled != null) {
+            coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            SystemClock.sleep(scaled(1_500, factor))
+            extra.put("actionRestored", extensionAction(row.id))
+            runCatching { coreCall("extension.closePopup", "null") }
+        }
+        val rulesets = extra.optJSONObject("rulesets")?.optJSONArray("enabled")?.length() ?: 0
+        when {
+            toggled != null -> Grade("P", "$label: the action click flipped its state (title \"${toggled.optString("title").take(60)}\", badge \"${toggled.optString("badgeText").take(12)}\"); $rulesets ruleset(s) enabled; ${debugLines.size} analytics line(s) on the fixture's console after a reload", extra)
+            else -> Grade("F", "$label: the action click left its title \"${extensionAction(row.id)?.optString("title")?.take(60)}\" (no ${on.pattern} within ${scaled(15_000, factor) / 1000} s)", extra)
+        }
+    }
+
+    /**
+     * SingleFile: the action click runs its content scripts on the fixture and hands the
+     * page's single-file copy to `downloads.download`, which the phone's runtime opens as a
+     * tab (the saved page's `blob:` or `data:` address, `extensionApi.downloads.download`).
+     * A new tab that is not one of the row's own pages, carrying `marker` (the fixture's
+     * title) or SingleFile's saved-page comment, is the pass; the click opening nothing within
+     * the wait is `F`, with the worker's console.
+     */
+    private fun savesPage(label: String, page: String, marker: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture(page, factor, 2_500)
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val opened = poll(scaled(40_000, factor), 700) { tabUrls().entries.firstOrNull { it.key !in before && it.key != tab } }
+        var saved = JSONObject()
+        if (opened != null) {
+            runCatching { waitForView(opened.key) }.getOrNull()?.let { savedView ->
+                showTab(opened.key)
+                saved = pollExpr(savedView, SINGLEFILE_SAVED.replace("__MARKER__", JSONObject.quote(marker)), scaled(20_000, factor))
+                saved.put("url", opened.value.take(120)).put("console", JSONArray(consoleOf(savedView).takeLast(8)))
+            } ?: saved.put("url", opened.value.take(120)).put("noView", true)
+        }
+        extra.put("saved", saved).put("fixtureConsole", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-saved-page")
+        runCatching { coreCall("extension.closePopup", "null") }
+        when {
+            saved.optBoolean("pass") -> Grade("P", "$label: the saved copy opened as a tab (${opened?.value?.take(40)}): ${saved.toString().take(200)}", extra)
+            opened != null -> Grade("F", "$label: the click opened ${opened.value.take(80)}, not the saved copy: ${saved.toString().take(200)}", extra)
+            else -> Grade("F", "$label: the action click opened nothing within ${scaled(40_000, factor) / 1000} s (downloads.download never reached the tab list)", extra)
+        }
+    }
+
+    /**
+     * RSS Feed Reader: its content script reads the page's `<link rel="alternate">` feeds and
+     * the worker counts them on the action's badge; the popup over the page offers the feed by
+     * its title. Over `feed.html` (one RSS link to `feed.xml`, "Zenium fixture feed"): a badge
+     * count of one or more, or the popup naming the feed, is the pass.
+     */
+    private fun feedDetector(label: String, page: String, feedTitle: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture(page, factor, 3_000)
+        val badge = poll(scaled(15_000, factor), 500) { extensionAction(row.id)?.optString("badgeText")?.takeIf { Regex("[1-9]").containsMatchIn(it) } }
+        extra.put("action", extensionAction(row.id)).put("badge", badge ?: JSONObject.NULL)
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        if (popup != null) {
+            found = pollExpr(popup, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:${JSONObject.quote(feedTitle)}.split(' ').every(function(w){return text.toLowerCase().indexOf(w.toLowerCase())>=0})||/feed\\.xml|1 feed|feeds? (found|detected|on this page)/i.test(text),text:"), scaled(20_000, factor))
+            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+        }
+        extra.put("popup", found)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-feed")
+        runCatching { coreCall("extension.closePopup", "null") }
+        when {
+            badge != null || found.optBoolean("pass") -> Grade("P", "$label: over a page announcing one feed, badge \"${badge ?: ""}\"; popup ${found.toString().take(200)}", extra)
+            popup == null -> Grade("F", "$label: no badge count on the feed page and the popup did not render", extra)
+            else -> Grade("F", "$label: no badge count on the feed page and the popup does not name the feed: ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * A text-to-speech popup (Read Aloud TTS: `app/popup.html`, a player over the tab's text):
+     * the popup opened over the fixture, its play control tapped (`play`, a label regex), then
+     * the worker's `chrome.tts.isSpeaking` and the popup's own state (a pause or stop control
+     * up, a sentence highlighted) are read: either speaking or the player past its play state
+     * is the pass. The sign-in gate of a service-backed voice is `n/m` on its surface.
+     */
+    private fun ttsPopup(label: String, play: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?tts", factor)
+        val bg = awakeBackground(row.id, factor)
+        extra.put("voices", bg?.let { probe(it, TTS_VOICES_PROBE, "__zenTts", scaled(10_000, factor)) } ?: "no background view")
+        val popup = openPopup(row, factor)
+        val steps = JSONArray()
+        var state = JSONObject()
+        var text = ""
+        if (popup != null) {
+            SystemClock.sleep(scaled(4_000, factor))
+            text = json(tabEval(popup, DEEP_TEXT)).optString("text")
+            extra.put("popupFirst", text.take(200))
+            val tapped = tapLabel(play, factor, steps, "play")
+            if (!tapped) steps.put("play by selector: ${runCatching { tabEval(popup, TTS_PLAY_CLICK) }.getOrNull()?.take(80)}")
+            popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                state = pollExpr(live, TTS_PLAYING, scaled(20_000, factor))
+                state.put("console", JSONArray(consoleOf(live).takeLast(10)))
+            }
+        }
+        val speaking = bg?.let { worker ->
+            tabEval(worker, "(function(){window.__zenSpeaking=null;try{chrome.tts.isSpeaking(function(s){window.__zenSpeaking=String(s)})}catch(e){window.__zenSpeaking='threw: '+String(e&&e.message||e)}return 'asked'})()")
+            poll(3_000, 200) { tabEval(worker, "window.__zenSpeaking||null").takeIf { r -> r != "null" } }
+        }
+        extra.put("steps", steps).put("popup", state).put("speaking", speaking ?: JSONObject.NULL)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-tts-popup")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val gate = popup != null && !state.optBoolean("pass") && LOGIN_WORDS.containsMatchIn(text + " " + state.optString("text"))
+        when {
+            state.optBoolean("pass") || speaking == "true" -> Grade("P", "$label: popup over the fixture, play tapped (${steps.toString().take(100)}): ${state.toString().take(200)}; tts.isSpeaking $speaking", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
+            gate -> Grade("n/m", "$label: its popup asks for its account (\"${text.take(100)}\"); its voices are its service's (not measurable here)", extra)
+            else -> Grade("F", "$label: popup over the fixture did not start reading after play (${steps.toString().take(100)}): ${state.toString().take(200)}; tts.isSpeaking $speaking", extra)
+        }
+    }
+
+    /**
+     * FoxyProxy: its preferences live in `storage.local` (`mode`, `data: [{active, type,
+     * hostname, port, ...}]`), its popup picks a proxy by setting `mode` to `hostname:port`
+     * and sending `{update: 'setProxy', pref}` to the worker, which turns it into a
+     * `fixed_servers` `chrome.proxy.settings.set`. A proxy at `127.0.0.1:8080` (nothing
+     * listens there on the emulator) is seeded into its storage from the worker, then picked
+     * the popup's way from the popup page (`storage.local.set({mode})` and the message): the
+     * fixture reloading as the proxy error page is the override at the WebView, and `disable`
+     * sent the same way bringing the fixture back is the clear – both together the pass, as
+     * [proxySwitcher] reads ZeroOmega. The worker's `chrome.proxy` shape is read first.
+     */
+    private fun foxyProxy(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val bg = awakeBackground(row.id, factor)
+        val proxy = if (bg != null) probe(bg, PROXY_PROBE, "__zenProxyProbe", scaled(10_000, factor)) else JSONObject().put("pass", false).put("note", "no background view")
+        extra.put("proxy", proxy)
+        extra.put("seed", bg?.let { probe(it, FOXY_SEED, "__zenFoxySeed", scaled(8_000, factor)) } ?: JSONObject().put("error", "no background view to seed from"))
+        val (tab, view) = fixture("echo-headers?foxy", factor, 1_500)
+        val since = StepEvidence(row)
+        val setMode = { mode: String ->
+            val popup = openPopup(row, factor)
+            val answer = if (popup != null) {
+                SystemClock.sleep(scaled(1_500, factor))
+                probe(popup, FOXY_SET_MODE.replace("__MODE__", JSONObject.quote(mode)), "__zenFoxyMode", scaled(8_000, factor))
+            } else JSONObject().put("error", "popup did not render")
+            popupView()?.takeIf { it.context == "popup" }?.let { extra.put("popupText${mode.filter { c -> c.isLetterOrDigit() }.take(12)}", json(tabEval(it, DEEP_TEXT)).optString("text").take(200)) }
+            runCatching { coreCall("extension.closePopup", "null") }
+            answer
+        }
+        val reloaded = {
+            showTab(tab)
+            coreCall("tab.reload", """{"tabId":${JSONObject.quote(tab)}}""")
+            SystemClock.sleep(scaled(1_500, factor))
+            pollExpr(view, PAGE_OR_ERROR, scaled(20_000, factor))
+        }
+        val picked = setMode("127.0.0.1:8080")
+        extra.put("picked", picked)
+        val through = reloaded()
+        extra.put("throughProxy", through)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-through-proxy")
+        val cleared = setMode("disable")
+        extra.put("cleared", cleared)
+        val back = reloaded()
+        extra.put("backDirect", back)
+        bg?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        val failedThrough = through.optBoolean("errorPage")
+        val restored = back.optBoolean("loaded")
+        val note = "chrome.proxy: ${proxy.toString().take(140)}; seeded ${extra.optJSONObject("seed")?.toString()?.take(100)}; picked ${picked.toString().take(120)}; fixture through the proxy: ${through.toString().take(140)}; back on disable: ${back.toString().take(120)}"
+        return when {
+            failedThrough && restored -> Grade("P", "FoxyProxy: the seeded proxy picked the popup's way reached ProxyController (the fixture came back as the ${through.optString("code").ifEmpty { "proxy error" }} error page) and disable cleared it (the fixture loaded again): $note", extra)
+            failedThrough -> Grade("PARTIAL", "FoxyProxy: the seeded proxy reached ProxyController (${through.optString("code").ifEmpty { "the error page" }}) but disable did not bring the fixture back within the wait: $note", extra)
+            !proxy.optBoolean("pass") -> Grade("F", "FoxyProxy: the proxy API is not Chrome's shape in the worker: $note", extra)
+            picked.has("error") -> Grade("F", "FoxyProxy: the proxy could not be picked (${picked.optString("error").take(80)}): $note", extra)
+            else -> Grade("F", "FoxyProxy: the proxy picked and the fixture still loaded directly (the override never reached the WebView): $note", extra)
         }
     }
 
@@ -8329,5 +8671,63 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val WALLET_STANDARD =
             "(function(){var w=window.__wallet||{};var re=__RE__;var std=(w.standard||[]).filter(function(n){return re.test(n)});var o=w.others||{};var globals=Object.keys(o).filter(function(k){return o[k]!=='undefined'&&o[k]!==false});" +
                 "return JSON.stringify({pass:std.length>0||__GLOBALS__,standard:w.standard||[],matched:std,others:o,globals:globals,announced:w.announced||[],error:w.standardError||null})})()"
+
+        // --- compat round 15 ---
+
+        /** MEGA's bundled client rendered on the extension's page: its app shell or sign-in, or a body with text. */
+        private const val MEGA_CLIENT =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var shell=document.querySelector('#startholder, .fm-dialog, .login-page, .bottom-page, .fmholder, #fmholder, [class*=\"mega\"]');" +
+                "var err=/^zen:\\/\\/error/i.test(location.href)||/could not be loaded because|Webpage not available|net::ERR_/i.test(t);" +
+                "return JSON.stringify({pass:!err&&(!!shell||t.length>20),shell:shell?(shell.id||String(shell.className).split(' ')[0]):null,errorPage:err,title:document.title,text:t.slice(0,160)})})()"
+
+        /** The rulesets an extension has enabled (`declarativeNetRequest.getEnabledRulesets`), with its dynamic and session rule counts. */
+        private const val DNR_RULESETS_PROBE =
+            "(function(){window.__zenRulesets={done:false};var out={};var pending=3;var finish=function(){if(--pending<=0){out.done=true;window.__zenRulesets=out}};" +
+                "try{chrome.declarativeNetRequest.getEnabledRulesets(function(r){out.enabled=r||[];out.err=chrome.runtime.lastError?String(chrome.runtime.lastError.message):null;finish()})}catch(e){out.enabled=[];out.err=String(e&&e.message||e);finish()}" +
+                "try{chrome.declarativeNetRequest.getDynamicRules(function(r){out.dynamic=(r||[]).length;finish()})}catch(e){out.dynamic=-1;finish()}" +
+                "try{chrome.declarativeNetRequest.getSessionRules(function(r){out.session=(r||[]).length;finish()})}catch(e){out.session=-1;finish()}return 'asked'})()"
+
+        /** A page saved by SingleFile: its saved-page comment in the document, or the fixture's title carried over. */
+        private const val SINGLEFILE_SAVED =
+            "(function(){var html=document.documentElement?document.documentElement.outerHTML:'';var comment=/Page saved with SingleFile|singlefile/i.test(html.slice(0,4000));var marker=__MARKER__;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:comment||(t.indexOf(marker)>=0&&!/^zen:\\/\\/error/i.test(location.href)),comment:comment,marker:t.indexOf(marker)>=0,title:document.title,scheme:location.protocol,text:t.slice(0,120)})})()"
+
+        /** Cite This For Me's citer frame mounted by the action click (`iframe.ctfmWebCiterFrame`), or its markers in the page. */
+        private const val CITE_FRAME =
+            "(function(){var f=document.querySelector('iframe.ctfmWebCiterFrame, iframe[class*=\"ctfm\"], iframe[id*=\"ctfm\"], iframe[src*=\"nnnmhgkokpalnmbeighfomegjfkklkle\"]');var marks=document.querySelectorAll('[id*=\"ctfm\"], [class*=\"ctfm\"], [id*=\"citethisforme\"], [class*=\"citethisforme\"]');" +
+                "var r=f?f.getBoundingClientRect():{width:0,height:0};return JSON.stringify({pass:!!f||marks.length>0,frame:!!f,src:f?(f.getAttribute('src')||'').slice(0,80):null,marks:marks.length,w:Math.round(r.width),h:Math.round(r.height)})})()"
+
+        /** Focus To-Do's app page (`WebContent/index.html`) rendered: its timer or task list on screen. */
+        private const val FOCUS_TODO_APP =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var timer=/\\b\\d{1,2}:\\d{2}\\b/.test(t);var ui=document.querySelectorAll('button, input, [class*=\"timer\"], [class*=\"task\"], [class*=\"pomodoro\"], [class*=\"todo\"]').length;" +
+                "return JSON.stringify({pass:timer||ui>3||/pomodoro|focus|task|today|start/i.test(t),timer:timer,controls:ui,text:t.slice(0,160)})})()"
+
+        /** Detailed SEO's popup over `page-a.html`: the fixture's title read into the popup, or its heading / meta rows. */
+        private const val DETAILED_SEO =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();return JSON.stringify({pass:/Probe Page A/.test(t)||(/title/i.test(t)&&/h1|heading|meta|description|canonical/i.test(t)&&t.length>80),text:t.slice(0,200)})})()"
+
+        /** TikTok Pixel Helper's popup over `tiktok-pixel.html`: the fixture's pixel id listed, or a pixel counted. */
+        private const val TIKTOK_PIXEL_LISTED =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();return JSON.stringify({pass:/ZENIUMFIX01/.test(t)||/1 pixel|pixels? (found|detected|loaded)|page ?view/i.test(t),text:t.slice(0,200)})})()"
+
+        /** Read Aloud TTS's popup past its play state: a pause or stop control up, a sentence highlighted, or a progress indicator moving. */
+        private const val TTS_PLAYING =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var q=function(s){return document.querySelector(s)};var pause=q('[aria-label*=\"pause\" i], [title*=\"pause\" i], [class*=\"pause\"], #Pause, [data-testid*=\"pause\"]');var stop=q('[aria-label*=\"stop\" i], [title*=\"stop\" i], [class*=\"stop\"], #Stop');" +
+                "var hl=q('[class*=\"highlight\"], mark, [class*=\"current-sentence\"], [class*=\"speaking\"], [class*=\"playing\"]');var vis=function(e){return !!e&&e.offsetParent!==null};" +
+                "return JSON.stringify({pass:vis(pause)||vis(stop)||vis(hl)||/pause|stop|speaking|reading/i.test(t),pause:vis(pause),stop:vis(stop),highlight:vis(hl),text:t.slice(0,160)})})()"
+
+        /** Read Aloud TTS's play control clicked by selector when no label matched (an icon button without text). */
+        private const val TTS_PLAY_CLICK =
+            "(function(){var b=document.querySelector('[aria-label*=\"play\" i], [title*=\"play\" i], [class*=\"play\"], #Play, #btnPlay, [data-testid*=\"play\"], button');if(!b)return 'no control';b.click();return 'clicked '+(b.getAttribute('aria-label')||b.id||b.className||b.tagName).slice(0,40)})()"
+
+        /** FoxyProxy's preferences seeded from its worker: one active HTTP proxy at 127.0.0.1:8080, the mode left as found (`disable`). */
+        private const val FOXY_SEED =
+            "(function(){window.__zenFoxySeed={done:false};var pref={mode:'disable',sync:false,autoBackup:false,passthrough:'',theme:'',container:{},commands:{},data:[{active:true,title:'Zenium probe',type:'http',hostname:'127.0.0.1',port:8080,username:'',password:'',cc:'',city:'',color:'#ff0000',pac:'',pacString:'',proxyDNS:true,include:[],exclude:[],tabProxy:[]}]};" +
+                "try{chrome.storage.local.set(pref,function(){chrome.storage.local.get(null,function(r){window.__zenFoxySeed={done:true,mode:r.mode,proxies:(r.data||[]).length,err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})})}catch(e){window.__zenFoxySeed={done:true,err:String(e&&e.message||e)}}return 'seeding'})()"
+
+        /** FoxyProxy's mode set the popup's way from its popup page: `storage.local.set({mode})` and `{update: 'setProxy', pref}` to the worker. */
+        private const val FOXY_SET_MODE =
+            "(function(){window.__zenFoxyMode={done:false};var mode=__MODE__;try{chrome.storage.local.get(null,function(r){var pref=Object.assign({},r,{mode:mode});chrome.storage.local.set({mode:mode},function(){" +
+                "try{chrome.runtime.sendMessage({update:'setProxy',pref:pref},function(reply){window.__zenFoxyMode={done:true,mode:mode,proxies:(pref.data||[]).length,reply:reply===undefined?null:reply,err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})}catch(e){window.__zenFoxyMode={done:true,mode:mode,error:String(e&&e.message||e)}}})})}catch(e){window.__zenFoxyMode={done:true,error:String(e&&e.message||e)}}return 'setting'})()"
     }
 }
