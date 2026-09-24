@@ -506,8 +506,8 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 // The system's clipboard chip is a window of its own, and while it shows the
                 // accessibility tree read is its (run 35939865448: every label read after the
                 // hold found nothing): the rest of the step works off the chrome's own document,
-                // and the app's window is waited for before anything is pressed.
-                finding("  the app's window active again ${awaitAppWindow(15_000)}")
+                // and the chip is waited out before anything is pressed.
+                finding("  the clipboard chip: ${awaitClipboardChip()}")
             }
             // Open by default (DEF-06): the row reads the host's state; its tap leaves for the
             // system's screen, and the app is brought back for the rest of the recording.
@@ -618,11 +618,12 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                 // The menu stands after the hold (the release's click is swallowed).
                 finding("  the menu still up after the hold ${verdict(chromeSurfaceUp())}")
             }
-            // The sheet gone for good (its spring carried out) and the app's window active
-            // again after the copy's chip, before the next hold lands on the page.
-            closeSurfaces()
-            awaitSheets(0, 4_000)
-            finding("  the app's window active again ${awaitAppWindow(15_000)}")
+            // The copy's chip waited out before the back: while it shows, the emulator's
+            // software GPU is its and the sheet's spring crawls (run 35941798860: 8 s from the
+            // back to `back.update`, and closeSurfaces' second back meanwhile landed on the page's
+            // root – the demo tab left for a new one, nothing for the next holds to match).
+            finding("  the clipboard chip: ${awaitClipboardChip()}")
+            finding("  the menu closed by one back ${verdict(closeMenuSheet())}")
             SystemClock.sleep(800)
             // tel: – the number bare under the link's text, and the three items for it.
             if (holdPageLink("#call") != null) {
@@ -635,8 +636,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                     "  tel: header $telHeader; items ${items.joinToString { "${it.first} ${if (it.second) "yes" else "NO"}" }} " +
                         verdict(telHeader == "Call the demo | $DEMO_NUMBER" && items.all { it.second })
                 )
-                closeSurfaces()
-                awaitSheets(0, 4_000)
+                closeMenuSheet()
                 SystemClock.sleep(800)
             }
             // mailto: – the address bare, Send Email.
@@ -650,7 +650,7 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
                     "  mailto: header $mailHeader; items ${items.joinToString { "${it.first} ${if (it.second) "yes" else "NO"}" }} " +
                         verdict(mailHeader == "Write to the demo | $DEMO_EMAIL" && items.all { it.second })
                 )
-                closeSurfaces()
+                closeMenuSheet()
             }
             SystemClock.sleep(800)
         }
@@ -728,6 +728,37 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             SystemClock.sleep(250)
         }
         return "NOT within $timeoutMs ms (active window ${ui.rootInActiveWindow?.packageName}) FAIL"
+    }
+
+    /**
+     * After a copy on Android 13+: the system's clipboard chip comes up as a window of its own a
+     * moment after the copy, holds the active window for as long as it shows (about six seconds;
+     * every accessibility read meanwhile is its) and, on the emulator's software GPU, starves the
+     * app's frames – a sheet's spring crawls under it. Wait for it to have come (up to 2.5 s) and
+     * gone, so that what follows lands on an app drawing at its own pace; a word on what happened.
+     */
+    private fun awaitClipboardChip(): String {
+        if (Build.VERSION.SDK_INT < 33) return "none below 33"
+        val start = SystemClock.uptimeMillis()
+        while (SystemClock.uptimeMillis() - start < 2_500 && appInFront()) SystemClock.sleep(100)
+        if (appInFront()) return "no window of its own within 2.5 s"
+        val came = SystemClock.uptimeMillis() - start
+        return "took the window after $came ms, the app's back ${awaitAppWindow(15_000)}"
+    }
+
+    /**
+     * One back on the menu sheet, then wait for the sheet to have gone – its spring carried out
+     * (`.zen-sheet` unmounted) and the host told (`back.update`) – before anything else; never a
+     * second back while it is still mounted, which would land on the page beneath. False when it
+     * is still there after the wait.
+     */
+    private fun closeMenuSheet(): Boolean {
+        if (!chromeSurfaceUp() && sheetCount() == 0) return true
+        back()
+        val gone = awaitSheets(0, 20_000)
+        val told = awaitSurface(up = false, timeoutMs = 10_000)
+        SystemClock.sleep(500)
+        return gone && told
     }
 
     /** The text of the settings row `id` as the chrome draws it (`data-row`); empty when the page has none. */
