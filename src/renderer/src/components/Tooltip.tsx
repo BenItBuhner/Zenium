@@ -157,23 +157,29 @@ export function Tooltip(): JSX.Element | null {
   }, [target])
 
   // The tooltip's own size decides where it fits; measured once it has rendered its text, to
-  // the fraction (`tooltipSize`: a rounded width clamps the box a fraction over the margin).
+  // the fraction (`tooltipSize`: a rounded width clamps the box a fraction over the margin),
+  // with the width the last text was given taken off first so the reading is this text's own
+  // `max-content`. The placer takes the width up to the whole pixel (`box.width`) and the box
+  // is given it here, outside React's style prop – the same whole width for two texts in a
+  // row would otherwise leave the cleared style uncorrected – so the right hairline stands on
+  // a column as the left one does.
   useLayoutEffect(() => {
     const el = ref.current
     if (!target || !el || !text) {
       setPlacement(null)
       return
     }
+    el.style.width = ''
     const pane = tooltipPaneOf(target)
-    setPlacement(
-      placeTooltip(
-        toRect(target.getBoundingClientRect()),
-        tooltipSize(el),
-        viewportSize(),
-        pane ? toRect(pane.getBoundingClientRect()) : null,
-        contentAreaStore.get().area
-      )
+    const placed = placeTooltip(
+      toRect(target.getBoundingClientRect()),
+      tooltipSize(el),
+      viewportSize(),
+      pane ? toRect(pane.getBoundingClientRect()) : null,
+      contentAreaStore.get().area
     )
+    el.style.width = `${placed.box.width}px`
+    setPlacement(placed)
   }, [target, text])
 
   // Over the page, the page goes under its picture first – unless it is under one already (a

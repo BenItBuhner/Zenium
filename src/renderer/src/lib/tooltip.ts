@@ -277,6 +277,14 @@ export interface TooltipBox {
   side: 'below' | 'above'
   left: number
   top: number
+  /**
+   * The box's width in whole pixels – the measured `max-content` width taken up to the next
+   * pixel – for the host to give the element (`style.width`): with the left edge on a column and
+   * the width a fraction (Seek forward's 74.36), the right hairline fell between two columns
+   * and drew soft; on a whole width both hairlines stand on a column. Up, never down: a width
+   * under the text's own would wrap its last word.
+   */
+  width: number
 }
 
 export interface TooltipPlacement {
@@ -315,15 +323,19 @@ export function tooltipSize(el: HTMLElement): Size {
  * (a control in the gap between the page's views: a split pane's header at the top of the
  * frame, whose tooltip above it stands on the caption band, beside the page rather than over
  * it) – and `coversPage` says whether the box then lies over the page (`page`: the content
- * area), for the host to put the page under its picture before the tooltip shows.
+ * area), for the host to put the page under its picture before the tooltip shows. The box is
+ * whole pixels on every edge: `size` is the element's own to the fraction (`tooltipSize`), and
+ * the placer takes its width up to the next pixel (`TooltipBox.width`) before it centres and
+ * clamps, so the right hairline stands on a column as the left does.
  */
 export function placeTooltip(
   anchor: Rect,
-  size: Size,
+  measured: Size,
   viewport: Size,
   pane: Rect | null,
   page: Rect | null
 ): TooltipPlacement {
+  const size: Size = { width: Math.ceil(measured.width), height: measured.height }
   if (pane) {
     const inPane = fitTooltip(anchor, size, pane)
     if (inPane) return { box: inPane, coversPage: false }
@@ -338,7 +350,8 @@ export function placeTooltip(
       // Neither side fits the window: below, slid up to the margin, as far as it goes.
       side: 'below' as const,
       left: slideLeft(anchor, size, frame),
-      top: Math.round(Math.max(POPOVER_MARGIN, viewport.height - POPOVER_MARGIN - size.height))
+      top: Math.round(Math.max(POPOVER_MARGIN, viewport.height - POPOVER_MARGIN - size.height)),
+      width: size.width
     }
   return { box, coversPage: covers(box) }
 }
@@ -353,21 +366,32 @@ function fitBelow(anchor: Rect, size: Size, field: Rect): TooltipBox | null {
   if (field.width - 2 * POPOVER_MARGIN < size.width) return null
   const below = anchor.y + anchor.height + TOOLTIP_GAP
   if (below + size.height > field.y + field.height - POPOVER_MARGIN) return null
-  return { side: 'below', left: slideLeft(anchor, size, field), top: Math.round(below) }
+  return {
+    side: 'below',
+    left: slideLeft(anchor, size, field),
+    top: Math.round(below),
+    width: size.width
+  }
 }
 
 function fitAbove(anchor: Rect, size: Size, field: Rect): TooltipBox | null {
   if (field.width - 2 * POPOVER_MARGIN < size.width) return null
   const above = anchor.y - TOOLTIP_GAP - size.height
   if (above < field.y + POPOVER_MARGIN) return null
-  return { side: 'above', left: slideLeft(anchor, size, field), top: Math.round(above) }
+  return {
+    side: 'above',
+    left: slideLeft(anchor, size, field),
+    top: Math.round(above),
+    width: size.width
+  }
 }
 
 /**
  * Centred on the control, then slid the least distance that keeps it inside the field's margin
  * – on a whole pixel, the margin's bounds rounded inwards first, so the clamp never rounds the
- * box a fraction out over the margin (a 95.2 wide tooltip against a 240 pane clamps to 136.8;
- * rounded to 137 it would end 0.2 past the margin – it lands on 136).
+ * box a fraction out over the margin (a 95.2 wide tooltip against a 240 pane clamped to 136.8;
+ * rounded to 137 it would end 0.2 past the margin – it lands on 136; the width comes whole by
+ * now, 96, and the bounds still round inwards for a field that starts on a fraction).
  */
 function slideLeft(anchor: Rect, size: Size, field: Rect): number {
   const min = Math.ceil(field.x + POPOVER_MARGIN)

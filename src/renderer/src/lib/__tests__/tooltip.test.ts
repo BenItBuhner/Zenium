@@ -38,7 +38,7 @@ const control = (x: number, y: number): Rect => ({ x, y, width: 28, height: 28 }
 describe('placeTooltip', () => {
   it('centres under the control, 8 px below its box, inside its pane', () => {
     expect(placeTooltip(control(100, 40), size, viewport, sidebar, page)).toEqual({
-      box: { side: 'below', left: 100 + 14 - 48, top: 40 + 28 + TOOLTIP_GAP },
+      box: { side: 'below', left: 100 + 14 - 48, top: 40 + 28 + TOOLTIP_GAP, width: 96 },
       coversPage: false
     })
   })
@@ -61,7 +61,7 @@ describe('placeTooltip', () => {
     const wide = { width: 95.2, height: 30 }
     const placed = placeTooltip(control(204, 44), wide, viewport, sidebar, page)
     expect(placed.box.left).toBe(136)
-    expect(placed.box.left + wide.width).toBeLessThanOrEqual(sidebar.width - POPOVER_MARGIN)
+    expect(placed.box.left + placed.box.width).toBeLessThanOrEqual(sidebar.width - POPOVER_MARGIN)
     // A pane starting on a fraction: the margin's inner edge is the next whole pixel.
     const shifted: Rect = { x: 0.5, y: 0, width: 240, height: 1000 }
     expect(placeTooltip(control(0, 40), size, viewport, shifted, page).box.left).toBe(9)
@@ -72,12 +72,33 @@ describe('placeTooltip', () => {
     ).toBe(66)
   })
 
+  it('takes the measured width up to the whole pixel, so the right hairline stands on a column too', () => {
+    // Seek forward's tooltip measured 74.36 wide (the W5-1 drive, 2026-09-24): its left edge
+    // on a column, its right hairline between two. The box is 75 wide, never 74 – a width
+    // under the text's own would wrap its last word – and centred on the whole width.
+    const fractional = { width: 74.36, height: 30 }
+    const placed = placeTooltip(control(100, 40), fractional, viewport, sidebar, page)
+    expect(placed.box.width).toBe(75)
+    expect(placed.box.left).toBe(Math.round(100 + 14 - 75 / 2))
+    expect(Number.isInteger(placed.box.left + placed.box.width)).toBe(true)
+    // A whole width stays as it is, and the flip above carries it too.
+    expect(placeTooltip(control(100, 40), size, viewport, sidebar, page).box.width).toBe(96)
+    expect(placeTooltip(control(100, 964), fractional, viewport, sidebar, page).box).toMatchObject({
+      side: 'above',
+      width: 75
+    })
+    // Handed to the window (a pane too narrow), the same whole width.
+    const rail: Rect = { x: 0, y: 0, width: 48, height: 1000 }
+    expect(placeTooltip(control(10, 40), fractional, viewport, rail, page).box.width).toBe(75)
+  })
+
   it('flips above a control at the bottom of its pane', () => {
     const bottom = control(100, 1000 - 8 - 28)
     expect(placeTooltip(bottom, size, viewport, sidebar, page).box).toEqual({
       side: 'above',
       left: 66,
-      top: bottom.y - TOOLTIP_GAP - size.height
+      top: bottom.y - TOOLTIP_GAP - size.height,
+      width: 96
     })
   })
 
@@ -94,14 +115,19 @@ describe('placeTooltip', () => {
     const band: Rect = { x: 0, y: 0, width: 1600, height: 40 }
     const below: Rect = { x: 0, y: 40, width: 1600, height: 960 }
     const placed = placeTooltip(control(100, 6), size, viewport, band, below)
-    expect(placed.box).toEqual({ side: 'below', left: 66, top: 6 + 28 + TOOLTIP_GAP })
+    expect(placed.box).toEqual({ side: 'below', left: 66, top: 6 + 28 + TOOLTIP_GAP, width: 96 })
     expect(placed.coversPage).toBe(true)
   })
 
   it('a pane too narrow for the text hands over to the window too', () => {
     const rail: Rect = { x: 0, y: 0, width: 48, height: 1000 }
     const placed = placeTooltip(control(10, 40), size, viewport, rail, { ...page, x: 48 })
-    expect(placed.box).toEqual({ side: 'below', left: POPOVER_MARGIN, top: 40 + 28 + TOOLTIP_GAP })
+    expect(placed.box).toEqual({
+      side: 'below',
+      left: POPOVER_MARGIN,
+      top: 40 + 28 + TOOLTIP_GAP,
+      width: 96
+    })
     expect(placed.coversPage).toBe(true)
   })
 
@@ -110,7 +136,12 @@ describe('placeTooltip', () => {
     const band: Rect = { x: 0, y: 0, width: 1600, height: 36 }
     const lower: Rect = { x: 0, y: 80, width: 1600, height: 920 }
     expect(placeTooltip(control(1560, 4), size, viewport, band, lower)).toEqual({
-      box: { side: 'below', left: 1600 - POPOVER_MARGIN - size.width, top: 4 + 28 + TOOLTIP_GAP },
+      box: {
+        side: 'below',
+        left: 1600 - POPOVER_MARGIN - size.width,
+        top: 4 + 28 + TOOLTIP_GAP,
+        width: 96
+      },
       coversPage: false
     })
   })
@@ -123,7 +154,7 @@ describe('placeTooltip', () => {
       null,
       null
     )
-    expect(placed.box).toEqual({ side: 'below', left: 66, top: 77 })
+    expect(placed.box).toEqual({ side: 'below', left: 66, top: 77, width: 96 })
     expect(placed.coversPage).toBe(false)
   })
 
@@ -135,7 +166,7 @@ describe('placeTooltip', () => {
     const layout: Rect = { x: 859, y: 82, width: 20, height: 20 }
     const placed = placeTooltip(layout, size, viewport, null, area)
     expect(placed).toEqual({
-      box: { side: 'above', left: 859 + 10 - 48, top: 82 - TOOLTIP_GAP - size.height },
+      box: { side: 'above', left: 859 + 10 - 48, top: 82 - TOOLTIP_GAP - size.height, width: 96 },
       coversPage: false
     })
     // Below still comes first where both sides miss the page (a control under the area).
