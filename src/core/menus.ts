@@ -1932,7 +1932,7 @@ export class Menus {
    * The ⋯ menu of a split pane's header (split-07, split-13; Edge's "More options" on the pane,
    * Chrome's menu on the split's toolbar icon): Swap Panes – this pane trades places with the
    * pane after it, the last with the one before it – then the left pane's link rule as a
-   * checkbox on the one setting Settings › Tabs › Split view carries (Edge keeps the toggle on
+   * checkbox on the one setting Settings › Look and Feel › Split view carries (Edge keeps the toggle on
    * the pane; here it is the setting's mirror, greyed for a stacked split, which has no left and
    * right), then Un-split Tab, which the header's own button also does. Title Case (design
    * language v2 §9.1); nothing here for a tab outside a split.
