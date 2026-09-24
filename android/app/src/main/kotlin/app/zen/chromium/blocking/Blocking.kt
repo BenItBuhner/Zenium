@@ -96,9 +96,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
 
     /**
      * Whether the response stage of media-element requests is observed (`ext.observeResponses`,
-     * contract 7.1): then a `Range` GET of a subresource the request stage let through – a
-     * media element's, or the ambiguous request nothing tells from one – is relayed through the
-     * header stage's [HeaderStage.relayMedia], which serves the origin's response as it is and
+     * contract 7.1): then a `Range` GET without `Origin` of a subresource the request stage let
+     * through – a media element's, by round 14's measurement ([RelaySelection]) – is relayed
+     * through the header stage's [HeaderStage.relayMedia], which serves the origin's response as it is and
      * reports its headers and its end to [observer] under the request's id. Set by the extension
      * runtime while an extension holds a response-stage `webRequest` listener, cleared with it;
      * off, nothing is relayed and every request is answered exactly as before.
@@ -393,8 +393,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
          * recorded as unsupported. A request that goes out is shown to the `onSendHeaders`
          * listeners; a cancelled one to the `onErrorOccurred` listeners as
          * `net::ERR_BLOCKED_BY_CLIENT`, as Chromium does. `observeResponses` is the engine's
-         * switch of the same name: a `Range` GET the request stage let through is then relayed
-         * for its response ([Verdict.MediaRelay], contract 7.2) – a request that goes out too.
+         * switch of the same name: a `Range` GET without `Origin` the request stage let through
+         * is then relayed for its response ([Verdict.MediaRelay], contract 7.2 / 7.10,
+         * [RelaySelection]) – a request that goes out too.
          */
         fun evaluate(
             snap: EngineSnapshot,
@@ -408,8 +409,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             observer: DecisionObserver? = null,
             observeResponses: Boolean = false
         ): Verdict {
-            val ranged = observeResponses && headers.keys.any { it.equals("Range", ignoreCase = true) }
-            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer, observeResponses, ranged)
+            val ranged = observeResponses && RelaySelection.hasHeader(headers, "Range")
+            val hasOrigin = ranged && RelaySelection.hasHeader(headers, "Origin")
+            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer, observeResponses, ranged, hasOrigin)
             if (listeners.isEmpty || !isHttp(url)) return engine
             val record = listeners.begin(tab, url, method, isMainFrame, ResourceType.guessKnown(url, isMainFrame, headers["Accept"]))
             // A relay – to the header stage, or of a media request for its response – is a
@@ -457,11 +459,12 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
          * navigation it is (the process's first may wait for the tables, here on a network
          * thread); a frame's is not.
          *
-         * `observeResponses` is [Blocking.observeResponses]; `ranged` says the request's headers
-         * carry `Range`. Both on, a `GET` subresource the rules allow and whose type is `MEDIA` or
-         * the ambiguous one (nothing tells it from a media element's request) is answered
-         * [Verdict.MediaRelay] in place of [Verdict.Pass] (contract 7.2); a request typed image,
-         * script, style or font by its `Accept` or extension is not, whatever it carries.
+         * `observeResponses` is [Blocking.observeResponses]; `ranged` and `hasOrigin` say whether
+         * the request's headers carry `Range` and `Origin`. The switch on, a `GET` subresource the
+         * rules allow that carries `Range` and no `Origin` – a media element's request, by round
+         * 14's measurement; a cors-mode `fetch` / XHR carries `Origin` – is answered
+         * [Verdict.MediaRelay] in place of [Verdict.Pass] ([RelaySelection.selects], contract
+         * 7.2 as 7.10 amends it: no type in the choice, the runtime's twin has none to read).
          */
         fun evaluate(
             snap: EngineSnapshot,
@@ -473,7 +476,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             policy: RequestPolicy? = null,
             observer: DecisionObserver? = null,
             observeResponses: Boolean = false,
-            ranged: Boolean = false
+            ranged: Boolean = false,
+            hasOrigin: Boolean = false
         ): Verdict {
             if (!isHttp(url)) return Verdict.Pass
             val known = ResourceType.guessKnown(url, isMainFrame, accept)
@@ -512,12 +516,12 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 observer.onDecision(tab, req, decision, elapsed, if (cpuAfter < 0) -1L else cpuAfter - cpuBefore)
             }
             // A media element's `Range` GET while an extension listens for the response stage
-            // (contract 7.2): typed `MEDIA`, or the ambiguous request nothing tells from one. A
-            // document never qualifies (its type is known), nor does anything typed by its
-            // `Accept` or extension; the cookie word is the policy's for the request under the
-            // tab's document, as it is for a relayed document. (The empty snapshot without an
-            // observer returned above: nobody would hear the relay.)
-            val mediaRelay = observeResponses && ranged && method == "GET" && (known == null || known == ResourceType.MEDIA)
+            // (contract 7.2 / 7.10): the shared selection – allowed, not a document (a frame's
+            // counts as one here), GET, `Range` and no `Origin`; the cookie word is the policy's
+            // for the request under the tab's document, as it is for a relayed document. (The
+            // empty snapshot without an observer returned above: nobody would hear the relay.)
+            val mediaRelay = observeResponses &&
+                RelaySelection.selects(decision.action == Decision.Action.ALLOW, isDocument, method, ranged, hasOrigin)
             return when (decision.action) {
                 // A document allowed for now that a header-conditioned rule may still overturn,
                 // or whose cookies the cookie policy withholds, goes through the header stage's
@@ -703,8 +707,8 @@ sealed class Verdict {
     class HeaderStage(val request: Request, val decision: Decision, val withCookies: Boolean = true) : Verdict()
 
     /**
-     * A media element's `Range` GET the request stage let through while the response stage is
-     * observed ([Blocking.observeResponses], contract 7.2): relayed through
+     * A media element's `Range` GET (no `Origin`: [RelaySelection]) the request stage let through
+     * while the response stage is observed ([Blocking.observeResponses], contract 7.2 / 7.10): relayed through
      * [HeaderStage.relayMedia], which serves the origin's response as it is – its status,
      * `Content-Range`, the body streamed – and reports its headers and its end to the observer
      * under the request's id ([DecisionObserver.onResponse]). `request` is the instance the

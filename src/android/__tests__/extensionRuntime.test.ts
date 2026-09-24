@@ -4,6 +4,7 @@ import { WARN_FLOW_DROPPED } from '@core/extensions/api/engine'
 import type { ExtensionErrorReport } from '@core/extensions/errorConsole'
 import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
 import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
+import type { ScriptRequestObservation } from '../relaySelection'
 import {
   type FakeAuthSheet,
   type Harness,
@@ -1421,6 +1422,42 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     await call(h, 'bg1', 'webRequest', 'removeListener', ['onCompleted', 2])
     expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }, { on: false }])
     expect(h.runtime.onResponse(response('complete') as never)).toBeNull()
+  })
+  it("the runtime tells the page script's observer which fetch / XHR the relay already served, by the shared selection, and only while the switch is on (blocking-rule-interface.md 7.10)", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    backgroundUp(h, 'bg1')
+    const observed = (over: Partial<ScriptRequestObservation> = {}): ScriptRequestObservation => ({
+      tabId: 't1',
+      url: 'https://news.example/clip.mp4',
+      method: 'GET',
+      range: 'bytes=0-',
+      crossOrigin: false,
+      ...over
+    })
+    // No response-stage listener: nothing is relayed, every observation is the page script's.
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([])
+    expect(h.runtime.relayServed(observed())).toBe(false)
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onCompleted',
+      { urls: ['<all_urls>'] },
+      [],
+      1
+    ])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }])
+    // The switch on: a same-origin ranged GET a script made was relayed (the recorded overlap) –
+    // its response comes as ext.response, the observation is dropped.
+    expect(h.runtime.relayServed(observed())).toBe(true)
+    // A cross-origin one carried Origin, an unranged one no Range, a POST is no GET: the page script's.
+    expect(
+      h.runtime.relayServed(observed({ url: 'https://api.example/data.json', crossOrigin: true }))
+    ).toBe(false)
+    expect(h.runtime.relayServed(observed({ range: null }))).toBe(false)
+    expect(h.runtime.relayServed(observed({ method: 'POST' }))).toBe(false)
+    // The switch off again: nothing was relayed.
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onCompleted', 1])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }, { on: false }])
+    expect(h.runtime.relayServed(observed())).toBe(false)
   })
   it('a navigation event landing after the new document said hello leaves its endpoints answering; Kotlin says which are gone', async () => {
     const h = harness()

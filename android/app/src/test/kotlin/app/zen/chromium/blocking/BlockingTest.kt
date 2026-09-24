@@ -485,11 +485,16 @@ class BlockingTest {
         assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = false, ranged = true))
         assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = false))
         assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://api.example/data.json", false, "*/*", "GET", observer = observer, observeResponses = true))
-        // Typed by its Accept or extension as something else: not relayed, whatever it carries.
-        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/pixel.png", false, "image/avif,*/*", "GET", observer = observer, observeResponses = true, ranged = true))
-        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/app.js", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true))
-        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/site.css", false, "text/css,*/*", "GET", observer = observer, observeResponses = true, ranged = true))
-        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/font.woff2", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true))
+        // `Origin` on the request: a cors-mode fetch / XHR (round 14, Table 1) – the page script's, never relayed,
+        // the media type notwithstanding (a fetch of clip.mp4 reads as media by its extension).
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true, hasOrigin = true))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://api.example/stream?clip=2", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true, hasOrigin = true))
+        // No type in the selection (7.10): a Range GET without Origin typed image, script, style or font by its
+        // Accept or extension is relayed like the ambiguous request – the runtime's twin has no type to read.
+        assertTrue(Blocking.evaluate(snapshot, tab, "https://cdn.example/pixel.png", false, "image/avif,*/*", "GET", observer = observer, observeResponses = true, ranged = true) is Verdict.MediaRelay)
+        assertTrue(Blocking.evaluate(snapshot, tab, "https://cdn.example/app.js", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true) is Verdict.MediaRelay)
+        assertTrue(Blocking.evaluate(snapshot, tab, "https://cdn.example/site.css", false, "text/css,*/*", "GET", observer = observer, observeResponses = true, ranged = true) is Verdict.MediaRelay)
+        assertTrue(Blocking.evaluate(snapshot, tab, "https://cdn.example/font.woff2", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true) is Verdict.MediaRelay)
         // Not a GET: not relayed.
         assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "POST", observer = observer, observeResponses = true, ranged = true))
         // Documents never: a main frame and a frame keep their own path (no header rule here: the pass).
@@ -519,6 +524,50 @@ class BlockingTest {
         assertEquals(2, tab.blocked)
     }
 
+    /**
+     * One row of the relay selection's truth table (contract 7.10): the five facts and the answer,
+     * with a request that carries them for `Blocking.evaluate` to be asked the same question.
+     */
+    private class RelayRow(val name: String, val allowed: Boolean, val mainFrame: Boolean, val method: String, val hasRange: Boolean, val hasOrigin: Boolean, val relayed: Boolean, val url: String, val accept: String)
+
+    /** The table, pinned here and in `src/android/__tests__/relaySelection.test.ts` – the same rows, the same answers. */
+    private val relayTable = listOf(
+        RelayRow("element same-origin", true, false, "GET", true, false, true, "https://news.example/clip.mp4", "*/*"),
+        RelayRow("element cross-origin no-cors", true, false, "GET", true, false, true, "https://cdn.example/clip.mp4", "*/*"),
+        RelayRow("element crossorigin (the recorded gap: Origin goes with it)", true, false, "GET", true, true, false, "https://cdn.example/clip.mp4", "*/*"),
+        RelayRow("fetch same-origin, no Range", true, false, "GET", false, false, false, "https://news.example/data.json", "*/*"),
+        RelayRow("fetch same-origin with Range (a range-reading script: the recorded overlap)", true, false, "GET", true, false, true, "https://news.example/data.json", "*/*"),
+        RelayRow("fetch cross-origin with Range", true, false, "GET", true, true, false, "https://api.example/data.json", "*/*"),
+        RelayRow("XHR cross-origin", true, false, "GET", false, true, false, "https://api.example/data.json", "*/*"),
+        RelayRow("main frame", true, true, "GET", true, false, false, "https://news.example/next", "text/html"),
+        RelayRow("a blocked request", false, false, "GET", true, false, false, "https://tracker.net/clip.mp4", "*/*"),
+        RelayRow("a POST with Range", true, false, "POST", true, false, false, "https://cdn.example/clip.mp4", "*/*"),
+        RelayRow("a HEAD with Range", true, false, "HEAD", true, false, false, "https://cdn.example/clip.mp4", "*/*")
+    )
+
+    @Test
+    fun `the relay selection's truth table holds for the predicate and for the engine alike`() {
+        val tab = FakeTab()
+        val listeners = WebRequestListeners()
+        for (row in relayTable) {
+            assertEquals(row.name, row.relayed, RelaySelection.selects(row.allowed, row.mainFrame, row.method, row.hasRange, row.hasOrigin))
+            val headers = HashMap<String, String>()
+            headers["Accept"] = row.accept
+            if (row.hasRange) headers["Range"] = "bytes=0-"
+            if (row.hasOrigin) headers["Origin"] = "https://news.example"
+            val verdict = Blocking.evaluate(snapshot, listeners, tab, row.url, row.mainFrame, headers, row.method, null, null, observeResponses = true)
+            assertEquals(row.name, row.relayed, verdict is Verdict.MediaRelay)
+            // The switch off: never, whatever the row says.
+            assertTrue(row.name, Blocking.evaluate(snapshot, listeners, tab, row.url, row.mainFrame, headers, row.method, null, null) !is Verdict.MediaRelay)
+        }
+        // The blocked row still blocks – once with the switch on, once with it off; the main frame's pass is the document path's own.
+        assertEquals(2, tab.blocked)
+        // The header is found whatever its case, and in any spelling of the name.
+        assertTrue(RelaySelection.hasHeader(mapOf("origin" to "https://news.example"), "Origin"))
+        assertTrue(RelaySelection.hasHeader(mapOf("RANGE" to "bytes=0-"), "Range"))
+        assertEquals(false, RelaySelection.hasHeader(mapOf("Accept" to "*/*"), "Origin"))
+    }
+
     @Test
     fun `the listener registry sees a media relay as a request that goes out, and its own answer comes first`() {
         val tab = FakeTab()
@@ -529,15 +578,16 @@ class BlockingTest {
         val relayed = Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*", "range" to "bytes=0-"), "GET", null, null, observeResponses = true)
         assertTrue(relayed is Verdict.MediaRelay)
         assertEquals(listOf("https://cdn.example/clip.mp4"), sent)
-        // Without the header, or with the switch off: the pass, also a request that goes out.
+        // Without the header, with Origin beside it (a cors fetch of the clip), or with the switch off: the pass, also a request that goes out.
         assertSame(Verdict.Pass, Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*"), "GET", null, null, observeResponses = true))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*", "Range" to "bytes=0-", "origin" to "https://news.example"), "GET", null, null, observeResponses = true))
         assertSame(Verdict.Pass, Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*", "Range" to "bytes=0-"), "GET", null, null))
-        assertEquals(3, sent.size)
+        assertEquals(4, sent.size)
         // A blocking listener's cancel stands ahead of the relay: the request never goes out.
         listeners.addListener(WebRequestEvent.ON_BEFORE_REQUEST, { BlockingResponse(cancel = true) }, ListenerOptions("ext-b", blocking = true))
         val cancelled = Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*", "Range" to "bytes=0-"), "GET", null, null, observeResponses = true)
         assertTrue(cancelled is Verdict.Empty)
-        assertEquals(3, sent.size)
+        assertEquals(4, sent.size)
     }
 
     @Test

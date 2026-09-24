@@ -106,6 +106,7 @@ import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { webViewProxyOverride } from './extensionProxy'
 import type { KeepAwakeLevel } from '@core/extensions/api/power'
+import { relayServedObservation, type ScriptRequestObservation } from './relaySelection'
 import type { RawCpuReading, RawMemoryReading } from '@core/extensions/api/systemInfo'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
 import type { ViewEventPayloads } from './views'
@@ -994,7 +995,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * the state at the time it runs – so it carries every registration recorded by then – and
    * resolves when that landed; nothing an extension awaits resolves before its plan is live.
    */
-  private readonly configuring = new Map<string, { landed: Promise<void>; next: Promise<void> | null }>()
+  private readonly configuring = new Map<
+    string,
+    { landed: Promise<void>; next: Promise<void> | null }
+  >()
 
   /**
    * Plan the extension's units from its manifest, registered scripts and world configuration
@@ -2206,6 +2210,20 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (!this.observingResponses) return null
     // the extension program emits onHeadersReceived / onResponseStarted / onCompleted / onBeforeRedirect / onErrorOccurred from here (blocking-rule-interface.md §7)
     return event
+  }
+
+  /**
+   * Whether the Kotlin engine's relay served a `fetch` / XHR the page script observed
+   * (`blocking-rule-interface.md` 7.10): then its response stage comes as `ext.response`
+   * ([onResponse]) and the observation is dropped, so no response is reported twice. The same
+   * predicate the engine chooses with (`blocking/RelaySelection.kt`, `relaySelection.ts`, one
+   * truth table in both tests); while the switch is off nothing was relayed, and every
+   * observation is the page script's to report.
+   */
+  relayServed(observation: ScriptRequestObservation): boolean {
+    if (!this.observingResponses) return false
+    // the extension program's page-script observer asks here before it emits a fetch / XHR's response stage (blocking-rule-interface.md 7.10)
+    return relayServedObservation(observation)
   }
 
   /**
