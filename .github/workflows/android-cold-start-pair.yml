@@ -1,0 +1,67 @@
+name: Android cold start pair
+
+# The P0 rule's record for a change near the boot path: MainActivity's cold start under a BASE
+# build and under the HEAD (this workflow's commit) on the same emulator boot, `am start -W` after
+# `am force-stop`, five runs each, the medians of TotalTime and WaitTime side by side
+# (android-cold-start-pair.sh; the table lands in the job summary and in the artifact as
+# cold-start-pair.txt with every am start answer). The base build is assembled here from the
+# base ref (the same web build and Gradle tasks as the head's, in a worktree; the head's
+# node_modules serve it, since the base and the head share a lockfile or the base's own install
+# is made). Dispatch-only: a worker whose change touches the boot path's neighbourhood fires it
+# on its branch and writes the numbers into its PR body; it says nothing about a change being
+# correct, only what the two builds' cold starts measured on the recipe's emulator. The build,
+# the emulator and the Gradle cache live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      base-ref:
+        description: The ref the before build is assembled from (a branch, tag or commit)
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-cold-start-pair-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pair:
+    name: Cold start pair (before ${{ inputs.base-ref || 'main' }} / after this commit)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-cold-start-pair.sh
+      # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
+      # head's own step ran it. The labels are the two commits, for the table.
+      script-env: |
+        P0_BASE_REF=${{ inputs.base-ref || 'main' }}
+        P0_BASE_APK=artifacts/cold-start-base/app-base.apk
+        P0_RUNS=5
+        DEMO_OUT=artifacts/android-cold-start-pair
+      setup-script: |
+        set -euo pipefail
+        git fetch --no-tags --depth 1 origin "$P0_BASE_REF"
+        base_sha=$(git rev-parse FETCH_HEAD)
+        echo "base ref $P0_BASE_REF = $base_sha; head $GITHUB_SHA"
+        git worktree add --detach /tmp/cold-start-base "$base_sha"
+        cd /tmp/cold-start-base
+        if cmp -s package-lock.json "$GITHUB_WORKSPACE/package-lock.json"; then
+          ln -s "$GITHUB_WORKSPACE/node_modules" node_modules
+        else
+          npm ci
+        fi
+        npm run build:android:web
+        cd android
+        ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
+        cd "$GITHUB_WORKSPACE"
+        mkdir -p artifacts/cold-start-base
+        cp /tmp/cold-start-base/android/app/build/outputs/apk/debug/app-debug.apk artifacts/cold-start-base/app-base.apk
+        {
+          echo "P0_BASE_LABEL=${base_sha:0:9}"
+          echo "P0_HEAD_LABEL=${GITHUB_SHA:0:9}"
+        } >> "$GITHUB_ENV"
+      artifact-name: android-cold-start-pair
+      artifact-path: artifacts/android-cold-start-pair/
+      timeout-minutes: 60
