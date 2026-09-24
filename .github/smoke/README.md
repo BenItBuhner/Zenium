@@ -17,15 +17,20 @@ node .github/smoke/verdict.mjs --out /tmp/smoke-out --expect unpacked
 
 ## Sandboxed legs
 
-A `--no-sandbox` leg cannot observe the worker-preload layer: Electron evaluates a session's
-`service-worker` preload scripts in sandboxed renderers only, so Zenium's `chrome.*` layer for
-MV3 background workers (`src/preload/extension.ts`) is simply not there in a worker started
-under `--no-sandbox`, and a check on it that passes there checks the wrong thing. The
-`mv3-worker` scenario therefore runs twice in `ci.yml`: sandboxed (`--sandbox`, no
-`--no-sandbox`; the layer must be present) and under `--no-sandbox` (the negative: the layer must
-be absent). Where the kernel denies unprivileged user namespaces (ubuntu-24.04's AppArmor
-default) the sandboxed launch needs the build's `chrome-sandbox` helper setuid root, as the
-installers leave it. The leg's arguments are what the app gets: Playwright 1.63's Electron
+Electron evaluates a session's `service-worker` preload scripts in its sandboxed renderer client
+only, and picks that client for a renderer when `--enable-sandbox` is on its command line or
+`--no-sandbox` is not. Zenium's `chrome.*` layer for MV3 background workers
+(`src/preload/extension.ts`) is such a preload, so a plain `--no-sandbox` launch used to start
+every worker without it; the app now asks for the client itself (`app.enableSandbox()` before
+`ready`, `src/main/platform/sandbox.ts` – not for root on Linux, where Electron refuses it), and
+the layer is there whatever the OS sandbox does. The `mv3-worker` scenario runs twice in
+`ci.yml` and expects the layer both times: sandboxed (`--sandbox`, no `--no-sandbox`; the layer
+with the OS sandbox on) and under `--no-sandbox` (the layer by the app's own switch – the
+in-house fix's proof; the app must carry `--enable-sandbox`, and its startup self-check for a
+preload that did not run must stay silent). Where the kernel denies unprivileged user
+namespaces (ubuntu-24.04's AppArmor default) the sandboxed launch needs the build's
+`chrome-sandbox` helper setuid root, as the installers leave it. The leg's arguments are what
+the app gets: Playwright 1.63's Electron
 launcher would add `--no-sandbox` on Linux by itself, so the smoke launches with
 `chromiumSandbox: true` and the `--no-sandbox` legs pass the switch themselves; and since
 Electron takes `ELECTRON_DISABLE_SANDBOX` in the environment as the same switch, a `--sandbox`
