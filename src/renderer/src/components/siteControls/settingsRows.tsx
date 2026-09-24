@@ -69,8 +69,9 @@ const SAFETY_CHECK_INTRO =
  * answer are the action themselves, a chevron on those that open something – and Check now.
  * The result is the state's `lastSafetyCheck`, kept by the core until the next run; before the
  * first run the results group shows its one-line empty state. Reviews of the sites holding
- * permissions or sending notifications open a sheet listing them, each site an action that
- * resets or stops it (Chrome's review pages); the extensions review leaves for that category.
+ * permissions or sending notifications open a sheet listing them – a permission site an item
+ * row carrying its plain Reset, a notifying site an action that stops it after a confirmation
+ * (Chrome's review pages); the extensions review leaves for that category.
  */
 export function safetyCheckGroups({ state, tab, navigate }: SectionContext): RowGroup[] {
   const result = state.lastSafetyCheck
