@@ -543,7 +543,7 @@ class Share(private val host: Host, private val io: Executor) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) toast("Image copied")
     }
 
-    /** A word to the user through the chrome's toast (the one toast the app has; `BrowserActivity` says its the same way). */
+    /** A word to the user through the chrome's toast (the one toast the app has; `BrowserActivity` speaks the same way). */
     private fun toast(message: String) {
         host.chrome.hostEvent("toast", json("message" to message, "kind" to "info", "action" to null))
     }
