@@ -1,6 +1,13 @@
 import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
-import { announce, startAnnouncer, zoomAnnouncement } from '@renderer/lib/announce'
+import {
+  announce,
+  announcementVoice,
+  loadCompleteAnnouncement,
+  startAnnouncer,
+  tabMoveAnnouncement,
+  zoomAnnouncement
+} from '@renderer/lib/announce'
 import { installedMessage } from '@shared/webApp'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
@@ -20,6 +27,7 @@ import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
 import { openImportSurface } from '@renderer/lib/pages'
+import { refocusStripRow } from '@renderer/lib/tabStrip'
 import {
   configureThumbnails,
   rememberCard,
@@ -90,8 +98,9 @@ export function useMainEvents(): void {
     const offs = [
       // The downloads button and bubble follow the engine's list and the `downloads.reveal` event.
       startDownloadsUi(),
-      // The status region hears of the tab that came to the front and of tabs muted or unmuted.
-      startAnnouncer(),
+      // The status region hears of the tab that came to the front and of tabs muted or unmuted;
+      // in the phone's voice (name first, as its overview cards read) and of a load finishing.
+      startAnnouncer(() => announcementVoice(viewportStore.get().formFactor)),
       onEvent('urlbar.toggle', ({ mode, text }) => {
         const ui = uiStore.get()
         if (ui.urlbar.open && ui.urlbar.mode === mode && text === undefined) {
@@ -250,6 +259,19 @@ export function useMainEvents(): void {
       // open URL bar keeps its field and takes the keyboard back, as does a field marked
       // `KEEPS_KEYBOARD_ATTR` (lib/panes.ts).
       onEvent('focus.page', ({ tabId }) => void pageTookKeyboard(tabId)),
+      // The front tab's load finished (A11Y-02): the phone's reader hears "<name> loaded" through
+      // the status region, the focus where it was. The core's event, not the state's diff – a
+      // fast load's start and stop reach the chrome as one snapshot.
+      onEvent('tab.loaded', ({ tabId }) => {
+        const state: UIState | null = browserStore.get().state
+        if (!state) return
+        const words = loadCompleteAnnouncement(
+          state,
+          tabId,
+          announcementVoice(viewportStore.get().formFactor)
+        )
+        if (words) announce(words)
+      }),
       onEvent('zoom.changed', ({ tabId, factor }) => {
         // Chrome's bubble, for the page on screen. The host with the page-controls sheet
         // (Android) shows the zoom there instead. Either way the reader hears the new level.
@@ -319,6 +341,13 @@ export function useMainEvents(): void {
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
       onEvent('tab.dragOver', (over) => remoteDragOver(over)),
       onEvent('tab.startRename', ({ tabId }) => uiStore.set({ renamingTabId: tabId })),
+      onEvent('tab.moved', (moved) => {
+        // The chord moved a tab (tabs-34): the reader hears where it landed, and the keyboard
+        // goes back onto the row when the move was the focused row's (the row re-rendered where
+        // the tab now stands; the event followed the state that drew it there).
+        announce(tabMoveAnnouncement(moved))
+        if (moved.focused) refocusStripRow(moved.tabId)
+      }),
       onEvent('folder.startRename', ({ folderId }) => uiStore.set({ renamingFolderId: folderId })),
       onEvent('folder.edit', ({ folderId }) => {
         // Chrome's group editor bubble (tabs-13) beside the folder's header; the phone's group

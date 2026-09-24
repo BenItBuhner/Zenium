@@ -1459,6 +1459,31 @@
     opacity: 0.69;
   }
   /*
+   * The attention dot on a pinned row or Essentials tile (tabs-11, Chrome's seat): a 6 px disc
+   * of the accent at full ink (§9.29, never dimmed with a sleeping row's icon) at the favicon's
+   * top-right corner, its edges 1 px outside the icon's box, the icon punched out 1 px around it
+   * so the dot reads as its own mark on any icon (Chrome's ring). The seat is the icon's box,
+   * the dot takes neither the pointer nor the layout.
+   */
+  .zen-favicon-seat {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .zen-favicon-seat[data-attention] > .zen-tab-favicon {
+    mask-image: radial-gradient(circle 4px at calc(100% - 2px) 2px, transparent 98%, #000 100%);
+  }
+  .zen-attention-dot {
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--zen-accent);
+    pointer-events: none;
+  }
+  /*
    * The row in the hand: its slot stays open under the ghost (lib/drag.ts draws the ghost) and
    * the ghost comes back to it on Escape, so the row itself must not show twice.
    */
@@ -2048,10 +2073,11 @@
     right: 0;
     background: var(--zen-row-fill);
   }
-  /* The leading glyph: the row's favicon or mask, the folder's mark, the New Tab row's +. */
+  /* The leading glyph: the row's favicon (or its seat, on a pinned row) or mask, the folder's
+     mark, the New Tab row's +. */
   .zen-rail-flyout[data-flyout-rows]
     .zen-tab:not(.zen-split-seg)
-    > :is(.zen-tab-favicon, .zen-group-row-glyph),
+    > :is(.zen-tab-favicon, .zen-favicon-seat, .zen-group-row-glyph),
   .zen-rail-flyout[data-flyout-rows] .zen-tab[data-new-tab] > svg {
     margin-left: var(--zen-glyph-lead);
     margin-right: calc(var(--zen-rail-rest) + 10px - 16px - 9px - var(--zen-glyph-lead));
@@ -2122,7 +2148,7 @@
   }
   .zen-rail-flyout[data-flyout-rows][data-side='right']
     .zen-tab:not(.zen-split-seg)
-    > :is(.zen-tab-favicon, .zen-group-row-glyph),
+    > :is(.zen-tab-favicon, .zen-favicon-seat, .zen-group-row-glyph),
   .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-tab[data-new-tab] > svg {
     margin-right: var(--zen-glyph-lead);
     margin-left: calc(var(--zen-rail-rest) + 10px - 16px - 9px - var(--zen-glyph-lead));
@@ -4304,6 +4330,24 @@
     stroke-width: var(--v2-icon-stroke);
   }
   /*
+   * The same six as a list (A11Y-04; `lib/accessibilityState.ts`): under touch exploration or at
+   * large text each is a §10.3 sheet row – `.zen-sheet-item`'s 44 (the line box's height above
+   * scale 1), the 20 glyph in the leading slot at the 16 gutter, the label 12 after it so the
+   * labels align at 48 as the site-information sheet's do, the row's full width the target, the
+   * press fill – in the body's rhythm: the list's first row flush under the header and the group
+   * hairline 8 below its last, where the icon row's would be. The glyphs keep the row's tokens
+   * (20 at stroke 1.75); the star's stacked pair sizes itself.
+   */
+  .zen-menu-icon-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .zen-menu-icon-list .zen-sheet-item-glyph svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  /*
    * The stateful bookmark star (`BarGlyphs.tsx`), the menu row's and the bar's optional Bookmark
    * alike: the icon token's square, the outline and the filled star stacked in it, each star the
    * square's size – so in the bar, where no row rule sizes the svgs, the star is the 20 of its
@@ -4974,7 +5018,33 @@
    * 4 below its line box the host and the row's state lines at 13 on a 20 line (§4: 13 → 20,
    * `--v2-line-small`) in the deemphasised ink. Its height is capped by the placement (never taller than the window minus 16), and it
    * takes no pointer.
+   *
+   * The page preview above the title (tabs-19): a 16:10 frame at the card's inner width – 286
+   * inside the 320 card's border and padding, so 286 × 179 – as an inner box inside the card
+   * (§2's inner box, `.zen-capture-picture-box`'s precedent; the lead's #436 ruling 2): r6
+   * (`--v2-radius-inner`) and no squircle – the squircle is for 8 and up – inside the card's own
+   * r8, ringed by a 1 px `--v2-border` (a light page's picture on the light panel has no edge of
+   * its own; Chrome frames its preview the same way, §9.31), 12 above the title's line box. The
+   * picture fills it, the page's top kept and the rest cropped (`object-fit: cover` from the
+   * top), so a tall page reads as its first screen.
    */
+  .zen-tab-hover-card-preview {
+    box-sizing: border-box;
+    width: 286px;
+    height: 179px;
+    margin-bottom: 12px;
+    border-radius: var(--v2-radius-inner);
+    border: 1px solid var(--v2-border);
+    overflow: hidden;
+    background: var(--v2-page);
+  }
+  .zen-tab-hover-card-preview > img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+  }
   .zen-tab-hover-card {
     position: fixed;
     z-index: 80;
@@ -6086,7 +6156,7 @@
  * components/downloads/DownloadsSheet.tsx). The sheet is the phone chassis (`BottomSheet`,
  * .zen-sheet above): its surface, scrim, grabber, the 48 header with the centred title and the
  * trailing control, the hairline once the body scrolls, the empty sentence (.zen-sheet-empty),
- * the Clear list action row (.zen-sheet-item) and the hairline before it (.zen-sheet-sep) are
+ * the Clear all action row (.zen-sheet-item, in the danger ink) and the hairline before it (.zen-sheet-sep) are
  * all the chassis's. A download is the shared `.zen-v2-row` (§9.34) with the `.zen-downloads-
  * row` modifier, unlayered beside the primitive after this block: the §9.2 two-line floor (64
  * on a phone: 12 + 20 + 20 + 12) that grows around a progress track or the Keep / Delete pair.
@@ -6692,6 +6762,19 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     flex-shrink: 0;
+    stroke-width: var(--v2-icon-stroke);
+  }
+  /*
+   * The requester's favicon in the title block's glyph slot (§9.23; the slot's size is the
+   * title block's own rule): the stand-in globe for a site without one draws at 69%, §10.4's
+   * deemphasised ink for a picture the row does not have.
+   */
+  .zen-scpick-requester {
+    display: block;
+    object-fit: contain;
+  }
+  .zen-scpick-requester-globe {
+    color: var(--v2-text-deemphasized);
     stroke-width: var(--v2-icon-stroke);
   }
   .zen-scpick-footer {
@@ -11312,7 +11395,17 @@
  *   the whole row its label;
  * - an inline field (§9.12) is the one short field the desktop keeps beside its label: 96 for a
  *   number, 160 at most for text; its validation message takes the line under the field.
+ *
+ * A row's control box is its own word, never its host's: the token inherits like every custom
+ * property, so a plain row inside a control row's box – a nested list, a row in a control's
+ * popover – would read the host's 32 and grow its label's line to it (the lead's #391 note).
+ * Every row starts from nothing (`initial` is the guaranteed-invalid value, so §9.18's
+ * `var(--zen-settings-control-box, …)` takes its fallback, the line) and the two rows below
+ * that hold a control name theirs after it, same specificity, later in the sheet.
  */
+.zen-settings-row {
+  --zen-settings-control-box: initial;
+}
 .zen-settings-control-row {
   --zen-settings-control-box: var(--v2-control);
   min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
@@ -11352,12 +11445,14 @@
 .zen-settings-field-text {
   width: 160px;
 }
+/*
+ * The inline field's refused commit: §9.12's validation line (`.zen-settings-validation`, the
+ * glyph, the danger ink and the small type are its) capped at the field's width or so, hugging
+ * the field's right edge as the column's item (`align-items: flex-end` above); the words read on
+ * from the glyph, so they are not right-aligned within the line.
+ */
 .zen-settings-inline-error {
   max-width: 240px;
-  color: var(--v2-danger);
-  font-size: var(--v2-font-small);
-  line-height: var(--v2-line-small);
-  text-align: right;
 }
 /*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,

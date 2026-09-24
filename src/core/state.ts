@@ -1088,6 +1088,10 @@ export class BrowserState {
           capture: null,
           // A toolbox is a session's own: the key is not written (Android's records never carry it).
           devtools: undefined,
+          // A pinned tab's attention dot is the session's too: seen or not, a restart clears it.
+          attention: undefined,
+          // A hung renderer is the session's; the page is a fresh one after a restart.
+          unresponsive: undefined,
           // So is a wake from sleep: the leaf's number is this session's (`Tabs.load`).
           memorySaver: undefined,
           errorCode: null,

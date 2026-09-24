@@ -42,8 +42,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // that never gets bounds again. Drop the old one without a word.
         views.remove(tabId)?.let(::drop)
         val view = TabWebView(context, tabId, containerId, host)
-        view.visibility = View.GONE
+        show(view, false)
         container.addView(view, FrameLayout.LayoutParams(0, 0))
+        readAfterChrome(view)
         host.focusHandoff?.wirePage(view)
         views[tabId] = view
         return view
@@ -90,9 +91,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         host.extensions?.attach(view)
         view.applyAutofillProvider()
         view.tabId = viewId
-        view.visibility = View.GONE
+        show(view, false)
         view.translationX = 0f
         container.addView(view, FrameLayout.LayoutParams(0, 0))
+        readAfterChrome(view)
         host.focusHandoff?.wirePage(view)
         views[viewId] = view
         host.hostEvent("view.adopt", json("viewId" to viewId, "parentTabId" to null, "active" to true))
@@ -182,11 +184,12 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // The dead view's context (a custom tab's page carries a MutableContextWrapper), so the
         // replacement can still move to another window later.
         val fresh = TabWebView(dead.context, tabId, dead.containerId, host)
-        fresh.visibility = if (visible) View.VISIBLE else View.GONE
+        show(fresh, visible)
         fresh.setRadius(dead.radiusPx)
         fresh.cover.set(dead.cover.topTarget, dead.cover.bottomTarget, snap = true)
         dead.cover.reset()
         container.addView(fresh, if (index >= 0) index else -1, lp ?: FrameLayout.LayoutParams(0, 0))
+        readAfterChrome(fresh)
         host.focusHandoff?.wirePage(fresh)
         views[tabId] = fresh
         place(fresh)
@@ -311,11 +314,64 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // GONE views neither draw nor receive input; JS keeps running so background audio, like
         // in Zen, carries on until the core unloads the tab.
         val next = if (visible) View.VISIBLE else View.GONE
-        if (view.visibility == next) return
-        view.visibility = next
+        if (view.visibility == next) {
+            // A hide asked and waited for ([hideRequested]) that a show overtook: the view stayed
+            // on screen and is read again.
+            if (visible) readable(view, true)
+            return
+        }
+        show(view, visible)
         // The bar may have moved while this view was off screen (only views on screen follow it
         // per frame, [setBarHide]): it takes the bar's current frame as it comes on.
         if (visible) place(view)
+    }
+
+    /**
+     * The core asked `tabId` hidden and the hide waits for the chrome's frame ([Host.setTabVisible],
+     * [PageVisibility]): the page is out of a screen reader's tree from now, not from that frame
+     * – what covers it (a sheet's scrim, the overview's cover) is already up in the chrome's own
+     * tree (A11Y-03). A view filling the picture-in-picture window is covered by nothing.
+     */
+    fun hideRequested(tabId: String) {
+        val view = views[tabId] ?: return
+        if (filled?.tabId == tabId) return
+        readable(view, false)
+    }
+
+    /**
+     * `visible` on screen or gone, and read by a screen reader or not with it: a page view that
+     * is not showing is `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS`, so neither it nor its
+     * document is in the tree TalkBack explores – a GONE view is left out of the tree anyway,
+     * and the flag makes the rule hold whichever way the view went (a hide asked and still
+     * waiting for the chrome's frame, [hideRequested], is the case the visibility alone misses).
+     * A reader that asks for the unimportant views too (`FLAG_INCLUDE_NOT_IMPORTANT_VIEWS`: the
+     * harness's UiAutomation) is handed the view as it is handed every view; TalkBack asks for
+     * the important ones, and the harness's layers scene reads as TalkBack does. One coming back
+     * reads as any view does (A11Y-03).
+     */
+    private fun show(view: TabWebView, visible: Boolean) {
+        view.visibility = if (visible) View.VISIBLE else View.GONE
+        readable(view, visible)
+    }
+
+    private fun readable(view: TabWebView, readable: Boolean) {
+        view.importantForAccessibility = if (readable) View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+    }
+
+    /**
+     * A screen reader takes the chrome before the page: the view is traversed after the chrome
+     * WebView (`R.id.zen_chrome`; the [PageHost.underlay]) – the bar and what the chrome has up
+     * first, the page's document after (A11Y-03). Whether the hint reaches the reader is this
+     * WebView's to say: Chromium builds the node for a WebView's own view itself
+     * (`WebContentsAccessibilityImpl.createNodeForHost`) and copies what it copies; the framework
+     * lists the root's children top-to-bottom, tallest first among equals, which puts the chrome
+     * – the window's full height under the pages – ahead of every page view regardless. The
+     * harness reads both (`ChromeA11yDemo`, the layers scene). A host without a chrome (a custom
+     * tab) has nothing to read after.
+     */
+    private fun readAfterChrome(view: TabWebView) {
+        val chrome = host.underlay ?: return
+        if (chrome.id != View.NO_ID) view.accessibilityTraversalAfter = chrome.id
     }
 
     fun bringToFront(tabId: String) {
@@ -368,7 +424,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
                 if (reported.containsKey(before.tabId)) place(view) else view.layoutParams = before.bounds
                 view.setRadius(before.radiusPx)
                 view.cover.set(before.coverTop, before.coverBottom, snap = true)
-                view.visibility = if (before.visible) View.VISIBLE else View.GONE
+                show(view, before.visible)
             }
         }
         if (tabId == null) return
@@ -379,7 +435,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.setRadius(0f)
         view.cover.set(0f, 0f, snap = true)
         view.setBarHideShift(0f, 0)
-        view.visibility = View.VISIBLE
+        show(view, true)
         view.bringToFront()
     }
 }
