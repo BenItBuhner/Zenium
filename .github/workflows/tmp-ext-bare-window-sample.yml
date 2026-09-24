@@ -2,7 +2,7 @@ name: TEMPORARY - bare-window sample trigger
 
 # TEMPORARY, removed before the PR is marked ready. Worker tokens cannot dispatch
 # android-ext-compat-sweep.yml (HTTP 403 on the dispatches endpoint) and it stays dispatch-only;
-# this file runs the same two sweep jobs on a push to the branch when the commit message carries
+# this file runs the same two sweep lanes on a push to the branch when the commit message carries
 # `[sample]`: the compat sweep driver in its bare-window mode (SWEEP_BARE_WINDOW=1) over the
 # twenty gating MV3 workers of the sample (the three class-A rows of compat round 14's section
 # 7.1 – WOT, Calendly, Trust Wallet – and seventeen more spread across install rank and gating
@@ -10,7 +10,13 @@ name: TEMPORARY - bare-window sample trigger
 # unchanged (the control) and once with the identifier `window` hidden from the worker script
 # (flag on: a driver-side rewrite of the unpacked worker file, restored afterwards; no runtime
 # change), and records worker up, the branch taken, the uncaught count and the row's core check.
-# Measurement only: the runtime is main's.
+# Each lane runs as two jobs of ten rows (half A, half B) so a half fits the timeout on the
+# slower snapshot WebView; the heaviest worker of each half (Trust Wallet 42 MB, OKX 15 MB) runs
+# last in its half (SWEEP_LAST). Measurement only: the runtime is main's.
+#   Half A: WOT, Calendly, Trust Wallet (class A), Google Docs Offline, MetaMask, Dashlane,
+#           Grammarly, Copyfish, Keep Awake, Chrono Download Manager.
+#   Half B: uBlock, OKX Wallet, Coinbase Wallet, Total Adblock, ZeroOmega, Solflare,
+#           Open Multiple URLs, PrintFriendly, Scribbr, Bitwarden.
 on:
   push:
     branches:
@@ -24,27 +30,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  system-webview:
+  system-webview-a:
     if: contains(github.event.head_commit.message, '[sample]')
-    name: System WebView (API 34 image)
+    name: System WebView (API 34 image) - half A
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-ext-compat-sweep.sh
-      artifact-name: android-ext-bare-window-sample
+      artifact-name: android-ext-bare-window-sample-a
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
         SWEEP_BARE_WINDOW=1
-        SWEEP_ONLY=bhmmomiinigofkjcapegjjndpbikblnp,cbhilkcodigmigfbnphipnnmamjfkipp,egjidjbpglichdcondbcbdnbeeppgdph
+        SWEEP_ONLY=bhmmomiinigofkjcapegjjndpbikblnp,cbhilkcodigmigfbnphipnnmamjfkipp,egjidjbpglichdcondbcbdnbeeppgdph,ghbmnnjooekpmoecnnnilnnbdlolhkhi,nkbihfbeogaeaoehlefnkodbefgpgknn,fdjamakpfbbddfjaooikfcpapjohcfmg,kbfnbcaeplbcioakkpcpgfkobkghlhen,eenjdnjldapjajjofmldgmkjaienebbj,kioaomfokioenhackhaijiebhhkkcojo,mciiogijehkdemklbdcbfkefimifhecn
         SWEEP_LAST=egjidjbpglichdcondbcbdnbeeppgdph
       timeout-minutes: 150
 
-  modern-webview:
+  system-webview-b:
     if: contains(github.event.head_commit.message, '[sample]')
-    name: Best effort - Chromium snapshot WebView on an AOSP image
+    name: System WebView (API 34 image) - half B
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-ext-compat-sweep.sh
-      artifact-name: android-ext-bare-window-sample-modern-webview
+      artifact-name: android-ext-bare-window-sample-b
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_BARE_WINDOW=1
+        SWEEP_ONLY=epcnnfbjfcgphgdmggkamkmgojdagdnn,mcohilncbfahbmgdjkbpemcciiolgcge,hnfanknocfeofbddgcijnmhnfnkdnaad,gekdekpbfehejjiecgonmgmepbdnaggp,pfnededegaaopdmhkdmcofjmoldfiped,bhhhlbepdkbapadjdnnojkbgioiodbic,oifijhaokejakekmnjmphonojcfkpbbh,ohlencieiipommannpdfcmfdpjjmeolj,epbobagokhieoonfplomdklollconnkl,nngceckbapebfimnlniiiahkandclblb
+        SWEEP_LAST=mcohilncbfahbmgdjkbpemcciiolgcge
+      timeout-minutes: 150
+
+  modern-webview-a:
+    if: contains(github.event.head_commit.message, '[sample]')
+    name: Best effort - Chromium snapshot WebView on an AOSP image - half A
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-bare-window-sample-modern-webview-a
       artifact-path: artifacts/android-ext-compat-sweep/
       target: default
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
@@ -52,8 +72,37 @@ jobs:
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
         SWEEP_BARE_WINDOW=1
-        SWEEP_ONLY=bhmmomiinigofkjcapegjjndpbikblnp,cbhilkcodigmigfbnphipnnmamjfkipp,egjidjbpglichdcondbcbdnbeeppgdph
+        SWEEP_ONLY=bhmmomiinigofkjcapegjjndpbikblnp,cbhilkcodigmigfbnphipnnmamjfkipp,egjidjbpglichdcondbcbdnbeeppgdph,ghbmnnjooekpmoecnnnilnnbdlolhkhi,nkbihfbeogaeaoehlefnkodbefgpgknn,fdjamakpfbbddfjaooikfcpapjohcfmg,kbfnbcaeplbcioakkpcpgfkobkghlhen,eenjdnjldapjajjofmldgmkjaienebbj,kioaomfokioenhackhaijiebhhkkcojo,mciiogijehkdemklbdcbfkefimifhecn
         SWEEP_LAST=egjidjbpglichdcondbcbdnbeeppgdph
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 150
+
+  modern-webview-b:
+    if: contains(github.event.head_commit.message, '[sample]')
+    name: Best effort - Chromium snapshot WebView on an AOSP image - half B
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-bare-window-sample-modern-webview-b
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_BARE_WINDOW=1
+        SWEEP_ONLY=epcnnfbjfcgphgdmggkamkmgojdagdnn,mcohilncbfahbmgdjkbpemcciiolgcge,hnfanknocfeofbddgcijnmhnfnkdnaad,gekdekpbfehejjiecgonmgmepbdnaggp,pfnededegaaopdmhkdmcofjmoldfiped,bhhhlbepdkbapadjdnnojkbgioiodbic,oifijhaokejakekmnjmphonojcfkpbbh,ohlencieiipommannpdfcmfdpjjmeolj,epbobagokhieoonfplomdklollconnkl,nngceckbapebfimnlniiiahkandclblb
+        SWEEP_LAST=mcohilncbfahbmgdjkbpemcciiolgcge
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")

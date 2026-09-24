@@ -37,6 +37,24 @@ class BareWindowBracketTest {
     }
 
     @Test
+    fun strictPrologueScanIsLinearAndExact() {
+        assertTrue(BareWindowBracket.hasStrictPrologue("\uFEFF\n\t'use strict'"))
+        assertTrue(BareWindowBracket.hasStrictPrologue("/*! license */\n// note\n\"use strict\";(()=>{})()"))
+        assertFalse("a directive in an inner function is not the script's", BareWindowBracket.hasStrictPrologue("(()=>{\"use strict\";x()})()"))
+        assertFalse("the quotes must match", BareWindowBracket.hasStrictPrologue("'use strict\";"))
+        assertFalse("a different string first", BareWindowBracket.hasStrictPrologue("'use client';'use strict';"))
+        assertFalse(BareWindowBracket.hasStrictPrologue("/* unterminated"))
+        assertFalse(BareWindowBracket.hasStrictPrologue(""))
+        // A bundle of many comment closes after a licence header: the pathological input for the regex form.
+        val bundle = StringBuilder("/*! For license information please see x.LICENSE.txt */\n!function(){")
+        repeat(20_000) { bundle.append("/* c */a();") }
+        val started = System.nanoTime()
+        assertFalse(BareWindowBracket.hasStrictPrologue(bundle))
+        assertFalse(BareWindowBracket.scanText(bundle).strict)
+        assertTrue("the scan finished in well under a second", System.nanoTime() - started < 1_000_000_000L)
+    }
+
+    @Test
     fun importedFilesRecordIntoTheFilesList() {
         val out = BareWindowBracket.bracketClassic("x()", "lib/b.js", main = false)
         assertTrue(out.contains("self.__zenBareWindowFiles=(self.__zenBareWindowFiles||[]).concat([{mode:'with',file:'lib/b.js'"))
@@ -47,7 +65,7 @@ class BareWindowBracketTest {
     fun modulePrefixIsOneLine() {
         val text = "import { a } from './a.js'\nexport const b = typeof window\n"
         val out = BareWindowBracket.bracketModule(text, "sw.js")
-        assertTrue(out.startsWith(BareWindowBracket.MARKER + "let window;try{self.__zenBareWindow={mode:'module',file:'sw.js',strict:false,"))
+        assertTrue(out.startsWith(BareWindowBracket.MARKER + "var window;try{self.__zenBareWindow={mode:'module',file:'sw.js',strict:false,"))
         assertTrue(out.endsWith(text))
         assertEquals(text.count { it == '\n' }, out.count { it == '\n' })
     }
@@ -147,16 +165,20 @@ class BareWindowBracketTest {
         File(dir, "sw.js").writeText("import './a.js';\nimport { b } from './lib/b.js';\nconsole.log(typeof window)")
         File(dir, "a.js").writeText("let window = self;\nexport const a = window.x")
         File(dir, "lib").mkdirs()
-        File(dir, "lib/b.js").writeText("export * from '../c.js';\nexport const b = typeof window")
+        File(dir, "lib/b.js").writeText("export * from '../c.js';\nimport './d.js';\nexport const b = typeof window")
         File(dir, "c.js").writeText("export const c = 1")
+        // Calendly's shape: `const window` inside a function, indented; the module's gate at its top level.
+        File(dir, "lib/d.js").writeText("async function f() {\n    const window = await chrome.windows.getCurrent();\n    return window.width;\n}\nexport const d = typeof window === 'undefined';")
         val plan = BareWindowBracket.plan(dir, "sw.js", module = true)
-        assertEquals(listOf("sw.js", "a.js", "lib/b.js", "c.js"), plan.map { it.file })
+        assertEquals(listOf("sw.js", "a.js", "lib/b.js", "c.js", "lib/d.js"), plan.map { it.file })
         val byFile = plan.associateBy { it.file }
         assertTrue(byFile.getValue("sw.js").apply)
-        assertFalse("a module that declares window gets no second let", byFile.getValue("a.js").apply)
+        assertFalse("a module that declares window at its top level gets no prologue", byFile.getValue("a.js").apply)
         assertTrue(byFile.getValue("a.js").declaresWindow)
         assertTrue(byFile.getValue("lib/b.js").apply)
         assertFalse("no bare read, no prologue", byFile.getValue("c.js").apply)
+        assertFalse("an indented declaration is a function's own", byFile.getValue("lib/d.js").declaresWindow)
+        assertTrue(byFile.getValue("lib/d.js").apply)
         assertTrue(plan.all { it.mode == BareWindowBracket.Mode.MODULE })
     }
 

@@ -25,10 +25,11 @@ import java.nio.charset.StandardCharsets
  * `importScripts` file (`var` and function declarations still hoist to the global).
  *
  * A module worker (`"type": "module"`) cannot carry a `with` (a SyntaxError in modules); its
- * module and every module it statically imports from a relative path get a module-scoped `let
- * window;` prologue instead (legal at module scope: only a Script's global declaration
- * instantiation rejects the restricted global names), skipped for a module that declares
- * `window` itself. A `self.window = …` polyfill and the bare name stay apart in this shape.
+ * module and every module it statically imports from a relative path get a module-scoped `var
+ * window;` prologue instead (a module's top-level `var` is a module binding, not a global
+ * property; it has no temporal dead zone and sits beside the module's own `var window`), skipped
+ * for a module that declares `window` at its own top level in a form the prologue cannot sit
+ * beside. A `self.window = …` polyfill and the bare name stay apart in this shape.
  *
  * Every prefix is one line without a newline, so the original text's line numbers hold; the
  * suffix closes the block after a newline, so a trailing line comment cannot swallow it. The
@@ -36,8 +37,34 @@ import java.nio.charset.StandardCharsets
  * request, `Cache-Control: no-cache`) and restored from the driver's backup afterwards.
  */
 object BareWindowBracket {
-    /** A leading `'use strict'` directive prologue (after blanks and comments), as the runtime's own `STRICT_PROLOGUE` reads it. */
-    val STRICT_PROLOGUE = Regex("""^(?:[\s\uFEFF]|//[^\n]*\n|/\*[\s\S]*?\*/)*(['"])use strict\1\s*;?""")
+    /**
+     * Whether `text` opens with a `'use strict'` directive (past blanks, a byte order mark and
+     * comments): the one a `with` block turns into a plain statement. A hand scan, linear in the
+     * prologue's length – a regex over the comments backtracks across every comment close of a
+     * bundle.
+     */
+    fun hasStrictPrologue(text: CharSequence): Boolean {
+        val n = text.length
+        var i = 0
+        while (i < n) {
+            val c = text[i]
+            if (c.isWhitespace() || c == '\uFEFF') { i++; continue }
+            if (c == '/' && i + 1 < n && text[i + 1] == '/') {
+                while (i < n && text[i] != '\n') i++
+                continue
+            }
+            if (c == '/' && i + 1 < n && text[i + 1] == '*') {
+                var j = i + 2
+                while (j + 1 < n && !(text[j] == '*' && text[j + 1] == '/')) j++
+                i = if (j + 1 < n) j + 2 else n
+                continue
+            }
+            if (c != '\'' && c != '"') return false
+            val lit = "use strict"
+            return i + lit.length + 1 < n && text.regionMatches(i + 1, lit, 0, lit.length) && text[i + 1 + lit.length] == c
+        }
+        return false
+    }
 
     /** A UTF-8 byte order mark as [scanFile]'s byte-for-char decoding shows it. */
     private const val BOM_LATIN1 = "\u00EF\u00BB\u00BF"
@@ -45,8 +72,16 @@ object BareWindowBracket {
     /** An identifier `window` that is not a member read (`.window`) and not part of another word. */
     val BARE_WINDOW = Regex("""(?<![.\w$])window\b""")
 
-    /** A module-scope declaration of `window` (a module with one needs no prologue: a second `let` would be a redeclaration). */
-    val DECLARES_WINDOW = Regex("""(?m)^\s*(?:let|const|var|function|class)\s+window\b""")
+    /**
+     * A declaration of `window` at the start of a line with no indentation: a top-level one as
+     * unminified code writes it (an indented `const window = …` inside a function is the
+     * function's own, and shadows nothing the prologue touches). A module with one gets no
+     * prologue: `let`/`const`/`class`/`function` beside the prologue's `var` is a redeclaration,
+     * and a module with its own `var window` shadows the global already. A minified module keeps
+     * its top level on one line, where this cannot see it; a redeclaration there is a SyntaxError
+     * the driver records under its own signature.
+     */
+    val DECLARES_WINDOW = Regex("""(?m)^(?:export\s+)?(?:let|const|var|function|class)\s+window\b""")
 
     /** `importScripts(...)` calls with their string arguments (the rest of the call's text is left out). */
     val IMPORT_SCRIPTS = Regex("""importScripts\s*\(([^)]{0,4000})\)""")
@@ -97,8 +132,8 @@ object BareWindowBracket {
         return MARKER + "with(" + proxy + "){" + probe(file, "with", strict, main)
     }
 
-    /** The head of a module: the module-scoped `let window;`, the probe, then the original text on the same line. */
-    fun modulePrefix(file: String, main: Boolean): String = MARKER + "let window;" + probe(file, "module", false, main)
+    /** The head of a module: the module-scoped `var window;`, the probe, then the original text on the same line. */
+    fun modulePrefix(file: String, main: Boolean): String = MARKER + "var window;" + probe(file, "module", false, main)
 
     /** The tail of a classic script: the block closed on its own line. */
     const val CLASSIC_SUFFIX = "\n}\n"
@@ -121,7 +156,7 @@ object BareWindowBracket {
 
     /** The whole bracketed text of a classic script (the file form streams the same three parts). */
     fun bracketClassic(text: String, file: String, main: Boolean = true): String =
-        classicPrefix(file, STRICT_PROLOGUE.containsMatchIn(text), main) + text + CLASSIC_SUFFIX
+        classicPrefix(file, hasStrictPrologue(text), main) + text + CLASSIC_SUFFIX
 
     /** The whole prologued text of a module. */
     fun bracketModule(text: String, file: String, main: Boolean = true): String = modulePrefix(file, main) + text
@@ -166,7 +201,7 @@ object BareWindowBracket {
 
     /** What one file's text says, for the plan (the file form scans in chunks; this is the whole-text form the tests use). */
     fun scanText(text: CharSequence): Scan = Scan(
-        strict = STRICT_PROLOGUE.containsMatchIn(text),
+        strict = hasStrictPrologue(text),
         bareReads = BARE_WINDOW.findAll(text).count(),
         declaresWindow = DECLARES_WINDOW.containsMatchIn(text),
         lexicalAtLineStart = LEXICAL_AT_LINE_START.findAll(text).count(),
@@ -221,7 +256,7 @@ object BareWindowBracket {
                 val text = carry + String(buf, 0, n)
                 if (first) {
                     val head = text.removePrefix(BOM_LATIN1)
-                    strict = STRICT_PROLOGUE.containsMatchIn(head)
+                    strict = hasStrictPrologue(head)
                     already = head.startsWith(MARKER)
                     first = false
                 }
