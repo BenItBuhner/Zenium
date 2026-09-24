@@ -41,6 +41,17 @@ describe('the scenario constants', () => {
       'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'
     )
   })
+
+  it('ends the browser process itself in the registration-survives step', () => {
+    // `s.kill()` stands for Windows ending the process after WM_ENDSESSION. Playwright launches
+    // Electron through cmd.exe on win32, so a taskkill on the launched pid ended the shell and
+    // left the app running (run 36020202657's leftover processes): the harness kills the main
+    // process's own pid, which it resolves after the launch.
+    const harness = read('.github/smoke/smoke.mjs')
+    expect(harness).toContain('this.appPid = await this.app.evaluate(() => process.pid)')
+    expect(harness).toMatch(/async kill\(\) \{[^}]*const pid = this\.appPid \?\? this\.pid/)
+    expect(read('.github/smoke/restart-scenario.mjs')).toContain('const exit = await s.kill()')
+  })
 })
 
 describe('the rules the scenario shares with the main process', () => {

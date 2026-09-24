@@ -47,6 +47,21 @@ describe('the scenario constants', () => {
     )
   })
 
+  it('enumerates the frames under the browser process, not the shell Playwright launches it through on Windows', () => {
+    // Playwright 1.63's Electron launcher spawns through cmd.exe on win32, so the session's
+    // `pid` is the shell's there: the harness resolves the main process's own pid after the
+    // launch and the scenario keys the window enumeration on it (run 36020202657 read no
+    // windows under the shell's pid).
+    const harness = read('.github/smoke/smoke.mjs')
+    expect(harness).toContain('this.appPid = await this.app.evaluate(() => process.pid)')
+    const scenario = read('.github/smoke/private-taskbar-scenario.mjs')
+    expect(scenario).toContain('const pid = s.appPid ?? s.pid')
+    expect(scenario).toContain("['-Action', 'windows', '-ProcessId', String(pid)]")
+    // The reader's PROPVARIANT is the native size (24 bytes on x64), or GetValue writes past it.
+    const taskbar = read('.github/smoke/win-taskbar.ps1')
+    expect(taskbar).toContain('[FieldOffset(16)] public IntPtr p2;')
+  })
+
   it('is read by scripts that name the same key and the same property store', () => {
     const taskbar = read('.github/smoke/win-taskbar.ps1')
     expect(taskbar).toContain('SHGetPropertyStoreForWindow')

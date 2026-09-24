@@ -1023,6 +1023,9 @@ class Session {
     this.quitStartedAt = null
     this.killedAt = null
     this.mainWindowId = null
+    /** The launched process (cmd.exe on Windows, see `launch`) and the browser process itself. */
+    this.pid = null
+    this.appPid = null
   }
 
   launchArgs() {
@@ -1080,6 +1083,11 @@ class Session {
       workerPartitions: [DEFAULT_CONTAINER_PARTITION]
     })
     this.timings.launchMs = Date.now() - t0
+    // The browser process's own pid. Playwright 1.63 launches Electron on Windows through
+    // cmd.exe (`shell: true` in its Electron launcher), so `proc.pid` is the shell's there and
+    // a taskkill or a window enumeration keyed on it misses the app (run 36020202657 saw no
+    // windows under it and a kill that left the app running); on Linux and macOS both are one.
+    this.appPid = await this.app.evaluate(() => process.pid)
     this.chrome = await this.waitForChromePage(RENDER_WAIT_MS)
     await this.chrome.locator('[data-testid="chrome-root"]').waitFor({
       state: 'attached',
@@ -1899,13 +1907,18 @@ class Session {
     return { ms, exit, prompt: asked }
   }
 
-  /** End the process the way a crash does: no quit path, no clean-exit marker. */
+  /**
+   * End the process the way a crash does: no quit path, no clean-exit marker. The browser
+   * process is the one ended (its children follow it); on Windows the cmd.exe Playwright
+   * launched it through exits with it, which is the exit the launch promise sees.
+   */
   async kill() {
     this.killedAt = Date.now()
-    if (IS_WIN) sh('taskkill', ['/F', '/PID', String(this.pid)], 20000)
-    else process.kill(this.pid, 'SIGKILL')
+    const pid = this.appPid ?? this.pid
+    if (IS_WIN) sh('taskkill', ['/F', '/PID', String(pid)], 20000)
+    else process.kill(pid, 'SIGKILL')
     const exit = await Promise.race([this.exitPromise, delay(10000).then(() => null)])
-    if (!exit) throw new Error(`process ${this.pid} still alive 10 s after SIGKILL`)
+    if (!exit) throw new Error(`process ${pid} still alive 10 s after SIGKILL`)
     return exit
   }
 
@@ -1915,11 +1928,15 @@ class Session {
     this.quitStartedAt ??= Date.now()
     await Promise.race([this.app.close().catch(() => undefined), delay(8000)])
     if (!this.exit && this.pid) {
-      log(`force killing pid ${this.pid}`)
-      if (IS_WIN) sh('taskkill', ['/F', '/T', '/PID', String(this.pid)], 20000)
+      // The tree under the browser process; the launching shell, where there is one, exits
+      // with it (a tree kill from the shell's pid would take the browser too, but the shell
+      // may already be gone while the app lives on).
+      const pid = this.appPid ?? this.pid
+      log(`force killing pid ${pid}`)
+      if (IS_WIN) sh('taskkill', ['/F', '/T', '/PID', String(pid)], 20000)
       else {
         try {
-          process.kill(this.pid, 'SIGKILL')
+          process.kill(pid, 'SIGKILL')
         } catch {
           // already gone
         }
@@ -1960,7 +1977,8 @@ class Session {
     const failures = this.failures()
     return {
       scenario: this.scenario,
-      pid: this.pid,
+      pid: this.appPid ?? this.pid,
+      launcherPid: this.pid,
       hook: this.hookResult,
       timings: this.timings,
       exit: this.exit,

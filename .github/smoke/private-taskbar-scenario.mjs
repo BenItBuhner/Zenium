@@ -154,9 +154,19 @@ export async function scenarioPrivateTaskbar(h) {
     }))
     out.main = main
     const command = expectedPrivateRelaunchCommand(main.execPath, main.userData)
+    // The frames belong to the browser process (`s.appPid`), not to the cmd.exe Playwright
+    // launches it through on Windows (`s.pid` there; run 36020202657 read no windows under it).
+    const pid = s.appPid ?? s.pid
+    out.pid = { browser: s.appPid, launcher: s.pid }
     const readWindows = () => {
-      const r = ps('win-taskbar.ps1', ['-Action', 'windows', '-ProcessId', String(s.pid)], 60000)
-      return parseJson(r.stdout, r).windows
+      const r = ps('win-taskbar.ps1', ['-Action', 'windows', '-ProcessId', String(pid)], 60000)
+      const windows = parseJson(r.stdout, r).windows
+      if (windows.length === 0) {
+        throw new Error(
+          `no top-level window under pid ${pid} (browser ${shown(s.appPid)}, launcher ${shown(s.pid)})`
+        )
+      }
+      return windows
     }
     let privateWin = null
     let mainWin = null

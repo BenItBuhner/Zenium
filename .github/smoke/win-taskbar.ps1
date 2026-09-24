@@ -31,11 +31,14 @@ namespace SmokeTaskbar {
     public PropertyKey(Guid f, uint p) { fmtid = f; pid = p; }
   }
 
-  // PROPVARIANT: the type at 0, three reserved words, the union at 8 (on either bitness).
+  // PROPVARIANT: the type at 0, three reserved words, the union at 8 (on either bitness). The
+  // union is two pointer-sized words (24 bytes in all on x64, 16 on x86): the struct has to be
+  // that size, or GetValue's out-marshalling writes past the buffer the runtime gives it.
   [StructLayout(LayoutKind.Explicit)]
   public struct PropVariant {
     [FieldOffset(0)] public ushort vt;
     [FieldOffset(8)] public IntPtr p;
+    [FieldOffset(16)] public IntPtr p2;
   }
 
   [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
