@@ -16,6 +16,10 @@ name: TEMPORARY - compat round 15 sweep and frame budget trigger
 #   - `[sniff]` in the commit message: the two sweep jobs over the two webRequest sniffer rows alone
 #     (Chrono Download Manager, Video Downloader PLUS: the response stage's proof on both fixtures),
 #     for a runtime change read on its own without the whole sweep.
+#   - `[proof]` in the commit message: the two sweep jobs over the #448 proof row alone (5.11: a
+#     block-everything session rule from a fixture extension of the sweep's own beside a second
+#     fixture whose options page must load whole while its web request is blocked), read in the
+#     acceptance run's shape on both WebViews.
 # A sweep whose emulator went away under the driver (the shared workflow's `emulator-died`: qemu
 # gone or the guest frozen, or the runner action's SDK download coming down broken) boots once more
 # and sweeps the rows the first boot did not grade (read off the results.json the sweep script pulls
@@ -211,6 +215,47 @@ jobs:
         unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
         ls -la artifacts/webview
       timeout-minutes: 60
+
+  proof-system-webview:
+    if: contains(github.event.head_commit.message, '[proof]')
+    name: The #448 proof row alone - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-proof
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=igkinnldjpikoggonflimiaamlmehcig
+        SWEEP_LAST=
+      timeout-minutes: 45
+
+  proof-modern-webview:
+    if: contains(github.event.head_commit.message, '[proof]')
+    name: The #448 proof row alone - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-proof-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=igkinnldjpikoggonflimiaamlmehcig
+        SWEEP_LAST=
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 45
 
   budget-system-webview:
     if: contains(github.event.head_commit.message, '[budget]')

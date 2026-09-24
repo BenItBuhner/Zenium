@@ -15,6 +15,7 @@ import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.webkit.WebView
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -27,6 +28,7 @@ import app.zen.chromium.blocking.Domains
 import app.zen.chromium.blocking.ListenerOptions
 import app.zen.chromium.blocking.WebRequestEvent
 import app.zen.chromium.blocking.WebRequestListener
+import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.Extensions
@@ -38,9 +40,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.math.roundToInt
 
 /**
@@ -139,6 +144,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * AOSP lane as any row.
          */
         val notOnGoogleImage: String? = null,
+        /**
+         * A fixture extension of the sweep's own: its files by path, zipped by the driver and
+         * handed to the chrome as a file manager hands a package ([sideloadFixture]), in place
+         * of the store install. Its [id] is the runtime's for an unsigned zip without a `key`
+         * ([fixtureId] of the manifest's name).
+         */
+        val fixture: Map<String, String>? = null,
         val core: (Row, JSONObject) -> Grade
     )
 
@@ -511,6 +523,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             stage(entry, "install", if (ext.isNull("error")) "P" else "F", "kept from the earlier run: v${ext.optString("version")}${if (ext.isNull("error")) "" else " error=${ext.optString("error")}"}")
             return ext.takeIf { it.isNull("error") }
         }
+        row.fixture?.let { files ->
+            val landed = sideloadFixture(row.id, row.name, files, slug)
+            stage(entry, "install", landed.verdict, landed.note, landed.detail)
+            if (landed.ext == null) snap("$slug-install-failed")
+            return landed.ext
+        }
         chromeJs("window.__toasts=[];'ok'")
         val started = SystemClock.uptimeMillis()
         var promptMs = 0L
@@ -580,6 +598,113 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return null
         }
         return ext
+    }
+
+    /** What [sideloadFixture] read: the record (null when nothing enabled landed) and the install stage's grade. */
+    private class Sideload(val ext: JSONObject?, val verdict: String, val note: String, val detail: JSONObject)
+
+    /**
+     * A fixture extension of the sweep's own, installed the way a package another app hands
+     * Zenium is (`ExtensionStoreDemo.sideload`): its files zipped under the app's share cache, a
+     * `content:` URI for the zip on the manifest's VIEW filter (the package MIME type, this
+     * package only), and the chrome's install prompt answered as the store install's is – a
+     * finger on the sheet's accepting button once it stands still, twice at most; the command
+     * with the picture kept when the button is out of reach or the taps did not take the prompt
+     * down ([zen]'s rule). `P` once the record is enabled without an error; `F` with the error,
+     * or with no record within the install timeout. The id the runtime gives the zip is
+     * [fixtureId] of the manifest's name, so the caller knows it before the install.
+     */
+    private fun sideloadFixture(id: String, name: String, files: Map<String, String>, slug: String): Sideload {
+        val shared = File(File(app.cacheDir, "share").apply { mkdirs() }, "$slug.zip")
+        ZipOutputStream(shared.outputStream().buffered()).use { zip ->
+            for ((path, text) in files) {
+                zip.putNextEntry(ZipEntry(path))
+                zip.write(text.toByteArray())
+                zip.closeEntry()
+            }
+        }
+        val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", shared)
+        chromeJs("window.__toasts=[];'ok'")
+        lastPromptFallback = null
+        val started = SystemClock.uptimeMillis()
+        app.startActivity(
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, ExtensionStore.CRX_MIME_TYPE)
+                .setPackage(app.packageName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        )
+        var promptMs = 0L
+        var taps = 0
+        var tappedAt = 0L
+        var promptSeenAt = 0L
+        var byCommand = false
+        var lastRect: Rect? = null
+        var ext: JSONObject? = null
+        val deadline = SystemClock.uptimeMillis() + INSTALL_TIMEOUT_MS
+        while (SystemClock.uptimeMillis() < deadline) {
+            ext = extensions().firstOrNull { it.getString("id") == id }
+            if (ext != null) break
+            val pending = pendingPrompts()
+            if (pending.length() == 0) {
+                promptSeenAt = 0L
+                lastRect = null
+            } else {
+                val now = SystemClock.uptimeMillis()
+                if (promptSeenAt == 0L) promptSeenAt = now
+                val button = promptButton()
+                val rect = button?.rect
+                val still = rect != null && rect == lastRect
+                lastRect = rect
+                if (rect != null && still && taps < PROMPT_TAPS && (taps == 0 || now - tappedAt > PROMPT_RETAP_MS) && onScreen("$name: the sideload prompt's button")) {
+                    if (taps == 0) snap("$slug-prompt")
+                    tapRect(rect)
+                    taps++
+                    tappedAt = SystemClock.uptimeMillis()
+                    promptMs += tappedAt - now
+                } else if ((rect == null && now - promptSeenAt > PROMPT_TAP_TIMEOUT_MS) || (taps >= PROMPT_TAPS && now - tappedAt > PROMPT_RETAP_MS)) {
+                    Log.w(TAG, "$name: the sideload prompt goes through the command (${if (rect == null) "button not reachable" else "$taps tap(s) did not answer"})")
+                    snap("$slug-prompt-by-command")
+                    promptsAnsweredByCommand++
+                    byCommand = true
+                    lastPromptFallback = JSONObject()
+                        .put("reason", if (rect == null) "button not reachable" else "$taps tap(s) did not answer")
+                        .put("button", button?.detail ?: JSONObject.NULL)
+                    answerPrompts(pending)
+                    promptSeenAt = 0L
+                    taps = 0
+                }
+            }
+            SystemClock.sleep(400)
+        }
+        val total = SystemClock.uptimeMillis() - started
+        val toasts = runCatching { JSONArray(JSONTokener(chromeJs("JSON.stringify(window.__toasts||[])")).nextValue() as String) }.getOrDefault(JSONArray())
+        val toastText = (0 until toasts.length()).joinToString(" | ") { toasts.optString(it) }
+        val detail = JSONObject()
+            .put("ms", total - promptMs)
+            .put("promptMs", promptMs)
+            .put("prompted", taps > 0 || byCommand)
+            .put("promptAnsweredBy", if (byCommand) "command" else if (taps > 0) "tap" else JSONObject.NULL)
+            .put("promptTaps", taps)
+            .put("promptFallback", lastPromptFallback ?: JSONObject.NULL)
+            .put("toasts", toasts)
+            .put("package", shared.name)
+            .put("packageBytes", shared.length())
+            .put("files", JSONArray(files.keys.sorted()))
+        if (ext != null) {
+            detail.put("version", ext.optString("version"))
+                .put("source", ext.optString("source"))
+                .put("permissions", ext.optJSONArray("permissions"))
+                .put("hostPermissions", ext.optJSONArray("hostPermissions"))
+                .put("warnings", ext.optJSONArray("warnings"))
+        }
+        val landed = ext?.takeIf { it.isNull("error") && it.getBoolean("enabled") }
+        val toastNote = if (toastText.isNotEmpty()) "; toast: $toastText" else ""
+        return when {
+            ext == null -> Sideload(null, "F", "no record for $id after ${total / 1000} s: the zip handed over on the VIEW filter drew ${if (taps > 0 || byCommand) "a prompt whose answer installed nothing" else "no prompt"}$toastNote", detail)
+            !ext.isNull("error") -> Sideload(null, "F", "installed v${ext.optString("version")} but the runtime refused it: ${ext.optString("error")}", detail)
+            landed == null -> Sideload(null, "F", "installed v${ext.optString("version")} but not enabled$toastNote", detail)
+            else -> Sideload(landed, "P", "v${ext.optString("version")} from ${ext.optString("source")} (the sweep's own zip, ${files.size} files) in ${(total - promptMs) / 1000.0} s (+$promptMs ms in the prompt, answered by ${if (byCommand) "the command" else "$taps tap(s)"})$toastNote", detail)
+        }
     }
 
     /**
@@ -5103,6 +5228,116 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
+     * The proof of #448 (services' pass 3: an extension's own pages are exempt from the rules on
+     * both engines, `Blocking.isWeb`). The row's extension is the blocker – a fixture of the
+     * sweep's own whose worker installs one session rule at start, `urlFilter: '*'` over every
+     * resource type – and the core check sideloads the second fixture, whose options page
+     * (`open_in_tab`) carries its own stylesheet, script and image and asks the fixture server
+     * for one image. Read, in order: the rule from the blocker's worker (`getSessionRules` 1) and
+     * on the web (a fixture page opened in a tab lands on the Zenium blocked page: the rule is in
+     * force); the options page opened in a tab, its document rendered, its own subresources
+     * loaded (the stylesheet applied, the script run, the image drawn) while the web image errors
+     * (`Blocking.intercept`'s 403 for a web request from an extension page); then the rule
+     * removed and the page reloaded, the web image loads (the block was the rule's). `P` on the
+     * rule in force and the page as described; `F` where the page did not open (a navigation to
+     * the extension origin blocked as before #448), a subresource of its own did not load, or the
+     * web image loaded under the rule (the exemption too wide); `n/m` where the second fixture did
+     * not install. Both fixtures are the sweep's, disabled and left as any row's at the end.
+     */
+    private fun ownPagesExempt(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        // The blocker's rule, from its worker: installed at start, reported on the worker global.
+        val bg = awakeBackground(row.id, factor)
+        val rule = bg?.let { view ->
+            poll(scaled(15_000, factor), 300) {
+                tabEval(view, "self.__zenProofRule && self.__zenProofRule.done ? JSON.stringify(self.__zenProofRule) : null").takeIf { it != "null" }
+            }?.let(::json)
+        } ?: JSONObject().put("error", if (bg == null) "no background view" else "the worker did not report within the wait")
+        extra.put("rule", rule)
+        // The rule on the web: a fixture page opened in a tab under it.
+        val webTab = createTab("$BASE/page-b.html?proof")
+        val webView = runCatching { waitForView(webTab) }.getOrNull()
+        val webTitle = webView?.let { view ->
+            poll(scaled(15_000, factor), 500) { tabEval(view, "document.title").trim('"').takeIf { it == "Page blocked" } }
+                ?: tabEval(view, "document.title").trim('"')
+        }
+        extra.put("webUnderRule", JSONObject().put("title", webTitle ?: JSONObject.NULL).put("url", webView?.let { urlOf(it) } ?: JSONObject.NULL))
+        snap("$slug-web-under-rule")
+        closeTab(webTab)
+        showTab(fixtureTab)
+        // The second fixture: the extension whose own page is read.
+        val page = sideloadFixture(PROOF_PAGE_ID, PROOF_PAGE_NAME, PROOF_PAGE_FILES, "$slug-page")
+        extra.put("pageInstall", JSONObject().put("verdict", page.verdict).put("note", page.note).put("detail", page.detail))
+        var optionsTab: String? = null
+        var report: JSONObject? = null
+        var removed: JSONObject? = null
+        var control: JSONObject? = null
+        if (page.ext != null) {
+            val tabsBefore = tabUrls().keys
+            coreCall("extension.openOptions", """{"id":${JSONObject.quote(PROOF_PAGE_ID)}}""")
+            optionsTab = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) {
+                tabUrls().entries.firstOrNull { (id, url) -> id !in tabsBefore && extensionPage(url, PROOF_PAGE_ID) }?.key
+            }
+            var view: TabWebView? = null
+            optionsTab?.let { id -> instrumentation.runOnMainSync { view = host.tabs.get(id) } }
+            val optionsView = view
+            report = optionsView?.let { v ->
+                poll(scaled(20_000, factor), 500) {
+                    tabEval(v, "window.__zenProof && window.__zenProof.done ? JSON.stringify(window.__zenProof) : null").takeIf { it != "null" }
+                }?.let(::json)
+            }
+            SystemClock.sleep(scaled(1_000, factor))
+            snap("$slug-options-under-rule")
+            extra.put(
+                "optionsUnderRule",
+                JSONObject()
+                    .put("tab", optionsTab ?: JSONObject.NULL)
+                    .put("url", optionsView?.let { urlOf(it) } ?: JSONObject.NULL)
+                    .put("report", report ?: JSONObject.NULL)
+                    .put("dom", optionsView?.let { json(tabEval(it, DOM_REPORT)) } ?: JSONObject.NULL)
+                    .put("console", JSONArray(optionsView?.let { consoleOf(it).takeLast(8) } ?: emptyList<String>()))
+                    .put("tabs", JSONArray(tabUrls().values.map { it.take(120) }))
+            )
+            // The rule removed, the page reloaded: the control the other way.
+            removed = bg?.let { probe(it, PROOF_RULE_REMOVE, "__zenProofRemove", scaled(10_000, factor)) }
+            extra.put("ruleRemoved", removed ?: JSONObject.NULL)
+            if (removed?.isNull("error") == true && optionsView != null && optionsTab != null) {
+                coreCall("tab.reload", """{"tabId":${JSONObject.quote(optionsTab)}}""")
+                SystemClock.sleep(scaled(1_500, factor))
+                control = poll(scaled(20_000, factor), 500) {
+                    tabEval(optionsView, "window.__zenProof && window.__zenProof.done ? JSON.stringify(window.__zenProof) : null").takeIf { it != "null" }
+                }?.let(::json)
+                extra.put("optionsRuleRemoved", control ?: JSONObject.NULL)
+                snap("$slug-options-rule-removed")
+            }
+            optionsTab?.let { closeTab(it) }
+            runCatching { coreCall("extension.setEnabled", JSONObject().put("id", PROOF_PAGE_ID).put("enabled", false).toString()) }
+            showTab(fixtureTab)
+        }
+        val ruleOn = rule.isNull("error") && rule.optInt("session", 0) >= 1
+        val ownLoaded = report != null && report.optBoolean("script") && report.optBoolean("css") && report.optString("ownImage") == "loaded"
+        val webImage = report?.optString("webImage") ?: "not read"
+        val note = "session rules ${rule.optInt("session", -1)}${rule.optString("error").takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: ""}; " +
+            "a fixture page in a tab under the rule: \"${webTitle ?: "no view"}\"; the options page ${if (optionsTab != null) "opened in a tab" else "did not open in a tab"}" +
+            (report?.let { ": stylesheet ${if (it.optBoolean("css")) "applied" else "missing"}, script ${if (it.optBoolean("script")) "run" else "not run"}, own image ${it.optString("ownImage")}, web image ${it.optString("webImage")}" } ?: "") +
+            (control?.let { "; the rule removed and the page reloaded: web image ${it.optString("webImage")}" } ?: (removed?.optString("error")?.takeIf { it.isNotEmpty() }?.let { "; the rule's removal: $it" } ?: ""))
+        return when {
+            page.ext == null -> Grade("n/m", "the second fixture did not install (${page.note}); $note", extra)
+            !ruleOn -> Grade("F", "the blocker's session rule is not in force: $note", extra)
+            webTitle != "Page blocked" -> Grade("F", "the block-everything rule did not stop a fixture page in a tab: $note", extra)
+            optionsTab == null -> Grade("F", "the options page did not open in a tab under the rule (a navigation to the extension's own origin blocked, or nothing opened): $note", extra)
+            report == null -> Grade("F", "the options page opened but its script never reported (the document or its script did not load under the rule): $note", extra)
+            !ownLoaded -> Grade("F", "a subresource of the extension's own did not load under the rule: $note", extra)
+            webImage != "error" -> Grade("F", "the web image ${webImage} from the extension page under the block-everything rule: the rule did not reach the page's web request: $note", extra)
+            // The web image erred under the rule; that it loads without the rule is what makes the error the rule's.
+            control?.optString("webImage") != "loaded" -> Grade("PARTIAL", "the extension's own page loaded whole under a rule that blocks every request, and its web image erred – but the image did not load without the rule either (${control?.optString("webImage") ?: "the control not read"}), so the error is not told from the lane's own handling of the page's plain-http image: $note", extra)
+            else -> Grade("P", "the extension's own page loaded whole under a rule that blocks every request, and its web request was blocked (the same image loaded once the rule was removed): $note", extra)
+        }
+    }
+
+    /**
      * HTTPS-only mode (`ask`, the default) upgrades an `http://` navigation to any host that is
      * unique on the public Internet – [NonUniqueHost] leaves private addresses, loopback and
      * names without a registrable suffix alone, a `nip.io` name it does not. A fixture under the
@@ -6503,7 +6738,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("bafijghppfhdpldihckdcadbcobikaca", "Keyword Surfer", "keyword-surfer", core = siteGate("Keyword Surfer", "https://www.google.com/search?q=zenium+browser&hl=en", "[id*='surfer'], [class*='surfer'], [class*='keyword-surfer'], [id*='keyword-surfer']", Regex("^https://(www\\.)?google\\."), "a Google results page served to the runner (its volumes come from its service)")),
         Row("bigefpfhnfcobdlfbedofhhaibnlghod", "MEGA", "mega", core = ::megaClient),
         Row("ibnejdfjmmkpcnlpebklmnkoeoihofec", "TronLink", "tronlink", core = domMarker("TronLink's provider injected into the page world", "wallet.html?tronlink", WALLET_STANDARD.replace("__RE__", "/tronlink|tron/i").replace("__GLOBALS__", "typeof window.tronLink!=='undefined'||typeof window.tronWeb!=='undefined'"), settleMs = 30_000)),
-        Row("ngceodoilcgpmkijopinlkmohnfifjfb", "Focus To-Do: Pomodoro Timer & To Do List", "focus-to-do", core = actionPage("Focus To-Do", Regex("WebContent/index\\.html"), FOCUS_TODO_APP, listOf("page-a.html?focus")))
+        Row("ngceodoilcgpmkijopinlkmohnfifjfb", "Focus To-Do: Pomodoro Timer & To Do List", "focus-to-do", core = actionPage("Focus To-Do", Regex("WebContent/index\\.html"), FOCUS_TODO_APP, listOf("page-a.html?focus"))),
+        // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
+        // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
+        // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
+        // after the store rows in table order (its rule stands only while its row runs: the
+        // row's cleanup disables the blocker as it does any row's extension).
+        Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
     )
 
     // --- the core checks of compat round 14 (ranks 301-330 by installs) --------------------------
@@ -8059,6 +8300,64 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * reading says so.
          */
         private const val PUBLIC_NAME_BASE = "http://10.0.2.2.nip.io:8765"
+
+        /**
+         * The runtime's id for an unsigned zip without a `manifest.key`: SHA-256 of
+         * `zenium-sideload:<name>`, its first 16 bytes in Chrome's a-p alphabet (`hostStore.ts`
+         * `zipIdSeed`, `bytes.ts` `extensionIdFromSeed`). The two fixtures below come out as
+         * `igkinnldjpikoggonflimiaamlmehcig` (the blocker) and `aalkoepihlcafingocdgbgliocobgbjl`
+         * (the page) – the ids the trigger's `SWEEP_ONLY` names.
+         */
+        private fun fixtureId(name: String): String {
+            val digest = MessageDigest.getInstance("SHA-256").digest("zenium-sideload:$name".toByteArray())
+            return digest.take(16).joinToString("") { b ->
+                val v = b.toInt() and 0xff
+                "${'a' + (v shr 4)}${'a' + (v and 0x0f)}"
+            }
+        }
+
+        /** The #448 proof's blocker ([ownPagesExempt]): one session rule at start, `urlFilter: '*'`, every resource type. */
+        private const val PROOF_BLOCKER_NAME = "Zenium compat proof: block everything"
+        private val PROOF_BLOCKER_ID = fixtureId(PROOF_BLOCKER_NAME)
+        private val PROOF_BLOCKER_FILES: Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$PROOF_BLOCKER_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: one session rule that blocks every request.","permissions":["declarativeNetRequest"],"background":{"service_worker":"worker.js"}}""",
+            "worker.js" to
+                "var types=['main_frame','sub_frame','stylesheet','script','image','font','object','xmlhttprequest','ping','csp_report','media','websocket','webtransport','webbundle','other'];\n" +
+                "var p=self.__zenProofRule={done:false,error:null,session:null,types:types.length};\n" +
+                "function finish(){chrome.declarativeNetRequest.getSessionRules(function(rules){if(chrome.runtime.lastError)p.error=String(chrome.runtime.lastError.message);p.session=(rules||[]).length;p.done=true})}\n" +
+                "try{chrome.declarativeNetRequest.updateSessionRules({removeRuleIds:[1],addRules:[{id:1,priority:1,action:{type:'block'},condition:{urlFilter:'*',resourceTypes:types}}]},function(){" +
+                "if(chrome.runtime.lastError){p.error=String(chrome.runtime.lastError.message);p.done=true;return}finish()})}catch(e){p.error='threw: '+String(e&&e.message||e);p.done=true}\n"
+        )
+        /** From the blocker's worker: the rule removed, the session count after. Lands on `window.__zenProofRemove`. */
+        private const val PROOF_RULE_REMOVE =
+            "(function(){var p=window.__zenProofRemove={done:false,error:null,session:null};" +
+                "try{chrome.declarativeNetRequest.updateSessionRules({removeRuleIds:[1]},function(){if(chrome.runtime.lastError)p.error=String(chrome.runtime.lastError.message);" +
+                "chrome.declarativeNetRequest.getSessionRules(function(r){p.session=(r||[]).length;p.done=true})})}catch(e){p.error='threw: '+String(e&&e.message||e);p.done=true}" +
+                "setTimeout(function(){if(!p.done){p.error='no answer within 8 s';p.done=true}},8000);return 'asked'})()"
+
+        /**
+         * The #448 proof's page owner ([ownPagesExempt]): an options page in a tab with its own
+         * stylesheet, script and image, and one image from the fixture server; the script reports
+         * each load on `window.__zenProof`.
+         */
+        private const val PROOF_PAGE_NAME = "Zenium compat proof: own pages"
+        private val PROOF_PAGE_ID = fixtureId(PROOF_PAGE_NAME)
+        private val PROOF_PAGE_FILES: Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$PROOF_PAGE_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: an extension page with its own subresources and one web image.","options_ui":{"page":"options.html","open_in_tab":true}}""",
+            "options.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Zenium compat proof: own pages</title>" +
+                "<link rel=\"stylesheet\" href=\"options.css\"><script src=\"options.js\" defer></script></head>" +
+                "<body><h1>An extension's own page under a rule that blocks every request</h1><p id=\"status\">reading\u2026</p><div id=\"images\"></div></body></html>",
+            "options.css" to "body{font:16px system-ui,sans-serif;margin:24px;background:#eef;color:#123}h1{font-size:20px}img{display:block;margin:8px 0;width:64px;height:64px;border:1px solid #89a}",
+            "options.js" to
+                "(function(){var p=window.__zenProof={done:false,script:true,css:false,ownImage:'pending',webImage:'pending',webUrl:null,error:null};\n" +
+                "function settle(){if(p.ownImage==='pending'||p.webImage==='pending')return;p.css=getComputedStyle(document.body).backgroundColor==='rgb(238, 238, 255)';p.done=true;" +
+                "document.getElementById('status').textContent='own image '+p.ownImage+', web image '+p.webImage+', stylesheet '+(p.css?'applied':'missing')}\n" +
+                "function img(src,key){var i=document.createElement('img');i.alt=key;i.onload=function(){p[key]='loaded';settle()};i.onerror=function(){p[key]='error';settle()};i.src=src;document.getElementById('images').appendChild(i)}\n" +
+                "img('own.svg?t='+Date.now(),'ownImage');p.webUrl='$BASE/pixel.png?proof='+Date.now();img(p.webUrl,'webImage');\n" +
+                "setTimeout(function(){if(!p.done){if(p.ownImage==='pending')p.ownImage='timeout';if(p.webImage==='pending')p.webImage='timeout';settle()}},15000)})();\n",
+            "own.svg" to "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#3a6\"/><circle cx=\"32\" cy=\"32\" r=\"18\" fill=\"#fff\"/></svg>"
+        )
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
         /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */
