@@ -14,9 +14,6 @@ name: Android share demo
 # file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-share-panel-4763
 
 permissions:
   contents: read
