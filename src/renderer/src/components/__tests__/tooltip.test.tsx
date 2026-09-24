@@ -299,7 +299,17 @@ describe('Tooltip host', () => {
     let midLayout: HTMLButtonElement
     let free: HTMLButtonElement
     const rect = (x: number, y: number, width: number, height: number): DOMRect =>
-      ({ x, y, width, height, left: x, top: y, right: x + width, bottom: y + height, toJSON: () => ({}) }) as DOMRect
+      ({
+        x,
+        y,
+        width,
+        height,
+        left: x,
+        top: y,
+        right: x + width,
+        bottom: y + height,
+        toJSON: () => ({})
+      }) as DOMRect
     beforeEach(() => {
       contentAreaStore.set({ area })
       gap = document.createElement('div')

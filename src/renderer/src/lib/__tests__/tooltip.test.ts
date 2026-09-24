@@ -189,7 +189,13 @@ describe('placeTooltip', () => {
     // 8 px margin above: 82 - 8 - 30 = 44 fits; at y 40 it would be 2, under the margin – below,
     // over the page, and the cover.
     const area: Rect = { x: 240, y: 40, width: 1352, height: 952 }
-    const placed = placeTooltip({ x: 859, y: 40, width: 20, height: 20 }, size, viewport, null, area)
+    const placed = placeTooltip(
+      { x: 859, y: 40, width: 20, height: 20 },
+      size,
+      viewport,
+      null,
+      area
+    )
     expect(placed.box.side).toBe('below')
     expect(placed.coversPage).toBe(true)
   })

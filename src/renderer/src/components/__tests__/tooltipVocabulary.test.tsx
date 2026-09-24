@@ -398,7 +398,8 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
   const files = sources(root)
     .map((f) => ({ path: f, rel: relative(root, f).split('\\').join('/') }))
     .filter(
-      ({ rel }) => ALSO_WALKED.includes(rel) || !NOT_DESKTOP_CHROME.some((dir) => rel.startsWith(dir))
+      ({ rel }) =>
+        ALSO_WALKED.includes(rel) || !NOT_DESKTOP_CHROME.some((dir) => rel.startsWith(dir))
     )
 
   it('the walk reaches the v2 primitives and the extensions toolbar', () => {
