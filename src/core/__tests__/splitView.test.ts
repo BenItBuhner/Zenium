@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
+import type { HostCapabilities, Platform as PlatformOs, SplitGroup, Tab } from '../../shared/types'
 import { Browser } from '../browser'
 import { applicationMenu } from '../menuBar'
 import type {
@@ -392,10 +392,10 @@ describe('the split view drag and drop switch (split-12)', () => {
 })
 
 describe('Swap Panes (split-07)', () => {
-  const groupOf = (h: Harness): { tabIds: string[]; sizes: number[] } => {
+  const groupOf = (h: Harness): SplitGroup => {
     const group = Object.values(h.browser.state.model.splitGroups)[0]
     if (!group) throw new Error('no split')
-    return { tabIds: group.tabIds, sizes: group.sizes }
+    return group
   }
 
   it('reverses a two-pane split from the command, each tab keeping its size, the active pane staying active', () => {
@@ -478,21 +478,57 @@ describe('Swap Panes (split-07)', () => {
     expect(rule.enabled).toBe(true)
     click(h.shown(), 'Swap Panes')
     expect(groupOf(h).tabIds).toEqual([b.id, a.id])
-    // The checkbox writes the one setting, and reads it back.
+    // The checkbox writes this split's own state (§9.35: the rule is the arrangement's), reads
+    // it back, and the record carries it – off is stored as absent, on as `true`.
     click(h.shown(), 'Open Links from Left Pane in Right Pane')
-    expect(h.browser.state.settings.splitLinksToRight).toBe(true)
+    expect(groupOf(h).linksToRight).toBe(true)
+    expect('splitLinksToRight' in h.browser.state.settings).toBe(false)
     h.browser.handleCommand(h.win, 'split.paneMenu', { tabId: b.id })
     expect(
       h.shown().find((i) => i.label === 'Open Links from Left Pane in Right Pane')?.checked
     ).toBe(true)
-    // A stacked split has no left and right: the row is greyed.
+    click(h.shown(), 'Open Links from Left Pane in Right Pane')
+    expect('linksToRight' in groupOf(h)).toBe(false)
+    h.browser.handleCommand(h.win, 'split.paneMenu', { tabId: b.id })
+    click(h.shown(), 'Open Links from Left Pane in Right Pane')
+    expect(groupOf(h).linksToRight).toBe(true)
+    // A stacked split has no left and right: the row is greyed (the state kept for a turn back).
     h.browser.tabs.setSplitLayout(Object.keys(h.browser.state.model.splitGroups)[0], 'horizontal')
     h.browser.handleCommand(h.win, 'split.paneMenu', { tabId: b.id })
     expect(
       h.shown().find((i) => i.label === 'Open Links from Left Pane in Right Pane')?.enabled
     ).toBe(false)
+    expect(groupOf(h).linksToRight).toBe(true)
     click(h.shown(), 'Un-split Tab')
     expect(Object.keys(h.browser.state.model.splitGroups)).toHaveLength(0)
+  })
+
+  it('the link rule is each split’s own: off for a new split, one split’s rule leaving the other’s alone, and gone with the split', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    const c = h.open('https://c.example/')
+    const d = h.open('https://d.example/')
+    h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
+    h.browser.tabs.createSplit([c.id, d.id], 'vertical', h.win)
+    const groups = (): SplitGroup[] => Object.values(h.browser.state.model.splitGroups)
+    expect(groups().map((g) => 'linksToRight' in g)).toEqual([false, false])
+    const ab = groups().find((g) => g.tabIds.includes(a.id))!
+    h.browser.tabs.setSplitLinksToRight(ab.id, true)
+    expect(
+      groups()
+        .map((g) => g.linksToRight === true)
+        .sort()
+    ).toEqual([false, true])
+    expect(h.browser.tabs.linksToSplitPane(h.browser.tabs.tab(a.id)!)).toBe(true)
+    expect(h.browser.tabs.linksToSplitPane(h.browser.tabs.tab(c.id)!)).toBe(false)
+    // Un-split and split again: a new split, without the rule.
+    h.browser.tabs.unsplit(ab.id, undefined, h.win)
+    h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
+    expect(h.browser.tabs.linksToSplitPane(h.browser.tabs.tab(a.id)!)).toBe(false)
+    // A split that is gone takes no write.
+    h.browser.tabs.setSplitLinksToRight(ab.id, true)
+    expect(h.browser.state.model.splitGroups[ab.id]).toBeUndefined()
   })
 })
 
@@ -500,16 +536,12 @@ describe('links from the left pane open in the right pane (split-13)', () => {
   const linkFlags = (h: Harness): { tabId: string; linksToSplitPane: boolean }[] =>
     h.flags.map((f) => ({ tabId: f.tabId, linksToSplitPane: f.flags.linksToSplitPane }))
 
-  it('is off by default and reads anything but true as off', () => {
-    const h = harness()
-    expect(h.browser.state.settings.splitLinksToRight).toBe(false)
-    h.browser.handleCommand(h.win, 'settings.update', { splitLinksToRight: true })
-    expect(h.browser.state.snapshot(h.win).settings.splitLinksToRight).toBe(true)
-    h.browser.handleCommand(h.win, 'settings.update', {
-      splitLinksToRight: 'yes' as unknown as boolean
-    })
-    expect(h.browser.state.settings.splitLinksToRight).toBe(false)
-  })
+  /** The split `tab` is in gets the rule, as the pane header's ⋯ checkbox writes it. */
+  const ruleOn = (h: Harness, tabId: string): void => {
+    const group = h.browser.tabs.tab(tabId)?.splitGroupId
+    if (!group) throw new Error(`${tabId} is in no split`)
+    h.browser.tabs.setSplitLinksToRight(group, true)
+  }
 
   it('tells the left pane’s page alone, and only in a side-by-side split, once the rule is on', async () => {
     const h = harness()
@@ -523,12 +555,11 @@ describe('links from the left pane open in the right pane (split-13)', () => {
     ])
     h.flags.length = 0
     h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
-    h.browser.handleCommand(h.win, 'settings.update', { splitLinksToRight: true })
-    expect(linkFlags(h)).toEqual([
-      { tabId: a.id, linksToSplitPane: true },
-      { tabId: b.id, linksToSplitPane: false }
-    ])
+    // The pane menu's write is a commit like any other: after the broadcast the one page whose
+    // answer changed – the left pane's – hears it; the right pane's flag holds and is not written.
+    ruleOn(h, a.id)
     await tick()
+    expect(linkFlags(h)).toEqual([{ tabId: a.id, linksToSplitPane: true }])
     h.flags.length = 0
     // Stacked, there is no left and right; side by side again, there is. The layout's turn is
     // the split's, and reaches the one page whose answer changed after the broadcast.
@@ -549,7 +580,7 @@ describe('links from the left pane open in the right pane (split-13)', () => {
     const lone = h.open('https://lone.example/')
     for (const t of [a, b, lone]) h.browser.tabs.sendPageFlags(t.id)
     h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
-    h.browser.handleCommand(h.win, 'settings.update', { splitLinksToRight: true })
+    ruleOn(h, a.id)
     await tick()
     h.flags.length = 0
     h.browser.handleCommand(h.win, 'split.swap', { tabId: a.id })
@@ -572,7 +603,7 @@ describe('links from the left pane open in the right pane (split-13)', () => {
     const a = h.open('https://a.example/')
     const b = h.open('https://b.example/')
     h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
-    h.browser.handleCommand(h.win, 'settings.update', { splitLinksToRight: true })
+    ruleOn(h, a.id)
     h.browser.tabs.activateTab(a.id, h.win)
     h.browser.handlePageMessage(a.id, { type: 'split-link', url: 'https://a.example/story' })
     expect(h.browser.tabs.tab(b.id)?.url).toBe('https://a.example/story')
@@ -606,7 +637,7 @@ describe('links from the left pane open in the right pane (split-13)', () => {
     const a = h.open('https://a.example/')
     const b = h.open('https://b.example/')
     h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
-    h.browser.handleCommand(h.win, 'settings.update', { splitLinksToRight: true })
+    ruleOn(h, a.id)
     h.browser.tabs.activateTab(a.id, h.win)
     h.browser.handlePageMessage(a.id, { type: 'split-link', url: 'https://a.example/story' })
     // A trusted press in the right pane while it loads: the user moved there.
@@ -638,7 +669,7 @@ describe('links from the left pane open in the right pane (split-13)', () => {
     const a = h.open('https://a.example/')
     const b = h.open('https://b.example/')
     h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
-    h.browser.handleCommand(h.win, 'settings.update', { splitLinksToRight: true })
+    ruleOn(h, a.id)
     // The split dissolved before the message landed.
     h.browser.tabs.unsplit(undefined, a.id, h.win)
     h.browser.handlePageMessage(a.id, { type: 'split-link', url: 'https://a.example/story' })

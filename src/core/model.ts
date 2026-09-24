@@ -445,6 +445,25 @@ export function swapSplitPanes(model: Model, groupId: string, a: number, b: numb
 }
 
 /**
+ * The split's link rule (split-13): whether links clicked in its first pane load in the pane to
+ * the right. The rule is this split's own – set from the pane header's ⋯ menu, off for a new
+ * split, kept with the split (layout and sizes alike, so a restored session keeps it). Absent
+ * reads off, and off is stored as absent, so a split's record says the rule only when it holds.
+ */
+export function splitLinksToRight(group: SplitGroup): boolean {
+  return group.linksToRight === true
+}
+
+/** Write the split's link rule; false when the split is gone or the rule already reads `on`. */
+export function setSplitLinksToRight(model: Model, groupId: string, on: boolean): boolean {
+  const group = model.splitGroups[groupId]
+  if (!group || splitLinksToRight(group) === on) return false
+  if (on) group.linksToRight = true
+  else delete group.linksToRight
+  return true
+}
+
+/**
  * The tab shown in a pane makes way for another (a tab dropped on the pane): the newcomer takes
  * the pane, its slot and its size, and the shown tab leaves the split but stays open. Two tabs
  * of the same split swap panes instead.

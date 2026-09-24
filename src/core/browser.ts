@@ -3576,7 +3576,6 @@ export class Browser {
       glance: s.glanceEnabled,
       trigger: s.glanceTrigger,
       thirdParty: s.thirdPartyOnPinned,
-      splitLinks: s.splitLinksToRight,
       appIcon: s.appIcon,
       colorScheme: s.colorScheme,
       windowSync: s.windowSync,
@@ -3702,7 +3701,6 @@ export class Browser {
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.splitEdgeZones = s.splitEdgeZones !== false
-    s.splitLinksToRight = s.splitLinksToRight === true
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
     s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false
@@ -3721,8 +3719,7 @@ export class Browser {
     if (
       before.glance !== s.glanceEnabled ||
       before.trigger !== s.glanceTrigger ||
-      before.thirdParty !== s.thirdPartyOnPinned ||
-      before.splitLinks !== s.splitLinksToRight
+      before.thirdParty !== s.thirdPartyOnPinned
     ) {
       this.tabs.broadcastPageFlags()
     }

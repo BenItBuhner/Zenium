@@ -612,6 +612,17 @@ export interface SplitGroup {
   layout: SplitLayout
   /** Normalised sizes (fractions summing to 1) for the panes – one per tab. */
   sizes: number[]
+  /**
+   * This split's link rule (split-13, Edge's "Open links from the left pane in the right
+   * pane"; v2 §9.35): true, a plain click on a link in the first pane of a side-by-side split
+   * (vertical or grid) loads the link in the pane to its right, the left pane staying where it
+   * is – search results on the left, the article on the right. The rule is the arrangement's,
+   * not a habit of the browser's: the pane header's ⋯ menu writes it for this split alone, a new
+   * split starts without it, and it is kept with the split – layout and sizes alike – so a
+   * restored session keeps it. Absent reads off; a stacked (horizontal) split has no left and
+   * right and keeps its links whatever this says.
+   */
+  linksToRight?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -2444,15 +2455,6 @@ export interface Settings {
    * targets. Absent in profiles from before it existed (read as true).
    */
   splitEdgeZones: boolean
-  /**
-   * Split view's link rule (split-13, Edge's "Open links from the left pane in the right pane"):
-   * on, a plain click on a link in the first pane of a side-by-side split (vertical or grid)
-   * loads the link in the pane to its right, the left pane staying where it is – search results
-   * on the left, the article on the right. Off by default, as Edge's toggle is; a stacked
-   * (horizontal) split has no left and right and keeps its links. Absent in profiles from before
-   * it existed (read as false).
-   */
-  splitLinksToRight: boolean
   pinnedCloseBehavior: PinnedCloseBehavior
   pinnedResetOnStartup: boolean
   thirdPartyOnPinned: ThirdPartyPinnedBehavior

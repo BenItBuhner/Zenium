@@ -639,8 +639,6 @@ export class BrowserState {
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
     // Off only when the profile says so: an older profile, or anything but a boolean, reads on.
     this.settings.splitEdgeZones = data.settings?.splitEdgeZones !== false
-    // On only when the profile says so: an older profile, or anything but a boolean, reads off.
-    this.settings.splitLinksToRight = data.settings?.splitLinksToRight === true
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }
@@ -844,6 +842,9 @@ export class BrowserState {
       }
       if (group.sizes?.length !== group.tabIds.length)
         group.sizes = group.tabIds.map(() => 1 / group.tabIds.length)
+      // The split's link rule (split-13) reads on only when the record says `true`: a session
+      // from before it existed, a peer's record or anything else reads off, stored as absent.
+      if (group.linksToRight !== true) delete group.linksToRight
       for (const id of group.tabIds) m.tabs[id].splitGroupId = group.id
     }
     for (const tab of Object.values(m.tabs)) {

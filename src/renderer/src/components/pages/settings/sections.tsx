@@ -847,17 +847,9 @@ function lookSection({
           keywords: ['split screen', 'side by side', 'pane', 'drag', 'edge'],
           checked: s.splitEdgeZones,
           onChange: (v) => set({ splitEdgeZones: v })
-        },
-        {
-          kind: 'switch',
-          id: 'split-links-right',
-          label: 'Open links from the left pane in the right pane',
-          description:
-            'In a side-by-side split view, a link clicked in the left pane loads in the right one.',
-          keywords: ['split screen', 'side by side', 'pane', 'link', 'left', 'right'],
-          checked: s.splitLinksToRight,
-          onChange: (v) => set({ splitLinksToRight: v })
         }
+        // The left pane's link rule (split-13) is not a row here: it is each split's own, on the
+        // pane header's ⋯ menu – one home for the switch (v2 §9.35).
       ]
     })
   }

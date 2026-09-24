@@ -2539,30 +2539,12 @@ describe('the section model', () => {
     expect(section('look').groups.map((g) => g.id)).not.toContain('split-view')
   })
 
-  it('offers the left pane’s link rule under the drag switch, off by default, writing the one setting (split-13)', () => {
+  it('keeps the left pane’s link rule off the page: the split view group is the drag switch alone – the rule is each split’s own, on the pane’s ⋯ menu (split-13, §9.35)', () => {
     const c = context(state(), true)
     const look = buildSection(PAGE.sections[0], c.ctx)
     const group = look.groups.find((g) => g.id === 'split-view')!
-    expect(group.rows.map((r) => r.id)).toEqual(['split-edge-zones', 'split-links-right'])
-    const links = row(look, 'split-links-right')
-    expect(links).toMatchObject({
-      kind: 'switch',
-      label: 'Open links from the left pane in the right pane',
-      description:
-        'In a side-by-side split view, a link clicked in the left pane loads in the right one.',
-      checked: false
-    })
-    if (links.kind !== 'switch') throw new Error('not a switch')
-    links.onChange(true)
-    expect(c.patches).toEqual([{ splitLinksToRight: true }])
-    const on = buildSection(
-      PAGE.sections[0],
-      context(state({}, { splitLinksToRight: true }), true).ctx
-    )
-    const lit = row(on, 'split-links-right')
-    expect(lit.kind === 'switch' && lit.checked).toBe(true)
-    // Found by what the user would type for it.
-    expect(searchRows([look], 'right pane').map((h) => h.row.id)).toContain('split-links-right')
+    expect(group.rows.map((r) => r.id)).toEqual(['split-edge-zones'])
+    expect(searchRows([look], 'right pane').map((h) => h.row.id)).toEqual([])
   })
 
   it('tells a touch host its own gestures: no double-click, Glance from the link menu', () => {

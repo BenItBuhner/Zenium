@@ -43,6 +43,8 @@ import {
   swapSplitPanes,
   savedGroupTab,
   sectionIndexOf,
+  setSplitLinksToRight,
+  splitLinksToRight,
   splitPlacement,
   tabVisibleIn,
   type Model,
@@ -1240,15 +1242,17 @@ export class TabManager {
   }
 
   /**
-   * Whether links clicked in `tab`'s page go to the pane to its right (split-13): the setting is
-   * on and the tab is the first pane of a side-by-side split – vertical, or the grid, whose
-   * second pane is the top right; a stacked split has no left and right.
+   * Whether links clicked in `tab`'s page go to the pane to its right (split-13): the tab's split
+   * carries the rule (`SplitGroup.linksToRight`, this split's own – v2 §9.35) and the tab is the
+   * first pane of a side-by-side split – vertical, or the grid, whose second pane is the top
+   * right; a stacked split has no left and right.
    */
   linksToSplitPane(tab: Tab): boolean {
-    if (!this.settings.splitLinksToRight || !tab.splitGroupId) return false
+    if (!tab.splitGroupId) return false
     const group = this.model.splitGroups[tab.splitGroupId]
     return Boolean(
       group &&
+      splitLinksToRight(group) &&
       group.layout !== 'horizontal' &&
       group.tabIds.length >= 2 &&
       group.tabIds[0] === tab.id
@@ -1256,11 +1260,20 @@ export class TabManager {
   }
 
   /**
+   * The pane header's ⋯ menu wrote this split's link rule (split-13): the one home of the switch,
+   * kept with the split; the commit re-syncs the left pane's flag (`syncSplitLinkFlags`).
+   */
+  setSplitLinksToRight(groupId: string, on: boolean): void {
+    if (setSplitLinksToRight(this.model, groupId, on)) this.browser.state.commit()
+  }
+
+  /**
    * The left pane's link rule is the split's, not the page's: a swap, a pane joining or leaving,
-   * the layout turning, the split dissolving or the setting turning change what a page's flag
-   * should say. After every commit the live pages' flags are checked against the model and the
-   * ones whose answer changed are re-sent (a page whose flag holds is not written to; a page
-   * that has not had its flags yet gets them at its `dom-ready`, as every page does).
+   * the layout turning, the split dissolving or the rule written from the pane's menu change
+   * what a page's flag should say. After every commit the live pages' flags are checked against
+   * the model and the ones whose answer changed are re-sent (a page whose flag holds is not
+   * written to; a page that has not had its flags yet gets them at its `dom-ready`, as every
+   * page does).
    */
   syncSplitLinkFlags(): void {
     for (const [id, sent] of this.splitLinkFlags) {
