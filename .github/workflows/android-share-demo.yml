@@ -14,8 +14,6 @@ name: Android share demo
 # file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-share-panel-4763]
 
 permissions:
   contents: read
@@ -41,7 +39,6 @@ jobs:
 
   record-api33:
     name: Share demo (API 33, the share panel)
-    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
