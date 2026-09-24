@@ -280,12 +280,17 @@ hung=0
 # only under GUEST_SILENCE_S (a single-row lane); the sweeps never attach to the emulator.
 dump_host() {
   local label=$1 file="$out/host-emulator-$1.txt" pid task
-  pid=$(pgrep -f '/qemu-system-x86_64 ' 2> /dev/null | head -n 1 || true)
+  # By the process name the host monitor sees (comm, `qemu-system-x86`), not the command line: the
+  # emulator's qemu binary carries a suffix on a headless runner and the round's fourth sample found
+  # "no process" on a command-line match while the process stood.
+  pid=$(pgrep -o qemu-system-x86 2> /dev/null || true)
   {
     echo "the host side of the emulator at $(date +%T) ($label)"
     if [ -z "$pid" ]; then
       echo "qemu-system-x86_64: no process"
+      ps -eo pid=,comm=,args= 2> /dev/null | grep -E 'qemu|emulator' | grep -v grep | cut -c1-200 || true
     else
+      echo "== $pid: $(tr '\0' ' ' < "/proc/$pid/cmdline" 2> /dev/null | cut -c1-300)"
       echo "== /proc/$pid/status"
       grep -E '^(State|VmRSS|VmSwap|Threads|voluntary_ctxt_switches|nonvoluntary_ctxt_switches)' "/proc/$pid/status" 2> /dev/null || true
       echo "== threads: tid, %cpu, state, kernel wait channel, name"
