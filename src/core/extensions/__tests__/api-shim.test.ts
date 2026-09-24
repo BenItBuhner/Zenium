@@ -713,6 +713,49 @@ describe('installExtensionApi', () => {
     expect(got).toEqual({})
   })
 
+  it('notifies storage.local writes in the form Chrome stores: methods and undefined dropped, the write resolved (Rabby)', async () => {
+    installExtensionApi(host, API_SPEC)
+    // The host's transport clones structurally and refuses a function, as ipcRenderer does.
+    host.notify = (kind, payload) => {
+      const check = (value: unknown): void => {
+        if (typeof value === 'function') throw new Error('An object could not be cloned.')
+        if (value && typeof value === 'object') Object.values(value).forEach(check)
+      }
+      check(payload)
+      host.notifications.push({ kind, payload })
+    }
+    class Preference {
+      balanceMap = { a: 1 }
+      hidden = undefined
+      list = [1, (): number => 2, undefined]
+      patch(): void {
+        this.balanceMap.a += 1
+      }
+    }
+    await expect(
+      g.chrome.storage.local.set({ preference: new Preference(), fn: (): number => 1, n: 3 })
+    ).resolves.toBeUndefined()
+    const changes = host.notifications
+      .filter((n) => n.kind === 'storage-changed')
+      .map((n) => n.payload)
+    expect(changes).toEqual([
+      {
+        area: 'local',
+        changes: {
+          preference: { newValue: { balanceMap: { a: 1 }, list: [1, null, null] } },
+          n: { newValue: 3 }
+        }
+      }
+    ])
+    // The host-kept areas get the same form, which is what can cross to them.
+    await g.chrome.storage.sync.set({ preference: new Preference(), fn: (): number => 1 })
+    expect(host.calls.at(-1)).toEqual({
+      namespace: 'storage',
+      method: 'set',
+      args: ['sync', { preference: { balanceMap: { a: 1 }, list: [1, null, null] } }]
+    })
+  })
+
   it('routes storage.sync and storage.managed through the host', async () => {
     installExtensionApi(host, API_SPEC)
     host.respond = (_ns, method) =>

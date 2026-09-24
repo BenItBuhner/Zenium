@@ -2345,6 +2345,33 @@ export function installExtensionApi(
     }
   }
 
+  /**
+   * What the store keeps of a value the extension writes: its JSON form, which is what Chrome's
+   * `storage` serialises to (a function or `undefined` member dropped, `null` for one in an array,
+   * a class instance reduced to its own fields). A value with no JSON form (a bare function, a
+   * BigInt, a cycle) is not stored. The change events carry this form, and only this form can
+   * cross to the host: `ipcRenderer` clones structurally and refuses a function (Rabby's persist
+   * store writes objects that carry methods, and Chrome resolves those writes).
+   */
+  function storedForm(value: unknown): { stored: true; value: unknown } | { stored: false } {
+    try {
+      const text = JSON.stringify(value)
+      return text === undefined ? { stored: false } : { stored: true, value: JSON.parse(text) }
+    } catch {
+      return { stored: false }
+    }
+  }
+
+  /** `storedForm` over each item of a `set`, the unstorable ones left out, as Chrome leaves them. */
+  function storedItems(items: StorageItems): StorageItems {
+    const out: StorageItems = {}
+    for (const key of Object.keys(items)) {
+      const form = storedForm(items[key])
+      if (form.stored) out[key] = form.value
+    }
+    return out
+  }
+
   function hostArea(storage: object, areaName: string): Record<string, unknown> {
     const area: Record<string, unknown> = {}
     const qualifiedFor = (name: string): string => `storage.${areaName}.${name}`
@@ -2352,6 +2379,8 @@ export function installExtensionApi(
       define(area, name, function (...raw: unknown[]): unknown {
         const callback = takeCallback(raw)
         const args = normalizeArgs(qualifiedFor(name), raw, params)
+        // The host keeps these areas: it gets what Chrome would store, which is what can cross.
+        if (name === 'set' && isObject(args[0])) args[0] = storedItems(args[0])
         return settle(qualifiedFor(name), invoke('storage', name, [areaName, ...args]), callback)
       })
     }
@@ -2492,11 +2521,13 @@ export function installExtensionApi(
         await callNativeArea(area, nativeSet, [allowed])
         const changes: StorageChanges = {}
         for (const key of keys) {
-          const newValue = allowed[key]
-          if (newValue === undefined) continue
+          const form = storedForm(allowed[key])
+          if (!form.stored) continue
           const had = Object.prototype.hasOwnProperty.call(before, key)
-          if (had && sameJson(before[key], newValue)) continue
-          changes[key] = had ? { oldValue: before[key], newValue } : { newValue }
+          if (had && sameJson(before[key], form.value)) continue
+          changes[key] = had
+            ? { oldValue: before[key], newValue: form.value }
+            : { newValue: form.value }
         }
         notify(changes)
       })()
