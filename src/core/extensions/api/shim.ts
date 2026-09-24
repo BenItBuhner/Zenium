@@ -1741,6 +1741,73 @@ export function installExtensionApi(
     return sent
   }
 
+  /**
+   * Chrome's schema for `contexts` (`ContextType[]`, at least one) and `type` (`ItemType`) is
+   * checked in the binding, before anything reaches the browser: a value outside the enum is a
+   * synchronous `TypeError` with Chrome's text, not a `runtime.lastError`. SingleFile probes
+   * Firefox's `tab` context with `try { create({contexts: ["tab"], …}) } catch { tabMenuEnabled =
+   * false }` and builds its whole menu on the answer; an asynchronous refusal never reached the
+   * `catch`, so every `tab` item was refused and every later `update` of one rejected. The
+   * host's own validation (`contextMenus.ts`) stays as the second guard.
+   */
+  const menuEnums = ((): { contexts: string[]; type: string[] } => {
+    const constants = spec.contextMenus?.constants ?? {}
+    const values = (name: string): string[] => {
+      const table = constants[name]
+      return isObject(table)
+        ? Object.values(table).filter((v): v is string => typeof v === 'string')
+        : []
+    }
+    return { contexts: values('ContextType'), type: values('ItemType') }
+  })()
+  const typeNameOf = (value: unknown): string =>
+    value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+
+  function checkMenuProperties(
+    qualified: string,
+    parameter: string,
+    props: Record<string, unknown>
+  ): void {
+    const fail = (detail: string): TypeError =>
+      new TypeError(
+        `Error in invocation of ${qualified}: Error at parameter '${parameter}': ${detail}`
+      )
+    const { contexts, type } = props
+    // An optional property given as `null` reads as absent, as in Chrome's bindings.
+    if (contexts !== undefined && contexts !== null) {
+      if (!Array.isArray(contexts)) {
+        throw fail(
+          `Error at property 'contexts': Invalid type: expected array, found ${typeNameOf(contexts)}.`
+        )
+      }
+      if (contexts.length === 0) {
+        throw fail("Error at property 'contexts': Array must have at least 1 items; found 0.")
+      }
+      contexts.forEach((value: unknown, index: number) => {
+        if (typeof value !== 'string') {
+          throw fail(
+            `Error at property 'contexts': Error at index ${index}: Invalid type: expected string, found ${typeNameOf(value)}.`
+          )
+        }
+        if (!menuEnums.contexts.includes(value)) {
+          throw fail(
+            `Error at property 'contexts': Error at index ${index}: Value must be one of ${menuEnums.contexts.join(', ')}.`
+          )
+        }
+      })
+    }
+    if (type !== undefined && type !== null) {
+      if (typeof type !== 'string') {
+        throw fail(
+          `Error at property 'type': Invalid type: expected string, found ${typeNameOf(type)}.`
+        )
+      }
+      if (!menuEnums.type.includes(type)) {
+        throw fail(`Error at property 'type': Value must be one of ${menuEnums.type.join(', ')}.`)
+      }
+    }
+  }
+
   if (spec.contextMenus) {
     for (const root of roots) {
       const menus = namespaceOn(root, 'contextMenus')
@@ -1748,6 +1815,7 @@ export function installExtensionApi(
         const callback = takeCallback(raw)
         const props = raw[0]
         if (!isObject(props)) throw signatureError(menuQualified)
+        checkMenuProperties(menuQualified, 'createProperties', props)
         let id: string | number
         if (isMenuId(props.id)) {
           id = props.id
@@ -1775,6 +1843,7 @@ export function installExtensionApi(
           { name: 'id', type: ['integer', 'string'] },
           { name: 'updateProperties', type: 'object' }
         ])
+        if (isObject(props)) checkMenuProperties(qualified, 'updateProperties', props)
         const sent = isObject(props) && isMenuId(id) ? menuProperties(props, id) : props
         return settle(qualified, invoke('contextMenus', 'update', [id, sent]), callback)
       })

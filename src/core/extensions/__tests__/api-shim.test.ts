@@ -235,6 +235,59 @@ describe('installExtensionApi', () => {
     expect(clicks).toHaveLength(1)
   })
 
+  it("contextMenus.create and update throw Chrome's TypeError in the binding for a context or type outside the enum (SingleFile's probe of Firefox's tab context, caught by its try)", async () => {
+    installExtensionApi(host, API_SPEC)
+    const contextTypes =
+      'all, page, frame, selection, link, editable, image, video, audio, launcher, browser_action, page_action, action'
+    const created =
+      "Error in invocation of contextMenus.create(object createProperties, optional function callback): Error at parameter 'createProperties': "
+    // SingleFile's probe, verbatim from its worker: `await at.create({id:"temporary-id",contexts:["tab"],title:"title"})` in a try.
+    const probe = (): unknown =>
+      g.chrome.contextMenus.create({ id: 'temporary-id', contexts: ['tab'], title: 'title' })
+    expect(probe).toThrow(TypeError)
+    expect(probe).toThrow(
+      `${created}Error at property 'contexts': Error at index 0: Value must be one of ${contextTypes}.`
+    )
+    expect(() => g.chrome.contextMenus.create({ id: 'x', contexts: [], title: 't' })).toThrow(
+      `${created}Error at property 'contexts': Array must have at least 1 items; found 0.`
+    )
+    expect(() => g.chrome.contextMenus.create({ id: 'x', contexts: 'page', title: 't' })).toThrow(
+      `${created}Error at property 'contexts': Invalid type: expected array, found string.`
+    )
+    expect(() =>
+      g.chrome.contextMenus.create({ id: 'x', contexts: ['page', 7], title: 't' })
+    ).toThrow(
+      `${created}Error at property 'contexts': Error at index 1: Invalid type: expected string, found number.`
+    )
+    expect(() => g.chrome.contextMenus.create({ id: 'x', type: 'tab', title: 't' })).toThrow(
+      `${created}Error at property 'type': Value must be one of normal, checkbox, radio, separator.`
+    )
+    expect(() => g.chrome.contextMenus.update('x', { contexts: ['page', 'tab'] })).toThrow(
+      "Error in invocation of contextMenus.update(integer|string id, object updateProperties, optional function callback): Error at parameter 'updateProperties': Error at property 'contexts': Error at index 1: Value must be one of " +
+        `${contextTypes}.`
+    )
+    // The binding refused every one of them: nothing reached the host, no lastError was queued.
+    await flush()
+    expect(host.calls).toHaveLength(0)
+    // What Chrome admits goes through, an optional property given as null reading as absent.
+    expect(
+      g.chrome.contextMenus.create({
+        id: 'ok',
+        contexts: ['page', 'action'],
+        type: 'normal',
+        title: 'ok'
+      })
+    ).toBe('ok')
+    g.chrome.contextMenus.create({ id: 'nulls', contexts: null, type: null, title: 'n' })
+    g.chrome.contextMenus.update('ok', { type: 'checkbox', checked: true })
+    await flush()
+    expect(host.calls.map((c) => `${c.method}:${JSON.stringify(c.args[0])}`)).toEqual([
+      'create:{"id":"ok","contexts":["page","action"],"type":"normal","title":"ok"}',
+      'create:{"id":"nulls","contexts":null,"type":null,"title":"n"}',
+      'update:"ok"'
+    ])
+  })
+
   it('registers URL-filtered listeners with the host and delivers by filter id', () => {
     installExtensionApi(host, API_SPEC)
     const everyone: unknown[] = []
