@@ -271,6 +271,28 @@ describe('the site-information slot’s state (§9.29)', () => {
         kind: 'memory-saver'
       })
     })
+
+    it('a bell over a leaf on one tab: block > quiet bell > leaf > connection glyph, by kind, never by recency (§9.29, pr-434 ruling 1)', () => {
+      // One tab holding all three at once – a standing block of the camera, a quiet ask waiting,
+      // a wake the leaf's ten seconds run from – and the slot resolves by kind, one state at a
+      // time, as each above is taken away; the wake being the newest of the three moves it not
+      // one place.
+      const woken = {
+        ...tab('https://news.example/'),
+        memorySaver: { savedMb: 120, wokeAt: wokeAt + 5_000 }
+      } as Tab
+      const blocked = state(
+        [{ origin: 'https://news.example', permission: 'camera', decision: 'deny' }],
+        [ask('perm-q1', 't1')]
+      )
+      const chain = [
+        siteSlotState(blocked, woken, 'secure', { now: wokeAt + 5_000 }),
+        siteSlotState(quiet, woken, 'secure', { now: wokeAt + 5_000 }),
+        siteSlotState(none, woken, 'secure', { now: wokeAt + 5_000 }),
+        siteSlotState(none, woken, 'secure', { now: wokeAt + 5_000 + MEMORY_SAVER_LEAF_MS })
+      ].map((slot) => slot?.kind ?? 'connection')
+      expect(chain).toEqual(['blocked', 'quiet', 'memory-saver', 'connection'])
+    })
   })
 })
 
