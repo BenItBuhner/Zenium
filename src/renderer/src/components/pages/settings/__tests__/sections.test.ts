@@ -1877,7 +1877,8 @@ describe('the section model', () => {
     expect(findRow(privacy.groups, 'sites-reset-all')).toBeNull()
 
     // A stored default reads on the row; a site's answers list under their type and under the
-    // site, each forgotten or reset through the permission commands after a confirmation.
+    // site: under the type as item rows whose one action, Forget, runs at once (the lead's #418
+    // ruling 5), under the site reset through the permission command after a confirmation.
     const rules = [
       { origin: 'https://meet.example', permission: 'camera', decision: 'allow' as const },
       { origin: 'https://meet.example', permission: 'microphone', decision: 'deny' as const },
@@ -1890,13 +1891,13 @@ describe('the section model', () => {
     expect(row(stored, 'sites:camera').description).toBe('Sites cannot use camera')
     const cameraSite = row(stored, 'sites:camera:https://meet.example:camera')
     expect(cameraSite).toMatchObject({
-      kind: 'action',
+      kind: 'item',
       label: 'meet.example',
-      description: 'Allowed'
+      description: 'Allowed',
+      action: { label: 'Forget' }
     })
-    if (cameraSite.kind !== 'action') throw new Error('not an action')
-    expect(cameraSite.confirm?.action).toBe('Forget')
-    cameraSite.onPress?.()
+    if (cameraSite.kind !== 'item') throw new Error('not an item')
+    cameraSite.action?.onPress()
     expect(invoke).toHaveBeenCalledWith('permissions.forget', {
       origin: 'https://meet.example',
       permission: 'camera'
