@@ -8,6 +8,7 @@ import {
   session,
   shell,
   systemPreferences,
+  webContents,
   type IpcMainEvent,
   type Session,
   type WebContents
@@ -109,6 +110,7 @@ import { ElectronScreenCapture } from './screenCapture'
 import { ElectronShareSheet } from './shareSheet'
 import { ElectronGeolocation } from './geolocation'
 import { ElectronImportHost } from './importHost'
+import { ElectronTaskHost } from './tasks'
 import { ElectronMpris } from './mpris'
 import { ElectronSpeechHost } from './speech'
 import { sharedSpeechEngine } from './extensionApi/ttsBridge'
@@ -228,6 +230,8 @@ export class ElectronPlatform implements Platform {
   readonly sync = new ElectronSyncHost()
   /** Other browsers' profiles on this machine for Settings > Import (ID-23). */
   readonly importHost = new ElectronImportHost()
+  /** The task manager page's process list (`zen://tasks`); its network count attaches in `start`. */
+  readonly tasks: ElectronTaskHost
   /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
   readonly mediaSession?: ElectronMpris
   /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
@@ -291,6 +295,13 @@ export class ElectronPlatform implements Platform {
     )
     // The views hand "Save … As…" downloads to the downloads host, which then asks where to save.
     this.views = new ElectronTabViewHost(this.sessions, this.downloads)
+    this.tasks = new ElectronTaskHost({
+      tabIdForWebContents: (id) => {
+        const wc = webContents.fromId(id)
+        return wc ? this.views.tabIdForWebContents(wc) : undefined
+      },
+      isChromeWindow: (id) => this.windows.windowForWebContents(id) !== undefined
+    })
     this.screenCapture = new ElectronScreenCapture(this.views, () => this.browser.screenCapture)
     this.shareSheet = new ElectronShareSheet(
       () =>
@@ -585,6 +596,8 @@ export class ElectronPlatform implements Platform {
     // How a download's request ends (a refusing status, a `net::` error) names the reason an
     // interrupted row shows; Electron's download item alone only says "interrupted".
     this.downloads.observeRequests(this.requestBlocking)
+    // The task manager's network column counts on the same hook, only while the page samples.
+    this.tasks.attachNetwork(this.requestBlocking.multiplexer)
     // Extensions' chrome.webRequest listeners run over the same hook, after the rule engine;
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)

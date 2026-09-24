@@ -72,8 +72,9 @@ export class TaskService {
       privateBytes: sample.privateBytes,
       cpuPercent: sample.cpuPercent,
       networkBytesPerSecond: sample.networkBytesPerSecond,
-      // The browser process is the app: ending it is quitting, which has its own verb.
-      endable: sample.kind !== 'browser'
+      // The browser process is the app – ending it is quitting, which has its own verb – and
+      // the engine's plumbing (zygotes, sandbox helpers) is nothing a user ends one of.
+      endable: sample.kind !== 'browser' && sample.kind !== 'other'
     }
   }
 
