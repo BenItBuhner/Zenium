@@ -1853,10 +1853,11 @@
     opacity: 0.6;
   }
   /*
-   * The address dragged out of the URL pill (omnibox-43; SidebarTop's slot, lib/addressDrag.ts).
-   * The card Chromium snapshots for the drag image: the page's icon and name on the window's
-   * solid colour at level 2 and 90 % (§9.4's lifted item), a 28 px row at the control radius,
-   * no wider than 280 – kept off screen, since the drag image is a picture of it.
+   * The address dragged out of the URL pill (omnibox-43; SidebarTop's slot, lib/addressDrag.ts)
+   * and a bookmark dragged off the bar (bookmarks-15; BookmarksBar's chips). The card Chromium
+   * snapshots for the drag image: the page's icon and name on the window's solid colour at
+   * level 2 and 90 % (§9.4's lifted item), a 28 px row at the control radius, no wider than 280
+   * – kept off screen, since the drag image is a picture of it.
    */
   .zen-link-ghost {
     position: fixed;

@@ -22,3 +22,13 @@ export function forbiddenTargets(tree: BookmarkTree, ids: readonly string[]): Se
 export function nodeLabel(node: BookmarkNode): string {
   return node.title || node.url || (node.type === 'folder' ? 'Folder' : 'Bookmark')
 }
+
+/**
+ * A slot read off `siblings` as drawn – the node `id` among them – as `bookmark.move` counts
+ * it: among the siblings once `id` is taken out. A node dropped beside its own place lands
+ * where it was.
+ */
+export function slotWithout(siblings: readonly BookmarkNode[], id: string, index: number): number {
+  const at = siblings.findIndex((n) => n.id === id)
+  return at !== -1 && at < index ? index - 1 : index
+}
