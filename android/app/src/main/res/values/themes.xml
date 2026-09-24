@@ -16,8 +16,8 @@
          over the window until the chrome's first real frame (StartupSplash), then the browser
          theme below it. The bars are transparent with light icons over the indigo; the tone the
          chrome asks for meanwhile is applied as the splash lifts. API 33+ draws the icon for a
-         plain start too (an `am start` without --splashscreen-show-icon: the harness's and the
-         pair tool's), where the default would be the solid colour alone. -->
+         plain start too (an `am start` without the show-icon flag: the harness's and the pair
+         tool's), where the default would be the solid colour alone. -->
     <style name="Theme.Zen.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/ic_launcher_bg_indigo</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
