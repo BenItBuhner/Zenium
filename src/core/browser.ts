@@ -1411,7 +1411,7 @@ export class Browser {
     const node = this.bookmarks.create({
       title: tab.customTitle ?? tab.title,
       url: tab.url,
-      favicon: tab.favicon
+      favicon: bookmarkFaviconOf(tab, this.tabs.isPrivate(tab))
     })
     if (node) this.toast(`Bookmark added to ${this.bookmarks.pathLabel(node.id)}`, 'info', win)
   }
@@ -1438,7 +1438,7 @@ export class Browser {
       node = this.bookmarks.create({
         title: tab.customTitle ?? tab.title,
         url: tab.url,
-        favicon: tab.favicon
+        favicon: bookmarkFaviconOf(tab, this.tabs.isPrivate(tab))
       })
     }
     if (!node) return
@@ -3766,6 +3766,16 @@ export class Browser {
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0.5))
+}
+
+/**
+ * The favicon a new bookmark takes from the tab it is made from: none from a private tab. A
+ * private window bookmarks into the profile's store as Chrome's Incognito does (bookmarks-43),
+ * but writes nothing of the visit – the favicon backfill already skips private tabs (`tabs.ts`),
+ * and the star and Ctrl+D must not slip the icon in by the other door.
+ */
+function bookmarkFaviconOf(tab: Tab, isPrivate: boolean): string | null {
+  return isPrivate ? null : tab.favicon
 }
 
 /**
