@@ -62,6 +62,34 @@ export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 export type FormFactor = 'phone' | 'tablet' | 'desktop'
 
 /**
+ * A foldable's posture as the Android host reports it (`androidx.window`'s `FoldingFeature` of
+ * the window's layout, `Posture.kt`; OS-11): the device is `flat` (or has no fold in this
+ * window), or `halfOpened` with the hinge across the window – a laptop / tabletop or a book
+ * pose. The chrome lays itself out by the window's width, not the posture (`FormFactor`; no
+ * tabletop layout): the pose is logged and marked on the root (`lib/posture.ts`) for what reads
+ * it – a driver, a later surface that keeps clear of the hinge.
+ */
+export type PostureKind = 'flat' | 'halfOpened'
+
+export interface FoldHinge {
+  /** The hinge's bounds in CSS px, in the window's coordinates. */
+  left: number
+  top: number
+  right: number
+  bottom: number
+  /** A `horizontal` hinge splits the window top / bottom (tabletop); a `vertical` one left / right (book). */
+  orientation: 'horizontal' | 'vertical'
+  /** A hinge with a width or height (`FoldingFeature.isSeparating`): the two halves are separate. */
+  separating: boolean
+}
+
+export interface DevicePosture {
+  kind: PostureKind
+  /** The fold, when the window has one; a slab or a window off the fold has none. */
+  hinge: FoldHinge | null
+}
+
+/**
  * A surface of the chrome that answers a page's request the core would otherwise hold open for
  * it: the install prompt (`webapp.install`), the screen picker (`screenCaptureRequests`), the
  * share sheet (`shareRequests`). The renderer registers each as its component mounts
@@ -5702,6 +5730,12 @@ export interface Events {
    * (`lib/fullscreenLanding.ts`). A host without the word leaves it out.
    */
   insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
+  /**
+   * A foldable's posture from the Android host (`Posture.kt`, OS-11): the pose and the hinge's
+   * bounds in CSS px, at boot and whenever the window's layout says they changed. A host without
+   * the word never sends it; the chrome stands flat.
+   */
+  posture: DevicePosture
   /**
    * The core placed the page views as a `layout.report` asked: `hid` and `shown` name the tabs
    * whose views it took down or brought back under that report (a tab without a view, or one

@@ -1,15 +1,18 @@
 import type {
   AppLinkState,
+  DevicePosture,
   DownloadItem,
   EventName,
   Events,
   ExtensionErrorLevel,
   ExtensionErrorSource,
+  FoldHinge,
   HapticKind,
   HostCapabilities,
   LongCapture,
   PageEnvironment,
   Platform as PlatformOs,
+  PostureKind,
   ScreenshotSaved,
   ShareAction,
   ThumbnailPicture
@@ -389,6 +392,43 @@ export interface BootInfo {
    * host, which are online for good.
    */
   online?: boolean
+  /**
+   * A foldable's posture as the window's layout last reported it (`Posture.kt`, OS-11): the pose
+   * and the hinge's bounds in CSS px. Changes come as the `posture` host event. Absent in old
+   * hosts and in the preview host, which stand flat.
+   */
+  posture?: DevicePosture
+}
+
+export const FLAT_POSTURE: DevicePosture = { kind: 'flat', hinge: null }
+
+/**
+ * The posture as a host reports it: a payload the host lacks or garbles (an old host, a device
+ * without a fold, a preview without the word) is `flat` with no hinge; a hinge is kept only when
+ * every side is a finite number, its far sides past its near ones, and its orientation one of
+ * the two.
+ */
+export function devicePostureOf(payload: unknown): DevicePosture {
+  const raw = (payload ?? {}) as Partial<Record<string, unknown>>
+  const kind: PostureKind = raw.kind === 'halfOpened' ? 'halfOpened' : 'flat'
+  return { kind, hinge: hingeOf(raw.hinge) }
+}
+
+function hingeOf(payload: unknown): FoldHinge | null {
+  if (!payload || typeof payload !== 'object') return null
+  const raw = payload as Partial<Record<string, unknown>>
+  const sides = [raw.left, raw.top, raw.right, raw.bottom].map((value) => Number(value))
+  if (sides.some((side) => !Number.isFinite(side))) return null
+  const orientation =
+    raw.orientation === 'horizontal'
+      ? 'horizontal'
+      : raw.orientation === 'vertical'
+        ? 'vertical'
+        : null
+  if (!orientation) return null
+  const [left, top, right, bottom] = sides as [number, number, number, number]
+  if (right < left || bottom < top) return null
+  return { left, top, right, bottom, orientation, separating: raw.separating === true }
 }
 
 /**
@@ -437,6 +477,12 @@ export interface HostEventPayloads {
    * (`lib/fullscreenLanding.ts`). Absent from a host without the word.
    */
   insets: WindowInsets
+  /**
+   * The window's fold changed (`Posture.kt`: `androidx.window`'s layout info, OS-11) – the
+   * device folded flat or half-opened, the hinge moved across the window. Never from a host
+   * without the word or a window off any fold.
+   */
+  posture: DevicePosture
   /** A configuration change: screen class, keyboard / mouse or font scale differ now. */
   environment: PageEnvironment
   focus: { focused: boolean }
@@ -876,9 +922,10 @@ type Listener = (payload: unknown) => void
  * has rendered and `useMainEvents` has subscribed, whenever the boot yields to fetch a deferred
  * document (`fetchDeferredDocuments`, any profile document over `BOOT_INLINE_LIMIT`). Android
  * dispatches insets again only when they change (the keyboard, a turn), so without the replay
- * the chrome laid itself out under the status bar until then (Bennett's 0.3.79 report).
+ * the chrome laid itself out under the status bar until then (Bennett's 0.3.79 report). The
+ * fold's `posture` is another: the host reports it once at boot and then on a change alone.
  */
-const STICKY_EVENTS: ReadonlySet<EventName> = new Set<EventName>(['insets'])
+const STICKY_EVENTS: ReadonlySet<EventName> = new Set<EventName>(['insets', 'posture'])
 
 /** In-process event fan-out: the chrome runs in the same document as the core. */
 export class InProcessEvents {
@@ -1560,6 +1607,8 @@ export class AndroidPlatform implements Platform {
     // The window as the host last measured it; the bus keeps it for the chrome, which
     // subscribes once React has rendered (`InProcessEvents`, the sticky replay).
     this.events.send('insets', windowInsetsOf(boot.insets))
+    // The fold's posture the same way, from a host that has the word (the others stand flat).
+    if (boot.posture !== undefined) this.events.send('posture', devicePostureOf(boot.posture))
   }
 
   bind(browser: Browser): void {
@@ -1643,6 +1692,9 @@ export class AndroidPlatform implements Platform {
     switch (name) {
       case 'insets':
         this.events.send('insets', windowInsetsOf(payload))
+        return
+      case 'posture':
+        this.events.send('posture', devicePostureOf(payload))
         return
       case 'view.drawn':
         this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
