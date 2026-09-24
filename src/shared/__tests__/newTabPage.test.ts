@@ -155,7 +155,7 @@ describe('zen://newtab tokens', () => {
       /<div class="zen-toast" id="zen-toast" role="status" data-surface="page" hidden>/
     )
     // One vocabulary with the phone page (the shared rules give the look, the page its sizes):
-    // tiles, captions and Customize in the window family, the field a page surface.
+    // tiles, captions and Customise in the window family, the field a page surface.
     expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-tile \{[^}]*width: 64px; height: 64px;/)
     expect(shared).toMatch(/\.zen-ntp-tile \{[^}]*background: var\(--v2-control-fill\);/)
     expect(NEW_TAB_PAGE_STYLE).toMatch(/\.zen-ntp-icon \{ width: 32px; height: 32px; \}/)

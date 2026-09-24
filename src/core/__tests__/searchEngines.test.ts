@@ -352,6 +352,74 @@ describe('Settings > Search engines', () => {
     expect(browser.state.settings.searchEngines).toEqual([])
   })
 
+  it('adds an engine with the shortcut the form typed, `@` or not; empty or absent, one derived from the name (W5-4)', () => {
+    const { browser, win } = setup()
+    // Typed `@wiki`: the engine's own, as typed – not `@wikipedia2` derived from the name.
+    const id = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Wikipedia mirror',
+      url: 'https://wiki.example/w?search=%s',
+      keyword: '@wiki'
+    })
+    const added = browser.state.searchEngines.find((e) => e.id === id)!
+    expect(added.keyword).toBe('@wiki')
+    // The omnibox answers to it at once.
+    expect(matchEngineKeyword('@wiki rust', browser.state.searchEngines)?.engine.id).toBe(id)
+    // The `@` left off, and any case: the same normalising an edit's shortcut gets.
+    const second = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Marginalia',
+      url: 'https://search.marginalia.nu/search?query=%s',
+      keyword: ' MG '
+    })
+    expect(browser.state.searchEngines.find((e) => e.id === second)!.keyword).toBe('@mg')
+    // Empty: derived from the name, as before the form carried one – `@google` is the shipped
+    // engine's, so `@google2`; absent (a caller from before the argument): the same.
+    const third = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Google',
+      url: 'https://mirror.example/?q=%s',
+      keyword: ''
+    })
+    expect(browser.state.searchEngines.find((e) => e.id === third)!.keyword).toBe('@google2')
+    const fourth = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Other',
+      url: 'https://other.example/?q=%s'
+    })
+    expect(browser.state.searchEngines.find((e) => e.id === fourth)!.keyword).toBe('@other')
+    expect(browser.state.settings.searchEngines).toHaveLength(4)
+  })
+
+  it('refuses an added engine’s shortcut with the shared line – another engine’s word, one of Zenium’s scopes, spaces, a bare @ – and adds nothing (W5-4)', () => {
+    const { browser, win } = setup()
+    const mine = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Mine',
+      url: 'https://mine.example/?q=%s',
+      keyword: 'mine'
+    })
+    const add = (keyword: string): unknown =>
+      browser.handleCommand(win, 'search.addEngine', {
+        name: 'Another',
+        url: 'https://another.example/?q=%s',
+        keyword
+      })
+    // A shipped engine's word, the user's own engine's word (the new engine has no id, so every
+    // engine's is another's), a scope, spaces, the bare @: `engineKeywordProblem`'s lines, the
+    // ones the form shows as typed.
+    expect(() => add('@ddg')).toThrow('DuckDuckGo already answers to @ddg')
+    expect(() => add('Mine')).toThrow('Mine already answers to @mine')
+    expect(() => add('tabs')).toThrow('@tabs is one of Zenium’s own shortcuts')
+    expect(() => add('two words')).toThrow('A shortcut is one word, with no spaces')
+    expect(() => add('@')).toThrow('Type a word after the @')
+    expect(() => add(`@${'x'.repeat(65)}`)).toThrow('The shortcut is too long')
+    // The refused engine was never added; the template is checked first, as the form's order.
+    expect(browser.state.settings.searchEngines!.map((e) => e.id)).toEqual([mine])
+    expect(() =>
+      browser.handleCommand(win, 'search.addEngine', {
+        name: 'Another',
+        url: 'https://another.example/',
+        keyword: '@ddg'
+      })
+    ).toThrow('Put %s where the search terms go')
+  })
+
   it('falls back to the shipped default when the default engine is removed or unknown', () => {
     const { browser, win } = setup()
     const id = browser.handleCommand(win, 'search.addEngine', {

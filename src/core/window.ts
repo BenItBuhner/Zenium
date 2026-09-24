@@ -617,6 +617,17 @@ export class ZenWindow {
     if (!view || (!fresh && !view.isVisible())) return null
     return view.snapshot()
   }
+
+  /**
+   * The picture of the toolbox docked in a tab's box (§9.29), beside `snapshot`'s of the page,
+   * under the same terms; null where the host has none to give (no toolbox docked there, a
+   * host without an in-frame toolbox).
+   */
+  async snapshotDevtools(tabId: string, fresh = false): Promise<string | null> {
+    const view = this.browser.tabs.view(tabId)
+    if (!view?.snapshotDevtools || (!fresh && !view.isVisible())) return null
+    return view.snapshotDevtools()
+  }
 }
 
 function roundRect(r: Rect): Rect {

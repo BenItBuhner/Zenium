@@ -649,15 +649,16 @@ export interface SearchEngineFormValues {
  * description (`aria-describedby`) for a reader on the field, the sheet's own pattern
  * (`FieldSheet`). `initial` fills the fields from the engine being edited; the verb is the
  * caller's – "Add" for a new engine, "Save" for an edit – as the sheet's title is. The
- * shortcut is the one field that may be left empty, and only when adding: the engine derives a
- * keyword from the name then, and the core's `search.addEngine` takes none yet, so a word the
- * form insisted on would be typed to be dropped; a typed word is checked whichever the form
- * is. Editing, the engine's own word stands in the field and an empty one is refused – an
- * engine never holds one (#409's edit path, where the word is kept): "Give the engine a
- * shortcut" once the field is left or the form is submitted, and on submit the focus goes to
- * the field (§9.12's line on submit – a held button that answers Enter with nothing is the
- * failure the section names; the #419 lead check's ruling 1). The caller adds or saves, and
- * the sheet closes; what it refuses shows as the form's validation line.
+ * shortcut is the one field that may be left empty, and only when adding: the form's own
+ * choice (the #419 lead check's ruling 1) – an empty word is the engine's to derive from the
+ * name, a typed one the core keeps as the engine's `keyword` (#430's `search.addEngine`, its
+ * `keyword?`); a typed word is checked whichever the form is. Editing, the engine's own word
+ * stands in the field and an empty one is refused – an engine never holds one (#409's edit
+ * path, where the word is kept): "Give the engine a shortcut" once the field is left or the
+ * form is submitted, and on submit the focus goes to the field (§9.12's line on submit – a held
+ * button that answers Enter with nothing is the failure the section names; the #419 lead
+ * check's ruling 1). The caller adds or saves, and the sheet closes; what it refuses shows as
+ * the form's validation line.
  */
 export function SearchEngineForm({
   initial,

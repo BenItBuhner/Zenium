@@ -70,10 +70,10 @@ export interface ConfirmKeyboard {
  * root with it (`ConfirmDialog.tsx`), the desktop site-information popover's confirm levels
  * their container (`siteControls/SiteInfoPopover.tsx`), and the phone site-information sheet's
  * confirmation levels theirs (`siteinfo/SiteInfoSheet.tsx`, `tab: false` under the chassis's
- * wrap). The Settings' phone `ConfirmSheet` (`pages/settings/sheets.tsx`, `useDefaultAction`)
- * still keeps a copy of the rule word for word, written before this hook existed; `container`
- * and `enabled` above are shaped for it (the body to `closest('[role="dialog"]')`, off under
- * another sheet), and the swap is that file's to make.
+ * wrap), and the Settings' phone `ConfirmSheet` (`pages/settings/sheets.tsx`) its body's
+ * chassis dialog – `container` and `enabled` above are shaped for it (the body to
+ * `closest('[role="dialog"]')`, off under another sheet, `tab: false`), in place of the copy
+ * of the rule it kept before this hook existed.
  */
 export function useConfirmKeyboard(
   ref: RefObject<HTMLElement | null>,

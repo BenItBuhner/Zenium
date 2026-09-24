@@ -767,6 +767,57 @@ describe('a confirmation sheet’s keyboard is the prompt primitive’s (§9.22 
     expect(onPress).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(pageRow())
   })
+
+  /** The page's stack with the confirmation UNDER a second sheet, which `closeTop` drops. */
+  function Stacked({ row, over }: { row: ActionRow; over: ItemRow }): ReactElement {
+    const [requests, setRequests] = useState<readonly SheetRequest[]>([
+      { kind: 'confirm', rowId: row.id },
+      { kind: 'item', rowId: over.id }
+    ])
+    return (
+      <FrameDialogHost>
+        <SheetStack
+          requests={requests}
+          groups={[{ id: 'group', heading: null, rows: [row, over] }]}
+          ctx={{ open: () => undefined }}
+          closeTop={() => setRequests((all) => all.slice(0, -1))}
+        />
+      </FrameDialogHost>
+    )
+  }
+
+  it('a confirmation under another sheet leaves Enter alone, and takes it again once it is back on top', async () => {
+    const onPress = vi.fn()
+    const over: ItemRow = {
+      kind: 'item',
+      id: 'over',
+      label: 'Over',
+      sheet: { title: 'Over', groups: [] }
+    }
+    render(<Stacked row={confirmRow(false, onPress)} over={over} />)
+    await settle()
+    rest()
+    const sheets = [...mount!.querySelectorAll<HTMLElement>('.zen-sheet[role="dialog"]')]
+    expect(sheets).toHaveLength(2)
+    const confirm = sheets.find((el) => el.textContent?.includes('Sign out of sync?'))!
+    expect(confirm).not.toBeUndefined()
+    // Under: not the confirmation's key – nothing consumed, nothing done.
+    act(() => confirm.focus())
+    expect(enter(confirm).defaultPrevented).toBe(false)
+    rest()
+    expect(onPress).not.toHaveBeenCalled()
+    // The sheet over it goes (Escape is the top sheet's): the confirmation is on top again and
+    // its default key is back – `enabled` re-bound the listener.
+    escape()
+    rest()
+    await settle()
+    expect([...mount!.querySelectorAll('.zen-sheet[role="dialog"]')]).toEqual([confirm])
+    act(() => confirm.focus())
+    expect(enter(confirm).defaultPrevented).toBe(true)
+    rest()
+    await settle()
+    expect(onPress).toHaveBeenCalledTimes(1)
+  })
 })
 
 /*

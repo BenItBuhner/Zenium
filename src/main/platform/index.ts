@@ -631,8 +631,9 @@ export class ElectronPlatform implements Platform {
       // `getDisplayMedia` goes to the core's picker instead of Electron's flat refusal.
       this.screenCapture.attach(ses)
       attachWebAuthnHandlers(browser, this.views, ses)
-      // WebUSB / Web Serial / WebHID choosers and per-device grants (Web Bluetooth's is per view).
-      attachDeviceHandlers(browser, this.views, ses)
+      // WebUSB / Web Serial / WebHID choosers and per-device grants (Web Bluetooth's is per view);
+      // the private session's picks are granted for that session only.
+      attachDeviceHandlers(browser, this.views, ses, process.platform, containerId)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)
       )
