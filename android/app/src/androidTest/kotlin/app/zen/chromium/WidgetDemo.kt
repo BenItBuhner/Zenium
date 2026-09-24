@@ -674,9 +674,12 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         val started = watchStarts { fireAsTheLauncher(template) }
         val t0 = SystemClock.uptimeMillis()
         started.send()
-        val created = started.awaitMain(6_000)
+        // The landing read first, so its wall time is the landing's own; the watch is read after
+        // it (a MainActivity created meanwhile is still in it). The authorised run's "+6054 ms"
+        // was the watch's six-second wait, not the landing.
         val result = landed()
         val at = SystemClock.uptimeMillis() - t0
+        val created = started.awaitMain(0)
         expect("the warm $id shortcut lands ($result)", result != null)
         expect("the warm shortcut creates no MainActivity: the running one takes the landing through onNewIntent", created == null && activity === activityBefore && host === hostBefore && onMain { activity.intent } !== intentBefore)
         expect("Zenium comes back in front", awaitFront(ours = true))
