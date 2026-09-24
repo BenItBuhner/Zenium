@@ -415,9 +415,9 @@ function CaptureOverlay({
             type="button"
             className="zen-v2-button zen-capture-mode"
             // Off on `aria-disabled` (§9.30), not `disabled`: the button keeps the pointer and
-            // the keyboard, so its title – why nothing can be captured – can be reached.
+            // the keyboard, so its tooltip – why nothing can be captured – can be reached.
             aria-disabled={!viewport || undefined}
-            title={viewport ? undefined : NO_GEOMETRY}
+            data-tooltip={viewport ? undefined : NO_GEOMETRY}
             onClick={viewport ? () => dispatch({ type: 'pick', mode: 'viewport' }) : undefined}
             data-capture-visible
           >
@@ -428,7 +428,7 @@ function CaptureOverlay({
             type="button"
             className="zen-v2-button zen-capture-mode"
             aria-disabled={!viewport || undefined}
-            title={viewport ? undefined : NO_GEOMETRY}
+            data-tooltip={viewport ? undefined : NO_GEOMETRY}
             onClick={viewport ? () => dispatch({ type: 'pick', mode: 'fullPage' }) : undefined}
             data-capture-full
           >

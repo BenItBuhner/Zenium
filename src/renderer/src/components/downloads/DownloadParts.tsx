@@ -103,7 +103,7 @@ export function FileName({
       <button
         type="button"
         className="zen-dl-name zen-dl-name-open"
-        title={title}
+        data-tooltip={title}
         onClick={(e) => {
           e.stopPropagation()
           onOpen(e)
@@ -114,7 +114,7 @@ export function FileName({
     )
   }
   return (
-    <span className={cn('zen-dl-name', dim && 'zen-dl-deemph')} title={title}>
+    <span className={cn('zen-dl-name', dim && 'zen-dl-deemph')} data-tooltip={title}>
       {parts}
     </span>
   )
@@ -134,7 +134,7 @@ export function StatusText({ item }: { item: DownloadItem }): JSX.Element | null
         status.tone === 'warn' && 'zen-dl-status-warn',
         status.tone === 'danger' && 'zen-dl-status-danger'
       )}
-      title={status.hint}
+      data-tooltip={status.hint}
     >
       {status.text}
     </span>
@@ -200,7 +200,7 @@ export function DlButton({
       type="button"
       className={cn('zen-button', busy && 'zen-dl-busy', className)}
       data-variant={tone === 'secondary' ? undefined : tone}
-      title={title}
+      data-tooltip={title}
       disabled={disabled}
       aria-busy={busy || undefined}
       onClick={(e) => {
@@ -254,7 +254,7 @@ export function IconAction({
         busy && 'zen-dl-busy',
         className
       )}
-      title={title}
+      data-tooltip={title}
       aria-label={title}
       aria-pressed={pressed}
       aria-busy={busy || undefined}

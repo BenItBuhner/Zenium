@@ -22,7 +22,13 @@
  * first layout report, which a cold runner delivers late; before it the click would degrade to a
  * synthetic DOM click that arms nothing), and verified by the page itself (`event.isTrusted`).
  * When the click still did not arrive as trusted input and `xdotool` is available, the pointer
- * is driven through X instead, calibrated by a mousemove the page reports.
+ * is driven through X instead, calibrated by a mousemove the page reports. A degraded click is
+ * logged whole – the tool's second line names the cause (`input: synthetic – …`) – and when the
+ * cause names chrome covering the page it is dismissed (Escape) before the pointer goes in; the
+ * synthetic click has run the button's handler by then, so the page's flags are reset first,
+ * and a click the page did not report as trusted is retried once after a fresh mousemove, with
+ * what the page saw (`__clickTrusted`'s value, the element at the button's centre, the view's
+ * geometry, the tab listing) in the log either way.
  *
  * Usage: node .github/scripts/desktop-signin-smoke.mjs [path/to/zenium] [--out <dir>]
  *        [--gesture mcp|xdotool]
@@ -34,6 +40,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { removeTree } from './remove-tree.mjs'
 
 const argv = process.argv.slice(2)
@@ -103,13 +110,23 @@ const siteUrl = `http://localhost:${site.address().port}/`
 
 const config = mkdtempSync(join(tmpdir(), 'zenium-smoke-'))
 mkdirSync(join(config, 'Zenium', 'zen'), { recursive: true })
+// The build's version – package.json's, which `app.getVersion()` reports in the packaged build.
+const appVersion = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8')
+).version
 writeFileSync(
   join(config, 'Zenium', 'zen', 'state.json'),
   JSON.stringify({
     version: 3,
     settings: {
       onboardingDone: true,
-      defaultBrowserPromptDismissed: 1,
+      // The "Make Zenium your default browser" strip remembers an answer as the version it was
+      // given in (`defaultBrowserPromptDismissed: string | null`; a number read as no answer,
+      // and the strip showed): this build's version, so the strip stays down on a runner, where
+      // no browser is the default. It sits in the frame above the page and arrives when the host
+      // answers – late on a busy runner, and a strip arriving mid-run moves the page under a
+      // calibrated pointer by its 40 px.
+      defaultBrowserPromptDismissed: appVersion,
       updates: { checkAutomatically: false },
       agents: {
         enabled: true,
@@ -246,64 +263,144 @@ async function waitOnScreen() {
 /**
  * The MCP click: trusted OS-level input (`webContents.sendInputEvent` at the button) when the
  * page is on screen; the tool degrades to a synthetic DOM click otherwise, which the page tells
- * apart through `isTrusted`.
+ * apart through `isTrusted`. The result's first line is the tool's headline, logged as before;
+ * when the input was synthetic its second line names the cause (`input: synthetic – …`, the
+ * core's `routeInput` note), and the result is then logged whole – that line is the diagnosis,
+ * and main's boot smoke degraded twice with only the headline in the log. Returns whether the
+ * page saw trusted input and, when it did not, the chrome the cause names as covering the page
+ * (for `clickThroughXdotool` to dismiss), or null when it names none.
  */
 async function clickThroughMcp() {
   const out = await tool('browser_click', { target: 'text=open' })
-  log(`browser_click: ${out.split('\n')[0]}`)
-  return (await evaluate('window.__clickTrusted')) === true
+  const [headline, ...rest] = out.split('\n')
+  log(`browser_click: ${headline}`)
+  const value = await evaluate('window.__clickTrusted')
+  if (value === true) return { trusted: true, cover: null }
+  for (const line of rest) log(`  ${line}`)
+  log(`  window.__clickTrusted after browser_click: ${JSON.stringify(value)}`)
+  const cause = rest
+    .map((line) => /^input: synthetic – (.*), so the event/.exec(line)?.[1])
+    .find(Boolean)
+  const cover = cause && /covers|in front|on screen/.test(cause) ? cause : null
+  return { trusted: false, cover }
 }
+
+/** The page's view: its screen position, the button's centre in it, and what it can see of itself. */
+const VIEW_EXPRESSION = `(() => {
+  const r = document.getElementById('open').getBoundingClientRect()
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+  const at = document.elementFromPoint(cx, cy)
+  return {
+    sx: screenX, sy: screenY, ow: outerWidth, oh: outerHeight, iw: innerWidth, ih: innerHeight,
+    cx, cy, atCentre: at ? at.tagName.toLowerCase() + (at.id ? '#' + at.id : '') : null,
+    focus: document.hasFocus(), vis: document.visibilityState,
+    trusted: window.__clickTrusted, lastMove: window.__lastMove
+  }
+})()`
 
 /**
  * A real pointer through X: the page's view is found by moving the pointer into the window
  * (`window.screenX/Y` and `outerWidth/Height` are the window's) until the page reports a
  * mousemove, whose screen and client coordinates give the view's origin; the button's centre
- * is then clicked at its screen position.
+ * is then clicked at its screen position. `cover` is what the MCP click's cause named as
+ * covering the page; it is dismissed first, and so is whatever keeps every probe from the page:
+ * Escape – the URL bar overlay closes on it one stage at a time (its popup, then the bar; the
+ * chrome's transient surfaces likewise) – then the probes again, up to three rounds, a trusted
+ * mousemove reaching the page being the truth (the page's own `visibilityState` stays
+ * `visible` under the chrome's picture of it). The synthetic click has run the button's handler
+ * by then (`isTrusted` false, `window.open` blocked), so the page's flags are reset before the
+ * pointer's click, or its answer would be the synthetic click's. A click the page does not
+ * report as trusted is retried once after a fresh mousemove (away a few pixels, then back onto
+ * the point, `--sync` both, so a motion event precedes the button press), and the log says what
+ * the page saw after each: `__clickTrusted`'s value (null – no click reached the button; false –
+ * the synthetic click's value survived), the element at the button's centre, the view's geometry
+ * and the last trusted mousemove, the X pointer's window, the tab listing.
  */
-async function clickThroughXdotool() {
+async function clickThroughXdotool(cover) {
   const display = process.env.DISPLAY
   if (!display || !has('xdotool')) {
     log('xdotool gesture unavailable (no DISPLAY or xdotool)')
     return false
   }
-  const xdotool = (...args) => execFileSync('xdotool', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-  const geometry = await evaluate(
-    `(() => { const r = document.getElementById('open').getBoundingClientRect(); return { sx: screenX, sy: screenY, ow: outerWidth, oh: outerHeight, cx: r.left + r.width / 2, cy: r.top + r.height / 2 } })()`
+  // `--sync` waits for the pointer's motion; the timeout keeps a wait that never ends (a pointer
+  // X will not move) from wedging the smoke.
+  const xdotool = (...args) =>
+    execFileSync('xdotool', args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 })
+      .toString()
+      .trim()
+  await evaluate(
+    '(window.__clickTrusted = null, window.__popupMessage = null, window.__popup = null, true)'
   )
-  await evaluate('(window.__lastMove = null, true)')
-  let origin = null
-  for (const [fx, fy] of [
-    [0.6, 0.6],
-    [0.75, 0.5],
-    [0.5, 0.8],
-    [0.9, 0.9]
-  ]) {
-    const x = Math.round(geometry.sx + geometry.ow * fx)
-    const y = Math.round(geometry.sy + geometry.oh * fy)
-    xdotool('mousemove', '--sync', String(x), String(y))
-    const move = await waitFor('window.__lastMove', 1200)
-    if (move && move.trusted) {
-      origin = { x: move.screenX - move.clientX, y: move.screenY - move.clientY }
+  const geometry = await evaluate(VIEW_EXPRESSION)
+  const calibrate = async () => {
+    await evaluate('(window.__lastMove = null, true)')
+    for (const [fx, fy] of [
+      [0.6, 0.6],
+      [0.75, 0.5],
+      [0.5, 0.8],
+      [0.9, 0.9]
+    ]) {
+      const x = Math.round(geometry.sx + geometry.ow * fx)
+      const y = Math.round(geometry.sy + geometry.oh * fy)
+      xdotool('mousemove', '--sync', String(x), String(y))
+      const move = await waitFor('window.__lastMove', 1200)
+      if (move && move.trusted) {
+        const origin = { x: move.screenX - move.clientX, y: move.screenY - move.clientY }
+        log(
+          `xdotool: pointer at (${x}, ${y}) reached the page; view origin (${origin.x}, ${origin.y})`
+        )
+        return origin
+      }
       log(
-        `xdotool: pointer at (${x}, ${y}) reached the page; view origin (${origin.x}, ${origin.y})`
+        `xdotool: pointer at (${x}, ${y}) did not reach the page (${xdotool('getmouselocation')}; lastMove ${JSON.stringify(move)})`
       )
-      break
     }
+    return null
+  }
+  let origin = null
+  for (let round = 1; round <= 3 && !origin; round++) {
+    if (cover || round > 1) {
+      log(
+        round === 1
+          ? `xdotool: the click's cause names chrome over the page (${cover}); Escape to dismiss it`
+          : `xdotool: Escape (round ${round}: a surface may still cover the page), then the probes again`
+      )
+      xdotool('key', 'Escape')
+      await sleep(600)
+    }
+    origin = await calibrate()
   }
   if (!origin) {
     log(
-      `xdotool: no pointer movement reached the page (window at ${geometry.sx},${geometry.sy} ${geometry.ow}x${geometry.oh})`
+      `xdotool: no pointer movement reached the page (window at ${geometry.sx},${geometry.sy} ${geometry.ow}x${geometry.oh}, view ${geometry.iw}x${geometry.ih}, ${geometry.vis}, focus ${geometry.focus})`
     )
     return false
   }
   const x = Math.round(origin.x + geometry.cx)
   const y = Math.round(origin.y + geometry.cy)
-  xdotool('mousemove', '--sync', String(x), String(y))
-  await sleep(120)
-  xdotool('click', '1')
-  log(`xdotool: clicked at (${x}, ${y})`)
-  await sleep(400)
-  return (await evaluate('window.__clickTrusted')) === true
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt === 2) {
+      xdotool('mousemove', '--sync', String(x - 8), String(y - 8))
+      await sleep(120)
+    }
+    xdotool('mousemove', '--sync', String(x), String(y))
+    await sleep(120)
+    xdotool('click', '1')
+    log(
+      `xdotool: clicked at (${x}, ${y})${attempt === 2 ? ' – the retry, after a fresh mousemove' : ''}`
+    )
+    await sleep(400)
+    const after = await evaluate(VIEW_EXPRESSION)
+    if (after.trusted === true) return true
+    const moved = after.lastMove
+      ? `(${after.lastMove.screenX}, ${after.lastMove.screenY}) → client (${after.lastMove.clientX}, ${after.lastMove.clientY}), view origin (${after.lastMove.screenX - after.lastMove.clientX}, ${after.lastMove.screenY - after.lastMove.clientY})`
+      : 'none'
+    log(
+      `xdotool: window.__clickTrusted after the click: ${JSON.stringify(after.trusted)} (null: no click reached the button; false: the synthetic click's value); at the button's centre: ${after.atCentre}; view ${after.iw}x${after.ih} at window ${after.sx},${after.sy} ${after.ow}x${after.oh}, ${after.vis}, focus ${after.focus}; last trusted mousemove ${moved}; pointer ${xdotool('getmouselocation')}`
+    )
+    log(`xdotool: ${await tabsListing()}`)
+  }
+  return false
 }
 
 // --- failure artefacts -----------------------------------------------------------------------
@@ -416,14 +513,17 @@ try {
   )
   let gesture = 'none'
   let trusted = false
+  let cover = null
   if (gestureMode !== 'xdotool') {
-    trusted = await clickThroughMcp()
+    const mcp = await clickThroughMcp()
+    trusted = mcp.trusted
+    cover = mcp.cover
     gesture = trusted
       ? 'browser_click (sendInputEvent)'
       : 'browser_click degraded to a synthetic click'
   }
   if (!trusted) {
-    if (await clickThroughXdotool()) {
+    if (await clickThroughXdotool(cover)) {
       trusted = true
       gesture = gestureMode === 'xdotool' ? 'xdotool' : `${gesture}; xdotool`
     } else if (gestureMode === 'xdotool') gesture = 'xdotool failed'

@@ -94,7 +94,7 @@ describe('a failed row', () => {
     const line = status(row)
     expect(line.textContent).toBe('Failed · Check internet connection')
     expect(line.className).toContain('zen-dl-status-danger')
-    expect(line.getAttribute('title')).toBe('Check internet connection')
+    expect(line.getAttribute('data-tooltip')).toBe('Check internet connection')
     expect(row.getAttribute('aria-label')).toBe('report.pdf. Failed · Check internet connection')
     expect(actions(row)).toEqual(['Retry', 'Remove from list'])
   })

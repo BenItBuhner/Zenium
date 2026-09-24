@@ -51,10 +51,10 @@ import { captureUpdates, type CapturesHeld } from './captureRelay'
 import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
+import { landFromIntent } from './landing'
 import { schemeForPages } from './pageScheme'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
-import { openShortcutPrivateTab } from './privateShortcut'
 import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
@@ -116,8 +116,14 @@ export interface HostGlobal {
    * evaluation's result (the array as JSON text) while the system's action mode is coming up.
    */
   selectionMenu(tabId: string, json: string | null): SelectionToolbarItem[]
-  /** The launcher's "New private tab" shortcut: a private tab in the current space. */
-  newPrivateTab(): void
+  /**
+   * The search widget's or a launcher shortcut's landing state (`Landing.kt`'s intent extra,
+   * WID-07) on a WARM start – `onNewIntent`, or an intent in the boot's tail: the app opens
+   * straight in it – a new tab with the omnibox focused, listening, the QR scanner, or a private
+   * tab (`landing.ts`). A cold start's landing does not come this way: it rides the boot answer
+   * (`BootInfo.landing`) and is applied in `bootAndroid`'s own run, before the first render.
+   */
+  land(state: string): void
 }
 /**
  * Start Zen inside the chrome WebView: build the core on the Android platform, expose the
@@ -178,6 +184,13 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
     }
   )
   browser.start()
+  // The state a widget face or a launcher shortcut asked this cold start to open in (WID-07):
+  // the boot answer carried it, and it lands here, in the same synchronous run as the start and
+  // before `main.tsx` can render – the restored tab never takes a frame. The ready queue the
+  // warm path uses (`ChromeWebView.land`) would be too late: it fires at `onPageFinished`, after
+  // this run. A start with no landing reads one null here and does nothing else.
+  if (typeof boot.landing === 'string')
+    landFromIntent(boot.landing, platform.browser, platform.window)
   hostGlobal.flush()
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
@@ -506,10 +519,10 @@ function installHostGlobal(
             parse<{ text?: unknown } | undefined>(json) ?? {}
           ) ?? [])
         : [],
-    newPrivateTab: () =>
+    land: (state) =>
       withPlatform((platform) => {
-        openShortcutPrivateTab(platform.browser, platform.window)
-      })
+        landFromIntent(state, platform.browser, platform.window)
+      }, 'land')
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
   return {
