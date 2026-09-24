@@ -205,22 +205,22 @@ function notesCommand() {
   if (!existsSync(notesFile)) fail(`${notesFile} does not exist (run release-notes.mjs first)`)
   const notes = readFileSync(notesFile, 'utf8').replace(/\r\n?/g, '\n').trim()
   if (!notes) fail(`${notesFile} is empty`)
+  // Decided before anything is written: a signed manifest must leave here signed.
+  const keyText = (process.env.UPDATE_MANIFEST_SIGNING_KEY ?? '').trim()
+  if (!keyText && existsSync(signaturePath))
+    fail(
+      `${signaturePath} exists but UPDATE_MANIFEST_SIGNING_KEY is not set: the manifest would change and its signature no longer verify`
+    )
+  const key = keyText ? loadPrivateKey(keyText) : null
 
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   manifest.notes = notes
   const manifestText = `${JSON.stringify(manifest, null, 2)}\n`
   writeFileSync(manifestPath, manifestText)
   console.log(`Wrote the release body (${notes.length} characters) into ${manifestPath}`)
-
-  const keyText = (process.env.UPDATE_MANIFEST_SIGNING_KEY ?? '').trim()
-  if (keyText) {
-    const key = loadPrivateKey(keyText)
+  if (key) {
     writeFileSync(signaturePath, `${signManifest(manifestText, key)}\n`)
     console.log(`Re-signed with ${rawPublicKey(key)} → ${signaturePath}`)
-  } else if (existsSync(signaturePath)) {
-    fail(
-      `${signaturePath} exists but UPDATE_MANIFEST_SIGNING_KEY is not set: the manifest changed and its signature would no longer verify`
-    )
   }
 }
 
