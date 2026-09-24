@@ -254,6 +254,10 @@ describe('TasksPage', () => {
   it('lists every process in the core’s order with its kind, pid and figures, the verb disabled', async () => {
     const el = await mountPage()
     expect(text(el.querySelector('h1.zen-page-title'))).toBe('Task Manager')
+    // The description names every column the table draws – network with memory and CPU.
+    expect(text(el.querySelector('.zen-page-title-desc'))).toBe(
+      'Every process Zenium is running, with the memory, CPU and network it uses. Select one to end it.'
+    )
     expect(el.querySelector<HTMLInputElement>('[data-testid="tasks-search"]')!.placeholder).toBe(
       'Find a task'
     )

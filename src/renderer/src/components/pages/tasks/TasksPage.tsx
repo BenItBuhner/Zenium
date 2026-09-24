@@ -243,7 +243,7 @@ export function TasksPage({ tab }: { state: UIState; tab: Tab }): JSX.Element {
         <>
           <PageTitleBlock
             title="Task Manager"
-            description="Every process Zenium is running, with the memory and CPU it takes. Select one to end it."
+            description="Every process Zenium is running, with the memory, CPU and network it uses. Select one to end it."
           />
           <PageSearchField
             field={field}
