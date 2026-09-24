@@ -686,32 +686,47 @@ describe('ElectronTabView and the developer tools dock', () => {
     expect(d.openedAt).toEqual(['bottom', 'undocked'])
   })
 
-  it('moves an open toolbox through the frontend’s own dock controller, and reopens at the dock when the frontend cannot', async () => {
-    const { view, wc, closed } = setup()
-    view.openDevTools('toggle', 'bottom')
-    await settle()
-    const frontend = wc.devToolsWebContents!
-    view.setDevtoolsDock('right')
-    await settle()
-    const move = frontend.scripts.at(-1)!
-    expect(move).toContain('DockController')
-    expect(move).toContain('"right"')
-    expect(closed()).toBe(0)
-    expect(wc.devtoolsOpened).toHaveLength(1)
+  it('moves an open toolbox through the frontend’s own dock controller, and reopens at the dock when the frontend cannot – with a line on the log naming the tab and the dock', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { view, wc, closed } = setup()
+      view.openDevTools('toggle', 'bottom')
+      await settle()
+      const frontend = wc.devToolsWebContents!
+      view.setDevtoolsDock('right')
+      await settle()
+      const move = frontend.scripts.at(-1)!
+      expect(move).toContain('DockController')
+      expect(move).toContain('"right"')
+      expect(closed()).toBe(0)
+      expect(wc.devtoolsOpened).toHaveLength(1)
+      // The happy path is silent: the frontend took the move.
+      expect(warn).not.toHaveBeenCalled()
 
-    // A frontend without the module: the toolbox is closed and reopened at the dock instead.
-    frontend.rejecting = 'DockController'
-    view.setDevtoolsDock('undocked')
-    await settle()
-    await settle()
-    expect(closed()).toBe(1)
-    expect(wc.devtoolsOpened.at(-1)).toEqual({ mode: 'undocked', activate: true })
-    expect(wc.isDevToolsOpened()).toBe(true)
+      // A frontend without the module: the toolbox is closed and reopened at the dock instead,
+      // and the log says which tab's toolbox blinked, at which dock, and why.
+      frontend.rejecting = 'DockController'
+      view.setDevtoolsDock('undocked')
+      await settle()
+      await settle()
+      expect(closed()).toBe(1)
+      expect(wc.devtoolsOpened.at(-1)).toEqual({ mode: 'undocked', activate: true })
+      expect(wc.isDevToolsOpened()).toBe(true)
+      expect(warn).toHaveBeenCalledTimes(1)
+      const line = String(warn.mock.calls[0]![0])
+      expect(line).toContain('[zen] devtools:')
+      expect(line).toContain('tab_devtools')
+      expect(line).toContain('at undocked')
+      expect(line).toContain('module not found')
 
-    // Nothing to move while the toolbox is closed.
-    const idle = setup()
-    idle.view.setDevtoolsDock('right')
-    expect(idle.wc.devtoolsOpened).toEqual([])
+      // Nothing to move while the toolbox is closed – and nothing on the log.
+      const idle = setup()
+      idle.view.setDevtoolsDock('right')
+      expect(idle.wc.devtoolsOpened).toEqual([])
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 

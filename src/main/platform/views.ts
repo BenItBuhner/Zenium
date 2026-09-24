@@ -936,23 +936,30 @@ export class ElectronTabView implements TabView {
    * `DockController`, the path its buttons take, so the toolbox keeps its panel and drawer and
    * persists the state as the user's – and says the new dock on its console, the read-back the
    * core hears (`onDevtoolsDockChanged`). Should this Chromium keep the module elsewhere, the
-   * toolbox is closed and reopened at the dock instead.
+   * toolbox is closed and reopened at the dock instead – one blink of the toolbox, and a line on
+   * the app's log naming the tab and the dock, so a Chromium that takes this path is noticed.
    */
   setDevtoolsDock(dock: DevtoolsDock): void {
     const wc = this.wc
     if (wc.isDestroyed() || !wc.isDevToolsOpened()) return
     this.devtoolsDock = dock
     const frontend = wc.devToolsWebContents
-    const reopen = (): void => {
+    const reopen = (why: string): void => {
       if (wc.isDestroyed()) return
+      const tabId = this.owner.tabIdForWebContents(wc) ?? `webContents ${wc.id}`
+      console.warn(`[zen] devtools: reopening the toolbox of ${tabId} at ${dock} – ${why}`)
       wc.closeDevTools()
       wc.openDevTools({ mode: dock, activate: true })
     }
     if (!frontend || frontend.isDestroyed()) {
-      reopen()
+      reopen('the frontend is gone')
       return
     }
-    frontend.executeJavaScript(devtoolsMoveScript(dock), true).catch(reopen)
+    frontend
+      .executeJavaScript(devtoolsMoveScript(dock), true)
+      .catch((error: unknown) =>
+        reopen(`the frontend refused the move: ${error instanceof Error ? error.message : String(error)}`)
+      )
   }
 
   /**
