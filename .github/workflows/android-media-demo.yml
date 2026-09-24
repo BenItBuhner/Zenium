@@ -57,6 +57,7 @@ jobs:
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
         DEMO_VIDEO=${{ inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
+        DEMO_REVOKE=${{ inputs.driver == 'ui' && '' || 'android.permission.POST_NOTIFICATIONS' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       # The `AndroidDesktop_x64` snapshot ships com.android.webview with x86_64 native code (the
       # plain `Android` snapshot is armeabi-v7a only and cannot be dlopen'ed on an x86_64 emulator).
@@ -92,6 +93,7 @@ jobs:
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
         DEMO_VIDEO=${{ inputs.driver == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
+        DEMO_REVOKE=${{ inputs.driver == 'ui' && '' || 'android.permission.POST_NOTIFICATIONS' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64

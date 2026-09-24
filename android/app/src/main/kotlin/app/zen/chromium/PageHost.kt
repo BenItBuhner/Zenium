@@ -43,6 +43,11 @@ interface PageHost {
     val keys: Keys
     val downloads: Downloads
     val permissions: Permissions
+    /**
+     * The "<site> is using your microphone" card and its service while a page captures (NOT-13);
+     * the browser window's, fed by the core's per-tab fold – a custom tab has none.
+     */
+    val capture: CaptureNotifications? get() = null
     /** Links that leave the web (`mailto:`, `intent://`, a site's own app). */
     val externalProtocols: ExternalProtocols
     /** HTTP sign-in and client-certificate requests. */

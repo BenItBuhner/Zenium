@@ -5,6 +5,7 @@ import type {
   CommandResult,
   EventName,
   Events,
+  Tab,
   UIState
 } from '@shared/types'
 import { cssColorToHex, resolveTheme, rgbToHex } from '@shared/theme'
@@ -45,13 +46,14 @@ import {
 import { applyTextScale } from '@renderer/lib/textScale'
 import { pushToast } from '@renderer/lib/ui'
 import { Bridge, getNativeBridge } from './bridge'
+import { captureUpdates, type CapturesHeld } from './captureRelay'
 import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
+import { landFromIntent } from './landing'
 import { schemeForPages } from './pageScheme'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
-import { openShortcutPrivateTab } from './privateShortcut'
 import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
@@ -113,8 +115,14 @@ export interface HostGlobal {
    * evaluation's result (the array as JSON text) while the system's action mode is coming up.
    */
   selectionMenu(tabId: string, json: string | null): SelectionToolbarItem[]
-  /** The launcher's "New private tab" shortcut: a private tab in the current space. */
-  newPrivateTab(): void
+  /**
+   * The search widget's or a launcher shortcut's landing state (`Landing.kt`'s intent extra,
+   * WID-07) on a WARM start – `onNewIntent`, or an intent in the boot's tail: the app opens
+   * straight in it – a new tab with the omnibox focused, listening, the QR scanner, or a private
+   * tab (`landing.ts`). A cold start's landing does not come this way: it rides the boot answer
+   * (`BootInfo.landing`) and is applied in `bootAndroid`'s own run, before the first render.
+   */
+  land(state: string): void
 }
 /**
  * Start Zen inside the chrome WebView: build the core on the Android platform, expose the
@@ -161,10 +169,18 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncPullToRefresh(bridge, platform)
   syncBarHide(bridge, boot)
   syncHistoryNavBubble(bridge)
+  syncCaptureState(bridge, browser)
   // The chrome's text at the system font size (A11Y-05): the host drew it at `textZoom` already;
   // the line boxes follow from here. Changes arrive with the `environment` event (platform.ts).
   applyTextScale(boot.environment)
   browser.start()
+  // The state a widget face or a launcher shortcut asked this cold start to open in (WID-07):
+  // the boot answer carried it, and it lands here, in the same synchronous run as the start and
+  // before `main.tsx` can render – the restored tab never takes a frame. The ready queue the
+  // warm path uses (`ChromeWebView.land`) would be too late: it fires at `onPageFinished`, after
+  // this run. A start with no landing reads one null here and does nothing else.
+  if (typeof boot.landing === 'string')
+    landFromIntent(boot.landing, platform.browser, platform.window)
   hostGlobal.flush()
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
@@ -261,6 +277,23 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
     if (frame !== null) cancelAnimationFrame(frame)
     frame = null
     send(current())
+  })
+}
+
+/**
+ * The tabs' capture to the host (NOT-13): the core folds every frame's `capture-state` report
+ * into `tab.capture` (`TabManager.refreshAlert`) and commits; the host hears each change once –
+ * the kinds, the site, the privacy – and an all-clear for a tab whose capture ended or which
+ * closed (`captureUpdates`), and keeps its "is using your microphone" card and the foreground
+ * service that holds the capture open in the background by them (`CaptureNotifications.kt`).
+ */
+function syncCaptureState(bridge: Bridge, browser: Browser): void {
+  const held: CapturesHeld = new Map()
+  const isPrivate = (tab: Tab): boolean => browser.tabs.isPrivate(tab)
+  browser.state.subscribe(() => {
+    const tabs = Object.values(browser.state.model.tabs)
+    for (const update of captureUpdates(held, tabs, isPrivate))
+      bridge.send('capture.update', update)
   })
 }
 
@@ -470,10 +503,10 @@ function installHostGlobal(
             parse<{ text?: unknown } | undefined>(json) ?? {}
           ) ?? [])
         : [],
-    newPrivateTab: () =>
+    land: (state) =>
       withPlatform((platform) => {
-        openShortcutPrivateTab(platform.browser, platform.window)
-      })
+        landFromIntent(state, platform.browser, platform.window)
+      }, 'land')
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
   return {

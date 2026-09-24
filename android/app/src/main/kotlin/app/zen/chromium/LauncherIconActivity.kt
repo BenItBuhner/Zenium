@@ -16,20 +16,21 @@ import android.os.Bundle
  * happens; the browser's task is rooted at `MainActivity` itself, which no alias switch touches.
  * The affinity is empty so the browser never joins this task.
  *
- * The shortcut needs the same indirection for another reason: the system stamps every manifest
+ * The shortcuts need the same indirection for another reason: the system stamps every manifest
  * shortcut's intent with `FLAG_ACTIVITY_CLEAR_TASK` (`ShortcutParser`, "same flag as what
  * TaskStackBuilder adds"), so a shortcut aimed at `MainActivity` would clear the browser's task
  * and start the activity over. Aimed here, the flag clears this activity's own task, and the
- * browser's gets the shortcut's action through `onNewIntent` – a new private tab in the running
- * window ([PrivateBrowsing.ACTION_NEW_TAB]), the way Chrome's `LauncherShortcutActivity` relays
- * "New Incognito tab".
+ * browser's gets the state the shortcut asks for through `onNewIntent` – the [Landing] extra
+ * carried over as it came (a new tab, the omnibox, the QR scanner), the private shortcut's
+ * action read as the private landing ([Landing.forwarded]) – the way Chrome's
+ * `LauncherShortcutActivity` relays "New Incognito tab".
  */
 class LauncherIconActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val forward = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val action = PrivateBrowsing.forwardedAction(intent?.action)
-        if (action != null) forward.action = action
+        val landing = Landing.forwarded(intent?.action, intent?.getStringExtra(Landing.EXTRA))
+        if (landing != null) forward.setAction(Intent.ACTION_MAIN).putExtra(Landing.EXTRA, landing)
         else forward.setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         startActivity(forward)
         finish()

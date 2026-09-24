@@ -64,7 +64,6 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     private val live = HashMap<String, Live>() // token → transfer
     private val byCoreId = HashMap<String, Live>()
     private var seq = 0
-    private var askedNotifications = false
 
     /** `CONTENT`: a document on the device another app opened with Zenium (`content:` / `file:`; LocalDocuments), copied into Downloads. */
     enum class Kind { HTTP, DATA, BLOB, CONTENT }
@@ -521,16 +520,20 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         }
     }
 
+    /**
+     * Before the first byte: the storage permission of old Androids for a public download, and the
+     * app's one notification ask (Android 13, shared with web notifications and extensions:
+     * `Permissions.ensureNotificationsAllowed`) ahead of the first download's card. A refusal
+     * stops neither: the transfer runs, its card stays down.
+     */
     private fun ensurePermissions(l: Live, then: () -> Unit) {
-        val needed = ArrayList<String>()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && l.destination is Destination.Default && l.sink == null &&
             !granted(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        ) needed += Manifest.permission.WRITE_EXTERNAL_STORAGE
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !askedNotifications && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
-            askedNotifications = true
-            needed += Manifest.permission.POST_NOTIFICATIONS
+        ) {
+            activity.requestRuntimePermissions(listOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)) { then() }
+            return
         }
-        if (needed.isEmpty()) then() else activity.requestRuntimePermissions(needed) { then() }
+        host.permissions.ensureNotificationsAllowed { then() }
     }
 
     private fun granted(permission: String): Boolean =

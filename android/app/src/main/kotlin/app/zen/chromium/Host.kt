@@ -76,6 +76,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val privacy = Privacy.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
+    /** "<site> is using your microphone" while a page captures, on a camera / microphone service (`capture.*`, NOT-13). */
+    override val capture = CaptureNotifications(this)
     override val security = Security(this)
     override val downloads = Downloads(activity, this)
     /**
@@ -116,6 +118,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val focusHandoff = FocusHandoff(root) { landing -> onFocusLanding(landing) }
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
+    /** The updates' card on the shade – available, ready – from the core's `update.notify` (NOT-17). */
+    val updateNotifications = UpdateNotifications(activity)
     val translate = Translate(activity, this)
     val siteData = SiteData()
     private val accessibility: AccessibilityManager? = activity.getSystemService(AccessibilityManager::class.java)
@@ -652,7 +656,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "holdBackgroundWork" to BackgroundWorkHold.requested(
                     activity.intent?.getBooleanExtra(BackgroundWorkHold.EXTRA_HOLD, false) == true,
                     BuildConfig.DEBUG
-                )
+                ),
+                // The search widget's or a launcher shortcut's landing state on a cold start
+                // (`Landing.kt`, WID-07): the launch intent's extra, stashed by
+                // `MainActivity.handleIntent` through `chrome.land`; the boot applies it in its
+                // own run, before the chrome's first frame (`boot.ts`). Null in every other start.
+                "landing" to chrome.takeLanding()
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -773,6 +782,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.destroy" -> {
                 val tabId = args.str("tabId")
                 tabs.destroy(tabId)
+                // The page went with its view, and any capture it held or was granted with the
+                // page: its card comes down now, not at the confirm window's end (NOT-13).
+                capture.ended(tabId)
                 // A view the lock held hidden is gone with its tab: the guard follows what is left.
                 if (privateLock.forget(tabId)) refreshGuard()
                 reply(null)
@@ -1075,6 +1087,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "notification.close" -> { webNotifications.close(args.str("id")); reply(null) }
             "notification.forgetOrigin" -> { webNotifications.forgetOrigin(args.str("origin")); reply(null) }
             "notification.ensureAllowed" -> webNotifications.ensureAllowed(reply)
+            // A tab's capture as the core folds it from the page's reports (NOT-13): the card
+            // and the service follow it; a tab gone reports nothing held.
+            "capture.update" -> { capture.reported(args); reply(null) }
             "private.setOpenTabs" -> {
                 val count = args.num("count").toInt()
                 privateSession.setOpenTabs(count)
@@ -1106,6 +1121,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             )
             "update.cancel" -> { updates.cancel(args.str("token")); reply(null) }
             "update.install" -> reply(updates.install(args.str("path")))
+            "update.notify" -> { updateNotifications.notify(args.optJSONObject("notice")); reply(null) }
 
             // --- extension store (ext/ExtensionStore.kt; the contract is src/android/extensionStoreIo.ts).
             //     The runtime that runs extensions has its own methods, in its own block. -------------
@@ -2244,6 +2260,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         media.destroy()
         webNotifications.destroy()
         privateSession.destroy()
+        capture.destroy()
         voice.destroy()
         qrScan.destroy()
         readAloud.destroy()

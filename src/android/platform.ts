@@ -73,6 +73,7 @@ import type {
   SystemAutofillStatus,
   ThumbnailHost,
   UpdateHost,
+  UpdateNotice,
   WebNotificationHost,
   WindowHost,
   WindowHostFactory
@@ -388,6 +389,14 @@ export interface BootInfo {
    * host, which are online for good.
    */
   online?: boolean
+  /**
+   * The state the search widget or a launcher shortcut asked this cold start to open in
+   * (`Landing.kt`'s intent extra, WID-07; `landing.ts`'s words): `MainActivity.handleIntent`
+   * stashed it in the chrome before the core asked for its boot, and `bootAndroid` applies it
+   * right after `browser.start()`, in the boot's own run – the previous tab never painting. Null
+   * in every other start; absent in old hosts and in the preview host.
+   */
+  landing?: string | null
 }
 
 /**
@@ -662,6 +671,8 @@ export interface HostEventPayloads {
   'media.pip': { tabId: string; active: boolean; dismissed?: boolean }
   /** A tap on the media notification: the session's tab comes to the front (`MediaSessions.kt`). */
   'media.reveal': { tabId: string }
+  /** A tap on the "is using your microphone" card: the capturing tab comes to the front (`CaptureNotifications.kt`, NOT-13). */
+  'capture.reveal': { tabId: string }
   /**
    * The shade's tap (`click`) or swipe (`close`) on a page's notification, or its quiet
    * replacement by a later one with the same tag (`WebNotifications.kt`); `url` is the page's,
@@ -790,6 +801,15 @@ class AndroidUpdateHost implements UpdateHost {
     if (!this.token) return
     this.cancelled = true
     this.bridge.send('update.cancel', { token: this.token })
+  }
+
+  /**
+   * The shade's card on the Updates channel (`UpdateNotifications.kt`, NOT-17): "Update
+   * available" once a release is found, "Update ready" once its APK is downloaded, taken down
+   * when neither stands. A tap opens Settings › Updates through the `zenium://` deep link.
+   */
+  notify(notice: UpdateNotice | null): void {
+    this.bridge.send('update.notify', { notice })
   }
 
   onProgress(payload: HostEventPayloads['update.progress']): void {
@@ -1989,6 +2009,11 @@ export class AndroidPlatform implements Platform {
       }
       case 'media.reveal': {
         const p = payload as Partial<HostEventPayloads['media.reveal']>
+        if (typeof p.tabId === 'string') browser.revealTab(p.tabId)
+        return
+      }
+      case 'capture.reveal': {
+        const p = payload as Partial<HostEventPayloads['capture.reveal']>
         if (typeof p.tabId === 'string') browser.revealTab(p.tabId)
         return
       }
