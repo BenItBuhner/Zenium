@@ -135,10 +135,10 @@ function render(el: ReactElement): HTMLElement {
   return mount!
 }
 
-function panel(tabs: Tab[], activeTabId?: string): void {
+function panel(tabs: Tab[], activeTabId?: string, compact = false): void {
   const { state, space } = fixture(tabs, activeTabId ?? tabs[0]?.id ?? null)
   browserStore.set({ state })
-  render(<SpacePanel state={state} space={space} isActive compact={false} />)
+  render(<SpacePanel state={state} space={space} isActive compact={compact} />)
 }
 
 afterEach(() => {
@@ -240,6 +240,23 @@ describe('the attention dot on a pinned row', () => {
       'muted',
       'updated in the background'
     ])
+  })
+
+  it('yields to the compact rail’s audio disc – one disc per icon on every favicon-only seat (§9.29, the lead’s #436 ruling 3 widened): the compact pinned row that plays draws its audio disc and no attention dot, and the words still carry both states', () => {
+    panel([tab('front'), tab('radio', { pinned: true, attention: true, audible: true })], 'front', true)
+    const r = row('radio')
+    expect(r.querySelector('.zen-tab-audio-dot')).not.toBeNull()
+    expect(r.querySelector('.zen-favicon-seat')).not.toBeNull()
+    expect(r.querySelector('.zen-favicon-seat[data-attention]')).toBeNull()
+    expect(r.querySelector('.zen-attention-dot')).toBeNull()
+    expect(describedBy(r)).toEqual(['playing, updated in the background, pinned'])
+  })
+
+  it('wears the dot on a compact pinned row that is silent – nothing else marks the icon', () => {
+    panel([tab('front'), tab('mail', { pinned: true, attention: true })], 'front', true)
+    const r = row('mail')
+    expect(r.querySelector('.zen-tab-audio-dot')).toBeNull()
+    expect(r.querySelector('.zen-favicon-seat[data-attention] > .zen-attention-dot')).not.toBeNull()
   })
 
   it('draws a 6 px accent disc 1 px outside the icon’s top-right corner, the icon punched out', () => {
