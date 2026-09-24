@@ -95,8 +95,25 @@ const site = createServer((req, res) => {
     window.__popupMessage = null;
     window.__clickTrusted = null;
     window.__lastMove = null;
+    window.__events = [];
+    window.__moveCount = 0;
     addEventListener('message', (e) => { window.__popupMessage = e.data });
-    addEventListener('mousemove', (e) => { window.__lastMove = { screenX: e.screenX, screenY: e.screenY, clientX: e.clientX, clientY: e.clientY, trusted: e.isTrusted } }, true);
+    addEventListener('mousemove', (e) => { window.__moveCount++; window.__lastMove = { screenX: e.screenX, screenY: e.screenY, clientX: e.clientX, clientY: e.clientY, trusted: e.isTrusted } }, true);
+    // DIAG: a capture-phase trace of every discrete pointer/mouse event the renderer received,
+    // with isTrusted, coordinates and target – tells null (nothing arrived) from a coordinate miss.
+    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click']) {
+      addEventListener(type, (e) => {
+        if (window.__events.length < 200) {
+          const el = document.elementFromPoint(e.clientX, e.clientY);
+          window.__events.push({
+            t: Math.round(performance.now()), type: e.type, trusted: e.isTrusted,
+            x: e.clientX, y: e.clientY, sx: e.screenX, sy: e.screenY, button: e.button,
+            tgt: e.target ? (e.target.id || e.target.tagName) : null,
+            at: el ? (el.id || el.tagName) : null
+          });
+        }
+      }, true);
+    }
     document.getElementById('open').addEventListener('click', (e) => {
       window.__clickTrusted = e.isTrusted;
       window.__popup = window.open('/popup', 'smoke', 'width=400,height=300');
@@ -143,7 +160,7 @@ writeFileSync(
 )
 const startedAt = Date.now()
 const app = spawn(binary, ['--no-sandbox'], {
-  env: { ...process.env, XDG_CONFIG_HOME: config },
+  env: { ...process.env, XDG_CONFIG_HOME: config, ZEN_INPUT_DIAG: '1' },
   stdio: ['ignore', 'pipe', 'pipe']
 })
 let appLog = ''
@@ -278,6 +295,32 @@ async function clickThroughMcp() {
   if (value === true) return { trusted: true, cover: null }
   for (const line of rest) log(`  ${line}`)
   log(`  window.__clickTrusted after browser_click: ${JSON.stringify(value)}`)
+  // DIAG round: dump what the renderer saw and its geometry, then observe whether a repeated
+  // MCP click ever lands within a few seconds (a readiness race) or never does (a persistent
+  // misroute). Observation only – `trusted` stays false so the xdotool path still runs.
+  const diag = await evaluate(`(() => {
+    const b = document.getElementById('open').getBoundingClientRect();
+    const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+    const at = document.elementFromPoint(cx, cy);
+    return { dpr: devicePixelRatio, sx: screenX, sy: screenY, iw: innerWidth, ih: innerHeight,
+      ow: outerWidth, oh: outerHeight, rect: { l: b.left, t: b.top, w: b.width, h: b.height },
+      cx, cy, at: at ? at.tagName.toLowerCase() + (at.id ? '#' + at.id : '') : null,
+      hasFocus: document.hasFocus(), vis: document.visibilityState,
+      moves: window.__moveCount, events: window.__events };
+  })()`).catch((e) => ({ diagError: String(e) }))
+  log(`  DIAG mcp geometry+events: ${JSON.stringify(diag)}`)
+  for (let r = 1; r <= 5; r++) {
+    await sleep(1000)
+    await evaluate('(window.__clickTrusted = null, true)').catch(() => null)
+    const retryOut = await tool('browser_click', { target: 'text=open' }).catch((e) => `err ${e.message}`)
+    const rHead = String(retryOut).split('\n')[0]
+    const synth = /input: synthetic/.test(String(retryOut))
+    const rv = await evaluate('window.__clickTrusted').catch(() => 'evalErr')
+    const rc = await evaluate('window.__events.length').catch(() => '?')
+    log(`  DIAG mcp retry ${r}: __clickTrusted=${JSON.stringify(rv)} events=${rc} synthetic=${synth} headline=${JSON.stringify(rHead)}`)
+    if (rv === true) break
+  }
+  for (const l of appLog.split('\n')) if (l.includes('[signin-diag]')) log(`  ${l}`)
   const cause = rest
     .map((line) => /^input: synthetic – (.*), so the event/.exec(line)?.[1])
     .find(Boolean)
