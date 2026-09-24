@@ -492,6 +492,9 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
             layerShown && heroPagePhase == "hidden",
             "layer ${if (layerShown) "shown" else "unseen"}, hero page view '$heroPagePhase'"
         )
+        // The still is a capture of the screen: it wants the frame that carries the layer drawn,
+        // not the one before it (the software GPU's raster of the whole layer takes a while).
+        finding("mid-pull the layer's frame was drawn ${paintedFrames()} (the harness's wall clock; a reading)")
         val midPull = jsText(OVERVIEW_TRANSFORM)
         val midPhase = jsText(OVERVIEW_PHASE)
         check(
@@ -972,6 +975,20 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
     private fun framesSettled() {
         awaitShots()
         SystemClock.sleep(1_200)
+    }
+
+    /**
+     * Two animation frames of the chrome document, then a beat for the display's composition: the
+     * frame carrying a change just written has been drawn (`lib/cover.ts` counts a cover painted
+     * by the same two frames), so a still taken after it shows the change and not the frame
+     * before. What it took, for the notes.
+     */
+    private fun paintedFrames(timeoutMs: Long = 4_000): String {
+        val started = SystemClock.uptimeMillis()
+        chromeJs("(function(){window.__zenDemoPainted=0;requestAnimationFrame(function(){requestAnimationFrame(function(){window.__zenDemoPainted=1})});return 1})()")
+        val drawn = awaitJs("window.__zenDemoPainted===1", true, timeoutMs)
+        SystemClock.sleep(250)
+        return if (drawn) "two frames after ${SystemClock.uptimeMillis() - started} ms" else "no second frame within $timeoutMs ms"
     }
 
     private fun finding(line: String) {
