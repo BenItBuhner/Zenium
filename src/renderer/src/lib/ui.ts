@@ -1886,11 +1886,15 @@ export function cancelExternalProtocol(requestId: string): void {
 /**
  * The host put a share up for the panel (`share.panel`): the sheet rises over a capture of the
  * page that is sharing. A newer share while one is up takes the sheet over (the host has let the
- * older one go already); the omnibox closes if it was the opener.
+ * older one go already); the omnibox closes if it was the opener. The two marks split the open
+ * for a reading of its cost (`ShareDemo`'s probe): the host's request in, and the sheet asked
+ * for once the page's cover is captured.
  */
 export async function openSharePanel(request: SharePanelRequest): Promise<void> {
+  performance.mark('share.panel')
   await captureActiveTab(request.tabId)
   run('focus.chrome', undefined)
+  performance.mark('share.panel.set')
   uiStore.set({ sharePanel: request, drawerOpen: false })
   if (uiStore.get().urlbar.open) closeUrlbar()
 }

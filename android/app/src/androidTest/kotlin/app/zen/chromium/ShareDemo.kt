@@ -482,17 +482,27 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
      */
     private fun installProbe() {
         chromeJs(
-            """(function(){if(window.__zenShare)return;var P=window.__zenShare={long:[],marks:[]};
+            """(function(){if(window.__zenShare)return;var P=window.__zenShare={long:[],marks:[],from:0};
 try{new PerformanceObserver(function(l){l.getEntries().forEach(function(e){P.long.push({t:e.startTime,d:e.duration})})}).observe({type:'longtask'})}catch(_){}
 function isPanel(n){return n.matches('.zen-share-panel')||!!n.querySelector('.zen-share-panel')}
-try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes;for(var j=0;j<a.length;j++){var n=a[j];if(n.nodeType===1&&isPanel(n))P.marks.push({t:performance.now(),n:'panel-mounted'})}}}).observe(document.body,{childList:true,subtree:true})}catch(_){}
+function isSheet(n){return n.matches('.zen-sheet')||!!n.querySelector('.zen-sheet')}
+try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes;for(var j=0;j<a.length;j++){var n=a[j];if(n.nodeType===1&&isPanel(n))P.marks.push({t:performance.now(),n:'panel-mounted'})}
+var r=ms[i].removedNodes;for(var k=0;k<r.length;k++){var m=r[k];if(m.nodeType===1&&isSheet(m)&&!isPanel(m))P.marks.push({t:performance.now(),n:'menu-gone'})}}}).observe(document.body,{childList:true,subtree:true})}catch(_){}
 document.addEventListener('pointerup',function(){P.marks.push({t:performance.now(),n:'pointerup'})},{capture:true,passive:true});
-P.begin=function(){P.long=[];P.marks=[]};
-P.end=function(){return JSON.stringify({long:P.long,marks:P.marks})}})()"""
+P.begin=function(){P.long=[];P.marks=[];P.from=performance.now()};
+P.end=function(){var ms=P.marks.slice();try{performance.getEntriesByType('mark').forEach(function(e){if(e.startTime>=P.from&&(e.name==='share.panel'||e.name==='share.panel.set'))ms.push({t:e.startTime,n:e.name})})}catch(_){}
+ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:ms})}})()"""
         )
     }
 
-    /** The open's numbers into the findings: wall time, the chrome's clock from the tap to the mount, the long tasks on the way. */
+    /**
+     * The open's numbers into the findings: the wall time, and on the chrome's clock from the
+     * tap's pointerup the marks on the way – the menu sheet's leave done (its DOM gone), the
+     * host's request in (`share.panel`, `openSharePanel`), the sheet asked for once the page's
+     * cover is captured (`share.panel.set`), the panel's DOM mounted – with the long tasks from
+     * the tap and those within the panel's own open (the request in to the mount), which is the
+     * panel's number: what comes before it is the menu's leave, the core's and the host's.
+     */
     private fun noteOpen(scene: String, wallMs: Long, up: Boolean) {
         val raw = panelString("window.__zenShare?window.__zenShare.end():''")
         val json = runCatching { JSONObject(raw) }.getOrNull()
@@ -500,20 +510,25 @@ P.end=function(){return JSON.stringify({long:P.long,marks:P.marks})}})()"""
             finding("  open ($scene): ${if (up) "$wallMs ms from the touch to the panel (wall)" else "no panel within $wallMs ms"}; no probe record")
             return
         }
-        var tap: Double? = null
-        var mounted: Double? = null
+        val first = HashMap<String, Double>()
         val marks = json.optJSONArray("marks") ?: JSONArray()
         for (i in 0 until marks.length()) {
             val mark = marks.getJSONObject(i)
-            when (mark.optString("n")) {
-                "pointerup" -> if (tap == null) tap = mark.optDouble("t")
-                "panel-mounted" -> if (mounted == null) mounted = mark.optDouble("t")
-            }
+            val name = mark.optString("n")
+            if (!first.containsKey(name)) first[name] = mark.optDouble("t")
         }
+        val tap = first["pointerup"]
+        val menuGone = first["menu-gone"]
+        val request = first["share.panel"]
+        val asked = first["share.panel.set"]
+        val mounted = first["panel-mounted"]
         val long = json.optJSONArray("long") ?: JSONArray()
         var count = 0
         var longest = 0.0
         var total = 0.0
+        var ownCount = 0
+        var ownLongest = 0.0
+        var ownTotal = 0.0
         for (i in 0 until long.length()) {
             val entry = long.getJSONObject(i)
             val at = entry.optDouble("t")
@@ -524,10 +539,20 @@ P.end=function(){return JSON.stringify({long:P.long,marks:P.marks})}})()"""
                 total += duration
                 longest = max(longest, duration)
             }
+            // The tasks within the panel's own open (one that runs into it counts).
+            if (request != null && mounted != null && at + duration >= request && at <= mounted) {
+                ownCount++
+                ownTotal += duration
+                ownLongest = max(ownLongest, duration)
+            }
         }
-        val chromeClock = if (tap != null && mounted != null) "${(mounted - tap).roundToInt()} ms from the tap's pointerup to the sheet's mount on the chrome's clock" else "no mount mark on the chrome's clock"
+        val since = { at: Double? -> if (tap != null && at != null) "+${(at - tap).roundToInt()} ms" else "no mark" }
+        val own = if (request != null && mounted != null) "${(mounted - request).roundToInt()} ms" else "no reading"
         finding(
-            "  open ($scene): ${if (up) "$wallMs ms from the touch to the panel (wall)" else "no panel within $wallMs ms"}; $chromeClock; " +
+            "  open ($scene): ${if (up) "$wallMs ms from the touch to the panel (wall)" else "no panel within $wallMs ms"}; " +
+                "on the chrome's clock from the tap's pointerup: the menu sheet gone at ${since(menuGone)}, the host's request in at ${since(request)}, " +
+                "the sheet asked for at ${since(asked)}, the panel mounted at ${since(mounted)}; " +
+                "the panel's own open (request to mount): $own, long tasks in it: $ownCount (longest ${ownLongest.roundToInt()} ms, together ${ownTotal.roundToInt()} ms); " +
                 "long tasks from the tap: $count (longest ${longest.roundToInt()} ms, together ${total.roundToInt()} ms)"
         )
     }
