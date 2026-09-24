@@ -4432,7 +4432,7 @@ function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
     id: 'skill',
     heading: 'Agent skill',
     description:
-      'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs, tidied up at the end. Zenium keeps a copy in each agent’s skills folder.',
+      'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs. Zenium keeps a copy in each agent’s skills folder.',
     rows
   }
 }
