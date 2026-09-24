@@ -85,6 +85,7 @@ export function DialogStack({
             request={request}
             row={row}
             under={!top}
+            stacked={index > 0}
             ctx={ctx}
             close={closeTop}
           />
@@ -98,12 +99,15 @@ function RowDialog({
   request,
   row,
   under,
+  stacked,
   ctx,
   close
 }: {
   request: SheetRequest
   row: SettingsRow | null
   under: boolean
+  /** This dialog opened over another in the stack (its index is not the first). */
+  stacked: boolean
   ctx: RowContext
   close(): void
 }): JSX.Element | null {
@@ -124,7 +128,9 @@ function RowDialog({
       // lower dialog's to wear.
       return <ConfirmRowDialog row={row as ActionRow} close={close} />
     case 'form':
-      return <FormDialog row={row as ActionRow} under={under} close={close} />
+      // The one dialog whose place moves its width (§9.20: a form over another dialog is the
+      // 320 notice, "place beats content"); the rest keep the form width wherever they stand.
+      return <FormDialog row={row as ActionRow} under={under} stacked={stacked} close={close} />
     case 'item':
       return <ItemDialog row={row as ItemRow} under={under} ctx={ctx} close={close} />
     case 'detail':
@@ -162,6 +168,16 @@ interface DialogProps {
   descriptionTone?: 'warn' | 'danger'
   /** Another dialog is open over this one: it is inert, and Escape is that dialog's. */
   under: boolean
+  /**
+   * This dialog opened over another one in the slot (§9.20 as amended on #409, "place beats
+   * content"): it stands at the notice's 320 – `POPOVER_WIDTH.list`, the width the prompt
+   * primitive takes over a dialog (`ConfirmDialog`) – in place of the form's 400, because a 400
+   * over a 400 covers it whole and §9.5's stack reads only by the upper's narrower width and its
+   * shadow; its descriptions wrap to the lines they need there (`[data-stacked]`, main.css).
+   * A form's knob (`FormDialog`); the first dialog in a stack and a dialog on its own keep the
+   * form width.
+   */
+  stacked?: boolean
   onClose(): void
   children: ReactNode
   /**
@@ -209,6 +225,7 @@ function HostedDialog({
   description,
   descriptionTone,
   under,
+  stacked,
   onClose,
   children,
   initial,
@@ -289,10 +306,14 @@ function HostedDialog({
       data-dialog={name}
       data-surface="page"
       data-body={body}
+      data-stacked={stacked || undefined}
       inert={under || covered || undefined}
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-settings-dialog zen-animate-pop', className)}
-      style={{ width: POPOVER_WIDTH.form }}
+      // §9.20's widths (lib/portals `POPOVER_WIDTH`, the one place they are written): the
+      // form's 400, or the notice's 320 over another dialog – the prompt primitive's own
+      // stacked width, set the same way.
+      style={{ width: stacked ? POPOVER_WIDTH.list : POPOVER_WIDTH.form }}
       // The shared wrap (§9.22, lib/popover): Tab at the last control goes to the first,
       // Shift+Tab at the first to the last – and from the container itself, which holds the
       // focus in a form whose first control is a field (and in any dialog with nothing
@@ -535,15 +556,18 @@ function rowControl(id: string): HTMLElement | null {
  * A small form (add a route, create a container): the form draws its own footer. A form whose
  * body is a list (`FormSheet.body`: the site-data viewer) is the list-bodied dialog – capped at
  * 80% of the frame, the list scrolling under the title block, its claimed footer in §9.20's
- * list-body form.
+ * list-body form. Opened over another dialog (an item's Edit form, #409) it is `stacked`: the
+ * 320 notice with its descriptions wrapping, §9.20's "place beats content".
  */
 function FormDialog({
   row,
   under,
+  stacked,
   close
 }: {
   row: ActionRow
   under: boolean
+  stacked: boolean
   close(): void
 }): JSX.Element {
   const form = row.form!
@@ -553,6 +577,7 @@ function FormDialog({
       title={form.title}
       description={form.description}
       under={under}
+      stacked={stacked}
       onClose={close}
       // A picker's list of options is a list body here: the same dialog, the same footer form.
       body={form.body && 'list'}
