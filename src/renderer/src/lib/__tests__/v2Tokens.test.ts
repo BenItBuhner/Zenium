@@ -1203,6 +1203,23 @@ describe('the v2 primitives (§9.34)', () => {
     }
   })
 
+  it('hand the phone row’s glyph the text token the desktop lead names (§10.4; the twin of #425’s lead-slot pin)', () => {
+    // The desktop row anatomy's lead (`.zen-v2-row-lead`, extensions.css) is pinned at
+    // `--v2-text` by the W5-3 audit below (#425), with no stylesheet softening the slot. This is
+    // the phone twin the lead's #418 ruling 4 matched it to: the phone row (`.zen-sheet-item`)
+    // colours itself with the same token and its glyph rule (`.zen-sheet-item-glyph`) sets no
+    // colour of its own, so the glyph inherits it – the two hosts' leading glyphs read one token.
+    const declarations = (text: string, selector: string): string[] => {
+      const at = text.indexOf(`\n  ${selector} {`)
+      expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+      return text.slice(at, text.indexOf('\n  }', at)).match(/^ {4}[a-z-]+:[^;]+;/gm) ?? []
+    }
+    expect(declarations(css, '.zen-sheet-item')).toContain('    color: var(--v2-text);')
+    expect(declarations(css, '.zen-sheet-item-glyph')).not.toContainEqual(
+      expect.stringMatching(/^ {4}color:/)
+    )
+  })
+
   it('draw an inline link as text with a 40 % underline, the accent on hover and focus-visible (§9.10): one unlayered rule, the old forms gone', () => {
     // The #294 ruling: a `.zen-v2-link` in the accent with no underline at rest was the
     // primitive's fault, and the 18 px site link in the passwords detail the other failure case.
