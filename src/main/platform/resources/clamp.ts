@@ -45,10 +45,11 @@ const CLAMP_RETRIES = 8
  */
 export class ConcurrencyClamp {
   private readonly pending = new Set<ClampedView>()
+  /** The settle: reset by every touch. */
   private timer: NodeJS.Timeout | null = null
-  private pendingSince = 0
+  /** The burst's cap: set by the first touch of a burst, never reset. */
+  private capTimer: NodeJS.Timeout | null = null
   private readonly retries = new WeakMap<ClampedView, number>()
-  private flushing: Promise<void> | null = null
 
   constructor(
     private readonly lifecycle: TabLifecycle,
@@ -66,13 +67,10 @@ export class ConcurrencyClamp {
   /** The page was shown or hidden, born, lost its session, or the budget changed: decide again soon. */
   touch(view: ClampedView, delay = this.settleMs): void {
     if (view.isDestroyed()) return
-    const now = Date.now()
-    if (this.pending.size === 0) this.pendingSince = now
     this.pending.add(view)
-    const latest = Math.max(0, this.pendingSince + CLAMP_SETTLE_MAX_MS - now)
-    const wait = Math.min(delay, latest)
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => void this.flush(), wait)
+    this.timer = setTimeout(() => void this.flush(), delay)
+    if (!this.capTimer) this.capTimer = setTimeout(() => void this.flush(), CLAMP_SETTLE_MAX_MS)
   }
 
   touchAll(views: Iterable<ClampedView>): void {
@@ -91,24 +89,27 @@ export class ConcurrencyClamp {
   }
 
   stop(): void {
-    if (this.timer) clearTimeout(this.timer)
-    this.timer = null
+    this.clearTimers()
     this.pending.clear()
   }
 
-  /** Apply every pending decision now. */
+  /**
+   * Apply every pending decision now. Resolves when this batch has been answered; a batch is not
+   * held for an earlier one – a hung renderer never answers its override, and the decision that
+   * takes the session off it (the page shown) must not wait on that.
+   */
   flush(): Promise<void> {
-    if (this.flushing) return this.flushing
-    if (this.timer) clearTimeout(this.timer)
-    this.timer = null
+    this.clearTimers()
     const views = [...this.pending]
     this.pending.clear()
-    this.flushing = Promise.all(views.map((view) => this.apply(view)))
-      .then(() => undefined)
-      .finally(() => {
-        this.flushing = null
-      })
-    return this.flushing
+    return Promise.all(views.map((view) => this.apply(view))).then(() => undefined)
+  }
+
+  private clearTimers(): void {
+    if (this.timer) clearTimeout(this.timer)
+    if (this.capTimer) clearTimeout(this.capTimer)
+    this.timer = null
+    this.capTimer = null
   }
 
   private async apply(view: ClampedView): Promise<void> {
@@ -118,11 +119,14 @@ export class ConcurrencyClamp {
     const wanted = this.wanted(view)
     if (
       wanted === null &&
+      view.isVisible() &&
       this.lifecycle.hardwareConcurrency(wc) !== null &&
       (this.lifecycle.isFrozen(wc) || this.lifecycle.cpuThrottle(wc) !== 1)
     ) {
       // The wake is in flight (see CLAMP_RETRY_MS); a page that stays frozen or throttled in
       // front – nothing does that for long – has the clamp cleared through a recycle at the end.
+      // (A page behind losing the clamp – the limit set to 100 % – is recycled at once: its
+      // freeze or throttle stays, and is put back on the new session.)
       const n = this.retries.get(view) ?? 0
       if (n < CLAMP_RETRIES) {
         this.retries.set(view, n + 1)
