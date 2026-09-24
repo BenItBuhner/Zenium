@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createElement, isValidElement, type ReactNode } from 'react'
+import { createElement, isValidElement, type ComponentProps, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
@@ -9,7 +9,6 @@ import type {
   HostCapabilities,
   ImportSource,
   SafetyCheckResult,
-  SearchEngine,
   Settings,
   SyncStatus,
   Tab,
@@ -73,6 +72,7 @@ const {
   searchRows
 } = await import('../model')
 const { FontPreview } = await import('../fontBlocks')
+const { SearchEngineForm } = await import('../blocks')
 const { familyOptions, fontSizeOptions, previewFamilies } = await import('../fontsModel')
 const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
@@ -3168,7 +3168,7 @@ describe('what a row does', () => {
       ])
     })
 
-    it('Edit is a form row over the Add form pre-filled – name, shortcut, URL – saving through search.updateEngine', () => {
+    it('Edit is a form row over the chassis’s Add / Edit form pre-filled – name, shortcut, URL – saving through search.updateEngine', () => {
       const { model } = searchOn('desktop')
       const edit = row(model, 'search-engine:custom:wiki:edit')
       if (edit.kind !== 'action') throw new Error('not an action')
@@ -3178,10 +3178,20 @@ describe('what a row does', () => {
         description: 'Put %s in the URL where the search terms go.'
       })
       const form = edit.form!.render(() => {})
-      if (!isValidElement<{ engine: SearchEngine; onSave: (edits: object) => void }>(form))
+      if (!isValidElement<ComponentProps<typeof SearchEngineForm>>(form))
         throw new Error('not an element')
-      expect(form.props.engine).toBe(wiki)
-      form.props.onSave({ name: 'Wiki 2', searchUrl: wiki.searchUrl, keyword: '@w' })
+      // #419's one form for Add and Edit: the engine's values as the fields start, Save as the
+      // verb, the profile's engines for the shortcut's uniqueness with the engine's own word
+      // excepted (`engineId`).
+      expect(form.type).toBe(SearchEngineForm)
+      expect(form.props).toMatchObject({
+        initial: { name: 'Wiki', url: wiki.searchUrl, shortcut: '@wiki' },
+        action: 'Save',
+        engineId: wiki.id
+      })
+      expect(form.props.engines).toContain(wiki)
+      // The form's `shortcut` is the command's `keyword`, its `url` the engine's `searchUrl`.
+      form.props.onSubmit({ name: 'Wiki 2', url: wiki.searchUrl, shortcut: '@w' })
       expect(invoke).toHaveBeenCalledWith('search.updateEngine', {
         id: wiki.id,
         name: 'Wiki 2',
