@@ -175,9 +175,10 @@ class MainActivity : BrowserActivity() {
 
         // Back is the host's PredictiveBack: it registers itself only while there is something to
         // pop, so an empty stack leaves the system's own back-to-home animation alone.
-        BootMarks.mark("load")
-        host.chrome.load()
         handleIntent(intent)
+        // The chrome's document has been loading since the host's start (Host.init, OS-27); its
+        // core's boot call waits for this word: the host whole, the intent's landing stashed.
+        host.built()
         BootMarks.mark("created")
     }
 

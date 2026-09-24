@@ -269,6 +269,9 @@ class JsBridge(
         } catch (e: Exception) {
             return ""
         }
+        // The chrome's document loads from the host's start, ahead of the host being whole: its
+        // first sync call (the core's `boot`) waits here, on this thread, for onCreate's end.
+        host.awaitBuilt()
         return try {
             encodeResult(host.dispatchSync(call.str("method"), call.obj("args")))
         } catch (e: Exception) {
