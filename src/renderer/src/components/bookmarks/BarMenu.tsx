@@ -49,8 +49,19 @@ interface Props {
   /** A bar drag's target, so the row or folder about to take the drop is marked. */
   dropTarget: BarDropTarget | null
   liftedId: string | null
+  /**
+   * The keyboard asked for the panel (Down on the chip, an arrow from the neighbour's panel), so
+   * its first row takes the focus whatever element held it when the panel mounted; unset, the
+   * chip's focus ring decides (`openedFromKeyboard`).
+   */
+  keyboard?: boolean
   /** `focusAnchor`: the keyboard closed the panel, so the chip it hung from takes focus back. */
   onClose: (opts?: { focusAnchor: boolean }) => void
+  /**
+   * Left or Right at the root level (bookmarks-19): the bar hands the panel to the neighbour
+   * chip, as a menu bar's arrows walk its menus. Without it Left closes the panel, as Backspace.
+   */
+  onStep?: (direction: -1 | 1) => void
 }
 
 /** One open panel of the cascade: the folder whose contents it lists, and them. */
@@ -93,7 +104,11 @@ type PanelTarget = Exclude<BarDropTarget, { kind: 'slot' }>
  * through the level the focus is in, a letter goes to the row it names (Chrome's mnemonics),
  * Right opens a folder's panel on its first row, Left or Backspace closes the level and lands
  * on the folder that opened it, Escape closes one level at a time and, at the root, hands the
- * chip the focus back. The chrome layer's light dismiss closes the whole cascade otherwise: a
+ * chip the focus back. At the root the panel is a menu bar's menu (bookmarks-19): Left and
+ * Right hand it to the neighbour chip through `onStep` (a folder chip's or the »'s panel opens
+ * in its place, a page chip takes the focus with the panel closed), and Up from the first row
+ * closes it onto the chip that Down opened it from. The chrome layer's light dismiss closes
+ * the whole cascade otherwise: a
  * press anywhere else (consumed, §9.20 amended), its chip's own press (which hands the chip the
  * focus), a scroll outside it, a resize, another popover; hovering another folder chip hands
  * the panel to it (`BookmarksBar` mounts a `BarMenu` per chip), which is not a close.
@@ -111,7 +126,9 @@ export function BarMenu({
   tabId,
   dropTarget,
   liftedId,
-  onClose
+  keyboard = false,
+  onClose,
+  onStep
 }: Props): JSX.Element {
   const groupRef = useRef<HTMLDivElement>(null)
   const panelEls = useRef<Array<HTMLDivElement | null>>([])
@@ -153,7 +170,7 @@ export function BarMenu({
   // path finds none pending and sets its own or none.
   const [focusWanted, setFocusWanted] = useState<FocusWanted | null>(() => ({
     depth: 0,
-    target: openedFromKeyboard() ? 'first' : 'panel'
+    target: keyboard || openedFromKeyboard() ? 'first' : 'panel'
   }))
   const onFocused = useCallback((): void => setFocusWanted(null), [])
 
@@ -252,14 +269,32 @@ export function BarMenu({
     const current = at === -1 ? undefined : level?.items[at]
     switch (e.key) {
       case 'ArrowRight':
+        // A folder row opens its level; anywhere else at the root, Right walks the bar to the
+        // next chip, as a menu bar's arrows do (bookmarks-19).
         if (current?.type === 'folder') openLevel(depth, current.id, true)
+        else if (depth === 0 && onStep) onStep(1)
         break
       case 'ArrowLeft':
+        // The level in focus goes; its folder row, one level up, takes the focus. At the root
+        // Left walks the bar to the previous chip when the bar takes the step, else closes.
+        if (depth > 0) closeTo(depth - 1, true)
+        else if (onStep) onStep(-1)
+        else onClose({ focusAnchor: true })
+        break
       case 'Backspace':
-        // The level in focus goes; its folder row, one level up, takes the focus.
         if (depth > 0) closeTo(depth - 1, true)
         else onClose({ focusAnchor: true })
         break
+      case 'ArrowUp':
+        // Up from the root's first row closes the panel and hands the chip the focus back – the
+        // way back up out of what Down opened (bookmarks-19); elsewhere it is the menu's Up.
+        if (depth === 0 && at === 0) {
+          onClose({ focusAnchor: true })
+          break
+        }
+        if (!handleMenuKey(e, rows, { mnemonics: true, tab: true })) return
+        e.stopPropagation()
+        return
       case 'Enter':
       case ' ':
         if (current) activate(depth, current, e.ctrlKey || e.metaKey, true)

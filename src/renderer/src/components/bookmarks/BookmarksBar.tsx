@@ -28,6 +28,12 @@ type ExternalHover = { kind: 'slot'; index: number } | { kind: 'folder'; folderI
  * Folders open panels, chips that do not fit collect behind a chevron, chips reorder by drag
  * with the neighbours sliding out of the way, and anything that carries a URL – a tab from the
  * sidebar, a link from a page – can be dropped on it to become a bookmark.
+ *
+ * The keyboard (bookmarks-19, §9.22) is a toolbar's roving tab stop: Left and Right, Home and
+ * End walk the chips and the »; Enter or Space open the chip; Down opens a folder's panel (or
+ * the »'s) with its first row under the keyboard, and Up from the panel's first row or from
+ * the chip closes it; with a panel open, Left and Right walk the bar as a menu bar's arrows
+ * walk its menus, the neighbour folder's panel opening in its place.
  */
 export function BookmarksBar({
   state,
@@ -91,7 +97,13 @@ export function BookmarksBar({
   // Panels: a folder chip's contents, or the chips that did not fit
   // ---------------------------------------------------------------------------
 
-  const [menu, setMenu] = useState<{ anchorId: string; anchor: Rect; bar: Rect } | null>(null)
+  // `keyboard`: the keys asked for the panel, so its first row takes the focus (bookmarks-19).
+  const [menu, setMenu] = useState<{
+    anchorId: string
+    anchor: Rect
+    bar: Rect
+    keyboard: boolean
+  } | null>(null)
   // Mirrors the `barMenuOpen` chrome flag this component holds, so the handlers can decide
   // synchronously whether the page behind still has to be captured or released: `opening` while
   // the page behind is being captured and the flag is not yet set, `open` once it is.
@@ -122,15 +134,16 @@ export function BookmarksBar({
   // The chip a panel was last asked for, so a capture that finishes late does not show a stale one.
   const wantedAnchor = useRef<string | null>(null)
   const openMenu = useCallback(
-    (anchorId: string): void => {
+    (anchorId: string, opts?: { keyboard: boolean }): void => {
       const el = chipEls.current.get(anchorId)
       const barEl = barRef.current
       if (!el || !barEl) return
       const anchor = toRect(el.getBoundingClientRect())
       const bar = toRect(barEl.getBoundingClientRect())
+      const keyboard = Boolean(opts?.keyboard)
       wantedAnchor.current = anchorId
       if (holdsChrome.current) {
-        setMenu({ anchorId, anchor, bar })
+        setMenu({ anchorId, anchor, bar, keyboard })
         return
       }
       holdsChrome.current = 'opening'
@@ -139,7 +152,7 @@ export function BookmarksBar({
         if (holdsChrome.current !== 'opening') return
         holdsChrome.current = 'open'
         // The pointer may have moved on to another chip while the page was being captured.
-        if (wantedAnchor.current === anchorId) setMenu({ anchorId, anchor, bar })
+        if (wantedAnchor.current === anchorId) setMenu({ anchorId, anchor, bar, keyboard })
       })
     },
     [tabId]
@@ -179,6 +192,16 @@ export function BookmarksBar({
     if (menu?.anchorId === anchorId) closeMenu()
     else openMenu(anchorId)
   }
+
+  /** The roving stops of the strip in order: the visible chips, then the » when chips hide. */
+  const stopIds = (): string[] => {
+    const ids = items.slice(0, visibleCount).map((n) => n.id)
+    if (hidden.length) ids.push(OVERFLOW_ANCHOR)
+    return ids
+  }
+  /** Whether the stop opens a panel: a folder chip or the ». */
+  const opensPanel = (id: string): boolean =>
+    id === OVERFLOW_ANCHOR || items.some((n) => n.id === id && n.type === 'folder')
 
   // ---------------------------------------------------------------------------
   // Dragging a chip
@@ -338,15 +361,41 @@ export function BookmarksBar({
     return at >= 0 && at < visibleCount ? at : 0
   }, [focusId, hidden.length, items, visibleCount])
   const focusChip = (index: number): void => {
-    const shown = items.slice(0, visibleCount)
-    const ids = shown.map((n) => n.id)
-    if (hidden.length) ids.push(OVERFLOW_ANCHOR)
+    const ids = stopIds()
     if (!ids.length) return
     const at = ((index % ids.length) + ids.length) % ids.length
     setFocusId(ids[at] ?? null)
     chipEls.current.get(ids[at] ?? '')?.focus()
   }
 
+  // Left and Right with a panel open walk the bar as a menu bar's arrows walk its menus
+  // (bookmarks-19): the neighbour's panel opens in the open one's place, its first row taking
+  // the keyboard; a neighbour that is a page has no panel, so the panel closes and the chip
+  // takes the focus, ready for Enter or the next arrow. Nowhere to step – a pinned root's
+  // panel, a bar of one chip – the arrow closes the panel onto its chip, as Left always has.
+  const stepMenu = (direction: -1 | 1): void => {
+    if (!menu) return
+    const ids = stopIds()
+    const at = ids.indexOf(menu.anchorId)
+    if (at < 0 || ids.length < 2) {
+      closeMenu({ focusAnchor: true })
+      return
+    }
+    const next = ids[(at + direction + ids.length) % ids.length]
+    setFocusId(next)
+    if (opensPanel(next)) {
+      openMenu(next, { keyboard: true })
+      return
+    }
+    closeMenu({ focusAnchor: true })
+    chipEls.current.get(next)?.focus()
+  }
+
+  // The roving chip's keys (bookmarks-19; §9.22). Down on a folder chip or the » opens its
+  // panel with the first row focused, as Chrome's bar opens a folder from the keyboard; Up
+  // closes a panel that is open and puts the chip back under the keyboard (the panel hangs below
+  // the bar). The panel's own keys – Up from its first row, Escape, Left and Right along the bar
+  // – are `BarMenu`'s.
   const onStripKeyDown = (e: React.KeyboardEvent): void => {
     const total = visibleCount + (hidden.length ? 1 : 0)
     switch (e.key) {
@@ -361,6 +410,16 @@ export function BookmarksBar({
         break
       case 'End':
         focusChip(total - 1)
+        break
+      case 'ArrowDown': {
+        const id = stopIds()[focusIndex]
+        if (!id || !opensPanel(id)) return
+        openMenu(id, { keyboard: true })
+        break
+      }
+      case 'ArrowUp':
+        if (!menu) return
+        closeMenu({ focusAnchor: true })
         break
       case 'Delete': {
         const node = items[focusIndex]
@@ -603,7 +662,9 @@ export function BookmarksBar({
           tabId={tabId}
           dropTarget={target}
           liftedId={liftedId}
+          keyboard={menu.keyboard}
           onClose={closeMenu}
+          onStep={stepMenu}
         />
       )}
 
