@@ -7,13 +7,16 @@ import {
   NOTIFICATIONS_SCENARIO,
   TOAST_DEBUG_ENV,
   appIdProblems,
+  appIdRefreshReading,
   clickProblems,
   deliveredEvent,
   fireProblems,
+  isUnderDirectory,
   notificationPermissionSeed,
   osToastReadings,
   senderProblems,
   shortcutProblems,
+  staleAppIdSeed,
   toastLogSummary,
   toastTitle
 } from './notifications-scenario.mjs'
@@ -48,6 +51,19 @@ describe('the scenario constants', () => {
     expect(read('.github/workflows/desktop-smoke.yml')).toMatch(
       /--scenarios [a-z,-]*\bnotifications\b/
     )
+  })
+
+  it('runs first on both Windows legs, so app-id-registered meets the key as the leg starts', () => {
+    // The unpacked leg's launch finds no key (seeded stale), the installed leg's the unpacked
+    // build's – a launch before it would have rewritten the key already.
+    const workflow = read('.github/workflows/desktop-smoke.yml')
+    const windowsLegs = workflow.match(
+      /--label (?:unpacked|installed) --out "\$env:SMOKE_OUT" --scenarios [a-z,-]+/g
+    )
+    expect(windowsLegs).toHaveLength(2)
+    for (const leg of windowsLegs) {
+      expect(leg).toMatch(/--scenarios notifications,/)
+    }
   })
 
   it('holds the AppUserModelId in step with the main process and electron-builder', () => {
@@ -166,6 +182,135 @@ describe('appIdProblems', () => {
     expect(appIdProblems({ ...complete, iconExists: false }, { displayName: 'Zenium' })).toEqual([
       `${classKey} IconUri names '${complete.class.IconUri}', which is not on disk`
     ])
+  })
+
+  // The refresh (W4-12's finding 1): the installed build started after the unpacked one has to
+  // replace the unpacked copy's icon path with its own, under its executable's directory.
+  const installedDir = 'C:\\Users\\runneradmin\\AppData\\Local\\Programs\\zenium'
+  const installedIcon = `${installedDir}\\resources\\app.asar.unpacked\\resources\\icons\\indigo\\icon.png`
+  const unpackedIcon =
+    'D:\\a\\Zenium\\Zenium\\dist\\win-unpacked\\resources\\app.asar.unpacked\\resources\\icons\\indigo\\icon.png'
+
+  it('given the executable’s directory, accepts an IconUri under it (case and separators aside)', () => {
+    const own = { ...complete, class: { DisplayName: 'Zenium', IconUri: installedIcon } }
+    expect(appIdProblems(own, { displayName: 'Zenium', exeDir: installedDir })).toEqual([])
+    expect(
+      appIdProblems(own, { displayName: 'Zenium', exeDir: installedDir.toUpperCase() + '\\' })
+    ).toEqual([])
+    expect(
+      appIdProblems(own, { displayName: 'Zenium', exeDir: installedDir.replace(/\\/g, '/') })
+    ).toEqual([])
+    // The resolved path counts too (an 8.3 name in the key, the long one for the directory).
+    const short = {
+      ...own,
+      class: {
+        ...own.class,
+        IconUri: 'C:\\Users\\RUNNER~1\\AppData\\Local\\Programs\\zenium\\r\\icon.png'
+      },
+      iconRealPath: installedIcon
+    }
+    expect(appIdProblems(short, { displayName: 'Zenium', exeDir: installedDir })).toEqual([])
+  })
+
+  it('names an IconUri outside the executable’s directory: another copy’s registration, not refreshed', () => {
+    const stale = { ...complete, class: { DisplayName: 'Zenium', IconUri: unpackedIcon } }
+    expect(appIdProblems(stale, { displayName: 'Zenium', exeDir: installedDir })).toEqual([
+      `${classKey} IconUri names '${unpackedIcon}', which is not under the running build's directory '${installedDir}' (another copy's registration, not refreshed)`
+    ])
+    // A sibling directory with the same prefix is outside.
+    expect(
+      appIdProblems(stale, { displayName: 'Zenium', exeDir: 'D:\\a\\Zenium\\Zenium\\dist\\win' })
+    ).toHaveLength(1)
+    // Without the directory the check is off (a caller with no executable to compare against).
+    expect(appIdProblems(stale, { displayName: 'Zenium' })).toEqual([])
+  })
+
+  it('isUnderDirectory compares Windows paths', () => {
+    expect(isUnderDirectory(installedIcon, installedDir)).toBe(true)
+    expect(isUnderDirectory(installedDir, installedDir)).toBe(false)
+    expect(isUnderDirectory(`${installedDir}-old\\icon.png`, installedDir)).toBe(false)
+    expect(isUnderDirectory(null, installedDir)).toBe(false)
+  })
+})
+
+describe('staleAppIdSeed', () => {
+  it('names a file that exists and is no build’s icon, under a name that is not the app’s', () => {
+    const seed = staleAppIdSeed()
+    expect(seed.DisplayName).not.toBe('Zenium')
+    expect(fs.existsSync(seed.IconUri)).toBe(true)
+    expect(path.basename(seed.IconUri)).toBe('notifications-scenario.mjs')
+    expect(staleAppIdSeed('C:\\x\\stale.png').IconUri).toBe('C:\\x\\stale.png')
+  })
+
+  it('is written by win-toast.ps1’s seed-app-id action and read back by app-id', () => {
+    const ps1 = read('.github/smoke/win-toast.ps1')
+    expect(ps1).toMatch(/'seed-app-id' \{/)
+    expect(ps1).toContain("$k.SetValue('DisplayName', $DisplayName")
+    expect(ps1).toContain("$k.SetValue('IconUri', $IconUri")
+  })
+})
+
+describe('appIdRefreshReading', () => {
+  const installedIcon =
+    'C:\\Users\\runneradmin\\AppData\\Local\\Programs\\zenium\\resources\\app.asar.unpacked\\resources\\icons\\indigo\\icon.png'
+  const unpackedIcon =
+    'D:\\a\\Zenium\\Zenium\\dist\\win-unpacked\\resources\\app.asar.unpacked\\resources\\icons\\indigo\\icon.png'
+  const after = {
+    classKey,
+    class: { DisplayName: 'Zenium', IconUri: installedIcon },
+    iconExists: true
+  }
+
+  it('reads the installed build’s refresh of the unpacked build’s key', () => {
+    const before = {
+      classKey,
+      class: { DisplayName: 'Zenium', IconUri: unpackedIcon },
+      iconExists: true
+    }
+    expect(appIdRefreshReading(before, after)).toEqual({
+      before: { DisplayName: 'Zenium', IconUri: unpackedIcon },
+      after: { DisplayName: 'Zenium', IconUri: installedIcon },
+      seeded: null,
+      changed: ['IconUri'],
+      registered: false,
+      refreshed: true
+    })
+  })
+
+  it('reads the refresh of a seeded stale key, both values replaced', () => {
+    const seed = staleAppIdSeed('C:\\smoke\\notifications-scenario.mjs')
+    const before = { classKey, class: { ...seed }, iconExists: true, seeded: seed }
+    const reading = appIdRefreshReading(before, after)
+    expect(reading.changed).toEqual(['DisplayName', 'IconUri'])
+    expect(reading.refreshed).toBe(true)
+    expect(reading.registered).toBe(false)
+    expect(reading.seeded).toEqual(seed)
+  })
+
+  it('reads a fresh registration and an unchanged one', () => {
+    expect(appIdRefreshReading({ classKey, class: null }, after)).toMatchObject({
+      before: null,
+      changed: [],
+      registered: true,
+      refreshed: false
+    })
+    expect(appIdRefreshReading(null, after).registered).toBe(true)
+    expect(appIdRefreshReading(after, after)).toMatchObject({
+      changed: [],
+      registered: false,
+      refreshed: false
+    })
+  })
+})
+
+describe('the uninstall leftovers (win-install.ps1)', () => {
+  it('count the AppUserModelId class key among what may not stay behind, read until gone', () => {
+    const ps1 = read('.github/smoke/win-install.ps1')
+    expect(ps1).toContain('$AppIdClassKey = "Software\\Classes\\AppUserModelId\\$AppUserModelId"')
+    expect(ps1).toContain("$AppUserModelId = 'io.github.benitbuhner.zenium'")
+    const unregistered = /function Test-BrowserUnregistered\(\$reg\) \{([\s\S]*?)\n\}/.exec(ps1)
+    expect(unregistered?.[1]).toContain('if ($reg.appUserModelIdClass) { $left +=')
+    expect(ps1).toContain('$info.registrationLeftoverRounds = $rounds')
   })
 })
 
