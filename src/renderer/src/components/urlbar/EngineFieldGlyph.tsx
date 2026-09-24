@@ -4,6 +4,7 @@ import { Search } from 'lucide-react'
 import type { SearchEngine } from '@shared/types'
 import { engineFieldFavicon } from '@shared/search'
 import { cn } from '@renderer/lib/utils'
+import { TOOLBAR_STROKE } from '../v2/controls'
 
 /**
  * Favicon addresses that have loaded in this session: a slot shows them from its first frame,
@@ -22,15 +23,19 @@ const loaded = new Set<string>()
  * – the fallback is painted until then and stays if the image never comes, so the slot is never
  * blank (as a broken favicon leaves Chrome's globe) – arriving on a 120 ms opacity fade in place
  * (§11.4); an address that loaded once this session shows at once. The favicon keeps its own
- * colours: it is content drawn in chrome (§9.29).
+ * colours: it is content drawn in chrome (§9.29). The desktop pill's empty tab takes it at 16
+ * (`size`), the site-information slot's glyph size, with the magnifier at the row stroke.
  */
 export function EngineFieldGlyph({
   engine,
   fallback,
+  size = 20,
   className
 }: {
   engine: SearchEngine
   fallback: 'tile' | 'magnifier'
+  /** The favicon's box: §6's 20 on a field, 16 in the desktop pill (the slot's glyph size). */
+  size?: 16 | 20
   /** Extra classes on the slot (the new tab field's placeholder ink for its magnifier). */
   className?: string
 }): JSX.Element {
@@ -39,12 +44,14 @@ export function EngineFieldGlyph({
   const [broken, setBroken] = useState<string | null>(null)
   const image = favicon !== null && broken !== favicon
   const shown = image && (loaded.has(favicon) || arrived === favicon)
+  const box = size === 16 ? 'h-4 w-4' : 'h-5 w-5'
   const img = image ? (
     <img
       src={favicon}
       alt=""
       className={cn(
-        'zen-engine-field-favicon h-5 w-5 shrink-0 rounded-[3px]',
+        'zen-engine-field-favicon shrink-0 rounded-[3px]',
+        box,
         !shown && 'invisible absolute'
       )}
       data-arrived={arrived === favicon || undefined}
@@ -60,10 +67,15 @@ export function EngineFieldGlyph({
   if (fallback === 'magnifier') {
     return (
       <span
-        className={cn('relative flex h-5 w-5 shrink-0 items-center justify-center', className)}
+        className={cn('relative flex shrink-0 items-center justify-center', box, className)}
         data-testid="engine-field-glyph"
       >
-        {!shown && <Search className="h-5 w-5 shrink-0" strokeWidth={1.75} />}
+        {!shown && (
+          <Search
+            className={cn('shrink-0', box)}
+            strokeWidth={size === 16 ? TOOLBAR_STROKE : 1.75}
+          />
+        )}
         {img}
       </span>
     )

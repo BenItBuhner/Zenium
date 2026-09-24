@@ -108,18 +108,27 @@ describe('Sound (Content)', () => {
       permission: 'sound',
       decision: 'deny'
     })
+    // The site's answer is an item row in the grant rows' shape: Forget trailing, named for the
+    // host, running at once with no confirmation (the lead's #418 ruling 5).
     const exception = row(all, 'sites:sound:https://quiet.example:sound')
     expect(exception).toMatchObject({
-      kind: 'action',
+      kind: 'item',
       label: 'quiet.example',
-      description: 'Blocked'
+      description: 'Blocked',
+      action: { label: 'Forget' }
     })
-    if (exception.kind !== 'action') throw new Error('not an action')
-    exception.onPress?.()
+    if (exception.kind !== 'item') throw new Error('not an item')
+    expect(exception.action?.destructive).toBeUndefined()
+    exception.action?.onPress()
     expect(run).toHaveBeenCalledWith('permissions.forget', {
       origin: 'https://quiet.example',
       permission: 'sound'
     })
+    // The phone opens the item's sheet: one Forget action row, no confirmation there either.
+    const [forget] = sheetOf(exception)
+    expect(forget.rows).toHaveLength(1)
+    expect(forget.rows[0]).toMatchObject({ kind: 'action', button: 'Forget' })
+    expect(forget.rows[0]).not.toHaveProperty('confirm')
     // A stored default reads on the row.
     const blocked = groups({ permissionDefaults: { sound: 'deny' } } as Partial<UIState>)
     expect(row(blocked, 'sites:sound').description).toBe('Sites cannot use sound')
@@ -175,7 +184,7 @@ describe('the device kinds (Permissions)', () => {
     const all = groups({ permissionRules: RULES, deviceGrants: GRANTS })
     const [, sites] = sheetOf(row(all, 'sites:usb'))
     expect(sites.rows.map((r) => [r.kind, r.id, r.label])).toEqual([
-      ['action', 'sites:usb:https://blocked.example:usb', 'blocked.example'],
+      ['item', 'sites:usb:https://blocked.example:usb', 'blocked.example'],
       ['detail', 'sites:usb:https://ports.example:devices', 'ports.example'],
       ['detail', 'sites:usb:https://web.flasher.example:devices', 'web.flasher.example']
     ])
@@ -194,9 +203,13 @@ describe('the device kinds (Permissions)', () => {
     ])
     const [, hidSites] = sheetOf(row(all, 'sites:hid'))
     expect(hidSites.rows).toEqual([])
-    // The blocks stay what they were: Forget after a confirmation.
+    // The blocks are item rows like the grants: Forget trailing, at once, no confirmation.
     const block = row(all, 'sites:usb:https://blocked.example:usb')
-    expect(block).toMatchObject({ kind: 'action', description: 'Blocked', button: 'Forget…' })
+    expect(block).toMatchObject({
+      kind: 'item',
+      description: 'Blocked',
+      action: { label: 'Forget' }
+    })
   })
 
   it('a site’s detail row opens the depth-two list of its devices – name, vendor:product or serial under it – each an item row whose one action is Revoke, plain ink, named for its device, no confirmation, running devices.forget', () => {

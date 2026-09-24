@@ -34,6 +34,13 @@ export interface DeviceIdentity {
   serialNumber?: string | null
 }
 
+/**
+ * Where a device question or grant comes from: a private window or tab names its container, and
+ * the grant then lives with that private session (`grantDevice`), as an answer given in private
+ * does (`PermissionRequestDetails.privateContainerId`).
+ */
+export type DeviceGrantDetails = Pick<PermissionRequestDetails, 'privateContainerId'>
+
 /** A decision changed: `origin` is null when it was a permission's default. */
 export interface PermissionChange {
   permission: string
@@ -150,6 +157,14 @@ export class PermissionService {
    * too, and a private answer speaks only where the store is silent.
    */
   private readonly privateDecisions = new Map<string, Map<string, PermissionDecision>>()
+  /**
+   * Devices picked in a chooser of a private window or tab, per private container: the same
+   * Incognito rule for the device kinds. Never written to the store, read after it
+   * (`hasDeviceGrant`), gone with the session (`forgetContainer`). No list reads them –
+   * `deviceGrants` and `deviceGrantsFor` are the store's, as Chrome's Incognito shows no
+   * exceptions of its own.
+   */
+  private readonly privateDeviceGrants = new Map<string, DeviceGrant[]>()
   /** Prompts dismissed without an answer, per decision key (reset by an answer). */
   private readonly dismissals = new Map<string, number>()
   /** Requests answered from a stored allow this session, per key (the notification review). */
@@ -209,24 +224,51 @@ export class PermissionService {
    * enumerated (`getDevices()`, `open()`), asked after `check()`. A site the setting refuses is
    * connected to nothing. A grant from an earlier session names the device by identity; found
    * again, it takes the device's id of this session so a later forget names the same thing.
+   * Asked from a private container, the store is read first and then the container's own grants
+   * (`resolve`'s order for a decision): a device connected in the regular profile stays connected
+   * in private, one picked in private is known to its private session alone.
    */
-  hasDeviceGrant(kind: DeviceKind, requestingOrigin: string, device: DeviceIdentity): boolean {
-    if (this.resolve(kind, requestingOrigin) === 'deny') return false
+  hasDeviceGrant(
+    kind: DeviceKind,
+    requestingOrigin: string,
+    device: DeviceIdentity,
+    details?: DeviceGrantDetails
+  ): boolean {
+    if (this.resolve(kind, requestingOrigin, details) === 'deny') return false
     const origin = permissionSite(requestingOrigin)
     if (!origin) return false
     const grant = this.devices.find(
       (g) => g.origin === origin && g.kind === kind && sameDevice(g, device)
     )
-    if (!grant) return false
-    if (grant.deviceId !== device.deviceId) {
-      grant.deviceId = device.deviceId
-      this.writeDevices({ permission: kind, origin })
+    if (grant) {
+      if (grant.deviceId !== device.deviceId) {
+        grant.deviceId = device.deviceId
+        this.writeDevices({ permission: kind, origin })
+      }
+      return true
     }
+    const container = details?.privateContainerId
+    if (!container) return false
+    const kept = this.privateDeviceGrants
+      .get(container)
+      ?.find((g) => g.origin === origin && g.kind === kind && sameDevice(g, device))
+    if (!kept) return false
+    kept.deviceId = device.deviceId
     return true
   }
 
-  /** The user picked the device in a chooser: the site is connected to it from now on. */
-  grantDevice(kind: DeviceKind, requestingOrigin: string, device: DeviceIdentity): void {
+  /**
+   * The user picked the device in a chooser: the site is connected to it from now on. Picked in a
+   * private window or tab (`details.privateContainerId`), the connection lasts that private
+   * session and is never written to the store (Chrome's Incognito rule, as for an answer given
+   * in private).
+   */
+  grantDevice(
+    kind: DeviceKind,
+    requestingOrigin: string,
+    device: DeviceIdentity,
+    details?: DeviceGrantDetails
+  ): void {
     const origin = permissionSite(requestingOrigin)
     if (!origin) return
     const grant: DeviceGrant = {
@@ -239,6 +281,18 @@ export class PermissionService {
       serialNumber: device.serialNumber ?? null,
       grantedAt: this.now()
     }
+    const container = details?.privateContainerId
+    if (container) {
+      const kept = this.privateDeviceGrants.get(container) ?? []
+      const i = kept.findIndex(
+        (g) => g.origin === origin && g.kind === kind && sameDevice(g, device)
+      )
+      if (i >= 0) kept[i] = { ...grant, grantedAt: kept[i].grantedAt }
+      else kept.push(grant)
+      this.privateDeviceGrants.set(container, kept)
+      this.notify({ permission: kind, origin })
+      return
+    }
     const i = this.devices.findIndex(
       (g) => g.origin === origin && g.kind === kind && sameDevice(g, device)
     )
@@ -249,16 +303,32 @@ export class PermissionService {
 
   /**
    * Take a site's connection to one device away (a page's `forget()`, the row's Revoke), or,
-   * without `device`, to every device of the kind.
+   * without `device`, to every device of the kind. From a private container, only the session's
+   * own grants go: nothing done in private is written to the store.
    */
-  forgetDevice(kind: DeviceKind, requestingOrigin: string, device?: DeviceIdentity): void {
+  forgetDevice(
+    kind: DeviceKind,
+    requestingOrigin: string,
+    device?: DeviceIdentity,
+    details?: DeviceGrantDetails
+  ): void {
     const origin = permissionSite(requestingOrigin)
     if (!origin) return
+    const keep = (g: DeviceGrant): boolean =>
+      g.origin !== origin || g.kind !== kind || (device !== undefined && !sameDevice(g, device))
+    const container = details?.privateContainerId
+    if (container) {
+      const kept = this.privateDeviceGrants.get(container)
+      if (!kept) return
+      const left = kept.filter(keep)
+      if (left.length === kept.length) return
+      if (left.length > 0) this.privateDeviceGrants.set(container, left)
+      else this.privateDeviceGrants.delete(container)
+      this.notify({ permission: kind, origin })
+      return
+    }
     const before = this.devices.length
-    this.devices = this.devices.filter(
-      (g) =>
-        g.origin !== origin || g.kind !== kind || (device !== undefined && !sameDevice(g, device))
-    )
+    this.devices = this.devices.filter(keep)
     if (this.devices.length !== before) this.writeDevices({ permission: kind, origin })
   }
 
@@ -544,13 +614,17 @@ export class PermissionService {
 
   /**
    * The private session of `containerId` ended (no private window or tab is left): every answer
-   * given in it is forgotten, as Chrome forgets Incognito's on its last window closing.
+   * given in it is forgotten, and every device picked in it, as Chrome forgets Incognito's on its
+   * last window closing.
    */
   forgetContainer(containerId: string): void {
     const answers = this.privateDecisions.get(containerId)
-    if (!answers) return
+    const grants = this.privateDeviceGrants.get(containerId)
     this.privateDecisions.delete(containerId)
-    for (const key of answers.keys()) this.notify(changeFor(key))
+    this.privateDeviceGrants.delete(containerId)
+    if (answers) for (const key of answers.keys()) this.notify(changeFor(key))
+    if (grants)
+      for (const grant of grants) this.notify({ permission: grant.kind, origin: grant.origin })
   }
 
   /** A stored allow answered a request. Private windows leave no trace in the activity either. */
@@ -576,16 +650,22 @@ export class PermissionService {
 
   reset(): void {
     const keys = Object.keys(this.decisions)
-    const grants = this.devices
+    const grants = [...this.devices, ...this.privateGrants()]
     this.decisions = {}
     this.devices = []
     this.savedFiles.clear()
     this.sessionAllows.clear()
     this.privateDecisions.clear()
+    this.privateDeviceGrants.clear()
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of keys) this.notify(changeFor(key))
     for (const grant of grants) this.notify({ permission: grant.kind, origin: grant.origin })
+  }
+
+  /** Every device picked in a private container still open, for a reset to say goodbye to. */
+  private privateGrants(): DeviceGrant[] {
+    return [...this.privateDeviceGrants.values()].flat()
   }
 
   /**
@@ -597,7 +677,7 @@ export class PermissionService {
     const removed = Object.keys(this.decisions).filter(
       (key) => key.slice(0, key.lastIndexOf('|')) !== DEFAULT_ORIGIN
     )
-    const grants = this.devices
+    const grants = [...this.devices, ...this.privateGrants()]
     if (
       removed.length === 0 &&
       grants.length === 0 &&
@@ -611,6 +691,7 @@ export class PermissionService {
     this.savedFiles.clear()
     this.sessionAllows.clear()
     this.privateDecisions.clear()
+    this.privateDeviceGrants.clear()
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))

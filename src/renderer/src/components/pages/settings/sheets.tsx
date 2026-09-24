@@ -1,7 +1,8 @@
 import type { JSX, ReactNode, RefObject } from 'react'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { cn } from '@renderer/lib/utils'
+import { useConfirmKeyboard } from '../../dialogs/confirmKeyboard'
 import { PhoneSheet, type SheetFocus, type SheetTitle } from '../../phone/PhoneSheet'
 import type { BottomSheetHandle } from '../../sheet/BottomSheet'
 import { RadioOption, SheetActions, ValidationMessage } from './blocks'
@@ -218,7 +219,18 @@ export function SettingsSheet({
   const sheet = sheetRef ?? own
   const dismiss = (after?: () => void): void => sheet.current?.dismiss(after)
   const bodyRef = useRef<HTMLDivElement>(null)
-  useDefaultAction(bodyRef, defaultAction, under)
+  // The prompt primitive's keyboard (components/dialogs/confirmKeyboard.ts, the desktop's
+  // W4-14 export) on the sheet's held container: the chassis's dialog root, found up from the
+  // body, since a focus held on the root stands above where the Settings tab's markup begins.
+  // Tab is the chassis's (`BottomSheet` wraps it); a sheet under another, or one that is no
+  // confirmation, listens to nothing – `enabled` re-binds as the sheet comes back on top.
+  useConfirmKeyboard(bodyRef, {
+    destructive: defaultAction?.destructive ?? false,
+    confirm: () => defaultAction?.onConfirm(),
+    enabled: defaultAction !== undefined && !under,
+    tab: false,
+    container: (body) => body.closest<HTMLElement>('[role="dialog"]')
+  })
   // A body that changes height once the sheet is up (a form shows more rows, a field appears)
   // asks for its detents again through `useSheetRelayout`: the chassis measures on a new key.
   const [relayouts, setRelayouts] = useState(0)
@@ -299,58 +311,14 @@ function watchFooter(element: HTMLElement, relayout: () => void): () => void {
   return () => cancelAnimationFrame(frame)
 }
 
-/** A confirmation sheet's verb, for the keyboard: whether the prompt is destructive, and the verb's action. */
+/**
+ * A confirmation sheet's verb, for the keyboard (`useConfirmKeyboard`, the desktop prompt
+ * primitive's rule; §9.22 as amended on #392): whether the prompt is destructive – Enter from
+ * the container is then inert, a destructive prompt having no default – and the verb's action.
+ */
 export interface SheetDefaultAction {
   destructive: boolean
   onConfirm(): void
-}
-
-/** The control an Enter belongs to rather than to the prompt: a button answers its own Enter. */
-const OWN_ENTER = 'button, a[href], [role="button"], select, textarea'
-
-/**
- * The prompt primitive's default key (components/dialogs/ConfirmDialog.tsx; §9.22 as amended by
- * the design lead on #392) on the sheet's held container, in the primitive's own shape: an Enter
- * with no modifier, not a held key's repeat and not one composing text, from anything but a
- * control that answers its own Enter (`OWN_ENTER`), is the prompt's – consumed, so nothing
- * beneath answers it – and activates the verb on a prompt whose verb is the primary; a
- * DESTRUCTIVE prompt has no default (§6 draws it with no primary because the app recommends
- * neither answer, and a default key is a recommendation as much as a fill), so the key is inert.
- * Tab and Escape are the chassis's (`BottomSheet`'s wrap, `PhoneSheet`'s Escape). The listener
- * is a native one on the sheet's dialog root – the chassis's element, found up from the body –
- * because a focus held on the root stands above the body where the Settings tab's own markup
- * begins. A sheet under another leaves the key alone. The primitive exports its container's
- * keyboard as no hook or headless piece yet; until the desktop does, this is the phone's one
- * copy of the rule, kept word for word to the primitive's.
- */
-function useDefaultAction(
-  body: RefObject<HTMLElement | null>,
-  action: SheetDefaultAction | undefined,
-  under: boolean
-): void {
-  const latest = useRef({ action, under })
-  useLayoutEffect(() => {
-    latest.current = { action, under }
-  })
-  const wanted = action !== undefined
-  useEffect(() => {
-    if (!wanted) return
-    const root = body.current?.closest<HTMLElement>('[role="dialog"]')
-    if (!root) return
-    const onKey = (e: KeyboardEvent): void => {
-      const { action, under } = latest.current
-      if (!action || under) return
-      if (e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
-      if (e.repeat || e.isComposing) return
-      if (e.target instanceof Element && e.target.closest(OWN_ENTER)) return
-      e.preventDefault()
-      e.stopPropagation()
-      if (action.destructive) return
-      action.onConfirm()
-    }
-    root.addEventListener('keydown', onKey)
-    return () => root.removeEventListener('keydown', onKey)
-  }, [body, wanted])
 }
 
 // ---------------------------------------------------------------------------

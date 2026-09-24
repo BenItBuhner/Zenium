@@ -15,12 +15,15 @@ import {
   DesktopDialog,
   DesktopPopover,
   Footer,
+  Level,
   ListRow,
   Menulist,
   RowValue,
   TitleBlock,
   V2Sheet,
-  type DialogApi
+  type DialogApi,
+  type LevelDirection,
+  type LevelFocus
 } from '../primitives'
 
 /*
@@ -35,9 +38,11 @@ import {
  * follows its anchor – and a menulist opening inside it is its child), a ListRow's trailing slot
  * is capped at 55% of the row (the value truncates inside it, the label keeps the larger share)
  * and a row without a press is `data-static` (§9.34), a busy menulist is read-only at full
- * opacity (§9.30), and on a phone a stacked footer takes the chassis's `flex: 1` off its
- * buttons and a sheet opens on the 48 header with a title, on a title block with one (§9.23;
- * the stack over another sheet, its one scrim and the focus are the chassis's, tested with it).
+ * opacity (§9.30), a Level arriving lands the keyboard once where its `focus` says – its first
+ * control, its container, or the caller's element (#413 ruling 5) – and on a phone a stacked
+ * footer takes the chassis's `flex: 1` off its buttons and a sheet opens on the 48 header with a
+ * title, on a title block with one (§9.23; the stack over another sheet, its one scrim and the
+ * focus are the chassis's, tested with it).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -697,6 +702,63 @@ describe('ListRow holding a control (§9.21, pr-228 nit 2)', () => {
     // mislead a reader about which number wins.
     for (const row of rows)
       expect([...row.classList].filter((c) => /^(py-|min-h-)/.test(c))).toEqual([])
+  })
+})
+
+describe('Level focus (§9.22, #413 ruling 5)', () => {
+  /** A level arriving with `direction`, its keyboard landing where `focus` says; `focusin` counted. */
+  function arrive(
+    direction: LevelDirection,
+    focus?: LevelFocus
+  ): { level: HTMLElement; landings: EventTarget[] } {
+    const landings: EventTarget[] = []
+    const onFocusIn = (e: FocusEvent): void => {
+      if (e.target) landings.push(e.target)
+    }
+    document.addEventListener('focusin', onFocusIn)
+    const el = render(
+      <Level direction={direction} focus={focus}>
+        <div data-confirm="held" tabIndex={-1}>
+          <button type="button">Back</button>
+          <button type="button">Second</button>
+        </div>
+      </Level>
+    )
+    document.removeEventListener('focusin', onFocusIn)
+    return { level: el.firstElementChild as HTMLElement, landings }
+  }
+
+  it('lands on its first control by default, in one move', () => {
+    const { level, landings } = arrive('forward')
+    const [back] = level.querySelectorAll('button')
+    expect(document.activeElement).toBe(back)
+    expect(landings).toEqual([back])
+  })
+
+  it('focus="container" holds the level itself – no first-control detour', () => {
+    const { level, landings } = arrive('back', 'container')
+    expect(level.tabIndex).toBe(-1)
+    expect(document.activeElement).toBe(level)
+    expect(landings).toEqual([level])
+  })
+
+  it('a function names the landing – a held container inside the level – and falls back to the first control when it finds nothing', () => {
+    const { level, landings } = arrive('forward', (root) => root.querySelector('[data-confirm]'))
+    const held = level.querySelector<HTMLElement>('[data-confirm]')!
+    expect(document.activeElement).toBe(held)
+    expect(landings).toEqual([held])
+
+    act(() => root?.unmount())
+    mount?.remove()
+    const fallback = arrive('back', () => null)
+    expect(document.activeElement).toBe(fallback.level.querySelector('button'))
+    expect(fallback.landings).toHaveLength(1)
+  })
+
+  it('the first level on open (direction "none") moves no focus at all', () => {
+    const { landings } = arrive('none', 'container')
+    expect(document.activeElement).toBe(document.body)
+    expect(landings).toEqual([])
   })
 })
 

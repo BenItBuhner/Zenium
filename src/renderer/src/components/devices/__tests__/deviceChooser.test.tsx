@@ -498,8 +498,11 @@ describe('the pairing prompt', () => {
     expect(uiStore.get().deviceChooserOpen).toBe(true)
     const p = pairing()!
     expect(p.getAttribute('role')).toBe('alertdialog')
-    expect(p.dataset.pairingKind).toBe('confirm')
-    expect(p.dataset.devicePairing).toBe('pair-1')
+    // The primitive's `data-confirm` is the prompt's one handle; it hangs no `data-*` of its own
+    // on the root (the kind and the prompt's id had none reading them).
+    expect(p.dataset.confirm).toBe('device-pairing')
+    expect(p.dataset.pairingKind).toBeUndefined()
+    expect(p.dataset.devicePairing).toBeUndefined()
     expect(p.style.width).toBe('320px')
     expect(p.querySelector('.zen-v2-title-block-title')!.textContent).toBe(
       'Pair with Heart Rate Monitor'
@@ -538,7 +541,6 @@ describe('the pairing prompt', () => {
     await settle()
     const p = pairing()!
     expect(p.getAttribute('role')).toBe('dialog')
-    expect(p.dataset.pairingKind).toBe('providePin')
     // Alone it carries a field: §9.20's 400.
     expect(p.style.width).toBe('400px')
     expect(p.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
@@ -552,6 +554,15 @@ describe('the pairing prompt', () => {
     expect(field.getAttribute('maxlength')).toBe('6')
     expect(field.hasAttribute('placeholder')).toBe(false)
     expect(p.querySelector('label')).toBeNull()
+    // The field's own options on the primitive's slot (#425): a touch host raises the digit
+    // keyboard, the pattern says digits, the host fills nothing in (a pairing PIN is not a code
+    // sent to the user), and its look rides a class of the prompt's on the `<input>` – not a
+    // stylesheet reaching in by the field's `aria-label`. The field stays `type="text"`.
+    expect(field.getAttribute('inputmode')).toBe('numeric')
+    expect(field.getAttribute('pattern')).toBe('[0-9]*')
+    expect(field.getAttribute('autocomplete')).toBe('off')
+    expect(field.getAttribute('type')).toBe('text')
+    expect(field.className).toBe('zen-v2-field zen-device-pairing-field')
     expect(waiting(p)).toBe(true)
     type(field, '12a3')
     expect(field.value).toBe('123')

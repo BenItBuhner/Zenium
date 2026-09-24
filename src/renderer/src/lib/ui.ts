@@ -2277,7 +2277,9 @@ export function closePrintPreview(): void {
  * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
  * blocked pop-ups popover, an autofill prompt in its popover form, a menu the renderer draws,
  * the collapsed rail's flyout (`useRailFlyout` – the sidebar itself, §9.20's cascade beside
- * the rail), or a sign-in or certificate dialog. The page behind them is captured all the same
+ * the rail), the compact sidebar's or the hidden toolbar's hover reveal (`compactHover`,
+ * `toolbarHover`: chrome out over the page's picture, no dialog – #411 ruling 4), or a sign-in
+ * or certificate dialog. The page behind them is captured all the same
  * (they overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
  * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5),
  * so the same holds under the site-information sheet and the prompt sheet on a phone, and the
@@ -2315,6 +2317,12 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // `pageHidden`'s, not `overlayCoversContent`'s, so the reduced check below needs no
       // clearing of it.
       ui.railFlyout ||
+      // The compact sidebar's edge reveal and the hidden toolbar's are hover reveals of chrome
+      // the same way (#411 ruling 4, §9.20): chrome slid out over the page's picture, not a
+      // dialog over the page, so neither takes §9.5's dim. `pageHidden`'s flags too, so the
+      // reduced check needs no clearing of them either.
+      ui.compactHover ||
+      ui.toolbarHover ||
       popover) &&
     !overlayCoversContent({
       ...ui,
