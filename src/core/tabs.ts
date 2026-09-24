@@ -154,6 +154,15 @@ export class TabManager {
    * linksToSplitPane`), so `syncSplitLinkFlags` writes to a page only when its answer changed.
    */
   private readonly splitLinkFlags = new Map<string, boolean>()
+
+  /**
+   * The pane loading a link routed from the pane to its left (split-13), keyed by the loading
+   * tab's id with the origin's: while the load runs, the right pane's new document taking the
+   * keyboard is Chromium's doing and not the user moving there, so the keyboard is handed back
+   * (`handKeyboardBack`). Cleared at the load's `dom-ready`, by the user's own input in the
+   * right pane, or with the view.
+   */
+  private readonly splitLinkLoads = new Map<string, string>()
   /**
    * Tabs whose crash page `onCrashed` has asked the view for and that has not committed yet. A
    * load already in flight when the renderer went (a restored list's current entry, Android)
@@ -845,16 +854,22 @@ export class TabManager {
         this.browser.menus.showPageContextMenu(tabId, params, ownerWindow()),
       onKey: (input) => this.browser.keys.handle(input, tabId, ownerWindow()),
       onFocused: () => {
+        // A routed link's load grabbing the keyboard for the right pane is not the user moving
+        // there: the keyboard goes back to the left pane and nothing is activated (split-13).
+        if (this.handKeyboardBack(tabId)) return
         this.activatePaneOf(tabId)
         this.browser.emit('focus.page', { tabId }, ownerWindow())
       },
       onTargetUrl: (url) => this.browser.emit('status', { text: url }, ownerWindow()),
       onDomReady: () => {
+        this.splitLinkLoads.delete(tabId)
         this.sendPageFlags(tabId)
         this.browser.onPageReady(tabId)
       },
       onDestroyed: () => this.onViewGone(tabId),
       onUserActivation: () => {
+        // The user's own press or key in the pane: theirs to activate, mid-load or not.
+        this.splitLinkLoads.delete(tabId)
         this.activatePaneOf(tabId)
         this.browser.popups.activate(tabId)
       },
@@ -1261,17 +1276,60 @@ export class TabManager {
   /**
    * A link clicked in the left pane of a split with the rule on (split-13, Edge's "Open links
    * from the left pane in the right pane"): the pane to its right loads it, the left pane stays
-   * where it is and stays the active pane – the user is reading there, and the right pane is
-   * the result. The page prevented the click's own navigation on the flag's word, so when the
-   * flag no longer holds by the time the message lands (the split dissolved, the rule turned
-   * off) the link loads where it was clicked, and is never lost.
+   * where it is and stays the active pane (v2 §9.35) – the reader stays where they read, as a
+   * list drives a detail pane and keeps the focus; the pill keeps the left's address and the
+   * outline does not move. The right pane's load takes no focus: Chromium hands a new document
+   * the keyboard as it commits (twice on the desktop host, both before `dom-ready`), so the load
+   * is noted here and `handKeyboardBack` returns the keyboard to the left pane on each grab
+   * until the document is ready. The page prevented the click's own navigation on the flag's
+   * word, so when the flag no longer holds by the time the message lands (the split dissolved,
+   * the rule turned off) the link loads where it was clicked, and is never lost.
    */
   openInSplitPane(fromTabId: string, url: string): void {
     const tab = this.tab(fromTabId)
     if (!tab) return
     const group = tab.splitGroupId ? this.model.splitGroups[tab.splitGroupId] : undefined
     const target = this.linksToSplitPane(tab) && group ? group.tabIds[1] : undefined
+    if (target !== undefined) this.splitLinkLoads.set(target, fromTabId)
     this.navigate(target ?? fromTabId, url, { transition: 'link' })
+  }
+
+  /**
+   * `tabId`'s page took the keyboard while it loads a link routed from the pane to its left
+   * (`splitLinkLoads`): the grab is the load's, not the user's, so the keyboard goes back to the
+   * left pane – deferred, since a `focus()` asked for inside the grab's own event leaves the
+   * keyboard where Chromium put it (measured on the desktop host: a tick later it moves) – and
+   * true says the caller activates nothing. False, and the note dropped, once the two are no
+   * longer panes of one split or the left pane is not the active tab any more (the user
+   * activated the right pane themselves through its header): then the grab is an ordinary one.
+   */
+  private handKeyboardBack(tabId: string): boolean {
+    const origin = this.splitLinkLoads.get(tabId)
+    if (origin === undefined) return false
+    const win = this.windowFor(tabId)
+    if (!this.splitLinkHolds(tabId, origin, win)) {
+      this.splitLinkLoads.delete(tabId)
+      return false
+    }
+    defer(() => {
+      const view = this.view(origin)
+      if (view && !view.isDestroyed() && this.splitLinkHolds(tabId, origin, win)) view.focus()
+    })
+    return true
+  }
+
+  /** Whether `origin` (the left pane) and `tabId` are still panes of one split with `origin` the window's active tab. */
+  private splitLinkHolds(tabId: string, origin: string, win: ZenWindow): boolean {
+    const tab = this.tab(tabId)
+    const from = this.tab(origin)
+    return Boolean(
+      tab &&
+      from &&
+      tab.splitGroupId &&
+      tab.splitGroupId === from.splitGroupId &&
+      this.views.has(origin) &&
+      this.activeTabFor(win)?.id === origin
+    )
   }
 
   /** The pop-up rule of `origin` changed: tell every live page of that site. */
@@ -1639,6 +1697,7 @@ export class TabManager {
     this.httpsUpgraded.delete(tabId)
     this.pendingTransition.delete(tabId)
     this.splitLinkFlags.delete(tabId)
+    this.splitLinkLoads.delete(tabId)
     this.crashPagePending.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)

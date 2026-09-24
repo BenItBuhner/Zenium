@@ -53,6 +53,8 @@ interface Harness {
   shown: () => MenuItemTemplate[]
   /** Every set of page flags the core pushed into a page, in order. */
   flags: { tabId: string; flags: PageFlags }[]
+  /** The pages the core gave the keyboard to (`TabView.focus`), in order. */
+  focused: string[]
   open: (url: string) => Tab
   activeId: () => string | undefined
 }
@@ -61,6 +63,7 @@ function harness(): Harness {
   const events = new Map<string, TabViewEvents>()
   const sent: { name: string; payload: unknown }[] = []
   const flags: { tabId: string; flags: PageFlags }[] = []
+  const focused: string[] = []
   let last: MenuItemTemplate[] = []
   const menus: MenuHost = {
     popup: (items) => {
@@ -101,7 +104,9 @@ function harness(): Harness {
           canGoForward: () => false,
           getZoom: () => 1,
           isCurrentlyAudible: () => false,
-          sendPageFlags: (next) => void flags.push({ tabId: tab.id, flags: next })
+          sendPageFlags: (next) => void flags.push({ tabId: tab.id, flags: next }),
+          focus: () => void focused.push(tab.id),
+          executeJavaScript: () => Promise.resolve(undefined)
         })
       }
     }),
@@ -123,6 +128,7 @@ function harness(): Harness {
     win,
     sent,
     flags,
+    focused,
     shown: () => last,
     eventsOf: (tabId) => {
       const e = events.get(tabId)
@@ -561,7 +567,7 @@ describe('links from the left pane open in the right pane (split-13)', () => {
     expect(linkFlags(h)).toEqual([{ tabId: b.id, linksToSplitPane: false }])
   })
 
-  it('a link clicked in the left pane loads in the right pane, the left pane staying active', () => {
+  it('a link clicked in the left pane loads in the right pane, the left pane staying active: the load’s keyboard grabs are handed back to the left pane until the right’s document is ready (§9.35)', async () => {
     const h = harness()
     const a = h.open('https://a.example/')
     const b = h.open('https://b.example/')
@@ -572,6 +578,59 @@ describe('links from the left pane open in the right pane (split-13)', () => {
     expect(h.browser.tabs.tab(b.id)?.url).toBe('https://a.example/story')
     expect(h.browser.tabs.tab(a.id)?.url).toBe('https://a.example/')
     expect(h.activeId()).toBe(a.id)
+    // Chromium gives the right pane's new document the keyboard as it commits – twice on the
+    // desktop host, both before `dom-ready`. Neither grab activates the right pane, and each is
+    // handed back to the left pane a tick later (asked for inside the grab it would not move).
+    h.eventsOf(b.id).onFocused?.()
+    expect(h.activeId()).toBe(a.id)
+    expect(h.focused).toEqual([])
+    await tick()
+    expect(h.focused).toEqual([a.id])
+    h.eventsOf(b.id).onFocused?.()
+    await tick()
+    expect(h.focused).toEqual([a.id, a.id])
+    expect(h.activeId()).toBe(a.id)
+    // The chrome never heard the right pane take the keyboard: the pill keeps the left's address.
+    expect(h.sent.filter((s) => s.name === 'focus.page')).toEqual([])
+    // The document is ready: the load's grabs are over, and a later grab is the user's own click
+    // in the right pane, which activates it as ever.
+    h.eventsOf(b.id).onDomReady()
+    h.eventsOf(b.id).onFocused?.()
+    await tick()
+    expect(h.activeId()).toBe(b.id)
+    expect(h.focused).toEqual([a.id, a.id])
+  })
+
+  it('the hand-back yields to the user: their own press in the right pane mid-load activates it, and a right pane they activated through its header keeps the keyboard', async () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    h.browser.tabs.createSplit([a.id, b.id], 'vertical', h.win)
+    h.browser.handleCommand(h.win, 'settings.update', { splitLinksToRight: true })
+    h.browser.tabs.activateTab(a.id, h.win)
+    h.browser.handlePageMessage(a.id, { type: 'split-link', url: 'https://a.example/story' })
+    // A trusted press in the right pane while it loads: the user moved there.
+    h.eventsOf(b.id).onUserActivation()
+    expect(h.activeId()).toBe(b.id)
+    h.eventsOf(b.id).onFocused?.()
+    await tick()
+    expect(h.focused).toEqual([])
+    // A second routed link, then the right pane activated from the chrome (its header): the
+    // load's grab is an ordinary one now – nothing is handed back.
+    h.browser.tabs.activateTab(a.id, h.win)
+    h.browser.handlePageMessage(a.id, { type: 'split-link', url: 'https://a.example/next' })
+    h.browser.tabs.activateTab(b.id, h.win)
+    h.eventsOf(b.id).onFocused?.()
+    await tick()
+    expect(h.focused).toEqual([])
+    expect(h.activeId()).toBe(b.id)
+    // Un-split before the grab lands: no longer panes of one split, the grab is the page's own.
+    h.browser.tabs.activateTab(a.id, h.win)
+    h.browser.handlePageMessage(a.id, { type: 'split-link', url: 'https://a.example/last' })
+    h.browser.tabs.unsplit(undefined, a.id, h.win)
+    h.eventsOf(b.id).onFocused?.()
+    await tick()
+    expect(h.focused).toEqual([])
   })
 
   it('a click the page had already given up loads where it was clicked when the rule no longer holds', () => {
