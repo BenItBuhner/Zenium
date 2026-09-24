@@ -641,6 +641,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // Whether content scripts get real isolated worlds (decided once, when the runtime was built).
                 "isolatedWorlds" to extensions.isolatedWorlds,
                 "insets" to activity.currentInsets(),
+                // A foldable's pose as last seen (`Posture.kt`); changes follow as `posture` host events.
+                "posture" to activity.currentPosture(),
                 "fullscreen" to immersive,
                 "environment" to activity.environment(),
                 "pinShortcuts" to shortcuts.supported,

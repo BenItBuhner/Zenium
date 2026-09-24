@@ -24,6 +24,7 @@ import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/install
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, pageHandedKeyboard, pageTookKeyboard } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
+import { applyDevicePosture } from '@renderer/lib/posture'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
 import { openImportSurface } from '@renderer/lib/pages'
@@ -460,6 +461,8 @@ export function useMainEvents(): void {
       }),
       // The root's `--zen-inset-*` and the store, when the numbers changed (lib/insets.ts).
       onEvent('insets', (insets) => applyHostInsets(insets)),
+      // A foldable's pose (OS-11, lib/posture.ts): the store, the root's `data-posture`, the log.
+      onEvent('posture', (posture) => applyDevicePosture(posture)),
       // Where the chrome lies under the pages, the swap between a live page and its cover is
       // timed from these (lib/pageView.ts); the desktop hosts swap the moment they are asked.
       onEvent('layout.applied', (applied) => {

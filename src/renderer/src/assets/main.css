@@ -1249,12 +1249,14 @@
     transition: background 600ms var(--zen-ease);
   }
   /*
-   * On a phone the window family changes colour by the one blend of the resolved tokens over
-   * 240 ms (design language v2 §11.6, `useTheme`): the window reads the tokens as the blend
-   * writes them, and nothing tweens per element – no transition of its own, which would trail
-   * the blend by 600 ms (and, over a gradient, jump at its midpoint instead).
+   * On a phone – and on a tablet, the blend being the touch chassis's – the window family
+   * changes colour by the one blend of the resolved tokens over 240 ms (design language v2
+   * §11.6, `useTheme`): the window reads the tokens as the blend writes them, and nothing tweens
+   * per element – no transition of its own, which would trail the blend by 600 ms (and, over a
+   * gradient, jump at its midpoint instead).
    */
-  :root[data-form-factor='phone'] .zen-window {
+  :root[data-form-factor='phone'] .zen-window,
+  :root[data-form-factor='tablet'] .zen-window {
     transition: none;
   }
   /* Private windows: Zen tints the chrome purple and marks it with a mask. */
@@ -8450,6 +8452,17 @@
   height: var(--v2-icon);
 }
 /*
+ * `Tabs (N)` pressed while the overview stands (§9.36): the window's pressed fill – §9.29's
+ * `--v2-control-fill-hover`, which on the row's window surface is `--v2-window-fill-hover`, the
+ * fill the row's other buttons take on a press and the menu's on `aria-expanded` (the toolbar
+ * rule above) – on `aria-pressed`, from the pull's first frame through the close settle. The
+ * count's square keeps its outline at the ink it has, never an inverted square: the phone bar
+ * fills its badge (`barItems.tsx`), the tablet's row does not.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-tablet-tabs[aria-pressed='true'] {
+  background: var(--v2-window-fill-hover);
+}
+/*
  * The address pill in the row: as tall as the row's buttons (40), radius 12, the address at the
  * phone pill's 14 px; its chips – the site glyph, the star, the blocked count – on 32 boxes with
  * the row's 20 glyph (the §9.29 sidebar-pill tiering keeps deciding which chips are in it).
@@ -8801,6 +8814,38 @@
  */
 :root[data-form-factor='tablet'] .zen-sheet {
   max-width: 480px;
+}
+
+/*
+ * The tablet's tab overview (TABLET-14, MOT-04; §9.36 "the overview is the phone's, pulled down
+ * from the toolbar, at the width's columns, the sidebar fading under it"): the phone's grid,
+ * mounted by the tablet shell's stage with `data-tablet`. Its layer is opaque – it comes down
+ * from the toolbar's edge over the page's still on the spring, in place of the phone's morph –
+ * in the window's own tone: `--zen-bg` as `.zen-window` paints it – read as the §11.6 blend
+ * writes it, no transition of its own, as the touch windows' rule above – laid at the window's
+ * size and offset by `TabOverview`'s morph effect so at rest the gradient is the window's,
+ * seamless at the toolbar's edge (a fixed attachment would lay it so, but under a transform it
+ * is read as `scroll`). The window's grain comes with it
+ * (`.zen-texture`, under the layer's own content: the layer is a stacking context, so the
+ * texture's negative index puts it over the backdrop and under the grid).
+ */
+.zen-overview[data-tablet] {
+  background: var(--zen-bg);
+}
+.zen-overview-texture {
+  z-index: -1;
+}
+/*
+ * The tablet header's tab search (TABLET-14): the phone's field (`.zen-overview-search-field`,
+ * 40 tall in `--v2-urlbar` with the panel's shadow) standing in the header row itself, in the
+ * magnifier's place, at a fixed span that gives way before the title does; no gutter padding of
+ * its own – the header's gap places it. Its clear stands only over a query: an empty field in
+ * the header has nothing to close.
+ */
+.zen-overview-search.zen-overview-search-inline {
+  flex: 0 1 360px;
+  min-width: 160px;
+  padding: 0;
 }
 
 /*
