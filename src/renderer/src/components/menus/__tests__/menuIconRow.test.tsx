@@ -6,6 +6,7 @@ import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
 import { MenuSheet } from '../MenuSheet'
+import { auditNames, formatNameFindings } from '@renderer/lib/a11yNames'
 import { applyAccessibilityState, resetAccessibilityState } from '@renderer/lib/accessibilityState'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { isIconRow } from '@renderer/lib/menuIconRow'
@@ -334,6 +335,19 @@ describe('as a list under touch exploration or large text (A11Y-04)', () => {
     expect(item).toContain('height: var(--v2-row)')
     expect(item).toContain('gap: 12px')
     expect(item).toContain('padding: 0 16px')
+  })
+
+  it('in either pose every control of the menu is named, and one showing text carries it in its name – the word a Voice Access user says (A11Y-10)', async () => {
+    await show(appMenu({ forward: true, loading: true }))
+    expect(row()).not.toBeNull()
+    expect(formatNameFindings(auditNames(document.body))).toBe('')
+    // The row's names are the harness's contract (`MenuIconRowDemo`): the list carries the same.
+    const rowNames = buttons().map((b) => b.getAttribute('aria-label'))
+    expect(rowNames).toEqual(['Forward', 'Bookmark', 'Download Page', 'Page Info', 'Stop'])
+    act(() => applyAccessibilityState({ touchExploration: true, fontScale: 1 }))
+    expect(list()).not.toBeNull()
+    expect(formatNameFindings(auditNames(document.body))).toBe('')
+    expect(listRows().map((b) => b.textContent)).toEqual(rowNames)
   })
 })
 
