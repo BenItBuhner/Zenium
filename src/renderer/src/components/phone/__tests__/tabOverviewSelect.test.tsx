@@ -58,6 +58,7 @@ const { browserStore, claimMessageCards, pickToastAction, uiStore } =
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { CLOSE_SETTLE_MS } = await import('@renderer/lib/closeUndo')
 const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
 const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { bookmarkFolderTitle } = await import('@renderer/lib/overviewSelection')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
@@ -316,6 +317,9 @@ afterEach(async () => {
     overview: { phase: 'closed', progress: 0, heroTabId: null, target: 0 }
   })
   act(() => resetOverviewPane())
+  // Mounted outside the stage, `dismissOverview()` (which resets the shared overview UI) never
+  // runs between these tests.
+  act(() => resetOverviewUi())
   for (const [name, descriptor] of sizes) {
     if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
     else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]

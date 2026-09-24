@@ -234,6 +234,8 @@ function wireVisit(v: ImportedVisit): ImportedVisit {
   if (v.title) out.title = v.title
   if (v.transition && v.transition !== 'link') out.transition = v.transition
   if (v.favicon) out.favicon = v.favicon
+  if (v.redirectSource) out.redirectSource = true
+  if (v.redirectedFrom && v.redirectedFrom.length > 0) out.redirectedFrom = v.redirectedFrom.slice()
   return out
 }
 

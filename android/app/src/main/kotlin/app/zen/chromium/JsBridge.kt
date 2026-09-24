@@ -18,7 +18,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * Every one of them holds the chrome's JS thread while the WebView carries the string over to
  * this thread and back, a wait that is the device's scheduling more than the parse (the tab
  * swipe profile, #312): the chrome sends a layout report's view ops – four to six of them –
- * through [batch] for that reason, one hop and one main-thread task for the report.
+ * through [batch] for that reason, one hop and one main-thread task for the report. The one
+ * payload whose parse IS the wait – a document the core's store writes (`state.json` on its
+ * debounce, tens to hundreds of KB on thirty tabs: 143 ms of the overview's fold, #349) – is not
+ * parsed on this thread at all: a storage call goes to the storage thread as the raw string
+ * ([Calls]).
  */
 class JsBridge(
     private val host: Host,
@@ -41,29 +45,34 @@ class JsBridge(
     /** Strings refused at either limit, for instrumentation (the driver's per-row `bridgeRefused`). */
     val refused: AtomicInteger get() = admission.refused
 
+    /** The `call` route apart from the WebView and the host ([Calls]): its threads are the host's, its answers the chrome's. */
+    private val calls = Calls(
+        admission,
+        storage = { work -> host.storage.execute(work) },
+        main = { work -> main.post(work) },
+        dispatch = { id, method, args ->
+            host.dispatch(method, args) { result ->
+                if (result is Host.Rejection) host.chrome.reject(id, result.message) else host.chrome.resolve(id, result)
+            }
+        },
+        dispatchStorage = { id, method, args ->
+            host.dispatchStorage(method, args) { result ->
+                if (result is Host.Rejection) host.chrome.reject(id, result.message) else host.chrome.resolve(id, result)
+            }
+        },
+        reject = { id, message -> host.chrome.reject(id, message) },
+        log = { message, error -> if (error == null) Log.w(TAG, message) else Log.w(TAG, message, error) }
+    )
+
     /**
      * Admits [json] by its raw length, reserving it in the queue: null when admitted, the refusal
      * otherwise (logged: the first, then every hundredth; [what] names the call off its head).
      */
-    private fun admit(json: String, what: () -> String): BridgeAdmission.Verdict? {
-        val verdict = admission.admit(json.length)
-        if (verdict === BridgeAdmission.Verdict.Admitted) return null
-        val count = refused.get()
-        if (count == 1 || count % 100 == 0) {
-            val reason = if (verdict === BridgeAdmission.Verdict.TooLong) "over the message limit of ${admission.messageLimitChars} chars" else "the main thread's queue holds ${admission.queuedChars} chars of calls"
-            Log.w(TAG, "${what()} (${json.length} chars) refused, $reason ($count so far)")
-        }
-        return verdict
-    }
+    private fun admit(json: String, what: () -> String): BridgeAdmission.Verdict? =
+        calls.admit(json, what)
 
     /** Parses an admitted string; a malformed one is logged and its reservation returned. */
-    private fun parseAdmitted(json: String, kind: String): JSONObject? = try {
-        JSONObject(json)
-    } catch (e: Exception) {
-        admission.release(json.length)
-        Log.w(TAG, "bad $kind payload", e)
-        null
-    }
+    private fun parseAdmitted(json: String, kind: String): JSONObject? = calls.parseAdmitted(json, kind)
 
     /** Posts [block] for an admitted string of [chars] to the main thread; the reservation ends as it runs. */
     private fun dispatchLater(chars: Int, block: () -> Unit) {
@@ -74,27 +83,123 @@ class JsBridge(
     }
 
     @JavascriptInterface
-    fun call(json: String) {
-        // Admission first, on the raw length: a refused call is never parsed. Its id and method
-        // come off the string's head, so the chrome's promise still settles.
-        val refusal = admit(json) { BridgeAdmission.head(json)?.method ?: "a call" }
-        if (refusal != null) {
-            val head = BridgeAdmission.head(json) ?: return
-            main.post { host.chrome.reject(head.id, refusal.message ?: BridgeAdmission.MESSAGE_TOO_LONG) }
-            return
+    fun call(json: String) = calls.call(json)
+
+    /**
+     * The route of one `call` string, apart from the WebView and the host (so the unit test runs
+     * it with threads of its own): admission FIRST, on the raw length – a refused call is never
+     * parsed, and is answered off its head so the chrome's promise still settles. Then the parse
+     * and the dispatch:
+     *
+     *  - every call but a storage call is parsed HERE, on the bridge thread, and dispatched on the
+     *    main thread (`Host.dispatch`), as ever;
+     *  - a STORAGE CALL ([STORAGE_CALLS]: the core's stores writing their documents – `state.json`
+     *    on its debounce, the history, the downloads, a document in pieces – and removing one) is
+     *    handed to the storage thread AS THE RAW STRING and parsed THERE, then dispatched there
+     *    (`Host.dispatchStorage`): the chrome's JS thread waits on this thread for the whole hop,
+     *    and the payload of such a call is the document itself, so its parse was the wait (the
+     *    overview's fold on thirty tabs, #349: 143 ms of the frame with 1 ms of it on the CPU, the
+     *    renderer waiting for this thread's `JSONObject(json)`). The write itself ran on the
+     *    storage thread already; now the parse does too, and nothing of the call touches the main
+     *    thread until its reply.
+     *
+     * THE ORDER HOLDS: `Storage`'s executor is ONE thread with a FIFO queue. The calls' parses are
+     * queued on it in the order the calls arrived, each parse queues the call's write behind every
+     * parse before it, so two writes of one document land in the order the chrome sent them – and
+     * the core's `JsonStore` starts the next write of a document once the one before it has
+     * landed (the reply comes after the write, as before), so no two are ever in flight at once.
+     * A refused call parses nothing, as before; a storage call on a closed storage (the host is
+     * destroyed) is rejected instead of parsed, its reservation returned.
+     */
+    class Calls(
+        val admission: BridgeAdmission,
+        /** Run `work` on the storage thread, behind every write queued so far; false when the storage is closed (nothing runs). */
+        private val storage: (work: () -> Unit) -> Boolean,
+        /** Run `work` on the main thread. */
+        private val main: (work: () -> Unit) -> Unit,
+        /** The host's dispatch of a parsed call, on the main thread; its reply answers the chrome. */
+        private val dispatch: (id: Int, method: String, args: JSONObject) -> Unit,
+        /** The host's dispatch of a parsed storage call, on the storage thread; its reply reaches the chrome through the main thread. */
+        private val dispatchStorage: (id: Int, method: String, args: JSONObject) -> Unit,
+        /** The chrome's promise rejected, on the main thread. */
+        private val reject: (id: Int, message: String) -> Unit,
+        private val log: (message: String, error: Throwable?) -> Unit,
+        /** The parse of an admitted string (the test's spy on which thread it runs on). */
+        private val parse: (json: String) -> JSONObject = { JSONObject(it) }
+    ) {
+        /**
+         * Admits [json] by its raw length, reserving it in the queue: null when admitted, the
+         * refusal otherwise (logged: the first, then every hundredth; [what] names the call off its head).
+         */
+        fun admit(json: String, what: () -> String): BridgeAdmission.Verdict? {
+            val verdict = admission.admit(json.length)
+            if (verdict === BridgeAdmission.Verdict.Admitted) return null
+            val count = admission.refused.get()
+            if (count == 1 || count % 100 == 0) {
+                val reason = if (verdict === BridgeAdmission.Verdict.TooLong) "over the message limit of ${admission.messageLimitChars} chars" else "the main thread's queue holds ${admission.queuedChars} chars of calls"
+                log("${what()} (${json.length} chars) refused, $reason ($count so far)", null)
+            }
+            return verdict
         }
-        val call = parseAdmitted(json, "call") ?: return
-        val id = call.optInt("id")
-        val method = call.str("method")
-        val args = call.obj("args")
-        dispatchLater(json.length) {
-            try {
-                host.dispatch(method, args) { result ->
-                    if (result is Host.Rejection) host.chrome.reject(id, result.message) else host.chrome.resolve(id, result)
+
+        /** Parses an admitted string; a malformed one is logged and its reservation returned. */
+        fun parseAdmitted(json: String, kind: String): JSONObject? = try {
+            parse(json)
+        } catch (e: Exception) {
+            admission.release(json.length)
+            log("bad $kind payload", e)
+            null
+        }
+
+        fun call(json: String) {
+            // Admission first, on the raw length: a refused call is never parsed. Its id and
+            // method come off the string's head, so the chrome's promise still settles.
+            val head = BridgeAdmission.head(json)
+            val refusal = admit(json) { head?.method ?: "a call" }
+            if (refusal != null) {
+                if (head == null) return
+                main { reject(head.id, refusal.message ?: BridgeAdmission.MESSAGE_TOO_LONG) }
+                return
+            }
+            if (head != null && head.method in STORAGE_CALLS) {
+                // The raw string to the storage thread; parsed and dispatched there, behind every
+                // storage call before it. The reservation ends as the parse begins, as it does when
+                // the main thread takes a call: the string is the storage thread's from here.
+                val queued = storage {
+                    admission.release(json.length)
+                    val call = try {
+                        parse(json)
+                    } catch (e: Exception) {
+                        log("bad call payload", e)
+                        return@storage
+                    }
+                    val id = call.optInt("id")
+                    val method = call.str("method")
+                    try {
+                        dispatchStorage(id, method, call.obj("args"))
+                    } catch (e: Exception) {
+                        log("native $method failed", e)
+                        main { reject(id, e.message ?: e.javaClass.simpleName) }
+                    }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "native $method failed", e)
-                host.chrome.reject(id, e.message ?: e.javaClass.simpleName)
+                if (!queued) {
+                    admission.release(json.length)
+                    main { reject(head.id, "${head.method} refused: ${Storage.CLOSED}") }
+                }
+                return
+            }
+            val call = parseAdmitted(json, "call") ?: return
+            val id = call.optInt("id")
+            val method = call.str("method")
+            val args = call.obj("args")
+            main {
+                admission.release(json.length)
+                try {
+                    dispatch(id, method, args)
+                } catch (e: Exception) {
+                    log("native $method failed", e)
+                    reject(id, e.message ?: e.javaClass.simpleName)
+                }
             }
         }
     }
@@ -174,5 +279,22 @@ class JsBridge(
 
     companion object {
         const val TAG = "ZenBridge"
+
+        /**
+         * The calls parsed and dispatched on the storage thread rather than this one ([Calls]):
+         * the core's stores' writes and removals through `AndroidStoreIO` (`src/android/storeIo.ts`)
+         * – a document whole, a document in pieces, a removal – every one of them a call whose
+         * payload is the document (or a piece of it) and whose work is the storage thread's. The
+         * synchronous ones (`storage.writeSync`, the reads) come through [callSync] and are not
+         * routed: they run on the bridge thread by design.
+         */
+        val STORAGE_CALLS: Set<String> = setOf(
+            "storage.write",
+            "storage.remove",
+            "storage.writeBegin",
+            "storage.writeChunk",
+            "storage.writeEnd",
+            "storage.writeAbort"
+        )
     }
 }

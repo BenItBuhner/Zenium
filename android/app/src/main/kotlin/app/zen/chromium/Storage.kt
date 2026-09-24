@@ -328,15 +328,18 @@ class Storage(private val dir: File, private val lease: Lease? = null, private v
     }
 
     /**
-     * Run `work` on the storage thread, after every write queued so far has landed. Nothing runs
-     * once the instance is [close]d: a caller waiting on an answer is one whose host is gone.
+     * Run `work` on the storage thread, after every write queued so far has landed; true when it
+     * was queued. Nothing runs once the instance is [close]d (false): a caller waiting on an
+     * answer is one whose host is gone – the bridge still settles its promise (`JsBridge.call`).
      */
-    fun execute(work: () -> Unit) {
-        if (closed) return
-        try {
+    fun execute(work: () -> Unit): Boolean {
+        if (closed) return false
+        return try {
             executor.execute(work)
+            true
         } catch (_: RejectedExecutionException) {
             // Closed between the check and the hand-over: the same as closed before it.
+            false
         }
     }
 

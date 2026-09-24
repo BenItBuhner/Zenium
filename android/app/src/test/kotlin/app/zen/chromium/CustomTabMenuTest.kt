@@ -33,4 +33,15 @@ class CustomTabMenuTest {
         assertEquals(listOf("Save for later", "Open in app", "Three", "Four", "Five"), caller.map { it.title })
         assertEquals(CustomTabConfig.MAX_MENU_ITEMS, caller.size)
     }
+
+    @Test
+    fun aWebAppsOverflowIsThePageActionsAndTheWayOut() {
+        assertEquals(
+            listOf(
+                listOf(CustomTabMenu.Item.Share, CustomTabMenu.Item.CopyLink, CustomTabMenu.Item.Reload),
+                listOf(CustomTabMenu.Item.OpenInZenium)
+            ),
+            CustomTabMenu.webAppGroups()
+        )
+    }
 }

@@ -1,4 +1,5 @@
 import type { SyncPlatformHost, SyncTransport } from '../core/platform'
+import type { SyncDeviceKind } from '../shared/types'
 import { SyncFolderLostError } from '../core/sync/transport'
 import type { Bridge } from './bridge'
 
@@ -89,7 +90,9 @@ export class AndroidSyncHost implements SyncPlatformHost {
 
   constructor(
     private readonly bridge: Bridge,
-    private readonly deviceModel: string
+    private readonly deviceModel: string,
+    /** The screen's smallest width is 600 dp or more at start (`PageEnvironment.largeScreen`). */
+    private readonly largeScreen = false
   ) {}
 
   async chooseFolder(): Promise<string | null> {
@@ -104,6 +107,16 @@ export class AndroidSyncHost implements SyncPlatformHost {
 
   deviceNameDefault(): string {
     return this.deviceModel.trim() || 'Android phone'
+  }
+
+  /**
+   * A tablet at the 600 dp line Chrome draws too (`ui::GetDeviceFormFactor`, read once at
+   * start), else a phone. Chrome calls a device with a hinge a phone before it looks at the
+   * width (`GetLocalDeviceFormFactor`: `DEVICE_FORM_FACTOR_FOLDABLE` → `kPhone`); the host
+   * knows only the width, so a foldable open at start reads as a tablet.
+   */
+  deviceKind(): SyncDeviceKind {
+    return this.largeScreen ? 'tablet' : 'phone'
   }
 
   createTransport(folder: string): SyncTransport {

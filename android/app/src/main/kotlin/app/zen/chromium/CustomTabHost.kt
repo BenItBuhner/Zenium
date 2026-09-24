@@ -23,13 +23,33 @@ import org.json.JSONObject
  * native UI, and navigation and title changes go to the activity's toolbar. Popups navigate the
  * one page (`popupsAsTabs` is false), and the page script is not installed: there is no core to
  * talk to about Glance or third-party links.
+ *
+ * An installed web app's window ([WebAppActivity], PWA-07) is the same kind of host – one page,
+ * no chrome, the browser's rules – so it is this class with the activity as its [Listener]; only
+ * what it says of itself differs (`pageDialogs`: the app's `alert` / `confirm` / `prompt` are the
+ * native prompt sheets, as in a tab of the browser, since the sheet needs no chrome).
  */
 class CustomTabHost(
-    override val activity: CustomTabActivity,
+    override val activity: BrowserActivity,
+    private val listener: Listener,
     container: FrameLayout,
     private val fullscreenLayer: FrameLayout,
-    override val themeDark: Boolean
+    override val themeDark: Boolean,
+    override val pageDialogs: Boolean = false
 ) : PageHost {
+    /** The activity the one page reports to: its navigation, title and loading, and its progress. */
+    interface Listener {
+        /** What the page reports through [viewEvent]: `navigated`, `title`, `startLoading`, … */
+        fun onPageEvent(name: String, payload: JSONObject?)
+        fun onProgress(percent: Int)
+        /**
+         * A page element went fullscreen (`active`) or left it, the system bars hidden and shown
+         * with it. A window that hides the bars on its own account (`display: fullscreen`) puts
+         * them back out of sight after; a custom tab has nothing to do.
+         */
+        fun onFullscreenChanged(active: Boolean) {}
+    }
+
     override val pageScript = ""
     override val pageToken = ""
     /** The browser's rule sets apply here too: same engine, same files under `zen/blocking/`. */
@@ -59,7 +79,7 @@ class CustomTabHost(
     // --- what the page reports ----------------------------------------------------------------------
 
     override fun viewEvent(tabId: String, name: String, payload: Any?) {
-        activity.onPageEvent(name, payload as? JSONObject)
+        listener.onPageEvent(name, payload as? JSONObject)
     }
 
     override fun hostEvent(name: String, payload: Any?) {
@@ -81,7 +101,7 @@ class CustomTabHost(
         }
     }
 
-    override fun progress(tabId: String, percent: Int) = activity.onProgress(percent)
+    override fun progress(tabId: String, percent: Int) = listener.onProgress(percent)
 
     override fun onKey(tabId: String?, input: JSONObject) {
         // No shortcut table without the core; the page keeps every key.
@@ -232,6 +252,7 @@ class CustomTabHost(
         fullscreenLayer.visibility = View.VISIBLE
         setSystemBarsHidden(true)
         backChanged()
+        listener.onFullscreenChanged(true)
     }
 
     override fun exitFullscreen(tab: TabWebView) {
@@ -245,6 +266,7 @@ class CustomTabHost(
         tab.invalidate()
         setSystemBarsHidden(false)
         backChanged()
+        listener.onFullscreenChanged(false)
     }
 
     private fun setSystemBarsHidden(hidden: Boolean) {

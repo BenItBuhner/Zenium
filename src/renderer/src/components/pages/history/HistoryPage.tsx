@@ -28,6 +28,7 @@ import { createStore, type Store } from '@renderer/lib/store'
 import { SYNC_COPY, syncScopeRowId } from '@renderer/lib/syncSetup'
 import { openClearBrowsingData } from '@renderer/lib/ui'
 import { relativeTime } from '@renderer/lib/utils'
+import { DeviceGlyph, anyDeviceKind } from '../../DeviceGlyph'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { inTextField, walkRows } from '../rowKeys'
 import { usePageSearch } from '../usePageSearch'
@@ -977,12 +978,16 @@ function RemoteTabs({
     </li>
   )
   if (devices.length > 0) {
+    // One answer for the whole list: the headings lead with the kind glyphs while any listed
+    // device announced one (`anyDeviceKind`, §10.4's condition), none of them otherwise.
+    const glyphs = anyDeviceKind(devices)
     return (
       <>
         {devices.map((device) => (
           <DeviceGroup
             key={device.deviceId}
             device={device}
+            glyph={glyphs}
             terms={terms}
             selecting={selecting}
             onOpen={onOpen}
@@ -1060,15 +1065,22 @@ function RemoteTabs({
  * Device – are the heading line's native context menu (the lead's #326 ruling: a right-click
  * on the line or the menu key with the focus in it, as Firefox's Synced Tabs; the heading's
  * one trailing slot holds the disclosure alone, and the disclosure stays one – `aria-expanded`
- * for the rows, no `aria-haspopup`, so it takes no pressed fill, §9.20).
+ * for the rows, no `aria-haspopup`, so it takes no pressed fill, §9.20). The heading leads with
+ * the device's kind glyph (`DeviceGlyph`, services pass 4: the kind its announcement carried,
+ * the 69 % stand-in for one that carried none) on its rows' favicon column, the name on their
+ * text edge – Chrome's device card and Firefox's Synced Tabs lead with the same glyph – while
+ * `glyph` says the list has any kind to lead with (`anyDeviceKind`); a list where no device
+ * announced one puts the names on the gutter, no stand-in column.
  */
 function DeviceGroup({
   device,
+  glyph,
   terms,
   selecting,
   onOpen
 }: {
   device: SyncDeviceTabs
+  glyph: boolean
   terms: string[]
   selecting: boolean
   onOpen: (tab: SyncRemoteTab, background: boolean) => void
@@ -1084,6 +1096,7 @@ function DeviceGroup({
   return (
     <PageGroup
       heading={device.deviceName}
+      lead={glyph ? <DeviceGlyph kind={device.deviceKind} /> : undefined}
       headingId={`zen-history-device-${safeId}`}
       aside={REMOTE_COPY.lastActive(device.updatedAt)}
       data-testid="history-remote-device"

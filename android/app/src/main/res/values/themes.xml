@@ -23,6 +23,11 @@
         <item name="android:activityCloseExitAnimation">@anim/cct_slide_out_down</item>
     </style>
 
+    <!-- An installed web app's window (WebAppActivity, PWA-07): the browser theme under the
+         system's own app-launch animation, as an app of its own. Its own name so the splash
+         (PWA-06) has a theme to hang its window attributes on. -->
+    <style name="Theme.Zen.WebApp" />
+
     <!-- A phone sheet drawn natively per the v2 draft (§6): neutral panel, top radius 12, edge to
          edge under the navigation bar, scrim black .4 light / .55 dark. The 1 dp hairline is drawn
          by the sheet's content view (SheetEdge, under NativePromptSheet, ext/ExtensionSheet and

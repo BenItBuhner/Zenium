@@ -735,6 +735,22 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('voice=&prompt=http-auth').kind).toBe('prompt')
     expect(parsePreviewSpec('overview&voice=').kind).toBe('voice')
     expect(parsePreviewSpec('urlbar=&overview').kind).toBe('overview')
+    // The share panel sits between voice and the overview.
+    expect(parsePreviewSpec('share=link&voice=').kind).toBe('voice')
+    expect(parsePreviewSpec('overview&share=link').kind).toBe('share')
+  })
+
+  it("puts the browser's own share panel up for the page, a selection or an image, a private tab's on request (SH-03)", () => {
+    expect(parsePreviewSpec('share=link')).toEqual({ kind: 'share', share: 'link', private: false })
+    expect(parsePreviewSpec('share=text')).toEqual({ kind: 'share', share: 'text', private: false })
+    expect(parsePreviewSpec('share=image&private')).toEqual({
+      kind: 'share',
+      share: 'image',
+      private: true
+    })
+    // An unknown kind is no state; `private` with a value is the private surface, not a flag.
+    expect(parsePreviewSpec('share=files')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('share=link&private=page').kind).toBe('private')
   })
 
   it('raises a permission prompt from the active page, behind the menu but ahead of the bars', () => {

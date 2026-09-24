@@ -22,6 +22,8 @@ import type {
   OverlayKind,
   Rect,
   ScreenshotSaved,
+  SharePanelAction,
+  SharePanelRequest,
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
@@ -467,6 +469,8 @@ export interface UiState {
   siteInfoOpen: boolean
   /** A page wants to open another app: the external-protocol confirm sheet is up for it. */
   externalProtocol: ExternalProtocolRequest | null
+  /** The host's own share panel (Android below 14, SH-03) is up for a share (`components/share/SharePanelSheet.tsx`). */
+  sharePanel: SharePanelRequest | null
   /** Voice search: the listening sheet is up, for the search it will load (`lib/voiceSearch.ts`). */
   voice: VoicePrompt | null
   /** QR scanning: the scan sheet is up, for the payload it will load (`lib/qrScan.ts`). */
@@ -658,6 +662,7 @@ export const uiStore = createStore<UiState>(
     menu: null,
     siteInfoOpen: false,
     externalProtocol: null,
+    sharePanel: null,
     voice: null,
     qrScan: null,
     barEditorOpen: false,
@@ -1897,6 +1902,39 @@ export function cancelExternalProtocol(requestId: string): void {
     return
   }
   uiStore.set({ externalProtocol: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The share panel (Android below 14; SH-03): the host holds the share, the chrome draws the sheet
+// ---------------------------------------------------------------------------
+
+/**
+ * The host put a share up for the panel (`share.panel`): the sheet rises over a capture of the
+ * page that is sharing. A newer share while one is up takes the sheet over (the host has let the
+ * older one go already); the omnibox closes if it was the opener. The two marks split the open
+ * for a reading of its cost (`ShareDemo`'s probe): the host's request in, and the sheet asked
+ * for once the page's cover is captured.
+ */
+export async function openSharePanel(request: SharePanelRequest): Promise<void> {
+  performance.mark('share.panel')
+  await captureActiveTab(request.tabId)
+  run('focus.chrome', undefined)
+  performance.mark('share.panel.set')
+  uiStore.set({ sharePanel: request, drawerOpen: false })
+  if (uiStore.get().urlbar.open) closeUrlbar()
+}
+
+/**
+ * The panel's answer – an app, More, a chip the host carries out, or the dismissal that is every
+ * other way out (a drag, the scrim, back, a chip the chrome ran itself): one answer per request,
+ * the sheet taken down with it.
+ */
+export function answerSharePanel(id: string, action: Omit<SharePanelAction, 'id'>): void {
+  if (uiStore.get().sharePanel?.id !== id) return
+  uiStore.set({ sharePanel: null })
+  run('share.panelAction', { id, ...action })
   invalidateSnapshot()
   returnFocusToPage()
 }

@@ -8,6 +8,7 @@ import type {
   Platform as PlatformOs,
   Settings,
   SharePayload,
+  SyncDeviceKind,
   SyncDeviceTabs,
   SyncRemoteTab,
   Tab
@@ -4486,7 +4487,7 @@ describe('Send to your devices (ID-27)', () => {
   /** The browser's sync as a connected engine would report it, its `sendTab` recorded. */
   function connectSync(
     h: Harness,
-    devices: Array<{ id: string; name: string; lastSeen: number }>
+    devices: Array<{ id: string; name: string; lastSeen: number; kind?: SyncDeviceKind }>
   ): ReturnType<typeof vi.fn> {
     const sendTab = vi.fn(async () => undefined)
     const status = { ...h.browser.sync.status(), enabled: true, devices }
@@ -4568,6 +4569,38 @@ describe('Send to your devices (ID-27)', () => {
       'Home desktop',
       'Work laptop'
     ])
+  })
+
+  it('each device’s row carries the device’s kind for the renderer-drawn menu’s glyph, null for a device that announced none (services pass 4)', () => {
+    const h = pageHarness()
+    connectSync(h, [
+      { ...LAPTOP, kind: 'laptop' },
+      { ...DESK, kind: 'desktop' },
+      { id: 'dev-4', name: 'Pixel 9', lastSeen: 4_000, kind: 'phone' },
+      { id: 'dev-5', name: 'Old build', lastSeen: 3_000 }
+    ])
+    const appMenuItems = (h: Harness): MenuItemTemplate[] => {
+      h.browser.handleCommand(h.win, 'app.menu', {})
+      return h.shown()
+    }
+    const rows = deepItem(appMenuItems(h), 'Send to Your Devices').submenu!
+    expect(rows.map((row) => [row.label, row.device])).toEqual([
+      ['Home desktop', { kind: 'desktop' }],
+      ['Pixel 9', { kind: 'phone' }],
+      ['Old build', { kind: null }],
+      ['Work laptop', { kind: 'laptop' }]
+    ])
+    // The renderer's descriptor keeps the mark, as it keeps a group's (`serialiseMenu`).
+    const { items } = serialiseMenu(rows, 'm')
+    expect(items.map((item) => item.device)).toEqual([
+      { kind: 'desktop' },
+      { kind: 'phone' },
+      { kind: null },
+      { kind: 'laptop' }
+    ])
+    // The one-device item names the device and carries no mark: it is not a device row.
+    connectSync(h, [{ ...LAPTOP, kind: 'laptop' }])
+    expect(appMenuItems(h).some((item) => item.device)).toBe(false)
   })
 
   it('on a phone with several devices the item opens the device picker sheet instead (sendTab.open), beside Share…', () => {

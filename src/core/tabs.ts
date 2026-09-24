@@ -104,6 +104,17 @@ export type { PageFlags } from './platform'
 /** Hidden pages kept awake when memory runs low (`unloadForMemoryPressure`): the recent few. */
 export const KEEP_UNDER_PRESSURE = 3
 
+/**
+ * The favicon a new bookmark takes from the tab it is made from: none from a private tab. A
+ * private window bookmarks into the profile's store as Chrome's Incognito does (bookmarks-43),
+ * but writes nothing of the visit – the favicon backfill already skips private tabs
+ * (`updateFavicon`), and the star, Ctrl+D and a tab dropped on another window's bar must not
+ * slip the icon in by the other door.
+ */
+export function bookmarkFaviconOf(tab: Tab, isPrivate: boolean): string | null {
+  return isPrivate ? null : tab.favicon
+}
+
 /** Where the keyboard goes after a tab is activated or closed (`tab.activate` / `tab.close`). */
 export interface TabFocusOptions {
   /** The keyboard stays in the chrome (the tab strip) instead of moving into the page. */
@@ -165,6 +176,13 @@ export class TabManager {
    * right pane, or with the view.
    */
   private readonly splitLinkLoads = new Map<string, string>()
+  /**
+   * The server redirects the navigation under way in a tab went through (history-23): `hops`
+   * first to last, `to` the address it is bound for now. The hosts report each hop before the
+   * commit, which records the hops with the landing as one chain; a navigation that starts
+   * elsewhere, fails or loses its tab drops them.
+   */
+  private readonly pendingRedirects = new Map<string, { hops: string[]; to: string }>()
   /**
    * Tabs whose crash page `onCrashed` has asked the view for and that has not committed yet. A
    * load already in flight when the renderer went (a restored list's current entry, Android)
@@ -548,7 +566,11 @@ export class TabManager {
           t.waiting = true
           t.progress = 0
         }, true),
-      onStartNavigation: (_url, sameDocument) =>
+      onStartNavigation: (url, sameDocument) => {
+        // A navigation bound elsewhere than the redirect chain's latest target is a new one:
+        // the hops kept so far belonged to a load that never committed.
+        if (!sameDocument && this.pendingRedirects.get(tabId)?.to !== url)
+          this.pendingRedirects.delete(tabId)
         update((t) => {
           if (sameDocument) {
             // A pushState / hash change is no load to the row, although Chromium toggles the
@@ -561,7 +583,14 @@ export class TabManager {
             t.loading = true
             t.waiting = true
           }
-        }, true),
+        }, true)
+      },
+      onRedirected: (fromUrl, toUrl) => {
+        const pending = this.pendingRedirects.get(tabId)
+        const hops = pending?.to === fromUrl ? pending.hops : []
+        if (hops[hops.length - 1] !== fromUrl) hops.push(fromUrl)
+        this.pendingRedirects.set(tabId, { hops, to: toUrl })
+      },
       onStopLoading: () => {
         this.browser.governor.onLoadFinished(tabId)
         let finished = false
@@ -644,6 +673,8 @@ export class TabManager {
       onFailLoad: (code, description, url, details) => {
         const v = view()
         if (code === -3 || !v) return
+        // The navigation ended without a commit: its redirect hops go with it.
+        this.pendingRedirects.delete(tabId)
         // A link to a download the server refused: the downloads host made the failed row Chrome
         // shows for it ("Failed · No file") and stopped the navigation, which then ends with the
         // `ERR_ABORTED` above like a download that did start; a host whose stop came too late
@@ -945,6 +976,7 @@ export class TabManager {
     if (!tab || !view || view.isDestroyed()) return
     const url = view.getURL()
     this.pendingTransition.delete(tabId)
+    this.pendingRedirects.delete(tabId)
     if (!url || tab.url === url) return
     tab.url = url
     tab.title = view.getTitle() || this.titleFor(url)
@@ -1009,6 +1041,17 @@ export class TabManager {
     return true
   }
 
+  /**
+   * The redirect hops the navigation that just committed at `url` went through, taken off the
+   * tab; nothing when the hops were bound elsewhere (that navigation never committed).
+   */
+  private takeRedirects(tabId: string, url: string): string[] | undefined {
+    const pending = this.pendingRedirects.get(tabId)
+    if (!pending) return undefined
+    this.pendingRedirects.delete(tabId)
+    return pending.to === url && pending.hops.length > 0 ? pending.hops : undefined
+  }
+
   private onNavigated(tabId: string, view: TabView, url: string, inPage = false): void {
     const tab = this.tab(tabId)
     if (!tab) return
@@ -1038,8 +1081,13 @@ export class TabManager {
     view.setPopupsAllowed?.(this.browser.popups.siteAllowed(url))
     const transition = this.pendingTransition.get(tabId) ?? 'link'
     this.pendingTransition.delete(tabId)
+    const redirectedFrom = inPage ? undefined : this.takeRedirects(tabId, url)
     if (!this.isPrivate(tab))
-      this.browser.history.visit(url, tab.title, tab.favicon, { transition, tabId })
+      this.browser.history.visit(url, tab.title, tab.favicon, {
+        transition,
+        tabId,
+        ...(redirectedFrom ? { redirectedFrom } : {})
+      })
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
     this.rememberNavigation(tabId, view)
@@ -1164,6 +1212,7 @@ export class TabManager {
     tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
     this.pendingTransition.delete(tabId)
+    this.pendingRedirects.delete(tabId)
     for (const w of this.browser.allWindows())
       if (w.findResult?.tabId === tabId) w.findResult = null
     view.setBackgroundColor(this.backgroundFor(page))
@@ -1428,6 +1477,7 @@ export class TabManager {
     this.browser.protection.safeBrowsing.forgetTab(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.pendingTransition.delete(tabId)
+    this.pendingRedirects.delete(tabId)
     this.crashPagePending.delete(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
@@ -1711,6 +1761,7 @@ export class TabManager {
     this.pendingTransition.delete(tabId)
     this.splitLinkFlags.delete(tabId)
     this.splitLinkLoads.delete(tabId)
+    this.pendingRedirects.delete(tabId)
     this.crashPagePending.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
@@ -2914,7 +2965,7 @@ export class TabManager {
           index: drop.index ?? undefined,
           title: tab.customTitle ?? tab.title,
           url: tab.url,
-          favicon: tab.favicon,
+          favicon: bookmarkFaviconOf(tab, this.isPrivate(tab)),
           type: 'url'
         })
         return true

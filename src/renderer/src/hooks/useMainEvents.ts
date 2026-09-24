@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import type { Rect, UIState } from '@shared/types'
+import type { UIState } from '@shared/types'
 import {
   announce,
   announcementVoice,
@@ -22,11 +22,14 @@ import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
+import { afterPageShown } from '@renderer/lib/sharePanel'
 import { focusPane, pageHandedKeyboard, pageTookKeyboard } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
+import { applyDevicePosture } from '@renderer/lib/posture'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
 import { openImportSurface } from '@renderer/lib/pages'
+import { starSeat } from '@renderer/lib/starSeat'
 import { refocusStripRow } from '@renderer/lib/tabStrip'
 import {
   configureThumbnails,
@@ -46,11 +49,13 @@ import {
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   openInstallSheet,
+  openLongScreenshot,
   openNameWindow,
   openOverlay,
   openPrintPreview,
   openReaderPreferences,
   openSendTabSheet,
+  openSharePanel,
   openUrlbar,
   openZoom,
   overlayAvailable,
@@ -370,17 +375,10 @@ export function useMainEvents(): void {
           starredOnPhone(star)
           return
         }
-        // The bubble hangs from the pill's bottom edge, end-aligned with the star in it (v2
-        // draft §9.20); both are measured as the request arrives.
-        const chip = document.querySelector('[data-bm-star]')
-        const rect = (el: Element | null | undefined): Rect | null => {
-          const r = el?.getBoundingClientRect()
-          return r ? { x: r.left, y: r.top, width: r.width, height: r.height } : null
-        }
-        void openBookmarkChrome(
-          { starDialog: { ...star, anchor: rect(chip), pill: rect(chip?.closest('.zen-pill')) } },
-          currentActiveTabId()
-        )
+        // The bubble hangs from the pill's bottom edge, end-aligned with the star in it – or,
+        // with the star folded out of the pill, with the star's seat at the pill's end (v2 draft
+        // §9.20; `starSeat`); both are measured as the request arrives.
+        void openBookmarkChrome({ starDialog: { ...star, ...starSeat() } }, currentActiveTabId())
       }),
       onEvent('bookmark.edit', (edit) => {
         // Over the phone's bookmarks panel the request is the panel's sheet, with the panel's
@@ -438,6 +436,12 @@ export function useMainEvents(): void {
       onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
       onEvent('voice.event', (event) => voiceEvent(event)),
       onEvent('qr.event', (event) => qrEvent(event)),
+      onEvent('share.panel', (request) => void openSharePanel(request)),
+      // Zenium's Long screenshot in Android 14's share sheet (SH-02): the host relays the tap once
+      // the sheet has closed, and the editor opens over the page as the panel's chip opens it.
+      onEvent('screenshot.openLong', ({ tabId }) =>
+        afterPageShown(tabId, () => openLongScreenshot(tabId))
+      ),
       onEvent('webapp.install', (prompt) => {
         closeUrlbar()
         retireInstallBanner(prompt.tabId)
@@ -466,6 +470,8 @@ export function useMainEvents(): void {
       }),
       // The root's `--zen-inset-*` and the store, when the numbers changed (lib/insets.ts).
       onEvent('insets', (insets) => applyHostInsets(insets)),
+      // A foldable's pose (OS-11, lib/posture.ts): the store, the root's `data-posture`, the log.
+      onEvent('posture', (posture) => applyDevicePosture(posture)),
       // Where the chrome lies under the pages, the swap between a live page and its cover is
       // timed from these (lib/pageView.ts); the desktop hosts swap the moment they are asked.
       onEvent('layout.applied', (applied) => {

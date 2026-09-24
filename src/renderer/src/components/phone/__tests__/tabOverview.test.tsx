@@ -31,6 +31,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { NEW_TAB_CELL, TabOverview } = await import('../TabOverview')
 const { activeLiftPointer, cancelLift, liftStore } = await import('../useCardLift')
 const { privateTabsStore, resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
 const { BAR_ITEMS, barContext, tabCount } = await import('../barItems')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 const { clearDepartures, departStore } = await import('../departureStore')
@@ -320,6 +321,9 @@ afterEach(() => {
   root = null
   host?.remove()
   host = null
+  // These tests mount the overview outside the stage, so `dismissOverview()` (the one close path,
+  // which resets the shared overview UI) never runs between them.
+  act(() => resetOverviewUi())
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.useRealTimers()

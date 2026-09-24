@@ -1,0 +1,99 @@
+name: Android web app window demo
+
+# Records an installed web app's own window on the phone (matrix PWA-07, with PWA-08's overflow):
+# the Add-to-Home-screen demo's Sketch Studio installed through the install sheet (Add under a
+# real finger, the launcher's pin dialog, the confirmation toast), the pinned shortcut read back
+# and its intent asserted to aim at WebAppLauncherActivity with the manifest's record, the Home
+# screen tile opening the app in its own window – no toolbar, the status bar in the manifest's
+# theme_color (a pixel read), its own task in Recents under the app's name, matchMedia reporting
+# standalone inside – a link inside the scope staying toolbar-less, a link out of the scope
+# bringing the custom tab toolbar up with the X and the origin (frames measured), the X walking
+# the history back into the scope (frames measured), the overflow with Copy Link under a finger
+# and Open in Zenium handing the live page to the browser window, the shortcut launched again
+# through `am start -W` (the launch's frames and TotalTime), then the minimal-ui fixture (no strip
+# on a phone, Chrome's pose) and the fullscreen fixture (both bars hidden). Every check is a line
+# of webapp-findings.txt in the artifact; a FAIL fails the run once the stills are taken.
+#
+# Two acts, in parallel, each on its own emulator: the light and the dark colour scheme (the dark
+# act puts the device in night mode, which the app's window follows; the same claims; the stills
+# are the design record's). Dispatch-only, like the page dialogs demo: it says nothing about a
+# change being correct beyond what the findings record. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file picks the driver and the theme. One more boot
+# per act when the emulator itself went away under the driver (adb lost the device), and never
+# when the driver failed: a run is then spent on the demo rather than on the runner.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-webapp-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Web app window demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.WebAppDemo
+        DEMO_DIR=webapp-demo
+        DEMO_OUT=artifacts/android-webapp-demo
+        DEMO_VIDEO=android-webapp-demo-light.mp4
+        DEMO_THEME=light
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-webapp-demo-light
+      artifact-path: artifacts/android-webapp-demo/
+
+  light-again:
+    name: Web app window demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.WebAppDemo
+        DEMO_DIR=webapp-demo
+        DEMO_OUT=artifacts/android-webapp-demo
+        DEMO_VIDEO=android-webapp-demo-light.mp4
+        DEMO_THEME=light
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-webapp-demo-light-second-boot
+      artifact-path: artifacts/android-webapp-demo/
+
+  dark:
+    name: Web app window demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.WebAppDemo
+        DEMO_DIR=webapp-demo
+        DEMO_OUT=artifacts/android-webapp-demo
+        DEMO_VIDEO=android-webapp-demo-dark.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-webapp-demo-dark
+      artifact-path: artifacts/android-webapp-demo/
+
+  dark-again:
+    name: Web app window demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.WebAppDemo
+        DEMO_DIR=webapp-demo
+        DEMO_OUT=artifacts/android-webapp-demo
+        DEMO_VIDEO=android-webapp-demo-dark.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-webapp-demo-dark-second-boot
+      artifact-path: artifacts/android-webapp-demo/

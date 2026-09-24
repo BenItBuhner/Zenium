@@ -194,18 +194,31 @@ app and the Android WebView host.
   `browser_hover` (by ref, CSS selector, `text=…` or raw `x`/`y` viewport coordinates),
   `browser_type`, `browser_press_key`, `browser_scroll`, `browser_select_option`,
   `browser_wait_for`, `browser_take_screenshot` (viewport, `fullPage` or one element),
-  `browser_tabs` (list / new / select / close / move / group / ungroup), `browser_read_page`,
-  `browser_evaluate` — plus a small Zen layer: `zen_status`, `zen_mode`, `zen_spaces`,
-  `zen_history`, and the `zenium://status` / `zenium://tabs` resources. Arguments accept the
-  usual synonyms (`ref`/`selector` for `target`, `function` for `expression`, a tab's list
-  position or id prefix for `tabId`), and every error says what would have worked.
+  `browser_tabs` (list / new / close / move; `select`, `group` and `ungroup` stay as deprecated
+  aliases), `browser_read_page`, `browser_evaluate` — plus a small Zen layer: `zen_status`,
+  `zen_session` (status / end / rename), `zen_groups` (list / create / rename / close / adopt),
+  `zen_mode`, `zen_spaces`, `zen_history`, and the `zenium://status`, `zenium://tabs`,
+  `zenium://tabs?scope=all` and `zenium://tab/<id>/text` resources. Every page tool names the tab
+  it acts on with `tabId` (a tab id or a unique prefix of one – there is no current tab, and list
+  positions are refused because they shift under other agents). Arguments accept the usual
+  synonyms (`ref`/`selector` for `target`, `function` for `expression`, `folder` for `groupId`),
+  and every error says what would have worked.
 - **Foreground / background:** each agent chooses a mode with `zen_mode`. Foreground brings its tab
   in front of you before every action and shows a labelled, coloured cursor; background drives its
-  own tabs without changing what you are looking at. Agent-driven tabs are protected from the
-  resource governor while an agent holds them.
+  own tabs without changing what you are looking at. The screen is a lease: while one agent has
+  acted in the foreground within the last 20 s, another agent's foreground calls run in the
+  background and its results say so. Agent-driven tabs are protected from the resource governor
+  while an agent holds them.
 - **Many agents, one browser:** every connection is its own session with a distinct colour and
-  identity; a coloured robot badge marks the tabs each one drives (and a pill shows how many are
-  active). An agent may only touch tabs it opened or was given — it cannot take another agent's.
+  identity, and it works in tab groups of its own – a home group named after the agent in a shared
+  `Agents` space that appears on demand (or a space of its own), never in your spaces. A tab is an
+  agent's because it sits in one of its groups; a coloured robot badge marks those tabs and a pill
+  shows how many agents are active. Another live agent's tabs cannot be addressed at all; your own
+  tabs need `allowForeign: true`, which never makes them the agent's, and your Essentials and
+  pinned tabs are never closed, moved or grouped. When an agent disconnects its groups stay open as
+  orphaned groups (`[orphaned, was "…"]`) for you to keep or for another agent to adopt with
+  `zen_groups adopt`; `zen_session {action: "end", closeTabs: true}` cleans up instead. When you
+  close or move an agent's tab, its next result starts with a notice saying so.
 - **Security:** loopback-only by default (local-network access is opt-in); `Origin` and `Host` are
   validated to defeat DNS-rebinding; a new agent triggers an allow/deny prompt unless it presents
   the connection token; private windows are never exposed and running scripts in pages

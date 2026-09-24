@@ -125,6 +125,7 @@ describe('the overview and its first tap', () => {
   })
   afterEach(() => {
     stage.dismissStage()
+    stage.setTabletOverviewTravel(null)
     vi.restoreAllMocks()
   })
 
@@ -167,6 +168,70 @@ describe('the overview and its first tap', () => {
     expect(stage.overviewInteractive(overview())).toBe(false)
     settle()
     expect(overview().phase).toBe('closed')
+  })
+
+  it("the phone's travel is the thumb's reach – 42 % of the content frame's height, 220 at the least – and its gain is unchanged", () => {
+    // The frame 800 tall: 336 of finger opens the overview whole.
+    expect(stage.overviewTravel()).toBe(336)
+    contentAreaStore.set({ area: { x: 0, y: 0, width: 400, height: 400 } })
+    expect(stage.overviewTravel()).toBe(220)
+    contentAreaStore.set({ area: { x: 0, y: 0, width: 400, height: 800 } })
+    stage.beginOverviewDrag(state())
+    stage.dragOverview(100)
+    expect(overview().progress).toBeCloseTo(100 / 336, 9)
+  })
+
+  it("on the tablet the layer's height is the travel: 200 px of finger is 200 px of layer, and the commit's rule holds over that extent (§11's 1:1)", () => {
+    stage.setTabletOverviewTravel(660)
+    expect(stage.overviewTravel()).toBe(660)
+    stage.beginOverviewDrag(state())
+    stage.dragOverview(200)
+    expect(overview().progress * 660).toBeCloseTo(200, 9)
+    // Short of the 45 %: a slow release returns to the toolbar's edge.
+    stage.releaseOverview(0)
+    expect(overview()).toMatchObject({ phase: 'settling', target: 0 })
+    settle()
+    expect(overview().phase).toBe('closed')
+    // Past it: 450 of 660, a slow release opens.
+    stage.beginOverviewDrag(state())
+    stage.dragOverview(450)
+    expect(overview().progress * 660).toBeCloseTo(450, 9)
+    stage.releaseOverview(0)
+    expect(overview()).toMatchObject({ phase: 'settling', target: 1 })
+    settle()
+    expect(overview().phase).toBe('open')
+    // The layer gone: the phone's figure is back.
+    stage.setTabletOverviewTravel(null)
+    expect(stage.overviewTravel()).toBe(336)
+  })
+
+  it("a fling opens it from short of the threshold on the tablet's extent as on the phone's", () => {
+    stage.setTabletOverviewTravel(660)
+    stage.beginOverviewDrag(state())
+    stage.dragOverview(120)
+    stage.releaseOverview(600)
+    expect(overview()).toMatchObject({ phase: 'settling', target: 1 })
+    settle()
+    expect(overview().phase).toBe('open')
+  })
+
+  it("the tabs button's spring, set off over the phone's figure before the tablet's layer has measured itself, lands open when the layer publishes its height mid-flight", () => {
+    // From closed the layer is not mounted yet: the settle sets off over the phone's 336.
+    stage.openOverview(state())
+    expect(overview()).toMatchObject({ phase: 'settling', target: 1 })
+    for (let i = 0; i < 3; i++) frame()
+    const before = overview().progress
+    expect(before).toBeGreaterThan(0)
+    // The layer mounted and measured 744: the flight in progress must not re-scale to it (336 of
+    // 744 rounds to 0 – the overview would close instead of opening).
+    stage.setTabletOverviewTravel(744)
+    let last = before
+    while (overview().phase === 'settling') {
+      frame()
+      expect(overview().progress).toBeGreaterThan(last - 0.05)
+      last = overview().progress
+    }
+    expect(overview()).toMatchObject({ phase: 'open', progress: 1 })
   })
 
   it('a card picked mid-settle turns the overview round at once and activates that tab', () => {

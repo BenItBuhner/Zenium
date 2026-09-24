@@ -421,7 +421,9 @@ class Extensions(private val host: Host) {
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
             // The engine's switch (contract 7.1): the process's engine relays media requests for
             // their response stage while it is on; this runtime hears them through [observer].
-            "ext.observeResponses" -> { host.blocking.observeResponses = args.bool("on"); reply(null) }
+            // The pages' observer of their own fetch / XHR responses (7.10) follows the same
+            // word: every live document is told now, a new one learns it at its hello.
+            "ext.observeResponses" -> { setObserveResponses(args.bool("on")); reply(null) }
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
@@ -728,9 +730,22 @@ class Extensions(private val host: Host) {
         observeRequests = false
         // The engine's switch is the runtime's that set it: off with the runtime that goes, when
         // this one still owns the seams (a newer window's may have taken them over).
-        if (host.blocking.observer === observer) host.blocking.observeResponses = false
+        if (host.blocking.observer === observer) setObserveResponses(false)
         closeAuthSheets()
         releaseKeepAwake()
+    }
+
+    /**
+     * The response-stage switch (contract 7.1 / 7.10): the engine's relay of media-element
+     * requests and the pages' observer of their fetch / XHR responses turn together. Every live
+     * document hears a change at once ([TabWebView.setExtObserve]); a new document learns the
+     * current word at its hello (`TabWebView.sendFlags`).
+     */
+    private fun setObserveResponses(on: Boolean) {
+        val changed = host.blocking.observeResponses != on
+        host.blocking.observeResponses = on
+        if (!changed) return
+        for (view in host.tabs.all()) view.setExtObserve(on)
     }
 
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */

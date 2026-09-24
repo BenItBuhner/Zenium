@@ -1,5 +1,9 @@
 import { expect } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs } from '../../../shared/types'
+import type {
+  HostCapabilities,
+  Platform as PlatformOs,
+  SyncDeviceKind
+} from '../../../shared/types'
 import { Browser } from '../../browser'
 import type {
   Platform,
@@ -90,6 +94,8 @@ export function device(
     io?: StoreIO & { files: Record<string, string> }
     /** A host that posts notifications itself (Android): what it shows is recorded. */
     notifications?: boolean
+    /** What the host says the device is; absent for a host (an older build) that says nothing. */
+    kind?: SyncDeviceKind
   } = {}
 ): Device {
   const transports: MemoryTransport[] = []
@@ -106,10 +112,12 @@ export function device(
         ensureAllowed: async () => true
       }
     : undefined
+  const kind = options.kind
   const host: SyncPlatformHost = {
     chooseFolder: async () => '/drive',
     folderName: async (folder) => folder.split('/').pop() ?? folder,
     deviceNameDefault: () => name,
+    ...(kind ? { deviceKind: () => kind } : {}),
     createTransport: (folder): SyncTransport => {
       const t = new MemoryTransport(folderFiles(folder))
       transports.push(t)
