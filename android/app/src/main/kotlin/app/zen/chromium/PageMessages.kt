@@ -37,9 +37,18 @@ sealed class PageMessageRoute {
      * speaks for the tab; a frame's hello, `domReady` or forwarded message is not the page's and
      * is dropped. A frame's own [Fullscreen] is heard: an embed's video (a YouTube iframe) goes
      * fullscreen from its frame's document, the one that knows the video's size, while the main
-     * document sees only the `<iframe>`, without one.
+     * document sees only the `<iframe>`, without one. A frame's capture report is heard too
+     * (NOT-13): a meeting embedded in an iframe holds the microphone as much as a top document
+     * does, and the core folds every frame's report by the frame's id (`TabManager.refreshAlert`,
+     * the same as the desktop's preload, which runs in every frame).
      */
-    fun heardFrom(isMainFrame: Boolean): Boolean = isMainFrame || this is Fullscreen
+    fun heardFrom(isMainFrame: Boolean): Boolean =
+        isMainFrame || this is Fullscreen || (this is Forward && message.optString("type") == CAPTURE_STATE)
+
+    companion object {
+        /** The shared capture reporter's message (`captureState.ts`). */
+        const val CAPTURE_STATE = "capture-state"
+    }
 }
 
 /** Route a page-script message carrying `token` (a per-session secret pages cannot know). */

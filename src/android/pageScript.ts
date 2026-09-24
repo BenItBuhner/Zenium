@@ -8,6 +8,7 @@ import type { MediaSessionHostMessage } from '@shared/mediaSession'
 import type { NotificationHostMessage } from '@shared/notifications'
 import type { ReadAloudHostMessage } from '@shared/readAloud'
 import { installNotificationPolyfill } from '@shared/notificationScript'
+import { installCaptureReporter, installCaptureShim } from '@shared/captureState'
 import { installShareBridge, installShareShim, type ShareOutcome } from '@shared/share'
 import { installTextFragmentScript, type TextFragmentHostMessage } from '@shared/textFragmentScript'
 import { focusEdge } from '@shared/focusEdge'
@@ -298,6 +299,21 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
       onReadAloud = listener
     }
   })
+
+  // The page's camera and microphone (NOT-13): the shared shim counts the tracks `getUserMedia`
+  // hands out and the reporter sends one `capture-state` per change – in every frame, since an
+  // embedded call (a meeting in an iframe) holds the device as much as the top document's – the
+  // same fold the desktop runs (`TabManager.refreshAlert`): the tab's alert, the pill's live
+  // glyph, and here the host's "is using your microphone" card and the foreground service that
+  // keeps the capture alive in the background. The shim and the bridge share this one world.
+  try {
+    installCaptureReporter({
+      send: (message) => up(message),
+      installShim: (name) => installCaptureShim(name)
+    })
+  } catch {
+    /* a page that sealed `navigator.mediaDevices` keeps the engine's own capture, unreported */
+  }
 
   // `Notification` for the pages: the WebView hides the API, the browser shows the shade's cards
   // under the site's channel. Top frame only: an embedded frame's notifications are its own
