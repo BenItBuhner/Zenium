@@ -27,6 +27,13 @@ import {
   requestablePermissions
 } from '@core/extensions/api/permissions'
 import {
+  isKeepAwakeLevel,
+  POWER_BAD_LEVEL_ERROR,
+  POWER_NO_PERMISSION_ERROR,
+  POWER_PERMISSION,
+  type KeepAwakeLevel
+} from '@core/extensions/api/power'
+import {
   SYSTEM_DISPLAY_NO_PERMISSION_ERROR,
   SYSTEM_DISPLAY_PERMISSION
 } from '@core/extensions/api/systemDisplay'
@@ -161,6 +168,12 @@ export interface ApiHost {
   cpu(): Promise<RawCpuReading>
   /** `system.memory.getInfo`: the phone's memory as `ActivityManager` reports it, in bytes. */
   memory(): Promise<RawMemoryReading>
+  /**
+   * `power.requestKeepAwake` / `releaseKeepAwake`: the screen kept on while the extension holds a
+   * request (`level` null releases it). Both levels keep the display on: the phone has no
+   * wake lock an extension may hold with its screen off.
+   */
+  keepAwake(id: string, level: KeepAwakeLevel | null): Promise<void>
   /** Hear of the screen turning (its orientation changing); `system.display.onDisplayChanged` follows. */
   onScreenChange(listener: () => void): void
   exec(request: ExecRequest): Promise<unknown>
@@ -835,6 +848,8 @@ export class ExtensionApi {
       case 'idle':
         if (method === 'queryState') return 'active'
         break
+      case 'power':
+        return this.powerCall(ext, method, args)
       case 'system.storage':
         // No storage devices to show, as on the desktop (there the engine's own namespace is
         // withheld because it crashes; here there is none to begin with): Chrome's shape, for
@@ -936,6 +951,33 @@ export class ExtensionApi {
     if (isFileNavigation(full) && ext.record.allowFileAccess !== true)
       throw new Error(FILE_URL_WITHOUT_ACCESS_ERROR)
     return full
+  }
+
+  // --- power -----------------------------------------------------------------
+
+  /**
+   * `chrome.power`, for an extension declaring the permission (the table hides the namespace
+   * from the others): one request per extension, the last level winning, held until the
+   * extension releases it or is detached (Chrome releases on unload). Chrome checks the level
+   * against its enum before anything else; the phone answers every member with nothing, as
+   * Chrome's void members do.
+   */
+  private async powerCall(ext: AttachedExtension, method: string, args: unknown[]): Promise<void> {
+    if (!this.holdsPermission(ext, POWER_PERMISSION)) throw new Error(POWER_NO_PERMISSION_ERROR)
+    switch (method) {
+      case 'requestKeepAwake': {
+        const level = args[0]
+        if (!isKeepAwakeLevel(level)) throw new Error(POWER_BAD_LEVEL_ERROR)
+        await this.host.keepAwake(ext.record.id, level)
+        return
+      }
+      case 'releaseKeepAwake':
+        await this.host.keepAwake(ext.record.id, null)
+        return
+      case 'reportActivity':
+        return
+    }
+    throw new Error(`chrome.power.${method} ${NOT_IMPLEMENTED}`)
   }
 
   // --- tabs ------------------------------------------------------------------

@@ -1328,6 +1328,7 @@ export class Browser {
     if (tab) {
       tab.readerable = false
       this.webApps.onNavigated(tabId, tab.url, inPage)
+      this.webNotifications.onNavigated(tabId, tab.url, inPage)
     }
     // An action popup goes when the page under it navigates; a tab no window shows navigating
     // behind it leaves it open, as Chrome's does (Read Aloud's popup opens its player in a

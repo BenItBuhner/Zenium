@@ -183,6 +183,27 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `a file's relative import() is resolved to its own served URL, in a held and in a large file, and the CSS is left alone`() {
+        // eJOY's Vite loader (compat round 13 row 32): Chrome resolves the specifier against the content script's own URL.
+        files["src/pages/contentInject/index.js"] = """c(()=>import("../../../assets/js/inject.Cb-54asq.js").then(n=>n.i),[])"""
+        files["big.js"] = """import("./chunk.js");""" + "x".repeat(UnitCompiler.LARGE_SOURCE_CHARS)
+        files["style.css"] = """@import url("./x.css"); .a{background:url("./b.png")} import("./not-a-script.js")"""
+        val compiler = UnitCompiler { "/*boot*/" }
+        val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("src/pages/contentInject/index.js", "big.js", "cs.js")), true, read, size)
+        val script = compiled[0].script
+        assertTrue(script.contains("""import("https://$id.ext.zenium.invalid/assets/js/inject.Cb-54asq.js").then(n=>n.i)"""))
+        assertTrue(script.contains("""import("https://$id.ext.zenium.invalid/chunk.js");"""))
+        assertFalse(script.contains("""import("../../../assets"""))
+        // The CSS travels JSON-quoted; its `import(` and `url(` are as written, nothing of it rewritten.
+        assertTrue(script.contains("not-a-script.js") && script.contains("./x.css") && script.contains("./b.png"))
+        assertFalse(script.contains("ext.zenium.invalid/not-a-script.js") || script.contains("ext.zenium.invalid/x.css"))
+        // The cached text is the file as read, so a re-plan rewrites it the same way and reads nothing new.
+        val again = compiler.compile(id, "1.0.0", units("k2" to listOf("src/pages/contentInject/index.js")), true, read, size)
+        assertEquals(4, reads)
+        assertTrue(again[0].script.contains("""import("https://$id.ext.zenium.invalid/assets/js/inject.Cb-54asq.js")"""))
+    }
+
+    @Test
     fun `another extension's cache is untouched`() {
         val compiler = UnitCompiler { "/*boot*/" }
         val other = "ponmlkjihgfedcbaponmlkjihgfedcba"

@@ -630,7 +630,8 @@ export interface SearchEngineFormValues {
   /**
    * The shortcut as typed, `@` or not; the engine keeps it as `@word`, lower case. Empty when
    * an engine is added without one: the engine derives its keyword from the name
-   * (`customSearchEngine`), as the core does today for every engine it adds.
+   * (`customSearchEngine`), as the core does since #430 only for an engine added without a
+   * word – a typed one is kept as the engine's `keyword` (`search.addEngine`'s `keyword?`).
    */
   shortcut: string
 }
