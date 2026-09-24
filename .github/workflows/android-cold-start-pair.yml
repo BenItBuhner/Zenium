@@ -12,6 +12,10 @@ name: Android cold start pair
 # correct, only what the two builds' cold starts measured on the recipe's emulator. The build,
 # the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  # TEMPORARY (W5-15): fires the pair on the feature branch (base = main); removed before the PR
+  # is ready.
+  push:
+    branches: [cursor/android-pwa-display-0740]
   workflow_dispatch:
     inputs:
       base-ref:
