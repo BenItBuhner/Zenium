@@ -50,8 +50,12 @@ import kotlin.math.roundToInt
  * row lists the fixture share target of the instrumentation APK (ShareTargetActivity, "Nimbus
  * Notes") and a tap sends it the intent direct – its window reads the URL back – and is
  * recorded, so that after a second share it leads the row; More opens the system chooser; back
- * dismisses the panel; the panel in dark; and a private tab's share, which records nothing
- * (where the image's WebView supports private tabs). Findings land in `share-findings.txt`
+ * dismisses the panel; a selection's share (the toolbar's Share as the host sends it: the
+ * selected text leads the preview on two lines, the link to its highlight beneath, Copy text
+ * and Long screenshot the chips) and an image's (a planted picture's long-press menu → Share
+ * Image…: the picture itself in the preview, Copy image and Long screenshot); the three panels
+ * in dark; and a private tab's share, which records nothing (where the image's WebView supports
+ * private tabs). Findings land in `share-findings.txt`
  * (one PASS or FAIL per claim), the frame sheets in `share-frames-open-{light,dark}.png`; a
  * failed check fails the run. On both branches the recording and the stills (`share-*.png`) are
  * the evidence for the eye.
@@ -91,7 +95,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         // on the first proof run's API 34 emulator), and the page's view is not on screen until
         // it has left: the host's word on the surface is waited for, not a fixed pause.
         openMenu()
-        if (waitFor(HANDLE_LABEL, 6_000) != null) {
+        if (waitFor(MENU_HANDLE_LABEL, 6_000) != null) {
             SystemClock.sleep(800)
             back()
             if (!awaitSurface(false, 15_000)) Log.w(tag, "the warm-up menu is still up after 15 s")
@@ -267,7 +271,12 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             SystemClock.sleep(800)
         }
 
-        // 10. Dark: the same panel on the dark scheme, its open on record too.
+        // 10. A selection's share: the panel for the selected text, its link to the highlight
+        //     beneath; then an image's: the panel for the picture. Light here, dark below.
+        selectionScene("light")
+        imageScene("light")
+
+        // 11. Dark: the same three panels on the dark scheme, the page's open on record too.
         coreInvoke("settings.update", "{\"colorScheme\":\"dark\"}")
         SystemClock.sleep(2_000)
         val dark = openPanel(frames = "dark")
@@ -278,11 +287,183 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             back()
             awaitTrue(6_000) { !panelUp() }
         }
+        selectionScene("dark")
+        imageScene("dark")
         coreInvoke("settings.update", "{\"colorScheme\":\"light\"}")
         SystemClock.sleep(1_500)
 
-        // 11. A private tab's share: the same panel without QR code, and nothing recorded.
+        // 12. A private tab's share: the same panel without QR code, and nothing recorded.
         privateScene(fixture)
+    }
+
+    /**
+     * A selection's share through the panel (SH-11's text and highlight link, SH-03's sheet): the
+     * page's first paragraph selected through the tab's WebView, then the floating toolbar's Share
+     * as the host sends it – the `selection.action` event `TabWebView` sends for a touch on that
+     * item (`SelectionToolbar.action`; SelectionDemo drives the system's toolbar itself, SH-10) –
+     * so the core's `shareSelection` reads the selection back for the link to its highlight and
+     * shares the text with it, and the host puts the panel up for the two. The preview leads with
+     * the text, on two lines at most, the link beneath and no favicon; the chips are Copy text and
+     * Long screenshot; Copy text puts the selection on the clipboard (light only: once is the check).
+     */
+    private fun selectionScene(scheme: String) {
+        finding("== a selection's share ($scheme)")
+        val selected = openSelectionPanel()
+        expect("a selection's share opens the panel ($scheme)", selected != null && panelUp())
+        if (selected == null || !panelUp()) return
+        SystemClock.sleep(1_200)
+        shot("12-selection-panel-$scheme")
+        val title = panelString(TITLE_JS)
+        val url = panelString(URL_JS)
+        val lines = panelString(TITLE_LINES_JS)
+        finding("  preview: first line '${title.take(80)}${if (title.length > 80) "…" else ""}' (${title.length} characters), second line '$url'; the first line's box: $lines")
+        expect("the preview leads with the selected text ($scheme)", title == selected.trim())
+        expect("the link to the highlight is the line beneath ($scheme)", url.startsWith("$PAGE_URL#:~:text="))
+        expect("a selection's preview has no favicon ($scheme)", chromeJs(FAVICON_JS) == "false")
+        val box = runCatching { JSONObject(lines) }.getOrNull()
+        if (box != null) {
+            val height = box.optDouble("h")
+            val lineHeight = box.optDouble("lh")
+            expect(
+                "the text is clamped to two lines ($scheme)",
+                box.optString("clamp") == "2" && lineHeight > 0 && height <= 2 * lineHeight + 1 && box.optDouble("sh") > height
+            )
+        } else {
+            expect("the first line's box could be read ($scheme)", false)
+        }
+        val chips = panelList(CHIP_KINDS_JS)
+        val chipLabels = panelList(CHIP_LABELS_JS)
+        finding("  chips: $chips, reading $chipLabels; apps row: ${panelList(APPS_JS)}")
+        expect("a selection's chips are Copy text and Long screenshot ($scheme)", chips == listOf("copy", "screenshot") && chipLabels == listOf("Copy text", "Long screenshot"))
+        if (scheme == "light") {
+            val copiedAt = SystemClock.uptimeMillis()
+            expect("Copy text dismisses the panel", tapCell(COPY_TEXT_LABEL))
+            val clip = awaitClipboard(selected.trim())
+            finding("  clipboard after Copy text: '${clip?.take(80)}'")
+            expect("Copy text puts the selected text on the clipboard", clip == selected.trim())
+            awaitClipboardOverlayGone(copiedAt)
+        } else {
+            back()
+            awaitTrue(6_000) { !panelUp() }
+        }
+        SystemClock.sleep(800)
+    }
+
+    /**
+     * An image's share through the panel: a picture planted over the page through the tab's
+     * WebView (a canvas landscape as a `data:` PNG – the page has none of its own), a long press
+     * on it for the chrome's image menu and a touch on Share Image… – the core's `app.share`
+     * with the image's address, which the host fetches into its cache and puts on the panel with
+     * a small copy of itself as the preview. The preview is the picture and "Image" (the core
+     * sends no title for one), nothing beneath; the chips are Copy image and Long screenshot.
+     */
+    private fun imageScene(scheme: String) {
+        finding("== an image's share ($scheme)")
+        val up = openImagePanel()
+        expect("Share Image… opens the panel for the image ($scheme)", up)
+        if (!up) return
+        SystemClock.sleep(1_200)
+        shot("13-image-panel-$scheme")
+        val title = panelString(TITLE_JS)
+        val url = panelString(URL_JS)
+        val thumbnail = chromeJs(THUMBNAIL_JS)
+        finding("  preview: first line '$title', second line '$url', the picture ${if (thumbnail == "true") "drawn" else "not drawn"}")
+        expect("the preview names the picture Image ($scheme)", title == "Image")
+        expect("an image's preview has nothing beneath ($scheme)", url.isEmpty())
+        expect("the preview shows the picture itself ($scheme)", thumbnail == "true")
+        val chips = panelList(CHIP_KINDS_JS)
+        val chipLabels = panelList(CHIP_LABELS_JS)
+        val apps = panelList(APPS_JS)
+        finding("  chips: $chips, reading $chipLabels; apps row: $apps")
+        expect("an image's chips are Copy image and Long screenshot ($scheme)", chips == listOf("copy", "screenshot") && chipLabels == listOf("Copy image", "Long screenshot"))
+        expect("More ends the image's apps row ($scheme)", apps.lastOrNull() == MORE_KIND)
+        back()
+        awaitTrue(6_000) { !panelUp() }
+        SystemClock.sleep(800)
+    }
+
+    /**
+     * The page's first paragraph selected and shared the toolbar's way ([selectionScene]): the
+     * selected text when the panel came up for it, null when it did not (the finding says why).
+     */
+    private fun openSelectionPanel(): String? {
+        ensureForeground()
+        if (panelUp()) {
+            back()
+            awaitTrue(6_000) { !panelUp() }
+            SystemClock.sleep(600)
+        }
+        val tabId = activeCoreTab()?.optString("id").orEmpty()
+        if (tabId.isEmpty()) {
+            finding("  no active tab to select in")
+            return null
+        }
+        val web = awaitPageWebView(10_000) ?: run {
+            finding("  no tab WebView on screen to select in")
+            return null
+        }
+        val selected = evalJs(web, SELECT_PARAGRAPH_JS).orEmpty()
+        finding("  selected in the page: '${selected.take(60)}${if (selected.length > 60) "…" else ""}' (${selected.length} characters)")
+        if (selected.isBlank()) return null
+        SystemClock.sleep(600)
+        instrumentation.runOnMainSync {
+            (activity as MainActivity).host.hostEvent(
+                "selection.action",
+                SelectionToolbar.action(tabId, SelectionToolbar.SHARE_ID, selected, 0.5, 0.4)
+            )
+        }
+        val up = awaitTrue(12_000) { panelUp() }
+        if (!up) finding("  no panel came up for the selection within 12 s")
+        return if (up) selected else null
+    }
+
+    /** A picture planted over the page, long-pressed for its menu, Share Image… touched ([imageScene]): true when the panel is up. */
+    private fun openImagePanel(): Boolean {
+        ensureForeground()
+        if (panelUp()) {
+            back()
+            awaitTrue(6_000) { !panelUp() }
+            SystemClock.sleep(600)
+        }
+        val web = awaitPageWebView(10_000) ?: run {
+            finding("  no tab WebView on screen to plant the picture in")
+            return false
+        }
+        val point = plantImage(web) ?: run {
+            finding("  the picture could not be planted")
+            return false
+        }
+        SystemClock.sleep(800)
+        Finger().apply {
+            press(point.x, point.y)
+            up()
+        }
+        if (waitFor(SHARE_IMAGE_LABEL, 8_000) == null) {
+            finding("  no $SHARE_IMAGE_LABEL in the picture's menu after a long press at ${point.x.toInt()},${point.y.toInt()}")
+            shot("13-image-menu-missing")
+            back()
+            SystemClock.sleep(1_000)
+            return false
+        }
+        SystemClock.sleep(800)
+        if (!touchTapLabel(SHARE_IMAGE_LABEL) && !clickByLabel(SHARE_IMAGE_LABEL)) {
+            finding("  $SHARE_IMAGE_LABEL could not be touched")
+            back()
+            return false
+        }
+        // The host fetches the picture into its cache and draws the preview off the main thread first.
+        val up = awaitTrue(15_000) { panelUp() }
+        if (!up) finding("  no panel came up for the picture within 15 s")
+        return up
+    }
+
+    /** The demo picture in the page (planted once; found again after) and its centre on the screen. */
+    private fun plantImage(web: TabWebView): PointF? {
+        val text = evalJs(web, PLANT_IMAGE_JS) ?: return null
+        val point = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { web.getLocationOnScreen(origin) }
+        return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
     }
 
     /** A private tab on the page, its share to the fixture; N/A where the image's WebView has no private tabs. */
@@ -332,13 +513,17 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             SystemClock.sleep(600)
         }
         openMenu()
-        if (waitFor(HANDLE_LABEL, 8_000) == null) {
+        if (waitFor(MENU_HANDLE_LABEL, 8_000) == null) {
             finding("  the app menu did not open")
             return false
         }
         SystemClock.sleep(if (menuShot != null) 1_500 else 700)
         if (menuShot != null) shot(menuShot)
-        if (!revealMenuRow(SHARE_LABEL)) {
+        // The menu opens at its peek detent with Share… some twenty rows below the fold, where a
+        // row's bounds are off screen and no finger goes: the sheet pulled up the harness's way
+        // (`openMenuItem` does the same before it drills), then the row scrolled into view.
+        pullMenuUp()
+        if (reveal(SHARE_LABEL) == null) {
             finding("  no $SHARE_LABEL in the app menu")
             back()
             return false
@@ -364,25 +549,6 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         }
         noteOpen(frames ?: "again", wall, up)
         return up
-    }
-
-    /**
-     * The open menu pulled to its full height (its handle flung up, the harness's `openMenuItem`
-     * way) and the row reading `label` scrolled into view through the tree. The menu opens at its
-     * peek detent with Share… some twenty rows below the fold, and a row below the fold has its
-     * bounds off screen, where no finger goes (the first proof run: "no Share… in the app menu"
-     * on both emulators). True when the menu has the row.
-     */
-    private fun revealMenuRow(label: String): Boolean {
-        findByLabel(HANDLE_LABEL)?.let { handle ->
-            Finger().apply {
-                down(handle.exactCenterX(), handle.exactCenterY())
-                moveBy(0f, -0.4f * height, 130)
-                up()
-            }
-            SystemClock.sleep(2_000)
-        }
-        return reveal(label) != null
     }
 
     /** [openPanel] for a step, with the finding when it could not. */
@@ -664,14 +830,15 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
 
         // 1. App menu -> Share…: the system chooser, titled with the page and previewing it.
         openMenu()
-        if (waitFor(HANDLE_LABEL, 6_000) != null) {
+        if (waitFor(MENU_HANDLE_LABEL, 6_000) != null) {
             SystemClock.sleep(1_500)
             shot("01-app-menu")
             // The menu opens at its peek detent with Share… below the fold: the sheet pulled up
-            // and the row scrolled into view first ([revealMenuRow]), then the menu flow's
-            // injected touch (the rule in DemoHarness): the system's chooser, another package's
-            // window, must come in front on it.
-            revealMenuRow("Share…")
+            // (the harness's `pullMenuUp`) and the row scrolled into view first, then the menu
+            // flow's injected touch (the rule in DemoHarness): the system's chooser, another
+            // package's window, must come in front on it.
+            pullMenuUp()
+            reveal("Share…")
             if (touchTapLabelExpecting("Share…", "the system chooser is in front", timeoutMs = 8_000) {
                     ui.rootInActiveWindow?.packageName?.toString().let { it != null && it != app.packageName }
                 }
@@ -784,7 +951,7 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
             back()
             SystemClock.sleep(2_000)
         }
-        if (findByLabel(HANDLE_LABEL) != null) {
+        if (findByLabel(MENU_HANDLE_LABEL) != null) {
             back()
             SystemClock.sleep(1_500)
         }
@@ -892,7 +1059,6 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
     private fun quote(text: String) = "'" + text.replace("'", "'\\''") + "'"
 
     companion object {
-        private const val HANDLE_LABEL = "Resize menu"
         private const val DECLINE_LABEL = "Not now"
         private const val OPEN_LABEL = "Open"
         private const val ALWAYS_LABEL = "Always allow"
@@ -903,8 +1069,11 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         private const val PAGE_URL = "https://example.com/"
 
         // The panel's cells read their captions (`SharePanelSheet`), the code dialog and the
-        // editor their own labels (`Share.showQrCode`, `LongScreenshotSheet`).
+        // editor their own labels (`Share.showQrCode`, `LongScreenshotSheet`); the image menu's
+        // row is the core's (`Menus.imageGroup`).
         private const val COPY_LABEL = "Copy link"
+        private const val COPY_TEXT_LABEL = "Copy text"
+        private const val SHARE_IMAGE_LABEL = "Share Image…"
         private const val SCREENSHOT_LABEL = "Long screenshot"
         private const val PRINT_LABEL = "Print"
         private const val QR_LABEL = "QR code"
@@ -925,6 +1094,19 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         // What the panel shows, read off the chrome's DOM (the sheet is `.zen-share-panel`).
         private const val TITLE_JS = "(function(){var e=document.querySelector('.zen-share-panel .zen-menu-link-title');return e?e.textContent:''})()"
         private const val URL_JS = "(function(){var e=document.querySelector('.zen-share-panel .zen-menu-link-url');return e?e.textContent:''})()"
+        /** The first line's box, for the two-line clamp of a selection's text: the clamp, its height, its line height, its content's height. */
+        private const val TITLE_LINES_JS =
+            "(function(){var t=document.querySelector('.zen-share-panel .zen-menu-link-title');if(!t)return '';var cs=getComputedStyle(t);" +
+                "return JSON.stringify({clamp:cs.getPropertyValue('-webkit-line-clamp'),h:t.getBoundingClientRect().height,lh:parseFloat(cs.lineHeight),sh:t.scrollHeight})})()"
+        /** Whether the preview draws a favicon slot (a page's does; a selection's does not). */
+        private const val FAVICON_JS = "!!document.querySelector('.zen-share-panel .zen-menu-link-favicon')"
+        /** Whether the preview draws the shared picture itself (an image's). */
+        private const val THUMBNAIL_JS =
+            "(function(){var i=document.querySelector('.zen-share-panel .zen-menu-link-thumbnail');return !!(i&&i.complete&&i.naturalWidth>0)})()"
+        /** The page's first paragraph selected, as a finger's drag would leave it; its text back. */
+        private const val SELECT_PARAGRAPH_JS =
+            "(function(){var p=document.querySelector('p');if(!p)return '';var s=getSelection();s.removeAllRanges();" +
+                "var r=document.createRange();r.selectNodeContents(p);s.addRange(r);return String(s)})()"
         private const val CHIP_KINDS_JS =
             "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-share-panel [data-row=\"chips\"] [data-kind]'),function(b){return b.dataset.kind}))"
         private const val CHIP_LABELS_JS =
@@ -951,6 +1133,50 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
 
         /** Which page is showing and whether it has finished loading. */
         private const val PAGE_STATE_JS = "location.host + ':' + document.readyState"
+
+        /**
+         * A picture over the page for the image's share – a canvas landscape as a `data:` PNG,
+         * planted once and found again after – and its centre in device pixels relative to the
+         * WebView (CSS px through the visual viewport and the pixel ratio, as PLANT_LINKS_JS).
+         */
+        private val PLANT_IMAGE_JS = """
+            (function () {
+              var img = document.getElementById('zen-demo-image');
+              if (!img) {
+                var c = document.createElement('canvas');
+                c.width = 160;
+                c.height = 100;
+                var g = c.getContext('2d');
+                g.fillStyle = '#8ab4f8';
+                g.fillRect(0, 0, 160, 100);
+                g.fillStyle = '#fde293';
+                g.beginPath();
+                g.arc(120, 28, 14, 0, Math.PI * 2);
+                g.fill();
+                g.fillStyle = '#137333';
+                g.beginPath();
+                g.moveTo(0, 100);
+                g.lineTo(56, 50);
+                g.lineTo(88, 78);
+                g.lineTo(112, 62);
+                g.lineTo(160, 100);
+                g.closePath();
+                g.fill();
+                img = document.createElement('img');
+                img.id = 'zen-demo-image';
+                img.src = c.toDataURL('image/png');
+                img.style.cssText = 'position:fixed;left:50%;top:34%;width:240px;height:150px;margin-left:-120px;' +
+                  'z-index:2147483647;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.2)';
+                document.body.appendChild(img);
+              }
+              var vv = window.visualViewport;
+              var scale = (vv ? vv.scale : 1) * (window.devicePixelRatio || 1);
+              var dx = vv ? vv.offsetLeft : 0;
+              var dy = vv ? vv.offsetTop : 0;
+              var r = img.getBoundingClientRect();
+              return JSON.stringify({ x: (r.left + r.width / 2 - dx) * scale, y: (r.top + r.height / 2 - dy) * scale });
+            })()
+        """.trimIndent()
 
         /**
          * Four tall links over the page, in `LINK_*` order; returns their centres in device

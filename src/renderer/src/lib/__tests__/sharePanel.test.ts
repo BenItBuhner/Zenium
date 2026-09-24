@@ -98,9 +98,9 @@ describe("the share panel's preview", () => {
       )
     ).toEqual({ title: 'a passage', detail: highlight })
     // A title that came along anyway (a host's own share) does not displace the text.
-    expect(
-      sharePanelPreview(request({ kind: 'text', text: 'a passage', url: highlight }))
-    ).toEqual({ title: 'a passage', detail: highlight })
+    expect(sharePanelPreview(request({ kind: 'text', text: 'a passage', url: highlight }))).toEqual(
+      { title: 'a passage', detail: highlight }
+    )
   })
 
   it("shows a selection's text alone when the page gave no link to the highlight (not a web page)", () => {

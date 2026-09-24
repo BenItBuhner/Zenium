@@ -113,9 +113,7 @@ export function previewShareRequest(
       ...base,
       kind,
       title: null,
-      url: highlightLink(
-        tab && /^https?:\/\//i.test(tab.url) ? tab.url : 'https://example.com/'
-      ),
+      url: highlightLink(tab && /^https?:\/\//i.test(tab.url) ? tab.url : 'https://example.com/'),
       text: PREVIEW_SHARE_TEXT,
       favicon: null,
       image: null
