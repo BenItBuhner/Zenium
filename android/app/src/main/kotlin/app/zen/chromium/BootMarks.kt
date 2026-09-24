@@ -27,6 +27,12 @@ object BootMarks {
         if (!marks.containsKey(name)) marks[name] = SystemClock.uptimeMillis() - processStart
     }
 
+    /** A number that is not a moment (WebView's own start-up timings), on the same line. */
+    @Synchronized
+    fun note(name: String, value: Long) {
+        if (!marks.containsKey(name)) marks[name] = value
+    }
+
     @Synchronized
     fun get(name: String): Long? = marks[name]
 
