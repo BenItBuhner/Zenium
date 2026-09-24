@@ -68,7 +68,7 @@ cold_start() {
   adb shell am force-stop "$app_id"
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.HOME > /dev/null 2>&1 || true
   sleep 3
-  adb shell am start -W -a android.intent.action.MAIN -f 0x20000000 -n "$app_id/$activity" | tr -d '\r'
+  adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$activity" | tr -d '\r'
 }
 
 # Measure one build: install, settle on one discarded start, then $runs measured cold starts.
