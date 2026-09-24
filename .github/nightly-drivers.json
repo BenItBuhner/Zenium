@@ -749,7 +749,8 @@
       "shard": "phone-d",
       "mirrors": "android-customtabs-demo.yml",
       "dir": "customtabs-demo",
-      "estimate": 2.5
+      "estimate": 5.5,
+      "note": "Twenty-two scenes since #423 (the caller's bottom toolbar and Minimize): the demo's runs measured 197 s and 332 s (the page loads vary with the runner); the longer one, rounded up."
     },
     {
       "id": "voice",
