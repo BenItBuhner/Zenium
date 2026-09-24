@@ -54,7 +54,6 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 
 /**
@@ -101,34 +100,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     } else null
     var chrome = ChromeWebView(activity, this)
         private set
-
-    /**
-     * The chrome's document is asked for here, at the host's start (OS-27), not at the end of
-     * the activity's onCreate: its fetch and parse and the core's first script run in the
-     * renderer while the rest of the host is built and the activity's content set, instead of
-     * after them. The core's first word back, its sync `boot` on the bridge thread, waits on
-     * [built] for a host whole and an activity created ([awaitBuilt]); every asynchronous call
-     * is posted to the main thread and so runs after onCreate anyway (JsBridge).
-     */
-    init {
-        BootMarks.mark("load")
-        chrome.load()
-    }
-
-    /** Open once MainActivity.onCreate is done ([built]); the bridge thread's sync calls wait on it. */
-    private val builtGate = CountDownLatch(1)
-
-    /** MainActivity.onCreate is done: the host is whole, the launch intent handled. */
-    fun built() = builtGate.countDown()
-
-    /**
-     * Blocks a bridge thread until [built]; never the main thread (which is the one to open it).
-     * Also opened by [destroy], so a thread waiting on a host that died is let go.
-     */
-    fun awaitBuilt() {
-        if (builtGate.count > 0L && Looper.myLooper() != Looper.getMainLooper()) builtGate.await()
-    }
-
     override val tabs = TabHost(root, this)
     /**
      * The history navigation bubble (GN-04), drawn natively above the pages – the chrome's disc
@@ -2340,7 +2311,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
 
     fun destroy() {
-        builtGate.countDown()
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
         restoredPictures.releaseAll("host destroyed")
         connectivity.stop()
