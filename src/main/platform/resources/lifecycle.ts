@@ -20,6 +20,16 @@ interface SessionState {
  */
 export class TabLifecycle {
   private readonly sessions = new Map<number, SessionState>()
+  /** Pages whose session this lifecycle attached itself (a shared one another holder opened is not ours to drop). */
+  private readonly attachedBy = new Set<number>()
+  /** Pages whose debugger `detach` is followed (once per page; the state goes with the session). */
+  private readonly watched = new Set<number>()
+  /**
+   * The governor's word when a page's session went with overrides on it – another holder let
+   * the shared session go, DevTools or an extension took the page: what was applied is gone and
+   * the caller decides again (the CPU clamp on a background page).
+   */
+  onSessionLost: ((wc: WebContents) => void) | null = null
 
   constructor() {
     setDebuggerRecycler((wc) => this.recycle(wc))
@@ -66,7 +76,13 @@ export class TabLifecycle {
    */
   async setHardwareConcurrency(wc: WebContents, cores: number | null): Promise<boolean> {
     const s = this.sessions.get(wc.id)
-    if ((s?.hardwareConcurrency ?? null) === cores) return true
+    if ((s?.hardwareConcurrency ?? null) === cores) {
+      // A session of ours with nothing on it yet – the override still on its way to a renderer
+      // that does not answer (a hung page) – goes with a clear: the page is in front now, and
+      // Chromium reports a hang only for a page with no DevTools client on it.
+      if (cores === null && !s && this.attachedBy.has(wc.id)) this.detachIfIdle(wc)
+      return true
+    }
     if (cores === null) {
       // The protocol has no "clear" – dropping the session clears every emulation override.
       if (!s) return true
@@ -116,12 +132,19 @@ export class TabLifecycle {
     return this.sessions.get(wc.id)?.cpuThrottle ?? 1
   }
 
+  /** The cores the page is told it has, null with no override on it. */
+  hardwareConcurrency(wc: WebContents): number | null {
+    return this.sessions.get(wc.id)?.hardwareConcurrency ?? null
+  }
+
   /**
    * The WebContents is gone – nothing to detach from any more. Takes the id: after a page closes
    * itself the view's accessor is already dead by the time the host reports it.
    */
   forget(webContentsId: number): void {
     this.sessions.delete(webContentsId)
+    this.attachedBy.delete(webContentsId)
+    this.watched.delete(webContentsId)
   }
 
   /**
@@ -132,7 +155,10 @@ export class TabLifecycle {
    */
   async recycle(wc: WebContents): Promise<void> {
     if (wc.isDestroyed()) return
+    // The state goes first: the `detach` that follows is ours, not a session lost.
     const s = this.sessions.get(wc.id)
+    this.sessions.delete(wc.id)
+    this.attachedBy.delete(wc.id)
     try {
       if (wc.debugger.isAttached()) wc.debugger.detach()
     } catch {
@@ -140,7 +166,6 @@ export class TabLifecycle {
     }
     if (!s) return
     const { frozen, cpuThrottle, hardwareConcurrency } = s
-    this.sessions.delete(wc.id)
     if (cpuThrottle !== 1) await this.setCpuThrottle(wc, cpuThrottle)
     if (hardwareConcurrency !== null) await this.setHardwareConcurrency(wc, hardwareConcurrency)
     if (frozen) await this.freeze(wc)
@@ -159,6 +184,9 @@ export class TabLifecycle {
 
   private attach(wc: WebContents): boolean {
     if (wc.isDestroyed()) return false
+    this.watch(wc)
+    // Another holder's session (the dark theme for sites' hold, an action in flight) is shared:
+    // an override sent on it is theirs to lose when their hold ends – `watch` hears of that.
     if (wc.debugger.isAttached()) return true
     try {
       wc.debugger.attach('1.3')
@@ -166,11 +194,23 @@ export class TabLifecycle {
       console.warn('[zen] resource governor could not attach to a page:', error)
       return false
     }
-    wc.debugger.once('detach', () => {
-      // Target closed or another client kicked us out: overrides are gone either way.
-      this.sessions.delete(wc.id)
-    })
+    this.attachedBy.add(wc.id)
     return true
+  }
+
+  /**
+   * The session's end is the overrides' end, whoever ended it – the target closed, another
+   * client took the page, a holder the session was shared with let it go, or this lifecycle
+   * itself (which clears its state first, so nothing is reported lost then).
+   */
+  private watch(wc: WebContents): void {
+    if (this.watched.has(wc.id)) return
+    this.watched.add(wc.id)
+    wc.debugger.on('detach', () => {
+      this.attachedBy.delete(wc.id)
+      const lost = this.sessions.delete(wc.id)
+      if (lost && !wc.isDestroyed()) this.onSessionLost?.(wc)
+    })
   }
 
   private async send(
@@ -189,12 +229,17 @@ export class TabLifecycle {
     }
   }
 
-  /** Detach when no override is active any more. Returns true when detached. */
+  /**
+   * Detach when no override is active any more. Returns true when nothing of ours is left on the
+   * page. A session another holder opened, which only carried an override of ours (or nothing –
+   * a purge sent on it), is left to that holder.
+   */
   private detachIfIdle(wc: WebContents): boolean {
     const s = this.sessions.get(wc.id)
     if (s && (s.frozen || s.cpuThrottle !== 1 || s.hardwareConcurrency !== null)) return false
-    this.sessions.delete(wc.id)
-    if (!wc.isDestroyed() && wc.debugger.isAttached()) {
+    const ours = this.sessions.delete(wc.id) || this.attachedBy.delete(wc.id)
+    this.attachedBy.delete(wc.id)
+    if (ours && !wc.isDestroyed() && wc.debugger.isAttached()) {
       try {
         wc.debugger.detach()
       } catch {
