@@ -616,7 +616,9 @@
  * its first line 32 under the title block; Chrome's udev notice 8 under it at 13) read the same
  * tokens. The requesting host in the title wraps at its dots (`.zen-device-chooser-host`, as
  * the screen picker's origin does). The pairing prompt's PIN (`PromptDialog`'s field, six
- * digits) reads in `tabular-nums`, letter-spaced so six digits read as six; the PIN to compare
+ * digits on a touch host's digit keyboard) reads in `tabular-nums`, letter-spaced so six digits
+ * read as six, on the field's own class (`.zen-device-pairing-field`, handed to the primitive's
+ * `className` slot – no rule here reaches into its `.zen-v2-field`); the PIN to compare
  * (`confirmPin`) is the title size of §4's scale (22 on 28 – the wordmark's 34 is the one size
  * off the scale and stays the wordmark's) at the heading weight in `tabular-nums`, centred; six
  * letter-spaced digits at 22 read across a room.
@@ -666,7 +668,7 @@
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
 }
-.zen-confirm-dialog[data-pairing-kind='providePin'] .zen-v2-field[aria-label='PIN'] {
+.zen-device-pairing-field {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.25em;
 }

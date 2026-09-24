@@ -515,9 +515,11 @@ function FieldDialog({
  * container is the verb on a prompt that is not destructive and inert on one that is, Escape
  * and the scrim are Cancel. The way back (§9.5, one hop) is the row's own control – found by
  * its `data-row` as the prompt leaves, so a row re-rendered under the prompt is still found, and
- * a row the verb removed (with its item dialog, whose own return then governs) is not; never
- * Cancel. The `data-dialog` handle the stack's drives and smoke read (`confirm:<row>`) rides on
- * the root beside the primitive's `data-confirm`.
+ * a row the verb removed (with its item dialog, whose own return then governs) is not – on the
+ * primitive's return-focus contract (`ConfirmReturnFocus`): a getter's `null` falls to the
+ * opener; `false` where nowhere is meant; never Cancel. The `data-dialog` handle the stack's
+ * drives and smoke read (`confirm:<row>`) rides on the root beside the primitive's
+ * `data-confirm`.
  */
 function ConfirmRowDialog({ row, close }: { row: ActionRow; close(): void }): JSX.Element {
   const confirm = row.confirm!
