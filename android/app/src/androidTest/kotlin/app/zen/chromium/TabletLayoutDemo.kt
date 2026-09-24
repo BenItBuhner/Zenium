@@ -609,8 +609,8 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         // through the rise – read mid-flight if a read lands in the spring's frames (about 300 ms;
         // the read's timing is the harness's, so a reading, not a claim).
         val closeMidFlight = awaitJs("$OVERVIEW_TRANSFORM.indexOf('translateY(-')===0", true, 1_000)
-        val closeCardOpacity = jsText(ACTIVE_CARD_OPACITY)
-        finding("the close's rise: ${if (closeMidFlight) "read mid-flight at '${jsText(OVERVIEW_TRANSFORM)}' with the active card's opacity '$closeCardOpacity'" else "landed before a read caught it"} (the harness's wall clock – a reading, not a claim)")
+        val closeFrame = jsText(CLOSE_FRAME)
+        finding("the close's rise: ${if (closeMidFlight) "read mid-flight, then one read of a frame: $closeFrame" else "landed before a read caught it"} (the harness's wall clock – a reading, not a claim)")
         check("the next back closes the overview", awaitJs(OVERVIEW_PHASE + "==='closed'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
         SystemClock.sleep(1_500)
         check("the sidebar is back once the overview is gone", sidebarMode() == "expanded", "data-sidebar ${sidebarMode()}")
@@ -1159,6 +1159,12 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val ACTIVE_CELL = "$CELL > .zen-overview-card[data-active=\"true\"]"
         /** The active card's computed opacity: `1` drawn in its slot, `0` hidden (the phone's card under its flying hero). */
         private const val ACTIVE_CARD_OPACITY = "(function(){var a=document.querySelector('$ACTIVE_CELL');return a?getComputedStyle(a).opacity:'no card'})()"
+        /**
+         * One read of a frame of the close: the layer's transform and the active card's opacity
+         * together – two bridge reads land in two frames on the emulator, and the layer can be gone
+         * between them.
+         */
+        private const val CLOSE_FRAME = "(function(){var l=document.querySelector('.zen-overview');var a=document.querySelector('$ACTIVE_CELL');return 'transform \"'+(l?l.style.transform||'':'no layer')+'\", active card opacity \"'+(a?getComputedStyle(a).opacity:'no card')+'\"'})()"
         /** The card's box, its title row's height, and the ratio set on the layer's box for the cells (`--zen-overview-card-aspect`). */
         private const val CARD_WIDTH = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().width:NaN})()"
         private const val CARD_HEIGHT = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().height:NaN})()"
