@@ -43,6 +43,8 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     var ready = false
         private set
     private val whenReady = ArrayList<() -> Unit>()
+    /** The landing state a cold start carries into the boot answer ([land], [takeLanding]). */
+    private val landing = Landing.Stash()
     /** `window.__zenNative`: the chrome's calls into Kotlin (its queue's refusals are readable for instrumentation). */
     val bridge = JsBridge(host)
 
@@ -93,6 +95,9 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                 if (!ready) return
                 ready = false
                 whenReady.clear()
+                // The new document's core has not asked for its boot answer yet: a landing before
+                // it does rides that answer, as on a cold start (`land`).
+                landing.reset()
                 Log.w("ZenChrome", "the chrome document is being replaced ($url); dropping the old core's tab views")
                 host.onChromeDocumentReplaced()
             }
@@ -307,10 +312,30 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         onReady { js("window.__zenHost&&__zenHost.openUrl(${JSONObject.quote(url)})") }
     }
 
-    /** The launcher's "New private tab" shortcut: a private tab in the current space, once the core is up. */
-    fun newPrivateTab() {
-        onReady { js("window.__zenHost&&__zenHost.newPrivateTab()") }
+    /**
+     * The search widget's or a launcher shortcut's landing state ([Landing], WID-07; the "New
+     * private tab" shortcut's bare action reads as the private landing, `Landing.of`): the chrome
+     * opens straight in it, the previous tab never painting.
+     *
+     * Cold – the document's core has not asked for its boot answer yet – the state is stashed for
+     * [takeLanding] and travels IN the boot answer (`BootInfo.landing`), which `bootAndroid` applies
+     * right after `browser.start()`, in the boot's own synchronous run, before React's first render
+     * can show the restored tab (`boot.ts`). The ready queue would be too late for that: it runs
+     * at `onPageFinished`, after the document's `load`, and the module script has started the core
+     * and rendered by then. Warm – `onNewIntent`, or an intent in the boot's tail – the call goes
+     * to the host global at once (`__zenHost` is installed before the core asks for its boot), whose
+     * queue the boot flushes right after `browser.start()` if the core is not up yet (`landing.ts`).
+     */
+    fun land(state: String) {
+        if (!landing.offer(state)) evaluateJavascript("window.__zenHost&&__zenHost.land(${JSONObject.quote(state)})", null)
     }
+
+    /**
+     * The boot answer's `landing` (`Host.dispatchSync("boot")`, bridge thread): the state [land]
+     * stashed before this document's core asked, taken once; null in every other start. From
+     * here on the document's landings are the warm path's.
+     */
+    fun takeLanding(): String? = landing.take()
 
     // --- the omnibox field's floating toolbar (see FieldToolbar.kt) --------------------------
 

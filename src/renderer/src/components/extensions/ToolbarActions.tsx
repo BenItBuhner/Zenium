@@ -226,7 +226,7 @@ function ExtensionsPanel({
                 <button
                   type="button"
                   className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
-                  title={actionTitle(ext)}
+                  data-tooltip={actionTitle(ext)}
                   aria-disabled={!actionEnabled(ext) || undefined}
                   onClick={() => openFromPanel(ext)}
                 >

@@ -262,6 +262,7 @@ describe('the checked-in baselines (.github/smoke/aria)', () => {
       'dialog-cover',
       'tooltip-focus',
       'tab-row',
+      'tab-rename',
       'find-status'
     ])
     const files = readdirSync(ariaDir)
@@ -352,6 +353,22 @@ describe('the checked-in baselines (.github/smoke/aria)', () => {
     expect(rowFacts).toMatch(
       /^- tab "Smoke fixture: first page" \[selected posinset=2 setsize=2\]: muted$/m
     )
+    // The rename field (a11y-31, axe nested-interactive; pass 3): open on the active row, it is
+    // a named textbox with the keyboard beside the tablist – the row's tree holds its Close
+    // button and no textbox, and no tab anywhere holds an input (the `none` line).
+    const rename = read('tab-rename')
+    const renameTree = rename.slice(0, rename.indexOf(`\n${ARIA_FACTS_HEADER}\n`))
+    expect(renameTree).toMatch(/^- tablist "[^"]+":/)
+    expect(renameTree).not.toMatch(/textbox/)
+    expect(renameTree).toMatch(
+      /- 'tab "Smoke fixture: first page" \[selected\]':\n\s+- button "Close tab"/
+    )
+    const renameFacts = factsOf(rename)
+    expect(renameFacts).toMatch(
+      /^- tab "Smoke fixture: first page" \[selected posinset=2 setsize=2\]$/m
+    )
+    expect(renameFacts).toMatch(/^- textbox "Rename tab" \[focused\]$/m)
+    expect(renameFacts).toMatch(/^- none "\[role=\\"tab\\"\] input"$/m)
     // The find bar's count (a11y-35): a polite, atomic status region whose spoken text is the
     // count in words, the figures the eye reads hidden from it.
     const find = read('find-status')

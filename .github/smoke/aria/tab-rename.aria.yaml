@@ -1,0 +1,11 @@
+- tablist "Default tabs":
+  - 'tab "Smoke fixture: second page"':
+    - text: "Smoke fixture: second page"
+    - button "Close tab"
+  - 'tab "Smoke fixture: first page" [selected]':
+    - button "Close tab"
+
+# facts
+- tab "Smoke fixture: first page" [selected posinset=2 setsize=2]
+- textbox "Rename tab" [focused]
+- none "[role=\"tab\"] input"

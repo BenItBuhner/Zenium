@@ -495,7 +495,7 @@ export function BookmarksBar({
             aria-hidden={i >= visibleCount || undefined}
             tabIndex={i === focusIndex && i < visibleCount ? 0 : -1}
             className="zen-bm-chip"
-            title={node.url ?? undefined}
+            data-tooltip={node.url ?? undefined}
             onPointerDown={(e) => {
               if ((e.target as HTMLElement).closest('[data-drop]')) return
               startDrag(e, node, e.currentTarget)
