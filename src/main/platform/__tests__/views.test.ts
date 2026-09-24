@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import type { WebPreferences } from 'electron'
 import type { Tab } from '../../../shared/types'
 import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
 import {
@@ -1328,6 +1329,60 @@ describe('page fonts (CT-25)', () => {
     ;(nativeTheme as unknown as EventEmitter).emit('updated')
     await settle()
     expect(made.dbg.log).toEqual([])
+  })
+})
+
+/**
+ * A link dropped on a page's content area navigates the page, as Chrome's does (dnd-13): the
+ * preference is Electron's `navigateOnDragDrop`, off by default, and it reaches Blink – a
+ * synthesised (CDP `Input.dispatchDragEvent`) drop is accepted with it on and refused with it
+ * off, though only a real OS drop runs the navigation itself. The W5-11 drive can therefore read
+ * the browser's accept signal and no more; this pins the wiring so it cannot go quietly.
+ */
+describe('page web preferences', () => {
+  const prefsOf = (tabId: string, host = new ElectronTabViewHost(sessions)): WebPreferences => {
+    constructed.length = 0
+    host.createView({ id: tabId, containerId: 'default' } as Tab, noEvents, detachedWindow)
+    return (constructed[0] as { webPreferences: WebPreferences }).webPreferences
+  }
+
+  it('makes every page view with `navigateOnDragDrop` on, the popup’s adopted page included', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    expect(prefsOf('tab_dnd', host).navigateOnDragDrop).toBe(true)
+    // The page Chromium made for a `window.open`, given the tab page preferences on adoption.
+    const opener = host.createView(
+      { id: 'tab_dnd_opener', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    const guest = await guestWebContents()
+    constructed.length = 0
+    host.openTicket(
+      {
+        action: 'window',
+        url: 'https://example.com/',
+        adopt: () => ({
+          tab: { id: 'tab_dnd_popup', containerId: 'default' } as Tab,
+          events: noEvents
+        })
+      },
+      opener,
+      guest,
+      {}
+    )
+    const popup = constructed[0] as { webPreferences: WebPreferences }
+    expect(popup.webPreferences.navigateOnDragDrop).toBe(true)
+  })
+
+  it('keeps the page sandboxed and isolated alongside it: the drop preference never widens the page’s powers', () => {
+    const prefs = prefsOf('tab_dnd_sandbox')
+    expect(prefs).toMatchObject({
+      navigateOnDragDrop: true,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true
+    })
   })
 })
 
