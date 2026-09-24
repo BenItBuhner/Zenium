@@ -12,6 +12,12 @@ name: Android cold start pair
 # correct, only what the two builds' cold starts measured on the recipe's emulator. The build,
 # the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  # TEMPORARY (services perf pass 3's P0 record: the cold start pair on this branch – no token in
+  # the project can dispatch); removed before the PR is nod-ready. The push event carries no
+  # inputs, so the base below falls to the branch's base 393227c02 (main's tip, #458's merge)
+  # rather than to `main` fetched at run time, so the pair measures exactly the PR's delta.
+  push:
+    branches: [cursor/services-perf-3-24d1]
   workflow_dispatch:
     inputs:
       base-ref:
@@ -36,7 +42,7 @@ jobs:
       # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
       # head's own step ran it. The labels are the two commits, for the table.
       script-env: |
-        P0_BASE_REF=${{ inputs.base-ref || 'main' }}
+        P0_BASE_REF=${{ inputs.base-ref || '393227c02edb4cea55825fa031b2004023051393' }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
         P0_RUNS=5
         DEMO_OUT=artifacts/android-cold-start-pair
