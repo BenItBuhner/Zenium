@@ -94,6 +94,18 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     /** The header stage of a process without an extension runtime; its jar is the profile's `CookieManager`. */
     private val defaultHeaderStage: HeaderStage by lazy { HeaderStage(ProfileCookieStore) }
 
+    /**
+     * Whether the response stage of media-element requests is observed (`ext.observeResponses`,
+     * contract 7.1): then a `Range` GET of a subresource the request stage let through – a
+     * media element's, or the ambiguous request nothing tells from one – is relayed through the
+     * header stage's [HeaderStage.relayMedia], which serves the origin's response as it is and
+     * reports its headers and its end to [observer] under the request's id. Set by the extension
+     * runtime while an extension holds a response-stage `webRequest` listener, cleared with it;
+     * off, nothing is relayed and every request is answered exactly as before.
+     */
+    @Volatile
+    var observeResponses: Boolean = false
+
     /** Wall-clock milliseconds of the last build, for the settings sheet and the demo. */
     @Volatile
     var lastBuildMs: Long = 0
@@ -196,12 +208,13 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
      * resource of the right type instead, like uBlock Origin's neutered resources; a blocked
      * document is answered with 204 – Chromium drops the navigation without committing – and the
      * tab is told so it can show the Zenium blocked page; a listener's `data:` redirect becomes
-     * the body it encodes.
+     * the body it encodes; a media element's request relayed for its response stage
+     * ([observeResponses]) is the origin's response, streamed.
      */
     fun intercept(tab: BlockingTab, request: WebResourceRequest): WebResourceResponse? {
         val verdict = evaluate(
             snapshot, listeners, tab, request.url.toString(), request.isForMainFrame,
-            request.requestHeaders ?: emptyMap(), request.method ?: "GET", policy, observer
+            request.requestHeaders ?: emptyMap(), request.method ?: "GET", policy, observer, observeResponses
         )
         return when (verdict) {
             Verdict.Pass -> null
@@ -214,6 +227,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             is Verdict.Redirect -> redirector?.redirect(tab, request, verdict.url, verdict.type)
             is Verdict.HeaderStage -> (headerStage ?: defaultHeaderStage)
                 .relay(snapshot, tab, verdict.request, request.requestHeaders ?: emptyMap(), observer, verdict.decision, verdict.withCookies)
+                ?.toResponse()
+            is Verdict.MediaRelay -> (headerStage ?: defaultHeaderStage)
+                .relayMedia(tab, verdict.request, request.requestHeaders ?: emptyMap(), observer, verdict.withCookies)
                 ?.toResponse()
         }
     }
@@ -376,7 +392,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
          * is loaded by the tab, an `http(s)` redirect of a subresource cannot be honoured and is
          * recorded as unsupported. A request that goes out is shown to the `onSendHeaders`
          * listeners; a cancelled one to the `onErrorOccurred` listeners as
-         * `net::ERR_BLOCKED_BY_CLIENT`, as Chromium does.
+         * `net::ERR_BLOCKED_BY_CLIENT`, as Chromium does. `observeResponses` is the engine's
+         * switch of the same name: a `Range` GET the request stage let through is then relayed
+         * for its response ([Verdict.MediaRelay], contract 7.2) – a request that goes out too.
          */
         fun evaluate(
             snap: EngineSnapshot,
@@ -387,13 +405,16 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             headers: Map<String, String>,
             method: String,
             policy: RequestPolicy? = null,
-            observer: DecisionObserver? = null
+            observer: DecisionObserver? = null,
+            observeResponses: Boolean = false
         ): Verdict {
-            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer)
+            val ranged = observeResponses && headers.keys.any { it.equals("Range", ignoreCase = true) }
+            val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer, observeResponses, ranged)
             if (listeners.isEmpty || !isHttp(url)) return engine
             val record = listeners.begin(tab, url, method, isMainFrame, ResourceType.guessKnown(url, isMainFrame, headers["Accept"]))
-            // A relay to the header stage is a request that goes out: the listeners see it as one.
-            if (engine !is Verdict.Pass && engine !is Verdict.HeaderStage) {
+            // A relay – to the header stage, or of a media request for its response – is a
+            // request that goes out: the listeners see it as one.
+            if (engine !is Verdict.Pass && engine !is Verdict.HeaderStage && engine !is Verdict.MediaRelay) {
                 if (engine is Verdict.Empty) listeners.errorOccurred(record, WebRequestListeners.BLOCKED_BY_CLIENT)
                 else listeners.end(record)
                 return engine
@@ -435,6 +456,12 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
          * warning page; a listed frame gets an empty 403. A document's check is marked as the
          * navigation it is (the process's first may wait for the tables, here on a network
          * thread); a frame's is not.
+         *
+         * `observeResponses` is [Blocking.observeResponses]; `ranged` says the request's headers
+         * carry `Range`. Both on, a `GET` subresource the rules allow and whose type is `MEDIA` or
+         * the ambiguous one (nothing tells it from a media element's request) is answered
+         * [Verdict.MediaRelay] in place of [Verdict.Pass] (contract 7.2); a request typed image,
+         * script, style or font by its `Accept` or extension is not, whatever it carries.
          */
         fun evaluate(
             snap: EngineSnapshot,
@@ -444,7 +471,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             accept: String?,
             method: String,
             policy: RequestPolicy? = null,
-            observer: DecisionObserver? = null
+            observer: DecisionObserver? = null,
+            observeResponses: Boolean = false,
+            ranged: Boolean = false
         ): Verdict {
             if (!isHttp(url)) return Verdict.Pass
             val known = ResourceType.guessKnown(url, isMainFrame, accept)
@@ -482,12 +511,23 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 val cpuAfter = if (cpuBefore < 0) -1L else ThreadCpu.nanos()
                 observer.onDecision(tab, req, decision, elapsed, if (cpuAfter < 0) -1L else cpuAfter - cpuBefore)
             }
+            // A media element's `Range` GET while an extension listens for the response stage
+            // (contract 7.2): typed `MEDIA`, or the ambiguous request nothing tells from one. A
+            // document never qualifies (its type is known), nor does anything typed by its
+            // `Accept` or extension; the cookie word is the policy's for the request under the
+            // tab's document, as it is for a relayed document. (The empty snapshot without an
+            // observer returned above: nobody would hear the relay.)
+            val mediaRelay = observeResponses && ranged && method == "GET" && (known == null || known == ResourceType.MEDIA)
             return when (decision.action) {
                 // A document allowed for now that a header-conditioned rule may still overturn,
                 // or whose cookies the cookie policy withholds, goes through the header stage's
-                // relay (HeaderStage); other requests keep the allow.
-                Decision.Action.ALLOW ->
-                    if (isDocument && (decision.needsHeaders || withheld)) Verdict.HeaderStage(req, decision, withCookies = !withheld) else Verdict.Pass
+                // relay (HeaderStage); a media request observed for its response through the
+                // same stage's media relay; other requests keep the allow.
+                Decision.Action.ALLOW -> when {
+                    isDocument && (decision.needsHeaders || withheld) -> Verdict.HeaderStage(req, decision, withCookies = !withheld)
+                    mediaRelay -> Verdict.MediaRelay(req, withCookies = policy?.cookiesWithheld(url, tab.documentUrl, tab.containerId) != true)
+                    else -> Verdict.Pass
+                }
                 // A document's header edits are the relay's: it builds the request's headers and
                 // serves the response. A subresource's cannot be honoured from here (WebView
                 // sends the request itself and the relay is for documents only): it goes out
@@ -661,6 +701,17 @@ sealed class Verdict {
      * contract 5.5).
      */
     class HeaderStage(val request: Request, val decision: Decision, val withCookies: Boolean = true) : Verdict()
+
+    /**
+     * A media element's `Range` GET the request stage let through while the response stage is
+     * observed ([Blocking.observeResponses], contract 7.2): relayed through
+     * [HeaderStage.relayMedia], which serves the origin's response as it is – its status,
+     * `Content-Range`, the body streamed – and reports its headers and its end to the observer
+     * under the request's id ([DecisionObserver.onResponse]). `request` is the instance the
+     * request stage reported. `withCookies` false is the cookie policy's word for the request
+     * under the tab's document: no `Cookie` goes, no `Set-Cookie` is kept.
+     */
+    class MediaRelay(val request: Request, val withCookies: Boolean = true) : Verdict()
 }
 
 /**
@@ -678,7 +729,12 @@ object ProfileCookieStore : HeaderStage.CookieStore {
     }
 }
 
-/** Hears every decision the engine takes on a page's request; see [Blocking.observer]. */
+/**
+ * Hears every decision the engine takes on a page's request, and the response stage of the
+ * media requests relayed for it; see [Blocking.observer]. A functional interface still:
+ * [onDecision] is its one abstract member, [onResponse] has a default, so an observer that
+ * hears decisions only is a lambda as before.
+ */
 fun interface DecisionObserver {
     /**
      * `elapsedNanos` is the wall-clock time `EngineSnapshot.decide` took (the latency the IO
@@ -687,6 +743,37 @@ fun interface DecisionObserver {
      * cannot tell.
      */
     fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long)
+
+    /**
+     * The response stage of a media request relayed for it ([Verdict.MediaRelay], contract 7.4):
+     * `request` is the instance [onDecision] reported – the pairing rides on
+     * [Request.observerRequestId] – and `response` the origin's headers once they are in
+     * ([RelayedResponse.Stage.HEADERS]), then once more when the body was read to its end
+     * ([RelayedResponse.Stage.COMPLETE]) or failed ([RelayedResponse.Stage.ERROR]). Called on the
+     * intercept thread for the headers and the relay's own failures, on the thread reading the
+     * body for its end. Nothing by default.
+     */
+    fun onResponse(tab: BlockingTab, request: Request, response: RelayedResponse) {}
+}
+
+/**
+ * A relayed media response as the observer hears it (contract 7.4): the origin's status and
+ * status line (the connection's own, or `HTTP/1.1 <status> <reason>` composed when it has
+ * none), its headers one entry per header line as the fetch returned them (duplicates as
+ * separate entries – Chrome's `HttpHeader[]` –, the status line's null key skipped, nothing
+ * filtered: the runtime filters per `extraInfoSpec`), the stage, and the `net::ERR_*` name at
+ * [Stage.ERROR]. [Stage.COMPLETE] and [Stage.ERROR] repeat the [Stage.HEADERS] report's status
+ * and headers, as Chrome's `onCompleted` carries them; a relay that never had headers (a
+ * failed connect) reports status 0, an empty line and no headers.
+ */
+class RelayedResponse(
+    val statusCode: Int,
+    val statusLine: String,
+    val headers: List<Pair<String, String>>,
+    val at: Stage,
+    val error: String? = null
+) {
+    enum class Stage { HEADERS, COMPLETE, ERROR }
 }
 
 /** The calling thread's CPU clock; -1 where there is none (the JVM's `android.jar` stubs throw). */

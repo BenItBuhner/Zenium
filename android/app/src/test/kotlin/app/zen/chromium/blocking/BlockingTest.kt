@@ -462,6 +462,84 @@ class BlockingTest {
         assertEquals("http://legacy.example/" to "https://legacy.example/", tab.upgrades.last())
     }
 
+    // --- The response stage for media requests (contract 7.2, services pass 2) -----------------
+
+    @Test
+    fun `a media element's Range GET is relayed for its response only while the response stage is observed`() {
+        val heard = ArrayList<Request>()
+        val observer = DecisionObserver { _, request, _, _, _ -> heard.add(request) }
+        val tab = FakeTab()
+        // A typed media request, allowed, ranged, the switch on: relayed; the verdict carries the
+        // very request the observer heard, so the response is reported under its id.
+        val clip = Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true)
+        assertTrue(clip is Verdict.MediaRelay)
+        assertEquals(ResourceType.MEDIA, (clip as Verdict.MediaRelay).request.type)
+        assertEquals(true, clip.withCookies)
+        assertSame(heard.last(), clip.request)
+        // The ambiguous request nothing tells from a media element's (Accept */*, no telling extension): relayed too.
+        val stream = Blocking.evaluate(snapshot, tab, "https://api.example/stream?clip=2", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true)
+        assertTrue(stream is Verdict.MediaRelay)
+        assertEquals(ResourceType.XMLHTTPREQUEST, (stream as Verdict.MediaRelay).request.type)
+        assertEquals(ResourceType.AMBIGUOUS_MASK, stream.request.typeMask)
+        // The switch off, or no Range: the plain pass, exactly as before.
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = false, ranged = true))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = false))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://api.example/data.json", false, "*/*", "GET", observer = observer, observeResponses = true))
+        // Typed by its Accept or extension as something else: not relayed, whatever it carries.
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/pixel.png", false, "image/avif,*/*", "GET", observer = observer, observeResponses = true, ranged = true))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/app.js", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/site.css", false, "text/css,*/*", "GET", observer = observer, observeResponses = true, ranged = true))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/font.woff2", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true))
+        // Not a GET: not relayed.
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "POST", observer = observer, observeResponses = true, ranged = true))
+        // Documents never: a main frame and a frame keep their own path (no header rule here: the pass).
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://news.example/next", true, "text/html", "GET", observer = observer, observeResponses = true, ranged = true))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://news.example/frame", false, "text/html", "GET", observer = observer, observeResponses = true, ranged = true))
+        // A block still blocks, a filter's redirect still substitutes: the relay is for an allow only.
+        val blocked = Blocking.evaluate(snapshot, tab, "https://tracker.net/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true)
+        assertTrue(blocked is Verdict.Empty)
+        assertEquals(403, (blocked as Verdict.Empty).status)
+        assertTrue(Blocking.evaluate(snapshot, tab, "https://cdn.example/lib.js", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true) is Verdict.Neutered)
+        // The empty snapshot with an observer: the allow it reports is relayed like any other.
+        assertTrue(Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = true, ranged = true) is Verdict.MediaRelay)
+        assertSame(Verdict.Pass, Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", observer = observer, observeResponses = false, ranged = true))
+        // The cookie policy's word rides on the relay: a never-site's clip goes without cookies.
+        val policy = NeverSitePolicy()
+        val withheld = Blocking.evaluate(snapshot, tab, "https://never.example/clip.mp4", false, "*/*", "GET", policy, observer, observeResponses = true, ranged = true)
+        assertTrue(withheld is Verdict.MediaRelay)
+        assertEquals(false, (withheld as Verdict.MediaRelay).withCookies)
+        assertEquals(Triple("https://never.example/clip.mp4", "https://news.example/story", "default"), policy.asked.last())
+        val allowed = Blocking.evaluate(snapshot, tab, "https://cdn.example/clip.mp4", false, "*/*", "GET", policy, observer, observeResponses = true, ranged = true)
+        assertEquals(true, (allowed as Verdict.MediaRelay).withCookies)
+        // The policy is not asked for a request that is not relayed.
+        val asked = policy.asked.size
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://never.example/clip.mp4", false, "*/*", "GET", policy, observer, observeResponses = false, ranged = true))
+        assertEquals(asked, policy.asked.size)
+        // The block and the neutered stand-in above were counted as before; the relays were not.
+        assertEquals(2, tab.blocked)
+    }
+
+    @Test
+    fun `the listener registry sees a media relay as a request that goes out, and its own answer comes first`() {
+        val tab = FakeTab()
+        val listeners = WebRequestListeners()
+        val sent = ArrayList<String>()
+        listeners.addListener(WebRequestEvent.ON_SEND_HEADERS, { sent.add(it.url); null }, ListenerOptions("ext-a"))
+        // The Range header is found whatever its case; the relay is reported to onSendHeaders as a request that goes out.
+        val relayed = Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*", "range" to "bytes=0-"), "GET", null, null, observeResponses = true)
+        assertTrue(relayed is Verdict.MediaRelay)
+        assertEquals(listOf("https://cdn.example/clip.mp4"), sent)
+        // Without the header, or with the switch off: the pass, also a request that goes out.
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*"), "GET", null, null, observeResponses = true))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*", "Range" to "bytes=0-"), "GET", null, null))
+        assertEquals(3, sent.size)
+        // A blocking listener's cancel stands ahead of the relay: the request never goes out.
+        listeners.addListener(WebRequestEvent.ON_BEFORE_REQUEST, { BlockingResponse(cancel = true) }, ListenerOptions("ext-b", blocking = true))
+        val cancelled = Blocking.evaluate(snapshot, listeners, tab, "https://cdn.example/clip.mp4", false, mapOf("Accept" to "*/*", "Range" to "bytes=0-"), "GET", null, null, observeResponses = true)
+        assertTrue(cancelled is Verdict.Empty)
+        assertEquals(3, sent.size)
+    }
+
     @Test
     fun extractFilterTextReadsTheStringLiteralWithoutParsingTheDocument() {
         assertEquals("||a.example^\n||b.example^", Blocking.extractFilterText("""{"id":"x","filterText":"||a.example^\n||b.example^","rules":[]}"""))

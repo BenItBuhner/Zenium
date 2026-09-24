@@ -40,6 +40,16 @@ class Request(
     val isThirdParty: Boolean
     val methodLower: String = method.lowercase()
 
+    /**
+     * The id an observer reported this request's decision under (`ext.request.requestId`,
+     * written by `Extensions.onDecision`); null until one does. The response stage of a media
+     * request relayed for it ([Verdict.MediaRelay]) reports under the same id, so the runtime
+     * pairs the two (contract 7.4). Written on the IO thread that decided the request, read on
+     * the thread that reads its body.
+     */
+    @Volatile
+    var observerRequestId: String? = null
+
     private var tokenCache: IntArray? = null
 
     init {

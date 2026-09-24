@@ -141,12 +141,13 @@ import type { ViewEventPayloads } from './views'
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
  *  ext.i18n.detectLanguage { text }         → { isReliable, languages: [{ language, percentage }] } (the platform's classifier)
  *  ext.observeRequests { on }               every engine decision is reported, not just the rules' matches
+ *  ext.observeResponses { on }              media-element requests are relayed for their response stage (blocking-rule-interface.md §7)
  *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
  *  ext.proxy.set { rules, bypass, bypassSimpleHostnames, removeImplicitRules } / clear   chrome.proxy.settings over ProxyController
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
- * ext.authView { viewId, event, url? }, ext.notification, ext.wake { id }.
+ * ext.response, ext.authView { viewId, event, url? }, ext.notification, ext.wake { id }.
  */
 
 /** The bridge calls the runtime makes (`Bridge` satisfies it; tests pass a fake). */
@@ -242,11 +243,50 @@ export interface ExtRequestEvent {
   cpuMicros: number | null
 }
 
+/**
+ * The response stage of a media-element request the Kotlin engine relayed for it
+ * (`ext.response`, `blocking-rule-interface.md` §7.5), reported while `ext.observeResponses` is
+ * on: the origin's headers once they are in (`at: 'headers'`), then the body's end
+ * (`'complete'`) or its failure (`'error'`, with the `net::ERR_*` name), each under the
+ * `ext.request` id the request's decision carried, so the two pair. A `3xx` comes as a
+ * `'headers'` report with no end: WebView follows the redirect itself and the target is a new
+ * request under a new id.
+ */
+export interface ExtResponseEvent {
+  tabId: string | null
+  /** The `ExtRequestEvent.requestId` of the same request. */
+  requestId: string
+  url: string
+  /** `chrome.declarativeNetRequest.ResourceType` name: `media`, or `xmlhttprequest` for the ambiguous request. */
+  type: string
+  method: string
+  statusCode: number
+  statusLine: string
+  /** Every header line as received, `set-cookie` included (a listener's `extraInfoSpec` decides what it sees). */
+  responseHeaders: Array<{ name: string; value: string }>
+  at: 'headers' | 'complete' | 'error'
+  /** A `net::ERR_*` name, at `'error'` only. */
+  error?: string
+  relayed: true
+}
+
 /** One `webRequest` listener of one endpoint: the event and its compiled `RequestFilter`. */
 interface RequestListener {
   event: WebRequestEventName
   filter: CompiledRequestFilter
 }
+
+/**
+ * The `webRequest` events of the response stage: while any endpoint (or a stopped background,
+ * persisted) holds a listener for one, the Kotlin engine relays media-element requests for
+ * their responses (`ext.observeResponses`, `blocking-rule-interface.md` §7.1).
+ */
+const RESPONSE_STAGE_EVENTS: ReadonlySet<WebRequestEventName> = new Set<WebRequestEventName>([
+  'onHeadersReceived',
+  'onResponseStarted',
+  'onCompleted',
+  'onBeforeRedirect'
+])
 
 /** The `details` a `webRequest` event carries here (the observational subset of Chrome's). */
 interface RequestDetails {
@@ -592,6 +632,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     { url: string; resolve: () => void; reject: (error: Error) => void; timer: unknown }
   >()
   private observing = false
+  /** `ext.observeResponses` as last sent: a response-stage `webRequest` listener exists somewhere. */
+  private observingResponses = false
   private subscribed = false
   private activeTabId: string | null = null
   /** The tabs of the last state snapshot and whether each is private (a closed tab is still one). */
@@ -2151,6 +2193,22 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   }
 
   /**
+   * The response stage of a media-element request the Kotlin engine relayed for it
+   * (`ext.response`, `blocking-rule-interface.md` §7.5), while a response-stage `webRequest`
+   * listener exists (`ext.observeResponses`). `requestId` is the `ext.request` id the same
+   * request's decision carried, so its `onBeforeRequest` details and these reports pair. The
+   * shape is checked here and nothing else: the event, as it reaches the seam, is returned;
+   * null when it was dropped (malformed, or landed after the switch went off – a body still
+   * streaming then ends for nobody).
+   */
+  onResponse(event: ExtResponseEvent): ExtResponseEvent | null {
+    if (!isResponseEvent(event)) return null
+    if (!this.observingResponses) return null
+    // the extension program emits onHeadersReceived / onResponseStarted / onCompleted / onBeforeRedirect / onErrorOccurred from here (blocking-rule-interface.md §7)
+    return event
+  }
+
+  /**
    * One `webRequest` event to every listener whose `RequestFilter` the request matches, each
    * delivery addressed to the one listener (`delivery.matched`), as the desktop's host does.
    * Pages, popups and content scripts get it now; the background gets it when it runs, has it
@@ -2382,18 +2440,35 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   /**
    * Kotlin reports every decision (`ext.observeRequests`) while a `webRequest` listener exists in
    * any endpoint – or a stopped worker persisted one: its listener is what wakes it (Chrome's
-   * observational events start an MV3 worker), and without the decisions nothing would.
+   * observational events start an MV3 worker), and without the decisions nothing would. By the
+   * same rule it relays media-element requests for their response stage
+   * (`ext.observeResponses`) while one of those listeners is a response-stage one
+   * (`RESPONSE_STAGE_EVENTS`); each switch is sent only when its answer changes, the requests'
+   * first (a relayed request has had its `ext.request`).
    */
   private updateObserving(): void {
     let wanted = false
-    for (const own of this.requestListeners.values()) if (own.size > 0) wanted = true
+    let responses = false
+    for (const own of this.requestListeners.values()) {
+      if (own.size > 0) wanted = true
+      for (const listener of own.values())
+        if (RESPONSE_STAGE_EVENTS.has(listener.event)) responses = true
+    }
     for (const id of this.extensions.keys()) {
-      if (this.background.persistedListeners(id).some((key) => key.startsWith('webRequest.')))
+      for (const key of this.background.persistedListeners(id)) {
+        if (!key.startsWith('webRequest.')) continue
         wanted = true
+        if (RESPONSE_STAGE_EVENTS.has(key.slice('webRequest.'.length) as WebRequestEventName))
+          responses = true
+      }
     }
     if (wanted !== this.observing) {
       this.observing = wanted
       this.bridge.send('ext.observeRequests', { on: wanted })
+    }
+    if (responses !== this.observingResponses) {
+      this.observingResponses = responses
+      this.bridge.send('ext.observeResponses', { on: responses })
     }
   }
 
@@ -2684,6 +2759,33 @@ function webRequestEventNamed(raw: unknown): WebRequestEventName {
   const event = WEB_REQUEST_EVENT_NAMES.find((name) => name === raw)
   if (!event) throw new Error('Unknown webRequest event.')
   return event
+}
+
+/** An `ext.response` payload of the shape `blocking-rule-interface.md` §7.5 gives it; anything else is dropped. */
+function isResponseEvent(raw: unknown): raw is ExtResponseEvent {
+  if (typeof raw !== 'object' || raw === null) return false
+  const e = raw as Record<string, unknown>
+  if (e.tabId !== null && typeof e.tabId !== 'string') return false
+  if (typeof e.requestId !== 'string' || e.requestId === '') return false
+  if (typeof e.url !== 'string' || typeof e.type !== 'string' || typeof e.method !== 'string')
+    return false
+  if (typeof e.statusCode !== 'number' || !Number.isInteger(e.statusCode) || e.statusCode < 0)
+    return false
+  if (typeof e.statusLine !== 'string') return false
+  if (
+    !Array.isArray(e.responseHeaders) ||
+    !e.responseHeaders.every(
+      (h: unknown) =>
+        typeof h === 'object' &&
+        h !== null &&
+        typeof (h as { name?: unknown }).name === 'string' &&
+        typeof (h as { value?: unknown }).value === 'string'
+    )
+  )
+    return false
+  if (e.at !== 'headers' && e.at !== 'complete' && e.at !== 'error') return false
+  if (e.at === 'error' ? typeof e.error !== 'string' : e.error != null) return false
+  return e.relayed === true
 }
 
 /** The `UrlFilter`s of a filtered listener; a malformed list matches nothing but is not fatal. */
