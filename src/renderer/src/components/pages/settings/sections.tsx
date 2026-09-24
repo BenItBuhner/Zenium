@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Check, CreditCard, Fingerprint, MapPin } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
+  AgentSkillStatus,
   AppLinkState,
   BookmarksBarMode,
   ColorScheme,
@@ -4246,6 +4247,7 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
       ]
     })
   }
+  if (state.capabilities.agentSkills) groups.push(agentSkillGroup(state.agentSkills))
   groups.push(
     {
       id: 'behaviour',
@@ -4356,6 +4358,90 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
     })
   }
   return groups
+}
+
+/**
+ * Settings › AI Agents › Agent skill (desktop hosts, `capabilities.agentSkills`): the
+ * `zenium-browser` Agent Skill – the file that teaches a coding agent to drive this browser
+ * politely – installed into each detected harness's global skills folder from a switch per
+ * harness, or all at once; a status row above them, and the note that Zenium keeps the
+ * installed copies current. No modal: the group is the nudge.
+ */
+function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
+  const detected = skills.targets.filter((t) => t.detected)
+  const installed = detected.filter((t) => t.installed)
+  const allInstalled = detected.length > 0 && installed.length === detected.length
+  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 'es'}`
+  const status = skills.error
+    ? skills.error
+    : detected.length === 0
+      ? 'No coding harness found on this computer'
+      : installed.length === 0
+        ? 'Not installed'
+        : `Installed for ${installed.length} of ${plural(detected.length, 'detected harness')} · version ${installed[0].installedVersion ?? skills.version}`
+  const rows: SettingsRow[] = [
+    {
+      kind: 'info',
+      id: 'skill-status',
+      label: 'zenium-browser skill',
+      description: status,
+      tone: skills.error ? 'danger' : undefined,
+      keywords: ['skill', 'claude code', 'cursor', 'codex', 'opencode', 'gemini cli', 'copilot']
+    },
+    ...detected.map((t): SettingsRow => ({
+      kind: 'switch',
+      id: `skill:${t.id}`,
+      label: t.label,
+      description: t.note ?? t.dir,
+      tone: t.note ? 'warn' : undefined,
+      keywords: ['skill', t.dir],
+      checked: t.installed,
+      onChange: (v) => run(v ? 'agent.installSkill' : 'agent.uninstallSkill', { targets: [t.id] })
+    })),
+    allInstalled
+      ? {
+          kind: 'action',
+          id: 'skill-all',
+          label: 'Remove everywhere',
+          description: 'Takes Zenium’s copy out of every harness above.',
+          button: 'Remove…',
+          destructive: true,
+          confirm: {
+            title: 'Remove the zenium-browser skill everywhere?',
+            description:
+              'Agents in Claude Code, Cursor, Codex and the shared folder lose the instructions for this browser. A copy you edited is left in place.',
+            action: 'Remove'
+          },
+          onPress: () => run('agent.uninstallSkill', {})
+        }
+      : {
+          kind: 'action',
+          id: 'skill-all',
+          label: 'Install for all detected',
+          description:
+            detected.length === 0
+              ? 'Install Claude Code, Cursor, Codex, Gemini CLI, Copilot CLI or OpenCode first, then check again.'
+              : 'Writes the skill into every harness above.',
+          button: detected.length === 0 ? 'Check again' : 'Install',
+          onPress: () =>
+            detected.length === 0
+              ? run('agent.refreshSkill', undefined)
+              : run('agent.installSkill', {})
+        },
+    {
+      kind: 'info',
+      id: 'skill-refresh-note',
+      label: 'Kept current',
+      description: 'Installed copies are refreshed when Zenium updates.'
+    }
+  ]
+  return {
+    id: 'skill',
+    heading: 'Agent skill',
+    description:
+      'A skill file that teaches coding agents how to drive this browser politely, beside you and each other: your own tab group, nothing touched that is not yours, tidy up at the end. Zenium puts it in each harness’s global skills folder, where Claude Code, Cursor, Codex, Gemini CLI, Copilot CLI and OpenCode load it when a task calls for a browser.',
+    rows
+  }
 }
 
 // ---------------------------------------------------------------------------

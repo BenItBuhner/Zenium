@@ -348,7 +348,9 @@ export class SkillInstaller implements AgentSkillsHost {
 
   private async readManifest(): Promise<SkillsManifest> {
     try {
-      const raw = this.io.read ? await this.io.read(SKILLS_MANIFEST) : this.io.readSync(SKILLS_MANIFEST)
+      const raw = this.io.read
+        ? await this.io.read(SKILLS_MANIFEST)
+        : this.io.readSync(SKILLS_MANIFEST)
       if (!raw) return { version: this.version, installed: [] }
       const parsed = JSON.parse(raw) as Partial<SkillsManifest>
       const installed = Array.isArray(parsed.installed)
@@ -370,7 +372,11 @@ export class SkillInstaller implements AgentSkillsHost {
   private async writeManifest(manifest: SkillsManifest): Promise<void> {
     if (!manifest.installed.length) {
       if (this.io.remove) await this.io.remove(SKILLS_MANIFEST)
-      else await this.io.write(SKILLS_MANIFEST, JSON.stringify({ version: manifest.version, installed: [] }))
+      else
+        await this.io.write(
+          SKILLS_MANIFEST,
+          JSON.stringify({ version: manifest.version, installed: [] })
+        )
       return
     }
     await this.io.write(SKILLS_MANIFEST, JSON.stringify(manifest, null, 2))

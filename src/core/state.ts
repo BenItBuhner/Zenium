@@ -1,6 +1,7 @@
 import type {
   AgentInfo,
   AgentServerStatus,
+  AgentSkillStatus,
   AutofillUIState,
   BlockedPopup,
   Bookmark,
@@ -73,6 +74,7 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
+  emptyAgentSkillStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot,
@@ -263,6 +265,7 @@ export interface StateExtras {
   sync: SyncStatus
   agents: AgentInfo[]
   agentServer: AgentServerStatus
+  agentSkills: AgentSkillStatus
   updates: UpdateStatus
   passwords: PasswordsStatus
   defaultBrowser: DefaultBrowserStatus
@@ -416,6 +419,7 @@ export class BrowserState {
     },
     agents: [],
     agentServer: emptyAgentServerStatus(),
+    agentSkills: emptyAgentSkillStatus(this.version),
     updates: emptyUpdateStatus(this.version, {
       os: updateOsOf(this.platform),
       arch: 'universal',

@@ -3,11 +3,12 @@ import type {
   AgentMode,
   AgentServerStatus,
   AgentSettings,
+  AgentSkillStatus,
   Tab
 } from '../../shared/types'
-import { emptyAgentServerStatus } from '../../shared/defaults'
+import { emptyAgentServerStatus, emptyAgentSkillStatus } from '../../shared/defaults'
 import type { Browser } from '../browser'
-import type { AgentTransport, TabView } from '../platform'
+import type { AgentSkillsHost, AgentTransport, TabView } from '../platform'
 import type { ZenWindow } from '../window'
 import {
   StreamableHttp,
@@ -59,6 +60,12 @@ const NAVIGATION_START_GRACE_MS = 1500
 const SERVER_NAME = 'zenium'
 /** Endpoint + token, read by the `zenium --mcp` shim (see main/agent/shim.ts). */
 const AGENT_FILE = 'agent.json'
+/**
+ * How long after start the Agent Skill's once-per-update refresh waits: off the boot path (the
+ * first window's paint, the session restore), yet early enough that a harness started right
+ * after an update reads the new copy.
+ */
+const SKILL_REFRESH_DELAY_MS = 2000
 
 /** One connected agent: its MCP session plus everything Zen knows about it. */
 export interface AgentSession extends McpSession {
@@ -116,6 +123,9 @@ export class AgentService implements SessionStore, McpHandlers {
   private writing: Promise<void> = Promise.resolve()
   private sweeper: ReturnType<typeof setInterval> | null = null
   private started = false
+  /** The Agent Skill's install state, as the host last reported it (`Platform.agentSkills`). */
+  private skills: AgentSkillStatus
+  private skillRefresh: ReturnType<typeof setTimeout> | null = null
 
   constructor(readonly browser: Browser) {
     this.transport = browser.platform.createAgentTransport?.(browser) ?? null
@@ -127,6 +137,7 @@ export class AgentService implements SessionStore, McpHandlers {
     this.http = new StreamableHttp(this)
     this.token = this.loadToken()
     this.status.token = this.token
+    this.skills = emptyAgentSkillStatus(browser.platform.info.version)
   }
 
   get settings(): AgentSettings {
@@ -145,6 +156,12 @@ export class AgentService implements SessionStore, McpHandlers {
     this.started = true
     this.sweeper = setInterval(() => this.sweep(), 60_000)
     this.onSettingsChanged()
+    // The skill's once-per-update refresh, off the boot path; the rows show the result.
+    if (this.browser.platform.agentSkills)
+      this.skillRefresh = setTimeout(() => {
+        this.skillRefresh = null
+        void this.runSkills((host) => host.status({ sync: true }))
+      }, SKILL_REFRESH_DELAY_MS)
   }
 
   /** Bring the server in line with Settings → AI Agents (start / stop / rebind). */
@@ -156,6 +173,8 @@ export class AgentService implements SessionStore, McpHandlers {
   async stop(): Promise<void> {
     if (this.sweeper) clearInterval(this.sweeper)
     this.sweeper = null
+    if (this.skillRefresh) clearTimeout(this.skillRefresh)
+    this.skillRefresh = null
     for (const id of [...this.sessions.keys()]) this.close(id)
     await this.applying
     await this.stopServer()
@@ -265,6 +284,49 @@ export class AgentService implements SessionStore, McpHandlers {
 
   isValidToken(token: string | null): boolean {
     return Boolean(token) && token === this.token
+  }
+
+  // ---------------------------------------------------------------------------
+  // The Agent Skill (Settings → AI Agents → Agent skill; desktop hosts only)
+  // ---------------------------------------------------------------------------
+
+  skillStatus(): AgentSkillStatus {
+    return this.skills
+  }
+
+  /** Install into `targets` (`AgentSkillTarget.id`s), or into every detected harness. */
+  installSkill(targets?: string[]): Promise<void> {
+    return this.runSkills((host) => host.install(targets))
+  }
+
+  uninstallSkill(targets?: string[]): Promise<void> {
+    return this.runSkills((host) => host.uninstall(targets))
+  }
+
+  /** Detect the harnesses again and re-read the installed copies. */
+  refreshSkill(): Promise<void> {
+    return this.runSkills((host) => host.status())
+  }
+
+  /**
+   * One host operation, its outcome into the state: the host reports failures inside the status,
+   * and anything it throws all the same lands in `error` rather than in the caller (the startup
+   * refresh has none).
+   */
+  private async runSkills(
+    operation: (host: AgentSkillsHost) => Promise<AgentSkillStatus>
+  ): Promise<void> {
+    const host = this.browser.platform.agentSkills
+    if (!host) return
+    try {
+      this.skills = await operation(host)
+    } catch (error) {
+      this.skills = {
+        ...this.skills,
+        error: (error as Error).message || 'The agent skill could not be updated'
+      }
+    }
+    this.browser.state.commitVolatile()
   }
 
   // ---------------------------------------------------------------------------

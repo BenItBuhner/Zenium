@@ -6,6 +6,7 @@ import { DEFAULT_BLOCKING_SETTINGS, emptyBlockingStatus } from '@shared/blocking
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
+  emptyAgentSkillStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
@@ -55,6 +56,7 @@ const ELECTRON: HostCapabilities = {
   printPreview: true,
   pdfViewer: false,
   agents: true,
+  agentSkills: true,
   updates: true,
   share: false,
   clipboardChip: false,
@@ -286,6 +288,7 @@ function desktopState(): UIState {
       token: 'secret-token',
       error: null
     },
+    agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.77-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
     passwords: emptyPasswordsStatus(),
     defaultBrowser: { isDefault: false, prompt: null },

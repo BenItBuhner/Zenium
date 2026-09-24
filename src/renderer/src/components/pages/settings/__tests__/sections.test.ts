@@ -31,6 +31,7 @@ import {
   DEFAULT_SETTINGS,
   INACTIVE_TAB_AUTO_CLOSE_DAYS,
   emptyAgentServerStatus,
+  emptyAgentSkillStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
@@ -106,6 +107,7 @@ const ANDROID: HostCapabilities = {
   printPreview: false,
   pdfViewer: true,
   agents: true,
+  agentSkills: true,
   updates: true,
   share: true,
   clipboardChip: true,
@@ -278,6 +280,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
+    agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
     passwords: emptyPasswordsStatus(),
     autofill: emptyAutofillUIState(),

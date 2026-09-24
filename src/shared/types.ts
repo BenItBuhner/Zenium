@@ -153,6 +153,12 @@ export interface HostCapabilities {
   pdfViewer: boolean
   /** The host can run the MCP server that lets AI agents control the browser. */
   agents: boolean
+  /**
+   * The host can install the `zenium-browser` Agent Skill into the coding harnesses' global
+   * skills directories on this machine (Settings › AI Agents › Agent skill): the desktop, where
+   * Claude Code, Cursor and Codex run beside the browser. A phone has no harness to install into.
+   */
+  agentSkills: boolean
   /** The host checks GitHub Releases for new versions and can fetch / apply them. */
   updates: boolean
   /** The host has a system share sheet (`app.share`); menus offer Share items when true. */
@@ -2960,6 +2966,36 @@ export interface AgentServerStatus {
   error: string | null
 }
 
+/**
+ * One coding harness the `zenium-browser` Agent Skill can be installed for (Settings › AI
+ * Agents › Agent skill): its user-level skills directory and whether Zenium's copy is in it.
+ */
+export interface AgentSkillTarget {
+  /** `claude`, `cursor`, `codex` or `agents` (the shared `~/.agents/skills` folder). */
+  id: string
+  /** The harness's name as the row's label ("Claude Code"). */
+  label: string
+  /** The skill's directory as the row shows it (`~/.claude/skills/zenium-browser`). */
+  dir: string
+  /** The harness's configuration directory exists on this machine. */
+  detected: boolean
+  /** Zenium's copy is there (recorded in the manifest and present on disk). */
+  installed: boolean
+  /** The `metadata.version` of the installed copy; null when not installed. */
+  installedVersion: string | null
+  /** What the last operation left to say about this target (an edited copy kept, an error). */
+  note: string | null
+}
+
+/** The Agent Skill's install state across the harnesses (`Platform.agentSkills`). */
+export interface AgentSkillStatus {
+  /** The skill version this app installs (the app's version). */
+  version: string
+  targets: AgentSkillTarget[]
+  /** The last operation's failure, when it failed as a whole. */
+  error: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Resource governor (memory / CPU / GPU budgets)
 // ---------------------------------------------------------------------------
@@ -3799,6 +3835,8 @@ export interface UIState {
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]
   agentServer: AgentServerStatus
+  /** The `zenium-browser` Agent Skill's install state per harness (`capabilities.agentSkills`). */
+  agentSkills: AgentSkillStatus
   /** Automatic updates: what the browser knows about the latest release and how far it got. */
   updates: UpdateStatus
   /** The password vault: lock state, protection, counts and the last checkup (never secrets). */
@@ -5492,6 +5530,15 @@ export interface Commands {
   'agent.forget': { args: { name: string }; result: void }
   /** Issue a new token (existing HTTP sessions stay valid until they end). */
   'agent.regenerateToken': { args: void; result: string }
+  /**
+   * Install the `zenium-browser` Agent Skill into the named harnesses' skills directories
+   * (`AgentSkillTarget.id`s), or into every detected one when none are named.
+   */
+  'agent.installSkill': { args: { targets?: string[] }; result: void }
+  /** Remove Zenium's copies from the named harnesses (every installed one when none are named). */
+  'agent.uninstallSkill': { args: { targets?: string[] }; result: void }
+  /** Detect the harnesses again and re-read the installed copies. */
+  'agent.refreshSkill': { args: void; result: void }
 
   /** Look for a newer release now (Settings → Updates → "Check now"). */
   'updates.check': { args: void; result: void }

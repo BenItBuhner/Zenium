@@ -13,6 +13,7 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
+  emptyAgentSkillStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
@@ -59,6 +60,7 @@ const DESKTOP: HostCapabilities = {
   sync: true,
   print: true,
   agents: true,
+  agentSkills: true,
   updates: true,
   share: false,
   clipboardChip: false,
@@ -221,6 +223,7 @@ function state(
     webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
+    agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
     passwords: emptyPasswordsStatus(),
     autofill: emptyAutofillUIState(),
