@@ -72,7 +72,8 @@ const ELECTRON: HostCapabilities = {
   quitsThroughCore: true,
   newTabPage: true,
   pageTabs: true,
-  pinShortcuts: false,
+  // The desktop writes launchers for installed web apps (Settings › Apps lists them).
+  pinShortcuts: true,
   translate: true,
   voiceSearch: false,
   screenCapture: true,
@@ -239,6 +240,17 @@ function desktopState(): UIState {
     extensionUpdates: { checking: false, lastCheckedAt: null },
     sidePanel: null,
     mods: [{ id: 'm1', name: 'Round tabs', source: null, css: '', enabled: true, updatedAt: 1 }],
+    webApps: [
+      {
+        id: 'notes',
+        name: 'Notes',
+        startUrl: 'https://notes.example/',
+        scope: 'https://notes.example/',
+        pinnedAt: 1,
+        icon: null,
+        bounds: null
+      }
+    ],
     sync: {
       enabled: true,
       folder: '/home/me/Sync',
@@ -574,6 +586,9 @@ const INVENTORY: Record<string, readonly string[]> = {
   boosts: ['github.com', 'Boost a site'],
   mods: ['Round tabs', 'New Mod', 'Import from URL', 'Import from file'],
   extensions: ['From the Chrome Web Store', 'From a file', 'Load unpacked', 'Check for updates'],
+  // shortcuts-menus-138: the installed apps by name (the fixture's one), Open and Uninstall
+  // behind each row's ⋯.
+  apps: ['Notes'],
   agents: [
     'Enable the MCP server',
     'Port',
@@ -722,6 +737,8 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'Boosts',
       'Mods',
       'Extensions',
+      // shortcuts-menus-138: the installed web apps, on a host that writes their launchers.
+      'Apps',
       'AI Agents',
       'Passwords',
       'Security',

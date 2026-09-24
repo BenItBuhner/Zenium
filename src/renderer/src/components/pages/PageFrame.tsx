@@ -1,5 +1,5 @@
 import type { JSX, KeyboardEvent, MouseEvent, ReactNode, RefObject, UIEvent } from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, X } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 
@@ -31,12 +31,15 @@ export const TWO_PANE_MIN_WIDTH = 720
 /**
  * The page: a flex column filling the host, its scroll container carrying `data-scrolled` while
  * the column is scrolled (the sticky header's hairline reads it). `header` is what stays put;
- * the children are the body.
+ * the children are the body; `footer`, when a page has one (the task manager's End process,
+ * §9.11), is pinned at the page's foot outside the scroll, carrying `data-more` while rows are
+ * still below the fold (its hairline reads it, the header's mirror).
  */
 export function PageColumn({
   testId,
   className,
   header,
+  footer,
   scrollRef,
   onKeyDown,
   children
@@ -44,18 +47,38 @@ export function PageColumn({
   testId?: string
   className?: string
   header: ReactNode
+  footer?: ReactNode
   scrollRef?: RefObject<HTMLDivElement | null>
   onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void
   children: ReactNode
 }): JSX.Element {
   const [scrolled, setScrolled] = useState(false)
-  const onScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
-    setScrolled(e.currentTarget.scrollTop > 0)
+  const [more, setMore] = useState(false)
+  const scroller = useRef<HTMLDivElement | null>(null)
+  const measure = useCallback((el: HTMLDivElement) => {
+    setScrolled(el.scrollTop > 0)
+    setMore(el.scrollTop + el.clientHeight < el.scrollHeight - 1)
   }, [])
+  const onScroll = useCallback((e: UIEvent<HTMLDivElement>) => measure(e.currentTarget), [measure])
+  const hasFooter = Boolean(footer)
+  // A pinned footer reads whether rows stand below the fold before any scroll, and as the page
+  // or its list changes size.
+  useEffect(() => {
+    const el = scroller.current
+    if (!hasFooter || !el || typeof ResizeObserver === 'undefined') return
+    measure(el)
+    const observer = new ResizeObserver(() => measure(el))
+    observer.observe(el)
+    for (const child of el.children) observer.observe(child)
+    return () => observer.disconnect()
+  }, [hasFooter, measure])
   return (
     <div className={cn('zen-page', className)} data-testid={testId} onKeyDown={onKeyDown}>
       <div
-        ref={scrollRef}
+        ref={(el) => {
+          scroller.current = el
+          if (scrollRef) scrollRef.current = el
+        }}
         className="zen-page-scroll"
         data-scrolled={scrolled || undefined}
         onScroll={onScroll}
@@ -63,6 +86,11 @@ export function PageColumn({
         <header className="zen-page-header">{header}</header>
         <div className="zen-page-body">{children}</div>
       </div>
+      {footer && (
+        <footer className="zen-page-footer" data-more={more || undefined}>
+          <div className="zen-page-footer-actions">{footer}</div>
+        </footer>
+      )}
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { WARN_FLOW_DROPPED } from '@core/extensions/api/engine'
 import type { ExtensionErrorReport } from '@core/extensions/errorConsole'
 import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
 import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
+import type { ScriptRequestObservation } from '../relaySelection'
 import {
   type FakeAuthSheet,
   type Harness,
@@ -1246,6 +1247,218 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
     expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
   })
 
+  it('the response stage is relayed only while a response-stage listener exists: ext.observeResponses follows the registrations, the requests switch first (blocking-rule-interface.md §7.1)', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    backgroundUp(h, 'bg1')
+    // A request-stage listener alone: the decisions are reported, nothing is relayed.
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['<all_urls>'] },
+      [],
+      1
+    ])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([])
+    // The first response-stage listener turns the relay on; a second changes nothing.
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onHeadersReceived',
+      { urls: ['<all_urls>'] },
+      ['responseHeaders'],
+      2
+    ])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }])
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onCompleted',
+      { urls: ['<all_urls>'] },
+      [],
+      3
+    ])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }])
+    // Off again when the last response-stage listener goes, while the request stage stays observed.
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onHeadersReceived', 2])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }])
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onCompleted', 3])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }, { on: false }])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
+    // Each of the four response-stage events counts; onErrorOccurred and onSendHeaders do not.
+    for (const [index, event] of ['onResponseStarted', 'onBeforeRedirect'].entries()) {
+      await call(h, 'bg1', 'webRequest', 'addListener', [
+        event,
+        { urls: ['<all_urls>'] },
+        [],
+        10 + index
+      ])
+      expect(h.kt.calledWith('ext.observeResponses')).toHaveLength(3 + index * 2)
+      await call(h, 'bg1', 'webRequest', 'removeListener', [event, 10 + index])
+      expect(h.kt.calledWith('ext.observeResponses')).toHaveLength(4 + index * 2)
+    }
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onErrorOccurred',
+      { urls: ['<all_urls>'] },
+      [],
+      20
+    ])
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onSendHeaders',
+      { urls: ['<all_urls>'] },
+      [],
+      21
+    ])
+    expect(h.kt.calledWith('ext.observeResponses')).toHaveLength(6)
+    expect(h.kt.calledWith('ext.observeResponses').at(-1)).toEqual({ on: false })
+    // When both switches change at once the requests' goes first: a relayed request has had its ext.request.
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onBeforeRequest', 1])
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onErrorOccurred', 20])
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onSendHeaders', 21])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
+    const before = h.kt.calls.length
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onCompleted',
+      { urls: ['<all_urls>'] },
+      [],
+      30
+    ])
+    expect(
+      h.kt.calls
+        .slice(before)
+        .map((c) => c.method)
+        .filter((m) => m.startsWith('ext.observe'))
+    ).toEqual(['ext.observeRequests', 'ext.observeResponses'])
+    // A stopped worker that persisted a response-stage listener keeps the relay on: its listener wakes it.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    expect(h.kt.calledWith('ext.observeResponses').at(-1)).toEqual({ on: true })
+    // Gone for good: both switches off with the extension.
+    await h.runtime.detach(ID)
+    expect(h.kt.calledWith('ext.observeRequests').at(-1)).toEqual({ on: false })
+    expect(h.kt.calledWith('ext.observeResponses').at(-1)).toEqual({ on: false })
+  })
+
+  it("an ext.response reaches the runtime's seam under the ext.request id its onBeforeRequest carried, and is dropped when malformed or after the switch went off (blocking-rule-interface.md §7.5)", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    backgroundUp(h, 'bg1')
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['<all_urls>'] },
+      [],
+      1
+    ])
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onCompleted',
+      { urls: ['<all_urls>'], types: ['media'] },
+      ['responseHeaders'],
+      2
+    ])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }])
+    // The request stage: Kotlin's decision, as the observer reported it under its id.
+    h.runtime.onRequest({
+      tabId: 't1',
+      requestId: '7',
+      url: 'https://cdn.example/clip.mp4',
+      type: 'media',
+      method: 'GET',
+      initiator: 'https://news.example',
+      mainFrame: false,
+      document: 2,
+      action: 'allow',
+      matchedSet: null,
+      matchedRule: null,
+      micros: 3,
+      cpuMicros: null
+    })
+    const heard = events(h, 'bg1', 'webRequest.onBeforeRequest')
+    expect(heard).toHaveLength(1)
+    const details = (heard[0].args as Array<{ requestId: string; url: string }>)[0]
+    expect(details.requestId).toBe('7')
+    // The response stage: the same id, the origin's headers, then the end; each reaches the seam as it came.
+    const response = (
+      at: 'headers' | 'complete' | 'error',
+      over: Record<string, unknown> = {}
+    ): Record<string, unknown> => ({
+      tabId: 't1',
+      requestId: '7',
+      url: 'https://cdn.example/clip.mp4',
+      type: 'media',
+      method: 'GET',
+      statusCode: 206,
+      statusLine: 'HTTP/1.1 206 Partial Content',
+      responseHeaders: [
+        { name: 'Content-Type', value: 'video/mp4' },
+        { name: 'Content-Range', value: 'bytes 0-1023/4096' },
+        { name: 'Set-Cookie', value: 'seen=1' }
+      ],
+      at,
+      relayed: true,
+      ...over
+    })
+    const headers = h.runtime.onResponse(response('headers') as never)
+    expect(headers).not.toBeNull()
+    expect(headers?.requestId).toBe(details.requestId)
+    expect(headers?.url).toBe(details.url)
+    expect(headers?.at).toBe('headers')
+    expect(headers?.responseHeaders).toHaveLength(3)
+    expect(h.runtime.onResponse(response('complete') as never)?.at).toBe('complete')
+    expect(
+      h.runtime.onResponse(response('error', { error: 'net::ERR_ABORTED' }) as never)?.error
+    ).toBe('net::ERR_ABORTED')
+    // Nothing of it became a webRequest event here: the emission is the extension program's.
+    expect(events(h, 'bg1', 'webRequest.onCompleted')).toHaveLength(0)
+    expect(events(h, 'bg1', 'webRequest.onHeadersReceived')).toHaveLength(0)
+    // Malformed shapes are dropped: no id, an error without its name, a header without a value, not relayed.
+    expect(h.runtime.onResponse(response('headers', { requestId: '' }) as never)).toBeNull()
+    expect(h.runtime.onResponse(response('error') as never)).toBeNull()
+    expect(h.runtime.onResponse(response('complete', { error: 'x' }) as never)).toBeNull()
+    expect(
+      h.runtime.onResponse(response('headers', { responseHeaders: [{ name: 'X' }] }) as never)
+    ).toBeNull()
+    expect(h.runtime.onResponse(response('headers', { relayed: false }) as never)).toBeNull()
+    expect(h.runtime.onResponse(response('headers', { at: 'started' }) as never)).toBeNull()
+    expect(h.runtime.onResponse(response('headers', { statusCode: -1 }) as never)).toBeNull()
+    expect(h.runtime.onResponse(null as never)).toBeNull()
+    // The switch went off while a body was still streaming: its end is nobody's.
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onCompleted', 2])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }, { on: false }])
+    expect(h.runtime.onResponse(response('complete') as never)).toBeNull()
+  })
+  it("the runtime tells the page script's observer which fetch / XHR the relay already served, by the shared selection, and only while the switch is on (blocking-rule-interface.md 7.10)", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    backgroundUp(h, 'bg1')
+    const observed = (over: Partial<ScriptRequestObservation> = {}): ScriptRequestObservation => ({
+      tabId: 't1',
+      url: 'https://news.example/clip.mp4',
+      method: 'GET',
+      range: 'bytes=0-',
+      crossOrigin: false,
+      ...over
+    })
+    // No response-stage listener: nothing is relayed, every observation is the page script's.
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([])
+    expect(h.runtime.relayServed(observed())).toBe(false)
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onCompleted',
+      { urls: ['<all_urls>'] },
+      [],
+      1
+    ])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }])
+    // The switch on: a same-origin ranged GET a script made was relayed (the recorded overlap) –
+    // its response comes as ext.response, the observation is dropped.
+    expect(h.runtime.relayServed(observed())).toBe(true)
+    // A cross-origin one carried Origin, an unranged one no Range, a POST is no GET: the page script's.
+    expect(
+      h.runtime.relayServed(observed({ url: 'https://api.example/data.json', crossOrigin: true }))
+    ).toBe(false)
+    expect(h.runtime.relayServed(observed({ range: null }))).toBe(false)
+    expect(h.runtime.relayServed(observed({ method: 'POST' }))).toBe(false)
+    // The switch off again: nothing was relayed.
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onCompleted', 1])
+    expect(h.kt.calledWith('ext.observeResponses')).toEqual([{ on: true }, { on: false }])
+    expect(h.runtime.relayServed(observed())).toBe(false)
+  })
   it('a navigation event landing after the new document said hello leaves its endpoints answering; Kotlin says which are gone', async () => {
     const h = harness()
     await h.runtime.attach(record(h))

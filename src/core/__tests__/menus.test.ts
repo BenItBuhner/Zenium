@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
+  Folder,
   FormFactor,
   HostCapabilities,
   MediaState,
@@ -49,6 +50,7 @@ import {
   selectionUrl
 } from '../menus'
 import { HELP_URL, ISSUES_URL } from '../menuBar'
+import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
 
 /**
@@ -442,6 +444,8 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > -',
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
+  'Bookmarks > -',
+  'Bookmarks > Tab Folders',
   'History',
   'History > Show Full History',
   'History > -',
@@ -475,18 +479,19 @@ const DESKTOP_APP_MENU = [
   'More Tools > Change Theme…',
   'More Tools > -',
   'More Tools > Resources',
+  'More Tools > Task Manager',
   'More Tools > Developer Tools',
   'More Tools > Dock to Bottom',
   'More Tools > Dock to Right',
   'More Tools > Dock to Left',
   'More Tools > Undock',
   'Help',
+  'Help > About Zenium',
+  "Help > What's New",
+  'Help > -',
   'Help > Zenium Help',
   'Help > Keyboard Shortcuts',
-  'Help > -',
   'Help > Report an Issue…',
-  'Help > -',
-  'Help > About Zenium 1.2.3',
   'Quit'
 ]
 
@@ -514,6 +519,7 @@ const DESKTOP_ONLY = [
   'More Tools > Compact Mode',
   'More Tools > Split View',
   'More Tools > Name Window…',
+  'More Tools > Task Manager',
   'Zoom > Fullscreen',
   'Quit'
 ]
@@ -563,10 +569,199 @@ describe('the app menu', () => {
     expect(separators(full.shown())).toBe(4)
   })
 
+  describe("Chrome's Update row at the menu's head (shortcuts-menus-101)", () => {
+    /** The updater driven to `phase`, a 2.0.0 release found (downloaded when `ready`). */
+    const updater = (
+      h: Harness,
+      phase: 'available' | 'ready' | 'downloading' | 'up-to-date'
+    ): void => {
+      const status = h.browser.updates.status()
+      vi.spyOn(h.browser.updates, 'status').mockReturnValue({
+        ...status,
+        phase,
+        release: {
+          version: '2.0.0',
+          tag: 'v2.0.0',
+          prerelease: false,
+          publishedAt: '2026-09-24T00:00:00Z',
+          releaseUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
+          notesUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v2.0.0',
+          asset: null
+        },
+        downloadedPath: phase === 'ready' ? '/tmp/zenium-2.0.0.AppImage' : null
+      })
+    }
+
+    it('heads the desktop menu with Update Zenium over a hairline while an update is downloaded, and its pick relaunches into it (About’s Relaunch, #409)', () => {
+      const h = harness(DESKTOP)
+      updater(h, 'ready')
+      const install = vi.spyOn(h.browser.updates, 'install').mockResolvedValue(undefined)
+      expect(appMenu(h).slice(0, 3)).toEqual(['Update Zenium', '-', 'New Tab'])
+      // Chrome's form of the row ("Update Google Chrome"), not About's "Relaunch to update".
+      const row = h.shown()[0]
+      expect(row).toMatchObject({ label: 'Update Zenium' })
+      expect(row.enabled).not.toBe(false)
+      row.click?.()
+      expect(install).toHaveBeenCalledTimes(1)
+      // The rest of the menu is as it was: the row is one row and one hairline more.
+      expect(appMenu(h).slice(2)).toEqual(DESKTOP_APP_MENU)
+    })
+
+    it('shows nothing while an update is merely found (Chrome shows nothing on available), while it downloads, or when the build is up to date', () => {
+      for (const phase of ['available', 'downloading', 'up-to-date'] as const) {
+        const h = harness(DESKTOP)
+        updater(h, phase)
+        expect(appMenu(h), phase).toEqual(DESKTOP_APP_MENU)
+      }
+      // A host that cannot update has no row whatever the phase reads.
+      const h = harness({ ...DESKTOP, updates: false })
+      updater(h, 'ready')
+      expect(appMenu(h)).not.toContain('Update Zenium')
+    })
+
+    it("is the desktop's alone: the tablet's and the phone's menus keep their shape with an update waiting", () => {
+      const tablet = harness(ANDROID, 'tablet')
+      updater(tablet, 'ready')
+      expect(appMenu(tablet)).not.toContain('Update Zenium')
+      expect(appMenu(tablet)[0]).toBe('New Tab')
+      const phone = harness(ANDROID, 'phone')
+      updater(phone, 'ready')
+      expect(appMenu(phone)).not.toContain('Update Zenium')
+    })
+
+    it('is a twenty-first row only while the update waits: 21 rows / 4 separators (701 px); the Now Playing… row folded too, 22 / 5 (741 px) and the Update row first', () => {
+      const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
+      const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
+      appMenu(full)
+      expect(rows(full)).toHaveLength(20)
+      expect(separators(full.shown())).toBe(3)
+      updater(full, 'ready')
+      appMenu(full)
+      expect(rows(full)).toHaveLength(21)
+      expect(separators(full.shown())).toBe(4)
+      expect(rows(full)[0]).toBe('Update Zenium')
+      // Chrome's order at the head: the update, then the folded hub's row, then the tabs.
+      full.browser.state.media = [
+        { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
+      ]
+      appMenuFolded(full)
+      expect(rows(full)).toHaveLength(22)
+      expect(separators(full.shown())).toBe(5)
+      expect(topLabels(full.shown()).slice(0, 5)).toEqual([
+        'Update Zenium',
+        '-',
+        'Now Playing…',
+        '-',
+        'New Tab'
+      ])
+    })
+  })
+
+  describe("Chrome's Tab groups submenu (shortcuts-menus-111)", () => {
+    /** A folder of the window's space, its tabs closed and `pages` kept: a SAVED group. */
+    const savedGroup = (
+      h: Harness,
+      name: string,
+      pages: string[],
+      patch: Partial<Folder> = {}
+    ): Folder => {
+      const folder = h.browser.createFolder(h.win.activeSpace().id, name, '📁', h.win, {
+        rename: false,
+        color: 'blue'
+      })
+      Object.assign(folder, {
+        savedTabs: pages.map((url) => ({ url, title: url, favicon: null })),
+        ...patch
+      })
+      return folder
+    }
+    /** The Tab Folders submenu of the window's app menu (Chrome's Tab groups ▸; the desktop's noun). */
+    const tabGroups = (h: Harness, win = h.win): MenuItemTemplate[] => {
+      h.browser.handleCommand(win, 'app.menu', {})
+      return item(item(h.shown(), 'Bookmarks').submenu!, 'Tab Folders').submenu!
+    }
+
+    it("closes the Bookmarks submenu as its last group – Chrome's seat for a list beside the bookmarks – listing the saved groups by name with their mark, the most recently used first", () => {
+      const h = pageHarness(DESKTOP)
+      savedGroup(h, 'Research', ['https://a.example/', 'https://b.example/'], { lastUsedAt: 10 })
+      savedGroup(h, 'Trip', ['https://c.example/'], { lastUsedAt: 20, color: 'green', icon: '✈️' })
+      // An OPEN group (a live member) is the sidebar's, an EMPTY one (nothing kept) neither's.
+      const open = h.browser.createFolder(h.win.activeSpace().id, 'Work', '📁', h.win, {
+        rename: false
+      })
+      h.browser.tabs.moveToFolder(h.tabId, open.id)
+      h.browser.createFolder(h.win.activeSpace().id, 'Empty', '📁', h.win, { rename: false })
+      appMenu(h)
+      const bookmarks = item(h.shown(), 'Bookmarks').submenu!
+      expect(topLabels(bookmarks).slice(-3)).toEqual(['Export Bookmarks…', '-', 'Tab Folders'])
+      expect(separators(bookmarks)).toBe(3)
+      const rows = tabGroups(h)
+      expect(rows.map((r) => r.label)).toEqual(['Trip', 'Research'])
+      expect(rows[0]).toMatchObject({ group: { color: 'green', icon: '✈️', saved: true } })
+      expect(rows[1]).toMatchObject({ group: { color: 'blue', icon: '📁', saved: true } })
+      for (const row of rows) expect(row.enabled).not.toBe(false)
+      // The mark rides the descriptor the renderer draws (`serialiseMenu`).
+      expect(serialiseMenu(rows, 'm').items.map((r) => r.group)).toEqual([
+        { color: 'green', icon: '✈️', saved: true },
+        { color: 'blue', icon: '📁', saved: true }
+      ])
+      // The top level keeps its resting shape – §6's three separators, no row of its own for
+      // the groups (twenty rows, 661 px, on the full host) – with groups saved: the list is
+      // the submenu's. (A page harness's zoom row carries its percentage.)
+      appMenu(h)
+      expect(topLabels(h.shown()).map((l) => l.replace(' (100%)', ''))).toEqual(
+        DESKTOP_APP_MENU_TOP
+      )
+      expect(separators(h.shown())).toBe(3)
+    })
+
+    it("a row's pick opens the group in this window: its pages back as its tabs, the first active; the group is then the sidebar's and leaves the list", () => {
+      const h = pageHarness(DESKTOP)
+      const research = savedGroup(h, 'Research', ['https://a.example/', 'https://b.example/'])
+      savedGroup(h, 'Trip', ['https://c.example/'], { lastUsedAt: 1 })
+      item(tabGroups(h), 'Research').click?.()
+      const m = h.browser.state.model
+      const members = Object.values(m.tabs).filter((t) => t.folderId === research.id)
+      expect(members.map((t) => t.url)).toEqual(['https://a.example/', 'https://b.example/'])
+      expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://a.example/')
+      expect(m.folders[research.id].savedTabs).toBeNull()
+      expect(tabGroups(h).map((r) => r.label)).toEqual(['Trip'])
+    })
+
+    it("with nothing saved the submenu is §9.17's empty state: 'No saved tab folders' as the note row", () => {
+      const h = harness(DESKTOP)
+      expect(tabGroups(h)).toEqual([{ label: 'No saved tab folders', enabled: false, note: true }])
+      // A group open in the sidebar saves nothing yet: still the note.
+      const p = pageHarness(DESKTOP)
+      const open = p.browser.createFolder(p.win.activeSpace().id, 'Work', '📁', p.win, {
+        rename: false
+      })
+      p.browser.tabs.moveToFolder(p.tabId, open.id)
+      expect(tabGroups(p).map((r) => r.label)).toEqual(['No saved tab folders'])
+    })
+
+    it("is the desktop's alone, and no row of a private window's menu: the tablet's and the phone's Bookmarks keep their shape", () => {
+      const desktop = pageHarness(DESKTOP)
+      savedGroup(desktop, 'Trip', ['https://c.example/'])
+      const priv = desktop.browser.openWindow('private', desktop.win)!
+      desktop.browser.handleCommand(priv, 'app.menu', {})
+      expect(labels(desktop.shown())).not.toContain('Bookmarks > Tab Folders')
+      expect(labels(item(desktop.shown(), 'Bookmarks').submenu!).at(-1)).toBe('Export Bookmarks…')
+      const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
+      savedGroup(tablet, 'Trip', ['https://c.example/'])
+      expect(appMenu(tablet)).not.toContain('Bookmarks > Tab Folders')
+      const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+      savedGroup(phone, 'Trip', ['https://c.example/'])
+      expect(appMenu(phone)).not.toContain('Bookmarks > Tab Folders')
+      expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Tab Folders')
+    })
+  })
+
   it('folds Chrome’s Save and Share into a submenu closing the page’s group, before the app’s separator: the saves, then the shares (shortcuts-menus-120)', () => {
     // A host that shares and pins shortcuts, with a page up and the install surface mounted,
     // syncing with another device: every row of the group stands – Save Page As…, Create
-    // Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – and no Cast row.
+    // Shortcut…, Manage Apps (shortcuts-menus-138), Web Capture…, Print…, Share…, Send to Your
+    // Devices – and no Cast row.
     const h = pageHarness({ ...DESKTOP, share: true, pinShortcuts: true }, { shortcuts: true })
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
     vi.spyOn(h.browser.sync, 'status').mockReturnValue({
@@ -588,6 +783,7 @@ describe('the app menu', () => {
     expect(topLabels(group)).toEqual([
       'Save Page As…',
       'Create Shortcut…',
+      'Manage Apps',
       'Web Capture…',
       'Print…',
       'Share…',
@@ -621,6 +817,39 @@ describe('the app menu', () => {
       'Web Capture…',
       'Print…'
     ])
+  })
+
+  it('seats Edge’s Manage Apps under the install row, whatever the page shows, on a desktop host that pins launchers; its pick opens Settings › Apps (shortcuts-menus-138)', () => {
+    // The install row is the page's (an installable page, the surface up); Manage Apps is the
+    // list's, so it stands with no page up and no surface, on any host that writes launchers –
+    // the way to the installed apps by name, with Open and Uninstall.
+    const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
+    appMenu(h)
+    let group = item(h.shown(), 'Save and Share').submenu!
+    expect(topLabels(group)).toEqual(['Save Page As…', 'Manage Apps', 'Web Capture…', 'Print…'])
+    const open = vi.spyOn(h.browser.pages, 'open')
+    item(group, 'Manage Apps').click?.()
+    expect(open).toHaveBeenCalledWith('settings', 'apps', h.win)
+    // With the install row up the pair reads as Edge's Apps does: install, then manage.
+    h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+    appMenu(h)
+    group = item(h.shown(), 'Save and Share').submenu!
+    expect(topLabels(group).slice(0, 3)).toEqual([
+      'Save Page As…',
+      'Create Shortcut…',
+      'Manage Apps'
+    ])
+    // A host that pins no launchers has no list to manage: the bare desktop, the tablet and the
+    // phone show no row (the section is the desktop OSes'; Android's apps are the launcher's).
+    for (const other of [
+      harness(DESKTOP),
+      harness({ ...DESKTOP, pinShortcuts: true }, { formFactor: 'tablet', shortcuts: true }),
+      harness({ ...ANDROID, pinShortcuts: true }, { formFactor: 'phone', shortcuts: true })
+    ]) {
+      appMenu(other)
+      expect(allItems(other.shown()).map((i) => i.label)).not.toContain('Manage Apps')
+    }
   })
 
   it('carries Chrome’s Delete Browsing Data… row at the top level, closing the library group with its chord, and runs the dialog’s request from it', () => {
@@ -773,10 +1002,10 @@ describe('the app menu', () => {
     expect(everywhere).not.toContain('Take Screenshot')
     expect(everywhere).not.toContain('Capture Full Page')
     expect(desktopMenu).toContain('Save and Share > Web Capture…')
-    // More Tools: two rows and a separator fewer than the row had – eight of its own, the four
-    // dock rows after them, two separators.
+    // More Tools: two rows and a separator fewer than the row had – nine of its own (the
+    // desktop's Task Manager among them, W5-8), the four dock rows after them, two separators.
     const moreTools = item(desktop.shown(), 'More Tools').submenu!
-    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(12)
+    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(13)
     expect(separators(moreTools)).toBe(2)
     // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
     // in their own group before the resources.
@@ -868,8 +1097,13 @@ describe('the app menu', () => {
     // review's ruling 3): the overlay takes the visible area and the full page both, so
     // nothing the two rows did is lost, and More Tools is two rows and a separator shorter.
     const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
+    // The flat menu's disabled version line is Help's About Zenium row now, which opens the
+    // About page the version is on (shortcuts-menus-152).
+    const renamed: Record<string, string> = { 'About Zenium 1.2.3': 'About Zenium' }
     for (const label of before)
-      expect(everywhere, label).toContain(foldedIntoWebCapture.has(label) ? 'Web Capture…' : label)
+      expect(everywhere, label).toContain(
+        foldedIntoWebCapture.has(label) ? 'Web Capture…' : (renamed[label] ?? label)
+      )
     for (const label of foldedIntoWebCapture) expect(everywhere).not.toContain(label)
     expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
     expect(separators(h.shown())).toBe(3)
@@ -891,14 +1125,20 @@ describe('the app menu', () => {
     // tablet's too, its host permitting. Both rows live in submenus now (§6 "Menus"). Web
     // capture's overlay is the desktop chrome's, so its row is too – which is why the tablet's
     // More Tools keeps Take Screenshot and Capture Full Page, the rows the desktop folded into
-    // it; Name Window… names an OS title bar the tablet's one window does not have.
+    // it; Name Window… names an OS title bar the tablet's one window does not have; the Tab
+    // Folders submenu (its group closing Bookmarks) is the desktop's, the tablet's saved groups
+    // being its overview's pane (TAB-16). The task manager is a page tab of the desktop layout
+    // alone (`internalPages.ts`).
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
         label !== 'More Tools > Name Window…' &&
+        label !== 'More Tools > Task Manager' &&
         label !== 'Bookmarks > Show Bookmarks Bar' &&
+        label !== 'Bookmarks > Tab Folders' &&
         label !== 'Save and Share > Web Capture…'
     )
+    tabletChrome.splice(tabletChrome.lastIndexOf('Bookmarks > -'), 1)
     tabletChrome.splice(tabletChrome.indexOf('More Tools > Resources'), 0, ...TABLET_CAPTURES)
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(tabletChrome)
   })
@@ -943,7 +1183,7 @@ describe('the app menu', () => {
     )
   })
 
-  it("Help carries the menu bar's entries: Zenium Help and Report an Issue… open their pages, About closes it", () => {
+  it("Help is Chrome's Help submenu in Chrome's order (shortcuts-menus-152): About Zenium opens the About page, What's New the release notes, Zenium Help and Report an Issue… their pages", () => {
     const opened: string[] = []
     const h = harness(DESKTOP)
     h.browser.platform.shell.openExternal = (url: string): Promise<void> => {
@@ -951,10 +1191,48 @@ describe('the app menu', () => {
       return Promise.resolve()
     }
     appMenu(h)
+    const help = deepItem(h.shown(), 'Help').submenu ?? []
+    expect(topLabels(help)).toEqual([
+      'About Zenium',
+      "What's New",
+      '-',
+      'Zenium Help',
+      'Keyboard Shortcuts',
+      'Report an Issue…'
+    ])
     deepItem(h.shown(), 'Zenium Help').click?.()
     deepItem(h.shown(), 'Report an Issue…').click?.()
     expect(opened).toEqual([HELP_URL, ISSUES_URL])
-    expect(deepItem(h.shown(), 'About Zenium 1.2.3').enabled).toBe(false)
+    // About is a row that acts now – the About page (Settings › About: the version, the
+    // update row, the legal pages), not a disabled version line; the version is the page's.
+    const about = deepItem(h.shown(), 'About Zenium')
+    expect(about.enabled).not.toBe(false)
+    h.sent.length = 0
+    about.click?.()
+    expect(h.sent).toContain('overlay.open')
+    // The phone's flat list keeps its version line, as it was.
+    const phone = harness(ANDROID, 'phone')
+    expect(appMenu(phone)).toContain('About Zenium 1.2.3')
+    expect(appMenu(phone)).not.toContain("What's New")
+  })
+
+  it("What's New opens the running version's release notes: the zen://whats-new page tab where the host has it, else the version's release on GitHub in a tab", () => {
+    // A host without page tabs (this fixture's `pageTabs: false`) cannot hold the `whats-new`
+    // page tab: the release on GitHub, in a Zenium tab – the running version's, not the found
+    // release's (`openRelease`).
+    const h = pageHarness(DESKTOP)
+    appMenu(h)
+    deepItem(h.shown(), "What's New").click?.()
+    expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe(releaseNotesUrl('1.2.3'))
+    expect(releaseNotesUrl('1.2.3')).toBe(
+      'https://github.com/BenItBuhner/Zenium/releases/tag/v1.2.3'
+    )
+    // A host with page tabs opens the registered page (#424 registers `whats-new` for every
+    // layout with page tabs): the tablet here, and the shipping desktop (`pageTabs: true`).
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    appMenu(tablet)
+    deepItem(tablet.shown(), "What's New").click?.()
+    expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://whats-new')
   })
 
   describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
@@ -1160,6 +1438,34 @@ describe('the app menu', () => {
     deepItem(tablet.shown(), 'Keyboard Shortcuts').click?.()
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://settings/shortcuts')
     expect(tablet.sent).not.toContain('overlay.open')
+  })
+
+  it('seats Task Manager in More Tools before Developer Tools on the desktop alone, opening the zen://tasks page tab (shortcuts-menus-121)', () => {
+    const desktop = pageHarness({ ...DESKTOP, pageTabs: true })
+    const menu = appMenu(desktop)
+    const tools = menu.filter((l) => l.startsWith('More Tools > ') && l !== 'More Tools > -')
+    expect(tools.indexOf('More Tools > Task Manager')).toBe(
+      tools.indexOf('More Tools > Developer Tools') - 1
+    )
+    expect(tools.indexOf('More Tools > Task Manager')).toBe(
+      tools.indexOf('More Tools > Resources') + 1
+    )
+    const row = deepItem(desktop.shown(), 'Task Manager')
+    // The row's action is the shortcut's (Shift+Esc), so the menu shows its keys.
+    expect(row.action).toBe('tasks.open')
+    expect(row.enabled).not.toBe(false)
+    row.click?.()
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe('zen://tasks')
+    // A second press goes back to the one task manager (a singleton page), opening no other.
+    const before = Object.keys(desktop.browser.state.model.tabs).length
+    appMenu(desktop)
+    deepItem(desktop.shown(), 'Task Manager').click?.()
+    expect(Object.keys(desktop.browser.state.model.tabs).length).toBe(before)
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe('zen://tasks')
+
+    // Not a tablet's row: the page is the desktop layout's (`internalPages.ts` layouts).
+    expect(appMenu(harness(DESKTOP, 'tablet'))).not.toContain('More Tools > Task Manager')
+    expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Task Manager')
   })
 
   it('offers Text Preferences… under Reader View while a reader page is open, on both hosts', () => {
@@ -3635,6 +3941,67 @@ describe('the history row menu', () => {
     const before = Object.keys(h.browser.state.model.tabs).length
     h.shown().find((item) => item.label === 'Open in New Tab')!.click!()
     expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The URL bar popup's suggestion row menu (context-menus-115)
+// ---------------------------------------------------------------------------
+
+describe('the suggestion row menu', () => {
+  it('offers Remove on a removable row, opening where the row’s right-click said, and Remove goes back to the bar as its pick', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', {
+      id: 'hist:https://example.com/docs',
+      kind: 'history',
+      x: 640,
+      y: 212
+    })
+    expect(labels(h.shown())).toEqual(['Remove'])
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 640, y: 212 })
+    expect(h.where()).not.toHaveProperty('keyboard')
+    h.sent.length = 0
+    h.shown()[0].click!()
+    expect(h.sent).toEqual(['urlbar.suggestionAction'])
+  })
+
+  it('a remembered search adds Delete Search History, whose pick goes back the same way; the keyboard’s anchor passes through', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', {
+      id: 'recent:https://www.google.com/search?q=cats',
+      kind: 'search',
+      x: 640,
+      y: 262,
+      keyboard: true
+    })
+    expect(labels(h.shown())).toEqual(['Remove', 'Delete Search History'])
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 640, y: 262, keyboard: true })
+    h.sent.length = 0
+    h.shown()[1].click!()
+    expect(h.sent).toEqual(['urlbar.suggestionAction'])
+    // Nothing is forgotten by the menu itself: the bar acts on the pick through the core's
+    // removes, Delete Search History being `urlbar.clearSearchHistory`.
+    const shortcuts = h.browser.omniboxShortcuts
+    shortcuts.learn('cat', {
+      url: 'https://www.google.com/search?q=cats',
+      title: 'cats',
+      kind: 'search',
+      engineId: 'google'
+    })
+    shortcuts.learn('gm', { url: 'https://mail.google.com/', title: 'Gmail', kind: 'url' })
+    expect(shortcuts.all()).toHaveLength(2)
+    h.browser.handleCommand(h.win, 'urlbar.clearSearchHistory', undefined)
+    expect(shortcuts.all().map((s) => s.kind)).toEqual(['url'])
+  })
+
+  it('the other kinds get Remove alone: a page, an extension’s row', () => {
+    const h = harness(DESKTOP)
+    for (const kind of ['url', 'omnibox'] as const) {
+      h.browser.handleCommand(h.win, 'urlbar.suggestionContextMenu', { id: `${kind}:1`, kind })
+      expect(labels(h.shown())).toEqual(['Remove'])
+    }
+    // No anchor given: the host opens the menu at the pointer.
+    expect(h.where()).not.toHaveProperty('x')
   })
 })
 

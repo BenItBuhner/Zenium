@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   Accessibility,
+  AppWindow,
   Bot,
   CircleFadingArrowUp,
   Container,
@@ -49,6 +50,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   boosts: Zap,
   mods: Paintbrush,
   extensions: Puzzle,
+  apps: AppWindow,
   agents: Bot,
   passwords: KeyRound,
   security: ShieldCheck,

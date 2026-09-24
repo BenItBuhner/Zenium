@@ -12,11 +12,13 @@ import {
   browserStore,
   chromeNeedsKeyboard,
   closeClearBrowsingData,
+  closeDeleteSearchHistoryConfirm,
   closeImportDialog,
   closeMediaSheet,
   closeNameWindow,
   onboardingUp,
   openClearBrowsingData,
+  openDeleteSearchHistoryConfirm,
   openImportDialog,
   openInstallSheet,
   openMediaSheet,
@@ -41,6 +43,7 @@ afterEach(() => {
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
     nameWindowOpen: false,
+    deleteSearchHistoryOpen: false,
     barMenuOpen: false,
     starDialog: null,
     snapshot: null,
@@ -50,6 +53,7 @@ afterEach(() => {
     importDialog: null,
     overlaySection: null
   })
+  uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   vi.mocked(run).mockClear()
   vi.mocked(cmd).mockClear()
 })
@@ -221,6 +225,34 @@ describe('chrome surfaces over the content', () => {
     vi.mocked(run).mockClear()
     closeNameWindow()
     expect(run).not.toHaveBeenCalled()
+  })
+
+  it('the "Delete search history?" prompt is a dialog over the page in the same way (pr-434 ruling 3): covering, dimming, holding the keyboard; under the open bar its close leaves the keyboard with the chrome', async () => {
+    expect(overlayCoversContent(idle())).toBe(false)
+    await openDeleteSearchHistoryConfirm(null)
+    expect(idle().deleteSearchHistoryOpen).toBe(true)
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(chromeNeedsKeyboard()).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(false)
+    vi.mocked(run).mockClear()
+    // Cancel: nothing forgotten; with no bar up the page takes the keyboard back.
+    closeDeleteSearchHistoryConfirm()
+    expect(idle().deleteSearchHistoryOpen).toBe(false)
+    expect(run).not.toHaveBeenCalledWith('urlbar.clearSearchHistory', undefined)
+    expect(run).toHaveBeenCalledWith('focus.content', undefined)
+    vi.mocked(run).mockClear()
+    closeDeleteSearchHistoryConfirm()
+    expect(run).not.toHaveBeenCalled()
+    // Under the open bar the chrome keeps the keyboard as the prompt goes: the bar's field takes
+    // it (the prompt's own return, desktopOmnibox.test.tsx), never the page.
+    uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
+    await openDeleteSearchHistoryConfirm(null)
+    vi.mocked(run).mockClear()
+    closeDeleteSearchHistoryConfirm()
+    expect(idle().deleteSearchHistoryOpen).toBe(false)
+    expect(run).not.toHaveBeenCalledWith('focus.content', undefined)
+    expect(overlayCoversContent(idle())).toBe(true)
   })
 
   it('the import dialog is a dialog over the page in the same way, opened once with its preselected source (ID-23)', async () => {

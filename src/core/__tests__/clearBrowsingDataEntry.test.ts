@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { searchCommands } from '../../shared/commands'
 import { Browser } from '../browser'
@@ -143,5 +143,41 @@ describe('the palette', () => {
     expect(
       searchCommands('delete browsing', { ...sidebar, formFactor: 'phone' }).map((c) => c.action)
     ).not.toContain('privacy.clearBrowsingData')
+  })
+
+  it('offers Delete Browsing Data as the one row for Chrome’s action phrases (omnibox-39)', () => {
+    for (const typed of ['clear browsing data', 'delete browsing data', 'clear history']) {
+      const rows = searchCommands(typed, sidebar)
+      expect(rows.map((c) => c.action)).toContain('privacy.clearBrowsingData')
+      // "clear history" is the dialog, not Show History: the row that only says "history" does
+      // not carry "clear".
+      expect(rows.map((c) => c.action)).not.toContain('history.open')
+    }
+  })
+
+  it('offers Manage Search Engines for Chrome’s phrases on every layout (omnibox-39)', () => {
+    for (const typed of ['manage search engines', 'search engines', 'change search engine']) {
+      const rows = searchCommands(typed, sidebar)
+      expect(rows.map((c) => c.action)).toEqual(['search.manageEngines'])
+      expect(rows[0]).toMatchObject({ id: 'manage-search-engines', label: 'Manage Search Engines' })
+    }
+    // Settings › Search is a page or a sheet on every host, so the row is host-agnostic.
+    for (const formFactor of ['tablet', 'phone'] as const) {
+      expect(
+        searchCommands('search engines', { ...sidebar, formFactor }).map((c) => c.action)
+      ).toEqual(['search.manageEngines'])
+    }
+  })
+})
+
+describe('search.manageEngines', () => {
+  it('opens Settings at its Search section in the window the row was picked in', () => {
+    const f = fixture()
+    const open = vi.spyOn(f.browser.pages, 'open').mockImplementation(() => null)
+    f.browser.actions.run('search.manageEngines', { sourceTabId: null, win: f.win })
+    expect(open).toHaveBeenCalledWith('settings', 'search', f.win)
+    // The palette's row reaches the same action through `urlbar.runCommand`.
+    f.browser.handleCommand(f.win, 'urlbar.runCommand', { action: 'search.manageEngines' })
+    expect(open).toHaveBeenCalledTimes(2)
   })
 })

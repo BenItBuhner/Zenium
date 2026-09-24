@@ -37,10 +37,12 @@ describe('the page registry', () => {
       'privacy-notice',
       'terms',
       'print',
-      'pdf'
+      'pdf',
+      'tasks'
     ])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
-    // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
+    // Zen's features, Autofill, Languages and then Privacy after Search; Apps (the installed web
+    // apps, the desktop OSes alone; shortcuts-menus-138) after Extensions; Agents, Passwords and
     // Security (the remembered per-site answers and the session's sign-ins) last among them; then
     // the browser-wide group past the first hairline: Sync, then Import beside it as Chrome keeps
     // its "Import bookmarks and settings" (ID-23), Accessibility, Keyboard Shortcuts, Default
@@ -61,6 +63,7 @@ describe('the page registry', () => {
       'boosts',
       'mods',
       'extensions',
+      'apps',
       'agents',
       'passwords',
       'security',
@@ -151,6 +154,27 @@ describe('the page registry', () => {
       expect.arrayContaining(["what's new", 'release notes', 'legal', 'notice', 'terms'])
     )
     expect(matchSections(SETTINGS_SECTIONS, 'privacy').map((s) => s.id)).toEqual(['privacy'])
+  })
+
+  it('registers the Task Manager as a singleton chrome page of the desktop layout alone, no panel form (shortcuts-menus-121)', () => {
+    expect(INTERNAL_PAGES.tasks).toMatchObject({
+      id: 'tasks',
+      title: 'Task Manager',
+      render: 'chrome',
+      singleton: true,
+      glyph: 'activity',
+      pill: { showStar: false },
+      splittable: false,
+      layouts: ['desktop'],
+      sections: []
+    })
+    // The processes are the desktop host's: no overlay to fall back on, so the touch layouts
+    // and a host without page tabs drop the ask rather than open an empty panel.
+    expect(INTERNAL_PAGES.tasks.overlay).toBeUndefined()
+    expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: true }, 'desktop')).toBe(true)
+    expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: true }, 'tablet')).toBe(false)
+    expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: true }, 'phone')).toBe(false)
+    expect(pageOpensAsTab(INTERNAL_PAGES.tasks, { pageTabs: false }, 'desktop')).toBe(false)
   })
 
   it('opens a chrome page as a tab where the host draws page tabs and the layout is one of its own', () => {
