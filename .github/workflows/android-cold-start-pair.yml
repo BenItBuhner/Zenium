@@ -12,6 +12,12 @@ name: Android cold start pair
 # correct, only what the two builds' cold starts measured on the recipe's emulator. The build,
 # the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  # TEMPORARY (W5-16, cursor/android-startup-9615): a worker cannot dispatch, so a bump of the
+  # marker file fires the pair on that branch alone, the marker's first line naming the base ref.
+  # Removed with the marker before the PR leaves draft.
+  push:
+    branches: [cursor/android-startup-9615]
+    paths: ['.github/pair-trigger']
   workflow_dispatch:
     inputs:
       base-ref:
@@ -42,6 +48,8 @@ jobs:
         DEMO_OUT=artifacts/android-cold-start-pair
       setup-script: |
         set -euo pipefail
+        # TEMPORARY (W5-16): the marker's first line is the base ref of a push-triggered pair.
+        if [ -f .github/pair-trigger ]; then P0_BASE_REF=$(head -n 1 .github/pair-trigger); fi
         git fetch --no-tags --depth 1 origin "$P0_BASE_REF"
         base_sha=$(git rev-parse FETCH_HEAD)
         echo "base ref $P0_BASE_REF = $base_sha; head $GITHUB_SHA"
