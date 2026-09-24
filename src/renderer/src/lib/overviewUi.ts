@@ -68,7 +68,8 @@ export interface OverviewUiState {
   scroll: OverviewScroll | null
 }
 
-const OVERVIEW_UI_OFF: OverviewUiState = {
+/** A fresh overview: no query, no mode, no sheet, at the top. */
+export const OVERVIEW_UI_OFF: OverviewUiState = {
   search: SEARCH_OFF,
   kept: NO_KEPT_SELECTION,
   sheet: null,
