@@ -1,3 +1,4 @@
+import type { UIState } from '@shared/types'
 import { isPrereleaseVersion, type UpdateTarget } from '@shared/updates'
 
 /*
@@ -34,4 +35,16 @@ export function versionLine(version: string, target: Pick<UpdateTarget, 'kind'>)
 export function copyrightLine(year: number = new Date().getFullYear()): string {
   const span = year > FIRST_YEAR ? `${FIRST_YEAR}–${year}` : String(FIRST_YEAR)
   return `© ${span} ${AUTHOR} · ${LICENCE}`
+}
+
+/**
+ * Whether an update is downloaded and waiting for the relaunch (`UpdateStatus.phase: 'ready'`,
+ * shortcuts-menus-101): the app menu opens on its "Update Zenium" row then (`core/menus.ts`)
+ * and the "⋯" button wears the accent dot for it (`SidebarTop`), Chrome's dot on its ⋮. A
+ * found update that has not downloaded (`available`) shows neither, as Chrome shows nothing
+ * until it has. A snapshot without the updater's status (a partial state in a component test)
+ * reads as no update.
+ */
+export function updateReadyAt(state: Pick<UIState, 'updates'>): boolean {
+  return state.updates?.phase === 'ready'
 }

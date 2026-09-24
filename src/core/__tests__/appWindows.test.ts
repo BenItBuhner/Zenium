@@ -282,6 +282,45 @@ describe('standalone app windows (MW-23)', () => {
     expect(other.app?.scope).toBe('https://app.example/')
   })
 
+  it('the UI snapshot lists the installed app with how many of its windows stand open (`UIState.webApps`, Settings › Apps’ Uninstall notice): one as installing opened it, none once that window is closing, and the window of another app or of no app is not its', async () => {
+    const f = fixture()
+    const browserWin = f.browser.allWindows()[0]
+    expect(f.browser.state.snapshot(browserWin).webApps).toEqual([])
+    const tab = f.browser.tabs.createTab({ url: APP_URL, active: true }, browserWin)
+    f.browser.webApps.handleMessage(tab.id, {
+      type: 'webapp',
+      webapp: 'manifest',
+      manifestUrl: 'https://app.example/dash/manifest.webmanifest',
+      manifest: { name: 'Dash Board', short_name: 'Dash', start_url: '/dash/', scope: '/dash/' }
+    })
+    await f.browser.webApps.pin(tab.id, 'Dash', browserWin)
+    f.browser.webApps.onPinned('https://app.example/dash/', { icon: 'file:///icons/dash.png' })
+    const appWin = f.browser.allWindows().find((w) => w.chrome === 'app')!
+    const listed = (): Array<{ id: string; windows: number }> =>
+      f.browser.state.snapshot(browserWin).webApps.map((a) => ({ id: a.id, windows: a.windows }))
+    expect(listed()).toEqual([{ id: 'https://app.example/dash/', windows: 1 }])
+    expect(f.browser.state.snapshot(browserWin).webApps[0]).toMatchObject({
+      name: 'Dash',
+      icon: 'file:///icons/dash.png',
+      startUrl: 'https://app.example/dash/'
+    })
+    // A window outside the app's scope is no window of the app's, nor is the browser window.
+    const blog = f.browser.openAppWindow('https://app.example/blog/')!
+    expect(blog.app?.appId).toBeNull()
+    expect(listed()).toEqual([{ id: 'https://app.example/dash/', windows: 1 }])
+    // A second window of the app counts; one on its way out does not.
+    const second = f.browser.openAppWindow('https://app.example/dash/reports')!
+    expect(second.app?.appId).toBe('https://app.example/dash/')
+    expect(listed()).toEqual([{ id: 'https://app.example/dash/', windows: 2 }])
+    appWin.onClosing()
+    expect(appWin.isClosing).toBe(true)
+    expect(listed()).toEqual([{ id: 'https://app.example/dash/', windows: 1 }])
+    appWin.onClosed()
+    second.onClosing()
+    second.onClosed()
+    expect(listed()).toEqual([{ id: 'https://app.example/dash/', windows: 0 }])
+  })
+
   it('routes pages opened from the app window (target=_blank) to the browser window behind it', () => {
     const f = fixture()
     const browserWin = f.browser.allWindows()[0]

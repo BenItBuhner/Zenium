@@ -14,7 +14,8 @@ import { createRoot, type Root } from 'react-dom/client'
  * first control and Shift+Tab at the verb with the keys wrapping at the ends, Enter from the
  * container or the check row activating the verb as the prompt's default button – on a prompt
  * whose verb is the primary; a destructive prompt has no default and swallows that Enter (§9.22
- * as amended by the design lead on #392) – Escape and the scrim
+ * as amended by the design lead on #392), as does the third form, the plain verb beside Cancel
+ * as two secondaries (`verbTone: 'plain'`, the #435 lead check on Uninstall) – Escape and the scrim
  * as Cancel; the one-hop return (§9.5) waiting for an `inert` to lift, the window chrome's held
  * through the prompt's exit animation or a lower dialog's dropped a render later, and never
  * `body`; the motion the host's, a 120 ms fade under reduced motion (§11.3).
@@ -185,6 +186,48 @@ describe('the confirmation prompt', () => {
     expect(verb.textContent).toBe('Delete')
     expect(verb.hasAttribute('data-danger')).toBe(true)
     expect(d.querySelector('[data-primary]')).toBeNull()
+  })
+
+  it('the third form (`verbTone: "plain"`, the #435 lead check on Uninstall): Cancel and the verb as TWO SECONDARIES – no primary, no danger ink – on the same 320 alertdialog, `data-verb="plain"` on the root and no destructive mark; with `destructive` beside it the ink is still the plain one', async () => {
+    render(
+      <Prompt
+        title="Uninstall Notes?"
+        description="Its open window closes."
+        action="Uninstall"
+        verbTone="plain"
+      />
+    )
+    await settle()
+    const d = dialog()!
+    expect(d).not.toBeNull()
+    expect(d.getAttribute('role')).toBe('alertdialog')
+    expect(d.style.width).toBe('320px')
+    expect(d.dataset.verb).toBe('plain')
+    expect(d.hasAttribute('data-destructive')).toBe(false)
+    expect(d.querySelector('.zen-v2-title-block-title')!.textContent).toBe('Uninstall Notes?')
+    expect(d.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
+      'Its open window closes.'
+    )
+    const [cancel, verb] = buttons(d)
+    expect(buttons(d)).toHaveLength(2)
+    expect(cancel.textContent).toBe('Cancel')
+    expect(verb.textContent).toBe('Uninstall')
+    for (const b of [cancel, verb]) {
+      expect(b.classList.contains('zen-v2-button')).toBe(true)
+      expect(b.hasAttribute('data-primary')).toBe(false)
+      expect(b.hasAttribute('data-danger')).toBe(false)
+    }
+    expect(d.querySelector('[data-primary]')).toBeNull()
+    expect(d.querySelector('[data-danger]')).toBeNull()
+
+    // A consumer that names both: the plain ink is the verb's, the root says both forms.
+    render(<Prompt action="Uninstall" verbTone="plain" destructive />)
+    await settle()
+    const both = dialog()!
+    expect(both.dataset.verb).toBe('plain')
+    expect(both.dataset.destructive).toBe('true')
+    expect(both.querySelector('[data-primary]')).toBeNull()
+    expect(both.querySelector('[data-danger]')).toBeNull()
   })
 
   it('takes a check row as the body’s only element at §9.20’s 400 for a prompt with a row, the shared checkbox with a 15 label, and answers its change', async () => {
@@ -372,6 +415,44 @@ describe('the keyboard (§9.22)', () => {
     click(verb)
     expect(onConfirm).toHaveBeenCalledTimes(1)
     expect(onCancel).not.toHaveBeenCalled()
+  })
+
+  it('the plain verb has no default either (§9.22: it recommends no answer): the container holds the focus, Enter from it is swallowed and confirms nothing, Tab enters at Cancel and Shift+Tab at the verb, the verb’s own Enter is the button’s and its press confirms; Escape and the scrim are Cancel', async () => {
+    const onConfirm = vi.fn()
+    const onCancel = vi.fn()
+    render(
+      <Prompt
+        title="Uninstall Notes?"
+        description="Its open window closes."
+        action="Uninstall"
+        verbTone="plain"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+    )
+    await settle()
+    const d = dialog()!
+    expect(document.activeElement).toBe(d)
+    expect(press(d, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(d)
+    const [cancel, verb] = buttons(d)
+    expect(press(d, 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(cancel)
+    act(() => d.focus())
+    expect(press(d, 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(verb)
+    expect(press(verb, 'Enter').defaultPrevented).toBe(false)
+    expect(press(verb, ' ').defaultPrevented).toBe(false)
+    expect(onConfirm).not.toHaveBeenCalled()
+    pressEscape()
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    pressScrim()
+    expect(onCancel).toHaveBeenCalledTimes(2)
+    click(cancel)
+    expect(onCancel).toHaveBeenCalledTimes(3)
+    click(verb)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
   })
 
   it('Escape and a press on the scrim are Cancel; the buttons answer as themselves', async () => {

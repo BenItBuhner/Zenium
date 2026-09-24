@@ -41,6 +41,7 @@ import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
+import { updateReadyAt } from '@renderer/lib/about'
 import { addressDragOf, writeAddressDrag } from '@renderer/lib/addressDrag'
 import { run } from '@renderer/lib/api'
 import { chipPrompt } from '@renderer/lib/autofill'
@@ -301,6 +302,10 @@ export function NavRow({
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
   const mediaFolded = mediaHubFoldedAt(state, hubUp)
+  // An update downloaded and waiting (shortcuts-menus-101): the menu opens on its "Update
+  // Zenium" row and ⋯ wears the dot for it – Chrome's dot on its ⋮ – over the hub's while
+  // both would show (one dot on the button; the menu's head row says which).
+  const updateReady = updateReadyAt(state)
   // The decision published for the hub's popover (`mediaHubUi.buttonUp`), from this commit's
   // layout phase: where the button returns or folds in the row's own observer pass – a sidebar
   // drag, no state push – the popover re-reads its anchor before the frame paints, so the hold
@@ -963,9 +968,12 @@ export function NavRow({
         The "⋯" carries the media hub's accent dot while something plays and the hub's toolbar
         button has folded (design language v2 §9.29: at the 240 sidebar the hub folds into the
         menu's "Now Playing…" row, and the dot on the menu button is Firefox's badge saying so;
-        with the button up, the button wears the dot and ⋯ says nothing twice). The name says it
-        for the tree, keeping the chord the tooltip shows (a11y-26: the chrome tooltip of
-        lib/tooltip.ts, on hover and on keyboard focus, in place of a native `title`).
+        with the button up, the button wears the dot and ⋯ says nothing twice) – and the same
+        dot while an update is downloaded and waiting (shortcuts-menus-101: Chrome's dot on
+        its ⋮ for its "Update Google Chrome" row; the menu opens on "Update Zenium"), which
+        takes the one dot over the hub's. The name says it for the tree, keeping the chord the
+        tooltip shows (a11y-26: the chrome tooltip of lib/tooltip.ts, on hover and on keyboard
+        focus, in place of a native `title`).
       */}
       <button
         ref={menuButton}
@@ -974,15 +982,21 @@ export function NavRow({
         className="zen-toolbar-button relative"
         data-tooltip={hint('Menu', state, 'menu.app')}
         aria-label={
-          mediaFolded && mediaPlaying(state)
-            ? `${hint('Menu', state, 'menu.app')}, media playing`
-            : hint('Menu', state, 'menu.app')
+          updateReady
+            ? `${hint('Menu', state, 'menu.app')}, update ready`
+            : mediaFolded && mediaPlaying(state)
+              ? `${hint('Menu', state, 'menu.app')}, media playing`
+              : hint('Menu', state, 'menu.app')
         }
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}
       >
         <MoreHorizontal className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
-        {mediaFolded && <MediaLiveDot state={state} />}
+        {updateReady ? (
+          <span className="zen-mhub-dot" data-testid="update-ready-dot" aria-hidden />
+        ) : (
+          mediaFolded && <MediaLiveDot state={state} />
+        )}
       </button>
     </div>
   )
