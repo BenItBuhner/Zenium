@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { isValidElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Settings, Tab, UIState } from '@shared/types'
 import type { RowGroup } from '../model'
@@ -636,13 +637,12 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Show the agent’s cursor',
     'Ask before a new agent connects',
     'Allow agents to run JavaScript in pages',
-    // The Agent skill group (desktop hosts): the status row, a switch per harness found (the
-    // fixture's two; Codex is not on this computer), the install-everywhere action, the note.
+    // The Agent skill group (desktop hosts): the status row, a switch per coding agent found
+    // (the fixture's two; Codex is not on this computer) and the install-everywhere action.
     'zenium-browser skill',
     'Claude Code',
     'Cursor',
-    'Install for all detected',
-    'Kept current'
+    'Install for every agent found'
   ],
   passwords: ['Manage passwords', 'Offer to save passwords', 'Ask again before showing or copying'],
   // #259's Import (ID-23): the pane's two dialog rows; the last import's one row comes and goes.
@@ -855,9 +855,11 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
 
 /*
  * The AI Agents › Agent skill group (S2 of the MCP program): the `zenium-browser` Agent Skill's
- * install state per coding harness, as `agentSkills` reports it – a status line, a switch per
- * harness found on this computer, one action for all of them, and the note that Zenium refreshes
- * the copies it installed. Desktop hosts only: a phone has no harness to install into.
+ * install state per coding agent, as `agentSkills` reports it – a status line, a switch per
+ * agent found on this computer and one action for all of them (the #460 gate: no "Kept current"
+ * row, its sentence rides the install row; Remove everywhere asks nothing and wears no danger
+ * ink; the status row's error state trails its glyph). Desktop hosts only: a phone has no
+ * agent to install into.
  */
 describe('the AI Agents › Agent skill group', () => {
   const section = availableSections(PAGE, ELECTRON, 'desktop', 'linux').find(
@@ -900,16 +902,22 @@ describe('the AI Agents › Agent skill group', () => {
   const skill = (model: ReturnType<typeof buildSection>): RowGroup | undefined =>
     model.groups.find((g) => g.id === 'skill')
 
-  it('sits right after Connect an agent, on hosts with harnesses to install into', () => {
+  it('sits right after Connect an agent, on hosts with coding agents to install into', () => {
     const status = { ...emptyAgentSkillStatus('0.3.77-test'), targets: [] }
-    const ids = build(status).groups.map((g) => g.id)
+    const model = build(status)
+    const ids = model.groups.map((g) => g.id)
     expect(ids.indexOf('skill')).toBe(ids.indexOf('connect') + 1)
+    // Two lines at 664 (§10.5): the etiquette in a sentence, the folder in another – no product
+    // list, the rows name the agents found.
+    expect(skill(model)?.description).toBe(
+      'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs, tidied up at the end. Zenium keeps a copy in each agent’s skills folder.'
+    )
     expect(
       build(status, { ...ELECTRON, agentSkills: false }).groups.map((g) => g.id)
     ).not.toContain('skill')
   })
 
-  it('offers a switch per harness found and one install for all of them while any is missing', () => {
+  it('offers a switch per agent found and one install for all of them while any is missing', () => {
     invoke.mockClear()
     const group = skill(
       build({
@@ -922,15 +930,17 @@ describe('the AI Agents › Agent skill group', () => {
       })
     )!
     expect(group.heading).toBe('Agent skill')
+    // No "Kept current" row: its sentence rides the install row's description.
     expect(group.rows.map((r) => r.id)).toEqual([
       'skill-status',
       'skill:claude',
       'skill:cursor',
-      'skill-all',
-      'skill-refresh-note'
+      'skill-all'
     ])
     const status = group.rows[0]
     expect(status.kind === 'info' && status.description).toBe('Not installed')
+    expect(status.tone).toBeUndefined()
+    expect(status.kind === 'info' && status.trailing).toBeUndefined()
     const cursor = findRow([group], 'skill:cursor')!
     expect(cursor.kind).toBe('switch')
     if (cursor.kind === 'switch') {
@@ -942,8 +952,11 @@ describe('the AI Agents › Agent skill group', () => {
       expect(invoke).toHaveBeenLastCalledWith('agent.uninstallSkill', { targets: ['cursor'] })
     }
     const all = findRow([group], 'skill-all')!
-    expect(all.kind === 'action' && all.label).toBe('Install for all detected')
+    expect(all.kind === 'action' && all.label).toBe('Install for every agent found')
     if (all.kind === 'action') {
+      expect(all.description).toBe(
+        'Writes the skill into each folder above and keeps it current when Zenium updates.'
+      )
       expect(all.button).toBe('Install')
       expect(all.confirm).toBeUndefined()
       all.onPress?.()
@@ -951,7 +964,7 @@ describe('the AI Agents › Agent skill group', () => {
     }
   })
 
-  it('counts the installs and turns the action into a confirmed Remove everywhere once all are in', () => {
+  it('counts the installs and turns the action into Remove everywhere, unasked and unmarked, once all are in', () => {
     invoke.mockClear()
     const partial = skill(
       build({
@@ -965,9 +978,9 @@ describe('the AI Agents › Agent skill group', () => {
     )!
     const partialStatus = partial.rows[0]
     expect(partialStatus.kind === 'info' && partialStatus.description).toBe(
-      'Installed for 1 of 3 detected harnesses · version 0.3.77-test'
+      'Installed for 1 of 3 agents found · version 0.3.77-test'
     )
-    expect(findRow([partial], 'skill-all')?.label).toBe('Install for all detected')
+    expect(findRow([partial], 'skill-all')?.label).toBe('Install for every agent found')
 
     const full = skill(
       build({
@@ -980,19 +993,25 @@ describe('the AI Agents › Agent skill group', () => {
     )!
     const fullStatus = full.rows[0]
     expect(fullStatus.kind === 'info' && fullStatus.description).toBe(
-      'Installed for 2 of 2 detected harnesses · version 0.3.77-test'
+      'Installed for 2 of 2 agents found · version 0.3.77-test'
     )
+    // §10.5 as amended on #450: the files are Zenium's copies, an edited one is spared, Install
+    // brings them back – no confirm, no danger ink, no ellipsis; it runs at once.
     const remove = findRow([full], 'skill-all')!
     expect(remove.kind === 'action' && remove.label).toBe('Remove everywhere')
     if (remove.kind === 'action') {
-      expect(remove.destructive).toBe(true)
-      expect(remove.confirm?.action).toBe('Remove')
+      expect(remove.description).toBe(
+        'Takes Zenium’s copy out of each folder above; a copy you edited stays.'
+      )
+      expect(remove.button).toBe('Remove')
+      expect(remove.destructive).toBeUndefined()
+      expect(remove.confirm).toBeUndefined()
       remove.onPress?.()
       expect(invoke).toHaveBeenLastCalledWith('agent.uninstallSkill', {})
     }
   })
 
-  it('says when no harness is on this computer and offers to look again', () => {
+  it('says when no coding agent is on this computer and offers to look again', () => {
     invoke.mockClear()
     const group = skill(
       build({
@@ -1000,10 +1019,10 @@ describe('the AI Agents › Agent skill group', () => {
         targets: [target('codex', 'Codex', false, false)]
       })
     )!
-    expect(group.rows.map((r) => r.id)).toEqual(['skill-status', 'skill-all', 'skill-refresh-note'])
+    expect(group.rows.map((r) => r.id)).toEqual(['skill-status', 'skill-all'])
     const status = group.rows[0]
     expect(status.kind === 'info' && status.description).toBe(
-      'No coding harness found on this computer'
+      'No coding agent found on this computer'
     )
     const again = findRow([group], 'skill-all')!
     if (again.kind === 'action') {
@@ -1013,7 +1032,7 @@ describe('the AI Agents › Agent skill group', () => {
     }
   })
 
-  it('shows the installer’s error and a harness’s note in place of the path', () => {
+  it('shows the installer’s error with its trailing glyph, and an agent’s note in place of the path', () => {
     const group = skill(
       build({
         ...emptyAgentSkillStatus('0.3.77-test'),
@@ -1027,12 +1046,44 @@ describe('the AI Agents › Agent skill group', () => {
       })
     )!
     const status = group.rows[0]
-    expect(status.kind === 'info' && status.description).toBe('Could not install: EACCES')
+    if (status.kind !== 'info') throw new Error('not an info row')
+    expect(status.description).toBe('Could not install: EACCES')
+    // §10.4 / §9.33: a status row trails its 16 glyph with the line that reports the status,
+    // both in the danger ink through the row's one tone – the glyph carries no ink class.
     expect(status.tone).toBe('danger')
+    expect(status.leading).toBeUndefined()
+    if (!isValidElement<{ className?: string }>(status.trailing)) throw new Error('no glyph')
+    expect(status.trailing.props.className).toBe('zen-settings-trailing-glyph')
     const claude = findRow([group], 'skill:claude')!
     expect(claude.kind === 'switch' && claude.description).toBe(
       'A copy Zenium did not install is there; installing replaces it'
     )
     expect(claude.tone).toBe('warn')
+  })
+
+  it('names no harness in what it shows', () => {
+    const states: UIState['agentSkills'][] = [
+      { ...emptyAgentSkillStatus('0.3.77-test'), targets: [] },
+      {
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        targets: [
+          target('claude', 'Claude Code', true, false),
+          target('cursor', 'Cursor', true, true)
+        ]
+      },
+      {
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        targets: [target('claude', 'Claude Code', true, true)]
+      }
+    ]
+    for (const state of states) {
+      const group = skill(build(state))!
+      const shown = [
+        group.heading,
+        group.description,
+        ...group.rows.flatMap((r) => [r.label, r.description])
+      ]
+      for (const text of shown) expect(text ?? '').not.toMatch(/harness/i)
+    }
   })
 })

@@ -191,6 +191,16 @@ describe('SkillInstaller', () => {
     expect(byId.get('agents')?.detected).toBe(true)
     expect(status.targets.every((t) => !t.installed && t.installedVersion === null)).toBe(true)
     expect(byId.get('claude')?.dir).toBe('~/.claude/skills/zenium-browser')
+    // The rows' labels (§6: no parenthesised aside – the path beneath says `.agents`), and
+    // nothing that reaches the UI says "harness" (the #460 gate).
+    expect(status.targets.map((t) => t.label)).toEqual([
+      'Claude Code',
+      'Cursor',
+      'Codex',
+      'Shared skills folder'
+    ])
+    expect(byId.get('agents')?.dir).toBe('~/.agents/skills/zenium-browser')
+    for (const t of status.targets) expect(`${t.label} ${t.note ?? ''}`).not.toMatch(/harness/i)
     expect(await manifest()).toBeNull()
   })
 
