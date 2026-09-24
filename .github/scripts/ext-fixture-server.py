@@ -25,7 +25,13 @@ Serves `.github/scripts/ext-demo-pages/` as `python3 -m http.server` did, plus:
     response headers the browser lets it see; `?expose=1` adds `Access-Control-Expose-Headers`
     naming the non-safelisted ones (Content-Disposition, Content-Range, Accept-Ranges), and
     `/cors/large.mp4` is the clip zero-padded to 200,000 bytes under `video/mp4` (headers are
-    what that load measures: a sniffer's size rule, compat round 14's item 1).
+    what that load measures: a sniffer's size rule, compat round 14's item 1);
+  - `/redirect?to=<path>`: a `302` to `<path>` on this server (the query's other parameters
+    carried over), so a media element or a `fetch` reaches the clip through a redirect hop
+    (`fetch-player.html`: the response stage's `onBeforeRedirect` and its chain, compat round 15);
+  - `/scroll-fetch.html`: `scroll.html` with `scroll-fetch.js` appended – the frame budget's
+    fixture fetching the server's JSON twenty times a second while it is scrolled (the response
+    stage's page-script observer against a scroll's frames, compat round 15).
 
     python3 ext-fixture-server.py <port> <directory>
 """
@@ -59,6 +65,12 @@ class FixtureHandler(SimpleHTTPRequestHandler):
             return
         if parts.path.startswith('/cors/'):
             self.cors_file(parts.path[len('/cors/'):], parse_qs(parts.query).get('expose', ['0'])[0] == '1')
+            return
+        if parts.path == '/redirect':
+            self.redirect(parse_qs(parts.query))
+            return
+        if parts.path == '/scroll-fetch.html':
+            self.scroll_fetch()
             return
         if parts.path == '/stream':
             # The clip under an extension-less URL (a CDN's `/videoplayback?...`): the same file,
@@ -176,6 +188,36 @@ class FixtureHandler(SimpleHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         if expose:
             self.send_header('Access-Control-Expose-Headers', self.EXPOSED)
+
+    def redirect(self, query):
+        """`/redirect?to=<path>`: a `302` to `<path>` on this server, the rest of the query carried over (see the module doc)."""
+        target = query.get('to', [''])[0]
+        if not target.startswith('/') or target.startswith('//'):
+            self.send_error(400, 'to must be a path on this server')
+            return
+        rest = '&'.join('%s=%s' % (k, v[0]) for k, v in query.items() if k != 'to')
+        location = target + (('&' if '?' in target else '?') + rest if rest else '')
+        self.send_response(302)
+        self.send_header('Location', location)
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def scroll_fetch(self):
+        """`/scroll-fetch.html`: `scroll.html` with `scroll-fetch.js` appended before `</body>` (see the module doc)."""
+        path = self.translate_path('/scroll.html')
+        if not os.path.isfile(path):
+            self.send_error(404, 'no scroll.html')
+            return
+        with open(path, 'rb') as f:
+            page = f.read()
+        data = page.replace(b'</body>', b'<script src="/scroll-fetch.js"></script>\n</body>', 1)
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def no_cors_json(self):
         data = json.dumps({'fixture': 'no-cors', 'origin': self.headers.get('Origin'), 'host': self.headers.get('Host')}).encode('utf-8')
