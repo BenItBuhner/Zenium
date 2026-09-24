@@ -200,7 +200,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         takeDownTheHost()
 
         coldLanding(SearchWidgetProvider.FACES[0], "search") { searchLanded(30_000) }
-        coldLanding(SearchWidgetProvider.FACES[2], "private") { privateLanded(30_000) }
+        coldLanding(SearchWidgetProvider.FACES[2], "private") { privateLanded(30_000, armToastRecord = true) }
         coldLanding(
             Face(R.id.widget_search_face, Landing.SCAN, SCAN_REPLAY_CODE),
             "scan",
@@ -596,10 +596,17 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         return if (scanning) "scanner up and scanning" else "scanner up (phase ${qrPhase()})"
     }
 
-    /** A private tab active, or the toast on a WebView without profiles: the private landing's word. */
-    private fun privateLanded(timeoutMs: Long): String? {
+    /**
+     * A private tab active, or the toast on a WebView without profiles: the private landing's word.
+     * Cold ([armToastRecord]) the new activity's chrome document has no toast record yet, so one is
+     * put on it as soon as the chrome answers – the landing's toast is a plain toast (2.8 s) said in
+     * the chrome's first frame, and a read from the live tree alone would race it under the boot's
+     * load; warm the caller has armed the record before its tap, and re-arming would clear it.
+     */
+    private fun privateLanded(timeoutMs: Long, armToastRecord: Boolean = false): String? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         if (!awaitChromeUp(timeoutMs)) return null
+        if (armToastRecord) watchToasts()
         while (SystemClock.uptimeMillis() < deadline) {
             if (activeCoreTab()?.optString("containerId") == Profiles.PRIVATE_CONTAINER) return PRIVATE_TAB
             if (toastSeen(PRIVATE_UNAVAILABLE_TOAST)) return PRIVATE_TOAST
