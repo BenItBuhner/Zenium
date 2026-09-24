@@ -144,11 +144,25 @@ class Permissions(private val host: PageHost) {
                 request.grant(wanted.toTypedArray())
                 // The page may capture now: the "<site> is using your microphone" card and the
                 // service that keeps the capture alive behind other apps start here, while the
-                // app is in front (NOT-13; the page's own report confirms or ends it).
-                if (capture.any) host.capture?.granted(view.tabId, view.url ?: url, capture, Profiles.isPrivate(view.containerId))
+                // app is in front (NOT-13; the page's own report confirms or ends it) – for the
+                // kinds whose runtime permission the app holds. A camera + microphone request
+                // the system prompt answered with the microphone alone arms the microphone: the
+                // kind Android 14 lets the service hold (the camera stream is the engine's to
+                // refuse; a report naming one all the same meets the service's own ladder).
+                val armed = held(capture)
+                if (armed.any) host.capture?.granted(view.tabId, view.url ?: url, armed, Profiles.isPrivate(view.containerId))
             }
         }
     }
+
+    /** The kinds of `use` the app holds the runtime permission for right now. */
+    private fun held(use: CaptureUse): CaptureUse = CaptureUse(
+        camera = use.camera && holds(Manifest.permission.CAMERA),
+        microphone = use.microphone && holds(Manifest.permission.RECORD_AUDIO)
+    )
+
+    private fun holds(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(host.activity, permission) == PackageManager.PERMISSION_GRANTED
 
     /** The page took a capture request back before it was answered: an arm it had is dropped. */
     fun onPermissionRequestCanceled(view: TabWebView, request: PermissionRequest) {

@@ -116,20 +116,31 @@ class CaptureNotifications(private val host: Host) {
         // With the app's notifications off the shade shows nothing, but the service still holds
         // the capture up behind other apps: the start is the point, the card its face.
         ensureChannel(context)
-        val notification = build(first)
-        val type = CaptureService.typeOf(ledger.use())
-        if (CaptureService.foreground(context, notification, type)) {
-            plain = false
-        } else {
-            // The system refused the service (the app was in the background at the start): the
-            // card still says what is happening, as a plain notification.
-            plain = true
-            runCatching { manager.notify(CaptureService.NOTIFICATION_ID, notification) }
-        }
+        CaptureService.foreground(context, build(first), CaptureService.typeOf(ledger.use()), ::started)
         for (card in rest) {
             tagged += card.tabId
             runCatching { manager.notify(card.tabId, CaptureService.NOTIFICATION_ID, build(card)) }
         }
+    }
+
+    /**
+     * How the service's start came out – at once, or once a fresh start's command has run: the
+     * first card is the service's, or, the start refused (Android 14: a camera or microphone
+     * service from an app in the background, a kind without its runtime permission), a plain
+     * notification saying the same, the capture then at the system's mercy behind other apps.
+     * Read against the ledger as it stands now: a capture that ended while the start was in
+     * flight has nothing to show.
+     */
+    private fun started(outcome: ForegroundStart) {
+        if (destroyed) return
+        val first = ledger.cards().firstOrNull()
+        if (first == null || outcome.holds) {
+            if (plain && first == null) manager.cancel(CaptureService.NOTIFICATION_ID)
+            plain = false
+            return
+        }
+        plain = true
+        runCatching { manager.notify(CaptureService.NOTIFICATION_ID, build(first)) }
     }
 
     private fun build(card: CaptureCard): Notification =
