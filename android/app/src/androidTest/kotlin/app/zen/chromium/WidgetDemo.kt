@@ -560,8 +560,10 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             expect("the previous tab's view is not the one shown at the landing", !previousShown)
         }
         expect("the previous tab is restored behind it, not closed", previous != null && previous.optString("url").endsWith(PREVIOUS_PATH))
+        // A null is the wait's limit, never written as a landing time.
+        val landedWord = if (result != null) "landed $result at +$landedAt ms wall" else "no landing read within +$landedAt ms (the wait's limit)"
         finding(
-            "  cold $landing: landed ${result ?: "no"} at +$landedAt ms wall, main thread CPU over it ${cpuMs(cpuBefore, cpuAfter)}, " +
+            "  cold $landing: $landedWord, main thread CPU over it ${cpuMs(cpuBefore, cpuAfter)}, " +
                 "$grabs (first at +${frames.firstOrNull()?.at ?: "-"} ms, last at +${frames.lastOrNull()?.at ?: "-"} ms, max orange ${"%.2f".format(frames.maxOfOrNull { it.orange } ?: 0f)}, copy errors ${grabber.copyErrors}), " +
                 "window drawn $drawn frames from +${started.firstDrawAt} ms, the previous tab's view shown in $drawnWithPrevious of them, " +
                 "tabs ${tabsBefore} -> ${state.optJSONObject("tabs")?.length() ?: 0}, active ${describeActive()}, previous view ${describeView(previousView)}, " +
@@ -573,8 +575,10 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         grabber.sheet(
             "frames-cold-$landing",
             frames,
-            "cold $landing landing: send at 0 ms, window at +${grabber.windowAt} ms, landed at +$landedAt ms, ${"%.0f".format(rate)} grabs/s" +
-                (if (result == PRIVATE_TOAST) " (no profiles: the restored tab under the toast)" else "")
+            "cold $landing landing: send at 0 ms, window at +${grabber.windowAt} ms, " +
+                (if (result != null) "landed at +$landedAt ms" else "no landing read within +$landedAt ms") +
+                ", ${"%.0f".format(rate)} grabs/s" +
+                (if (result == PRIVATE_TOAST) " (the WebView-113 fallback: the restored tab in front, the toast said within the wait)" else "")
         )
         shot("0${5 + COLD_ORDER.indexOf(landing)}-cold-$landing")
         leaveLanding(result)
