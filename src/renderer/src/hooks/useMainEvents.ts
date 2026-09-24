@@ -43,6 +43,7 @@ import {
   openPrintPreview,
   openReaderPreferences,
   openSendTabSheet,
+  openSharePanel,
   openUrlbar,
   openZoom,
   overlayAvailable,
@@ -409,6 +410,7 @@ export function useMainEvents(): void {
       onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
       onEvent('voice.event', (event) => voiceEvent(event)),
       onEvent('qr.event', (event) => qrEvent(event)),
+      onEvent('share.panel', (request) => void openSharePanel(request)),
       onEvent('webapp.install', (prompt) => {
         closeUrlbar()
         retireInstallBanner(prompt.tabId)

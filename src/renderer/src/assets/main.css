@@ -4510,6 +4510,67 @@
     border-top: 0;
     border-bottom-right-radius: calc(var(--v2-radius-card) + 4px);
   }
+  /*
+   * The browser's own share panel (Android below 14; SH-03; Chrome 152's sharing hub): the
+   * share's preview is PUI-18's header, read-only (no press fill: nothing happens on it), then
+   * two rows that scroll sideways when they overflow – the apps the user shares to, More at the
+   * end, a hairline, and Zenium's own chips. A cell is a §9.3 icon button (44, the glyph 20 at
+   * stroke 1.75, radius 8) with its caption under (13, centred, wrapping to a second line when
+   * the cell's width asks – §9.2: grow, never clamp), the cells 72 wide so the 44 boxes stand 28
+   * apart, the outer ones on the 16 gutter (§9.25); a row stands as tall as its tallest cell.
+   * The whole cell is the target; the press fill is the box's. An app's launcher icon fills 40
+   * of the box, its own shape (adaptive icons come cut already). The scrollbar is hidden, as a
+   * group's chips hide theirs.
+   */
+  .zen-share-panel-preview:active {
+    background: transparent;
+  }
+  .zen-share-panel-row {
+    display: flex;
+    gap: 0;
+    padding: 8px 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
+  }
+  .zen-share-panel-row::-webkit-scrollbar {
+    display: none;
+  }
+  .zen-share-panel-cell {
+    display: flex;
+    width: 72px;
+    flex-shrink: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--v2-text);
+  }
+  .zen-share-panel-cell:first-child {
+    margin-left: -14px;
+  }
+  .zen-share-panel-cell:last-child {
+    margin-right: -14px;
+  }
+  .zen-share-panel-box {
+    overflow: hidden;
+  }
+  .zen-share-panel-cell:active > .zen-share-panel-box {
+    background: var(--v2-fill);
+  }
+  .zen-share-panel-app {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+  }
+  .zen-share-panel-caption {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    text-align: center;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
   /* A row under a finger that is dragging the sheet is not being pressed. */
   .zen-sheet[data-dragging='true'] .zen-sheet-item:active {
     background: transparent;
