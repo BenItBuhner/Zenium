@@ -155,6 +155,38 @@ describe('AndroidTabView.dispatch', () => {
     view.dispatch('domReady', undefined)
     expect(reached).toEqual(['onDestroyed'])
   })
+
+  it("routes Kotlin's redirected (shouldOverrideUrlLoading with isRedirect) to onRedirected with both addresses, before the commit (history-23)", () => {
+    const { bridge } = fakeBridge()
+    const hops: Array<[string, string]> = []
+    const reached: string[] = []
+    const events = new Proxy({} as TabViewEvents, {
+      get: (_target, name: string) =>
+        name === 'onRedirected'
+          ? (from: string, to: string) => hops.push([from, to])
+          : (): undefined => {
+              reached.push(name)
+              return undefined
+            }
+    })
+    const view = new AndroidTabView('tab_1', bridge)
+    view.events = events
+    view.dispatch('redirected', { from: 'https://sho.rt/x', to: 'http://a.example/' })
+    view.dispatch('redirected', { from: 'http://a.example/', to: 'https://a.example/' })
+    view.dispatch('navigated', { ...nav, url: 'https://a.example/', inPage: false })
+    expect(hops).toEqual([
+      ['https://sho.rt/x', 'http://a.example/'],
+      ['http://a.example/', 'https://a.example/']
+    ])
+    expect(reached).toEqual(['onNavigated'])
+    // Garbage and a redirect onto the same address go nowhere.
+    view.dispatch('redirected', { from: 'https://a.example/', to: 'https://a.example/' })
+    view.dispatch('redirected', { from: 7, to: 'https://b.example/' } as unknown as {
+      from: string
+      to: string
+    })
+    expect(hops).toHaveLength(2)
+  })
 })
 
 describe('AndroidTabView.sendFormsCommand', () => {

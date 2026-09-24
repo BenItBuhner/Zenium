@@ -4810,6 +4810,8 @@ describe('searching the rows', () => {
     const key = row(privacy, 'safe-browsing-api-key')
     if (key.kind !== 'field') throw new Error('not a field')
     expect(key.secret).toBe(true)
+    // A 39-character key: the desktop's field stands under the label (§9.12's stacked form).
+    expect(key.form).toBe('stacked')
     expect(key.display).toBe('Not set · optional, adds Google Safe Browsing lookups')
     expect(rowText(key)).not.toContain('AIza')
     // Update feeds now runs the service; each feed is an item whose sheet refreshes it alone.
@@ -5528,8 +5530,9 @@ describe('ID-08’s Sync category on a phone', () => {
       folderName: 'Zenium',
       lastSyncAt: Date.now() - 5 * 60_000,
       devices: [
+        // The laptop's build announced no kind; the desktop's did (services pass 4).
         { id: 'dev-2', name: 'Work laptop', lastSeen: Date.now() - 2 * 3_600_000 },
-        { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000 }
+        { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000, kind: 'desktop' }
       ],
       ...patch
     })
@@ -5699,6 +5702,50 @@ describe('ID-08’s Sync category on a phone', () => {
     for (const r of devices?.rows ?? []) {
       if (r.kind !== 'info') continue
       expect(r.trailing).toBeTruthy()
+    }
+    // Each device row leads with the device's kind glyph (services pass 4; §10.4's leading slot
+    // at the full ink): the desktop's laptop – Chrome's one computer glyph – and for the laptop
+    // – whose build announced no kind – the stand-in at 69 %. The kind is searchable with the
+    // row.
+    const glyphOf = (m: Model, id: string): { kind: string | null; standin: boolean } => {
+      const r = row(m, id)
+      if (r.kind !== 'info' || !isValidElement(r.leading)) throw new Error(`no glyph on ${id}`)
+      const markup = renderToStaticMarkup(r.leading)
+      return {
+        kind: /data-kind="([^"]+)"/.exec(markup)?.[1] ?? null,
+        standin: markup.includes('zen-list-standin')
+      }
+    }
+    expect(glyphOf(model, 'sync-device:dev-3')).toEqual({ kind: 'desktop', standin: false })
+    expect(glyphOf(model, 'sync-device:dev-2')).toEqual({ kind: 'none', standin: true })
+    expect(row(model, 'sync-device:dev-3').keywords).toContain('desktop')
+    // A list in which no device announced a kind – every peer an older build – has no glyph
+    // column at all (§10.4's condition, `anyDeviceKind`; the #453 lead check): no `leading` on
+    // any device row, so the names stand at the gutter rather than behind a column of stand-ins.
+    const bare = section(
+      'sync',
+      syncState(
+        connected({
+          devices: [
+            { id: 'dev-2', name: 'Work laptop', lastSeen: Date.now() - 2 * 3_600_000 },
+            { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000 }
+          ]
+        })
+      )
+    )
+    for (const id of ['sync-device:dev-3', 'sync-device:dev-2']) {
+      const r = row(bare, id)
+      if (r.kind !== 'info') throw new Error('not an info row')
+      expect(r.leading, id).toBeUndefined()
+      expect(r.trailing, id).toBeTruthy()
+    }
+    // The action row under the device run stands under the builder's hairline (the #453 lead
+    // check): the run's glyphs and the row's plain label part there, and the one `--v2-border`
+    // line closes the run – a separator, no glyph or empty slot drawn for alignment.
+    expect(row(model, 'sync-remote-tabs').hairline).toBe(true)
+    expect(row(bare, 'sync-remote-tabs').hairline).toBe(true)
+    for (const r of devices?.rows ?? []) {
+      if (r.kind === 'info') expect(r.hairline, r.id).toBeUndefined()
     }
 
     const off = model.groups.find((g) => g.id === 'sync-off')

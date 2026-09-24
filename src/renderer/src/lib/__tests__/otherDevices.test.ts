@@ -74,6 +74,24 @@ describe('groupRemoteTabs', () => {
     expect(desk.tabs.map((t) => t.tabId)).toEqual(['d1', 'd2', 'd3'])
   })
 
+  it("carries the device's kind to the heading when its announcement had one, and nothing when it had none (services pass 4)", () => {
+    const groups = groupRemoteTabs(
+      [
+        { ...pixel, deviceKind: 'phone', updatedAt: NOW },
+        { ...desk, deviceKind: 'desktop' },
+        laptop
+      ],
+      none
+    )
+    expect(groups.map((d) => [d.deviceId, d.kind])).toEqual([
+      ['pixel', 'phone'],
+      ['laptop', undefined],
+      ['desk', 'desktop']
+    ])
+    // A device whose build announced no kind carries no key at all, not an explicit none.
+    expect(groups[1]).not.toHaveProperty('kind')
+  })
+
   it('drops a device with no tabs and names one without a name', () => {
     expect(groupRemoteTabs([idle, desk], none).map((d) => d.deviceId)).toEqual(['desk'])
     const [unnamed] = groupRemoteTabs([{ ...laptop, deviceName: '  ' }], none)

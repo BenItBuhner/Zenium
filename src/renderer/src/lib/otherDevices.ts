@@ -1,4 +1,4 @@
-import type { SyncDeviceTabs, SyncRemoteTab, SyncStatus } from '@shared/types'
+import type { SyncDeviceKind, SyncDeviceTabs, SyncRemoteTab, SyncStatus } from '@shared/types'
 import { displayUrl, getHost } from '@shared/url'
 import { createStore } from './store'
 import { relativeTime } from './utils'
@@ -22,6 +22,8 @@ import { relativeTime } from './utils'
 export interface RemoteDevice {
   deviceId: string
   deviceName: string
+  /** What the device announced it is – the heading's leading glyph; absent for an older build's. */
+  kind?: SyncDeviceKind
   /** When the device last published its list (epoch ms) – the heading's "Last active …". */
   updatedAt: number
   /** Newest activity first. */
@@ -46,6 +48,7 @@ export function groupRemoteTabs(
     .map((device) => ({
       deviceId: device.deviceId,
       deviceName: device.deviceName.trim() || UNNAMED_DEVICE,
+      ...(device.deviceKind ? { kind: device.deviceKind } : {}),
       updatedAt: device.updatedAt,
       tabs: [...device.tabs].sort((a, b) => b.lastActive - a.lastActive)
     }))

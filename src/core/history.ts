@@ -58,6 +58,15 @@ export interface VisitOptions {
   tabId?: string
   /** The visit's time, ms since the epoch; absent means now. Values in the future clamp to now. */
   at?: number
+  /**
+   * The redirect chain the navigation went through before landing on `url`: the earlier
+   * addresses, first hop to last (history-23). Each becomes a visit flagged `redirectSource` at
+   * the landing's time, as Chrome records a chain (`HistoryBackend::AddPage`: one visit per hop,
+   * one timestamp, only the last one `CHAIN_END`); the first hop keeps the navigation's
+   * transition (the typed credit goes to the address the user asked for), the others and the
+   * landing read `redirect`. Unrecordable addresses and the landing itself are skipped.
+   */
+  redirectedFrom?: string[]
 }
 
 /** One visit another browser recorded. */
@@ -69,7 +78,14 @@ export interface ImportedVisit {
   /** Default `'link'`; importers map their source's transition when they have one. */
   transition?: HistoryTransition
   favicon?: string | null
+  /** A redirect chain's hop, not the page landed on (`HistoryVisit.redirectSource`). */
+  redirectSource?: true
+  /** A landing's chain, first hop to last (`HistoryVisit.redirectedFrom`). */
+  redirectedFrom?: string[]
 }
+
+/** Hops a chain keeps at most (Chrome's `net::URLRequest::kMaxRedirects`). */
+export const MAX_REDIRECT_HOPS = 20
 
 export interface ImportVisitsOptions {
   /**
@@ -167,7 +183,14 @@ export function migrateHistory(data: unknown): HistoryData {
     return { entries, visits: sortByTime(visits) }
   }
   if (doc.version === 2) {
-    const visits = (Array.isArray(doc.visits) ? doc.visits : []).filter(isVisit)
+    // The chain fields are read as written by this build or left out (an older store has
+    // none; a hand-edited one may hold anything).
+    const visits = (Array.isArray(doc.visits) ? doc.visits : []).filter(isVisit).map((v) => {
+      const rest: HistoryVisit = { ...v }
+      delete rest.redirectSource
+      delete rest.redirectedFrom
+      return { ...rest, ...chainFields(v) }
+    })
     return { entries, visits: sortByTime(visits) }
   }
   return { entries: [], visits: [] }
@@ -236,11 +259,63 @@ function exported(
   title: string,
   at: number,
   transition: HistoryTransition,
-  favicon: string | null | undefined
+  favicon: string | null | undefined,
+  chain?: Pick<HistoryVisit, 'redirectSource' | 'redirectedFrom'>
 ): ImportedVisit {
   const out: ImportedVisit = { url, at, transition }
   if (title && title !== url) out.title = title
   if (favicon && /^https?:/i.test(favicon)) out.favicon = favicon
+  if (chain?.redirectSource) out.redirectSource = true
+  if (chain?.redirectedFrom?.length) out.redirectedFrom = [...chain.redirectedFrom]
+  return out
+}
+
+/**
+ * A redirect chain as the store keeps it: recordable addresses only, the landing itself and
+ * repeated hops dropped, the last `MAX_REDIRECT_HOPS` kept. Null when nothing is left.
+ */
+export function redirectChain(hops: unknown, landing: string): string[] | null {
+  if (!Array.isArray(hops)) return null
+  const out: string[] = []
+  for (const hop of hops) {
+    if (typeof hop !== 'string' || !isRecordableUrl(hop) || hop === landing) continue
+    if (out.includes(hop)) continue
+    out.push(hop)
+  }
+  if (out.length === 0) return null
+  return out.length > MAX_REDIRECT_HOPS ? out.slice(out.length - MAX_REDIRECT_HOPS) : out
+}
+
+/**
+ * Whether `to` is `from` moved from http to https and nothing else – Chrome's
+ * `FormatUrlForRedirectComparison` (`history_backend.cc`): scheme, port, credentials and a
+ * `www.` aside, the two addresses read the same.
+ */
+export function isHttpsUpgrade(from: string, to: string): boolean {
+  if (!/^http:/i.test(from) || !/^https:/i.test(to)) return false
+  const a = comparableAddress(from)
+  return a !== null && a === comparableAddress(to)
+}
+
+function comparableAddress(url: string): string | null {
+  try {
+    const u = new URL(url)
+    return `${u.hostname.toLowerCase().replace(/^www\./, '')}${u.pathname}${u.search}${u.hash}`
+  } catch {
+    return null
+  }
+}
+
+/** The chain fields a visit carries, read defensively (a peer's page, an older store). */
+function chainFields(v: {
+  redirectSource?: unknown
+  redirectedFrom?: unknown
+  url: string
+}): Pick<HistoryVisit, 'redirectSource' | 'redirectedFrom'> {
+  const out: Pick<HistoryVisit, 'redirectSource' | 'redirectedFrom'> = {}
+  if (v.redirectSource === true) out.redirectSource = true
+  const chain = redirectChain(v.redirectedFrom, v.url)
+  if (chain) out.redirectedFrom = chain
   return out
 }
 
@@ -341,7 +416,11 @@ export function searchVisits(visits: HistoryVisit[], query: HistoryQuery): Histo
   const host = query.host?.toLowerCase().replace(/^www\./, '') ?? null
   const from = query.fromMs ?? -Infinity
   const to = query.toMs ?? Infinity
+  const hops = query.includeRedirectSources === true
   const matched = visits.filter((v) => {
+    // A redirect chain's hops are not what the user saw: Chrome's `QueryHistory` lists the
+    // visits with `CHAIN_END` only (`visit_database.cc` `TransitionIsVisible`).
+    if (v.redirectSource && !hops) return false
     if (v.visitTime < from || v.visitTime >= to) return false
     if (host !== null && !hostMatches(v.url, host)) return false
     if (terms.length === 0) return true
@@ -473,10 +552,76 @@ export class HistoryService {
     // Retention would expire it at once; the aggregate must not count what is not kept.
     if (at < now - RETENTION_MS) return
     const transition = opts.transition ?? 'link'
+    const chain = redirectChain(opts.redirectedFrom, url)
+    const added: ImportedVisit[] = []
+    // The chain's hops first, at the landing's time (Chrome records every hop of a chain with
+    // one timestamp, `history_backend.cc` `AddPage`): the navigation's transition belongs to
+    // the first member – a typed address that redirected was still typed, and Chrome's typed
+    // credit goes there (`IsTypedIncrement`) – and every later one was reached by the redirect.
+    // One exception, Chrome's too: a typed http address that only moved to its https twin
+    // credits the https one (`transfer_typed_credit_from_first_to_second_url`); the label moves
+    // with the credit, because the label is what a later reader counts typed credit from – this
+    // store's recount after a deletion, a peer's import of the chain – and the two must agree.
+    const members = chain ? [...chain, url] : [url]
+    const creditedMember =
+      transition === 'typed' && chain && isHttpsUpgrade(members[0], members[1]) ? 1 : 0
+    const memberTransition = (i: number): HistoryTransition =>
+      i === creditedMember ? transition : 'redirect'
+    if (chain) {
+      for (let i = 0; i < chain.length; i += 1) {
+        const hop = chain[i]
+        const hopTransition = memberTransition(i)
+        // No title of its own: a hop keeps the one its landing gave it (`updateTitle`).
+        this.bumpEntry(hop, '', null, at, hopTransition === 'typed')
+        this.insertVisit({
+          id: newId('visit'),
+          url: hop,
+          title: hop,
+          favicon: null,
+          visitTime: at,
+          transition: hopTransition,
+          redirectSource: true,
+          ...(opts.tabId ? { tabId: opts.tabId } : {})
+        })
+        added.push(exported(hop, '', at, hopTransition, null, { redirectSource: true }))
+      }
+    }
+    const landingTransition = memberTransition(members.length - 1)
+    this.bumpEntry(url, title, favicon, at, landingTransition === 'typed')
+    this.insertVisit({
+      id: newId('visit'),
+      url,
+      title: title || url,
+      favicon: null,
+      visitTime: at,
+      transition: landingTransition,
+      ...(opts.tabId ? { tabId: opts.tabId } : {}),
+      ...(chain ? { redirectedFrom: chain } : {})
+    })
+    added.push(
+      exported(url, title, at, landingTransition, favicon, chain ? { redirectedFrom: chain } : {})
+    )
+    this.enforceRetention(now)
+    this.persist()
+    this.notify('visit')
+    this.emitVisits({ type: 'added', visits: added })
+  }
+
+  /**
+   * One more visit of `url` at `at` on its aggregate (created when the page is new); `typed`
+   * counts it among the typed ones.
+   */
+  private bumpEntry(
+    url: string,
+    title: string,
+    favicon: string | null,
+    at: number,
+    typed: boolean
+  ): void {
     const existing = this.entries.get(url)
     if (existing) {
       existing.visitCount += 1
-      if (transition === 'typed') existing.typedCount = (existing.typedCount ?? 0) + 1
+      if (typed) existing.typedCount = (existing.typedCount ?? 0) + 1
       existing.firstVisit = Math.min(existing.firstVisit ?? existing.lastVisit, at)
       if (at >= existing.lastVisit) {
         existing.lastVisit = at
@@ -486,37 +631,75 @@ export class HistoryService {
         this.entries.delete(url)
         this.entries.set(url, existing)
       }
-    } else {
-      this.entries.set(url, {
-        url,
-        title: title || url,
-        visitCount: 1,
-        lastVisit: at,
-        firstVisit: at,
-        typedCount: transition === 'typed' ? 1 : 0,
-        favicon
-      })
+      return
     }
-    this.insertVisit({
-      id: newId('visit'),
+    this.entries.set(url, {
       url,
       title: title || url,
-      favicon: null,
-      visitTime: at,
-      transition,
-      ...(opts.tabId ? { tabId: opts.tabId } : {})
+      visitCount: 1,
+      lastVisit: at,
+      firstVisit: at,
+      typedCount: typed ? 1 : 0,
+      favicon
     })
-    this.enforceRetention(now)
-    this.persist()
-    this.notify('visit')
-    this.emitVisits({ type: 'added', visits: [exported(url, title, at, transition, favicon)] })
   }
 
   /** Add one visit to the chronological list: appended when newest, else at its place. */
   private insertVisit(v: HistoryVisit): void {
+    this.chains = null
     const last = this.visitList[this.visitList.length - 1]
     if (!last || v.visitTime >= last.visitTime) this.visitList.push(v)
     else this.visitList.splice(insertionIndex(this.visitList, v.visitTime), 0, v)
+  }
+
+  // --- redirect chains (history-23) --------------------------------------------
+
+  /**
+   * The most recent chain each address took part in (Chrome's `recent_redirects_`): by the
+   * landing, the hops that led to it; by a hop, the landing it led to. Built from the visit list
+   * on demand and dropped when the list changes.
+   */
+  private chains: { byLanding: Map<string, string[]>; byHop: Map<string, string> } | null = null
+
+  private chainIndex(): NonNullable<HistoryService['chains']> {
+    if (this.chains) return this.chains
+    const byLanding = new Map<string, string[]>()
+    const byHop = new Map<string, string>()
+    for (let i = this.visitList.length - 1; i >= 0; i -= 1) {
+      const v = this.visitList[i]
+      if (!v.redirectedFrom?.length || byLanding.has(v.url)) continue
+      byLanding.set(v.url, v.redirectedFrom)
+      for (const hop of v.redirectedFrom) if (!byHop.has(hop)) byHop.set(hop, v.url)
+    }
+    this.chains = { byLanding, byHop }
+    return this.chains
+  }
+
+  /**
+   * The addresses of the most recent redirect chain `url` took part in, hops first and the
+   * landing last: where the user landed from (the chain's landing) or what a hop led to. Just
+   * `[url]` for a page no chain touched.
+   */
+  redirectChainOf(url: string): string[] {
+    const { byLanding, byHop } = this.chainIndex()
+    const landing = byLanding.has(url) ? url : byHop.get(url)
+    if (!landing) return [url]
+    return [...(byLanding.get(landing) ?? []), landing]
+  }
+
+  /** The `redirectSource` visits of the chain that landed with `landing` (same time, its hops). */
+  private hopsOf(landing: HistoryVisit): HistoryVisit[] {
+    const chain = landing.redirectedFrom
+    if (!chain?.length) return []
+    const hops = new Set(chain)
+    const out: HistoryVisit[] = []
+    const start = insertionIndex(this.visitList, landing.visitTime - 1)
+    for (let i = start; i < this.visitList.length; i += 1) {
+      const v = this.visitList[i]
+      if (v.visitTime > landing.visitTime) break
+      if (v.visitTime === landing.visitTime && v.redirectSource && hops.has(v.url)) out.push(v)
+    }
+    return out
   }
 
   /**
@@ -560,7 +743,8 @@ export class HistoryService {
         title: v.title || v.url,
         favicon: null,
         visitTime: at,
-        transition
+        transition,
+        ...chainFields(v)
       })
       const page = pages.get(v.url)
       if (!page) {
@@ -586,6 +770,7 @@ export class HistoryService {
       for (const [url, page] of pages) this.applyImportedPage(url, page)
       fresh.sort((a, b) => a.visitTime - b.visitTime)
       this.visitList = mergeByTime(this.visitList, fresh)
+      this.chains = null
       this.enforceRetention(now)
       this.persist()
       this.notify('visit')
@@ -593,7 +778,7 @@ export class HistoryService {
       this.emitVisits({
         type: 'added',
         visits: fresh.map((v) =>
-          exported(v.url, v.title, v.visitTime, v.transition, this.entries.get(v.url)?.favicon)
+          exported(v.url, v.title, v.visitTime, v.transition, this.entries.get(v.url)?.favicon, v)
         )
       })
     }
@@ -638,7 +823,7 @@ export class HistoryService {
       const v = this.visitList[i]
       if (v.visitTime >= until) break
       visits.push(
-        exported(v.url, v.title, v.visitTime, v.transition, this.entries.get(v.url)?.favicon)
+        exported(v.url, v.title, v.visitTime, v.transition, this.entries.get(v.url)?.favicon, v)
       )
       last = v
     }
@@ -687,13 +872,20 @@ export class HistoryService {
     if (!overCap && (!oldest || oldest.visitTime >= now - RETENTION_MS)) return
     const pruned = prune(this.visitList, [...this.entries.values()], now)
     this.visitList = pruned.visits
+    this.chains = null
     this.entries = new Map(pruned.entries.map((e) => [e.url, e]))
   }
 
+  /**
+   * The page's title arrived (or changed): its aggregate and visits take it, and so do the hops
+   * of the chain that last landed on it – Chrome titles the whole redirect chain of a page
+   * (`HistoryBackend::SetPageTitle` over `recent_redirects_`), so a shortener's address reads as
+   * the page it led to wherever it is shown.
+   */
   updateTitle(url: string, title: string): void {
     if (!title) return
-    const e = this.entries.get(url)
     let changed = false
+    const e = this.entries.get(url)
     if (e && e.title !== title) {
       e.title = title
       changed = true
@@ -704,16 +896,42 @@ export class HistoryService {
         changed = true
       }
     }
+    const hops = this.chainIndex().byLanding.get(url)
+    if (hops) {
+      const inChain = new Set(hops)
+      for (const hop of hops) {
+        const he = this.entries.get(hop)
+        if (he && he.title !== title) {
+          he.title = title
+          changed = true
+        }
+      }
+      for (const v of this.visitList) {
+        if (v.redirectSource && inChain.has(v.url) && v.title !== title) {
+          v.title = title
+          changed = true
+        }
+      }
+    }
     if (changed) {
       this.persist()
       this.notify('visit')
     }
   }
 
+  /** The page's favicon: its aggregate's, and its last chain's hops' too (Chrome maps the icon onto the chain). */
   updateFavicon(url: string, favicon: string): void {
-    const e = this.entries.get(url)
-    if (e && favicon && e.favicon !== favicon) {
-      e.favicon = favicon
+    if (!favicon) return
+    let changed = false
+    const targets = [url, ...(this.chainIndex().byLanding.get(url) ?? [])]
+    for (const target of targets) {
+      const e = this.entries.get(target)
+      if (e && e.favicon !== favicon) {
+        e.favicon = favicon
+        changed = true
+      }
+    }
+    if (changed) {
       this.persist()
       this.notify('visit')
     }
@@ -755,10 +973,24 @@ export class HistoryService {
       const score = scoreHistoryMatch(e, terms, now)
       if (score !== null) scored.push({ e, score })
     }
-    return scored
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
-      .map((s) => s.e)
+    // A redirect chain's hop is a visited address Chrome's omnibox may offer (its URL row is not
+    // hidden – `history_tab_helper.cc` hides sub-frames and error pages only), but one chain
+    // makes one suggestion: the lower-ranked members of a chain a higher one already stands for
+    // go (`HistoryURLProvider::CullRedirects`). At an equal score the page the user saw – the
+    // chain's landing – stands for it, not the address that bounced there.
+    const { byLanding, byHop } = this.chainIndex()
+    const hopOnly = (url: string): number => (!byLanding.has(url) && byHop.has(url) ? 1 : 0)
+    scored.sort((a, b) => b.score - a.score || hopOnly(a.e.url) - hopOnly(b.e.url))
+    const taken = new Set<string>()
+    const out: HistoryEntry[] = []
+    for (const { e } of scored) {
+      const chain = this.redirectChainOf(e.url)
+      if (chain.some((member) => taken.has(member))) continue
+      for (const member of chain) taken.add(member)
+      out.push(e)
+      if (out.length >= limit) break
+    }
+    return out
   }
 
   /**
@@ -862,10 +1094,15 @@ export class HistoryService {
     return topSites([...this.entries.values()], n, excludedHosts, this.now())
   }
 
-  /** Visits with `fromMs <= visitTime < toMs`. */
+  /**
+   * Visits with `fromMs <= visitTime < toMs`, the redirect chains' hops aside (the clear-data
+   * counter counts what the history page lists, as Chrome's `GetHistoryCount` counts `CHAIN_END`
+   * visits).
+   */
   count(fromMs: number, toMs: number): number {
     let n = 0
-    for (const v of this.visitList) if (v.visitTime >= fromMs && v.visitTime < toMs) n += 1
+    for (const v of this.visitList)
+      if (!v.redirectSource && v.visitTime >= fromMs && v.visitTime < toMs) n += 1
     return n
   }
 
@@ -879,6 +1116,14 @@ export class HistoryService {
     return this.entries.get(url)?.favicon ?? null
   }
 
+  /**
+   * Whether `url` was ever visited: a page landed on, or an address a redirect chain went
+   * through (Chrome counts a hop's URL row as visited, `AddPageVisit` bumps it like any other).
+   */
+  visited(url: string): boolean {
+    return this.entries.has(url)
+  }
+
   /** Last known title of a URL, null when the page was never visited (or is untitled). */
   titleFor(url: string): string | null {
     const title = this.entries.get(url)?.title
@@ -887,8 +1132,17 @@ export class HistoryService {
 
   // --- deletion ---------------------------------------------------------------
 
+  /**
+   * Remove visits by id. A landing takes the hops of its redirect chain with it (Chrome deletes
+   * a visit's redirect parents alongside, `ExpireHistoryBackend::GetVisitsAndRedirectParents`):
+   * the user removing a page from the list leaves no trace of the address that led there.
+   */
   deleteVisits(ids: string[]): void {
     const gone = new Set(ids)
+    for (const v of this.visitList) {
+      if (!gone.has(v.id) || !v.redirectedFrom?.length) continue
+      for (const hop of this.hopsOf(v)) gone.add(hop.id)
+    }
     this.removeVisits((v) => gone.has(v.id), removedKeys)
   }
 
@@ -965,6 +1219,7 @@ export class HistoryService {
   clear(): void {
     this.entries.clear()
     this.visitList = []
+    this.chains = null
     this.persist()
     this.notify('clear')
     this.emitVisits({ type: 'cleared' })
@@ -996,6 +1251,7 @@ export class HistoryService {
       return 0
     }
     this.visitList = kept
+    this.chains = null
     for (const url of affected) {
       const entry = this.entries.get(url)
       if (!entry) continue

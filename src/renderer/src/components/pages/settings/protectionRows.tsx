@@ -111,6 +111,9 @@ export function safeBrowsingGroups(state: UIState, set: Set): RowGroup[] {
           value: p.safeBrowsingApiKey,
           display: apiKeyRowText(status, p.safeBrowsingApiKey),
           input: 'text',
+          // A 39-character key is unreadable in the inline form's 160: the field stands under
+          // the label across the row (§9.12), the phone's field sheet as before.
+          form: 'stacked',
           placeholder: text.apiKey.placeholder,
           secret: true,
           disabled: !on,

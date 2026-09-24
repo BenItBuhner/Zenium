@@ -302,6 +302,69 @@ describe('ElectronTabViewHost', () => {
     expect(host.viewForWebContents(wc)).toBeUndefined()
   })
 
+  it('reports each server redirect of the main-frame navigation under way as a hop, from the address it was bound for (history-23)', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const hops: Array<[string, string]> = []
+    const events = new Proxy({} as TabViewEvents, {
+      get: (_t, name) =>
+        name === 'onRedirected'
+          ? (from: string, to: string) => hops.push([from, to])
+          : () => undefined
+    })
+    const view = host.createView(
+      { id: 'tab_redirect', containerId: 'default' } as Tab,
+      events,
+      detachedWindow
+    )
+    const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
+    const start = (url: string, isSameDocument = false): void => {
+      wc.emit('did-start-navigation', { url, isMainFrame: true, isSameDocument })
+    }
+    const redirect = (
+      url: string,
+      extra: Partial<{ isMainFrame: boolean; isSameDocument: boolean }> = {}
+    ): void => {
+      wc.emit('did-redirect-navigation', {
+        url,
+        isMainFrame: true,
+        isSameDocument: false,
+        ...extra
+      })
+    }
+
+    // A typed shortener bouncing twice: two hops, each from the previous target.
+    start('https://sho.rt/x')
+    redirect('http://a.example/')
+    redirect('https://a.example/')
+    expect(hops).toEqual([
+      ['https://sho.rt/x', 'http://a.example/'],
+      ['http://a.example/', 'https://a.example/']
+    ])
+    // A sub-frame's or a same-document redirect is not the tab's chain.
+    redirect('https://frame.example/', { isMainFrame: false })
+    redirect('https://a.example/#x', { isSameDocument: true })
+    expect(hops).toHaveLength(2)
+
+    // The commit ends the navigation: a redirect with no navigation under way is not a hop.
+    wc.emit('did-navigate', {}, 'https://a.example/')
+    redirect('https://stray.example/')
+    expect(hops).toHaveLength(2)
+
+    // A same-document start does not open a navigation either; a failure closes one.
+    start('https://a.example/#y', true)
+    redirect('https://stray.example/')
+    start('https://b.example/')
+    wc.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://b.example/', true)
+    redirect('https://stray.example/')
+    expect(hops).toHaveLength(2)
+
+    // A redirect onto the same address is no hop.
+    start('https://c.example/')
+    redirect('https://c.example/')
+    redirect('https://d.example/')
+    expect(hops.slice(2)).toEqual([['https://c.example/', 'https://d.example/']])
+  })
+
   it('reports a renderer End process crashed as `ended`, once, and a crash of the page’s own as the engine says', () => {
     vi.useFakeTimers()
     try {

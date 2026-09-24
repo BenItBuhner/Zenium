@@ -57,11 +57,13 @@ export class HistoryApi {
   /** Start following the model; visits already recorded are history, not events. */
   attach(): void {
     if (this.detach) return
-    const latest = this.service.visits({ limit: 1 })[0]
+    const latest = this.service.visits({ limit: 1, includeRedirectSources: true })[0]
     this.watermark = latest
       ? {
           time: latest.visitTime,
-          ids: this.service.visits({ fromMs: latest.visitTime, limit: Infinity }).map((v) => v.id)
+          ids: this.service
+            .visits({ fromMs: latest.visitTime, limit: Infinity, includeRedirectSources: true })
+            .map((v) => v.id)
         }
       : { time: 0, ids: [] }
     this.detach = this.service.onChange((kind) => this.changed(kind))
@@ -96,8 +98,9 @@ export class HistoryApi {
   private getVisits(ctx: ApiContext, raw: unknown): ChromeVisitItem[] {
     this.requirePermission(ctx.extension)
     const url = checked(() => normalizeUrlDetails(raw))
+    // Every visit of the page, a redirect chain's hops included (Chrome's `GetVisitsForURL`).
     return this.service
-      .visits({ limit: Infinity })
+      .visits({ limit: Infinity, includeRedirectSources: true })
       .filter((visit) => sameHistoryUrl(visit.url, url))
       .sort((a, b) => a.visitTime - b.visitTime)
       .map(toVisitItem)
@@ -137,9 +140,14 @@ export class HistoryApi {
 
   private changed(kind: HistoryChangeKind): void {
     const holders = this.host.allLoaded().filter((ext) => hasHistory(this.host, ext))
-    // The watermark moves regardless, so a later listener never replays old visits.
+    // The watermark moves regardless, so a later listener never replays old visits. A redirect
+    // chain's hops are visits Chrome's `onVisited` reports too (every `AddPageVisit` notifies).
     const scan = visitsSince(
-      this.service.visits({ fromMs: this.watermark.time, limit: Infinity }),
+      this.service.visits({
+        fromMs: this.watermark.time,
+        limit: Infinity,
+        includeRedirectSources: true
+      }),
       this.watermark
     )
     this.watermark = scan.watermark
