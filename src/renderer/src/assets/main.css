@@ -11446,6 +11446,21 @@
 .zen-settings-dialog[data-body='list'] {
   max-height: 80%;
 }
+/*
+ * A form dialog opened over another dialog (`data-stacked`: `FormDialog` at the stack's second
+ * place; §9.20 as amended on #409, "place beats content") stands at the notice's 320 – the
+ * width `HostedDialog` sets inline from lib/portals' `POPOVER_WIDTH.list`, as the prompt
+ * primitive sets its own over a dialog – and its descriptions wrap to the lines they need
+ * there: the title block's, and the fields' and rows' (`.zen-settings-description`, two lines
+ * in a row list, the row's own `-full` form here), a long token – a template URL – breaking as
+ * the title and the label already break, never clipped by the narrower panel.
+ */
+.zen-settings-dialog[data-stacked] .zen-v2-title-block-description,
+.zen-settings-dialog[data-stacked] .zen-settings-description {
+  display: block;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: none;
+}
 .zen-settings-dialog-body {
   display: flex;
   min-height: 0;
