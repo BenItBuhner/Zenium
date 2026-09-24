@@ -191,6 +191,26 @@ describe('the frame radius under a docked toolbox (v2 §9.29)', () => {
       ;(s.tabs.a as { devtools?: unknown }).devtools = { dock: 'sideways' }
       expect(devtoolsDockOf(s, 'a')).toBe('right')
     })
+
+    it('reports no dock for a tab whose toolbox is no longer open, whatever its own field still says', () => {
+      // The tick after a page's view went: the core has cleared the window's set (`destroyView`)
+      // and the tab's own reading is nulled a step later (`discard`, the window's release). One
+      // truth for "open" – the set; the field alone never squares the frame or asks for a
+      // toolbox picture.
+      const gone = state({ devtoolsOpenFor: [], devtools: { a: 'bottom' } })
+      expect(devtoolsDockOf(gone, 'a')).toBeNull()
+      expect(devtoolsDockedInFrame(gone)).toBe(false)
+      expect(contentRadius(gone, 'desktop')).toBe(10)
+      // Another tab's toolbox open does not lend A its field back.
+      const other = state({ devtoolsOpenFor: ['c'], devtools: { a: 'left', c: 'undocked' } })
+      expect(devtoolsDockOf(other, 'a')).toBeNull()
+      expect(devtoolsDockOf(other, 'c')).toBe('undocked')
+      expect(devtoolsDockedInFrame(other)).toBe(false)
+      // A field that says closed (null) on a tab the set names is read at the setting.
+      const opened = state({ devtoolsOpenFor: ['a'], devtoolsDock: 'right' })
+      ;(opened.tabs.a as { devtools?: unknown }).devtools = null
+      expect(devtoolsDockOf(opened, 'a')).toBe('right')
+    })
   })
 
   it('reads a state that carries no toolbox fields yet as one with no toolbox up', () => {

@@ -8,18 +8,21 @@ export const DESKTOP_CONTENT_RADIUS = 10
 export const PHONE_CONTENT_RADIUS = 14
 
 /**
- * Where the toolbox on `tabId` stands, or null with none up (design language v2 §9.29). The
- * tab's own reading first (`Tab.devtools`, the host's read-back for that view: a toolbox left
- * docked at the bottom while another tab's was undocked is still docked at the bottom); a host
- * that reports a toolbox open but no dock of its own (a record from before the field) is read
- * at the setting, the default every toolbox opens at.
+ * Where the toolbox on `tabId` stands, or null with none up (design language v2 §9.29). Whether
+ * one is up is the window's set (`devtoolsOpenFor`), which the core clears the moment a page's
+ * view goes; where it stands is the tab's own reading (`Tab.devtools`, the host's read-back for
+ * that view: a toolbox left docked at the bottom while another tab's was undocked is still docked
+ * at the bottom), nulled with the rest of the tab's page state a step later. Between the two a
+ * tab can carry a dock with no toolbox behind it – the set decides, the field never reports a
+ * dock on its own. A host that reports a toolbox open but no dock of its own (a record from
+ * before the field) is read at the setting, the default every toolbox opens at.
  */
 export function devtoolsDockOf(state: UIState, tabId: string): DevtoolsDock | null {
-  const own = state.tabs?.[tabId]?.devtools
-  if (own) return sanitizeDevtoolsDock(own.dock, state.settings.devtoolsDock ?? 'bottom')
   const open = state.devtoolsOpenFor
   if (!open || !open.includes(tabId)) return null
-  return state.settings.devtoolsDock ?? 'bottom'
+  const fallback = state.settings.devtoolsDock ?? 'bottom'
+  const own = state.tabs?.[tabId]?.devtools
+  return own ? sanitizeDevtoolsDock(own.dock, fallback) : fallback
 }
 
 /**

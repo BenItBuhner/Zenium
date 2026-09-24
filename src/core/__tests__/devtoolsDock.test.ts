@@ -242,4 +242,27 @@ describe('where each tab’s toolbox stands (v2 §9.29)', () => {
     // In memory B's toolbox still stands where it was.
     expect(browser.tabs.tab(b.id)?.devtools).toEqual({ dock: 'right' })
   })
+
+  it('the window’s set is cleared the moment a page’s view goes, the tab’s own reading a step later: the set is the one truth for “open”', () => {
+    // Every teardown path (a discard, a close, a window's release, the host's own going) runs
+    // through `destroyView`, which drops the tab from `devtoolsOpenFor`; the tab's reading is
+    // nulled by the path that follows. For that step the two disagree – the chrome's read
+    // (`lib/contentRadius.ts`'s `devtoolsDockOf`) takes the set first and never reports a dock
+    // the set does not back, so the frame and the cover never see a toolbox that has gone.
+    const { browser, win, open } = start()
+    const a = open('https://a.example/')
+    const b = open('https://b.example/')
+    a.page.events.onDevtoolsOpened('bottom')
+    b.page.events.onDevtoolsOpened('right')
+    browser.tabs.destroyView(a.id)
+    expect([...browser.state.devtoolsOpenFor]).toEqual([b.id])
+    const ui = browser.state.snapshot(win)
+    expect(ui.devtoolsOpenFor).toEqual([b.id])
+    expect(ui.tabs[a.id]?.devtools).toEqual({ dock: 'bottom' })
+    // The path that follows squares the two (here the discard's).
+    browser.tabs.discard(a.id)
+    expect(browser.tabs.tab(a.id)?.devtools).toBeNull()
+    expect([...browser.state.devtoolsOpenFor]).toEqual([b.id])
+    expect(browser.tabs.tab(b.id)?.devtools).toEqual({ dock: 'right' })
+  })
 })

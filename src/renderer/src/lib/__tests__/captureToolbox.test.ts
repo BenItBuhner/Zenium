@@ -73,11 +73,14 @@ describe('the capture under a docked toolbox (§9.29)', () => {
     }
   })
 
-  it('asks for the page alone with no toolbox docked in the tab’s box: closed, undocked, or another tab’s', async () => {
+  it('asks for the page alone with no toolbox docked in the tab’s box: closed, undocked, another tab’s, or a dock left on a tab whose toolbox went', async () => {
     for (const s of [
       state({}, []),
       state({ t1: 'undocked' }, ['t1']),
-      state({ t2: 'bottom' }, ['t2'])
+      state({ t2: 'bottom' }, ['t2']),
+      // The tick after the page's view went: the window's set is cleared first, the tab's own
+      // reading a step later – the set decides.
+      state({ t1: 'bottom' }, [])
     ]) {
       browserStore.set({ state: s })
       await captureActiveTab('t1')
