@@ -4499,14 +4499,16 @@ export interface Commands {
   'clipboard.read': { args: void; result: ClipboardContent }
   'clipboard.markUsed': { args: void; result: void }
   /**
-   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), edit one of
-   * the user's (name, template, shortcut – empty for one derived from the name; omnibox-09),
-   * take one out of the omnibox or bring it back (`active`, settings-43; the default engine
-   * stays active), forget one the user added or a page offered, or make one the default. The
-   * shipped engines cannot be edited or removed; `search.remove` on the default falls back to
-   * the shipped default.
+   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query; `keyword` the
+   * shortcut typed in the form, `@` or not – absent or empty for one derived from the name, as
+   * before the form carried one), edit one of the user's (name, template, shortcut – empty for
+   * one derived from the name; omnibox-09), take one out of the omnibox or bring it back
+   * (`active`, settings-43; the default engine stays active), forget one the user added or a
+   * page offered, or make one the default. The shipped engines cannot be edited or removed;
+   * `search.remove` on the default falls back to the shipped default. Both forms' shortcuts
+   * are refused with `engineKeywordProblem`'s line – the one the form shows as typed.
    */
-  'search.addEngine': { args: { name: string; url: string }; result: string }
+  'search.addEngine': { args: { name: string; url: string; keyword?: string }; result: string }
   'search.updateEngine': {
     args: { id: string; name: string; searchUrl: string; keyword: string }
     result: void

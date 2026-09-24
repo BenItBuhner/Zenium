@@ -3091,7 +3091,8 @@ export class Browser {
       'clipboard.peek': () => this.searchEngines.peekClipboard(),
       'clipboard.read': () => this.searchEngines.readClipboard(),
       'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
-      'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
+      'search.addEngine': ({ name, url, keyword }, win) =>
+        this.searchEngines.add(name, url, win, keyword),
       'search.updateEngine': ({ id, name, searchUrl, keyword }, win) =>
         this.searchEngines.update(id, { name, searchUrl, keyword }, win),
       'search.setEngineActive': ({ id, active }, win) =>

@@ -3063,6 +3063,32 @@ describe('what a row does', () => {
     if (add.kind !== 'action') throw new Error('not an action')
     expect(add.form?.title).toBe('Add search engine')
     expect(allRows(search.groups).some((r) => r.id === 'search-engine:google')).toBe(false)
+    // The chassis form with Add as its verb over every engine of the profile (no `engineId`:
+    // the new engine has none); its shortcut goes to the command as the engine's `keyword`
+    // (W5-4) – typed, the engine's own; empty, the engine derives one from the name.
+    const addForm = add.form!.render(() => {})
+    if (!isValidElement<ComponentProps<typeof SearchEngineForm>>(addForm))
+      throw new Error('not an element')
+    expect(addForm.type).toBe(SearchEngineForm)
+    expect(addForm.props).toMatchObject({ action: 'Add', engines: s.searchEngines })
+    expect(addForm.props.initial).toBeUndefined()
+    expect(addForm.props.engineId).toBeUndefined()
+    addForm.props.onSubmit({
+      name: 'Wiki',
+      url: 'https://wiki.example/w?search=%s',
+      shortcut: '@wiki'
+    })
+    expect(invoke).toHaveBeenCalledWith('search.addEngine', {
+      name: 'Wiki',
+      url: 'https://wiki.example/w?search=%s',
+      keyword: '@wiki'
+    })
+    addForm.props.onSubmit({ name: 'Wiki', url: 'https://wiki.example/w?search=%s', shortcut: '' })
+    expect(invoke).toHaveBeenLastCalledWith('search.addEngine', {
+      name: 'Wiki',
+      url: 'https://wiki.example/w?search=%s',
+      keyword: ''
+    })
     // A fresh profile: the group shows its empty state.
     const fresh = section('search')
     const added = fresh.groups.find((g) => g.id === 'search-engines')!
