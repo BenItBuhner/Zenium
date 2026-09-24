@@ -594,6 +594,14 @@ export interface TabViewEvents {
    * knows (a repeat within the minute).
    */
   onCrashed(reason: CrashReason, exitCode?: number, details?: CrashDetails): void
+  /**
+   * The page's renderer stopped answering – the host's hang monitor (Chromium's, on an input
+   * event left unanswered) said so – and, later, answered again. A host reports every page the
+   * hung renderer hosts (they hang together, and Chrome's prompt lists them together). Hosts
+   * without a hang monitor (Android's WebView) leave both out; the chrome then never asks.
+   */
+  onUnresponsive?(): void
+  onResponsive?(): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
   /** The host's own request engine blocked `count` more requests of this page (Android). */
@@ -709,6 +717,12 @@ export interface TabView {
    */
   restoreNavigation(snapshot: NavigationSnapshot): Promise<void>
   reload(ignoreCache: boolean): void
+  /**
+   * End the page's renderer for not responding (the "Page unresponsive" prompt's Exit page,
+   * tabs-45): the process is killed as a crash would kill it and `onCrashed` follows for every
+   * page it hosted. Hosts without a hang monitor leave it out with `onUnresponsive`.
+   */
+  endRenderer?(): void
   stop(): void
   /** True once a document has committed (a view that only ever triggered a download has none). */
   hasDocument(): boolean

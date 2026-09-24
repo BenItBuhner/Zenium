@@ -1081,6 +1081,8 @@ export class BrowserState {
           devtools: undefined,
           // A pinned tab's attention dot is the session's too: seen or not, a restart clears it.
           attention: undefined,
+          // A hung renderer is the session's; the page is a fresh one after a restart.
+          unresponsive: undefined,
           errorCode: null,
           // A certificate proceeded past is a decision of the session, not of the tab.
           certificateError: null,

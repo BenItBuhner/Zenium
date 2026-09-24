@@ -419,6 +419,11 @@ export class ElectronTabView implements TabView {
       ev.onFailLoad(code, description, url, isCertificateError(code) ? { certificate } : undefined)
     })
     wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason, details.exitCode))
+    // Chromium's hang monitor speaks for the contents whose input went unanswered (tabs-45); the
+    // pages sharing that renderer hang with it, so the host tells the core of every one of them,
+    // as Chrome's "Pages unresponsive" lists them – and of every one answering again.
+    wc.on('unresponsive', () => this.owner.rendererHung(this, true))
+    wc.on('responsive', () => this.owner.rendererHung(this, false))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
     wc.on('media-started-playing', () => ev.onMediaStateChanged(true))
     wc.on('media-paused', () => ev.onMediaStateChanged(false))
@@ -758,6 +763,33 @@ export class ElectronTabView implements TabView {
     this.recordHostNavigation(true, () => this.reload(ignoreCache))
     if (ignoreCache) this.wc.reloadIgnoringCache()
     else this.wc.reload()
+  }
+
+  /**
+   * The "Page unresponsive" prompt's Exit page (tabs-45): Electron kills the renderer as a
+   * crash would, and `render-process-gone` (`killed` or `crashed`) follows for every page it
+   * hosted. A renderer that is gone already (the first of several pages sharing it took it)
+   * is nothing to kill; Electron may throw for it, and that is nothing either.
+   */
+  endRenderer(): void {
+    if (this.wc.isDestroyed()) return
+    try {
+      this.wc.forcefullyCrashRenderer()
+    } catch {
+      // Already gone.
+    }
+  }
+
+  /** The core's word on this page's renderer standing still, or moving again (`rendererHung`). */
+  reportHung(hung: boolean): void {
+    if (this.wc.isDestroyed()) return
+    if (hung) this.events.onUnresponsive?.()
+    else this.events.onResponsive?.()
+  }
+
+  /** The OS process of this page's renderer, for the pages that share it; null when it has none. */
+  rendererProcess(): number | null {
+    return this.rendererPid()
   }
 
   stop(): void {
@@ -2262,6 +2294,22 @@ export class ElectronTabViewHost implements TabViewHost {
     view.attachTo(host)
     this.track(view, tab.id)
     return view
+  }
+
+  /**
+   * A page's renderer stopped answering, or answers again (tabs-45): every live page in that
+   * renderer is told – they hang and recover together – `view` first. A view whose process the
+   * engine cannot name (gone between the event and the read) speaks for itself alone.
+   */
+  rendererHung(view: ElectronTabView, hung: boolean): void {
+    const process = view.rendererProcess()
+    const shared =
+      process === null
+        ? []
+        : [...this.byWebContentsId.values()].filter(
+            (other) => other !== view && other.rendererProcess() === process
+          )
+    for (const each of [view, ...shared]) each.reportHung(hung)
   }
 
   /** Follow every tab view for its lifetime (the ones already alive included). */

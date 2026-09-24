@@ -152,6 +152,12 @@ export class TabManager {
    */
   private readonly crashPagePending = new Set<string>()
   /**
+   * Tabs whose renderer the user ended from the "Page unresponsive" prompt (tabs-45): the
+   * `onCrashed` that follows reads the kill as a page ended for not responding (the crash
+   * page's `hung` words, no toast for one unloaded in the background). Consumed by that report.
+   */
+  private readonly hungExits = new Set<string>()
+  /**
    * Tabs whose close, while active, returns to the opener (tabs-30): a tab opened by another
    * (`Tab.openerTabId`) joins this set, and leaves it the moment the user switches away from it,
    * so closing it comes back to its opener only when they never left it – Chrome's rule. A
@@ -553,9 +559,12 @@ export class TabManager {
         // and whatever permission question the previous page asked.
         if (!inPage) {
           // The document committed: the first byte is in, the throbber turns to its loading
-          // phase (tabs-41).
+          // phase (tabs-41). A renderer that commits a document answers: a hang's mark goes,
+          // and so does a pending word that the user ended it – the kill never came.
+          this.hungExits.delete(tabId)
           update((t) => {
             t.waiting = false
+            if (t.unresponsive) delete t.unresponsive
           }, true)
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
@@ -657,12 +666,30 @@ export class TabManager {
       onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
       onUnsafeNavigation: (url, hit) =>
         this.browser.protection.safeBrowsing.notePendingBlock(tabId, url, hit),
+      // The page stopped answering (tabs-45, Chrome's "Page unresponsive"): the row is marked
+      // and the chrome asks whether to wait or exit the page; the mark goes when the page answers
+      // again, when the user waits (`waitUnresponsive` – the next report asks again), when a
+      // navigation commits, or with the renderer. The session's own, never written to disk.
+      onUnresponsive: () =>
+        update((t) => {
+          t.unresponsive = true
+        }, true),
+      onResponsive: () =>
+        update((t) => {
+          if (t.unresponsive) delete t.unresponsive
+        }, true),
       onCrashed: (reason, exitCode, details) => {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
         if (!tab) return
         // The renderer took every frame's capture with it.
         this.clearCaptureState(tabId)
+        // The user ended the renderer from the "Page unresponsive" prompt (`exitUnresponsive`):
+        // the host reports the kill as `killed` or `crashed`, and the crash page's words are
+        // those for a page ended for not responding (ERR-15's `hung`). The prompt's mark goes
+        // with the renderer.
+        const ended = this.hungExits.delete(tabId)
+        if (tab.unresponsive) delete tab.unresponsive
         const title = tab.customTitle ?? tab.title
         const outOfMemory = reason === 'oom' || reason === 'memory-eviction'
         // The OS took the memory back from a page in front of the user (Android's
@@ -675,16 +702,22 @@ export class TabManager {
         // error page in a fresh renderer: keep the tab, drop the page, reload on activation.
         if (outOfMemory || !visible) {
           const memory = outOfMemory || memoryKill
-          const why = memory ? 'the page ran out of memory' : `the page crashed (${reason})`
+          const why = memory
+            ? 'the page ran out of memory'
+            : ended
+              ? 'the page was ended for not responding'
+              : `the page crashed (${reason})`
           this.browser.governor.record('discard', tabId, why, title)
           this.discard(tabId)
-          this.browser.toast(
-            memory
-              ? `"${title}" ran out of memory and was unloaded.`
-              : `"${title}" crashed and was unloaded.`,
-            'error',
-            ownerWindow()
-          )
+          // A page the user ended needs no word of it: the prompt was the word.
+          if (!ended)
+            this.browser.toast(
+              memory
+                ? `"${title}" ran out of memory and was unloaded.`
+                : `"${title}" crashed and was unloaded.`,
+              'error',
+              ownerWindow()
+            )
           return
         }
         // A crash in front of the user is the sad tab (tabs-44): the crash page, for the page
@@ -697,7 +730,7 @@ export class TabManager {
         const code = crashCodeName(reason, exitCode, this.browser.platform.info.os)
         const variant: CrashPageVariant = memoryKill
           ? 'memory'
-          : reason === 'hung'
+          : reason === 'hung' || ended
             ? 'hung'
             : 'crash'
         update((t) => {
@@ -1282,6 +1315,10 @@ export class TabManager {
     tab.cpuThrottle = 1
     tab.loading = false
     tab.waiting = false
+    // A sleeping page has no renderer to be hung (tabs-45): the prompt's mark goes with it, and
+    // any pending word that the user ended it.
+    if (tab.unresponsive) delete tab.unresponsive
+    this.hungExits.delete(tabId)
     tab.progress = 0
     tab.audible = false
     // The toolbox went with the page (the host sends no close for a view it destroyed).
@@ -2144,6 +2181,46 @@ export class TabManager {
 
   stop(tabId: string): void {
     this.view(tabId)?.stop()
+  }
+
+  /**
+   * The "Page unresponsive" prompt's Exit page (tabs-45): end the renderer of every page listed
+   * – they share it, so the first kill takes them all, and a host asked again for a renderer
+   * that is gone does nothing – and read the reports that follow as pages ended for not
+   * responding (`hungExits`). A host without `endRenderer` cannot; the mark is dropped so the
+   * prompt goes.
+   */
+  exitUnresponsive(tabIds: readonly string[]): void {
+    let changed = false
+    for (const tabId of tabIds) {
+      const tab = this.tab(tabId)
+      if (!tab?.unresponsive) continue
+      const view = this.view(tabId)
+      if (view?.endRenderer) {
+        this.hungExits.add(tabId)
+        view.endRenderer()
+      } else {
+        delete tab.unresponsive
+        changed = true
+      }
+    }
+    if (changed) this.browser.state.commitVolatile()
+  }
+
+  /**
+   * The prompt's Wait: the mark goes and the prompt with it; the host's hang monitor reports the
+   * page again should it stay unresponsive, and the chrome asks again (Chrome's dialog returns
+   * the same way).
+   */
+  waitUnresponsive(tabIds: readonly string[]): void {
+    let changed = false
+    for (const tabId of tabIds) {
+      const tab = this.tab(tabId)
+      if (!tab?.unresponsive) continue
+      delete tab.unresponsive
+      changed = true
+    }
+    if (changed) this.browser.state.commitVolatile()
   }
 
   toggleMute(tabId: string): void {

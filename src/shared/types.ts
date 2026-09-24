@@ -484,6 +484,15 @@ export interface Tab {
    * pinned row and Essentials tile draw it; the phone's chrome reads it or not as it likes.
    */
   attention?: true
+  /**
+   * The page's renderer stopped answering (tabs-45, Chrome's "Page unresponsive"): the host's
+   * hang monitor said so (`TabViewEvents.onUnresponsive`), and the chrome asks whether to wait
+   * for it or exit the page. Cleared when the page answers again (`onResponsive`), when the user
+   * chooses to wait (`tab.waitUnresponsive` – the next report asks again), when a navigation
+   * commits, and when the renderer goes. A session's own (not persisted); absent on hosts
+   * without a hang monitor (Android's WebView) and on records older than the field.
+   */
+  unresponsive?: true
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**
@@ -3970,6 +3979,13 @@ export interface Commands {
   'tab.toggleEssential': { args: { tabId: string }; result: void }
   'tab.resetPinned': { args: { tabId: string }; result: void }
   'tab.editPinnedUrl': { args: { tabId: string; url: string }; result: void }
+  /**
+   * The "Page unresponsive" prompt's answers (tabs-45): exit the pages – their renderer is ended
+   * and each shows the crash page for a page ended for not responding – or wait, which takes the
+   * prompt down until the host reports the hang again.
+   */
+  'tab.exitUnresponsive': { args: { tabIds: string[] }; result: void }
+  'tab.waitUnresponsive': { args: { tabIds: string[] }; result: void }
   'tab.rename': { args: { tabId: string; title: string | null }; result: void }
   'tab.duplicate': { args: { tabId: string }; result: void }
   'tab.unload': { args: { tabId: string }; result: void }

@@ -18,6 +18,7 @@ import { ClearBrowsingDataDialog } from './siteControls/ClearBrowsingDataDialog'
 import { ImportDialog } from './import/ImportDialog'
 import { PermissionPrompts } from './siteControls/PermissionPromptBubble'
 import { PageDialogs } from './dialogs/PageDialog'
+import { UnresponsiveDialog } from './dialogs/UnresponsiveDialog'
 import { WindowPromptDialog } from './dialogs/WindowPromptDialog'
 import { BlockedPopupsPanel } from './security/BlockedPopupsPanel'
 import { SecurityPrompts } from './security/SecurityPromptDialog'
@@ -66,7 +67,8 @@ const TAB_ICONS = [
  * requests wait on, the permission prompts a page's requests wait on, the screen-capture picker
  * a page's `getDisplayMedia` waits on, the device chooser a page's `requestDevice()` waits on
  * (with the Bluetooth pairing prompt over it), the page's own dialogs
- * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes or
+ * (`alert`, `confirm`, `prompt`, "Leave site?"), the "Page unresponsive" prompt for a page whose
+ * renderer stopped answering (`UnresponsiveDialog`), the questions asked before a window closes or
  * Zenium quits, Chrome's Name window prompt, the new tab page's add / edit shortcut dialog, the extension install and
  * permission prompts, the site-information popover's "Clear site data?" confirmation, the
  * sidebar's "Delete <folder>?" prompt, the Clear browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
@@ -122,6 +124,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <SecurityPrompts state={state} />
       <PermissionPrompts state={state} />
       <PageDialogs state={state} />
+      <UnresponsiveDialog state={state} />
       <WindowPromptDialog state={state} />
       <NameWindowDialog state={state} />
       <ExtensionPromptDialog />
