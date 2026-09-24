@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -327,6 +329,28 @@ describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
     const text = h.querySelector('[role="dialog"]')!.textContent ?? ''
     for (const never of ['Back', 'Reload', 'Address', 'Menu'])
       expect(text.includes(never), never).toBe(false)
+  })
+
+  it('the rows are the chassis’s own check rows (#419’s leading slot), not a copy drawn here', () => {
+    const { h } = openDialog(state())
+    for (const r of controlRows(h)) {
+      // The primitive's slot: the glyph is decoration, hidden from the name the label gives the
+      // box, and the row is neither disabled nor marked so (§10.5: never a disabled row here).
+      const leading = r.querySelector('.zen-settings-leading')!
+      expect(leading.getAttribute('aria-hidden')).toBe('true')
+      expect(leading.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+      expect(r.getAttribute('aria-disabled')).toBeNull()
+      expect(r.querySelector('input')!.disabled).toBe(false)
+      expect(r.className).toBe(
+        'zen-settings-row zen-settings-check-row zen-v2-row zen-v2-check-row'
+      )
+    }
+    // The form builds switch rows and hands them to the chassis (`RowView`, the desktop
+    // vocabulary); it draws no row markup of its own – `ControlRow`, #409's copy of the check
+    // row, is gone with the ask it stood in for.
+    const source = readFileSync(resolve(__dirname, '../CustomizeToolbarForm.tsx'), 'utf8')
+    expect(source).toMatch(/<RowView\b[^>]*variant="desktop"/)
+    expect(source).not.toMatch(/zen-v2-check-row|<label\b|<input\b|function ControlRow/)
   })
 
   it('checked is in the bar: the default bar has every box checked but Downloads, whose key is the downloads block’s', () => {

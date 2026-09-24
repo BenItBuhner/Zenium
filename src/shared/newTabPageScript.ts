@@ -20,7 +20,7 @@ import { getHost } from './url'
  * switch. Nothing here touches browser state
  * directly: every wish is a `NewTabPageAction`, and the answer arrives as the next state. The page draws no popover or dialog of its own (design
  * language v2 §9.20–9.23): a tile's menu is the host's context menu, the add / edit dialog and
- * Customize (Settings → New Tab) are the chrome's, asked for through actions; the one surface it
+ * Customise (Settings → New Tab) are the chrome's, asked for through actions; the one surface it
  * keeps is the Undo toast, and the chrome tells it through a `NewTabPageCommand` when the menu
  * picked Remove so that toast follows.
  */
@@ -593,7 +593,7 @@ class NewTabPage {
   }
 
   // ---------------------------------------------------------------------------
-  // Customize: Settings opens on its New Tab section
+  // Customise: Settings opens on its New Tab section
   // ---------------------------------------------------------------------------
 
   private wireCustomize(): void {

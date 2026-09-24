@@ -1,5 +1,5 @@
 /**
- * The desktop toolbar's optional controls (Settings › Look and Feel › Customize toolbar,
+ * The desktop toolbar's optional controls (Settings › Look and Feel › Customise toolbar,
  * `settings-36`; Chrome's pinnable toolbar actions, Firefox's Customize): which of the controls
  * beside the address pill are pinned in the bar. Back, Reload, the pill itself and the ⋯ menu
  * are never optional and have no key here. A control that is not pinned is folded into the app
@@ -9,7 +9,7 @@
  * The record holds the user's departures alone: a key absent reads pinned, so a profile from
  * before the setting existed shows the default bar, and re-pinning a control removes its key
  * rather than writing `true`. The downloads button is not a key: its "pin" is the existing
- * `downloads.alwaysShowButton` (Chrome's "Always show downloads button"), which the Customize
+ * `downloads.alwaysShowButton` (Chrome's "Always show downloads button"), which the Customise
  * toolbar dialog binds as its Downloads row – one field, wherever it is set.
  *
  * Read by the desktop chrome's toolbar row alone (`components/sidebar/SidebarTop.tsx`'s

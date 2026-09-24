@@ -103,8 +103,9 @@ function useCloseWhenEmpty(empty: boolean, close: () => void): void {
  * One refused page or app launch: its glyph, the URL, and Open. The shared row for a control
  * (`.zen-v2-control-row`, §9.21, §9.34): the control's height plus 8 – 40 on desktop, 48 on a
  * phone – the 4 above and below the row's own padding, so rows touch, the button centred on it
- * (§9.18); inside it the shared row anatomy, the glyph on the URL's line in the deemphasised
- * ink, 12 before the text. The row is not a target and takes no fill; the button carries its own.
+ * (§9.18); inside it the shared row anatomy, the glyph on the URL's line in the row's ink (the
+ * lead slot's, §10.4), 12 before the text. The row is not a target and takes no fill; the button
+ * carries its own.
  */
 function Entry({ tab, entry }: { tab: Tab; entry: BlockedPopup }): JSX.Element {
   const Glyph = entry.kind === 'external' ? ExternalLink : AppWindow

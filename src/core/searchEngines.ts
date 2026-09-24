@@ -119,16 +119,19 @@ export class SearchEngineService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Add an engine by hand: `url` carries `%s` where the terms go. Rejects with the reason the
-   * form shows (`searchTemplateProblem`); resolves with the new engine's id.
+   * Add an engine by hand: `url` carries `%s` where the terms go; `keyword` is the shortcut the
+   * form typed, `@` or not – empty for one derived from the name. Rejects with the reason the
+   * form shows (`searchTemplateProblem`, `engineKeywordProblem` – the new engine has no id yet,
+   * so every engine's word is another's); resolves with the new engine's id.
    */
-  add(name: string, url: string, win: ZenWindow): string {
+  add(name: string, url: string, win: ZenWindow, keyword = ''): string {
     const cleanName = name.trim()
     if (!cleanName) throw new Error('Enter a name')
-    const problem = searchTemplateProblem(url)
-    if (problem) throw new Error(problem)
     const state = this.browser.state
-    const engine = customSearchEngine(cleanName, url, state.searchEngines)
+    const problem =
+      searchTemplateProblem(url) ?? engineKeywordProblem(keyword, '', state.searchEngines)
+    if (problem) throw new Error(problem)
+    const engine = customSearchEngine(cleanName, url, state.searchEngines, keyword)
     this.browser.updateSettings(
       { searchEngines: [...(state.settings.searchEngines ?? []), engine] },
       win

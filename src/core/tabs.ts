@@ -730,17 +730,32 @@ export class TabManager {
         this.browser.pushDisplayMode(win)
       },
       onLeaveHtmlFullscreen: () => this.leaveHtmlFullscreen(tabId),
-      onDevtoolsOpened: () => {
+      // The toolbox is up: the tab notes where it stands (`Tab.devtools`, §9.29) – the dock the
+      // host opened it at, or the setting's where the host cannot say – so the frame's radius
+      // and the page's cover follow the toolbox in the tab in front, not the one setting.
+      onDevtoolsOpened: (dock) => {
         state.devtoolsOpenFor.add(tabId)
+        const tab = this.tab(tabId)
+        if (tab) tab.devtools = { dock: dock ?? state.settings.devtoolsDock }
         state.commitVolatile()
       },
       onDevtoolsClosed: () => {
         state.devtoolsOpenFor.delete(tabId)
+        const tab = this.tab(tabId)
+        if (tab) tab.devtools = null
         state.commitVolatile()
       },
-      // The toolbox's own dock buttons: remembered like the menu's choice (§9.29), for the next
-      // opening; the other open toolboxes stand where they are, as Chrome's do.
-      onDevtoolsDockChanged: (dock) => this.setDevtoolsDock(dock, ownerWindow(), { move: false }),
+      // The toolbox's own dock buttons (and the read-back of a move the menu asked for): this
+      // tab's toolbox has moved, and the choice is remembered like the menu's (§9.29), for the
+      // next opening; the other open toolboxes stand where they are, as Chrome's do.
+      onDevtoolsDockChanged: (dock) => {
+        const tab = this.tab(tabId)
+        if (tab && state.devtoolsOpenFor.has(tabId)) {
+          tab.devtools = { dock }
+          state.commitVolatile()
+        }
+        this.setDevtoolsDock(dock, ownerWindow(), { move: false })
+      },
       onFoundInPage: (result) => {
         if (!result.finalUpdate) return
         const win = ownerWindow()
@@ -1261,6 +1276,8 @@ export class TabManager {
     tab.waiting = false
     tab.progress = 0
     tab.audible = false
+    // The toolbox went with the page (the host sends no close for a view it destroyed).
+    tab.devtools = null
     tab.canGoBack = false
     tab.canGoForward = false
     this.browser.updateMedia()
@@ -3522,7 +3539,11 @@ export class TabManager {
     )
   }
 
-  /** The developer tools open at the remembered dock (`settings.devtoolsDock`; §9.29). */
+  /**
+   * The developer tools open at the remembered dock (`settings.devtoolsDock`; §9.29) – the
+   * default for every opening; where this tab's toolbox then stands is the tab's own
+   * (`Tab.devtools`, from the host's `onDevtoolsOpened`).
+   */
   toggleDevtools(tabId: string, mode: 'toggle' | 'inspect' | 'console' = 'toggle'): void {
     if (!this.browser.state.capabilities.devtools) {
       this.browser.toast('Developer tools are not available on this device.')
@@ -3535,9 +3556,11 @@ export class TabManager {
    * Where the developer tools stand (design language v2 §9.29: "bottom or right, the user's last
    * choice remembered, undocked on offer"). The choice is kept in the settings for every later
    * opening; from the app menu's rows (`move`, the default) every open toolbox moves to it as
-   * well, where the host can move one (`TabView.setDevtoolsDock`). A choice read back from a
-   * toolbox's own buttons (`onDevtoolsDockChanged`) is remembered alone: that toolbox has moved
-   * itself, and the others stand as Chrome's do until they are next opened.
+   * well, where the host can move one (`TabView.setDevtoolsDock`), and each such tab's own
+   * reading (`Tab.devtools`) takes the dock at once – the frame follows the click, and the
+   * host's read-back confirms it. A choice read back from a toolbox's own buttons
+   * (`onDevtoolsDockChanged`) is remembered alone: that toolbox has moved itself, and the
+   * others stand as Chrome's do until they are next opened.
    */
   setDevtoolsDock(dock: DevtoolsDock, win: ZenWindow, options: { move?: boolean } = {}): void {
     const state = this.browser.state
@@ -3545,7 +3568,18 @@ export class TabManager {
     if (state.settings.devtoolsDock !== dock)
       this.browser.updateSettings({ devtoolsDock: dock }, win)
     if (options.move === false) return
-    for (const tabId of state.devtoolsOpenFor) this.view(tabId)?.setDevtoolsDock?.(dock)
+    let moved = false
+    for (const tabId of state.devtoolsOpenFor) {
+      const view = this.view(tabId)
+      if (!view?.setDevtoolsDock) continue
+      view.setDevtoolsDock(dock)
+      const tab = this.tab(tabId)
+      if (tab && tab.devtools?.dock !== dock) {
+        tab.devtools = { dock }
+        moved = true
+      }
+    }
+    if (moved) state.commitVolatile()
   }
 
   unloadSpace(spaceId: string): void {
@@ -3606,6 +3640,7 @@ export class TabManager {
           tab.waiting = false
           tab.progress = 0
           tab.audible = false
+          tab.devtools = null
         }
       }
     }
