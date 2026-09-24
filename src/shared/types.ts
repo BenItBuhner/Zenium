@@ -2939,10 +2939,10 @@ export interface AgentInfo {
   transport: 'http' | 'stdio'
   connectedAt: number
   lastActiveAt: number
-  /** Tabs this agent drives (indicated in the sidebar). */
+  /** Tabs this agent drives (indicated in the sidebar): the members of its groups. */
   tabIds: string[]
-  /** The tab its page tools act on when no `tabId` is given. */
-  currentTabId: string | null
+  /** Tab groups (folders) this agent owns; a tab belongs to the agent whose group holds it. */
+  groupIds: string[]
   /** Waiting for the user to allow it. */
   pending: boolean
   /** Tool calls handled so far. */
