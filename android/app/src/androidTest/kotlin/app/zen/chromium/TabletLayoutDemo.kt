@@ -50,13 +50,27 @@ import kotlin.math.roundToInt
  *     a finger scrolls its rows (more than the 60% cap holds) so the video shows which scrollbar
  *     the device draws on the popover – read off the layout too, here and on the tab menu, as a
  *     `scrollbar on …` line in the findings; back closes it;
- * 10. a pull down the toolbar opens the tab overview (the `tablet-overview-pull` scene, traced);
- *     its More button opens a sheet that docks centred at 480; back closes the sheet, back the
- *     overview;
- * 11. live resize through `wm size`: 1280 x 590 is the phone chrome (the short side under 600
- *     dp) with the same tab at the same place on the page (the block under the view's top edge,
- *     which Blink anchors through the reflow the sidebar's 240 forces; not the scroll pixel) and
- *     no second load of it; 600 x 1000 (a split-screen width) is the tablet
+ * 10. a pull down the toolbar opens the tab overview (the `tablet-overview-pull` scene, traced):
+ *     on the tablet the switcher comes DOWN from the toolbar's edge over the page, with the
+ *     finger – a NEGATIVE `translateY` of the layer on the overview's progress (above its rest,
+ *     descending; §9.36 "pulled down from the toolbar", §11's input rule), the page's still
+ *     under it, no morph (MOT-04) – and the release's spring is the `tablet-overview-slide`
+ *     scene (traced; read for its sequence of long tasks, never its timing); open, the grid runs
+ *     at the width's columns (three or more at any tablet width, four at 1280) with the tab
+ *     search a FIELD in its header, no magnifier (TABLET-14, §9.34), its cards at the frame's
+ *     aspect – landscape on this landscape shard – and the active card's row whole; a query
+ *     narrows the grid and takes the New Tab card with it, the field's X stands over the query
+ *     alone and clears it; its More button opens a sheet that docks centred at 480; back closes
+ *     the sheet, back the overview; the toolbar's `Tabs (N)` button before Menu is the
+ *     switcher's second entry, pressed while it is up on the window's fill, its square never
+ *     inverted;
+ * 11. live resize through `wm size`: with the overview up, a query in its field and the Spaces
+ *     drawer over it, 1280 x 590 is the phone chrome (the short side under 600 dp) with the
+ *     overview, the query and the drawer still up – the switcher's transient state is
+ *     `overviewUiStore`'s, the drawer's `uiStore`'s, neither a shell's (TABLET-08) – then, the
+ *     three taken down by back, the same tab at the same place on the page (the block under the
+ *     view's top edge, which Blink anchors through the reflow the sidebar's 240 forces; not the
+ *     scroll pixel) and no second load of it; 600 x 1000 (a split-screen width) is the tablet
  *     with the rail docked and the expanded sidebar as a drawer over the page (the
  *     `tablet-drawer-open` spring scene, traced), closed by back; 800 x 1280 the portrait tablet
  *     with the sidebar docked; 1280 x 800 again.
@@ -166,7 +180,7 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
             if (i > 0 && abs(centres.getJSONArray(i).getDouble(0) - centres.getJSONArray(i - 1).getDouble(0) - 44) > 1) pitch = false
         }
         check("the toolbar's leading buttons are 40 px in flow on a 44 pitch", centres.length() >= 4 && size && pitch, "centres ${centres.joinToString(",")}")
-        check("the toolbar has no Home button", jsNumber("document.querySelectorAll('$TOOLBAR button[title^=\"Home\"]').length") == 0.0, "")
+        check("the toolbar has no Home button", jsNumber("document.querySelectorAll('$TOOLBAR button[aria-label^=\"Home\"]').length") == 0.0, "")
         check("no sleep glyph trails a sidebar row", jsNumber("[...document.querySelectorAll('$SIDEBAR .zen-tab-sleeping')].filter(function(e){return getComputedStyle(e).display!=='none'}).length") == 0.0, "")
         shot("01-sidebar-expanded")
     }
@@ -462,15 +476,151 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         val pill = screen(domRect(ADDRESS_PILL)) ?: return
         framesSettled()
         val f = Finger()
-        // The pull is the jank record's gesture scene; the release and its spring come after.
+        // The first stretch of the pull, off the record: the layer comes down from the toolbar's
+        // edge with the finger (MOT-04's slide, a negative `translateY` of the overview on its
+        // progress – §9.36's "pulled down from the toolbar"; the phone morphs instead), 1:1 – the
+        // layer's foot moves as far as the finger (§11's input rule, the gate's ruling: the travel
+        // is the layer's height on the tablet, the phone's 0.42 reach the phone's) – read and
+        // pictured with the finger held 0.34 of the window down: the foot that far below the
+        // toolbar's edge, less the drag's slop, about two fifths of the layer.
+        val fingerY0 = pill.centerY()
+        val firstStretch = 0.34f * height
+        val secondStretch = 0.22f * height
+        f.down(pill.centerX(), fingerY0)
+        f.moveBy(0f, firstStretch, 400)
+        // The chrome lies under the page views: the layer is unseen until the host has drawn the
+        // frame without the live page (the page's still, under the layer, stands in from that
+        // frame), so the finger holds here until it shows – the capture behind it takes about a
+        // second on the software GPU – and the reads and the picture are of the layer come down
+        // over the still to the finger's progress. The wait is a reading (the harness's wall clock).
+        val pullAt = SystemClock.uptimeMillis()
+        val layerShown = awaitJs(OVERVIEW_VISIBLE, true, 8_000)
+        val heroPagePhase = jsText(HERO_PAGE_PHASE)
+        finding("mid-pull the layer showed ${SystemClock.uptimeMillis() - pullAt} ms after the pull's first stretch (the harness's wall clock; the page's capture and the host's frame behind it – a reading, not a claim)")
+        check(
+            "mid-pull the layer shows once the hero page's view is off the screen, and not before (the chrome lies under the pages)",
+            layerShown && heroPagePhase == "hidden",
+            "layer ${if (layerShown) "shown" else "unseen"}, hero page view '$heroPagePhase'"
+        )
+        // The still is a capture of the screen: it wants the frame that carries the layer drawn,
+        // not the one before it (the software GPU's raster of the whole layer takes a while).
+        finding("mid-pull the layer's frame was drawn ${paintedFrames()} (the harness's wall clock; a reading)")
+        val midPull = jsText(OVERVIEW_TRANSFORM)
+        val midPhase = jsText(OVERVIEW_PHASE)
+        // The direction's proof (§9.36 as amended, the design gate's redirect): the offset is
+        // NEGATIVE – the layer stands above its rest and comes down with the finger, its foot
+        // between the box's head (the toolbar's edge) and its rest, so what is drawn is the layer's
+        // foot leading – its lower rows over the page's top, the header row arriving last. A
+        // positive offset would be a rise from the box's foot: the phone sheet's direction,
+        // against the finger under a top toolbar.
+        val midOffset = midPull.removePrefix("translateY(").removeSuffix("px)").toFloatOrNull()
+        val layerFoot = jsNumber(LAYER_FOOT)
+        val boxHeight = jsNumber(LAYER_BOX_HEIGHT)
+        check(
+            "mid-pull the switcher comes DOWN from the toolbar's edge over the page (a negative translateY on the tablet's mount, no scale; §9.36)",
+            midPull.startsWith("translateY(") && !midPull.contains("scale") && midOffset != null && midOffset < 0f && jsBoolean("!!document.querySelector('$OVERVIEW_LAYER')"),
+            "transform '$midPull' in phase $midPhase, layer ${domRect(OVERVIEW_LAYER)}"
+        )
+        check(
+            "mid-pull the layer's foot stands between the toolbar's edge and its rest: its lower rows are what show, the foot leading down over the page's top",
+            !layerFoot.isNaN() && !boxHeight.isNaN() && layerFoot > 0 && layerFoot < boxHeight,
+            "foot ${layerFoot.toInt()} px below the box's head, the box ${boxHeight.toInt()} tall, transform '$midPull'"
+        )
+        check("the page's still lies under the descending layer, in the page's frame", jsBoolean("!!document.querySelector('$OVERVIEW_HERO')"), "still ${domRect(OVERVIEW_HERO)}, content ${domRect(CONTENT)}")
+        // The active tab's card is part of the grid that comes down: drawn in its slot from the
+        // descent's first frame (§9.36's hero card at the page's frame; §11 – a slot that fills by a
+        // cut at the settle is no motion). The phone hides that card until its flying hero lands on
+        // it; on the tablet nothing flies – the hero is the still under the layer – so the card is
+        // never hidden. Read off the computed opacity (the hide is an inline `opacity: 0`).
+        val midCardOpacity = jsText(ACTIVE_CARD_OPACITY)
+        check(
+            "mid-pull the active tab's card is drawn in its slot, come down with the grid – not an empty slot that fills at the settle (§9.36, §11)",
+            midCardOpacity == "1",
+            "active card opacity '$midCardOpacity', card ${domRect(ACTIVE_CELL)}, layer ${domRect(OVERVIEW_LAYER)}"
+        )
+        // 1:1 (§11: "a drag tracks the finger 1:1 – that is input, not animation"; the gate's
+        // ruling on §9.36's drag): the foot's position against the finger's. The finger has come
+        // `firstStretch` since the touch; the drag began past its slop (the dead zone every drag
+        // of the chrome begins past, 8 px and the step that crossed it), so the foot stands that
+        // much short of the whole – the reading; the claim is the displacement between two holds,
+        // below, which the slop does not enter.
+        val fingerTravel1 = firstStretch / density
+        val boxTop = jsNumber(LAYER_BOX_TOP)
+        val footScreenY = offsetY + (boxTop + layerFoot).toFloat() * density
+        finding(
+            "1:1 at the first hold: the foot ${layerFoot.toInt()} px below the toolbar's edge against the finger's ${"%.1f".format(fingerTravel1)} px since the touch – " +
+                "${"%.1f".format(fingerTravel1 - layerFoot)} px short, the drag's slop; on the screen the foot at y ${footScreenY.roundToInt()} under the finger at y ${(fingerY0 + firstStretch).roundToInt()} (a reading, not a claim)"
+        )
+        shot("13a-overview-mid-slide")
+        // The rest of the pull is the jank record's gesture scene; the release and its spring come
+        // after, as their own: the spring carries the layer the rest of the way (§11's gentle
+        // spring, about Chrome's 300 ms). Long tasks are read by their sequence (RULING 5), never timed.
         traceFrames("tablet-overview-pull", JankBudget.Kind.GESTURE) {
-            f.down(pill.centerX(), pill.centerY())
-            f.moveBy(0f, 0.55f * height, 700)
+            f.moveBy(0f, secondStretch, 500)
         }
-        f.up()
+        // The finger holds again: the foot has moved as far as the finger did between the two
+        // holds – equal within a frame of the finger's motion (one frame's worth of the move at the
+        // pull's pace; the reads are of a held finger, so the two should agree to the pixel).
+        SystemClock.sleep(250)
+        val layerFoot2 = jsNumber(LAYER_FOOT)
+        val fingerTravel2 = secondStretch / density
+        val footTravel = layerFoot2 - layerFoot
+        val framePx = fingerTravel2 / (500f / 16.7f)
+        check(
+            "the pull is 1:1: between two holds the layer's foot moved as far as the finger, no farther and no less (§11's input rule; the gate's ruling on §9.36's drag)",
+            !layerFoot.isNaN() && !layerFoot2.isNaN() && abs(footTravel - fingerTravel2) <= framePx,
+            "foot ${layerFoot.toInt()} -> ${layerFoot2.toInt()} px below the toolbar's edge (${"%.1f".format(footTravel)} px) against the finger's ${"%.1f".format(fingerTravel2)} px; " +
+                "${"%.2f".format(footTravel - fingerTravel2)} px apart, a frame of the finger ${"%.1f".format(framePx)} px; transform '${jsText(OVERVIEW_TRANSFORM)}', the box ${boxHeight.toInt()} tall"
+        )
+        traceFrames("tablet-overview-slide", JankBudget.Kind.SPRING) {
+            f.up()
+            SystemClock.sleep(SLIDE_MS)
+        }
         check("a pull down the toolbar opens the tab overview", awaitJs(OVERVIEW_PHASE + "==='open'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
+        check("open, the layer stands untransformed at full opacity", jsText(OVERVIEW_TRANSFORM) == "" && jsText(OVERVIEW_OPACITY).let { it == "" || it == "1" }, "transform '${jsText(OVERVIEW_TRANSFORM)}', opacity '${jsText(OVERVIEW_OPACITY)}'")
+        // TABLET-14: the grid at the width's columns, the search a field in the header.
+        val columns = gridColumns()
+        check("the grid runs at the width's columns: three or more on a tablet, four at 1280", columns >= 3 && (width < 800 || columns == 4), "columns $columns at $width wide, cells ${cellKeys()}")
+        check("the tab search stands in the header as a field, no magnifier toggle (TABLET-14, §9.34)", awaitDom(SEARCH_INPUT, 4_000) && !jsBoolean("!!document.querySelector('$SEARCH_TOGGLE')"), "field ${domRect(SEARCH_INPUT)}, toggle ${domRect(SEARCH_TOGGLE)}")
+        check("the field's X stands only over a query: none on the empty field", !jsBoolean("!!document.querySelector('$SEARCH_CLEAR')"), "clear ${domRect(SEARCH_CLEAR)}")
+        check("the header keeps under four segments", jsNumber("document.querySelectorAll('$SEGMENT').length") <= 3, "segments ${jsText("[...document.querySelectorAll('$SEGMENT')].map(function(s){return s.textContent})")}")
+        // §9.36: a card's picture takes the frame's aspect – landscape on this landscape shard – and
+        // the grid opens with the active card's row whole. The numbers drawn are the finding.
+        val frame = domRect(CONTENT)
+        val frameRatio = if (frame != null && frame.height() > 0) frame.width() / frame.height() else Float.NaN
+        val cardWidth = jsNumber(CARD_WIDTH)
+        val cardHeight = jsNumber(CARD_HEIGHT)
+        val pictureHeight = jsNumber(CARD_PICTURE_HEIGHT)
+        val pictureRatio = if (pictureHeight > 0) cardWidth / pictureHeight else Double.NaN
+        finding("the cards: ${cardWidth.toInt()} x ${cardHeight.toInt()} (${"%.3f".format(cardWidth / cardHeight)} : 1), the picture ${cardWidth.toInt()} x ${pictureHeight.toInt()} (${"%.3f".format(pictureRatio)} : 1) under the frame's ${frame?.width()?.toInt()} x ${frame?.height()?.toInt()} (${"%.3f".format(frameRatio)} : 1); ratio set ${jsText(CARD_ASPECT_SET)}")
+        check(
+            "a card's picture takes the frame's aspect: landscape on the landscape tablet, within a percent of the frame's ratio (§9.36)",
+            !frameRatio.isNaN() && !pictureRatio.isNaN() && cardWidth > cardHeight && abs(pictureRatio - frameRatio) <= 0.01 * frameRatio,
+            "picture ${"%.3f".format(pictureRatio)} : 1, frame ${"%.3f".format(frameRatio)} : 1, card ${cardWidth.toInt()} x ${cardHeight.toInt()}"
+        )
+        check(
+            "the grid opened with the active card's row whole under the header (the scroll set by the hero's slot)",
+            jsBoolean(ACTIVE_ROW_WHOLE),
+            "active card ${domRect(ACTIVE_CELL)}, scroller ${domRect(SCROLLER)}, its scrollTop ${jsText("(document.querySelector('$SCROLLER')||{scrollTop:''}).scrollTop")}, grid ${domRect(GRID)}"
+        )
         SystemClock.sleep(1_500)
         shot("13-overview")
+        val cellsBefore = cellKeys()
+        tapDom(SEARCH_INPUT)
+        awaitIme(true)
+        SystemClock.sleep(600)
+        instrumentation.sendStringSync("tea")
+        check("a query narrows the grid to the matching cards and the New Tab card leaves (§9.34)", awaitJs("document.querySelectorAll('$CELL').length<${cellsBefore.length()}&&!document.querySelector('$CELL[data-cell=\"$NEW_TAB_CELL\"]')", true, 5_000), "cells ${cellKeys()} (were $cellsBefore)")
+        check("the field's X stands over the query", jsBoolean("!!document.querySelector('$SEARCH_CLEAR')"), "clear ${domRect(SEARCH_CLEAR)}")
+        SystemClock.sleep(1_200)
+        shot("13b-overview-search")
+        tapDom(SEARCH_CLEAR)
+        check("the X clears the query and the grid is whole again", awaitJs("document.querySelectorAll('$CELL').length===${cellsBefore.length()}", true, 5_000), "cells ${cellKeys()}")
+        // The X hands the focus back to the field (the keyboard stays for the next query): off it, so
+        // the keyboard is down before the sheet.
+        blurChrome()
+        awaitIme(false)
+        SystemClock.sleep(800)
         tapDom(OVERVIEW_MORE)
         check("the overview's More opens a sheet", awaitDom(".zen-sheet", 4_000), "sheet ${domRect(".zen-sheet")}")
         SystemClock.sleep(1_500)
@@ -487,9 +637,46 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         check("the overview stays under it", jsText(OVERVIEW_PHASE) == "open", "phase ${jsText(OVERVIEW_PHASE)}")
         SystemClock.sleep(800)
         back()
+        // The close is the descent run backwards (the same writer): the active card stays drawn
+        // through the rise – read mid-flight if a read lands in the spring's frames (about 300 ms;
+        // the read's timing is the harness's, so a reading, not a claim).
+        val closeMidFlight = awaitJs("$OVERVIEW_TRANSFORM.indexOf('translateY(-')===0", true, 1_000)
+        val closeFrame = jsText(CLOSE_FRAME)
+        finding("the close's rise: ${if (closeMidFlight) "read mid-flight, then one read of a frame: $closeFrame" else "landed before a read caught it"} (the harness's wall clock – a reading, not a claim)")
         check("the next back closes the overview", awaitJs(OVERVIEW_PHASE + "==='closed'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
         SystemClock.sleep(1_500)
         check("the sidebar is back once the overview is gone", sidebarMode() == "expanded", "data-sidebar ${sidebarMode()}")
+
+        // The switcher's second entry: the toolbar's tab-count button before Menu (the phone bar's
+        // `Tabs (N)` item), pressed while the overview is up.
+        val tabsLabel = jsText("(document.querySelector('$TABS_BUTTON')||{getAttribute:function(){return ''}}).getAttribute('aria-label')")
+        check("the toolbar carries `Tabs (N)` before Menu, not pressed with the overview down", tabsLabel.matches(Regex("Tabs \\(\\d+\\)")) && jsText("document.querySelector('$TABS_BUTTON').getAttribute('aria-pressed')") == "false" && buttonPrecedes(TABS_BUTTON, MENU_BUTTON), "label '$tabsLabel' (${tabOrder().size} tabs in the space), tabs ${domRect(TABS_BUTTON)}, menu ${domRect(MENU_BUTTON, last = true)}")
+        tapDom(TABS_BUTTON)
+        // The tap's entrance is the pull's direction (§9.36: the same on a tap as on the drag) –
+        // the same writer – read mid-flight if a read lands in the spring's frames: a reading, the
+        // spring being about 300 ms and the read's timing the harness's, not a claim.
+        val tapAt = SystemClock.uptimeMillis()
+        val tapMidFlight = awaitJs("$OVERVIEW_TRANSFORM.indexOf('translateY(-')===0", true, 1_000)
+        val tapTransform = jsText(OVERVIEW_TRANSFORM)
+        val tapShown = awaitJs(OVERVIEW_VISIBLE, true, 8_000)
+        finding("the tap's entrance: ${if (tapMidFlight) "read mid-flight at '$tapTransform' – a negative translateY, down from the toolbar's edge" else "landed before a read caught it"}; the layer showed ${SystemClock.uptimeMillis() - tapAt} ms after the tap${if (tapShown) "" else " (not within 8 s)"} at '${jsText(OVERVIEW_TRANSFORM)}' (the harness's wall clock and the page's capture behind it – a reading, not a claim)")
+        check("the tab-count button opens the overview", awaitJs(OVERVIEW_PHASE + "==='open'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
+        check("and reads pressed while it is up", awaitJs("document.querySelector('$TABS_BUTTON').getAttribute('aria-pressed')==='true'", true, 3_000), "aria-pressed ${jsText("document.querySelector('$TABS_BUTTON').getAttribute('aria-pressed')")}")
+        // §9.36: pressed, the button takes the window's fill and the count's square keeps its
+        // outline – never the phone bar's inverted square. Read off the computed styles.
+        val buttonFill = jsText("getComputedStyle(document.querySelector('$TABS_BUTTON')).backgroundColor")
+        val squareFill = jsText("getComputedStyle(document.querySelector('$TABS_BUTTON').firstElementChild).backgroundColor")
+        val squareInk = jsText("getComputedStyle(document.querySelector('$TABS_BUTTON').firstElementChild).color")
+        val buttonInk = jsText("getComputedStyle(document.querySelector('$TABS_BUTTON')).color")
+        check(
+            "pressed, `Tabs (N)` takes the window's pressed fill and its square is not inverted: the square's own ground stays clear and its ink is the button's",
+            buttonFill.isNotEmpty() && !isClear(buttonFill) && isClear(squareFill) && squareInk == buttonInk,
+            "button fill $buttonFill, square fill $squareFill, square ink $squareInk, button ink $buttonInk"
+        )
+        SystemClock.sleep(1_200)
+        back()
+        check("back closes the overview the button opened", awaitJs(OVERVIEW_PHASE + "==='closed'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
+        SystemClock.sleep(1_200)
     }
 
     // --- 11. live resize --------------------------------------------------------------------------
@@ -503,10 +690,44 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         val loadsBefore = server.hits("/news.html")
         finding("before the resize: active $tabBefore at scroll $scrollBefore, ${placeBefore.describe()}, ${loadsBefore} loads of the page so far")
 
+        // What is up rides the fold (TABLET-08): the overview with a query in its field, and the
+        // Spaces drawer over it – the switcher's transient state is `overviewUiStore`'s and the
+        // drawer's `uiStore`'s, neither a shell's, so the phone shell the fold mounts comes up
+        // with all three where the tablet's left them.
+        tapDom(TABS_BUTTON)
+        check("the overview is up for the fold", awaitJs(OVERVIEW_PHASE + "==='open'", true, 5_000), "phase ${jsText(OVERVIEW_PHASE)}")
+        tapDom(SEARCH_INPUT)
+        awaitIme(true)
+        SystemClock.sleep(600)
+        instrumentation.sendStringSync("zen")
+        check("a query narrows the grid before the fold (one card: the Zenium tab; the New Tab card gone)", awaitJs("document.querySelectorAll('$CELL').length===1&&!document.querySelector('$CELL[data-cell=\"$NEW_TAB_CELL\"]')", true, 5_000), "cells ${cellKeys()}")
+        val cellsFolded = cellKeys().toString()
+        blurChrome()
+        awaitIme(false)
+        SystemClock.sleep(600)
+        tapDom(OVERVIEW_SPACES)
+        check("the Spaces drawer opens over the overview", awaitJs(SPACES_DRAWER_OPEN, true, 5_000) && awaitDom(SPACES_PANEL, 4_000), "drawer ${jsText(SPACES_DRAWER_STATE)}, panel ${domRect(SPACES_PANEL)}")
+        SystemClock.sleep(1_500)
+        shot("15a-fold-before")
+        finding("before the fold: overview ${jsText(OVERVIEW_PHASE)} at ${gridColumns()} columns, query '${jsText(SEARCH_VALUE)}', cells $cellsFolded, Spaces drawer ${jsText(SPACES_DRAWER_STATE)}")
+
         // A 1280 x 590 window: the short side under 600 dp is the phone chrome, its bar below.
         resize("1280x590")
         check("at 1280 x 590 the chrome swaps to the phone layout", awaitFormFactor("phone", 15_000), "form factor ${formFactor()}, viewport ${viewportText()}")
         SystemClock.sleep(2_500)
+        check("the fold keeps the overview up, on the phone's mount", awaitJs(OVERVIEW_PHASE + "==='open'", true, 8_000) && awaitDom(".zen-overview:not([data-tablet])", 8_000), "phase ${jsText(OVERVIEW_PHASE)}, layer ${domRect(".zen-overview")}, tablet mount ${domRect(OVERVIEW_LAYER)}")
+        check("and its query, in the phone's field, the grid narrowed the same way", awaitJs("$SEARCH_VALUE==='zen'", true, 5_000) && cellKeys().toString() == cellsFolded, "query '${jsText(SEARCH_VALUE)}', cells ${cellKeys()} (were $cellsFolded)")
+        check("and the Spaces drawer over it", jsBoolean(SPACES_DRAWER_OPEN) && awaitDom(SPACES_PANEL, 4_000), "drawer ${jsText(SPACES_DRAWER_STATE)}, panel ${domRect(SPACES_PANEL)}")
+        finding("after the fold: overview ${jsText(OVERVIEW_PHASE)} at ${gridColumns()} columns (the width's, not the shell's), query '${jsText(SEARCH_VALUE)}', Spaces drawer ${jsText(SPACES_DRAWER_STATE)}")
+        shot("15b-fold-after")
+        // The three come down by back, the phone's way: the drawer, then the query, then the overview.
+        back()
+        check("back takes the Spaces drawer down on the phone", awaitJs(SPACES_DRAWER_OPEN, false, 5_000) && awaitDomGone(SPACES_PANEL, 5_000), "drawer ${jsText(SPACES_DRAWER_STATE)}")
+        SystemClock.sleep(1_200)
+        shot("15c-fold-after-overview")
+        closeOverviewByBack()
+        check("back closes the overview on the phone", jsText(OVERVIEW_PHASE) == "closed", "phase ${jsText(OVERVIEW_PHASE)}")
+        SystemClock.sleep(1_500)
         val phonePill = findByLabelPrefix(PILL_LABEL)
         val insets = windowInsets()
         check("the phone's pill sits at the bottom of the window", phonePill != null && phonePill.top > insets.windowHeight * 0.6, "pill $phonePill in ${insets.windowWidth}x${insets.windowHeight}")
@@ -668,6 +889,41 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
 
     private fun insetTop(): Double = jsNumber("parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zen-inset-top'))||0")
 
+    // --- the overview (TABLET-14, TABLET-08, MOT-04) ---------------------------------------------
+
+    /** How many columns the Tabs pane's grid lays its cards in (`overviewColumns(width)`, read off the computed template). */
+    private fun gridColumns(): Int = jsNumber(
+        "(function(){var g=document.querySelector('$GRID');if(!g)return 0;var t=getComputedStyle(g).gridTemplateColumns;return t&&t!=='none'?t.trim().split(/\\s+/).length:0})()"
+    ).takeIf { !it.isNaN() }?.toInt() ?: 0
+
+    /** The Tabs pane's cells in grid order, by their `data-cell` keys (a tab id, `group:<folder>`, or `new-tab`). */
+    private fun cellKeys(): JSONArray = jsArray("[...document.querySelectorAll('$CELL')].map(function(c){return c.dataset.cell})")
+
+    /** Whether the first element `before` matches comes before the last element `after` matches in the document. */
+    private fun buttonPrecedes(before: String, after: String): Boolean = jsBoolean(
+        "(function(){var a=document.querySelector('$before');var bs=document.querySelectorAll('$after');var b=bs[bs.length-1];return !!(a&&b&&(a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING))})()"
+    )
+
+    /** Take the focus off the chrome's field so the keyboard goes down without a back press (which the chrome would read as its own). */
+    private fun blurChrome() {
+        chromeJs("(function(){var a=document.activeElement;if(a&&a.blur)a.blur()})()")
+    }
+
+    /**
+     * The system back until the overview is closed: a query goes first (on the phone the field
+     * then stands empty for one more), then the overview – at most six presses. The keyboard is
+     * taken down before each, else the press is the keyboard's.
+     */
+    private fun closeOverviewByBack() {
+        for (i in 0 until 6) {
+            if (jsText(OVERVIEW_PHASE) == "closed") return
+            blurChrome()
+            awaitIme(false, 1_500)
+            back()
+            if (awaitJs(OVERVIEW_PHASE + "==='closed'", true, 2_500)) return
+        }
+    }
+
     /** The URL bar's popup shares the pill's left edge and width (TB-21) and hangs [POPUP_GAP] under it (`Urlbar.tsx`), within 2 px. */
     private fun popupHangsFrom(pill: RectF?): Boolean {
         val popup = domRect(OMNIBOX_POPUP) ?: return false
@@ -721,6 +977,10 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
     }
 
     private fun jsBoolean(code: String): Boolean = chromeJs("!!($code)") == "true"
+
+    /** A computed background that paints nothing: `rgba(0, 0, 0, 0)` as Blink serialises `transparent`. */
+    private fun isClear(color: String): Boolean =
+        color == "transparent" || color.replace(" ", "") == "rgba(0,0,0,0)"
 
     private fun jsNumber(code: String): Double = chromeJs("Number($code)").toDoubleOrNull() ?: Double.NaN
 
@@ -827,6 +1087,20 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         SystemClock.sleep(1_200)
     }
 
+    /**
+     * Two animation frames of the chrome document, then a beat for the display's composition: the
+     * frame carrying a change just written has been drawn (`lib/cover.ts` counts a cover painted
+     * by the same two frames), so a still taken after it shows the change and not the frame
+     * before. What it took, for the notes.
+     */
+    private fun paintedFrames(timeoutMs: Long = 4_000): String {
+        val started = SystemClock.uptimeMillis()
+        chromeJs("(function(){window.__zenDemoPainted=0;requestAnimationFrame(function(){requestAnimationFrame(function(){window.__zenDemoPainted=1})});return 1})()")
+        val drawn = awaitJs("window.__zenDemoPainted===1", true, timeoutMs)
+        SystemClock.sleep(250)
+        return if (drawn) "two frames after ${SystemClock.uptimeMillis() - started} ms" else "no second frame within $timeoutMs ms"
+    }
+
     private fun finding(line: String) {
         Log.i(tag, line)
         findings.append(line).append('\n')
@@ -861,10 +1135,10 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val CHROME_ROOT = "[data-testid=\"chrome-root\"]"
         private const val TOOLBAR = ".zen-tablet-toolbar"
         /** The toolbar's leading buttons: the sidebar toggle, Back, Forward, Reload (in flow on the 44 pitch). */
-        private const val TOOLBAR_BUTTONS = ".zen-tablet-toolbar [data-tablet-sidebar-toggle], .zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Back\"], .zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Forward\"], .zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Reload\"]"
-        private const val TOOLBAR_BACK = ".zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Back\"]"
-        private const val TOOLBAR_FORWARD = ".zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Forward\"]"
-        private const val TOOLBAR_RELOAD = ".zen-tablet-toolbar [data-zen-nav-row] > button[title^=\"Reload\"]"
+        private const val TOOLBAR_BUTTONS = ".zen-tablet-toolbar [data-tablet-sidebar-toggle], .zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Back\"], .zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Forward\"], .zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Reload\"]"
+        private const val TOOLBAR_BACK = ".zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Back\"]"
+        private const val TOOLBAR_FORWARD = ".zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Forward\"]"
+        private const val TOOLBAR_RELOAD = ".zen-tablet-toolbar [data-zen-nav-row] > button[aria-label^=\"Reload\"]"
         private const val SIDEBAR_TOGGLE = ".zen-tablet-toolbar [data-tablet-sidebar-toggle]"
         private const val ADDRESS_PILL = ".zen-tablet-toolbar [data-address-pill]"
         private const val STAR = ".zen-tablet-toolbar .zen-bm-star"
@@ -883,6 +1157,66 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         /** The gap between the pill and its popup (`POPUP_GAP` in `Urlbar.tsx`). */
         private const val POPUP_GAP = 4f
         private const val OVERVIEW_MORE = ".zen-overview button[aria-label=\"More\"]"
+        /** The overview's layer under the tablet's mount flag (`TabOverview` with `tablet`), and what the slide writes to it per frame. */
+        private const val OVERVIEW_LAYER = ".zen-overview[data-tablet]"
+        private const val OVERVIEW_TRANSFORM = "((document.querySelector('.zen-overview')||{style:{}}).style.transform||'')"
+        private const val OVERVIEW_OPACITY = "((document.querySelector('.zen-overview')||{style:{}}).style.opacity||'')"
+        /** Whether the tablet's layer is seen: unseen (`visibility: hidden`) until the live page is off the screen. */
+        private const val OVERVIEW_VISIBLE = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');return !!l&&getComputedStyle(l).visibility==='visible'})()"
+        /** The hero page's view, as the chrome knows it (`lib/pageView.ts`): shown, hiding, hidden or showing. */
+        private const val HERO_PAGE_PHASE = "(function(){var id=window.__zenStores.stage.get().overview.heroTabId;if(!id)return 'no hero';return window.__zenStores['page-view'].get().phases.get(id)||'shown'})()"
+        /** The page's still the layer comes down over (the hero card in the page's frame). */
+        private const val OVERVIEW_HERO = ".zen-overview-hero"
+        /**
+         * The direction's geometry (§9.36): where the layer's foot stands below its box's head – the box
+         * is the slide's clip, its head the toolbar's edge – and the box's height. Mid-slide the foot
+         * is between the two: the layer's lower rows are what show, its foot leading down over the
+         * page's top, the header row arriving last.
+         */
+        private const val LAYER_FOOT = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;var b=l.parentElement.getBoundingClientRect();return Math.round(l.getBoundingClientRect().bottom-b.top)})()"
+        private const val LAYER_BOX_HEIGHT = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;return Math.round(l.parentElement.getBoundingClientRect().height)})()"
+        /** The box's head in CSS px from the window's top: the toolbar's edge the layer comes down from. */
+        private const val LAYER_BOX_TOP = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');if(!l)return NaN;return Math.round(l.parentElement.getBoundingClientRect().top)})()"
+        /**
+         * The Tabs pane's scroller – what moves: its `scrollTop` is the opening scroll – its inner
+         * grid (which carries the column template and never scrolls itself), and the cells.
+         */
+        private const val GRID = ".zen-overview-grid[data-pane=\"tabs\"] .grid"
+        private const val SCROLLER = ".zen-overview-grid[data-pane=\"tabs\"]"
+        private const val CELL = ".zen-overview-grid[data-pane=\"tabs\"] [data-cell]"
+        private const val NEW_TAB_CELL = "new-tab"
+        /**
+         * A tab's card in the grid – the first cell that is one: a tab's cell carries `data-tab-id`,
+         * a group's `col-span-full` card and the New Tab card do not – and the active tab's.
+         */
+        private const val CARD_CELL = "$CELL[data-tab-id]"
+        private const val ACTIVE_CELL = "$CELL > .zen-overview-card[data-active=\"true\"]"
+        /** The active card's computed opacity: `1` drawn in its slot, `0` hidden (the phone's card under its flying hero). */
+        private const val ACTIVE_CARD_OPACITY = "(function(){var a=document.querySelector('$ACTIVE_CELL');return a?getComputedStyle(a).opacity:'no card'})()"
+        /**
+         * One read of a frame of the close: the layer's transform and the active card's opacity
+         * together – two bridge reads land in two frames on the emulator, and the layer can be gone
+         * between them.
+         */
+        private const val CLOSE_FRAME = "(function(){var l=document.querySelector('.zen-overview');var a=document.querySelector('$ACTIVE_CELL');return 'transform \"'+(l?l.style.transform||'':'no layer')+'\", active card opacity \"'+(a?getComputedStyle(a).opacity:'no card')+'\"'})()"
+        /** The card's box, its title row's height, and the ratio set on the layer's box for the cells (`--zen-overview-card-aspect`). */
+        private const val CARD_WIDTH = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().width:NaN})()"
+        private const val CARD_HEIGHT = "(function(){var c=document.querySelector('$CARD_CELL');return c?c.getBoundingClientRect().height:NaN})()"
+        private const val CARD_PICTURE_HEIGHT = "(function(){var c=document.querySelector('$CARD_CELL');if(!c)return NaN;var h=c.querySelector('.zen-overview-card-header');return c.getBoundingClientRect().height-(h?h.getBoundingClientRect().height:0)})()"
+        private const val CARD_ASPECT_SET = "(function(){var l=document.querySelector('$OVERVIEW_LAYER');return l&&l.parentElement?(l.parentElement.style.getPropertyValue('--zen-overview-card-aspect')||'none'):'no layer'})()"
+        /** Whether the active card's cell lies whole inside the grid's scroller (the opening scroll, §9.36). */
+        private const val ACTIVE_ROW_WHOLE = "(function(){var a=document.querySelector('$ACTIVE_CELL');var s=document.querySelector('$SCROLLER');if(!a||!s)return false;var r=a.getBoundingClientRect();var g=s.getBoundingClientRect();return r.top>=g.top-1&&r.bottom<=g.bottom+1})()"
+        /** The header's tab search: the field (inline on the tablet, the phone's own row after a fold), its X, the phone's magnifier. */
+        private const val SEARCH_INPUT = ".zen-overview [data-testid=\"overview-search\"] input"
+        private const val SEARCH_CLEAR = ".zen-overview [data-testid=\"overview-search-clear\"]"
+        private const val SEARCH_TOGGLE = ".zen-overview [data-testid=\"overview-search-toggle\"]"
+        private const val SEARCH_VALUE = "((document.querySelector('$SEARCH_INPUT')||{value:''}).value)"
+        private const val SEGMENT = ".zen-overview-segment [role=\"tab\"]"
+        /** The header's Spaces button (both mounts) and the Spaces drawer it opens over the overview. */
+        private const val OVERVIEW_SPACES = ".zen-overview button[aria-label=\"Spaces\"]"
+        private const val SPACES_PANEL = ".zen-drawer-panel:not(.zen-tablet-drawer-panel)"
+        /** The toolbar's tab-count button before Menu (`Tabs (N)`, TABLET-14's second entry). */
+        private const val TABS_BUTTON = ".zen-tablet-toolbar [data-tablet-tabs]"
 
         private fun row(tabId: String) = ".zen-tablet-sidebar [data-tab-id=\"$tabId\"]"
 
@@ -893,9 +1227,14 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val MENU_ROW_HEIGHTS = "[...document.querySelectorAll('.zen-v2-menu-item')].map(function(r){return r.getBoundingClientRect().height})"
         private const val OVERVIEW_PHASE = "window.__zenStores.stage.get().overview.phase"
         private const val DRAWER_PHASE = "window.__zenStores['tablet-drawer'].get().phase"
+        /** The phone's Spaces drawer: up in `uiStore`, landed in its own store (`lib/gestures/drawer.ts`). */
+        private const val SPACES_DRAWER_OPEN = "window.__zenStores.ui.get().drawerOpen===true&&window.__zenStores['spaces-drawer'].get().phase==='open'"
+        private const val SPACES_DRAWER_STATE = "(window.__zenStores.ui.get().drawerOpen?'up':'down')+' '+window.__zenStores['spaces-drawer'].get().phase"
 
         /** How long the drawer's gentle spring is given inside its measured block (it lands well within). */
         private const val DRAWER_MS = 1_600L
+        /** How long the overview's slide is given after the release (the same gentle spring; it lands well within). */
+        private const val SLIDE_MS = 1_600L
 
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"

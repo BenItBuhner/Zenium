@@ -22,8 +22,10 @@ import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
+import { afterPageShown } from '@renderer/lib/sharePanel'
 import { focusPane, pageHandedKeyboard, pageTookKeyboard } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
+import { applyDevicePosture } from '@renderer/lib/posture'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
 import { openImportSurface } from '@renderer/lib/pages'
@@ -47,11 +49,13 @@ import {
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   openInstallSheet,
+  openLongScreenshot,
   openNameWindow,
   openOverlay,
   openPrintPreview,
   openReaderPreferences,
   openSendTabSheet,
+  openSharePanel,
   openUrlbar,
   openZoom,
   overlayAvailable,
@@ -432,6 +436,12 @@ export function useMainEvents(): void {
       onEvent('externalProtocol.cancel', ({ requestId }) => cancelExternalProtocol(requestId)),
       onEvent('voice.event', (event) => voiceEvent(event)),
       onEvent('qr.event', (event) => qrEvent(event)),
+      onEvent('share.panel', (request) => void openSharePanel(request)),
+      // Zenium's Long screenshot in Android 14's share sheet (SH-02): the host relays the tap once
+      // the sheet has closed, and the editor opens over the page as the panel's chip opens it.
+      onEvent('screenshot.openLong', ({ tabId }) =>
+        afterPageShown(tabId, () => openLongScreenshot(tabId))
+      ),
       onEvent('webapp.install', (prompt) => {
         closeUrlbar()
         retireInstallBanner(prompt.tabId)
@@ -460,6 +470,8 @@ export function useMainEvents(): void {
       }),
       // The root's `--zen-inset-*` and the store, when the numbers changed (lib/insets.ts).
       onEvent('insets', (insets) => applyHostInsets(insets)),
+      // A foldable's pose (OS-11, lib/posture.ts): the store, the root's `data-posture`, the log.
+      onEvent('posture', (posture) => applyDevicePosture(posture)),
       // Where the chrome lies under the pages, the swap between a live page and its cover is
       // timed from these (lib/pageView.ts); the desktop hosts swap the moment they are asked.
       onEvent('layout.applied', (applied) => {

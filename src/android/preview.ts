@@ -1,4 +1,4 @@
-import type { ContentCover, Rect, ThumbnailPicture } from '@shared/types'
+import type { ContentCover, Rect, SharePanelRequest, ThumbnailPicture } from '@shared/types'
 import type { NativeBridge, NativeCall, NativeCommand } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
@@ -18,6 +18,7 @@ import { previewRangeAnswer } from './previewRange'
 import { createPreviewDownloads } from './previewDownloads'
 import { createPreviewScreenshots } from './previewScreenshots'
 import { previewPdfVariantOf } from './previewPdf'
+import { PREVIEW_SHARE_TARGETS } from './previewShare'
 import {
   PREVIEW_SITE_DATA_EVENT,
   previewCookies,
@@ -392,8 +393,10 @@ export function createPreviewBridge(): NativeBridge {
   })
 
   const params = new URLSearchParams(location.search)
-  // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself).
+  // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself; below
+  // 34 the browser's own shares go to Zenium's panel).
   const sdkInt = Number(params.get('sdk')) || 34
+  let shareSeq = 0
   // `?fontScale=1.3` stands in for the system font size (`Configuration.fontScale`): the
   // chrome's text is drawn at that zoom the way the Kotlin host's `textZoom` draws it
   // (`previewTextZoom.ts` multiplies the stylesheets' font sizes, a desktop browser having no
@@ -1115,8 +1118,27 @@ export function createPreviewBridge(): NativeBridge {
     // The pages are cross-origin iframes here: no forms script to talk to.
     'view.forms': () => undefined,
     'app.openExternal': ({ url }) => void window.open(String(url), '_blank'),
-    // The browser's own share sheet where there is one; otherwise the share is just logged.
-    'app.share': async ({ title, text, url, imageUrl }) => {
+    // Below Android 14 (`?sdk=33`) the browser's own shares go to Zenium's panel, as the Kotlin
+    // host sends them (`Share.kt`; SH-03), with the stand-in row of apps; a page's awaited share
+    // and every share on 14 and later go to the browser's own share sheet where there is one, or
+    // are just logged.
+    'app.share': async ({ title, text, url, imageUrl, tabId, favicon, awaitOutcome, files }) => {
+      if (sdkInt < 34 && !awaitOutcome && !(Array.isArray(files) && files.length)) {
+        const request: SharePanelRequest = {
+          id: `preview-share-${++shareSeq}`,
+          kind: imageUrl ? 'image' : text ? 'text' : 'link',
+          title: title ? String(title) : null,
+          url: imageUrl ? null : url ? String(url) : null,
+          text: text ? String(text) : null,
+          favicon: imageUrl ? null : favicon ? String(favicon) : null,
+          image: imageUrl ? String(imageUrl) : null,
+          tabId: tabId ? String(tabId) : null,
+          private: false,
+          targets: [...PREVIEW_SHARE_TARGETS]
+        }
+        host().hostEvent('share.panel', JSON.stringify(request))
+        return
+      }
       const data = {
         title: title ? String(title) : undefined,
         text: text ? String(text) : undefined,
@@ -1125,6 +1147,8 @@ export function createPreviewBridge(): NativeBridge {
       if (typeof navigator.share === 'function') await navigator.share(data).catch(() => undefined)
       else console.info('[zen preview] share', data)
     },
+    // The panel's answer: the stand-in host holds no intent, so the pick is logged and that is all.
+    'share.panelAction': (action) => console.info('[zen preview] share panel', action),
     'app.openAppLinkSettings': () => console.info('[zen preview] open-by-default settings'),
     'voice.start': () => voice.start(),
     'voice.cancel': () => voice.cancel(),

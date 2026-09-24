@@ -1953,14 +1953,7 @@ abstract class DemoHarness(
             return false
         }
         SystemClock.sleep(1_200)
-        findByLabel(MENU_HANDLE_LABEL)?.let { handle ->
-            Finger().apply {
-                down(handle.exactCenterX(), handle.exactCenterY())
-                moveBy(0f, -0.4f * height, 130)
-                up()
-            }
-            SystemClock.sleep(2_000)
-        }
+        pullMenuUp()
         for ((index, item) in path.withIndex()) {
             if (reveal(item) == null) {
                 Log.w(tag, "no $item in the menu")
@@ -1975,6 +1968,24 @@ abstract class DemoHarness(
             // A submenu slides in; give it a moment before looking for its items.
             if (index < path.lastIndex) SystemClock.sleep(1_200)
         }
+        return true
+    }
+
+    /**
+     * The open menu pulled to its full height: a finger flings its handle up two fifths of the
+     * screen, and the sheet gets two seconds to settle. The menu opens at its peek detent with
+     * most rows below the fold, where a row's bounds are off screen and no finger goes
+     * ([openMenuItem] pulls before it drills; a driver that touches a row on its own terms pulls
+     * the same way, then [reveal]s it). False when the tree has no handle to pull.
+     */
+    protected fun pullMenuUp(): Boolean {
+        val handle = findByLabel(MENU_HANDLE_LABEL) ?: return false
+        Finger().apply {
+            down(handle.exactCenterX(), handle.exactCenterY())
+            moveBy(0f, -0.4f * height, 130)
+            up()
+        }
+        SystemClock.sleep(2_000)
         return true
     }
 

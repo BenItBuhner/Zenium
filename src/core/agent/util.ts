@@ -1,7 +1,19 @@
+import type { Tab } from '../../shared/types'
 import type { ToolResult } from './protocol'
+
+/**
+ * How long the foreground lease outlives its holder's last foreground action: another agent in
+ * foreground mode runs in the background until the holder has been quiet this long.
+ */
+export const FOREGROUND_LEASE_MS = 20_000
 
 export function textError(message: string): ToolResult {
   return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true }
+}
+
+/** The title agents see for a tab: the user's custom title when set, else the page's. */
+export function titleOf(t: Tab): string {
+  return (t.customTitle ?? t.title) || '(untitled)'
 }
 
 export function sleep(ms: number): Promise<void> {
