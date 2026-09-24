@@ -207,18 +207,12 @@ function nameOf(el: HTMLElement): string {
 }
 
 function expectOneVocabulary(chrome: HTMLElement, where: string): HTMLElement[] {
-  // The one `title` the rendered desktop chrome keeps: the sidebar's pane-tall resize handle,
-  // a nameless hairline, whose hint the toolkit shows at the pointer (see `LEFT` below).
+  // No native `title` anywhere in the rendered desktop chrome – the resize handle's included
+  // (dropped on the lead's ruling: a nameless pane-tall hairline carries no hint at all).
   expect(
-    all('[title]', chrome)
-      .filter((el) => !el.classList.contains('zen-resizer'))
-      .map((el) => el.outerHTML),
+    all('[title]', chrome).map((el) => el.outerHTML),
     `${where}: native titles`
   ).toEqual([])
-  for (const handle of all('.zen-resizer[title]', chrome)) {
-    expect(isControl(handle), `${where}: the handle is no named control`).toBe(false)
-    expect(handle.hasAttribute(TOOLTIP_ATTR), `${where}: the handle carries one hint`).toBe(false)
-  }
   const carriers = all(`[${TOOLTIP_ATTR}]`, chrome)
   expect(carriers.length, `${where}: controls carrying a tooltip`).toBeGreaterThan(0)
   for (const el of carriers) {
@@ -314,12 +308,7 @@ describe('the desktop chrome’s sources: title stays off DOM elements (§9.31)'
     'downloads/DownloadsSheet.tsx': { count: 3, why: 'a phone surface' },
     // A dialog's address line, a truncated label: labels in W5-3's chassis and file.
     'protocol/ExternalProtocolSheet.tsx': { count: 1, why: 'a dialog line, not a control' },
-    'security/BlockedPopupsPanel.tsx': { count: 1, why: 'a truncated label; W5-3 holds the file' },
-    // The sidebar's resize handle: a nameless hairline as tall as the pane, whose §9.31 tooltip
-    // (centred on the control, below or above its box) has nowhere to stand but the seam's foot;
-    // the toolkit's follows the pointer (measured by the W5-1 drive: the chrome's landed 38 px
-    // over the handle at the window's bottom margin).
-    'sidebar/Sidebar.tsx': { count: 1, why: 'a pane-tall handle: the toolkit tooltip follows the pointer' }
+    'security/BlockedPopupsPanel.tsx': { count: 1, why: 'a truncated label; W5-3 holds the file' }
   }
 
   function sources(dir: string): string[] {
