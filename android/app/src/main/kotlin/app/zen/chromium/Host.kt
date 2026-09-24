@@ -1468,6 +1468,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (view.parent == null) root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         // Last among the siblings at 0 too, for a reader of the order (the harness's veil watch).
         view.bringToFront()
+        // What the veil hides from the eye it hides from a screen reader too: the chrome's tree
+        // under it is the frame before the lock – a private page's title in the bar, its card in
+        // the overview – until the masked frame; the veil itself is no stop (A11Y-03). The
+        // private page views went with the arming ([onPrivateLockArmed], [TabHost.setVisible]).
+        chrome.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         Log.d(TAG, "private lock veil raised")
         if (lockVeil.windowVisible) main.postDelayed(veilDeadline, LockVeil.DEADLINE_MS)
     }
@@ -1483,6 +1488,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val view = veilView?.takeIf { it.parent != null } ?: return
         main.removeCallbacks(veilDeadline)
         root.removeView(view)
+        // The chrome under it is the masked one (or the released one) now: read again.
+        chrome.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
         Log.d(TAG, "private lock veil lowered: $why")
     }
 
@@ -1967,6 +1974,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // the lock cover is up – then it is the core's to bring back, not the release's.
         if (privateLock.forget(tabId)) refreshGuard()
         val ticket = pageVisibility.request(tabId, visible) ?: return
+        // What covers the page is up in the chrome already: out of a screen reader's tree from
+        // the ask, not from the frame the hide waits for (A11Y-03, [TabHost.hideRequested]).
+        tabs.hideRequested(tabId)
         // A page on its way off the screen has its card picture taken while it is still there. The
         // chrome may have just captured its cover for the same frame: the copy is shared, and a
         // fresh cover stands as the picture ([TabWebView.captureThumbnail]).
