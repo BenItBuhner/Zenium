@@ -1,4 +1,5 @@
 import type {
+  AppLinkState,
   DefaultBrowserPrompt,
   DefaultBrowserRequestSource,
   DefaultBrowserStatus
@@ -43,6 +44,8 @@ export interface DefaultBrowserServiceOptions {
 export class DefaultBrowserService {
   private isDefault: boolean | null = null
   private prompt: DefaultBrowserPrompt = null
+  /** The host's "Open by default" reading (DEF-06); undefined until it answered, or without one. */
+  private appLinks: AppLinkState | undefined
   private checking: Promise<boolean | null> | null = null
   private readonly surfaces: boolean | undefined
 
@@ -54,7 +57,11 @@ export class DefaultBrowserService {
   }
 
   status(): DefaultBrowserStatus {
-    return { isDefault: this.isDefault, prompt: this.prompt }
+    return {
+      isDefault: this.isDefault,
+      prompt: this.prompt,
+      ...(this.appLinks ? { appLinks: this.appLinks } : {})
+    }
   }
 
   private get supported(): boolean {
@@ -89,15 +96,26 @@ export class DefaultBrowserService {
     void this.refresh()
   }
 
-  /** Ask the host for the role and re-evaluate the prompts; resolves with the answer. */
+  /**
+   * Ask the host for the role – and, where it has the screen, the "Open by default" state, on
+   * the same round (DEF-06) – and re-evaluate the prompts; resolves with the role's answer.
+   */
   refresh(): Promise<boolean | null> {
     if (!this.supported) return Promise.resolve(null)
     if (this.checking) return this.checking
+    const { app } = this.browser.platform
+    const appLinks: Promise<AppLinkState | null> = app.appLinkState
+      ? Promise.resolve()
+          .then(() => app.appLinkState!())
+          .catch(() => null)
+      : Promise.resolve(null)
     this.checking = Promise.resolve()
-      .then(() => this.browser.platform.app.isDefaultBrowser())
+      .then(() => app.isDefaultBrowser())
       .catch(() => null)
-      .then((isDefault) => {
+      .then(async (isDefault) => {
+        const links = await appLinks
         this.checking = null
+        if (links) this.appLinks = links
         this.apply(isDefault)
         return isDefault
       })

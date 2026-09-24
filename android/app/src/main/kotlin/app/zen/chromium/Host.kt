@@ -76,6 +76,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val privacy = Privacy.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
+    /** "<site> is using your microphone" while a page captures, on a camera / microphone service (`capture.*`, NOT-13). */
+    override val capture = CaptureNotifications(this)
     override val security = Security(this)
     override val downloads = Downloads(activity, this)
     /**
@@ -116,6 +118,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val focusHandoff = FocusHandoff(root) { landing -> onFocusLanding(landing) }
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
+    /** The updates' card on the shade – available, ready – from the core's `update.notify` (NOT-17). */
+    val updateNotifications = UpdateNotifications(activity)
     val translate = Translate(activity, this)
     val siteData = SiteData()
     private val accessibility: AccessibilityManager? = activity.getSystemService(AccessibilityManager::class.java)
@@ -773,6 +777,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.destroy" -> {
                 val tabId = args.str("tabId")
                 tabs.destroy(tabId)
+                // The page went with its view, and any capture it held or was granted with the
+                // page: its card comes down now, not at the confirm window's end (NOT-13).
+                capture.ended(tabId)
                 // A view the lock held hidden is gone with its tab: the guard follows what is left.
                 if (privateLock.forget(tabId)) refreshGuard()
                 reply(null)
@@ -936,10 +943,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "screenshot.delete" -> screenshots.delete(args.str("uri"), reply)
             "screenshot.open" -> screenshots.open(args.str("uri"), reply)
             "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
+            "app.openNotificationSettings" -> { openNotificationSettings(); reply(null) }
+            // The link menu's phone and email items (PUI-22): the dialer, the messaging app, the
+            // contacts app's new-contact form, the mail app – the link's URL as the data.
+            "link.call" -> { startFirst(listOf(SystemIntents.call(args.str("url"))), "No phone app on this device"); reply(null) }
+            "link.message" -> { startFirst(listOf(SystemIntents.message(args.str("url"))), "No messaging app on this device"); reply(null) }
+            "link.addContact" -> { startFirst(listOf(SystemIntents.addContact(args.str("url"))), "No contacts app on this device"); reply(null) }
+            "link.email" -> { startFirst(listOf(SystemIntents.email(args.str("url"))), "No email app on this device"); reply(null) }
             "app.openPrivateDnsSettings" -> { openPrivateDnsSettings(); reply(null) }
             "app.openKeyboardSettings" -> { openKeyboardSettings(); reply(null) }
             "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "app.isDefaultBrowser" -> reply(DefaultBrowser.isDefault(activity))
+            "app.appLinkState" -> reply(DefaultBrowser.appLinkState(activity))
             "app.requestDefaultBrowser" -> activity.requestDefaultBrowser(reply)
             "keys.setShortcuts" -> { keys.setShortcuts(args.arr("bindings")); reply(null) }
 
@@ -1067,6 +1082,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "notification.close" -> { webNotifications.close(args.str("id")); reply(null) }
             "notification.forgetOrigin" -> { webNotifications.forgetOrigin(args.str("origin")); reply(null) }
             "notification.ensureAllowed" -> webNotifications.ensureAllowed(reply)
+            // A tab's capture as the core folds it from the page's reports (NOT-13): the card
+            // and the service follow it; a tab gone reports nothing held.
+            "capture.update" -> { capture.reported(args); reply(null) }
             "private.setOpenTabs" -> {
                 val count = args.num("count").toInt()
                 privateSession.setOpenTabs(count)
@@ -1098,6 +1116,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             )
             "update.cancel" -> { updates.cancel(args.str("token")); reply(null) }
             "update.install" -> reply(updates.install(args.str("path")))
+            "update.notify" -> { updateNotifications.notify(args.optJSONObject("notice")); reply(null) }
 
             // --- extension store (ext/ExtensionStore.kt; the contract is src/android/extensionStoreIo.ts).
             //     The runtime that runs extensions has its own methods, in its own block. -------------
@@ -1556,6 +1575,32 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // The next screen down is on every device.
             }
         }
+    }
+
+    /**
+     * Android's notification settings for Zenium (Settings › Security › Notifications, SET-26):
+     * the app's channels – downloads, sites, updates, the private-tabs card – each turned on or
+     * off there, as Chrome's Notifications row opens it. The details page is the fallback.
+     */
+    private fun openNotificationSettings() {
+        startFirst(SystemIntents.notificationSettings(activity.packageName), "No notification settings on this device")
+    }
+
+    /**
+     * The first of the plans an app on this device answers to; a toast when none does (a tablet
+     * without a dialer, a device without a contacts app). Pure plans: `SystemIntentsTest`.
+     */
+    private fun startFirst(plans: List<SystemIntents.Plan?>, failure: String) {
+        for (plan in plans) {
+            if (plan == null) continue
+            try {
+                activity.startActivity(plan.toIntent())
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next plan down, or the toast.
+            }
+        }
+        Toast.makeText(activity, failure, Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -2210,6 +2255,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         media.destroy()
         webNotifications.destroy()
         privateSession.destroy()
+        capture.destroy()
         voice.destroy()
         qrScan.destroy()
         readAloud.destroy()
