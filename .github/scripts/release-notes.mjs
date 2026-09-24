@@ -179,6 +179,26 @@ function compareVersions(a, b) {
  * A final release skips pre-release tags so its notes cover everything since the last final
  * release; a pre-release compares against whatever came right before it.
  */
+/**
+ * The hand-written highlights, carried in the release tag's annotation (`npm run release --
+ * --notes <file>` puts them there, after the "Zenium X.Y.Z" subject line). Empty for a tag
+ * without an annotation body – a dry run, or a cut made without --notes – and the body then
+ * opens on the download table as before.
+ */
+function tagHighlights() {
+  let body
+  try {
+    body = execFileSync('git', ['tag', '--list', '--format=%(contents:body)', tag], {
+      encoding: 'utf8'
+    })
+  } catch {
+    return ''
+  }
+  const text = body.replace(/\r\n?/g, '\n').trim()
+  if (!text) return ''
+  return /^##\s+Highlights\s*$/im.test(text.split('\n')[0]) ? text : `## Highlights\n\n${text}`
+}
+
 function previousTag() {
   const current = parseTag(tag)
   if (!current) return null
@@ -434,8 +454,13 @@ const updating = [
 
 const previous = previousTag()
 const changes = await generatedNotes(previous)
+const highlights = tagHighlights()
+if (highlights)
+  console.log(`Highlights from the ${tag} annotation (${highlights.length} characters)`)
+else console.log(`No annotation body on ${tag}: the notes open on the download table`)
 
 const notes = [
+  ...(highlights ? [highlights, ''] : []),
   `Zenium **${version}** for Windows, macOS, Linux and Android. Pick the package for your device below.`,
   '',
   '## Downloads',
