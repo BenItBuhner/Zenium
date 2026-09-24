@@ -116,7 +116,7 @@
 //                fixture's second page (closed before, so it is history and no open tab), the
 //                arrow key selects it, Enter navigates the tab to it in place, no engine asked;
 //                three Settings `?row=` landings (zenium://settings/look?row=split-edge-zones,
-//                tabs?row=pinned-close, search?row=add-search-engine) – the row's group at the
+//                tabs?row=pinned-close, resources?row=protect-pinned) – the row's group at the
 //                column's top under its scroll padding, the row within the column, the page
 //                carrying data-landing; Reader View on the fixture's article – the tab read as
 //                readerable, Ctrl+Alt+R puts it on zen://reader for the article with the pill's
@@ -5953,11 +5953,15 @@ const BAR_CHIP = 'button.zen-bm-chip[data-bm-chip="url"]'
 const OMNIBOX_ROW = 'li.zen-omnibox-row'
 const OMNIBOX_SELECTED = '.zen-omnibox [role="option"][aria-selected="true"]'
 // The `?row=` landings the leg asks of Settings: one row in each of three sections
-// (sections.tsx: Look's Split view group, Tabs' Pinned tabs group, Search's Add search engine).
+// (sections.tsx: Look's Split view group, Tabs' Pinned tabs group, Resources' Never touch
+// group). Each section runs longer than the column, so the group can reach the column's top:
+// a section shorter than the column (Search at 1600x1000) lands its row short by the
+// difference – SettingsPage.tsx's landing pad reads the column's clamped scrollHeight – a
+// product defect the W5-14 report routes, not a fact this leg gates on.
 const SETTINGS_LANDINGS = [
   { section: 'look', row: 'split-edge-zones' },
   { section: 'tabs', row: 'pinned-close' },
-  { section: 'search', row: 'add-search-engine' }
+  { section: 'resources', row: 'protect-pinned' }
 ]
 // How far under the column's top (past its scroll padding) a landed group may sit, in px: the
 // column's own rounding, and the group's outline.
@@ -6292,14 +6296,55 @@ async function scenarioFeatures() {
       await folder.click({ timeout: 5000 })
       const list = s.chrome.locator(FOLDER_LIST).first()
       await list.waitFor({ state: 'visible', timeout: 5000 })
-      await list
-        .getByRole('option', { name: 'Bookmarks bar', exact: true })
-        .click({ timeout: 5000 })
+      const target = list.getByRole('option', { name: 'Bookmarks bar', exact: true })
+      await target.waitFor({ state: 'visible', timeout: 5000 })
+      // The pick is the keyboard's (MenulistPopover: the current option holds the focus as the
+      // list comes up, ArrowDown moves it a row, Enter picks): a pointer cannot be relied on
+      // here – the bubble's panel (z-index 70) paints over its own child popup, which has no
+      // z-index of its own, so the option's pixels can belong to the bubble (a product defect
+      // the W5-14 report routes). What the option's centre pixel belongs to goes into the
+      // detail as evidence either way.
+      const optionCover = await target.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        if (!hit) return { covered: true, by: 'nothing' }
+        if (el.contains(hit)) return { covered: false, by: null }
+        const owner = hit.closest('[role]')
+        return {
+          covered: true,
+          by: owner
+            ? `${owner.getAttribute('role')}${owner.id ? '#' + owner.id : ''}${
+                owner.getAttribute('aria-labelledby')
+                  ? ' ' + owner.getAttribute('aria-labelledby')
+                  : ''
+              }`
+            : `${hit.tagName.toLowerCase()}.${String(hit.className).split(' ')[0]}`
+        }
+      })
+      const focusedOption = () =>
+        list.evaluate((el) => {
+          const a = document.activeElement
+          return a && el.contains(a) ? (a.textContent ?? '').trim() : null
+        })
+      const focusBefore = await focusedOption()
+      const optionCount = await list.getByRole('option').count()
+      let focused = focusBefore
+      for (let i = 0; i < optionCount && focused !== 'Bookmarks bar'; i++) {
+        await s.chrome.keyboard.press('ArrowDown')
+        focused = await focusedOption()
+      }
+      if (focused !== 'Bookmarks bar') {
+        throw new Error(
+          `the Folder list's focus never reached "Bookmarks bar" through ${optionCount} ArrowDowns (it came up on ${JSON.stringify(focusBefore)}, ended on ${JSON.stringify(focused)})`
+        )
+      }
+      await s.chrome.keyboard.press('Enter')
       await waitFor(
         async () => ((await folder.textContent()) ?? '').trim() === 'Bookmarks bar' || null,
         5000,
-        'the Folder menulist reading Bookmarks bar'
+        'the Folder menulist reading Bookmarks bar after Enter on its option'
       )
+      await list.waitFor({ state: 'hidden', timeout: 5000 })
       const chip = bar.locator(BAR_CHIP).first()
       await chip.waitFor({ state: 'visible', timeout: 8000 })
       await s.settle()
@@ -6325,7 +6370,15 @@ async function scenarioFeatures() {
       if (chipLabel !== article.title) {
         throw new Error(`the chip is labelled "${chipLabel}", the page is "${article.title}"`)
       }
-      await s.sidebarTab(pages.second.title).first().click({ timeout: 5000 })
+      await s
+        .sidebarTab(pages.second.title)
+        .first()
+        .click({ timeout: 5000 })
+        .catch((e) => {
+          throw new Error(
+            `no sidebar row for the second page "${pages.second.title}" to click: ${e.message.split('\n')[0]}`
+          )
+        })
       const other = await waitFor(
         async () => {
           const t = await activeFeatureTab(s)
@@ -6375,6 +6428,7 @@ async function scenarioFeatures() {
       return {
         title,
         folderBefore,
+        folderList: { cameUpOn: focusBefore, options: optionCount, optionCover },
         bookmark: filed,
         chip: { id: chipId, label: chipLabel, tooltip: chipTooltip },
         openedIn: landed.id,

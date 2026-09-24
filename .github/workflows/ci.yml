@@ -132,8 +132,8 @@ jobs:
         # a profile past onboarding with search suggestions off (no engine is asked, nothing
         # leaves the loopback fixture) and the bookmarks bar always on. A step per leg, so a red
         # names the leg: omnibox-suggestions (a history row typed up, Enter navigates in place),
-        # settings-row-landing-look / -tabs / -search (zenium://settings/<section>?row=<id> lands
-        # the row's group at the column's top), reader-toggle (zen://reader on the fixture's
+        # settings-row-landing-look / -tabs / -resources (zenium://settings/<section>?row=<id>
+        # lands the row's group at the column's top), reader-toggle (zen://reader on the fixture's
         # article, the chip's aria-pressed both ways), bookmarks-bar (Ctrl+D filed to the bar,
         # the chip opened from another tab, deleted from its menu). Its own log, result.json and
         # screenshots under smoke-out/features; runs after a red step above as well.
