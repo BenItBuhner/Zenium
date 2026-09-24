@@ -893,6 +893,101 @@ describe('the picker (PickerDialog, a list body on the primitive)', () => {
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
 
+  it('over a page dialog that covers itself (`inert`, as the settings dialogs do) it leaves that dialog inert while it stands – its control refuses the focus, its Escape is not reached – and Escape is one hop: Cancel, then the keyboard back on that control as the cover lifts a render later, never on body (W5-3 (d))', async () => {
+    const onLowerEscape = vi.fn()
+    /** A page dialog on the host that covers itself while its picker stands. */
+    function ItemDialog({
+      covered,
+      children
+    }: {
+      covered: boolean
+      children?: ReactNode
+    }): JSX.Element {
+      useFrameDialog({})
+      useEscape(onLowerEscape)
+      return (
+        <div role="dialog" tabIndex={-1} data-dialog="item" inert={covered || undefined}>
+          {children}
+        </div>
+      )
+    }
+    const cancels = vi.fn()
+    function Stack(): JSX.Element {
+      const [open, setOpen] = useState(false)
+      const [covered, setCovered] = useState(false)
+      return (
+        <FrameDialogHost frame>
+          <ItemDialog covered={covered}>
+            <button
+              data-action="connect"
+              onClick={() => {
+                setOpen(true)
+                setCovered(true)
+              }}
+            >
+              Connect a device
+            </button>
+            <button data-action="uncover" onClick={() => setCovered(false)}>
+              uncover
+            </button>
+          </ItemDialog>
+          {open && (
+            <PickerDialog
+              {...pickBase}
+              onCancel={() => {
+                cancels()
+                setOpen(false)
+              }}
+            />
+          )}
+        </FrameDialogHost>
+      )
+    }
+    render(<Stack />)
+    await settle()
+    const item = document.querySelector<HTMLElement>('[data-dialog="item"]')!
+    const opener = item.querySelector<HTMLButtonElement>('[data-action="connect"]')!
+    refusingUnderInert(opener)
+    act(() => opener.focus())
+    expect(document.activeElement).toBe(opener)
+    click(opener)
+    await settle()
+    const d = picker()!
+    // The picker holds its own container; the dialog under it is inert – covered, later in the
+    // one slot – and nothing in it takes the focus while the picker stands.
+    expect(document.activeElement).toBe(d)
+    expect(item.hasAttribute('inert')).toBe(true)
+    expect(d.previousElementSibling).toBe(item)
+    expect(d.style.width).toBe('320px')
+    act(() => opener.focus())
+    expect(document.activeElement).toBe(d)
+    // Tab from the container enters the picker's list (the row the consumer made tabbable, as
+    // the test above has it) and never the dialog under it.
+    expect(press(d, 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(rows()[0])
+    expect(d.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement!.closest('[data-dialog="item"]')).toBeNull()
+    // Escape is one hop: the picker's Cancel, not the covered dialog's Escape.
+    pressEscape()
+    await settle()
+    expect(cancels).toHaveBeenCalledTimes(1)
+    expect(onLowerEscape).not.toHaveBeenCalled()
+    expect(picker()).toBeNull()
+    // The cover is still on as the picker's cleanup runs: the opener refuses, and the focus is
+    // not left on body for good – the return waits for the inert to lift.
+    expect(item.hasAttribute('inert')).toBe(true)
+    expect(document.activeElement).not.toBe(opener)
+    click(item.querySelector('[data-action="uncover"]'))
+    await settle()
+    expect(item.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement).toBe(opener)
+    expect(document.activeElement).not.toBe(document.body)
+    // With the picker gone and the cover off, Escape is the dialog's under it again.
+    pressEscape()
+    expect(onLowerEscape).toHaveBeenCalledTimes(1)
+    expect(cancels).toHaveBeenCalledTimes(1)
+  })
+
   it('Escape, a press on the scrim and Cancel are Cancel, and none of them is Connect', async () => {
     const onCancel = vi.fn()
     const onConfirm = vi.fn()

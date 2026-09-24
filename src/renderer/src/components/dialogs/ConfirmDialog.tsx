@@ -84,15 +84,17 @@ export interface ConfirmDialogProps {
  * sentences ran to three lines and its checkbox label wrapped, measured); and the notice again,
  * row or not, when it opens over another dialog in the slot ("a 400 prompt over a 400 dialog is
  * the unreadable stack of §9"; §9.5: "never the 400 of the dialog it covers"). The place is read
- * once, as the prompt mounts, before its first paint.
+ * as the prompt mounts, before its first paint, and again only should the row's presence change.
  *
  * The keyboard (§9.22 as amended by the design lead on #392; `useConfirmKeyboard` in
  * `confirmKeyboard.ts` beside this file, the one implementation of it, for any held
  * container): the CONTAINER holds the focus as
  * the prompt opens – its root is `tabIndex -1`, the container the keyboard is sent to and cannot
- * reach by Tab, so the chassis draws no ring on it
- * (`[role='alertdialog'][tabindex='-1']:focus-visible` in main.css) and no verb is preselected.
- * Tab enters at Cancel, Shift+Tab at the verb, and between them the keys wrap at the ends
+ * reach by Tab, so the chassis draws no ring on it (the `[role='dialog'][tabindex='-1']` and
+ * `[role='alertdialog'][tabindex='-1']` `:focus-visible` rule in main.css – both roles, since a
+ * prompt carrying a field or a list is a `dialog`) and no verb is preselected. Tab enters at the
+ * first control – Cancel, or the check row's box when the prompt carries one – Shift+Tab at the
+ * verb, and between them the keys wrap at the ends
  * (lib/popover.ts `wrapTab`). On a prompt whose verb is the primary (Quit), Enter from the
  * container, or from the check row, activates the verb as the prompt's default button – as
  * Firefox's and Chrome's dialogs answer Enter from the dialog itself, because they draw the verb

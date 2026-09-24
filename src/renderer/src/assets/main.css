@@ -537,8 +537,9 @@
  * body's specificity: the row primitive's own unlayered `width: 100%` (`.zen-v2-row`, later in
  * this file, one class) beat a one-class rule here by order while the negative margin still
  * applied – the row ran from the left border to 32 short of the right (pr-392 A1). The prompt's
- * ring rules are the chassis's: none on the container that holds the focus
- * (`[role='alertdialog'][tabindex='-1']` above), the shared v2 ring on its controls.
+ * ring rules are the chassis's: none on the container that holds the focus (the
+ * `[role='dialog'][tabindex='-1']` / `[role='alertdialog'][tabindex='-1']` rule above – a prompt
+ * with a field or a list is a `dialog`), the shared v2 ring on its controls.
  */
 .zen-confirm-dialog {
   display: flex;
