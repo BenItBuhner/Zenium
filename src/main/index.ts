@@ -11,7 +11,6 @@ import { runStdioShim } from './agent/shim'
 import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
 import { parseLaunchArgs, pathToFileUrl, type LaunchArgs } from '../shared/launchArgs'
 import { holdBackgroundWorkRequested } from './platform/backgroundWork'
-import { startInputDiag } from './platform/inputDiag'
 import {
   describeSwitches,
   droppedSecondInstanceSwitches,
@@ -174,7 +173,6 @@ function main(): void {
     // substitute the executable's path there, which no toast registration can carry).
     if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID)
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
-    startInputDiag()
 
     const platform = new ElectronPlatform(app.getPath('userData'), {
       // The desktop demo drivers' hold on the startup sweeps (`--hold-background-work`; a normal
