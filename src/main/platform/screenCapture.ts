@@ -198,13 +198,13 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
     // own announcement did; with no announcement the engine's word is the only one, and the
     // picker's audio choice – offered on the chance – is dropped unless the engine confirms it.
     const stored = this.takeAnswer(wc.id)
-    if (!stored || !stored.answer.sourceId) {
+    const sourceId = stored?.answer.sourceId
+    if (!stored || !sourceId) {
       deny(callback)
       return
     }
-    const { answer } = stored
     const audioRequested = request.audioRequested || stored.audio === true
-    const targetTab = tabIdOfSource(answer.sourceId)
+    const targetTab = tabIdOfSource(sourceId)
     try {
       if (targetTab) {
         const view = this.views.viewForTab(targetTab)
@@ -222,8 +222,8 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
         return
       }
       callback({
-        video: { id: answer.sourceId, name: this.names.get(answer.sourceId) ?? '' },
-        ...(answer.audio && audioRequested ? { audio: 'loopback' } : {})
+        video: { id: sourceId, name: this.names.get(sourceId) ?? '' },
+        ...(stored.answer.audio && audioRequested ? { audio: 'loopback' } : {})
       })
     } catch (error) {
       // The frame went away between the answer and the grant.
