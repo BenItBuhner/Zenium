@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ChevronRight } from 'lucide-react'
 import type { BookmarkNode, Rect } from '@shared/types'
 import { BOOKMARKS_BAR_ID, type BookmarkTree } from '@shared/bookmarks'
+import { carriesBookmark, draggedBookmarkId } from '@renderer/lib/addressDrag'
 import { run } from '@renderer/lib/api'
 import { popOrigin } from '@renderer/lib/anchor'
 import { pathForFile } from '@renderer/lib/dnd'
@@ -28,7 +29,7 @@ import {
 } from '@renderer/lib/portals'
 import { BookmarkIcon } from './BookmarkIcon'
 import { besideOrigin, layoutRect, placeBeside, rowRect } from './panelGeometry'
-import { nodeLabel } from './tree'
+import { nodeLabel, slotWithout } from './tree'
 import { HOLD_TO_OPEN_MS, type BarDropTarget } from './useBarDrag'
 
 export type BarMenuRoot =
@@ -120,8 +121,9 @@ type PanelTarget = Exclude<BarDropTarget, { kind: 'slot' }>
  *
  * A chip drag (`useBarDrag`) or a link from a page files its drop at a row, into a folder row
  * or at the end of a level (§9.4): the target row or panel is marked, and resting on a folder
- * row for `HOLD_TO_OPEN_MS` opens its panel beside, as on a chip. A private window's panel
- * takes no drop and no Delete (`readOnly`, bookmarks-43).
+ * row for `HOLD_TO_OPEN_MS` opens its panel beside, as on a chip. A chip lifted off the bar as
+ * a link (its HTML5 drag, bookmarks-15) moves in the same way rather than being filed twice.
+ * A private window's panel takes no drop and no Delete (`readOnly`, bookmarks-43).
  */
 export function BarMenu({
   tree,
@@ -349,7 +351,8 @@ export function BarMenu({
   const onDragOver = (e: React.DragEvent): void => {
     if (readOnly || payloadKind(e.dataTransfer.types) === null) return
     e.preventDefault()
-    e.dataTransfer.dropEffect = 'copy'
+    // A chip of the bar's is moved in, and badges so (bookmarks-15); a link is copied.
+    e.dataTransfer.dropEffect = carriesBookmark(e.dataTransfer.types) ? 'move' : 'copy'
     const next = externalTargetAt(e.clientX, e.clientY)
     setExternal((prev) => (sameTarget(prev, next) ? prev : next))
   }
@@ -362,15 +365,24 @@ export function BarMenu({
     e.preventDefault()
     setExternal(null)
     const target = externalTargetAt(e.clientX, e.clientY)
+    if (!target) return
+    const parentId = target.kind === 'folder' ? target.folderId : target.parentId
+    const index = target.kind === 'row' ? target.index : undefined
+    // A chip of the bar's dragged into the panel (bookmarks-15) moves there, as the pointer
+    // drag moves it; the slot is counted without the chip where it is one of the level's rows
+    // (the »'s panel lists the bar's own chips).
+    const own = draggedBookmarkId(e.dataTransfer)
+    if (own) {
+      run('bookmark.move', {
+        ids: [own],
+        parentId,
+        index: index === undefined ? undefined : slotWithout(tree.children(parentId), own, index)
+      })
+      return
+    }
     const dropped = droppedBookmark(e.dataTransfer, pathForFile)
-    if (!target || !dropped) return
-    run('bookmark.create', {
-      parentId: target.kind === 'folder' ? target.folderId : target.parentId,
-      index: target.kind === 'row' ? target.index : undefined,
-      title: dropped.title,
-      url: dropped.url,
-      type: 'url'
-    })
+    if (!dropped) return
+    run('bookmark.create', { parentId, index, title: dropped.title, url: dropped.url, type: 'url' })
   }
   const shownTarget = dropTarget ?? external
 

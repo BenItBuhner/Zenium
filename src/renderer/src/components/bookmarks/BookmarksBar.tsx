@@ -3,6 +3,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ChevronsRight } from 'lucide-react'
 import type { BookmarkNode, Rect, Tab, UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
+import {
+  bookmarkDragOf,
+  carriesBookmark,
+  draggedBookmarkId,
+  writeBookmarkDrag,
+  type AddressDrag
+} from '@renderer/lib/addressDrag'
 import { cmd, run } from '@renderer/lib/api'
 import { pathForFile } from '@renderer/lib/dnd'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
@@ -36,11 +43,20 @@ type ExternalHover = { kind: 'slot'; index: number } | { kind: 'folder'; folderI
  * the chip closes it; with a panel open, Left and Right walk the bar as a menu bar's arrows
  * walk its menus, the neighbour folder's panel opening in its place.
  *
+ * A chip dragged off the bar is the page's link (bookmarks-15, dnd-13; Chrome's bookmark drag):
+ * an HTML5 drag carrying `text/uri-list`, `text/plain` and an anchor (`lib/addressDrag.ts`, the
+ * URL pill's drag), so a file manager makes a link file of it, a tab row or the page navigates
+ * to it, and the bar itself – this window's or another's – moves the chip rather than filing it
+ * twice. Which drag a press became is read from its first movement: along the bar it is the
+ * reorder above (the native drag is refused at `dragstart` and the pointer drag goes on), off
+ * the bar it is the link.
+ *
  * In a private window the bar reads and opens, never writes (bookmarks-43): the bookmarks are
  * the profile's, so an edit made there would land in the regular store as if made in a regular
- * window. No drop (a tab, a link, a file), no paste, no reorder, no Delete, F2 or Cut on a chip;
- * the menus carry no editing row (the core's `showBookmarkContextMenu`). Ctrl+D still files the
- * page – through the star bubble, which names it as a private window's.
+ * window. No drop (a tab, a link, a file, a chip), no paste, no reorder, no Delete, F2 or Cut on
+ * a chip; the menus carry no editing row (the core's `showBookmarkContextMenu`). A chip still
+ * drags out as a link (an opening), and Ctrl+D still files the page – through the star bubble,
+ * which names it as a private window's.
  */
 export function BookmarksBar({
   state,
@@ -252,6 +268,43 @@ export function BookmarksBar({
   }, [motion, orderKey])
 
   // ---------------------------------------------------------------------------
+  // Dragging a chip out: the page's link, as an HTML5 drag (bookmarks-15, dnd-13)
+  // ---------------------------------------------------------------------------
+
+  // Where the press began, so `dragstart` can tell the reorder (along the bar) from the link
+  // drag (off it). Chromium raises `dragstart` three pixels into a press on a draggable
+  // element, before the pointer drag's five (`useBarDrag`), and asks once per press: refusing
+  // it leaves the pointer events to the reorder; letting it go cancels them (`pointercancel`),
+  // which the reorder takes as its cue to stand down.
+  const pressAt = useRef<{ x: number; y: number } | null>(null)
+  // The card Chromium snapshots as the drag's image (§9.4's lifted item, the URL pill's link
+  // card): drawn off screen for the chip under the press, so it stands when `dragstart` asks.
+  const [linkCard, setLinkCard] = useState<{ node: BookmarkNode; drag: AddressDrag } | null>(null)
+  const linkGhost = useRef<HTMLDivElement>(null)
+  // The chip of this window in flight, for the strip's insertion line while it hovers: the line
+  // is measured without it, as the drop counts without it (`slotAt`'s `except`).
+  const dragOut = useRef<string | null>(null)
+
+  const onChipDragStart = (e: React.DragEvent, node: BookmarkNode, link: AddressDrag): void => {
+    const press = pressAt.current
+    // Along the bar the press is the reorder's, where the bar reorders at all: a private
+    // window's bar has no reorder, so every direction lifts the link there.
+    const alongBar = press ? Math.abs(e.clientX - press.x) >= Math.abs(e.clientY - press.y) : false
+    if (alongBar && !readOnly) {
+      e.preventDefault()
+      return
+    }
+    writeBookmarkDrag(e.dataTransfer, node, link)
+    // The card's grip is under the pointer's left edge, as Chrome holds a link.
+    if (linkGhost.current) e.dataTransfer.setDragImage(linkGhost.current, 12, 14)
+    dragOut.current = node.id
+  }
+  const onChipDragEnd = (): void => {
+    dragOut.current = null
+    setLinkCard(null)
+  }
+
+  // ---------------------------------------------------------------------------
   // Drops from outside: a sidebar tab (pointer drag) or a link / URL text (HTML5 drag)
   // ---------------------------------------------------------------------------
 
@@ -278,9 +331,15 @@ export function BookmarksBar({
     return () => clearTimeout(timer)
   }, [heldFolder, openMenu])
 
-  const slotAt = (x: number): { index: number; folderId: string | null } => {
+  // The slot under `x` among the chips as drawn; `except` is a chip of the bar in the hand, which
+  // is left out of the count (the drop counts without it) and takes nothing dropped on itself.
+  const slotAt = (
+    x: number,
+    except: string | null = null
+  ): { index: number; folderId: string | null } => {
     let index = 0
     for (const node of items.slice(0, visibleCount)) {
+      if (node.id === except) continue
       const rect = chipEls.current.get(node.id)?.getBoundingClientRect()
       if (!rect) continue
       const inset = rect.width * 0.25
@@ -304,8 +363,9 @@ export function BookmarksBar({
   const onDragOver = (e: React.DragEvent): void => {
     if (readOnly || !overStrip(e) || !carriesUrl(e.dataTransfer)) return
     e.preventDefault()
-    e.dataTransfer.dropEffect = 'copy'
-    const { index, folderId } = slotAt(e.clientX)
+    // A chip of the bar's (this window's or another's) is moved, and badges so; a link is copied.
+    e.dataTransfer.dropEffect = carriesBookmark(e.dataTransfer.types) ? 'move' : 'copy'
+    const { index, folderId } = slotAt(e.clientX, dragOut.current)
     setExternal(folderId ? { kind: 'folder', folderId } : { kind: 'slot', index })
   }
   const onDragLeave = (e: React.DragEvent): void => {
@@ -316,6 +376,19 @@ export function BookmarksBar({
     if (readOnly || !overStrip(e) || !carriesUrl(e.dataTransfer)) return
     e.preventDefault()
     setExternal(null)
+    // A chip come back down (bookmarks-15): it moves to the slot or into the folder, as the
+    // pointer drag would move it – every window's bar shows the same chips, so a chip from
+    // another window's bar is a move here too, never a second bookmark.
+    const own = draggedBookmarkId(e.dataTransfer)
+    if (own) {
+      const { index, folderId } = slotAt(e.clientX, own)
+      run('bookmark.move', {
+        ids: [own],
+        parentId: folderId ?? BOOKMARKS_BAR_ID,
+        index: folderId ? undefined : index
+      })
+      return
+    }
     const dropped = droppedBookmark(e.dataTransfer, pathForFile)
     if (!dropped) return
     const { index, folderId } = slotAt(e.clientX)
@@ -555,56 +628,83 @@ export function BookmarksBar({
             Drag a tab or a link here, or right-click to add a page.
           </span>
         )}
-        {items.map((node, i) => (
-          <button
-            key={node.id}
-            ref={attach}
-            type="button"
-            data-bm-id={node.id}
-            data-bm-chip={node.type}
-            data-bm-anchor={node.type === 'folder' ? true : undefined}
-            data-overflow={i >= visibleCount}
-            data-lifted={liftedId === node.id}
-            data-target={dropFolderId === node.id}
-            data-icon-only={node.type === 'url' && !node.title ? true : undefined}
-            aria-label={node.type === 'url' && !node.title ? nodeLabel(node) : undefined}
-            aria-haspopup={node.type === 'folder' ? 'menu' : undefined}
-            aria-expanded={node.type === 'folder' ? menu?.anchorId === node.id : undefined}
-            aria-hidden={i >= visibleCount || undefined}
-            tabIndex={i === focusIndex && i < visibleCount ? 0 : -1}
-            className="zen-bm-chip"
-            data-tooltip={node.url ?? undefined}
-            onPointerDown={(e) => {
-              // A reorder is an edit: a private window's chips stay where they are.
-              if (readOnly || (e.target as HTMLElement).closest('[data-drop]')) return
-              startDrag(e, node, e.currentTarget)
-            }}
-            onPointerEnter={() => {
-              // With a panel open, hovering another folder switches to it (Chrome).
-              if (menu && node.type === 'folder' && menu.anchorId !== node.id && !drag)
-                openMenu(node.id)
-            }}
-            onFocus={() => setFocusId(node.id)}
-            onClick={(e) => {
-              if (justDragged()) return
-              if (node.type === 'folder') toggleMenu(node.id)
-              else openNode(node, e)
-            }}
-            onAuxClick={(e) => {
-              if (e.button !== 1) return
-              // Middle click: the page in a background tab; a folder's pages all at once (Chrome).
-              if (node.type === 'url') run('bookmark.open', { id: node.id, newTab: true, tabId })
-              else run('bookmark.openAll', { ids: [node.id] })
-            }}
-            onContextMenu={(e) => contextMenu(e, node)}
-          >
-            <BookmarkIcon node={node} className="zen-bm-chip-icon" strokeWidth={TOOLBAR_STROKE} />
-            <span className="zen-bm-chip-label">{nodeLabel(node)}</span>
-            {tabDrag && i < visibleCount && (
-              <TabDropZones node={node} index={i} barId={BOOKMARKS_BAR_ID} />
-            )}
-          </button>
-        ))}
+        {items.map((node, i) => {
+          // The link the chip lifts (bookmarks-15), or none: a folder, a bookmarklet, a Zenium page.
+          const link = bookmarkDragOf(node)
+          return (
+            <button
+              key={node.id}
+              ref={attach}
+              type="button"
+              data-bm-id={node.id}
+              data-bm-chip={node.type}
+              data-bm-anchor={node.type === 'folder' ? true : undefined}
+              data-overflow={i >= visibleCount}
+              data-lifted={liftedId === node.id}
+              data-target={dropFolderId === node.id}
+              data-icon-only={node.type === 'url' && !node.title ? true : undefined}
+              aria-label={node.type === 'url' && !node.title ? nodeLabel(node) : undefined}
+              aria-haspopup={node.type === 'folder' ? 'menu' : undefined}
+              aria-expanded={node.type === 'folder' ? menu?.anchorId === node.id : undefined}
+              aria-hidden={i >= visibleCount || undefined}
+              tabIndex={i === focusIndex && i < visibleCount ? 0 : -1}
+              className="zen-bm-chip"
+              data-tooltip={node.url ?? undefined}
+              draggable={link ? true : undefined}
+              data-drag-address={link ? link.url : undefined}
+              onPointerDown={(e) => {
+                pressAt.current = { x: e.clientX, y: e.clientY }
+                setLinkCard(link ? { node, drag: link } : null)
+                // A reorder is an edit: a private window's chips stay where they are.
+                if (readOnly || (e.target as HTMLElement).closest('[data-drop]')) return
+                startDrag(e, node, e.currentTarget)
+              }}
+              onDragStart={(e) => {
+                if (link) onChipDragStart(e, node, link)
+                else e.preventDefault()
+              }}
+              onDragEnd={onChipDragEnd}
+              onPointerEnter={() => {
+                // With a panel open, hovering another folder switches to it (Chrome).
+                if (menu && node.type === 'folder' && menu.anchorId !== node.id && !drag)
+                  openMenu(node.id)
+              }}
+              onFocus={() => setFocusId(node.id)}
+              onClick={(e) => {
+                if (justDragged()) return
+                if (node.type === 'folder') toggleMenu(node.id)
+                else openNode(node, e)
+              }}
+              onAuxClick={(e) => {
+                if (e.button !== 1) return
+                // Middle click: the page in a background tab; a folder's pages all at once (Chrome).
+                if (node.type === 'url') run('bookmark.open', { id: node.id, newTab: true, tabId })
+                else run('bookmark.openAll', { ids: [node.id] })
+              }}
+              onContextMenu={(e) => contextMenu(e, node)}
+            >
+              <BookmarkIcon node={node} className="zen-bm-chip-icon" strokeWidth={TOOLBAR_STROKE} />
+              <span className="zen-bm-chip-label">{nodeLabel(node)}</span>
+              {tabDrag && i < visibleCount && (
+                <TabDropZones node={node} index={i} barId={BOOKMARKS_BAR_ID} />
+              )}
+            </button>
+          )
+        })}
+        {linkCard && (
+          // The link card the drag carries (§9.4's lifted item): the chip's icon and name, off
+          // screen until Chromium snapshots it as the drag image (`.zen-link-ghost`).
+          <div ref={linkGhost} className="zen-link-ghost" aria-hidden>
+            <div className="zen-link-ghost-card" data-surface="window">
+              <BookmarkIcon
+                node={linkCard.node}
+                className="zen-bm-chip-icon"
+                strokeWidth={TOOLBAR_STROKE}
+              />
+              <span className="min-w-0 truncate">{linkCard.drag.title}</span>
+            </div>
+          </div>
+        )}
         {showInsert && (
           <span
             ref={insertLine}
