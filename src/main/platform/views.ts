@@ -1209,7 +1209,6 @@ export class ElectronTabView implements TabView {
         const b = this.view.getBounds()
         const cur = screen.getCursorScreenPoint()
         const xy = 'x' in event ? `(${event.x},${event.y})` : `[${event.type}]`
-        // eslint-disable-next-line no-console
         console.log(
           `[signin-diag] sendInput ${event.type} ${xy} viewBounds=${JSON.stringify(b)} visible=${this.view.getVisible()} zoom=${wc.getZoomFactor()} cursorScreen=(${cur.x},${cur.y}) wcId=${this.webContentsId}`
         )
@@ -1219,13 +1218,10 @@ export class ElectronTabView implements TabView {
     }
     try {
       await this.withDebugger((dbg) => dispatchInputViaCdp(dbg, event))
-      if (diag)
-        // eslint-disable-next-line no-console
-        console.log(`[signin-diag] path=cdp ${event.type}`)
+      if (diag) console.log(`[signin-diag] path=cdp ${event.type}`)
       return
     } catch (error) {
       if (diag)
-        // eslint-disable-next-line no-console
         console.log(
           `[signin-diag] path=fallback ${event.type} err=${(error as Error)?.message ?? error}`
         )

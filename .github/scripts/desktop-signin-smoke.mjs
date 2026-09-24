@@ -312,12 +312,16 @@ async function clickThroughMcp() {
   for (let r = 1; r <= 5; r++) {
     await sleep(1000)
     await evaluate('(window.__clickTrusted = null, true)').catch(() => null)
-    const retryOut = await tool('browser_click', { target: 'text=open' }).catch((e) => `err ${e.message}`)
+    const retryOut = await tool('browser_click', { target: 'text=open' }).catch(
+      (e) => `err ${e.message}`
+    )
     const rHead = String(retryOut).split('\n')[0]
     const synth = /input: synthetic/.test(String(retryOut))
     const rv = await evaluate('window.__clickTrusted').catch(() => 'evalErr')
     const rc = await evaluate('window.__events.length').catch(() => '?')
-    log(`  DIAG mcp retry ${r}: __clickTrusted=${JSON.stringify(rv)} events=${rc} synthetic=${synth} headline=${JSON.stringify(rHead)}`)
+    log(
+      `  DIAG mcp retry ${r}: __clickTrusted=${JSON.stringify(rv)} events=${rc} synthetic=${synth} headline=${JSON.stringify(rHead)}`
+    )
     if (rv === true) break
   }
   for (const l of appLog.split('\n')) if (l.includes('[signin-diag]')) log(`  ${l}`)
@@ -572,6 +576,16 @@ try {
     } else if (gestureMode === 'xdotool') gesture = 'xdotool failed'
   }
   check('the gesture reached the page as trusted input', trusted, gesture)
+  // DIAG round (always, pass or fail): the input path the product took and the view bounds it
+  // dispatched into, plus the page's geometry – so a green run establishes the baseline against
+  // which a red run's `path=`/`viewBounds=` are read.
+  {
+    const g = await evaluate(
+      `({ dpr: devicePixelRatio, sx: screenX, sy: screenY, iw: innerWidth, ih: innerHeight, ow: outerWidth, oh: outerHeight })`
+    ).catch((e) => String(e))
+    log(`DIAG geometry: ${JSON.stringify(g)}; onScreen ${JSON.stringify(onScreen)}`)
+    for (const l of appLog.split('\n')) if (l.includes('[signin-diag]')) log(l)
+  }
 
   const popup =
     (await waitFor(
