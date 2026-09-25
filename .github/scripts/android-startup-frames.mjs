@@ -239,7 +239,15 @@ function readFrames(buffer) {
     const centre = sample(buffer, offset, points.centre)
     const mark = sample(buffer, offset, points.mark)
     const bar = sample(buffer, offset, points.bar)
-    frames.push({ k, cls: classify(left, right, centre, mark, bar), left, right, centre, mark, bar })
+    frames.push({
+      k,
+      cls: classify(left, right, centre, mark, bar),
+      left,
+      right,
+      centre,
+      mark,
+      bar
+    })
   }
   return frames
 }
@@ -262,14 +270,15 @@ if (video !== '-') {
   if (buffer) frames = readFrames(buffer)
 }
 // A frame between the splash's last and the chrome's first that is neither is the exit's blend
-// (the splash's ground without its icon there is the icon's fade done, the reveal not yet).
+// (the splash's ground without its icon there is the icon's fade done, the reveal not yet) –
+// within the exit's window; ground standing longer than the exit stays in the timeline as ground.
 const lastSplash = frames.map((f) => f.cls).lastIndexOf('splash')
 const firstSplash = frames.findIndex((f) => f.cls === 'splash')
 const firstChrome = frames.findIndex(
   (f, i) => i > lastSplash && ['picture', 'page', 'blank'].includes(f.cls)
 )
 if (kind !== 'webapp' && lastSplash >= 0 && firstChrome > lastSplash) {
-  for (let i = lastSplash + 1; i < firstChrome; i++)
+  for (let i = lastSplash + 1; i < Math.min(firstChrome, lastSplash + 1 + EXIT_FRAMES); i++)
     if (['other', 'ground'].includes(frames[i].cls)) frames[i].cls = 'fade'
 }
 // The web app's: the dress blend just before the tile, the exit (the icon's fade leaves the
