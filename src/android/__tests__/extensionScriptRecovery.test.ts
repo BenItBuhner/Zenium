@@ -440,6 +440,137 @@ describe('extension-origin stylesheets the page CSP refused', () => {
     expect(none.errors).toEqual([])
   })
 
+  it("asks an isolated world's own import() for a refused graph from the page-origin alias, which 'self' admits (Eneba on store.steampowered.com; Buyhatke's refused again on flipkart.com)", async () => {
+    const { host, errors } = harness()
+    const warned: unknown[][] = []
+    const imported: Array<{
+      url: string
+      resolve: () => void
+      reject: (reason: unknown) => void
+    }> = []
+    const doc = new FakeDocument(null)
+    host.document = doc
+    host.pageModules = false
+    host.pageOrigin = 'https://store.steampowered.com'
+    host.warn = (...args) => void warned.push(args)
+    host.importModule = (url) =>
+      new Promise<void>((resolve, reject) => void imported.push({ url, resolve, reject }))
+    const recovery = createScriptRecovery(host)
+    const entry = `${ORIGIN}/assets/widget.tsx-loader-BbQ1xO2k.js`
+    recovery.onViolation(violation(entry))
+    // The world's own import, so the graph evaluates beside the content script's `chrome`; no
+    // module script of the page's (that would evaluate on the page's global) and no notice.
+    expect(doc.created).toEqual([])
+    expect(imported.map((i) => i.url)).toEqual([
+      `https://store.steampowered.com/.zenium-ext/${EXT}/assets/widget.tsx-loader-BbQ1xO2k.js`
+    ])
+    expect(recovery.pending()).toBe(1)
+    expect(warned).toEqual([])
+    // The same entry refused again (a second loader, a second frame boot) is not retried twice.
+    recovery.onViolation(violation(entry))
+    expect(imported).toHaveLength(1)
+    imported[0]!.resolve()
+    await tick()
+    expect(recovery.pending()).toBe(0)
+    expect(errors).toEqual([])
+    // A policy naming neither a nonce nor the page's origin refuses the alias too (Flipkart's
+    // nonce-only `script-src`, Buyhatke): the world's import rejects, and that is recorded once.
+    const cart = `${ORIGIN}/assets/addToCart.js-7VOB0Zfo.js`
+    recovery.onViolation(violation(cart))
+    expect(imported).toHaveLength(2)
+    expect(recovery.pending()).toBe(1)
+    imported[1]!.reject(new TypeError('Failed to fetch dynamically imported module'))
+    await tick()
+    expect(recovery.pending()).toBe(0)
+    expect(errors).toHaveLength(1)
+    expect(String(errors[0]?.[0])).toContain('addToCart.js-7VOB0Zfo.js')
+    expect(String(errors[0]?.[0])).toContain(`/.zenium-ext/${EXT}/assets/addToCart.js-7VOB0Zfo.js`)
+    // The alias's own violation is not an extension URL's: nothing further of the recovery's.
+    recovery.onViolation(
+      violation(`https://store.steampowered.com/.zenium-ext/${EXT}/assets/addToCart.js-7VOB0Zfo.js`)
+    )
+    expect(imported).toHaveLength(2)
+    // A world whose import() throws at the call (none to be had): recorded at once, nothing pending.
+    const thrown = harness()
+    thrown.host.document = new FakeDocument(null)
+    thrown.host.pageModules = false
+    thrown.host.pageOrigin = 'https://store.steampowered.com'
+    thrown.host.importModule = () => {
+      throw new TypeError('import() is not available')
+    }
+    const thrower = createScriptRecovery(thrown.host)
+    thrower.onViolation(violation(entry))
+    expect(thrower.pending()).toBe(0)
+    expect(String(thrown.errors[0]?.[0])).toContain('import() is not available')
+    // No import lent, or an opaque page origin (an about:blank frame's "null"): recorded as before.
+    for (const bare of [
+      { pageOrigin: 'https://store.steampowered.com' },
+      { pageOrigin: 'null', importModule: host.importModule }
+    ]) {
+      const world = harness()
+      const noted: unknown[][] = []
+      world.host.document = new FakeDocument(null)
+      world.host.pageModules = false
+      world.host.warn = (...args) => void noted.push(args)
+      Object.assign(world.host, bare)
+      createScriptRecovery(world.host).onViolation(violation(entry))
+      expect(noted).toHaveLength(1)
+      expect(String(noted[0]?.[0])).toContain('isolated world')
+      expect(world.errors).toEqual([])
+    }
+    expect(imported).toHaveLength(2)
+  })
+
+  it("puts the page-origin alias in the module script's src where the page lends no nonce (a host-only policy on the one-realm WebView), the nonce first where there is one", () => {
+    const { host, errors } = harness()
+    const doc = new FakeDocument(null)
+    host.document = doc
+    host.pageModules = true
+    host.pageOrigin = 'https://store.steampowered.com'
+    const recovery = createScriptRecovery(host)
+    const entry = `${ORIGIN}/assets/widget.tsx-loader-BbQ1xO2k.js`
+    recovery.onViolation(violation(entry))
+    expect(doc.created).toHaveLength(1)
+    const script = doc.created[0]!
+    expect(script).toMatchObject({
+      type: 'module',
+      nonce: '',
+      src: `https://store.steampowered.com/.zenium-ext/${EXT}/assets/widget.tsx-loader-BbQ1xO2k.js`,
+      connected: true
+    })
+    expect(recovery.pending()).toBe(1)
+    script.dispatchEvent(new Event('load'))
+    expect(script.connected).toBe(false)
+    expect(recovery.pending()).toBe(0)
+    expect(errors).toEqual([])
+    // The alias refused too (a policy naming neither): reported with the alias named, element gone.
+    recovery.onViolation(violation(`${ORIGIN}/assets/addToCart.js-7VOB0Zfo.js`))
+    doc.created[1]!.dispatchEvent(new Event('error'))
+    expect(doc.created[1]!.connected).toBe(false)
+    expect(recovery.pending()).toBe(0)
+    expect(errors).toHaveLength(1)
+    expect(String(errors[0]?.[0])).toContain('page-origin alias')
+    expect(String(errors[0]?.[0])).toContain(`/.zenium-ext/${EXT}/assets/addToCart.js-7VOB0Zfo.js`)
+    // A page that lends a nonce keeps the served URL under it: the nonce is the policy's own word.
+    const nonced = harness()
+    nonced.host.document = new FakeDocument()
+    nonced.host.pageModules = true
+    nonced.host.pageOrigin = 'https://www.flipkart.com'
+    createScriptRecovery(nonced.host).onViolation(violation(entry))
+    expect((nonced.host.document as FakeDocument).created[0]).toMatchObject({
+      nonce: 'nonce-of-the-page',
+      src: entry
+    })
+    // An opaque page origin roots no alias: the page lends no nonce, as before.
+    const opaque = harness()
+    opaque.host.document = new FakeDocument(null)
+    opaque.host.pageModules = true
+    opaque.host.pageOrigin = 'null'
+    createScriptRecovery(opaque.host).onViolation(violation(entry))
+    expect((opaque.host.document as FakeDocument).created).toEqual([])
+    expect(String(opaque.errors[0]?.[0])).toContain('lends no nonce')
+  })
+
   it('rebaseCssUrls leaves absolute, fragment, protocol-relative and data references alone', () => {
     const out = rebaseCssUrls(
       'a{b:url(x.png) url(\'../y.png\') url("https://h/z.png") url(#frag) url(//cdn/w.png) url( sub/v.png )}',

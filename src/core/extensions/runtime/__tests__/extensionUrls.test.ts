@@ -4,6 +4,8 @@ import {
   chromeExtensionUrl,
   extensionIdOfUrl,
   isExtensionPageUrl,
+  PAGE_ALIAS_SEGMENT,
+  pageAliasUrl,
   presentExtensionOrigin,
   presentExtensionUrl,
   sameExtensionOrigin,
@@ -103,6 +105,32 @@ describe('extension URL spellings', () => {
     expect(extensionUrl(ID, 'a b/c.d.html')).toBe(`${SERVED}/a b/c.d.html`)
     expect(extensionUrl(ID, '.hidden/x.js')).toBe(`${SERVED}/.hidden/x.js`)
     expect(extensionUrl(ID, '')).toBe(`${SERVED}/`)
+  })
+
+  it("roots a served file's page-origin alias under the page's own http(s) origin, and nowhere else", () => {
+    // The alias a page's `script-src 'self'` admits where it refused the served origin
+    // (`extensionScriptRecovery.ts`), path and query intact, the id in lower case.
+    expect(pageAliasUrl('https://store.steampowered.com', `${SERVED}/assets/widget.js?v=2`)).toBe(
+      `https://store.steampowered.com/.zenium-ext/${ID}/assets/widget.js?v=2`
+    )
+    expect(pageAliasUrl('http://10.0.2.2:8000', `${SERVED}/a.js`)).toBe(
+      `http://10.0.2.2:8000/${PAGE_ALIAS_SEGMENT}/${ID}/a.js`
+    )
+    expect(pageAliasUrl('https://h', `HTTPS://${ID.toUpperCase()}.EXT.ZENIUM.INVALID/p.js`)).toBe(
+      `https://h/.zenium-ext/${ID}/p.js`
+    )
+    expect(pageAliasUrl('https://h', SERVED)).toBe(`https://h/.zenium-ext/${ID}/`)
+    // Only a served URL has an alias: Chrome's spelling, a page's own URL, nothing else.
+    expect(pageAliasUrl('https://h', `chrome-extension://${ID}/p.js`)).toBeNull()
+    expect(pageAliasUrl('https://h', 'https://cdn.example/p.js')).toBeNull()
+    expect(
+      pageAliasUrl('https://h', `https://${ID}.ext.zenium.invalid.evil.example/p.js`)
+    ).toBeNull()
+    // Only a page's http(s) origin roots one: not an opaque origin, an extension page's own,
+    // a URL with a path, or another scheme.
+    for (const origin of ['null', SERVED, 'https://h/path', 'file://', 'zen://settings', '']) {
+      expect(pageAliasUrl(origin, `${SERVED}/p.js`)).toBeNull()
+    }
   })
 })
 

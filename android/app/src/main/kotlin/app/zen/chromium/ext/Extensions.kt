@@ -1491,6 +1491,30 @@ class Extensions(private val host: Host) {
             val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
             return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
         }
+        // A module graph a page's policy refused at the extension's origin, asked for again from
+        // the page's own origin (`/.zenium-ext/<id>/<path>`, the bootstrap's retry in
+        // extensionScriptRecovery.ts; `script-src 'self'` admits it where the served origin was
+        // refused). Served as the extension's origin serves a foreign page – the web-accessible
+        // resources only – for a subresource of a tab's page, never a navigation (no document:
+        // a frame of the extension's under the page's origin would be a page of the page's) and
+        // never an extension view's request. The module bracket and the chunk stub go with it on
+        // the one-realm WebView (the graph evaluates on the page's real global there); in an
+        // isolated world the world's own `import()` asked, and the file is served as it is.
+        if (tab != null && extensionPage == null && !request.isForMainFrame && (request.method ?: "GET").equals("GET", ignoreCase = true)) {
+            val alias = ExtensionUrls.pageAlias(url.path ?: "")
+            if (alias != null) {
+                val (id, path) = alias
+                val ext = served[id] ?: return notFound()
+                if (tab.isPrivateTab && !ext.allowPrivate) return notFound()
+                if (path.isEmpty() || ExtensionScripts.mimeType(path) == "text/html") return notFound()
+                if (!ext.webAccessible.any { it.matches(path) }) return notFound()
+                // A same-origin module request carries no `Origin`, so the graph is told by the
+                // WebView alone; only a script is bracketed (a stylesheet or an image goes as it is).
+                val moduleGraph = !isolatedWorlds && ExtensionScripts.isScriptPath(path)
+                val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
+                return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
+            }
+        }
         // A fetch or XHR of an extension page to a host its permissions cover: Chrome skips CORS
         // there, the proxy stands in (CorsProxy). The request's `Origin` names the extension, so
         // a popup, a background view and an extension page opened in a tab are one case.
