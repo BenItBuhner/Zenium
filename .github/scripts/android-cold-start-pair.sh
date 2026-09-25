@@ -9,26 +9,37 @@
 # drivers; the device is prepared the way android-gesture-demo.sh prepares it (the same display,
 # three-button navigation, the bundled Google apps disabled) so the numbers are the recipe's own.
 #
+# Two ways in, each build (round 4): `direct` – the shell's `am start` at MainActivity, the pair
+# as it was, a start no user makes – and `alias` – the launcher's own intent (MAIN/LAUNCHER,
+# NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, the tap's path: the alias's target
+# starts (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under
+# the splash theme from it) and forwards to MainActivity, one launch to the platform, so
+# TotalTime and Fully drawn span the tap to MainActivity's frames. The alias rows are the P0
+# rule's reading of the trampoline itself (alias − direct on the same build, and after − before
+# on the alias); the direct rows stay comparable with every pair before.
+#
 #   P0_BASE_APK   – the base build's debug APK (the caller's setup-script built it from the base ref)
 #   P0_BASE_LABEL – how the base is named in the table (its commit), `base` by default
 #   P0_HEAD_LABEL – how the head is named, `head` by default
-#   P0_RUNS       – measured cold starts per build, 5 by default (one more, discarded, pays for
-#                   the install's dexopt and the profile's first run)
+#   P0_RUNS       – measured cold starts per build and way, 5 by default (one more, discarded,
+#                   pays for the install's dexopt and the profile's first run)
 #   DEMO_OUT      – where the record goes (cold-start-pair.txt and the raw am start output)
 #
 # Each build is installed over the other (`adb install -r -d`: the same applicationId, so the
 # profile stays and both boot the same state; -d since the base may carry the newer version code
-# when main has moved past the branch), started once to settle, then force-stopped and started
-# P0_RUNS times. Every run keeps one clock for both builds (a build without the READY mark must
-# not read its frame statistics later, nor start its next run later, than one with it): the mark
-# is waited for up to READY_WAIT_S from the start request, the statistics are read STATS_AT_S
-# after it whatever the wait found, and the next start comes NEXT_AT_S after it, the device quiet
-# and the boot – the chrome and the core boot on after the first frame – long over on either.
-# The table is written to the job summary too.
+# when main has moved past the branch), then for each way started once to settle, force-stopped
+# and started P0_RUNS times. Every run keeps one clock for both builds (a build without the
+# READY mark must not read its frame statistics later, nor start its next run later, than one
+# with it): the mark is waited for up to READY_WAIT_S from the start request, the statistics are
+# read STATS_AT_S after it whatever the wait found, and the next start comes NEXT_AT_S after it,
+# the device quiet and the boot – the chrome and the core boot on after the first frame – long
+# over on either. The table is written to the job summary too.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
 activity=app.zen.chromium.MainActivity
+alias=app.zen.chromium.icon.Indigo
+tap_flags=0x10200000
 runs=${P0_RUNS:-5}
 READY_WAIT_S=12
 STATS_AT_S=15
@@ -79,9 +90,18 @@ to_launcher() {
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.HOME > /dev/null 2>&1 || true
   sleep 3
 }
-# The start with -W; the lines of its answer (Status, LaunchState, TotalTime, WaitTime).
+# The start with -W by way $1 (direct | alias); the lines of its answer (Status, LaunchState,
+# TotalTime, WaitTime). The alias is exported: a plain shell start, an APPLICATION launch source
+# like the launcher's, with the launcher's flags.
 start_app() {
-  adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$activity" | tr -d '\r'
+  case "$1" in
+    alias)
+      adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f "$tap_flags" -n "$app_id/$alias" | tr -d '\r'
+      ;;
+    *)
+      adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$activity" | tr -d '\r'
+      ;;
+  esac
 }
 # Sleep until the shell's clock (`date +%s`) reads $1; nothing when it already does.
 sleep_until() {
@@ -152,15 +172,21 @@ mark_values() {
   for line in "$@"; do printf '%s\n' "$line" | tr ' ' '\n' | sed -n "s/^$name=//p"; done
 }
 
-# Measure one build: install, settle on one discarded start, then $runs measured cold starts.
-# Writes `<name>.txt` (every am start answer) and echoes the TotalTime, Fully drawn and WaitTime lists.
-measure() {
+# Install one build over the other (the profile stays: the same applicationId).
+install_build() {
   local name=$1 apk=$2 label=$3
   echo "== $name ($label): $apk"
   adb install -r -d -g "$apk"
+}
+# Measure the installed build by way $2 (direct | alias) under name $1: settle on one discarded
+# start, then $runs measured cold starts. Writes `<name>-am-start.txt` (every am start answer)
+# and fills the totals, waits, states, drawn, helds, marks and fstats arrays.
+measure() {
+  local name=$1 way=$2
+  echo "== $name: $runs cold starts, $way"
   : > "$out/$name-am-start.txt"
   to_launcher
-  start_app > /dev/null
+  start_app "$way" > /dev/null
   sleep 8
   adb shell am force-stop "$app_id"
   totals=()
@@ -175,7 +201,7 @@ measure() {
     adb logcat -c > /dev/null 2>&1 || true
     seen=$(fully_drawn_count)
     started=$(date +%s)
-    answer=$(start_app)
+    answer=$(start_app "$way")
     # One clock for both builds: the READY mark waited for (the boot's length where a build has
     # it), the log's lines and the frame statistics read STATS_AT_S after the start request
     # whether the wait found the mark or not, the next start NEXT_AT_S after it.
@@ -189,8 +215,10 @@ measure() {
     wait_=$(printf '%s\n' "$answer" | sed -n 's/^WaitTime: *//p' | head -n 1)
     state=$(printf '%s\n' "$answer" | sed -n 's/^LaunchState: *//p' | head -n 1)
     echo "  run $i: TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held${marks_:+; marks $marks_}${stats_:+; frames $stats_}"
-    totals+=("${total:-0}")
-    waits+=("${wait_:-0}")
+    # A start the platform answered without a time (a build without the alias: `Error: Activity
+    # class does not exist`) reads `-`, and the median leaves it out.
+    totals+=("${total:--}")
+    waits+=("${wait_:--}")
     states+=("${state:-?}")
     drawn+=("$fully")
     helds+=("$held")
@@ -216,10 +244,23 @@ delta() {
 
 join() { local IFS=' '; echo "$*"; }
 
-measure before "$base_apk" "${P0_BASE_LABEL:-base}"
-before_totals=("${totals[@]}"); before_waits=("${waits[@]}"); before_states=("${states[@]}"); before_drawn=("${drawn[@]}"); before_helds=("${helds[@]}"); before_marks=("${marks[@]}"); before_fstats=("${fstats[@]}")
-measure after "$head_apk" "${P0_HEAD_LABEL:-head}"
-after_totals=("${totals[@]}"); after_waits=("${waits[@]}"); after_states=("${states[@]}"); after_drawn=("${drawn[@]}"); after_helds=("${helds[@]}"); after_marks=("${marks[@]}"); after_fstats=("${fstats[@]}")
+# Keep the last measurement's arrays under prefix $1 (`<prefix>_totals` and the rest).
+keep() {
+  local p=$1
+  eval "${p}_totals=(\"\${totals[@]}\"); ${p}_waits=(\"\${waits[@]}\"); ${p}_states=(\"\${states[@]}\"); ${p}_drawn=(\"\${drawn[@]}\"); ${p}_helds=(\"\${helds[@]}\"); ${p}_marks=(\"\${marks[@]}\"); ${p}_fstats=(\"\${fstats[@]}\")"
+}
+
+# One build, both ways: the direct start first (the pair as it was), then the launcher's.
+install_build before "$base_apk" "${P0_BASE_LABEL:-base}"
+measure before direct
+keep before
+measure before-alias alias
+keep before_alias
+install_build after "$head_apk" "${P0_HEAD_LABEL:-head}"
+measure after direct
+keep after
+measure after-alias alias
+keep after_alias
 
 before_total=$(median "${before_totals[@]}")
 after_total=$(median "${after_totals[@]}")
@@ -227,52 +268,64 @@ before_wait=$(median "${before_waits[@]}")
 after_wait=$(median "${after_waits[@]}")
 before_fully=$(median "${before_drawn[@]}")
 after_fully=$(median "${after_drawn[@]}")
+before_alias_total=$(median "${before_alias_totals[@]}")
+after_alias_total=$(median "${after_alias_totals[@]}")
+before_alias_wait=$(median "${before_alias_waits[@]}")
+after_alias_wait=$(median "${after_alias_waits[@]}")
+before_alias_fully=$(median "${before_alias_drawn[@]}")
+after_alias_fully=$(median "${after_alias_drawn[@]}")
+
+# The medians table of `name=value` lines (the boot's marks, the frame statistics) for the two
+# builds by one way: $1 the column's name, $2 and $3 the names of the arrays holding the before
+# and after lines. Nothing when neither build has the lines.
+values_table() {
+  local column=$1
+  local -n vt_before=$2 vt_after=$3
+  local names n bm am
+  names=$(mark_names "${vt_before[@]}" "${vt_after[@]}")
+  [ -n "$names" ] || return 0
+  echo
+  echo "| $column | before median | after median | delta | before runs | after runs |"
+  echo "| --- | --- | --- | --- | --- | --- |"
+  for n in $names; do
+    # shellcheck disable=SC2046
+    bm=$(median $(mark_values "$n" "${vt_before[@]}"))
+    # shellcheck disable=SC2046
+    am=$(median $(mark_values "$n" "${vt_after[@]}"))
+    # shellcheck disable=SC2046
+    echo "| $n | $bm | $am | $(delta "$am" "$bm") | $(join $(mark_values "$n" "${vt_before[@]}")) | $(join $(mark_values "$n" "${vt_after[@]}")) |"
+  done
+}
 
 {
-  echo "MainActivity cold start, am start -W after am force-stop, $runs runs each on one emulator boot (medians in ms)"
+  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $runs runs per build and way on one emulator boot (medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap."
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
-  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY; - for a build without the mark. Method: every start from the launcher with the process gone; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds."
+  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - for a build without the mark. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
   echo
-  echo "| build | TotalTime median | Fully drawn median | WaitTime median | TotalTime runs | Fully drawn runs | LaunchState | splash held (by) |"
+  echo "| build, way | TotalTime median | Fully drawn median | WaitTime median | TotalTime runs | Fully drawn runs | LaunchState | splash held (by) |"
   echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
-  echo "| before (${P0_BASE_LABEL:-base}) | $before_total | $before_fully | $before_wait | $(join "${before_totals[@]}") | $(join "${before_drawn[@]}") | $(join "${before_states[@]}") | $(join "${before_helds[@]}") |"
-  echo "| after (${P0_HEAD_LABEL:-head}) | $after_total | $after_fully | $after_wait | $(join "${after_totals[@]}") | $(join "${after_drawn[@]}") | $(join "${after_states[@]}") | $(join "${after_helds[@]}") |"
+  echo "| before (${P0_BASE_LABEL:-base}), direct | $before_total | $before_fully | $before_wait | $(join "${before_totals[@]}") | $(join "${before_drawn[@]}") | $(join "${before_states[@]}") | $(join "${before_helds[@]}") |"
+  echo "| after (${P0_HEAD_LABEL:-head}), direct | $after_total | $after_fully | $after_wait | $(join "${after_totals[@]}") | $(join "${after_drawn[@]}") | $(join "${after_states[@]}") | $(join "${after_helds[@]}") |"
+  echo "| before (${P0_BASE_LABEL:-base}), alias | $before_alias_total | $before_alias_fully | $before_alias_wait | $(join "${before_alias_totals[@]}") | $(join "${before_alias_drawn[@]}") | $(join "${before_alias_states[@]}") | $(join "${before_alias_helds[@]}") |"
+  echo "| after (${P0_HEAD_LABEL:-head}), alias | $after_alias_total | $after_alias_fully | $after_alias_wait | $(join "${after_alias_totals[@]}") | $(join "${after_alias_drawn[@]}") | $(join "${after_alias_states[@]}") | $(join "${after_alias_helds[@]}") |"
   echo
-  echo "delta (after - before): TotalTime $(delta "$after_total" "$before_total") ms, Fully drawn $(delta "$after_fully" "$before_fully") ms, WaitTime $(delta "$after_wait" "$before_wait") ms"
-  # The boot's marks, where a build logs them: one row per name, the medians over the runs.
-  names=$(mark_names "${before_marks[@]}" "${after_marks[@]}")
-  if [ -n "$names" ]; then
+  echo "delta (after - before), direct: TotalTime $(delta "$after_total" "$before_total") ms, Fully drawn $(delta "$after_fully" "$before_fully") ms, WaitTime $(delta "$after_wait" "$before_wait") ms"
+  echo "delta (after - before), alias: TotalTime $(delta "$after_alias_total" "$before_alias_total") ms, Fully drawn $(delta "$after_alias_fully" "$before_alias_fully") ms, WaitTime $(delta "$after_alias_wait" "$before_alias_wait") ms"
+  echo "the trampoline's cost (alias - direct, the same build): before TotalTime $(delta "$before_alias_total" "$before_total") ms, Fully drawn $(delta "$before_alias_fully" "$before_fully") ms; after TotalTime $(delta "$after_alias_total" "$after_total") ms, Fully drawn $(delta "$after_alias_fully" "$after_fully") ms"
+  # The boot's marks, where a build logs them: one row per name, the medians over the runs, each way.
+  if [ -n "$(mark_names "${before_marks[@]}" "${after_marks[@]}" "${before_alias_marks[@]}" "${after_alias_marks[@]}")" ]; then
     echo
-    echo "boot marks (BootMarks.kt): ms since the process start, medians over the runs; app ZenApplication.onCreate done, activity MainActivity.onCreate begins, host the Host built, content setContentView done, load the chrome's document asked for, created onCreate done, boot the core's boot call answered, ready chrome.ready heard, frame that frame drawn (the splash lifts). - for a build without the mark."
-    echo
-    echo "| mark | before median | after median | delta | before runs | after runs |"
-    echo "| --- | --- | --- | --- | --- | --- |"
-    for n in $names; do
-      # shellcheck disable=SC2046
-      bm=$(median $(mark_values "$n" "${before_marks[@]}"))
-      # shellcheck disable=SC2046
-      am=$(median $(mark_values "$n" "${after_marks[@]}"))
-      # shellcheck disable=SC2046
-      echo "| $n | $bm | $am | $(delta "$am" "$bm") | $(join $(mark_values "$n" "${before_marks[@]}")) | $(join $(mark_values "$n" "${after_marks[@]}")) |"
-    done
+    echo "boot marks (BootMarks.kt): ms since the process start, medians over the runs; app ZenApplication.onCreate done, activity MainActivity.onCreate begins (on the alias rows after the trampoline's own create, in the same process), host the Host built, content setContentView done, load the chrome's document asked for, created onCreate done, boot the core's boot call answered, ready chrome.ready heard, frame that frame drawn (the splash lifts). - for a build without the mark."
+    values_table "mark, direct" before_marks after_marks
+    values_table "mark, alias" before_alias_marks after_alias_marks
   fi
-  # Ruling 5: the boot's frame statistics, the medians over the runs, the same helpers (name=value words).
-  names=$(mark_names "${before_fstats[@]}" "${after_fstats[@]}")
-  if [ -n "$names" ]; then
+  # Ruling 5: the boot's frame statistics, the medians over the runs, the same helpers (name=value words), each way.
+  if [ -n "$(mark_names "${before_fstats[@]}" "${after_fstats[@]}" "${before_alias_fstats[@]}" "${after_alias_fstats[@]}")" ]; then
     echo
     echo "frame statistics (dumpsys gfxinfo, the process since its start, read $STATS_AT_S s after the start request on either build): frames rendered, janky, slowui the UI thread slow (the main thread's long tasks during the boot), missed the frame deadline missed, p90 / p99 the frame time percentiles in ms; medians over the runs."
-    echo
-    echo "| statistic | before median | after median | delta | before runs | after runs |"
-    echo "| --- | --- | --- | --- | --- | --- |"
-    for n in $names; do
-      # shellcheck disable=SC2046
-      bm=$(median $(mark_values "$n" "${before_fstats[@]}"))
-      # shellcheck disable=SC2046
-      am=$(median $(mark_values "$n" "${after_fstats[@]}"))
-      # shellcheck disable=SC2046
-      echo "| $n | $bm | $am | $(delta "$am" "$bm") | $(join $(mark_values "$n" "${before_fstats[@]}")) | $(join $(mark_values "$n" "${after_fstats[@]}")) |"
-    done
+    values_table "statistic, direct" before_fstats after_fstats
+    values_table "statistic, alias" before_alias_fstats after_alias_fstats
   fi
 } | tee "$out/cold-start-pair.txt"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

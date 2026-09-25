@@ -39,8 +39,11 @@ import java.io.File
  * done here too: the install's record and tile for a fixture app on the runner's `/webapp` page
  * are written where the window reads them ([WebAppStore]; the tile a flat cyan layer the
  * recording tells from the app's purple ground and the page's green), and the notes carry the
- * `am start` arguments of the app's launch intent ([WebAppLauncherActivity.launchIntent]) for
- * the runner to fire as root once the process is gone.
+ * `am start` arguments of the app's launch intent ([WebAppLauncherActivity.launchIntent],
+ * `webapp-start:`) and of the pinned tile's own ([Shortcuts.launchIntent], `tile-start:`: the
+ * trampoline's path, as the home screen sends it) for the runner to fire as root once the
+ * process is gone. The launcher icon's own path needs no note: the runner fires the launcher's
+ * intent at the enabled alias itself.
  */
 @RunWith(AndroidJUnit4::class)
 class StartupDemo : DemoHarness("startup-demo-state.json", "android-startup", "startup-demo") {
@@ -137,6 +140,9 @@ class StartupDemo : DemoHarness("startup-demo-state.json", "android-startup", "s
         val saved = WebAppStore.tileFile(app, record.shortcutId)
         check("the web app's record and tile are on disk", WebAppStore.load(app, record.shortcutId) != null && saved.isFile, "${saved.name}, ${saved.length()} B, ${canvas}px")
         note("webapp-start: ${amStartArguments(WebAppLauncherActivity.launchIntent(app, record, url))}")
+        // The pinned tile's own intent (Shortcuts.launchIntent: the trampoline, the record as
+        // extras), for the runner's tile act – the launch as the home screen sends it.
+        note("tile-start: ${amStartArguments(Shortcuts.launchIntent(app, url, record))}")
         note("webapp-colours: ground #%06x tile #%06x theme #%06x".format(WEBAPP_BACKGROUND and 0xffffff, WEBAPP_TILE and 0xffffff, WEBAPP_THEME and 0xffffff))
     }
 

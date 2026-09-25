@@ -61,11 +61,31 @@
 // Its rules: the tile was on screen on the app's ground; the window never stood bare before the
 // tile beyond the dress; the app's own window never showed the page view unpainted (`bare`);
 // the page's first frame came after the last splash frame within the exit's motion; nothing
-// bare, plain or ground after the page; no splash frame after the page's first. Its hand-over
-// gap (`gap:`): the ground and bare frames before the splash's first.
+// bare, plain or ground after the page; no splash frame after the page's first. Its gap
+// (`gap:`) runs from the fixed ground's first frame to the tile – the plain frames (the
+// platform's starting window before the hand-over), the dress, and the app's own window's
+// ground and bare frames – with the hand-over's own share (`hand-over:`) named apart.
 //
-//   node android-startup-frames.mjs <cold|hot|webapp> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
-//        [--still <class>=<png>]... [--tile <png>]
+// Two readings hold for every kind. `black`: every point near black (tighter than the
+// tolerance, so the dark theme's near-black window stays `blank`) – a display with nothing on
+// it. The navigation bar's glyphs (`nav`): the bottom band's ground (the median colour) and its
+// ink (the pixels far from that ground), light or dark by the ink's own luminance, `none` when
+// too little ink is there; at the dressed splash and on every splash still the glyphs must
+// take the tone the ground's luminance asks for (light on a dark ground, dark on a light one:
+// the platform's own rule for its starting window, the app's for its bars).
+//
+// The lead (`lead:`, with `--anchor ready=<ms>`): how long after the start request the splash
+// – or, for the web app, any window of the app's – first showed, and what showed until then.
+// The recording carries no clock of the request's, so it is anchored on the splash's lift: the
+// READY line's distance from the request on logcat's clock (`<ms>`) is laid back from the
+// frame after the last splash frame, which the lift draws within a frame or two. The lead
+// therefore reads short by up to two frames (100 ms), the same for every way of starting, and
+// the ways are compared, not the absolute. The `lead` kind is that reading alone (the link
+// path, the warm launch's flash): the timeline, the splash frames counted, no rule but that the
+// recording was read.
+//
+//   node android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
+//        [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>]
 //
 // The findings carry the timeline (runs of frames), the verdicts and each still's reading; the
 // exit code is 1 when a rule failed, 2 for a usage error. `--tile` writes a contact sheet of the
@@ -95,11 +115,22 @@ const BAR_Y = 12
 /** Frames before the tile that may be the dress blend (150 ms), and after the last splash frame that may be the exit (482 ms), at FPS. */
 const DRESS_FRAMES = 6
 const EXIT_FRAMES = 14
+/** A point is black within this per-channel distance of 0: under the dark window's #16161b, over the encoder's noise. */
+const BLACK_TOLERANCE = 10
+/** The navigation bar's band: the display's bottom 5 % (48 dp at the recipe's density is 84 of 1600 px), its lowest rows skipped. */
+const NAV_BAND = 0.05
+const NAV_SKIP_ROWS = 2
+/** A band pixel this far (max channel) from the band's ground is ink; fewer ink pixels than this is no glyph at all. */
+const NAV_INK_DISTANCE = 60
+const NAV_INK_MIN = 20
+/** The lift draws the frame after the last splash frame within this many frames: the lead's error, stated with it. */
+const LEAD_ERROR_FRAMES = 2
 
 const args = process.argv.slice(2)
 const positional = []
 const stills = []
 let tile = null
+let anchorMs = null
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--still') {
     const [cls, path] = (args[++i] ?? '').split('=')
@@ -107,6 +138,10 @@ for (let i = 0; i < args.length; i++) {
     stills.push({ cls, path })
   } else if (args[i] === '--tile') {
     tile = args[++i] ?? usage()
+  } else if (args[i] === '--anchor') {
+    const [what, ms] = (args[++i] ?? '').split('=')
+    if (what !== 'ready' || !Number.isFinite(Number(ms))) usage()
+    anchorMs = Number(ms)
   } else positional.push(args[i])
 }
 const [kind, video, slotArg, displayArg, outPath] = positional
@@ -116,13 +151,13 @@ if (
   !slotArg ||
   !displayArg ||
   !outPath ||
-  !['cold', 'hot', 'webapp'].includes(kind)
+  !['cold', 'hot', 'webapp', 'lead'].includes(kind)
 )
   usage()
 
 function usage() {
   console.error(
-    'usage: android-startup-frames.mjs <cold|hot|webapp> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>]'
+    'usage: android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>]'
   )
   process.exit(2)
 }
@@ -176,9 +211,66 @@ function sample(buffer, offset, [x, y]) {
 
 const near = (c, ref) => c.every((v, i) => Math.abs(v - ref[i]) <= TOLERANCE)
 const blank = (c) => BLANKS.some((ref) => near(c, ref))
+const black = (c) => c.every((v) => v <= BLACK_TOLERANCE)
 const hex = (c) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
+/** Relative luminance of an sRGB colour (0..1), the platform's `ColorUtils.calculateLuminance`. */
+function luminance([r, g, b]) {
+  const lin = (v) => {
+    const c = v / 255
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+/** The glyph tone a ground asks for: light glyphs on a dark ground, dark on a light one (luminance over a half). */
+const toneFor = (ground) => (luminance(ground) > 0.5 ? 'dark' : 'light')
+
+/**
+ * The navigation bar's band of a frame: its ground (the median colour of the band) and its
+ * glyphs' tone – the ink pixels far from the ground, light or dark by their mean luminance
+ * (the bytes' weighted mean against the middle grey), `none` with too few of them.
+ */
+function navBand(buffer, offset) {
+  const rows = Math.max(3, Math.round(height * NAV_BAND))
+  const y0 = height - rows
+  const y1 = height - NAV_SKIP_ROWS
+  const x0 = Math.round(width * 0.05)
+  const x1 = Math.round(width * 0.95)
+  const channels = [[], [], []]
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const at = offset + (y * width + x) * 3
+      channels[0].push(buffer[at])
+      channels[1].push(buffer[at + 1])
+      channels[2].push(buffer[at + 2])
+    }
+  }
+  const median = (values) => {
+    const sorted = values.slice().sort((a, b) => a - b)
+    return sorted[Math.floor(sorted.length / 2)]
+  }
+  const ground = channels.map(median)
+  let ink = 0
+  let inkLuma = 0
+  for (let i = 0; i < channels[0].length; i++) {
+    const r = channels[0][i]
+    const g = channels[1][i]
+    const b = channels[2][i]
+    const distance = Math.max(
+      Math.abs(r - ground[0]),
+      Math.abs(g - ground[1]),
+      Math.abs(b - ground[2])
+    )
+    if (distance > NAV_INK_DISTANCE) {
+      ink++
+      inkLuma += 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+  }
+  const tone = ink < NAV_INK_MIN ? 'none' : inkLuma / ink >= 128 ? 'light' : 'dark'
+  return { ground, tone, ink }
+}
 
 function classify(left, right, centre, mark, bar) {
+  if ([left, right, centre, mark, bar].every(black)) return 'black'
   if (kind === 'webapp') {
     if (near(bar, THEME)) {
       // The app's own window: only it paints the bar in the theme colour (the splash view covers it).
@@ -246,7 +338,8 @@ function readFrames(buffer) {
       right,
       centre,
       mark,
-      bar
+      bar,
+      nav: navBand(buffer, offset)
     })
   }
   return frames
@@ -255,6 +348,20 @@ function readFrames(buffer) {
 /** A frame's readings for the findings: the three slot points and the one that told its window. */
 const readings = (f) =>
   `left ${hex(f.left)} right ${hex(f.right)} centre ${hex(f.centre)} ${kind === 'webapp' ? `bar ${hex(f.bar)}` : `mark ${hex(f.mark)}`}`
+/** The navigation band's reading: its ground and its glyphs' tone. */
+const navReading = (f) =>
+  `nav ${hex(f.nav.ground)} glyphs ${f.nav.tone}${f.nav.tone === 'none' ? '' : ` (${f.nav.ink} px)`}`
+/** The tone most of `frames` read in the navigation band, with the count of each. */
+function navTone(frames) {
+  const counts = { light: 0, dark: 0, none: 0 }
+  for (const f of frames) counts[f.nav.tone]++
+  const tone = Object.keys(counts).reduce((a, b) => (counts[b] > counts[a] ? b : a))
+  return {
+    tone,
+    counts,
+    detail: `${counts.light} light, ${counts.dark} dark, ${counts.none} none of ${frames.length}`
+  }
+}
 
 say(
   `startup frames (${kind}): slot ${slot.join(' ')} of ${displayW}x${displayH}; read at ${width}x${height}, ${FPS} fps`
@@ -313,7 +420,71 @@ if (frames.length) {
   const firstOf = (cls) => classes.indexOf(cls)
   const at = (i) => (i < 0 ? 'never' : `${(i / FPS).toFixed(2)} s`)
   const ms = (n) => `${n} frames (${Math.round((n * 1000) / FPS)} ms)`
+
+  // The lead: the start request laid back from the lift (the frame after the last splash
+  // frame, READY's distance from the request before it), then the frames from there to the
+  // first splash frame – for the web app, to the first frame of any window of the app's (the
+  // platform's fixed ground is its starting window) – and what they showed.
+  const shown =
+    kind === 'webapp' ? ['plain', 'dress', 'splash', 'window', 'ground', 'bare'] : ['splash']
+  const firstShown = classes.findIndex((c) => shown.includes(c))
+  if (kind !== 'hot') {
+    if (anchorMs === null) say('lead: unread (no --anchor ready=<ms>)')
+    else if (lastSplash < 0) say('lead: unread (no splash frame to anchor the lift on)')
+    else if (firstShown < 0) say('lead: unread (nothing of the app was shown)')
+    else {
+      const tapFrame = lastSplash + 1 - (anchorMs * FPS) / 1000
+      const leadFrames = firstShown - tapFrame
+      const between = []
+      for (let i = Math.max(0, Math.ceil(tapFrame)); i < firstShown; i++) {
+        const last = between[between.length - 1]
+        if (last && last.cls === frames[i].cls) last.n++
+        else between.push({ cls: frames[i].cls, n: 1, sample: frames[i] })
+      }
+      const what = between.length
+        ? between.map((r) => `${r.cls} x${r.n} (${readings(r.sample)})`).join(', ')
+        : 'nothing: the first frame after the request already showed it'
+      say(
+        `lead: ${Math.round((leadFrames * 1000) / FPS)} ms (${leadFrames.toFixed(1)} frames) from the start request to the first ${kind === 'webapp' ? "frame of the app's window" : 'splash frame'} at ${at(firstShown)}; the request laid back ${anchorMs} ms from the lift at ${at(lastSplash + 1)}, so up to ${LEAD_ERROR_FRAMES} frames (${Math.round((LEAD_ERROR_FRAMES * 1000) / FPS)} ms) short; between: ${what}`
+      )
+    }
+  }
+
+  // The navigation bar's glyphs over the splash: the frames of the dressed splash past the
+  // dress and the bars' own write (DRESS_FRAMES in), light or dark as most of them read.
+  const splashFrames = frames.filter(
+    (f, i) => f.cls === 'splash' && i >= firstSplash + DRESS_FRAMES && i <= lastSplash
+  )
+  if (splashFrames.length) {
+    const { tone, detail } = navTone(splashFrames)
+    const ground = splashFrames[Math.floor(splashFrames.length / 2)].nav.ground
+    const expected = toneFor(ground)
+    say(
+      `nav over the splash: ${tone} glyphs on ${hex(ground)} (${detail}; the ground's luminance ${luminance(ground).toFixed(3)} asks for ${expected})`
+    )
+    if (kind === 'webapp')
+      verdict(
+        "the navigation bar's glyphs take the tone the dressed splash's ground asks for",
+        tone === expected,
+        `${tone} glyphs on ${hex(ground)}, ${expected} asked for (${detail})`
+      )
+  }
   if (kind === 'webapp') {
+    const plainFrames = frames.filter((f) => f.cls === 'plain')
+    if (plainFrames.length) {
+      const { tone, detail } = navTone(plainFrames)
+      const ground = plainFrames[Math.floor(plainFrames.length / 2)].nav.ground
+      say(
+        `nav over the fixed ground: ${tone} glyphs on ${hex(ground)} (${detail}; the platform's own, the ground's luminance ${luminance(ground).toFixed(3)} asks for ${toneFor(ground)})`
+      )
+    }
+  }
+
+  if (kind === 'lead') {
+    say(
+      `splash frames: ${count('splash')}${count('splash') ? ` from ${at(firstSplash)} to ${at(lastSplash)}` : ''}; black frames: ${count('black')}`
+    )
+  } else if (kind === 'webapp') {
     verdict(
       "the splash showed the app's tile on its ground",
       count('splash') > 0,
@@ -325,11 +496,23 @@ if (frames.length) {
       firstSplash >= 0 && bareBefore === 0,
       `${bareBefore} bare frames before the tile beyond the dress (plain ground until ${at(classes.lastIndexOf('plain'))})`
     )
-    // The hand-over: the app's own window (its bar in the theme colour) before its splash view –
-    // its ground standing in for the splash's, or the page view unpainted as it was.
-    const groundBefore = classes.filter((c, i) => c === 'ground' && i < firstSplash).length
-    const bareOwn = classes.filter((c, i) => c === 'bare' && i < firstSplash).length
-    say(`gap: ${ms(groundBefore + bareOwn)}: ${groundBefore} ground, ${bareOwn} bare`)
+    // The gap to the tile: from the fixed ground's first frame (the platform's starting window)
+    // to the dressed splash – the plain frames, the dress, and the hand-over's own share: the
+    // app's own window (its bar in the theme colour) before its splash view, its ground standing
+    // in for the splash's, or the page view unpainted as it was.
+    const before = (cls) =>
+      classes.filter((c, i) => c === cls && i < firstSplash && i >= firstShown).length
+    const groundBefore = before('ground')
+    const bareOwn = before('bare')
+    const plainBefore = before('plain')
+    const dressBefore = before('dress')
+    const toTile = firstSplash >= 0 && firstShown >= 0 ? firstSplash - firstShown : 0
+    say(
+      `gap: ${ms(toTile)} from the fixed ground's first frame to the tile: ${plainBefore} plain, ${dressBefore} dress, ${groundBefore} ground, ${bareOwn} bare`
+    )
+    say(
+      `hand-over: ${ms(groundBefore + bareOwn)}: ${groundBefore} ground, ${bareOwn} bare (the app's own window before its splash view)`
+    )
     verdict(
       "the app's own window never showed the page view unpainted",
       count('bare') === 0,
@@ -447,8 +630,18 @@ for (const still of stills) {
     continue
   }
   const [frame] = readFrames(buffer)
-  const detail = `${still.path}: ${frame.cls} (${readings(frame)})`
+  const detail = `${still.path}: ${frame.cls} (${readings(frame)}; ${navReading(frame)})`
   verdict(`the ${still.cls} still shows the ${still.cls}`, frame.cls === still.cls, detail)
+  if (still.cls === 'splash') {
+    // The bars over the dressed splash (the material nit of round 3's light web-app still: dark
+    // glyphs on the purple ground where the code asked for white).
+    const expected = toneFor(frame.nav.ground)
+    verdict(
+      `the ${still.cls} still's navigation glyphs take the tone its ground asks for`,
+      frame.nav.tone === expected,
+      `${navReading(frame)}; the ground's luminance ${luminance(frame.nav.ground).toFixed(3)} asks for ${expected}`
+    )
+  }
 }
 
 writeFileSync(outPath, lines.join('\n') + '\n')
