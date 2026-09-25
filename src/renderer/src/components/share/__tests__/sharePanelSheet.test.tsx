@@ -87,6 +87,7 @@ function request(over: Partial<SharePanelRequest> = {}): SharePanelRequest {
     image: null,
     tabId: 'tab-1',
     private: false,
+    source: 'menu',
     targets: [...TARGETS],
     ...over
   }

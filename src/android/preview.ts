@@ -1145,6 +1145,7 @@ export function createPreviewBridge(): NativeBridge {
           image: imageUrl ? String(imageUrl) : null,
           tabId: tabId ? String(tabId) : null,
           private: false,
+          source: 'menu',
           targets: [...PREVIEW_SHARE_TARGETS]
         }
         host().hostEvent('share.panel', JSON.stringify(request))

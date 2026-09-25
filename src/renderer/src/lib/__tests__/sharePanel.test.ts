@@ -22,6 +22,7 @@ function request(over: Partial<SharePanelRequest> = {}): SharePanelRequest {
     image: null,
     tabId: 'tab-1',
     private: false,
+    source: 'menu',
     targets: [
       { component: 'com.example.a/.Share', label: 'Alpha', icon: 'data:image/webp;base64,AAAA' },
       { component: 'com.example.b/.Share', label: 'Beta', icon: 'data:image/webp;base64,BBBB' }

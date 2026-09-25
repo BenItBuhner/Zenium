@@ -95,6 +95,7 @@ export function previewShareRequest(
     id: `preview-share-${++seq}`,
     tabId: tab?.id ?? null,
     private: isPrivate,
+    source: 'menu' as const,
     targets: [...PREVIEW_SHARE_TARGETS]
   }
   if (kind === 'image') {
