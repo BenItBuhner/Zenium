@@ -89,10 +89,11 @@ import { CookiePolicyEnforcer, ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
 import { ElectronPrintingHost } from './printing'
 import { ElectronUpdateHost } from './updates'
-import { applyAppIcon, iconPngPath } from './appIcon'
+import { applyAppIcon, iconPngPath, privateIconPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
 import { ElectronShortcuts } from './shortcuts'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
+import { PRIVATE_APP_USER_MODEL_ID, privateRelaunchDisplayName } from './privateTaskbar'
 import {
   NotificationRequestRelay,
   decideNotificationRequest,
@@ -496,6 +497,8 @@ export class ElectronPlatform implements Platform {
           id,
           this.browser
             .allWindows()
+            // Private windows keep the private icon, whatever the variant (os-56).
+            .filter((win) => !win.isPrivate)
             .map((win) => browserWindowOf(win))
             .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
         ),
@@ -616,6 +619,9 @@ export class ElectronPlatform implements Platform {
     this.downloads.observeRequests(this.requestBlocking)
     // The task manager's network column counts on the same hook, only while the page samples.
     this.tasks.attachNetwork(this.requestBlocking.multiplexer)
+    // An MV3 worker alone in its process is placed by the pid its preload reported: the engine
+    // names the worker's process by a render-process-host id only, never the OS pid.
+    this.tasks.attachExtensionWorkers(() => extensionApi.workerProcesses())
     // Extensions' chrome.webRequest listeners run over the same hook, after the rule engine;
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
@@ -686,9 +692,18 @@ export class ElectronPlatform implements Platform {
     // while Zenium was closed go before the enabled ones load (`extensions.start`, above).
     extensionApi.declarativeNetRequest.reconcile()
     // Toasts need the app id registered with Windows; a copy without installer shortcuts
-    // (development, portable) registers it itself.
-    if (process.platform === 'win32')
+    // (development, portable) registers it itself. The private windows' second id (os-56) the
+    // same way, with the group's name and the private icon, so Windows draws that group from
+    // its class key where no shortcut carries the id.
+    if (process.platform === 'win32') {
       void ensureWindowsAppIdRegistered(app.getName(), iconPngPath(browser.state.settings.appIcon))
+      void ensureWindowsAppIdRegistered(
+        privateRelaunchDisplayName(app.getName()),
+        privateIconPath('png'),
+        undefined,
+        PRIVATE_APP_USER_MODEL_ID
+      )
+    }
     return browser
   }
 

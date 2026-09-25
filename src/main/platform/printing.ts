@@ -27,8 +27,12 @@ import {
 } from '../../shared/print'
 import { downloadDir } from './downloads'
 
-/** How long the viewer gets to take a document in before the job is given up. */
-const DOCUMENT_LOAD_TIMEOUT_MS = 30_000
+/**
+ * How long the viewer gets to take a document in before the job is given up: the bound on
+ * `loadPdfDocument`, so a viewer that never reports the document's frame (a load that stalls,
+ * a viewer that is not there) fails the job with a reason instead of holding it forever.
+ */
+export const DOCUMENT_LOAD_TIMEOUT_MS = 30_000
 
 export class ElectronPrintingHost implements PrintingHost {
   constructor(private readonly browserWindowOf: (win?: ZenWindow) => BrowserWindow | undefined) {}
@@ -150,7 +154,12 @@ function loadPdfDocument(wc: WebContents, url: string): Promise<void> {
       else resolve()
     }
     const timer = setTimeout(
-      () => finish(new Error('The document did not load')),
+      () =>
+        finish(
+          new Error(
+            `The document did not load: the PDF viewer did not report it within ${Math.round(DOCUMENT_LOAD_TIMEOUT_MS / 1000)} s`
+          )
+        ),
       DOCUMENT_LOAD_TIMEOUT_MS
     )
     const onFrame = (

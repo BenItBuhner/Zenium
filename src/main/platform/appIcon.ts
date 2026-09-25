@@ -2,7 +2,7 @@ import { app, nativeImage, type BrowserWindow, type NativeImage } from 'electron
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { appIconVariant, type AppIconId } from '../../shared/appIcon'
+import { APP_ICON_PRIVATE, appIconVariant, type AppIconId } from '../../shared/appIcon'
 
 /**
  * The per-variant icons `scripts/app-icons.ts` writes under `resources/icons/<id>/`. In a
@@ -22,7 +22,18 @@ function iconsRoot(): string {
  * elsewhere the 512 PNG. Falls back to the PNG should the ICO not load.
  */
 export function windowIcon(id: AppIconId): NativeImage {
-  const dir = join(iconsRoot(), appIconVariant(id).id)
+  return windowIconIn(join(iconsRoot(), appIconVariant(id).id))
+}
+
+/**
+ * The private windows' image (`resources/icons/private/`: the mask on the private purple, os-56),
+ * the same way; empty when the copy ships none, and the caller falls back to the variant's.
+ */
+export function privateWindowIcon(): NativeImage {
+  return windowIconIn(join(iconsRoot(), APP_ICON_PRIVATE.folder))
+}
+
+function windowIconIn(dir: string): NativeImage {
   if (process.platform === 'win32') {
     const ico = nativeImage.createFromPath(join(dir, 'icon.ico'))
     if (!ico.isEmpty()) return ico
@@ -32,7 +43,18 @@ export function windowIcon(id: AppIconId): NativeImage {
 
 /** The 512 PNG of a variant on disk (Windows toasts take an image path), or null when missing. */
 export function iconPngPath(id: AppIconId): string | null {
-  const path = join(iconsRoot(), appIconVariant(id).id, 'icon.png')
+  return existingPath(join(iconsRoot(), appIconVariant(id).id, 'icon.png'))
+}
+
+/**
+ * The private icon's file on disk – the ICO a taskbar group's relaunch entry names, or the PNG
+ * the AppUserModelId class key's `IconUri` takes – or null when the copy ships none.
+ */
+export function privateIconPath(kind: 'ico' | 'png'): string | null {
+  return existingPath(join(iconsRoot(), APP_ICON_PRIVATE.folder, `icon.${kind}`))
+}
+
+function existingPath(path: string): string | null {
   return existsSync(path) ? path : null
 }
 
@@ -45,7 +67,8 @@ export function dockIcon(id: AppIconId): NativeImage {
  * Show the app under `id` from now on. macOS keeps one icon per app in the Dock; Windows and
  * Linux take it per window (title bar, taskbar / dock entry). Installed shortcuts keep the icon
  * the installer stamped on them: on Windows the next update re-points them (below), which the
- * Settings hint says.
+ * Settings hint says. `windows` are the browser's non-private ones: a private window keeps the
+ * private icon whatever the variant.
  */
 export function applyAppIcon(id: AppIconId, windows: Iterable<BrowserWindow>): void {
   if (process.platform === 'darwin') {

@@ -2122,6 +2122,13 @@ export type ShortcutAction =
    * name of the user's (`ZenWindow.name`). Unbound in both presets, as in Chrome.
    */
   | 'window.name'
+  /**
+   * Duplicate Window (session-19): a second window like this one – its kind, its space, its
+   * tabs (a blank or private window's as copies: the addresses in their order, pinned as they
+   * are) – cascaded from it. Unbound in both presets; the row is in the table so Settings can
+   * bind one and the palette lists it.
+   */
+  | 'window.duplicate'
   | 'app.quit'
   /** Open the application menu from the keyboard (Alt+F / F10 on Windows and Linux). */
   | 'menu.app'
@@ -4392,6 +4399,13 @@ export interface Commands {
   'tab.home': { args: { tabId: string }; result: void }
   'tab.back': { args: { tabId: string }; result: void }
   'tab.forward': { args: { tabId: string }; result: void }
+  /**
+   * Chrome's middle-click / Ctrl+click (⌘+click on macOS) on Back or Forward (shortcuts-menus-93):
+   * the page one step back or forward opens in a new background tab beside `tabId`, which
+   * stays where it is.
+   */
+  'tab.backInNewTab': { args: { tabId: string }; result: void }
+  'tab.forwardInNewTab': { args: { tabId: string }; result: void }
   'tab.reload': { args: { tabId: string; skipCache?: boolean }; result: void }
   'tab.stop': { args: { tabId: string }; result: void }
   'tab.toggleMute': { args: { tabId: string }; result: void }

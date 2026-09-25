@@ -14,7 +14,12 @@ export const APP_USER_MODEL_ID = 'io.github.benitbuhner.zenium'
  * user's hive whatever the install mode, so build/installer.nsh's uninstaller deletes it from
  * HKCU too.
  */
-export const WINDOWS_APP_ID_KEY = `HKCU\\Software\\Classes\\AppUserModelId\\${APP_USER_MODEL_ID}`
+export const WINDOWS_APP_ID_KEY = windowsAppIdKey(APP_USER_MODEL_ID)
+
+/** The class key of any AppUserModelId of ours (the app's; the private windows' second one). */
+export function windowsAppIdKey(aumid: string): string {
+  return `HKCU\\Software\\Classes\\AppUserModelId\\${aumid}`
+}
 
 export type WindowsRegistryCommand = { file: 'reg.exe'; args: string[] }
 
@@ -33,9 +38,10 @@ export type WindowsAppIdValues = { DisplayName: string | null; IconUri: string |
 const APP_ID_VALUE_NAMES = ['DisplayName', 'IconUri'] as const
 
 /** `reg.exe query <key>`: the whole key in one read (both values); a failure when it is absent. */
-export const WINDOWS_APP_ID_QUERY: WindowsRegistryCommand = {
-  file: 'reg.exe',
-  args: ['query', WINDOWS_APP_ID_KEY]
+export const WINDOWS_APP_ID_QUERY: WindowsRegistryCommand = windowsAppIdQuery(APP_USER_MODEL_ID)
+
+export function windowsAppIdQuery(aumid: string): WindowsRegistryCommand {
+  return { file: 'reg.exe', args: ['query', windowsAppIdKey(aumid)] }
 }
 
 /**
@@ -76,8 +82,10 @@ export function parseWindowsAppIdKey(result: WindowsRegistryResult): WindowsAppI
  */
 export function windowsAppIdRefresh(
   existing: WindowsAppIdValues,
-  wanted: WindowsAppIdValues
+  wanted: WindowsAppIdValues,
+  aumid: string = APP_USER_MODEL_ID
 ): WindowsRegistryCommand[] {
+  const key = windowsAppIdKey(aumid)
   const commands: WindowsRegistryCommand[] = []
   for (const name of APP_ID_VALUE_NAMES) {
     const want = wanted[name]
@@ -86,8 +94,8 @@ export function windowsAppIdRefresh(
       file: 'reg.exe',
       args:
         want === null
-          ? ['delete', WINDOWS_APP_ID_KEY, '/v', name, '/f']
-          : ['add', WINDOWS_APP_ID_KEY, '/v', name, '/t', 'REG_SZ', '/d', want, '/f']
+          ? ['delete', key, '/v', name, '/f']
+          : ['add', key, '/v', name, '/t', 'REG_SZ', '/d', want, '/f']
     })
   }
   return commands
@@ -121,16 +129,23 @@ export type WindowsAppIdOutcome = 'registered' | 'refreshed' | 'current' | 'fail
  * read whole, and only a value that differs is written – an installed build started after an
  * unpacked one replaces the unpacked copy's `IconUri` with its own, a build whose values are
  * already there writes nothing. Best effort and silent: notifications are the only thing that
- * depends on it.
+ * depends on it. `aumid` names another id of ours to register the same way – the private
+ * windows' (`privateTaskbar.ts`), whose group Windows names and draws from its class key where
+ * no shortcut carries the id.
  */
 export async function ensureWindowsAppIdRegistered(
   displayName: string,
   iconPath: string | null,
-  run: RunCommand = runRegistryCommand
+  run: RunCommand = runRegistryCommand,
+  aumid: string = APP_USER_MODEL_ID
 ): Promise<WindowsAppIdOutcome> {
   const wanted = windowsAppIdValues(displayName, iconPath)
-  const existing = parseWindowsAppIdKey(await run(WINDOWS_APP_ID_QUERY))
-  const commands = windowsAppIdRefresh(existing ?? { DisplayName: null, IconUri: null }, wanted)
+  const existing = parseWindowsAppIdKey(await run(windowsAppIdQuery(aumid)))
+  const commands = windowsAppIdRefresh(
+    existing ?? { DisplayName: null, IconUri: null },
+    wanted,
+    aumid
+  )
   if (commands.length === 0) return 'current'
   for (const command of commands) if (!(await run(command)).ok) return 'failed'
   return existing ? 'refreshed' : 'registered'

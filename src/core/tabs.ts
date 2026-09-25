@@ -2371,6 +2371,50 @@ export class TabManager {
     view.goForward()
   }
 
+  /**
+   * Chrome's middle-click / Ctrl+click (⌘+click on macOS) on Back or Forward, and its Ctrl+click
+   * on a row of the back/forward stack menu (shortcuts-menus-93): the entry at `index` of the
+   * tab's stack opens in a new background tab right after this one – a fresh load of that URL
+   * in the tab's container and space (a new navigation, not the entry's page state) – while this
+   * tab and its stack stay where they are. Nothing for an index the stack has not got, and
+   * nothing for a chrome page, whose "stack" is its sections. Returns the tab opened.
+   */
+  openNavigationEntryInNewTab(
+    tabId: string,
+    index: number,
+    win: ZenWindow = this.windowFor(tabId)
+  ): Tab | undefined {
+    const tab = this.tab(tabId)
+    if (!tab || this.browser.pages.isChromePage(tab)) return undefined
+    const entry = this.navigationEntries(tabId).entries[index]
+    if (!entry || !isNavigableUrl(entry.url)) return undefined
+    return this.createTab(
+      {
+        url: entry.url,
+        spaceId: tab.spaceId ?? undefined,
+        containerId: tab.containerId,
+        active: false,
+        afterTabId: tab.essential ? undefined : tab.id,
+        openerTabId: tab.id
+      },
+      win
+    )
+  }
+
+  /**
+   * The step Back (`-1`) or Forward (`1`) would take, opened in a new background tab instead
+   * (`openNavigationEntryInNewTab`): nothing when the stack has no entry that way.
+   */
+  openNavigationStepInNewTab(
+    tabId: string,
+    step: -1 | 1,
+    win: ZenWindow = this.windowFor(tabId)
+  ): Tab | undefined {
+    const { index } = this.navigationEntries(tabId)
+    if (index < 0) return undefined
+    return this.openNavigationEntryInNewTab(tabId, index + step, win)
+  }
+
   reload(tabId: string, skipCache = false): void {
     const tab = this.tab(tabId)
     if (!tab) return

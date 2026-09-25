@@ -15,6 +15,8 @@ import {
   APP_ICON_DESKTOP,
   APP_ICON_INK,
   APP_ICON_MARK,
+  APP_ICON_MASK,
+  APP_ICON_PRIVATE,
   APP_ICON_VARIANTS,
   parseHex,
   type AppIconVariant
@@ -82,8 +84,69 @@ export function renderIcon(
   size: number,
   opts: RenderOptions = {}
 ): Uint8Array {
+  return rasterise(variant.fill, size, markCoverage, opts)
+}
+
+/**
+ * The private windows' icon: the mask in the ink on the private ground (`APP_ICON_PRIVATE`).
+ * Rendered by the same rasteriser as the variants, so the two sit on one squircle.
+ */
+export function renderPrivateIcon(size: number, opts: RenderOptions = {}): Uint8Array {
+  return rasterise(APP_ICON_PRIVATE.fill, size, maskCoverage, opts)
+}
+
+/**
+ * How much of the pixel at (x, y) – from the centre, in pixels – the glyph covers, given the
+ * side of the squircle it sits on.
+ */
+type GlyphCoverage = (x: number, y: number, shape: number) => number
+
+const coverage = (d: number): number => Math.min(1, Math.max(0, 0.5 - d))
+
+/** Zenium's mark: the ring and the dot. */
+const markCoverage: GlyphCoverage = (x, y, shape) => {
+  const ringOuter = shape * APP_ICON_DESKTOP.ringOuter
+  const ringCentre = ringOuter * APP_ICON_MARK.ring
+  const strokeHalf = (ringOuter * APP_ICON_MARK.stroke) / 2
+  const dot = ringOuter * APP_ICON_MARK.dot
+  const rho = Math.hypot(x, y)
+  return Math.min(1, coverage(Math.abs(rho - ringCentre) - strokeHalf) + coverage(rho - dot))
+}
+
+/** The private mask: the body less the bridge dip, the nose notch and the eyes (`APP_ICON_MASK`). */
+const maskCoverage: GlyphCoverage = (x, y, shape) => {
+  const m = APP_ICON_MASK
+  const w = shape * m.halfWidth
+  const h = shape * m.halfHeight
+  const body = ellipse(x, y, w, h)
+  const bridge = ellipse(x, y - h * m.bridge.y, w * m.bridge.rx, h * m.bridge.ry)
+  const nose = ellipse(x, y - h * m.nose.y, w * m.nose.rx, h * m.nose.ry)
+  const eyes = Math.min(
+    ellipse(x - w * m.eye.x, y + h * m.eye.rise, w * m.eye.rx, h * m.eye.ry),
+    ellipse(x + w * m.eye.x, y + h * m.eye.rise, w * m.eye.rx, h * m.eye.ry)
+  )
+  return coverage(Math.max(body, -bridge, -nose, -eyes))
+}
+
+/**
+ * Signed distance to an axis-aligned ellipse centred on the origin – the implicit function
+ * divided by its gradient, exact on the axes and within a fraction of a pixel elsewhere at
+ * these aspect ratios, which is all an anti-aliased edge needs.
+ */
+function ellipse(x: number, y: number, rx: number, ry: number): number {
+  const k = Math.hypot(x / rx, y / ry)
+  if (k < 1e-6) return -Math.min(rx, ry)
+  return ((k - 1) * k) / Math.hypot(x / (rx * rx), y / (ry * ry))
+}
+
+function rasterise(
+  fill: string,
+  size: number,
+  glyph: GlyphCoverage,
+  opts: RenderOptions
+): Uint8Array {
   const out = new Uint8Array(size * size * 4)
-  const [fr, fg, fb] = parseHex(variant.fill)
+  const [fr, fg, fb] = parseHex(fill)
   const [ir, ig, ib] = parseHex(APP_ICON_INK)
   const inset = opts.macInset ? size * APP_ICON_DESKTOP.macInset : 0
   const shape = size - 2 * inset
@@ -91,11 +154,6 @@ export function renderIcon(
   const centre = size / 2
   const r = shape * APP_ICON_DESKTOP.cornerRadius
   const n = APP_ICON_DESKTOP.cornerExponent
-  const ringOuter = shape * APP_ICON_DESKTOP.ringOuter
-  const ringCentre = ringOuter * APP_ICON_MARK.ring
-  const strokeHalf = (ringOuter * APP_ICON_MARK.stroke) / 2
-  const dot = ringOuter * APP_ICON_MARK.dot
-  const coverage = (d: number): number => Math.min(1, Math.max(0, 0.5 - d))
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
       const x = px + 0.5 - centre
@@ -110,14 +168,10 @@ export function renderIcon(
       const a = coverage(ground)
       const o = (py * size + px) * 4
       if (a <= 0) continue
-      const rho = Math.hypot(x, y)
-      const mark = Math.min(
-        1,
-        coverage(Math.abs(rho - ringCentre) - strokeHalf) + coverage(rho - dot)
-      )
-      out[o] = Math.round(fr + (ir - fr) * mark)
-      out[o + 1] = Math.round(fg + (ig - fg) * mark)
-      out[o + 2] = Math.round(fb + (ib - fb) * mark)
+      const ink = glyph(x, y, shape)
+      out[o] = Math.round(fr + (ir - fr) * ink)
+      out[o + 1] = Math.round(fg + (ig - fg) * ink)
+      out[o + 2] = Math.round(fb + (ib - fb) * ink)
       out[o + 3] = Math.round(a * 255)
     }
   }
@@ -468,6 +522,20 @@ export function planAppIcons(input: PlanInput): OutputFile[] {
       data: androidAdaptiveIconXml(variant)
     })
   }
+
+  // The private windows' icon (os-56): the window / taskbar PNG and the ICO the taskbar group's
+  // relaunch entry names. No Dock image: macOS keeps one icon per app.
+  const privateDir = `${RUNTIME_ICON_DIR}/${APP_ICON_PRIVATE.folder}`
+  files.push({
+    path: `${privateDir}/icon.png`,
+    data: encodePng(renderPrivateIcon(DESKTOP_PNG_SIZE), DESKTOP_PNG_SIZE)
+  })
+  files.push({
+    path: `${privateDir}/icon.ico`,
+    data: encodeIco(
+      ICO_SIZES.map((size) => ({ size, png: encodePng(renderPrivateIcon(size), size) }))
+    )
+  })
 
   // electron-builder's inputs: the default variant.
   files.push({ path: 'build/icon.png', data: png(fallback, DESKTOP_PNG_SIZE) })

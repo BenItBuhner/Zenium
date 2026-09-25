@@ -1,15 +1,16 @@
 import {
   BrowserWindow,
   WebContentsView,
+  app,
   nativeImage,
   screen,
   shell,
-  webContents,
   type NativeImage
 } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
+import { focusedDocumentOf } from './focusedDocument'
 import { ElectronShortcuts } from './shortcuts'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
@@ -23,8 +24,9 @@ import type {
   WindowHostFactory
 } from '../../core/platform'
 import { TitleThrottle } from '../../shared/windowTitle'
-import { windowIcon } from './appIcon'
+import { privateIconPath, privateWindowIcon, windowIcon } from './appIcon'
 import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
+import { privateAppDetails } from './privateTaskbar'
 import { placeWindow, type DisplayArea } from './windowPlacement'
 import { showWhenReady } from './windowShow'
 import { NO_WINDOW_SWITCHES, windowLaunchState, type WindowSwitches } from '../cli'
@@ -114,6 +116,9 @@ export class ElectronWindow implements WindowHost {
     // Popups and app windows are as small as the page (or the app) wants, within reason.
     const compactChrome = init.chrome !== 'full'
     this.captionColors = init.captionColors
+    // A private window wears the private icon (the mask on the private purple, os-56); a copy
+    // that ships none falls back to the variant's like every other window.
+    const privateIcon = zen.isPrivate && !isMac ? privateWindowIcon() : null
     this.win = new BrowserWindow({
       ...bounds,
       minWidth: compactChrome ? POPUP_MIN_WIDTH : MIN_WIDTH,
@@ -148,7 +153,10 @@ export class ElectronWindow implements WindowHost {
         ? {}
         : {
             icon:
-              appWindowIcon(init.app?.icon ?? null) ?? windowIcon(browser.state.settings.appIcon)
+              appWindowIcon(init.app?.icon ?? null) ??
+              (privateIcon && !privateIcon.isEmpty()
+                ? privateIcon
+                : windowIcon(browser.state.settings.appIcon))
           }),
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
@@ -174,6 +182,22 @@ export class ElectronWindow implements WindowHost {
         relaunchCommand: ElectronShortcuts.relaunchCommand(init.app.startUrl),
         relaunchDisplayName: init.app.name
       })
+    } else if (process.platform === 'win32' && zen.isPrivate) {
+      // Private windows group on a taskbar button of their own under a second id, with the
+      // private icon; the button's pin and jump list relaunch this copy on this profile with a
+      // private window (os-56; `privateTaskbar.ts`).
+      win.setAppDetails(
+        privateAppDetails(
+          {
+            execPath: process.execPath,
+            isPackaged: app.isPackaged,
+            appPath: app.getAppPath(),
+            userDataDir: switches.userDataDir
+          },
+          app.getName(),
+          privateIconPath('ico')
+        )
+      )
     }
     // Saved maximised, or `--start-maximized` for a browser window (never a kiosk's fullscreen).
     if (launch.maximize) win.maximize()
@@ -293,9 +317,12 @@ export class ElectronWindow implements WindowHost {
   }
 
   focusedDocument(): 'chrome' | 'other' | 'none' {
-    const focused = webContents.getFocusedWebContents()
-    if (!focused || focused.isDestroyed()) return 'none'
-    return this.alive && focused.id === this.win.webContents.id ? 'chrome' : 'other'
+    if (!this.alive) return 'none'
+    return focusedDocumentOf({
+      focused: this.win.isFocused(),
+      chrome: this.win.webContents,
+      contentView: this.win.contentView
+    })
   }
 
   openChromeDevTools(): void {

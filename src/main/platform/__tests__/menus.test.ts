@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MenuItemTemplate } from '../../../core/platform'
 
 /*
@@ -7,7 +7,9 @@ import type { MenuItemTemplate } from '../../../core/platform'
  * often wider than tall, and the hub's tile covers such a picture (`object-fit: cover`) – so the
  * host crops it to its centre square before the resize rather than squashing it. The "⋯" app
  * menu is not native (design language v2 §6 "Menus"): its template goes to the renderer as a
- * `menu.show` descriptor through `RendererMenuHost`, and a pick comes back by id.
+ * `menu.show` descriptor through `RendererMenuHost`, and a pick comes back by id. The macOS
+ * menu bar is set from the same templates: at once, and again with the favicons its rows carry
+ * once those the cache lacked are fetched (History › Recently Visited's, shortcuts-menus-157).
  */
 
 interface FakeImage {
@@ -197,5 +199,115 @@ describe('native menu icons', () => {
     expect(item.icon).toBeUndefined()
     const [plain] = await popup([{ label: 'Now Playing…', icon: null }])
     expect(plain.icon).toBeUndefined()
+  })
+})
+
+describe('the macOS menu bar’s favicons (History › Recently Visited, shortcuts-menus-157)', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+  let setApplicationMenu: ReturnType<typeof vi.fn>
+
+  beforeEach(async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    setApplicationMenu = (await import('electron')).Menu.setApplicationMenu as ReturnType<
+      typeof vi.fn
+    >
+    setApplicationMenu.mockClear()
+  })
+
+  afterEach(() => {
+    if (platform) Object.defineProperty(process, 'platform', platform)
+  })
+
+  /** The fetches behind a set bar have landed. */
+  const fetched = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+  /** The History menu with a Recently Visited block whose rows carry the favicons given. */
+  const bar = (rows: Array<[label: string, icon: string]>): MenuItemTemplate[] => [
+    {
+      label: 'History',
+      submenu: [
+        { label: 'Show Full History' },
+        { type: 'separator' },
+        { label: 'Recently Visited', enabled: false, note: true },
+        ...rows.map(([label, icon]): MenuItemTemplate => ({ label, icon, click: vi.fn() }))
+      ]
+    }
+  ]
+
+  /** The Recently Visited rows of the last bar built, by label and the ops of their icon. */
+  const visited = (): Array<[string, string[] | undefined]> => {
+    const history = built.at(-1)?.[0]
+    const rows = (history?.submenu as Electron.MenuItemConstructorOptions[]).slice(3)
+    return rows.map((row) => [row.label ?? '', row.icon ? icon(row).ops : undefined])
+  }
+
+  it('sets the bar at once without the favicons the cache lacks, fetches them behind it and sets it again with them in place', async () => {
+    remote.set('https://docs.example/favicon.ico', image(32, 32))
+    remote.set('https://mail.example/icon.png', image(64, 64))
+    const menus = new ElectronMenus()
+    expect(menus.setApplicationMenu).toBeDefined()
+    menus.setApplicationMenu!(
+      bar([
+        ['Docs', 'https://docs.example/favicon.ico'],
+        ['Mail', 'https://mail.example/icon.png'],
+        ['Gone', 'https://gone.example/favicon.ico']
+      ])
+    )
+    // The bar stands before any fetch: a state change never shows late in it.
+    expect(setApplicationMenu).toHaveBeenCalledTimes(1)
+    expect(visited()).toEqual([
+      ['Docs', undefined],
+      ['Mail', undefined],
+      ['Gone', undefined]
+    ])
+    await fetched()
+    // Set again once the favicons are in – 16 × 16 as the context menus draw them; the row whose
+    // fetch failed stays icon-less (and is not retried, as `popup()` leaves it).
+    expect(setApplicationMenu).toHaveBeenCalledTimes(2)
+    expect(visited()).toEqual([
+      ['Docs', ['resize 16×16']],
+      ['Mail', ['resize 16×16']],
+      ['Gone', undefined]
+    ])
+    // The same rows again: every favicon known, the bar set once.
+    menus.setApplicationMenu!(
+      bar([
+        ['Docs', 'https://docs.example/favicon.ico'],
+        ['Gone', 'https://gone.example/favicon.ico']
+      ])
+    )
+    expect(setApplicationMenu).toHaveBeenCalledTimes(3)
+    expect(visited()).toEqual([
+      ['Docs', ['resize 16×16']],
+      ['Gone', undefined]
+    ])
+    await fetched()
+    expect(setApplicationMenu).toHaveBeenCalledTimes(3)
+  })
+
+  it('a bar set while the favicons are in flight supersedes the older one, whose favicons set nothing again', async () => {
+    remote.set('https://old.example/favicon.ico', image(32, 32))
+    const menus = new ElectronMenus()
+    menus.setApplicationMenu!(bar([['Old', 'https://old.example/favicon.ico']]))
+    menus.setApplicationMenu!(bar([['New', 'data:image/png;base64,NEW']]))
+    expect(setApplicationMenu).toHaveBeenCalledTimes(2)
+    await fetched()
+    // Old's favicon landed; the bar shows New, and is not set a third time with Old's rows.
+    expect(setApplicationMenu).toHaveBeenCalledTimes(2)
+    expect(visited().map(([label]) => label)).toEqual(['New'])
+  })
+
+  it('a fetch that brought no favicon sets the bar no second time', async () => {
+    const menus = new ElectronMenus()
+    menus.setApplicationMenu!(bar([['Gone', 'https://gone.example/favicon.ico']]))
+    expect(setApplicationMenu).toHaveBeenCalledTimes(1)
+    await fetched()
+    expect(setApplicationMenu).toHaveBeenCalledTimes(1)
+    expect(visited()).toEqual([['Gone', undefined]])
+  })
+
+  it('exists on macOS alone: the other desktops have no menu bar to set', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    expect(new ElectronMenus().setApplicationMenu).toBeUndefined()
   })
 })
