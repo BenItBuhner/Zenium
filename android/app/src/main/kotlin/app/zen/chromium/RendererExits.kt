@@ -13,9 +13,10 @@ package app.zen.chromium
  * (`crashPageUrl` in `src/shared/url.ts`) instead of the page. A renderer that went while the
  * app was away (the system reclaiming a background process, the commonest exit) leaves nothing:
  * the pages come back on their own, as Chrome's do. Away is the activity's lifecycle – its
- * window off screen, [Host] reads it at the callback – not the renderer's priority at exit,
- * which is IMPORTANT under the default policy whether or not a WebView shows (nothing sets a
- * waiving policy), nor the tabs' `View.VISIBLE`, which does not know the activity is stopped.
+ * window off screen, [Host] reads it at the callback – not the tabs' `View.VISIBLE`, which does
+ * not know the activity is stopped; the renderer's priority at exit only agrees with it: WAIVED
+ * once the window is off the screen under the pages' waiving policy ([RendererPriorities],
+ * OS-37), IMPORTANT whatever shows while media plays or a capture runs.
  *
  * Free of Android types (`RENDERER_PRIORITY_WAIVED` copied, the lifecycle a Boolean) so it runs
  * under plain JUnit (`RendererExitsTest`); [Host], [ChromeWebView] and [TabWebView] act on it.

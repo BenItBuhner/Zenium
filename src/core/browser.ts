@@ -2760,6 +2760,12 @@ export class Browser {
       this.keys.setEditing(tabId, message.editing === true)
       return
     }
+    if (message.type === 'formEdited') {
+      // The user typed into the page (once per document, the Android page script's word): a form
+      // in progress, which no sleep under memory pressure takes (OS-37; Chrome's HadFormInteraction).
+      this.tabs.noteFormEdited(tabId)
+      return
+    }
     if (message.type === 'pdf') {
       if (message.pdf && typeof message.pdf === 'object')
         this.pdf.onReport(tabId, message.pdf, message.pdfToken)

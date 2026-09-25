@@ -18,9 +18,14 @@ import android.widget.ImageView
  * (`onPageCommitVisible`; `onPageFinished` for a document whose commit-visible never comes), a
  * touch, the view's end or [TIMEOUT_MS], whichever is first; then the bitmap goes.
  *
- * Only the boot's restore gets one: a `view.load` arriving before the chrome's READY is the
+ * Two loads get one. The boot's restore: a `view.load` arriving before the chrome's READY is the
  * session coming back (`restoring`); a load after it is the user's, and a page left blank for a
- * moment then is the page's own look, as in Chrome. The file is read, its stamp checked against
+ * moment then is the page's own look, as in Chrome. And a back/forward list restored under a
+ * fresh view at any time (`view.restoreNavigation`, `restoredList`): the core creates a view
+ * like that for a page it put to sleep and is showing again – a tab the sleep timer or memory
+ * pressure discarded (OS-37), whose card picture is its last look – and for a reopened tab,
+ * whose picture, if a file under its id exists at all, is checked against the URL like every
+ * other. The file is read, its stamp checked against
  * the URL the view is loading (a picture of another page is never shown as this one's) and the
  * JPEG decoded on the pictures' own thread (Thumbnails.disk), RGB_565 – a page's picture has no
  * alpha, and half the bytes: a card-width picture is a few hundred KB; the main thread does one
@@ -41,10 +46,13 @@ class RestoredPictures(
 
     private val shown = HashMap<String, Shown>()
 
-    /** The core asked `view` to load `url`: its picture from disk, if this is the boot's restore and there is one. */
-    fun offer(view: TabWebView, url: String) {
+    /**
+     * The core asked `view` to load `url`: its picture from disk, if this is the boot's restore
+     * or a list restored under the view (`restoredList`), and there is one.
+     */
+    fun offer(view: TabWebView, url: String, restoredList: Boolean = false) {
         val thumbs = thumbnails ?: return
-        if (!wanted(restoring(), view.hasPaintedDocument, shown.containsKey(view.tabId))) return
+        if (!wanted(restoredList, restoring(), view.hasPaintedDocument, shown.containsKey(view.tabId))) return
         val tabId = view.tabId
         thumbs.disk.execute {
             val picture = thumbs.loadPicture(tabId, url) ?: return@execute
@@ -58,7 +66,7 @@ class RestoredPictures(
     @SuppressLint("ClickableViewAccessibility")
     private fun place(view: TabWebView, bitmap: Bitmap) {
         // Decoded off the main thread: the page may have painted, or the tab gone, meanwhile.
-        if (!wanted(true, view.hasPaintedDocument, shown.containsKey(view.tabId)) || view.parent == null) {
+        if (!wanted(true, false, view.hasPaintedDocument, shown.containsKey(view.tabId)) || view.parent == null) {
             bitmap.recycle()
             return
         }
@@ -111,10 +119,11 @@ class RestoredPictures(
         const val TIMEOUT_MS = 10_000L
 
         /**
-         * Whether a view gets a picture: only while the boot's restore is in flight, only over a
-         * view that has drawn no document yet (a picture over a painted page would hide it), and
-         * one per tab.
+         * Whether a view gets a picture: for a list restored under it (a sleeping tab shown again)
+         * or while the boot's restore is in flight, only over a view that has drawn no document
+         * yet (a picture over a painted page would hide it), and one per tab.
          */
-        fun wanted(restoring: Boolean, painted: Boolean, shown: Boolean): Boolean = restoring && !painted && !shown
+        fun wanted(restoredList: Boolean, restoring: Boolean, painted: Boolean, shown: Boolean): Boolean =
+            (restoredList || restoring) && !painted && !shown
     }
 }

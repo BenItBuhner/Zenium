@@ -568,9 +568,10 @@ export interface Tab {
    * The user typed into a form field of the current document (OS-37; Chrome's
    * `kHasFormInteraction` protection): the sleep policies leave the page loaded, timer and
    * memory pressure alike – a discard would lose what was typed. Set by the page script's
-   * first `input` on the document (`TabViewEvents.onFormEdited`), cleared when a navigation
-   * commits. A session's own (not persisted); absent on hosts that do not report it (the
-   * desktop today) and on records older than the field.
+   * first trusted `input` on the top document (the `formEdited` page message,
+   * `Tabs.noteFormEdited`), cleared when a navigation commits. A session's own (not
+   * persisted); absent on hosts that do not report it (the desktop today) and on records
+   * older than the field.
    */
   formEdited?: true
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */

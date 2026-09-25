@@ -4311,6 +4311,17 @@ export class TabManager {
     this.browser.state.commitVolatile()
   }
 
+  /**
+   * The user typed into the page's current document (`formEdited`, the page script's word once
+   * per document): a form in progress, which no sleep under memory pressure takes until the
+   * next commit clears it (the `navigated` handler). Session-only; nothing to persist.
+   */
+  noteFormEdited(tabId: string): void {
+    const tab = this.tab(tabId)
+    if (!tab || tab.formEdited || !this.view(tabId)) return
+    tab.formEdited = true
+  }
+
   /** The ids a pressure signal has yet to sleep, oldest first, and the timer for the next batch. */
   private pressureQueue: string[] = []
   private pressureTimer: ReturnType<typeof setTimeout> | null = null

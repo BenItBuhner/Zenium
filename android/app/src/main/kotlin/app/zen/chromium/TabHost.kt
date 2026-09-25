@@ -348,10 +348,19 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
      * harness's UiAutomation) is handed the view as it is handed every view; TalkBack asks for
      * the important ones, and the harness's layers scene reads as TalkBack does. One coming back
      * reads as any view does (A11Y-03).
+     *
+     * And what the view asks of the shared renderer with it (OS-37, [RendererPriorities]): the
+     * page in front `IMPORTANT`, a hidden one `WAIVED`, both waived once the window leaves the
+     * screen – for a host that rebuilds its chrome when the window is back
+     * ([PageHost.waivesHiddenRenderers]); the others keep the platform's default.
      */
     private fun show(view: TabWebView, visible: Boolean) {
         view.visibility = if (visible) View.VISIBLE else View.GONE
         readable(view, visible)
+        if (host.waivesHiddenRenderers) {
+            val policy = RendererPriorities.forPage(visible)
+            view.setRendererPriorityPolicy(policy.priority, policy.waivedWhenNotVisible)
+        }
     }
 
     private fun readable(view: TabWebView, readable: Boolean) {

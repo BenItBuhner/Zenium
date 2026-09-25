@@ -3,7 +3,15 @@ import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared
 import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
 import { NoopGovernor, SLEEP_CHECK_MS } from '../hostDefaults'
-import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
+import type {
+  AppHost,
+  Platform,
+  StoreIO,
+  TabView,
+  TabViewEvents,
+  TabViewHost,
+  WindowHost
+} from '../platform'
 import { DISCARD_BATCH_INTERVAL_MS, neverUnloaded, RECENTLY_AUDIBLE_MS } from '../memoryPressure'
 import type { ZenWindow } from '../window'
 
@@ -32,8 +40,11 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
  * The Android shape: no resource governor (the browser falls back to `NoopGovernor`), pages
  * that only record whether they are alive.
  */
-function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
+function fakePlatform(
+  io: StoreIO
+): Platform & { live: Set<string>; events: Map<string, TabViewEvents> } {
   const live = new Set<string>()
+  const events = new Map<string, TabViewEvents>()
   const capabilities = stub<HostCapabilities>({
     windows: false,
     updates: false,
@@ -44,6 +55,7 @@ function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
   })
   return {
     live,
+    events,
     info: { os: 'android' as PlatformOs, version: '0.0.0' },
     capabilities,
     io,
@@ -60,8 +72,9 @@ function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
         })
     },
     views: stub<TabViewHost>({
-      createView: (tab) => {
+      createView: (tab, viewEvents) => {
         live.add(tab.id)
+        events.set(tab.id, viewEvents)
         let destroyed = false
         return stub<TabView>({
           isDestroyed: () => destroyed,
@@ -86,7 +99,7 @@ function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
     downloads: stub(),
     sessions: stub(),
     app: stub<AppHost>()
-  } as unknown as Platform & { live: Set<string> }
+  } as unknown as Platform & { live: Set<string>; events: Map<string, TabViewEvents> }
 }
 
 function start(io = memoryIo()): {
@@ -266,6 +279,26 @@ describe('sleeping tabs on a host without a resource governor', () => {
     vi.advanceTimersByTime(1_000)
     browser.tabs.unloadForMemoryPressure('critical')
     expect(browser.tabs.tab(radio.id)!.discarded).toBe(true)
+  })
+
+  it('keeps a page with a form in progress until its next document', () => {
+    const { browser, platform, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadEnabled: false })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const form = browser.tabs.createTab({ url: 'https://forms.example/apply', active: false }, win)
+    browser.tabs.load(form.id, win)
+    browser.tabs.tab(form.id)!.lastActiveAt = Date.now() - 60 * 60_000
+    // The page script's word, through the `pageMessage` view event: the user typed into the page.
+    platform.events.get(form.id)!.onPageMessage({ type: 'formEdited' })
+    expect(browser.tabs.tab(form.id)!.formEdited).toBe(true)
+    browser.tabs.unloadForMemoryPressure('critical')
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
+    expect(browser.tabs.tab(form.id)!.discarded).toBe(false)
+    // The form was the old document's: a commit clears the guard, and the next signal takes the page.
+    platform.events.get(form.id)!.onNavigated('https://forms.example/thanks', false)
+    expect(browser.tabs.tab(form.id)!.formEdited).toBeUndefined()
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(browser.tabs.tab(form.id)!.discarded).toBe(true)
   })
 
   it('a newer signal replaces the pending batches, and a page gone back to is left alone', () => {
