@@ -20,7 +20,12 @@ import type { OverviewState } from '@renderer/lib/gestures/stage'
  */
 
 const SPACE = 'space'
-const AREA = { x: 0, y: 0, width: 412, height: 800 }
+/**
+ * A phone 426 wide: two columns of 195 (the grid's 12 gutters and gap taken out), so a 3 / 4
+ * card is 260 tall and a row's pitch 272 – the mount's guess (`overviewRowPitch`) and the
+ * layout below agree on the rows, and the guess is the measured window at the grid's top.
+ */
+const AREA = { x: 0, y: 0, width: 426, height: 800 }
 const CARD_H = 260
 const PITCH = 272
 const GRID_H = 800
@@ -41,8 +46,14 @@ const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { resetOverviewUi, setOverviewSearch } = await import('@renderer/lib/overviewUi')
-const { OverviewWindowContext, fillCards, overviewWindowStore, pendingFill } =
-  await import('@renderer/lib/overviewWindow')
+const {
+  OverviewWindowContext,
+  fillCards,
+  overviewWindowStore,
+  pendingFill,
+  resetOverviewWindow,
+  useCardFilled
+} = await import('@renderer/lib/overviewWindow')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -132,16 +143,24 @@ const PULL = (hero: string): OverviewState => ({
  * group's card take slots of their own in the same run (the group's shell takes none).
  */
 const measured = HTMLElement.prototype.getBoundingClientRect
+/** Where the cells' rows start, from the grid's top: a test moves them out of the view. */
+let layoutOffset = 0
+/** How often the grid's own box was read: the window's read of the layout starts with it. */
+let gridReads = 0
 function installLayout(): void {
   HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
-    if (this.classList.contains('zen-overview-grid')) return new DOMRect(0, 0, AREA.width, GRID_H)
+    if (this.classList.contains('zen-overview-grid')) {
+      gridReads++
+      return new DOMRect(0, 0, AREA.width, GRID_H)
+    }
     const grid = this.closest<HTMLElement>('.zen-overview-grid')
     if (!grid || !this.hasAttribute('data-cell')) return measured.call(this)
     if (!this.hasAttribute('data-tab-id') && this.classList.contains('zen-group'))
-      return new DOMRect(0, -PITCH, AREA.width, 40)
+      return new DOMRect(0, layoutOffset - PITCH, AREA.width, 40)
     const cells = [...grid.querySelectorAll<HTMLElement>('[data-cell][data-tab-id]')]
-    const i = cells.indexOf(this)
-    const y = Math.floor(i / 2) * PITCH - grid.scrollTop
+    // The New Tab card (the one cell without a tab id) is the grid's last.
+    const i = this.hasAttribute('data-tab-id') ? cells.indexOf(this) : cells.length
+    const y = layoutOffset + Math.floor(i / 2) * PITCH - grid.scrollTop
     return new DOMRect((i % 2) * 200, y, 200, CARD_H)
   }
 }
@@ -211,6 +230,8 @@ const ids = (from: number, to: number): string[] =>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   installLayout()
+  layoutOffset = 0
+  gridReads = 0
   idle.clear()
   clock = 0
   vi.stubGlobal('requestIdleCallback', (cb: (d: IdleDeadline) => void) => {
@@ -223,7 +244,11 @@ beforeEach(() => {
   vi.stubGlobal('requestAnimationFrame', () => 0)
   vi.stubGlobal('cancelAnimationFrame', () => undefined)
   vi.spyOn(performance, 'now').mockImplementation(() => (clock += 2))
-  viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
+  // The viewport store re-reads the window on every state change: size the window itself.
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: AREA.width })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: AREA.height })
+  viewportStore.set({ ...viewportStore.get(), formFactor: 'phone', width: AREA.width })
+  uiStore.set({ insets: { ...uiStore.get().insets, left: 0, right: 0 } })
   sizes = ['clientHeight', 'offsetHeight'].map((name) => [
     name,
     Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
@@ -254,6 +279,8 @@ afterEach(() => {
     overview: { phase: 'closed', progress: 0, heroTabId: null, target: 0 }
   })
   act(() => resetOverviewUi())
+  // The grid's unmount resets the window; a test that rendered no grid leaves nothing behind.
+  act(() => resetOverviewWindow())
   for (const [name, descriptor] of sizes) {
     if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
     else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
@@ -298,12 +325,62 @@ describe('the grid windowed at the mount', () => {
     // Short of the settle nothing is built in idle time: the pull's frames are the morph's.
     expect(idle.size).toBe(0)
     expect(pendingFill()).toBe(0)
+    // The mount's guess is on record with what the layout read: a guessed card stays a card.
+    expect([...overviewWindowStore.get().filled].sort()).toEqual(ids(0, 7).sort())
   })
 
-  it("builds the hero's card from the first frame wherever it stands", () => {
+  it("builds the mount's guess in the render itself, before any layout is read", () => {
+    // A layout that puts every cell far below the view: the read finds nothing in view, and
+    // what stands built is the guess alone – the rows the view holds from the top and one more,
+    // the same eight cards, in one pass.
+    layoutOffset = 5000
+    show(stateOf(thirty()), PULL('t0'))
+    expect(cardIds()).toEqual(ids(0, 7))
+    expect(placeholderIds()).toEqual(ids(8, 29))
+    expect([...overviewWindowStore.get().filled].sort()).toEqual(ids(0, 7).sort())
+  })
+
+  it('an eager cell is not re-rendered by a fill; a windowed one once, when its key fills', () => {
+    const rendered = vi.fn<(eager: boolean) => void>()
+    const renders = (): { eager: number; windowed: number } => ({
+      eager: rendered.mock.calls.filter(([eager]) => eager).length,
+      windowed: rendered.mock.calls.filter(([eager]) => !eager).length
+    })
+    const Probe = ({ eager }: { eager: boolean }): null => {
+      rendered(eager)
+      useCardFilled('x', eager)
+      return null
+    }
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() =>
+      root!.render(
+        createElement(
+          'div',
+          null,
+          createElement(Probe, { eager: true }),
+          createElement(Probe, { eager: false })
+        )
+      )
+    )
+    expect(renders()).toEqual({ eager: 1, windowed: 1 })
+    act(() => fillCards(['y']))
+    expect(renders()).toEqual({ eager: 1, windowed: 1 })
+    act(() => fillCards(['x']))
+    expect(renders()).toEqual({ eager: 1, windowed: 2 })
+    act(() => fillCards(['z']))
+    expect(renders()).toEqual({ eager: 1, windowed: 2 })
+  })
+
+  it("builds the hero's card from the first frame wherever it stands, and the rows around it", () => {
     show(stateOf(thirty(), 't25'), PULL('t25'))
-    expect(cardIds()).toEqual([...ids(0, 7), 't25'])
-    expect(placeholderIds()).not.toContain('t25')
+    // The mount's guess: the hero (t25, row 12) scrolls into view at the view's foot, so the
+    // three rows ending at its row and a row's margin each side – rows 9–13, t18–t27 – are
+    // built in the render itself. happy-dom scrolls nothing, so the layout read after it adds
+    // the rows at the grid's top; a real grid reads the same rows the guess built.
+    expect(cardIds()).toEqual([...ids(0, 7), ...ids(18, 27)])
+    expect(placeholderIds()).toEqual([...ids(8, 17), 't28', 't29'])
   })
 
   it('once settled, fills the rest in idle time nearest first, under the budget, and never shrinks', () => {
@@ -329,6 +406,41 @@ describe('the grid windowed at the mount', () => {
     expect(placeholderIds()).toEqual([])
     expect(pendingFill()).toBe(0)
     expect(idle.size).toBe(0)
+  })
+
+  it("the phases read no layout: the settle starts the idle fill from the mount's read, a close cancels it and unbuilds nothing", () => {
+    const state = stateOf(thirty())
+    show(state, PULL('t0'))
+    expect(cardIds()).toEqual(ids(0, 7))
+    expect(gridReads).toBe(1)
+    expect(idle.size).toBe(0)
+    // The spring carries the open the rest of the way: the morph's frames, no read, no fill.
+    render(state, { phase: 'settling', progress: 0.7, heroTabId: 't0', target: 1 })
+    expect(gridReads).toBe(1)
+    expect(idle.size).toBe(0)
+    // Settled: the rest fill in idle time, in the order the mount's read left – nothing re-read.
+    render(state, { ...OPEN, heroTabId: 't0' })
+    expect(gridReads).toBe(1)
+    expect(idle.size).toBe(1)
+    expect(pendingFill()).toBe(22)
+    runIdle()
+    const built = cardIds().length
+    expect(built).toBeGreaterThan(8)
+    // The pick: the overview closes – the fill is off – and the landing holds it mounted, its
+    // hero at the page's frame: no read, and no card back to a placeholder.
+    render(state, { phase: 'settling', progress: 0.9, heroTabId: 't0', target: 0 })
+    expect(idle.size).toBe(0)
+    expect(pendingFill()).toBe(0)
+    render(state, { phase: 'closed', progress: 0, heroTabId: 't0', target: 0 })
+    expect(gridReads).toBe(1)
+    expect(cardIds().length).toBe(built)
+    // The stage's reset of the overview's own state at the landing (`landOverview`) leaves the
+    // window of a grid that still stands alone; the grid's unmount resets it.
+    act(() => resetOverviewUi())
+    expect(cardIds().length).toBe(built)
+    expect(overviewWindowStore.get().filled.size).toBe(built)
+    act(() => root?.unmount())
+    expect(overviewWindowStore.get().filled.size).toBe(0)
   })
 
   it('a scroll brings the rows it shows and their margin into the window; the idle order follows', () => {

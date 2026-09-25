@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import { flushSync } from 'react-dom'
+import { OVERVIEW_GRID_GAP, OVERVIEW_GRID_GUTTER } from './layout'
 import { createStore } from './store'
 
 /*
@@ -14,10 +15,89 @@ import { createStore } from './store'
  * program's item) is split across frames, none of them long (ruling 5). A cell never goes back
  * to a placeholder: the window only grows until every card is built.
  *
- * The model is pure (`windowOf`); the store says which cells are cards and each cell reads its
- * own key, so a fill step re-renders the cells it fills and nothing else – not the grid, whose
- * FLIP set and hero measure stay where the commit left them.
+ * The mount has no layout to read yet, so its first render builds the cards a GUESS puts in
+ * view (`guessWindow`: the grid's items laid into rows by the columns and the cards' aspect, the
+ * hero's row at the view's foot when it must scroll into view, a row's margin); the commit's
+ * layout effect then reads the real window (`readWindow`, `windowOf`) and fills what the guess
+ * missed – in the same task, before the frame paints – so a mount whose guess is right builds
+ * its cards in one pass, as the grid always did, and one whose guess is short builds the missed
+ * row in a second. The guess errs towards more: it counts the grid's whole height as the view
+ * (the header takes some of it) and ignores a group's header row.
+ *
+ * The model is pure (`windowOf`, `guessWindow`); the store says which cells are cards and each
+ * cell reads its own key, so a fill step re-renders the cells it fills and nothing else – not
+ * the grid, whose FLIP set and hero measure stay where the commit left them.
  */
+
+/**
+ * The grid's items in its order, for the guess: a `cell` is one slot of a row – a card (a tab's
+ * cell, keyed by its id), or a cell that is not one (a folded group, a group of one, the New Tab
+ * card); a `row` item is a group spanning the grid (`col-span-full`), its cards laid in rows of
+ * the grid's columns under its header.
+ */
+export type GridItem =
+  | { kind: 'cell'; key: string; card: boolean }
+  | { kind: 'row'; key: string; cards: readonly string[] }
+
+/**
+ * A row's pitch in the grid: a card's height at the grid's column width plus the gap under it.
+ * `aspect` is the card's width over its height (the phone's 3 / 4, the tablet's computed ratio).
+ */
+export function overviewRowPitch(gridWidth: number, columns: number, aspect: number): number {
+  const column =
+    (gridWidth - 2 * OVERVIEW_GRID_GUTTER - (columns - 1) * OVERVIEW_GRID_GAP) / columns
+  if (!(column > 0) || !(aspect > 0)) return 0
+  return column / aspect + OVERVIEW_GRID_GAP
+}
+
+/**
+ * The mount's guess at the window, before the grid has a layout to read: the cards in the rows
+ * the view holds plus one row's margin past each edge, in the grid's order. The view stands at
+ * the grid's top, or – when the hero's row lies beyond the rows the view holds – ends at the
+ * hero's row, where `scrollIntoView` (nearest) puts it. `viewHeight` is the grid's, `pitch` a
+ * row's (`overviewRowPitch`); with no pitch or height to go by every card is guessed in.
+ */
+export function guessWindow(
+  items: readonly GridItem[],
+  hero: string | null,
+  columns: number,
+  viewHeight: number,
+  pitch: number
+): string[] {
+  const rows: string[][] = []
+  let heroRow = -1
+  let row: string[] = []
+  const flush = (): void => {
+    if (row.length > 0) rows.push(row)
+    row = []
+  }
+  const place = (key: string, card: boolean): void => {
+    if (key === hero) heroRow = rows.length
+    if (card) row.push(key)
+    else row.push('')
+    if (row.length >= columns) flush()
+  }
+  for (const item of items) {
+    if (item.kind === 'cell') {
+      place(item.key, item.card)
+      continue
+    }
+    flush()
+    if (item.key === hero) heroRow = rows.length
+    for (const key of item.cards) place(key, true)
+    flush()
+  }
+  flush()
+  const cards = (from: number, to: number): string[] =>
+    rows
+      .slice(Math.max(0, from), Math.max(0, to))
+      .flat()
+      .filter((key) => key !== '')
+  if (!(pitch > 0) || !(viewHeight > 0)) return cards(0, rows.length)
+  const inView = Math.max(1, Math.ceil(viewHeight / pitch))
+  const first = heroRow < inView ? 0 : heroRow - inView + 1
+  return cards(first - 1, first + inView + 1)
+}
 
 /** A cell's box along the grid's scroll axis, in the same space as the view's. */
 export interface CellBox {
@@ -133,9 +213,13 @@ export const overviewWindowStore = createStore<OverviewWindowState>(
  */
 export const OverviewWindowContext = createContext(false)
 
-/** Whether the cell is built as a card: its own key's word, so a fill re-renders it alone. */
-export function useCardFilled(key: string): boolean {
-  return overviewWindowStore.use((s) => s.all || s.filled.has(key))
+/**
+ * Whether the cell is built as a card: its own key's word, so a fill re-renders it alone. An
+ * `eager` cell (the hero's, the mount's guess) is a card whatever the store says, and a fill –
+ * which its key may be part of – re-renders it not at all.
+ */
+export function useCardFilled(key: string, eager = false): boolean {
+  return overviewWindowStore.use((s) => eager || s.all || s.filled.has(key))
 }
 
 /** Build these cells as cards (no change when they are). */

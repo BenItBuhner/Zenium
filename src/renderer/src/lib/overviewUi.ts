@@ -2,7 +2,6 @@ import type { ArchivedTabSummary } from '@shared/types'
 import { pushBackSurface } from './back'
 import type { ClosedEntrySummary } from './historyAdapter'
 import { NO_SELECTION, type OverviewSelection } from './overviewSelection'
-import { resetOverviewWindow } from './overviewWindow'
 import type { OverviewPane } from './privateTabs'
 import { createStore } from './store'
 
@@ -141,11 +140,7 @@ export function noteOverviewScroll(pane: OverviewPane, top: number): void {
   overviewUiStore.set({ scroll: { pane, top } })
 }
 
-/**
- * The overview has gone: the next one starts afresh (the stage calls this as it dismisses) –
- * the grid's window with it (`overviewWindow.ts`: the next grid builds the cards in view first).
- */
+/** The overview has gone: the next one starts afresh (the stage calls this as it dismisses). */
 export function resetOverviewUi(): void {
   overviewUiStore.set(OVERVIEW_UI_OFF)
-  resetOverviewWindow()
 }

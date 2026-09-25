@@ -61,7 +61,8 @@ interface Props {
   /**
    * The card is built from the first frame whatever the grid's window says (`lib/overviewWindow`):
    * the hero's own card, which the page morphs into (the phone) or which stands in the layer
-   * that comes down whole (the tablet, §9.36).
+   * that comes down whole (the tablet, §9.36), and the cards the mount's guess puts in view. An
+   * eager cell is not re-rendered by a fill.
    */
   eager?: boolean
 }
@@ -93,7 +94,7 @@ export function OverviewCard(props: Props): JSX.Element {
   const { tab, eager = false } = props
   const cellRef = useRef<HTMLDivElement>(null)
   const windowed = useContext(OverviewWindowContext)
-  const filled = useCardFilled(tab.id) || eager || !windowed
+  const filled = useCardFilled(tab.id, eager || !windowed)
   return (
     <div
       ref={cellRef}

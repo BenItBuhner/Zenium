@@ -3,12 +3,15 @@ import {
   FILL_BUDGET_MS,
   cancelFill,
   fillCards,
+  guessWindow,
+  overviewRowPitch,
   overviewWindowStore,
   pendingFill,
   resetOverviewWindow,
   scheduleFill,
   windowOf,
-  type CellBox
+  type CellBox,
+  type GridItem
 } from '../overviewWindow'
 
 /*
@@ -84,6 +87,87 @@ describe('windowOf: the cells in view and a row past each edge', () => {
       { key: 't', top: 2400, bottom: 2600, card: true, folded: false }
     ]
     expect(windowOf(VIEW, cells)).toEqual({ shown: [], rest: ['t'] })
+  })
+})
+
+describe("guessWindow: the mount's guess before there is a layout", () => {
+  const loose = (from: number, to: number): GridItem[] =>
+    Array.from({ length: to - from + 1 }, (_, i) => ({
+      kind: 'cell',
+      key: `t${from + i}`,
+      card: true
+    }))
+  const keys = (from: number, to: number): string[] =>
+    Array.from({ length: to - from + 1 }, (_, i) => `t${from + i}`)
+  // A phone 412 wide, two columns: a 188 column, a 3 / 4 card 250.7 tall, a 262.7 pitch.
+  const PITCH = overviewRowPitch(412, 2, 3 / 4)
+
+  it('sizes a row from the column the grid gives a card at its aspect, plus the gap', () => {
+    expect(PITCH).toBeCloseTo(188 / 0.75 + 12, 5)
+    // A tablet's four wide cards at 1.29 : 1 on a 1280 grid: a 305 column, 236 tall.
+    expect(overviewRowPitch(1280, 4, 1.29)).toBeCloseTo(305 / 1.29 + 12, 5)
+    expect(overviewRowPitch(0, 2, 3 / 4)).toBe(0)
+  })
+
+  it('takes the rows the view holds from the top and one more, when the hero is among them', () => {
+    // 800 / 262.7 = 3.05: four rows touch the view, the fifth is the margin – ten cards.
+    expect(guessWindow(loose(0, 29), 't0', 2, 800, PITCH)).toEqual(keys(0, 9))
+    expect(guessWindow(loose(0, 29), 't7', 2, 800, PITCH)).toEqual(keys(0, 9))
+    // No hero (the tablet's open by the button): the grid's top likewise.
+    expect(guessWindow(loose(0, 29), null, 2, 800, PITCH)).toEqual(keys(0, 9))
+  })
+
+  it("ends the view at the hero's row when it must scroll into view, a row's margin each side", () => {
+    // t25 is row 12: rows 9–12 hold the view (four rows), 8 and 13 are the margins.
+    expect(guessWindow(loose(0, 29), 't25', 2, 800, PITCH)).toEqual(keys(16, 27))
+    // The last row (14): rows 11–14 hold the view, 10 is the margin above, nothing below.
+    expect(guessWindow(loose(0, 29), 't29', 2, 800, PITCH)).toEqual(keys(20, 29))
+  })
+
+  it('lays a group spanning the grid in rows of its own, and a folded group or one of one as a cell', () => {
+    const items: GridItem[] = [
+      ...loose(0, 2),
+      { kind: 'row', key: 'group:g', cards: ['g0', 'g1', 'g2'] },
+      { kind: 'cell', key: 'group:f', card: false },
+      { kind: 'cell', key: 'h0', card: true },
+      ...loose(3, 12)
+    ]
+    // Rows: [t0 t1] [t2 -] [g0 g1] [g2 -] [f h0] [t3 t4] [t5 t6] … – four in view and a margin
+    // from the top: t0–t2, the group's three, h0 (the folded group builds nothing), and no more.
+    expect(guessWindow(items, 't0', 2, 800, PITCH)).toEqual([
+      't0',
+      't1',
+      't2',
+      'g0',
+      'g1',
+      'g2',
+      'h0'
+    ])
+    // The hero inside the spanning group: its first row is the group's.
+    expect(guessWindow(items, 'g2', 2, 800, PITCH)).toEqual([
+      't0',
+      't1',
+      't2',
+      'g0',
+      'g1',
+      'g2',
+      'h0'
+    ])
+    // The hero heading for a folded group's card: that cell's row.
+    expect(guessWindow(items, 'group:f', 2, 600, PITCH)).toEqual([
+      't2',
+      'g0',
+      'g1',
+      'g2',
+      'h0',
+      't3',
+      't4'
+    ])
+  })
+
+  it('guesses every card in when it has no pitch or height to go by', () => {
+    expect(guessWindow(loose(0, 29), 't0', 2, 0, PITCH)).toEqual(keys(0, 29))
+    expect(guessWindow(loose(0, 29), 't0', 2, 800, 0)).toEqual(keys(0, 29))
   })
 })
 

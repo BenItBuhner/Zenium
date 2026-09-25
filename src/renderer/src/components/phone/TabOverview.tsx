@@ -94,11 +94,14 @@ import {
   cancelFill,
   fillCards,
   fillEveryCard,
+  guessWindow,
+  overviewRowPitch,
   overviewWindowStore,
   readWindow,
   resetOverviewWindow,
   scheduleFill,
-  windowOf
+  windowOf,
+  type GridItem
 } from '@renderer/lib/overviewWindow'
 import { coveredNow, pageCovered, pageViewStore } from '@renderer/lib/pageView'
 import { PRIVATE_TAB_PLACEHOLDER, privateLockStore } from '@renderer/lib/privateLock'
@@ -405,12 +408,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // box spans the window less its horizontal insets (the layer covers the sidebar) – and the
   // picture's ratio the page frame's, which is `area`, beside the sidebar.
   const sideInsets = uiStore.use((s) => s.insets.left + s.insets.right)
+  const cardAspect = tablet
+    ? tabletCardAspect(area, viewportWidth - sideInsets, columns, cardHeaderHeight())
+    : 3 / 4
   const cardAspectStyle = tablet
-    ? ({
-        '--zen-overview-card-aspect': String(
-          tabletCardAspect(area, viewportWidth - sideInsets, columns, cardHeaderHeight())
-        )
-      } as CSSProperties)
+    ? ({ '--zen-overview-card-aspect': String(cardAspect) } as CSSProperties)
     : undefined
 
   const boxRef = useRef<HTMLDivElement>(null)
@@ -643,16 +645,49 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
 
   // The grid's WINDOW (`lib/overviewWindow.ts`, W6-0): which cells are built as cards. Read
   // from the layout the commit made – after the hero's card has been scrolled into view and the
-  // shell swap's scroll restored, both above – on the commits that can change it: the cards or
-  // the columns (a query, a close, a fold, a rotation), the frame, the phase. The cells in view
-  // and a row's margin fill in this very commit (the store's word reaches each cell before the
-  // frame paints); once the overview has settled the rest fill in idle time, nearest first, and
-  // not before – the pull's and the spring's frames are the morph's. A grid with no layout to
-  // read (the tests' DOM) builds every card. The grid's scroll re-reads the window (below).
+  // shell swap's scroll restored, both above – on the commits that can change the geometry: the
+  // cards or the columns (a query, a close, a fold, a rotation), the frame, the pane. The cells
+  // in view and a row's margin the mount's guess missed fill in this very commit (the store's
+  // word reaches each cell before the frame paints); once the overview has settled the rest
+  // fill in idle time, nearest first, and not before – the pull's and the spring's frames are
+  // the morph's. The phase reads no layout: the settle starts the idle fill from the last read,
+  // a drag, a close or the landing held after one cancels it (a read at the close would force
+  // the style and layout of a grid about to unmount). A grid with no layout to read (the tests'
+  // DOM) builds every card. The grid's scroll re-reads the window (below).
   const foldKey = groups
     .filter((f) => f.collapsed)
     .map((f) => f.id)
     .join('|')
+  // The mount's GUESS at the window (`guessWindow`): the render builds these cards outright,
+  // before there is a layout to read, so a mount whose guess holds builds its cards in one pass.
+  // The grid's items in its order – the pinned cards, the groups (a folded one or one of a
+  // single card is a cell of the flow; one spanning the grid lays its cards in rows of its own),
+  // the loose cards – laid into rows by the columns and the cards' aspect; the hero's row at the
+  // view's foot when it must scroll into view. A guessed card stays a card: the layout effect
+  // below records the guess in the store with what it read.
+  const gridItems: GridItem[] = [
+    ...pinned.map((t): GridItem => ({ kind: 'cell', key: t.id, card: true })),
+    ...groups.flatMap((folder): GridItem[] => {
+      const tabs = members.get(folder.id) ?? []
+      if (tabs.length === 0) return []
+      if (folder.collapsed) return [{ kind: 'cell', key: `group:${folder.id}`, card: false }]
+      if (tabs.length === 1) return [{ kind: 'cell', key: tabs[0].id, card: true }]
+      return [{ kind: 'row', key: `group:${folder.id}`, cards: tabs.map((t) => t.id) }]
+    }),
+    ...loose.map((t): GridItem => ({ kind: 'cell', key: t.id, card: true }))
+  ]
+  const guessed = new Set(
+    guessWindow(
+      gridItems,
+      heroCellKey,
+      columns,
+      area.height,
+      overviewRowPitch(viewportWidth - sideInsets, columns, cardAspect)
+    )
+  )
+  // The last read's cards outside the window, nearest first: the idle fill's order when the
+  // overview settles after the read.
+  const restRef = useRef<readonly string[]>([])
   const rewindow = (scrolled = false): void => {
     const grid = scrollRef.current
     if (scrolled) {
@@ -663,18 +698,27 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     }
     const read = grid ? readWindow(grid) : null
     if (!read) {
+      restRef.current = []
       fillEveryCard()
       return
     }
     const { shown, rest } = windowOf(read.view, read.cells)
-    fillCards(shown)
+    restRef.current = rest
+    fillCards(scrolled ? shown : [...guessed, ...shown])
     if (settled) scheduleFill(rest)
     else cancelFill()
   }
   useLayoutEffect(() => {
     rewindow()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read when the layout inputs change
-  }, [cardsKey, foldKey, columns, area.width, area.height, phase, pane])
+  }, [cardsKey, foldKey, columns, area.width, area.height, pane])
+  useEffect(() => {
+    if (settled) scheduleFill(restRef.current)
+    else cancelFill()
+  }, [settled])
+  // The window is this grid's: it starts afresh when the grid goes, and not before. The close
+  // keeps the overview mounted while the landing is held (`PhoneStage`, `landOverview`), its
+  // hero at the page's frame; a reset there would turn every card into a placeholder and back.
   useEffect(() => () => resetOverviewWindow(), [])
 
   // Escape closes the overview – unless a sheet or the Spaces drawer is up over it; the top
@@ -1487,8 +1531,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       // the settle is no motion of §11's).
       hidden={!tablet && tab.id === heroTabId && p < 1}
       // The hero's card is built from the first frame whatever the window holds: the morph
-      // lands on it, the tablet's layer shows it as it comes down (W6-0).
-      eager={tab.id === heroTabId}
+      // lands on it, the tablet's layer shows it as it comes down (W6-0). So are the cards the
+      // mount's guess puts in view (`guessed`, above): the one pass a right guess makes.
+      eager={tab.id === heroTabId || guessed.has(tab.id)}
       onPick={pick}
       onClose={(t) => closeTabs([t])}
       onSwipeClose={swipedAway}
