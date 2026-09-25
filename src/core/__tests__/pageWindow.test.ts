@@ -387,6 +387,20 @@ describe('the task manager window (W5-18)', () => {
     expect(tasks.closeApproved).toBe(true)
   })
 
+  it('stays up on macOS when the last browser window closes: the app lives on without windows there, and a task manager standing alone is a state the platform has', () => {
+    const f = fixture({ os: 'darwin' })
+    const browserWin = f.browserWindow()
+    const tasks = f.browser.openTaskManager(browserWin)!
+    closeWindow(browserWin)
+    expect(f.hostOf(tasks).closed).toBe(0)
+    expect(tasks.closeApproved).toBe(false)
+    expect(f.pageWindows()).toEqual([tasks])
+    expect(f.browser.allWindows()).toEqual([tasks])
+    // Its own close still goes through.
+    closeWindow(tasks)
+    expect(f.pageWindows()).toEqual([])
+  })
+
   it('does not hold the app up on its own: the browser window closing is still the last one for the downloads warning', async () => {
     const f = fixture()
     const browserWin = f.browserWindow()

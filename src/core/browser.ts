@@ -1213,10 +1213,13 @@ export class Browser {
     const pageId = this.pageWindowIdOf(win)
     if (pageId) this.pageWindows.delete(pageId)
     // The last browser window went (a popup or an app window may stay: they are the pages'
-    // own): the pages' utility windows go with it, and the app ends as it did without them.
+    // own): the pages' utility windows go with it, and the app ends as it did without them – on
+    // Windows and Linux. On macOS the app lives on without windows, and a task manager standing
+    // alone is a state the platform has (Chrome's stays too): it is left up.
     else if (
       win.chrome === 'full' &&
       !this.quitting &&
+      this.state.platform !== 'darwin' &&
       !this.allWindows().some((w) => w.chrome === 'full' && !w.isClosing)
     )
       this.closePageWindows()
