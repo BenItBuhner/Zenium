@@ -300,6 +300,29 @@ export class PageService {
     return tab.id
   }
 
+  /**
+   * Open a chrome page as the one tab of `win`, a page window made for it (`WindowChrome` `page`,
+   * `Browser.openPageWindow`: the task manager's window): the tab half of {@link open} without
+   * its rerouting – the window holds this page and nothing else, so the tab has no opener and no
+   * neighbour, takes the regular container (a chrome page never lives in the private one) and
+   * starts its chrome-page history at the page's landing address. Returns the tab id; null for
+   * a page this host has not got, cannot show, or would draw in a view.
+   */
+  openInWindow(id: string, win: ZenWindow): string | null {
+    const page = Object.prototype.hasOwnProperty.call(this.pages, id) ? this.pages[id] : undefined
+    if (!page || !this.available(page) || page.render !== 'chrome') return null
+    const url = internalPageUrl({ id: page.id, section: null })
+    const tab = this.browser.tabs.createTab(
+      { url, active: true, containerId: DEFAULT_CONTAINER_ID },
+      win
+    )
+    const history = initialHistory(url, this.pages)
+    this.histories.set(tab.id, history)
+    this.apply(tab, history)
+    this.browser.state.commit()
+    return tab.id
+  }
+
   /** Open the page a `zen://` / `zenium://` address names; false when it is not a page. */
   openUrl(
     url: string,

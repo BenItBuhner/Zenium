@@ -3651,8 +3651,9 @@ export class Menus {
       action: 'settings.open',
       click: () => void this.browser.pages.open('settings', undefined, win)
     }
-    // Chrome's More tools › Task manager (shortcuts-menus-121): the desktop's page tab
-    // (`zen://tasks`, Shift+Esc), the row before Developer tools as Chrome seats it.
+    // Chrome's More tools › Task manager (shortcuts-menus-121): the desktop's `zen://tasks` page
+    // in its own window (Shift+Esc; `Browser.openTaskManager`, W5-18), the row before Developer
+    // tools as Chrome seats it.
     const taskManager = desktop({
       label: 'Task Manager',
       action: 'tasks.open',

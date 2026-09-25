@@ -2298,8 +2298,10 @@ export type ShortcutAction =
   | 'devtools.console'
   | 'devtools.browserConsole'
   /**
-   * Chrome's task manager (Shift+Esc; More Tools › Task Manager): the `zen://tasks` page tab –
-   * every process with its memory and CPU, End process (`core/tasks.ts`); desktop layouts only.
+   * Chrome's task manager (Shift+Esc; More Tools › Task Manager): the `zen://tasks` page – every
+   * process with its memory and CPU, End process (`core/tasks.ts`) – in a window of its own on a
+   * host with windows (`WindowChrome` `page`, one per profile, focused when open;
+   * `Browser.openTaskManager`), as a page tab on a host with one window; desktop layouts only.
    */
   | 'tasks.open'
   | 'settings.open'
