@@ -123,19 +123,39 @@ abstract class DemoHarness(
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
      * recording is done when a touch a step injected did not take ([touchFault]). The stills
      * are flushed whether the sequence ran through or threw, so a failed run keeps the
-     * evidence it took on the way ([awaitShots]). The accessibility events of a current WebView
-     * are held open for the whole of it ([holdEventsOpen]) and released after the recording.
+     * evidence it took on the way ([awaitShots]). With `holdEvents` (the default) the
+     * accessibility events of a current WebView are held open for the whole of it
+     * ([holdEventsOpen]) and released after the recording.
+     *
+     * A PERF driver passes `holdEvents = false`, because the hold changes what it measures: the
+     * hold's service asks for every event type, and Chromium from 124 on reads a service with the
+     * whole mask as a complex-interaction one (`AccessibilityState`, the
+     * `isComplexUserInteractionServiceEnabled` flip in the runs' logcat) and moves the WebView
+     * from `kAXModeBasic` with no events – the state it holds under UiAutomation alone, which
+     * `getEnabledAccessibilityServiceList` does not list – to `kAXModeComplete` (at 145 with
+     * inline text boxes and the extended properties, at 124 with the screen reader's and the HTML
+     * attributes) with every event type built on the app's UI thread and sent over binder: work
+     * inside what `PerfCapture` reads (the gfxinfo framestats, the Perfetto trace, the Chromium
+     * trace). Every perf baseline – PERF-5's, the services' (#458, #469, #472), W6-0's (#480) –
+     * was taken on the API 35 image (124) under Basic with no events (on API 34's 113 the WebView
+     * sent everything anyway, so there the hold adds only a consumer process), and a perf reading
+     * compared across passes must stay there. A perf driver therefore runs the way every driver
+     * ran before the hold: UiAutomation alone, its tree reads as they were.
      */
-    protected fun runDemo() {
+    protected fun runDemo(holdEvents: Boolean = true) {
+        if (!holdEvents) {
+            runSequence()
+            return
+        }
         holdEventsOpen()
         try {
-            runDemoHeld()
+            runSequence()
         } finally {
             releaseEvents()
         }
     }
 
-    private fun runDemoHeld() {
+    private fun runSequence() {
         val info = ui.serviceInfo
         info.flags = info.flags or
             AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
@@ -206,10 +226,12 @@ abstract class DemoHarness(
      * So the run gets one enabled service, the instrumentation APK's [EVENTS_TAP_SERVICE_CLASS]
      * (every event type, generic feedback, no flags, no capabilities, doing nothing with them):
      * Chromium then dispatches every event as before 124, the framework forwards them to
-     * UiAutomation too, the WebView takes its complete tree mode (a service asking for the whole
-     * mask counts as a complex one) and drops its no-service auto-disable timer; the app sees no
-     * touch exploration and no screen reader. The service is added to whatever the setting
-     * held; [releaseEvents] puts that back unless a demo wrote the setting itself.
+     * UiAutomation too, and the WebView moves from `kAXModeBasic` – its state under UiAutomation
+     * alone: the tree answered on request, no events (accessibility was never off, and a WebView
+     * is never an auto-disable candidate) – to its complete tree mode, a service asking for the
+     * whole mask counting as a complex one; the app sees no touch exploration and no screen
+     * reader. The service is added to whatever the setting held, and `accessibility_enabled` is
+     * set; [releaseEvents] puts both back unless a demo wrote the services setting itself.
      */
     private fun holdEventsOpen() {
         servicesBefore = secureSetting("enabled_accessibility_services")
