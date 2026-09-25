@@ -24,10 +24,11 @@
 import { app, ipcMain } from 'electron'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { BUILTIN_RULE_SETS, type Decision } from '../../core/blocking/rules'
-import type { PrivacyHost } from '../../core/platform'
+import type { LookalikeTableName, PrivacyHost } from '../../core/platform'
 import { cookiesWithheld, signalHeaders } from '../../core/protection/policy'
-import type { PrivacyFlags, SafeBrowsingHit } from '../../shared/privacy'
+import type { LookalikeVerdict, PrivacyFlags, SafeBrowsingHit } from '../../shared/privacy'
 import type { SiteDataPolicy } from '../../shared/siteData'
 import { PRIVACY_SIGNALS_CHANNEL, type PrivacySignals } from '../../shared/privacySignals'
 import type { ElectronBlocking } from './blocking'
@@ -45,6 +46,7 @@ import {
 export interface RequestTab {
   noteUpgraded(from: string, to: string): void
   noteUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
+  noteLookalikeNavigation(url: string, verdict: LookalikeVerdict): void
 }
 
 export interface TabLookup {
@@ -54,6 +56,11 @@ export interface TabLookup {
 /** The core's Safe Browsing lookup, as the handler needs it. */
 export interface SafeBrowsingLookup {
   lookup(url: string): SafeBrowsingHit | null
+}
+
+/** The core's lookalike check (`ProtectionService.checkLookalike`), as the handler needs it. */
+export interface LookalikeLookup {
+  check(url: string): LookalikeVerdict | null
 }
 
 /** `app.configureHostResolver`, injectable for the tests. */
@@ -83,6 +90,34 @@ export class SafeBrowsingHandler implements RequestHandler {
     if (!hit) return undefined
     if (ctx.type === 'main_frame' && request.tabId)
       this.tabs.viewForTab(request.tabId)?.noteUnsafeNavigation(ctx.url, hit)
+    return { cancel: true }
+  }
+}
+
+/**
+ * Holds a tab's main-frame navigation whose address looks like a well-known site's (PS-18), right
+ * after Safe Browsing and ahead of every rule: the core's check says so, the tab is told the
+ * verdict, and the cancelled request's `did-fail-load` becomes the question page. Documents of
+ * tabs only – a frame's address is not the one in the address bar, and a request that is no
+ * tab's has no page to ask on.
+ */
+export class LookalikeHandler implements RequestHandler {
+  readonly id = 'lookalike'
+  readonly order = HANDLER_ORDER.lookalike
+
+  constructor(
+    private readonly lookalikes: LookalikeLookup,
+    private readonly tabs: TabLookup
+  ) {}
+
+  onBeforeRequest(request: HostRequest): BeforeRequestResult {
+    const { ctx } = request
+    if (ctx.type !== 'main_frame' || !request.tabId) return undefined
+    const tab = this.tabs.viewForTab(request.tabId)
+    if (!tab) return undefined
+    const verdict = this.lookalikes.check(ctx.url)
+    if (!verdict) return undefined
+    tab.noteLookalikeNavigation(ctx.url, verdict)
     return { cancel: true }
   }
 }
@@ -130,6 +165,11 @@ export function bundledSafeBrowsingDirectory(): string {
   return join(app.getAppPath(), 'resources', 'safebrowsing')
 }
 
+/** `resources/lookalikes` of this build (the lookalike check's two tables, gzipped). */
+export function bundledLookalikesDirectory(): string {
+  return join(app.getAppPath(), 'resources', 'lookalikes')
+}
+
 /** The cookie jar's enforcement of the per-site policy (`CookiePolicyEnforcer` in `siteData.ts`). */
 export interface CookieJarPolicy {
   apply(policy: SiteDataPolicy): void
@@ -145,7 +185,9 @@ export class ElectronPrivacy implements PrivacyHost {
     private readonly bundleDir: string = bundledSafeBrowsingDirectory(),
     private readonly configureResolver: HostResolverConfigurator = (options) =>
       app.configureHostResolver(options),
-    private readonly cookieJar: CookieJarPolicy | null = null
+    private readonly cookieJar: CookieJarPolicy | null = null,
+    private readonly lookalikes: LookalikeLookup | null = null,
+    private readonly lookalikesDir: string = bundledLookalikesDirectory()
   ) {}
 
   /** The policy the core last pushed, null before the first `apply`. */
@@ -168,6 +210,18 @@ export class ElectronPrivacy implements PrivacyHost {
     }
   }
 
+  /** One of the lookalike tables, gunzipped to text; null when the build has no copy. */
+  async bundledLookalikeTable(name: LookalikeTableName): Promise<string | null> {
+    if (!/^[a-z-]+$/.test(name)) return null
+    try {
+      return gunzipSync(await fs.readFile(join(this.lookalikesDir, `${name}.txt.gz`))).toString(
+        'utf8'
+      )
+    } catch {
+      return null
+    }
+  }
+
   /** The signals the page preload exposes on `navigator` (both off before the first `apply`). */
   signals(): PrivacySignals {
     return { gpc: this.flags?.gpc === true, dnt: this.flags?.dnt === true }
@@ -177,6 +231,7 @@ export class ElectronPrivacy implements PrivacyHost {
   handlers(): RequestHandler[] {
     return [
       new SafeBrowsingHandler(this.safeBrowsing, this.tabs),
+      ...(this.lookalikes ? [new LookalikeHandler(this.lookalikes, this.tabs)] : []),
       new PrivacyRequestHandler(() => this.flags)
     ]
   }

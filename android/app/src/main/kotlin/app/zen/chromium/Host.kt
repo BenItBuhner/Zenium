@@ -409,10 +409,21 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val thumbnails = Thumbnails(File(activity.cacheDir, Thumbnails.DIR))
     /**
      * The restored tab's card picture over its page view from the boot's `view.load` to the
-     * page's first paint (OS-26, `RestoredPictures`): only while the boot's restore is in flight,
-     * before the chrome's READY.
+     * page's first paint (OS-26, `RestoredPictures`): while the boot's restore is in flight,
+     * before the chrome's READY – and over a sleeping tab shown again, whose list is restored
+     * under a fresh view (OS-37).
      */
     val restoredPictures = RestoredPictures(thumbnails, main) { activity.restoringAtBoot }
+    /**
+     * The platform's memory readings graded for the core (OS-37, [MemoryPressure]): every trim
+     * beside its `MemoryInfo` reading ([onTrimMemory]), and the reading on its own every half
+     * minute while the window is up. Created at its first use – the chrome's READY – so the cold
+     * start's own path gains nothing.
+     */
+    private val memoryPressureMonitor = lazy { MemoryPressureMonitor(activity, main) { level, why -> onMemoryPressure(level, why) } }
+    val memoryPressure: MemoryPressureMonitor by memoryPressureMonitor
+    /** Whether the core booted in the current chrome (`chrome.ready`); false again across a rebuild. */
+    private var coreUp = false
     /**
      * Each tab's last pushed list and the `hostState` behind it, for the synchronous
      * `view.navigationEntries` and `view.navigationHostState` the core makes from the bridge
@@ -548,6 +559,43 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * at exit (IMPORTANT under the default policy, WebView showing or not) can tell that.
      */
     private fun windowUp(): Boolean = activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+
+    // --- memory pressure (OS-37) ------------------------------------------------------------------
+    //
+    // The one renderer every WebView shares – the chrome's (the UI and the core) and the pages' –
+    // keeps the platform's default priority policy, IMPORTANT and not waived when no view shows:
+    // at the app's own priority behind other apps, it dies only as the app would. Waiving it would
+    // make the whole renderer the system's cheapest kill and every return after one a chrome
+    // booting blank; Chrome's UI is native and outlives its renderers, ours is one. So the memory
+    // this row gives back is the discards' (`WebView.destroy` of the sleeping pages), and OS-37's
+    // "hidden renderers waived" is not applicable under WebView's one-renderer model (the
+    // coordinator's ruling, round 2).
+
+    /**
+     * `ComponentCallbacks2.onTrimMemory` (MainActivity, the one hunk there): the trim graded with
+     * the `MemoryInfo` reading beside it ([MemoryPressure.ofTrimWith]) and the core told
+     * ([onMemoryPressure]); BACKGROUND, UI_HIDDEN and the levels the table does not know are not
+     * pressure on their own – their arrival reads the device once, and the reading grades. The
+     * back previews are the activity's own to drop, as before.
+     */
+    fun onTrimMemory(level: Int) {
+        memoryPressure.onTrim(level)
+    }
+
+    /**
+     * Memory pressure graded (a trim, or the poll's reading): the core sleeps the hidden pages
+     * shown longest ago at the level's share (`Tabs.unloadForMemoryPressure`, never the page in
+     * front, one playing or capturing, one with a form in progress, one shown in the last
+     * minute) – a few at a time while the window is up, in one pass while it is away (`background`:
+     * nothing draws, and the hidden chrome's timers run throttled) – and a restored tab's picture
+     * still up is a bitmap the page beneath will replace anyway.
+     */
+    private fun onMemoryPressure(level: MemoryPressure.Level, why: String) {
+        val background = !windowUp()
+        Log.i(TAG, "memory pressure ${level.wire}${if (background) ", window away" else ""} ($why)")
+        chrome.hostEvent("memoryPressure", json("level" to level.wire, "background" to background))
+        restoredPictures.releaseAll("memory pressure")
+    }
 
     override fun rendererGone(tab: TabWebView, didCrash: Boolean, priorityAtExit: Int): JSONObject? {
         val exit = rendererExits.gone(didCrash, priorityAtExit, windowUp(), visibleTabIds())
@@ -939,10 +987,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // A restored list is loading its current entry; a refused one has the core load
                 // it next. Either way the crash page's word, when there is one, comes after.
                 if (tab != null) {
-                    // At boot, the session's tabs come back this way (their lists kept): the
-                    // restored tab's last picture over the entry the list is loading, as at
-                    // `view.load` for a tab without a list.
-                    if (restored) NavigationState.currentUrl(entries, index)?.let { restoredPictures.offer(tab, it) }
+                    // The session's tabs come back this way at boot (their lists kept), and a
+                    // sleeping tab shown again at any time (OS-37): the tab's last picture over
+                    // the entry the list is loading, as at `view.load` for a boot tab without a list.
+                    if (restored) NavigationState.currentUrl(entries, index)?.let { restoredPictures.offer(tab, it, restoredList = true) }
                     deliverRendererExit(tab.tabId)
                 }
             }
@@ -1038,7 +1086,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
             // The chrome's first real frame (boot.ts `ChromeReady`): the splash lifts and the launch's mark is set (OS-26, OS-27).
-            "chrome.ready" -> { activity.onChromeReady(); reply(null) }
+            "chrome.ready" -> {
+                activity.onChromeReady()
+                reply(null)
+                // The core is up: the memory poll starts (OS-37) – after the READY mark, a
+                // service lookup and a post; nothing the frame mark waits for (the P0 pair in
+                // the PR body).
+                coreUp = true
+                if (windowUp()) memoryPressure.start()
+            }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
             // The chrome asks for the bridge's asynchronous channel once its boot is answered
             // (`openBridgePort` in src/android/bridge.ts): the port travels back to the document
@@ -1495,6 +1551,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     fun onStop() {
         if (immersive) setImmersive(false)
+        // Away, the trims are the memory signal; the poll waits for the window (OS-37).
+        if (memoryPressureMonitor.isInitialized()) memoryPressure.stop()
         // A recogniser listening to a screen that is gone: the session ends, the sheet with it.
         voice.abort()
         // A camera scanning a screen that is gone: the session ends, the sheet with it (#187).
@@ -2087,6 +2145,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     fun onStart() {
         chrome.resumeTimers()
+        // The window is up again: the memory poll runs while it is, once the core is there to hear it.
+        if (coreUp) memoryPressure.start()
         // The lock as the app comes back, ahead of the layout the chrome re-applies on `resume`:
         // a screen lock removed while the app was away leaves nothing to pass, and the lock
         // comes off rather than cover the private tabs for good; the switch follows the device.
@@ -2153,8 +2213,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tabs.hideRequested(tabId)
         // A page on its way off the screen has its card picture taken while it is still there. The
         // chrome may have just captured its cover for the same frame: the copy is shared, and a
-        // fresh cover stands as the picture ([TabWebView.captureThumbnail]).
-        tabs.get(tabId)?.captureThumbnail()
+        // fresh cover stands as the picture ([TabWebView.captureThumbnail]). Its list's state goes
+        // to the mirror with the scroll it is left at, for the sleep that may take it while hidden
+        // ([TabWebView.refreshHostState], OS-37).
+        tabs.get(tabId)?.let {
+            it.captureThumbnail()
+            it.refreshHostState()
+        }
         val deadline = Runnable {
             if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
         }
@@ -2416,6 +2481,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (dead !== chrome || activity.isFinishing || activity.isDestroyed) return
         cancelProbe()
         endUnresponsivePrompt()
+        // The core that boots in the fresh chrome says READY again; until then no poll (OS-37).
+        coreUp = false
+        if (memoryPressureMonitor.isInitialized()) memoryPressure.stop()
         tabs.dropAll()
         // The exit recorded for the pages on screen is for the core that boots in the fresh chrome.
         rendererExits.chromeRebuilt()
@@ -2446,6 +2514,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun destroy() {
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
         restoredPictures.releaseAll("host destroyed")
+        if (memoryPressureMonitor.isInitialized()) memoryPressure.stop()
         connectivity.stop()
         extensions.destroy()
         cancelProbe()

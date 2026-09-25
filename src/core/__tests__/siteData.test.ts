@@ -9,6 +9,7 @@ import {
 import type { PrivacyFlags, PrivacySettings } from '../../shared/privacy'
 import { SITE_DATA_ORIGIN_CAP, type SiteDataPolicy } from '../../shared/siteData'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type {
   AppHost,
   EngineDataKind,
@@ -206,6 +207,7 @@ function fixture(options: Options = {}): Fixture {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
+  closeBootTabs(browser, views, (v) => v.tab.id)
   const win = browser.allWindows()[0]
   return {
     browser,

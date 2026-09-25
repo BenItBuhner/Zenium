@@ -75,6 +75,7 @@ const ELECTRON: HostCapabilities = {
   inactiveTabs: false,
   secureDns: true,
   quitsThroughCore: true,
+  lookalikeHolds: true,
   newTabPage: true,
   pageTabs: true,
   // The desktop writes launchers for installed web apps (Settings › Apps lists them).

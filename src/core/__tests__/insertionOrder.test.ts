@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import type { ZenWindow } from '../window'
 
@@ -93,6 +94,7 @@ function harness(): Harness {
   }
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   const regular = (): Tab[] =>
     win

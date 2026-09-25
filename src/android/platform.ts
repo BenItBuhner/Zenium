@@ -63,6 +63,7 @@ import type {
   Platform,
   PlatformInfo,
   PrivacyHost,
+  LookalikeTableName,
   QrScanHost,
   ScreenshotHost,
   PrivateSessionHost,
@@ -94,6 +95,7 @@ import type { Bridge } from './bridge'
 import type { AndroidExtensions } from './extensionHost'
 import {
   fetchBundledFeed,
+  fetchBundledLookalikeTable,
   readSpilledBody,
   type DeferredDocument,
   type SpilledBody
@@ -189,6 +191,7 @@ export function androidCapabilities({
     inactiveTabs: true,
     secureDns: false,
     quitsThroughCore: false,
+    lookalikeHolds: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
     pageTabs: true,
@@ -562,11 +565,14 @@ export interface HostEventPayloads {
    */
   'background.release': void
   /**
-   * The system is short of memory (`onTrimMemory`, graded by `HostLifecycle.memoryPressure`):
-   * hidden pages go to sleep ahead of their timeout, all of them when the process is about to
-   * be killed.
+   * The system is short of memory (`onTrimMemory` and `ActivityManager.MemoryInfo`, graded by
+   * `MemoryPressure.kt`): the hidden pages shown longest ago go to sleep ahead of their timeout
+   * – a quarter of them at `moderate`, half at `low`, all at `critical` (the process is about
+   * to be killed) – `planMemoryPressureDiscard`'s rules, a few at a time while the window is
+   * up; in one pass when `background` says it is away (nothing draws, and a hidden page's
+   * timers run throttled).
    */
-  memoryPressure: { level: 'low' | 'critical' }
+  memoryPressure: { level: 'moderate' | 'low' | 'critical'; background?: boolean }
   /**
    * The device's connectivity changed (`Connectivity.kt`, raw: a network switch reports a loss
    * and a gain within a second; the core's debounce settles it, ERR-06 / ERR-07).
@@ -1132,6 +1138,16 @@ class AndroidPrivacyHost implements PrivacyHost {
     if (fetched !== null) return fetched
     const raw = await this.bridge.call<unknown>('privacy.bundledFeed', { id })
     return typeof raw === 'string' && raw ? raw : null
+  }
+
+  /**
+   * One of the lookalike check's tables from the APK's assets (`assets/lookalikes/`, copied from
+   * `resources/lookalikes` by the Gradle build). The asset merger inflates a `.gz` asset and
+   * drops the extension, so the plain text is asked for first; a build that packaged the
+   * gzip verbatim is inflated here (`DecompressionStream`, the core's runtime has it).
+   */
+  async bundledLookalikeTable(name: LookalikeTableName): Promise<string | null> {
+    return fetchBundledLookalikeTable(name, (url, init) => fetch(url, init))
   }
 
   async lookupSafeBrowsing(url: string): Promise<SafeBrowsingHit | null> {
@@ -1879,8 +1895,10 @@ export class AndroidPlatform implements Platform {
         browser.onHostTeardown()
         return
       case 'memoryPressure': {
-        const p = payload as HostEventPayloads['memoryPressure']
-        browser.tabs.unloadForMemoryPressure(p.level === 'critical' ? 'critical' : 'low')
+        const p = payload as Partial<HostEventPayloads['memoryPressure']> | null
+        // An unknown grade from an older or newer host reads as the middle one.
+        const level = p?.level === 'critical' || p?.level === 'moderate' ? p.level : 'low'
+        browser.tabs.unloadForMemoryPressure(level, { atOnce: p?.background === true })
         return
       }
       case 'connectivity': {

@@ -105,6 +105,7 @@ export interface RequestHandler {
  */
 export const HANDLER_ORDER = {
   safeBrowsing: 50,
+  lookalike: 60,
   ruleEngine: 100,
   privacy: 150,
   headerRewrite: 200

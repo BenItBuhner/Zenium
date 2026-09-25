@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import { NoopGovernor, SLEEP_CHECK_MS } from '../hostDefaults'
-import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
-import { KEEP_UNDER_PRESSURE, neverUnloaded } from '../tabs'
+import type {
+  AppHost,
+  Platform,
+  StoreIO,
+  TabView,
+  TabViewEvents,
+  TabViewHost,
+  WindowHost
+} from '../platform'
+import { DISCARD_BATCH_INTERVAL_MS, neverUnloaded, RECENTLY_AUDIBLE_MS } from '../memoryPressure'
 import type { ZenWindow } from '../window'
 
 function memoryIo(): StoreIO {
@@ -31,8 +40,11 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
  * The Android shape: no resource governor (the browser falls back to `NoopGovernor`), pages
  * that only record whether they are alive.
  */
-function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
+function fakePlatform(
+  io: StoreIO
+): Platform & { live: Set<string>; events: Map<string, TabViewEvents> } {
   const live = new Set<string>()
+  const events = new Map<string, TabViewEvents>()
   const capabilities = stub<HostCapabilities>({
     windows: false,
     updates: false,
@@ -43,6 +55,7 @@ function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
   })
   return {
     live,
+    events,
     info: { os: 'android' as PlatformOs, version: '0.0.0' },
     capabilities,
     io,
@@ -59,8 +72,9 @@ function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
         })
     },
     views: stub<TabViewHost>({
-      createView: (tab) => {
+      createView: (tab, viewEvents) => {
         live.add(tab.id)
+        events.set(tab.id, viewEvents)
         let destroyed = false
         return stub<TabView>({
           isDestroyed: () => destroyed,
@@ -85,7 +99,7 @@ function fakePlatform(io: StoreIO): Platform & { live: Set<string> } {
     downloads: stub(),
     sessions: stub(),
     app: stub<AppHost>()
-  } as unknown as Platform & { live: Set<string> }
+  } as unknown as Platform & { live: Set<string>; events: Map<string, TabViewEvents> }
 }
 
 function start(io = memoryIo()): {
@@ -96,6 +110,7 @@ function start(io = memoryIo()): {
   const platform = fakePlatform(io)
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   return { browser, platform, win }
 }
@@ -112,6 +127,7 @@ function startMeasuring(io = memoryIo()): ReturnType<typeof start> {
   platform.createGovernor = (browser) => new MeasuringGovernor(browser)
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   return { browser, platform, win }
 }
@@ -193,7 +209,7 @@ describe('sleeping tabs on a host without a resource governor', () => {
     expect(browser.state.settings.unloadTimeoutMinutes).toBe(20)
   })
 
-  it('sleeps the pages idle longest under low memory and keeps the recent few', () => {
+  it('sleeps the pages shown longest ago under pressure, a share per level, a few at a time', () => {
     const { browser, win } = start()
     browser.handleCommand(win, 'settings.update', {
       unloadEnabled: false,
@@ -201,27 +217,131 @@ describe('sleeping tabs on a host without a resource governor', () => {
     })
     browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
     const hidden: Tab[] = []
-    for (let i = 0; i < KEEP_UNDER_PRESSURE + 3; i++) {
+    for (let i = 0; i < 8; i++) {
       const tab = browser.tabs.createTab({ url: `https://h${i}.example/`, active: false }, win)
       browser.tabs.load(tab.id, win)
-      // Created in order: h0 has been idle the longest.
-      browser.tabs.tab(tab.id)!.lastActiveAt = Date.now() - (10 - i) * 60_000
+      // Created in order: h0 was shown the longest ago.
+      browser.tabs.tab(tab.id)!.lastActiveAt = Date.now() - (20 - i) * 60_000
       hidden.push(tab)
     }
     const kept = browser.tabs.createTab({ url: 'https://kept.example/', active: false }, win)
     browser.tabs.load(kept.id, win)
     browser.tabs.tab(kept.id)!.lastActiveAt = Date.now() - 60 * 60_000
+    // Left ten seconds ago: the user is likely on the way back to it.
+    const recent = browser.tabs.createTab({ url: 'https://recent.example/', active: false }, win)
+    browser.tabs.load(recent.id, win)
+    browser.tabs.tab(recent.id)!.lastActiveAt = Date.now() - 10_000
+    const asleep = (): string[] =>
+      hidden.filter((t) => browser.tabs.tab(t.id)!.discarded).map((t) => t.url)
 
+    // Low: half of the eight eligible pages, oldest first – two at once, the rest in batches.
     browser.tabs.unloadForMemoryPressure('low')
-    const asleep = hidden.filter((t) => browser.tabs.tab(t.id)!.discarded).map((t) => t.url)
-    expect(asleep).toEqual(['https://h0.example/', 'https://h1.example/', 'https://h2.example/'])
-    // The never-sleep list holds under low pressure, whatever the switch says.
+    expect(asleep()).toEqual(['https://h0.example/', 'https://h1.example/'])
+    vi.advanceTimersByTime(DISCARD_BATCH_INTERVAL_MS)
+    expect(asleep()).toEqual([
+      'https://h0.example/',
+      'https://h1.example/',
+      'https://h2.example/',
+      'https://h3.example/'
+    ])
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
+    expect(asleep()).toHaveLength(4)
+    // The never-sleep list and the page just left hold under low pressure, whatever the
+    // switch says.
     expect(browser.tabs.tab(kept.id)!.discarded).toBe(false)
+    expect(browser.tabs.tab(recent.id)!.discarded).toBe(false)
 
-    // Critical: every hidden page goes, the never-sleep list included; the shown page stays.
+    // Critical: every hidden page goes, the never-sleep list included; the shown page and the
+    // one just left stay.
     browser.tabs.unloadForMemoryPressure('critical')
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
     expect(hidden.every((t) => browser.tabs.tab(t.id)!.discarded)).toBe(true)
     expect(browser.tabs.tab(kept.id)!.discarded).toBe(true)
+    expect(browser.tabs.tab(recent.id)!.discarded).toBe(false)
+    expect(browser.tabs.activeTabFor(win)!.discarded).toBe(false)
+  })
+
+  it('keeps a page that just went quiet for a minute: the gap between two songs is not idleness', () => {
+    const { browser, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadEnabled: false })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const radio = browser.tabs.createTab({ url: 'https://radio.example/', active: false }, win)
+    browser.tabs.load(radio.id, win)
+    browser.tabs.tab(radio.id)!.lastActiveAt = Date.now() - 60 * 60_000
+    // The page script's word on Android, the engine's on the desktop: the same note.
+    browser.tabs.noteAudible(radio.id, true)
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(browser.tabs.tab(radio.id)!.discarded).toBe(false)
+    browser.tabs.noteAudible(radio.id, false)
+    vi.advanceTimersByTime(RECENTLY_AUDIBLE_MS - 1_000)
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(browser.tabs.tab(radio.id)!.discarded).toBe(false)
+    vi.advanceTimersByTime(1_000)
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(browser.tabs.tab(radio.id)!.discarded).toBe(true)
+  })
+
+  it('keeps a page with a form in progress until its next document', () => {
+    const { browser, platform, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadEnabled: false })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const form = browser.tabs.createTab({ url: 'https://forms.example/apply', active: false }, win)
+    browser.tabs.load(form.id, win)
+    browser.tabs.tab(form.id)!.lastActiveAt = Date.now() - 60 * 60_000
+    // The page script's word, through the `pageMessage` view event: the user typed into the page.
+    platform.events.get(form.id)!.onPageMessage({ type: 'formEdited' })
+    expect(browser.tabs.tab(form.id)!.formEdited).toBe(true)
+    browser.tabs.unloadForMemoryPressure('critical')
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
+    expect(browser.tabs.tab(form.id)!.discarded).toBe(false)
+    // The form was the old document's: a commit clears the guard, and the next signal takes the page.
+    platform.events.get(form.id)!.onNavigated('https://forms.example/thanks', false)
+    expect(browser.tabs.tab(form.id)!.formEdited).toBeUndefined()
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(browser.tabs.tab(form.id)!.discarded).toBe(true)
+  })
+
+  it('a newer signal replaces the pending batches, and a page gone back to is left alone', () => {
+    const { browser, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadEnabled: false })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const hidden: Tab[] = []
+    for (let i = 0; i < 6; i++) {
+      const tab = browser.tabs.createTab({ url: `https://h${i}.example/`, active: false }, win)
+      browser.tabs.load(tab.id, win)
+      browser.tabs.tab(tab.id)!.lastActiveAt = Date.now() - (20 - i) * 60_000
+      hidden.push(tab)
+    }
+    // Critical plans all six; the first two go now.
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(2)
+    // The user goes back to h2 before its batch: it is shown, and stays loaded.
+    browser.tabs.activateTab(hidden[2]!.id, win)
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
+    expect(browser.tabs.tab(hidden[2]!.id)!.discarded).toBe(false)
+    expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(5)
+  })
+
+  it('takes the whole plan in one pass when the host says the window is away', () => {
+    // Behind other apps nothing draws and the chrome's timers run throttled: the batches would
+    // leave most of the plan waiting on the return.
+    const { browser, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadEnabled: false })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const hidden: Tab[] = []
+    for (let i = 0; i < 7; i++) {
+      const tab = browser.tabs.createTab({ url: `https://h${i}.example/`, active: false }, win)
+      browser.tabs.load(tab.id, win)
+      browser.tabs.tab(tab.id)!.lastActiveAt = Date.now() - (20 - i) * 60_000
+      hidden.push(tab)
+    }
+    browser.tabs.unloadForMemoryPressure('low', { atOnce: true })
+    // Half of seven, rounded up: four, all now – two would be a batch's worth.
+    expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(4)
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
+    expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(4)
+    browser.tabs.unloadForMemoryPressure('critical', { atOnce: true })
+    expect(hidden.every((t) => browser.tabs.tab(t.id)!.discarded)).toBe(true)
     expect(browser.tabs.activeTabFor(win)!.discarded).toBe(false)
   })
 

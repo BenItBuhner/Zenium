@@ -248,7 +248,10 @@ export class PageService {
     }
     // A page tab: in a regular window – the popup's opener, the private window's regular
     // neighbour, or a new regular window when none is open (what Ctrl+N makes from `asked`).
-    win = this.tabWindowFor(asked) ?? this.browser.createWindow({ kind: 'synced', from: asked })
+    win =
+      this.tabWindowFor(asked) ??
+      // `empty`: the page's tab is the new window's first (a window opens with one tab, not two).
+      this.browser.createWindow({ kind: 'synced', from: asked, empty: true })
     const rerouted = win !== asked
     if (rerouted) openerTabId = null
     // A page sent to another window is brought to the front there.

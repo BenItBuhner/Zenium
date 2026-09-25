@@ -861,8 +861,9 @@ export class Browser {
      */
     title?: string
     /**
-     * Start without the starter tab of blank / private windows (the caller adds the tabs, or
-     * adopts a page right away).
+     * Start without the starter tab – blank / private windows' empty tab, the fresh tab a synced
+     * window opens when its space has none (`ensureFirstTab`): the caller adds the tabs, or
+     * adopts a page right away.
      */
     empty?: boolean
     /** The web app of a standalone window (`chrome` `app`): name, icon and scope. */
@@ -942,6 +943,10 @@ export class Browser {
       const tab = this.tabs.createTab({ url, active: true, load: false }, win)
       win.select(localSpace, tab.id)
       this.urlbarOnReady.add(win.id)
+    } else if (!localSpace && !opts.empty) {
+      // A synced window into a space with nothing in it (New Window, the first browser window
+      // of a run that began on an app window) comes up with a tab all the same, as Chrome's do.
+      this.ensureFirstTab(win)
     }
     this.state.commit()
     return win
@@ -1004,10 +1009,41 @@ export class Browser {
     }
     setTimeout(() => {
       if (!win.alive) return
-      if (this.newTab.enabled && isEmptyTabUrl(tab.url))
-        this.emit('newtab.opened', { tabId: tab.id }, win)
-      else this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+      this.revealFreshTab(tab, win)
     }, 150)
+  }
+
+  /**
+   * The chrome's part of a fresh tab: the new tab page's own announcement when it is on and the
+   * tab is on it (its search box takes focus), the URL bar in new-tab mode over anything else.
+   */
+  private revealFreshTab(tab: Tab, win: ZenWindow): void {
+    if (this.newTab.enabled && isEmptyTabUrl(tab.url))
+      this.emit('newtab.opened', { tabId: tab.id }, win)
+    else this.emit('urlbar.toggle', { mode: 'new-tab' }, win)
+  }
+
+  /**
+   * Chrome's rule at a window's creation: a normal window never comes up without a tab. `win`
+   * was just made – at startup, by New Window, as the first browser window of a run that began
+   * on an app window – showing a space with no tab of its own the window can show (a first boot,
+   * a restored window whose space lost its tabs), so it gets one fresh tab (`openFreshTab`: the
+   * new tab page, or an enabled extension's override). A window whose space has tabs is left as
+   * restored, and so is the empty space the user makes later by closing a space's last tab (Zen's
+   * "This space is empty" – a matter of design, not of this rule). Windows without a tab strip
+   * (a page's sized popup, a web app's window) are their caller's to fill.
+   */
+  ensureFirstTab(win: ZenWindow): void {
+    if (!win.alive || win.chrome !== 'full') return
+    if (this.tabs.activeTabFor(win)) return
+    const space = win.activeSpace()
+    const m = this.state.model
+    const own = space.tabIds.some((id) => {
+      const tab = m.tabs[id]
+      return tab !== undefined && tabVisibleIn(tab, win.id)
+    })
+    if (own) return
+    this.openFreshTab(win)
   }
 
   onWindowClosing(win: ZenWindow): void {
@@ -1401,7 +1437,11 @@ export class Browser {
 
   /**
    * The session's browser windows: Zen restores every synced window (and the space each one was
-   * in). With "restore previous session" off one window starts fresh. Returns the windows opened.
+   * in). With "restore previous session" off one window starts fresh. Either way no window comes
+   * up without a tab (`ensureFirstTab`): a first boot, or a restored window whose space has no
+   * tabs, opens on the new tab page, as Chrome never presents a normal window with none (the
+   * extensions that read `tabs.query({ active: true })[0]` at their first breath count on it).
+   * Returns the windows opened.
    */
   private openStartupWindows(): ZenWindow[] {
     this.startupWindowsPending = false
@@ -1411,8 +1451,11 @@ export class Browser {
         ? this.state.restoredWindows
         : this.state.restoredWindows.slice(0, 1)
     const opened: ZenWindow[] = []
-    if (restore.length === 0) opened.push(this.createWindow({ kind: 'synced' }))
-    for (const persisted of restore) opened.push(this.createWindow({ kind: 'synced', persisted }))
+    // `empty`: the first tab is this function's – after the crash handling below has had its
+    // say, so a run that "never" restores its pages starts on the one fresh tab, not two.
+    if (restore.length === 0) opened.push(this.createWindow({ kind: 'synced', empty: true }))
+    for (const persisted of restore)
+      opened.push(this.createWindow({ kind: 'synced', persisted, empty: true }))
     if (!restoreSession) {
       this.openFreshTab(opened[0])
     } else if (this.state.uncleanExit && this.state.platform !== 'android') {
@@ -1420,6 +1463,7 @@ export class Browser {
       // most runs by killing the process – that is its normal exit, and the pages just come back.
       this.session.onUncleanStart()
     }
+    for (const win of opened) this.ensureFirstTab(win)
     return opened
   }
 
@@ -2848,6 +2892,12 @@ export class Browser {
       this.keys.setEditing(tabId, message.editing === true)
       return
     }
+    if (message.type === 'formEdited') {
+      // The user typed into the page (once per document, the Android page script's word): a form
+      // in progress, which no sleep under memory pressure takes (OS-37; Chrome's HadFormInteraction).
+      this.tabs.noteFormEdited(tabId)
+      return
+    }
     if (message.type === 'pdf') {
       if (message.pdf && typeof message.pdf === 'object')
         this.pdf.onReport(tabId, message.pdf, message.pdfToken)
@@ -2882,7 +2932,7 @@ export class Browser {
       // A host whose engine reports audibility itself (Electron's `audio-state-changed`) sends
       // the Media Session report alone; `playing` is the page script's word where it tracks it.
       if (message.playing !== undefined) {
-        tab.audible = Boolean(message.playing)
+        this.tabs.noteAudible(tabId, Boolean(message.playing))
         this.governor.onMedia(tabId, Boolean(message.playing))
       }
       if (message.media) this.mediaSession.onReport(tabId, message.media)
@@ -3837,7 +3887,13 @@ export class Browser {
         }
         this.defaultBrowser.onOnboardingDone()
         state.commit()
-        this.openNewTab(win)
+        // The tour ends in a new tab. The window came up on one already – a first boot opens
+        // the new tab page (`ensureFirstTab`) – and the tour ends on it rather than beside it:
+        // the same announcement a fresh tab makes, after the state that puts the tour away.
+        const active = tabs.activeTabFor(win)
+        if (active && isEmptyTabUrl(active.url) && !this.extensions.newTabUrl())
+          state.afterBroadcast(() => this.revealFreshTab(active, win))
+        else this.openNewTab(win)
       },
 
       'defaultBrowser.request': ({ source }) => this.defaultBrowser.request(source),

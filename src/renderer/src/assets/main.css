@@ -1001,6 +1001,19 @@
 .zen-interstitial-danger {
   color: var(--v2-danger);
 }
+/*
+ * The lookalike question names an IDN address in the form the user saw, its punycode beside it
+ * in the deemphasised ink (§1: 69 %) – inside the reason, the description, the title and the
+ * buttons' labels alike; the address bar keeps the punycode. On the primary's accent fill the
+ * label's own ink takes the 69 % instead (the token is the page ink).
+ */
+.zen-interstitial-punycode {
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-button[data-primary] .zen-interstitial-punycode {
+  color: inherit;
+  opacity: 0.69;
+}
 
 @layer base {
   html,
@@ -3532,6 +3545,17 @@
   }
   .zen-overview-card:active {
     transform: scale(0.975);
+  }
+  /*
+   * A cell the grid's window has not built yet (`lib/overviewWindow.ts`, W6-0): the card's
+   * frame – its radius, its surface, its elevation – and nothing on it; the card takes its
+   * place on scroll or in idle time. Never a tone of its own: the cell reads as the card it is
+   * about to be, so nothing is drawn differently as it fills (v2 §9.34, §11).
+   */
+  .zen-overview-card-placeholder {
+    border-radius: var(--zen-card-radius);
+    background: var(--zen-bg-solid);
+    box-shadow: var(--zen-shadow-1);
   }
   /* The title row (§9.21): 44 at the default text size, growing from its line box (A11Y-05). */
   .zen-overview-card-header {

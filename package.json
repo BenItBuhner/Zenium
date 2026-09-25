@@ -1,6 +1,6 @@
 {
   "name": "zenium",
-  "version": "0.4.70",
+  "version": "0.4.73",
   "homepage": "https://github.com/BenItBuhner/Zenium",
   "description": "Zenium: Zen Browser's Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine (Electron on desktop, the system WebView on Android).",
   "main": "./out/main/index.js",
@@ -32,6 +32,7 @@
     "icons": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/app-icons.ts",
     "blocking:snapshot": "node --experimental-strip-types --no-warnings .github/scripts/build-blocking-snapshot.mts",
     "safebrowsing:snapshot": "node --experimental-strip-types --no-warnings --import ./scripts/ts-imports.mjs scripts/safebrowsing-snapshot.mts",
+    "lookalikes:snapshot": "node --experimental-strip-types --no-warnings --import ./scripts/ts-imports.mjs scripts/lookalikes-snapshot.mts",
     "release": "node .github/scripts/cut-release.mjs"
   },
   "dependencies": {

@@ -6,6 +6,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type {
   MenuHost,
   MenuItemTemplate,
@@ -148,6 +149,7 @@ function harness(): Harness {
   }
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser, views)
   const win = browser.allWindows()[0] as ZenWindow
   return {
     browser,
