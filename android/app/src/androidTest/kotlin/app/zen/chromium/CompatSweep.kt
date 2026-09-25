@@ -7161,6 +7161,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ppfadpgpccljindldolejmgkhgaficka", "Ad Block Ninja", "ad-block-ninja", core = ::adBlocker),
         Row("nnajoiemfpldioamchanognpjmocgkbg", "Draftback", "draftback", core = attachedGate("Draftback", "https://docs.google.com/document/d/1/edit", "a Google account with a Google Doc open (its playback mounts in Docs' toolbar; docs.google.com sends a fresh browser to its sign-in)")),
         Row("oppflpnigmhkldmdmmbnopidlhahanji", "Snake", "snake", core = popupMarker("Snake", SNAKE_CANVAS, settleMs = 25_000)),
+        // These two rows each cost the API 34 Google image's emulator its host side once in compat
+        // round 19's BEFORE run (qemu-system-x86_64-headless 37.1.11, SIGSEGV on a libvk_swiftshader.so
+        // thread, the guest's logcat clean): axe DevTools 5 s after its install, Augmented Steam 8 s
+        // after its options page while the Steam store page painted. The round's trigger keeps them
+        // for last on that lane (`SWEEP_LAST`); two boots are too few for `notOnGoogleImage`.
         Row("lhdoppojpmngadmnindnejefpokejbdd", "axe DevTools - Web Accessibility Testing", "axe-devtools", core = notOnThePhone("axe DevTools: its scans run from its devtools panel (`devtools_page`) over chrome.debugger; the phone has no DevTools panel to host it (WebView limit); its popup is the panel's front door")),
         Row("dnhpnfgdlenaccegplpojghhmaamnnfp", "Augmented Steam", "augmented-steam", core = liveMarker("Augmented Steam", "https://store.steampowered.com/app/440/", injectedAny("\\bes_"), settleMs = 45_000, desktop = true, mirrors = listOf("https://steamcommunity.com/id/gaben"))),
         Row("mmcblfncjaclajmegihojiekebofjcen", "Plugins", "plugins", core = popupMarker("Plugins", PLUGINS_POPUP, settleMs = 30_000)),

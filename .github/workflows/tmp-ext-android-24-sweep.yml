@@ -19,6 +19,15 @@ name: TEMPORARY - compat round 19 sweep and frame budget trigger
 #     VPN is in no list: it reads n/a on the Google image by round 16's diagnosis (the emulator's
 #     own fault) and is not re-run. `[sweep113]` fires the System WebView sweep job alone (with its
 #     rows-left check and second boot) – only for a re-run the coordinator grants.
+#     The System WebView sweep keeps axe DevTools and Augmented Steam for last (SWEEP_LAST, and
+#     the rows-left job's LAST_IDS): the BEFORE run's two boots on the API 34 Google image each lost
+#     the emulator's host side under one of them – qemu-system-x86_64-headless (37.1.11) SIGSEGV on
+#     a libvk_swiftshader.so thread (the first in tcmalloc's free list under it, the second inside
+#     it), the guest's logcat clean of any crash – axe DevTools 5 s after its install
+#     (row 40/46, 21:29:23 UTC), Augmented Steam 8 s after its options page while the Steam store
+#     page painted (the second boot's first row, 21:37:32). Read last, a death costs the lane those
+#     rows alone; two boots are too few for notOnGoogleImage (round 16 section 7.0's outcome 1
+#     took nine), so the rows stay in the table and read whole on the AOSP lane.
 #   - `[budget]` in the commit message: the runtime demo's two jobs with the frame budget alone
 #     (ExtensionScrollBudget under SKIP_DEMO=1: the long fixture scrolled with 0, 2, 3 and 6
 #     extensions and the fetch-heavy twin, the jank report in the job summary) and, ahead of it,
@@ -58,7 +67,7 @@ jobs:
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
         SWEEP_ONLY=kadaohckdkghfaclhjmkmplebcdcnfnp,lmbopdiikkamfphhgcckcjhojnokgfeo,achogidmbhmofkmpgamphmlebdhgkdhc,jaembmdeobjibglbnnefpalabeohjpnj,lklfbkdigihjaaeamncibechhgalldgl,mbnbehikldjhnfehhnaidhjhoofhpehk,kpmbpdpbjjadabknommjfphilmecebab,hlgbcneanomplepojfcnclggenpcoldo,gmehookibnphigonphocphhcepbijeen,dnhpnfgdlenaccegplpojghhmaamnnfp,mmnbenehknklpbendgmgngeaignppnbe,inmopeiepgfljkpkidclfgbgbmfcennb,fonalplhodhnenmokepaijoemaednpjm,mjgcgnfikekladnkhnimljcalfibijha,mmcblfncjaclajmegihojiekebofjcen,cmfijaapnnkcglahdngmjnhkfnkihkbg,bhchdcejhohfmigjafbampogmaanbfkg,gnblbpbepfbfmoobegdogkglpbhcjofh,omebobahbkampglebglkoagddjnjbhle,bhiichidigehdgphoambhjbekalahgha,lgknkdljklhkafjfekjjbldfcdnmdpkh,blljobffcekcbopmkgfhpcjmbfnelkfg,opmeopcambhfimffbomjgemehjkbbmji,ppfadpgpccljindldolejmgkhgaficka,nnajoiemfpldioamchanognpjmocgkbg,kaibcgikagnkfgjnibflebpldakfhfih,blgcbajigpdfohpgcmbbfnphcgifjopc,oppflpnigmhkldmdmmbnopidlhahanji,lhdoppojpmngadmnindnejefpokejbdd,didegimhafipceonhjepacocaffmoppf,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,igkinnldjpikoggonflimiaamlmehcig,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,bogabmgabnjabjbiggmfkdocbjgackfo,baecjmoceaobpnffgnlkloccenkoibbb,mpiodijhokgodhhofbcjdecpffjipkle,oejgccbfbmkkpaidnkphaiaecficdnfn,ojplmecpdpgccookcobabopnaifgidhf,fjoiihoancoimepbgfcmopaciegpigpa,lknmjhcajhfbbglglccadlfdjbaiifig,ochhcgamjcnhpaekcckimgofnedofplf,dbfmnekepjoapopniengjbcpnbljalfg,cnojnbdhbhnkbcieeekonklommdnndci,ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg,jhidcpailhmpjpbdbhceiaeeggkalgmd
-        SWEEP_LAST=
+        SWEEP_LAST=lhdoppojpmngadmnindnejefpokejbdd,dnhpnfgdlenaccegplpojghhmaamnnfp
       timeout-minutes: 150
 
   modern-webview:
@@ -112,7 +121,7 @@ jobs:
         env:
           DIED: ${{ needs.system-webview.outputs.emulator-died }}
           FAILED: ${{ needs.system-webview.result == 'failure' }}
-          LAST_IDS: ""
+          LAST_IDS: "lhdoppojpmngadmnindnejefpokejbdd,dnhpnfgdlenaccegplpojghhmaamnnfp"
           ALL_IDS: kadaohckdkghfaclhjmkmplebcdcnfnp,lmbopdiikkamfphhgcckcjhojnokgfeo,achogidmbhmofkmpgamphmlebdhgkdhc,jaembmdeobjibglbnnefpalabeohjpnj,lklfbkdigihjaaeamncibechhgalldgl,mbnbehikldjhnfehhnaidhjhoofhpehk,kpmbpdpbjjadabknommjfphilmecebab,hlgbcneanomplepojfcnclggenpcoldo,gmehookibnphigonphocphhcepbijeen,dnhpnfgdlenaccegplpojghhmaamnnfp,mmnbenehknklpbendgmgngeaignppnbe,inmopeiepgfljkpkidclfgbgbmfcennb,fonalplhodhnenmokepaijoemaednpjm,mjgcgnfikekladnkhnimljcalfibijha,mmcblfncjaclajmegihojiekebofjcen,cmfijaapnnkcglahdngmjnhkfnkihkbg,bhchdcejhohfmigjafbampogmaanbfkg,gnblbpbepfbfmoobegdogkglpbhcjofh,omebobahbkampglebglkoagddjnjbhle,bhiichidigehdgphoambhjbekalahgha,lgknkdljklhkafjfekjjbldfcdnmdpkh,blljobffcekcbopmkgfhpcjmbfnelkfg,opmeopcambhfimffbomjgemehjkbbmji,ppfadpgpccljindldolejmgkhgaficka,nnajoiemfpldioamchanognpjmocgkbg,kaibcgikagnkfgjnibflebpldakfhfih,blgcbajigpdfohpgcmbbfnphcgifjopc,oppflpnigmhkldmdmmbnopidlhahanji,lhdoppojpmngadmnindnejefpokejbdd,didegimhafipceonhjepacocaffmoppf,mciiogijehkdemklbdcbfkefimifhecn,njgehaondchbmjmajphnhlojfnbfokng,igkinnldjpikoggonflimiaamlmehcig,ckkdlimhmcjmikdlpkmbgfkaikojcbjk,bogabmgabnjabjbiggmfkdocbjgackfo,baecjmoceaobpnffgnlkloccenkoibbb,mpiodijhokgodhhofbcjdecpffjipkle,oejgccbfbmkkpaidnkphaiaecficdnfn,ojplmecpdpgccookcobabopnaifgidhf,fjoiihoancoimepbgfcmopaciegpigpa,lknmjhcajhfbbglglccadlfdjbaiifig,ochhcgamjcnhpaekcckimgofnedofplf,dbfmnekepjoapopniengjbcpnbljalfg,cnojnbdhbhnkbcieeekonklommdnndci,ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg,jhidcpailhmpjpbdbhceiaeeggkalgmd
         run: node .github/scripts/ext-compat-rows-left.mjs first/results.json first/sweep-log.txt >> "$GITHUB_OUTPUT"
       - run: cat "$GITHUB_OUTPUT"
