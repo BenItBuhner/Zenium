@@ -14,7 +14,8 @@ name: Android cold start pair
 on:
   # TEMPORARY (services perf pass 4's two P0 pairs on the head that merges – the bridge's transport
   # and Q1's landing answer sit on the boot path's neighbourhood; no token in the project can
-  # dispatch); removed before the PR is nod-ready. The push event carries no inputs, so the base
+  # dispatch); removed before the PR is nod-ready. This comment's second line is the second pair's
+  # re-fire, a workflow-only commit. The push event carries no inputs, so the base
   # below falls to the rebased base a1dfe9ef7 (main's tip at the rebase) rather than to `main`
   # fetched at run time, so the pair measures exactly the PR's delta on the head that merges.
   push:
