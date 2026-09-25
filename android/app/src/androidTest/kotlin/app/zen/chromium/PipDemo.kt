@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -20,18 +21,24 @@ import kotlin.math.abs
  *
  *  1. the clip playing fullscreen and Home: the window by itself (the auto-enter), the entry's
  *     frames traced (ruling 5: the chrome's long tasks across its hide), the window's bounds and
- *     ratio read, the tab's own view alone filling it over the chrome, and the chrome under it
+ *     ratio read, the tab's own view alone filling it over the chrome, the element's own
+ *     `controls` off while the window stands (the design gate's change), and the chrome under it
  *     out of a screen reader's tree (the framework's word on the view); the window's menu under a
  *     finger – Pause (read back from the page), Play, Next track (the page's own handler) – then
  *     the expand, traced too: the page back inline in the chrome with the clip playing in its
- *     place and the chrome a reader's again. The WebView engine ends the element's fullscreen as the
- *     window shrinks, where Chrome keeps its tab fullscreen with a persistent video
- *     ([PictureInPictureRule]);
+ *     place, in view, its time run on and its controls back, and the chrome a reader's again. The
+ *     WebView engine ends the element's fullscreen as the window shrinks, where Chrome keeps its
+ *     tab fullscreen with a persistent video ([PictureInPictureRule]);
  *  2. the window on request (`media.pictureInPicture`, the in-app button's path) and its X: the
- *     clip pauses, the app stands behind the launcher, and comes back inline with the clip paused;
+ *     clip pauses, the app stands behind the launcher, and comes back inline with the clip paused
+ *     at its time; 2b: with another tab's audio holding the OS session, the X pauses the window's
+ *     own tab and the audio plays on;
  *  3. the endings by the host's hand (Chrome's dismissals, `moveTaskToBack`): a new document in
  *     the window's tab, another tab shown under the window, the window's tab closed – each takes
- *     the window down with its task, and the tab the user comes back to is the page;
+ *     the window down with its task, and the tab the user comes back to is the page, the chrome a
+ *     reader's again after the close; 3d: the window's skip buttons follow the page's declared
+ *     handlers alone – cleared they go, the session ended leaves Close alone, a page without them
+ *     never shows them;
  *  4. Home with no fullscreen video – a page without one, and the clip playing inline – does
  *     nothing new: no window (Chrome's auto-enter is the fullscreen video's alone).
  *
@@ -84,6 +91,8 @@ class PipDemo : MediaDemoBase("android-pip") {
         newDocumentEndsIt()
         anotherTabEndsIt()
         closingTheTabEndsIt()
+        declaredSkipsOnly()
+        theXPausesTheWindowsTabAlone()
         noFullscreenVideoNoWindow()
         note("\nend: pip=${inPip()} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling} fullscreenTab=${host.fullscreenTab?.tabId}; ${describeTab(TAB)}")
     }
@@ -121,6 +130,9 @@ class PipDemo : MediaDemoBase("android-pip") {
         check("$scheme: the engine ended the element's fullscreen with the entry (the fill stands in for Chrome's persistent video)", host.fullscreenTab == null && field("fs") == "0")
         check("$scheme: the window's ratio is the clip's", ratioMatches(win, field("size")))
         check("$scheme: the clip keeps playing in the window", field("state") == "playing")
+        val underWindow = readClip()
+        note("  the element under the window: $underWindow; controls remembered=${pageJs("document.getElementById('media').hasAttribute('data-zenium-pip-controls')")}")
+        check("$scheme: the engine's native controls are off the element while the small window stands (the design gate's change)", underWindow != null && !underWindow.controls)
         val under = chromeReader()
         note("  the chrome under the window: $under")
         check("$scheme: the chrome under the small window is out of a reader's tree (NO_HIDE_DESCENDANTS: TalkBack is handed the page alone)", under.mode == "no-hide-descendants" && !under.exposed)
@@ -137,14 +149,21 @@ class PipDemo : MediaDemoBase("android-pip") {
         } else {
             dumpWindows("no app window in picture-in-picture")
         }
+        val beforeExpand = readClip()
+        val expandAt = SystemClock.uptimeMillis()
         val expand = traceFrames("pip-expand-$scheme", JankBudget.Kind.OPEN) {
             bringToFront()
             poll(8_000) { !inPip() }
             poll(8_000) { host.tabs.filling == null }
             SystemClock.sleep(SETTLE_MS)
         }
+        val landed = readClip()
+        val elapsed = SystemClock.uptimeMillis() - expandAt
         note("  expanded: pip=${inPip()} filling=${host.tabs.filling} fullscreenTab=${host.fullscreenTab?.tabId} pip tab=${host.media.pictureInPictureTab}; page fs=${field("fs")} state=${field("state")}; ${describeTab(TAB)}")
+        note("  the landing: before the expand $beforeExpand; after ($elapsed ms) $landed")
         check("$scheme: the expand brings the page back inline in the chrome, the clip playing in its place", !inPip() && host.tabs.filling == null && host.fullscreenTab == null && field("fs") == "0" && field("state") == "playing")
+        check("$scheme: the landing has the clip in view, in the state the window left it (playing on, its time run on, not restarted)", landed != null && beforeExpand != null && landed.inView && !landed.paused && continuous(beforeExpand, landed, elapsed))
+        check("$scheme: the element's native controls are back with the expand", landed != null && landed.controls)
         val back = chromeReader()
         note("  expanded, the chrome: $back")
         check("$scheme: expanded, the chrome is a reader's again", back.mode == "auto" && back.exposed)
@@ -185,14 +204,64 @@ class PipDemo : MediaDemoBase("android-pip") {
         check("$scheme: the X leaves the app behind the launcher, not expanded", front != app.packageName && !inPip())
         shot("07-after-close-$scheme")
         note("  ruling 5: request ${longTasks(enter)}")
+        val afterX = readClip()
         bringToFront()
         awaitPip(false, 5_000)
         frontApp()
         SystemClock.sleep(1_000)
+        val back = readClip()
         note("  back in the app: pip=${inPip()} state=${field("state")} fs=${field("fs")} filling=${host.tabs.filling}; ${describeTab(TAB)}")
+        note("  the landing: after the X $afterX; back in the app $back")
         check("$scheme: the tab the user comes back to is the page inline, the clip paused", !inPip() && host.tabs.filling == null && field("fs") == "0" && field("state") == "paused")
+        check("$scheme: paused stays paused at its time, the clip in view, its controls back", back != null && afterX != null && back.inView && back.paused && back.controls && abs(back.time - afterX.time) < 0.25)
         shot("08-back-after-close-$scheme")
         beat()
+    }
+
+    // --- 2b. the X is the window's tab's pause, not the session's -----------------------------------
+
+    /**
+     * Another tab's audio holds the OS session (the core resolves the playing one) while the clip's
+     * window stands: the X pauses the clip – the window's own tab – and the audio plays on
+     * (`83c32ed15`: the ending names the tab the window showed, not the session's).
+     */
+    private fun theXPausesTheWindowsTabAlone() {
+        note("\n2b. the X pauses the window's own tab while another tab's audio holds the session (the per-tab pause)")
+        frontApp()
+        val audio = createTab("${server.origin}/audio", active = true)
+        if (audio == null) {
+            check("an audio tab opens beside the clip's", false)
+            return
+        }
+        waitTitle(audio, 20_000) { it.startsWith("MD|kind:audio") }
+        SystemClock.sleep(1_000)
+        // A finger on its Play (the gesture the engine wants once), then the clip's tab back in front and into the window.
+        val audioPlays = tapIn(audio, "play", "Play track", "the audio tab plays") { field("state", audio) == "playing" }
+        coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
+        SystemClock.sleep(1_000)
+        val entered = audioPlays && intoTheWindow()
+        val win = appWindowBounds()
+        // The audio paused and played again from its own timer (an element once played by a gesture may): its report is the newer, the session its.
+        pageJs("(function(){var a=document.getElementById('media');a.pause();setTimeout(function(){a.play()},300);return 'restarted'})()", audio)
+        val sessionIsAudios = poll(8_000) { host.media.current?.tabId == audio }
+        note("  the window on $TAB (entered=$entered, bounds $win); the audio tab $audio playing=${field("state", audio)}; the session's tab=${host.media.current?.tabId} (the audio's: $sessionIsAudios); pip tab=${host.media.pictureInPictureTab}")
+        check("the audio tab's session holds the OS controls while the clip's window stands", entered && sessionIsAudios)
+        val closed = if (entered && win != null) {
+            touchPipMenu(win, "Close", "the window closes", timeoutMs = 10_000) { !inPip() }
+        } else {
+            false
+        }
+        SystemClock.sleep(1_500)
+        note("  after the X: pip=${inPip()} clip state=${field("state")} audio state=${field("state", audio)}; the session's tab=${host.media.current?.tabId}; in front: ${ui.rootInActiveWindow?.packageName}")
+        check("the X pauses the window's own tab, the clip", closed && field("state") == "paused")
+        check("the other tab's audio plays on, untouched by the X", closed && field("state", audio) == "playing")
+        shot("14-x-per-tab-pause")
+        bringToFront()
+        frontApp()
+        pageJs("document.getElementById('media').pause()", audio)
+        coreInvoke("tab.close", """{"tabId":"$audio"}""")
+        coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
+        SystemClock.sleep(1_000)
     }
 
     // --- 3. the endings by the host's hand -------------------------------------------------------
@@ -275,6 +344,77 @@ class PipDemo : MediaDemoBase("android-pip") {
         SystemClock.sleep(1_000)
         note("  back: active=${activeCoreTab()?.optString("id")} pip=${inPip()} filling=${host.tabs.filling}; ${describeTab(TAB)}")
         check("the demo tab is the one the user comes back to, inline", !inPip() && host.tabs.filling == null && activeCoreTab()?.optString("id") == TAB)
+        // The fill ended by its view's removal, not by the system's expand: the chrome's reader hold must lift all the same (the review's REQUIRED 1).
+        val afterClose = chromeReader()
+        note("  the chrome after the CLOSE ending: $afterClose")
+        check("the CLOSE ending gives the chrome back to a reader (AUTO, exposed): the fill's record dropped through the same notice as every fill's end", afterClose.mode == "auto" && afterClose.exposed)
+    }
+
+    /**
+     * 3d. The window's skip buttons are the page's declared handlers alone (the design gate's (a)):
+     * the handlers cleared leave them out of the menu on the next params update; the session ended
+     * (the element emptied, the metadata gone: the core resolves none) leaves the menu the platform's
+     * X and expand alone; a page that never declared them (`/video?tracks=0`) never shows them.
+     */
+    private fun declaredSkipsOnly() {
+        note("\n3d. skip actions only where the page's session declares them: handlers cleared, the session ended, a page without them")
+        val entered = intoTheWindow()
+        val win = appWindowBounds()
+        if (!entered || win == null) {
+            check("the window stands for the declared-only check", false)
+            return
+        }
+        val declared = host.media.current?.actions
+        note("  declared by the page: $declared; the session's tab=${host.media.current?.tabId}")
+        pageJs("(function(){navigator.mediaSession.setActionHandler('nexttrack',null);navigator.mediaSession.setActionHandler('previoustrack',null);return 'cleared'})()")
+        val dropped = poll(8_000) { host.media.current?.let { "nexttrack" !in it.actions && "previoustrack" !in it.actions } == true }
+        note("  handlers cleared: the session's actions ${host.media.current?.actions} (dropped=$dropped)")
+        val menuAfterClear = menuButtons(win)
+        note("  the menu: $menuAfterClear")
+        check("the handlers cleared, the window's menu drops Next track and Previous track and keeps Pause", dropped && menuAfterClear != null && "Next track" !in menuAfterClear && "Previous track" !in menuAfterClear && "Pause" in menuAfterClear)
+        waitMenuGone()
+        pageJs("(function(){var m=document.getElementById('media');m.pause();m.removeAttribute('src');m.load();navigator.mediaSession.metadata=null;navigator.mediaSession.playbackState='none';return 'ended'})()")
+        val ended = poll(8_000) { host.media.current == null }
+        note("  the session ended by the page: current=${host.media.current?.tabId} (ended=$ended); pip=${inPip()} pip tab=${host.media.pictureInPictureTab}")
+        val menuAfterEnd = menuButtons(win)
+        note("  the menu: $menuAfterEnd")
+        check("the session ended, the window stands with the platform's Close alone: no Pause, no Play, no track buttons", ended && inPip() && menuAfterEnd != null && "Close" in menuAfterEnd && menuAfterEnd.none { it == "Pause" || it == "Play" || it == "Next track" || it == "Previous track" })
+        shot("15-ended-session-menu")
+        waitMenuGone()
+        bringToFront()
+        awaitPip(false, 8_000)
+        frontApp()
+        // A page that never declared the track handlers: its window shows Pause and no skips.
+        val single = createTab("${server.origin}/video?tracks=0", active = true)
+        if (single == null) {
+            check("a clip tab without track handlers opens", false)
+            return
+        }
+        waitTitle(single, 20_000) { it.startsWith("MD|kind:video") }
+        poll(10_000) { pageJs("document.getElementById('media').videoWidth", single) != "0" }
+        val played = tapIn(single, "play", "Play video", "the single clip plays") { field("state", single) == "playing" }
+        val asked = if (played) coreInvoke("media.pictureInPicture", """{"tabId":"$single"}""") else "not asked"
+        val singleEntered = played && awaitPip(true, 10_000)
+        poll(5_000) { host.tabs.filling == single }
+        SystemClock.sleep(SETTLE_MS)
+        val singleWin = appWindowBounds()
+        note("  /video?tracks=0 in the window: $singleEntered (media.pictureInPicture -> $asked); declared ${host.media.current?.actions}; bounds $singleWin")
+        val singleMenu = singleWin?.let { menuButtons(it) }
+        note("  the menu: $singleMenu")
+        check("a page without track handlers gets Pause and no Next track or Previous track", singleEntered && singleMenu != null && "Pause" in singleMenu && "Next track" !in singleMenu && "Previous track" !in singleMenu)
+        shot("16-undeclared-skips-menu")
+        waitMenuGone()
+        coreInvoke("tab.close", """{"tabId":"$single"}""")
+        awaitPip(false, 10_000)
+        SystemClock.sleep(1_000)
+        bringToFront()
+        frontApp()
+        coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
+        // The demo tab's clip was emptied above: the page again, whole.
+        coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/video"}""")
+        waitTitle(TAB, 20_000) { it.startsWith("MD|kind:video") }
+        poll(10_000) { pageJs("document.getElementById('media').videoWidth") != "0" }
+        SystemClock.sleep(1_000)
     }
 
     // --- 4. no fullscreen video, no window --------------------------------------------------------
@@ -416,6 +556,86 @@ class PipDemo : MediaDemoBase("android-pip") {
     /** [chromeReader]'s read: the host's mode, whether the framework exposes the view to a reader, the node's presence. */
     private data class ChromeReader(val mode: String, val exposed: Boolean, val node: String = "") {
         override fun toString() = "mode $mode; exposed to a reader (View.isImportantForAccessibility)=$exposed; node $node"
+    }
+
+    /**
+     * The small window's menu opened by a tap ([MediaDemoBase.openPipMenu], the look for its
+     * Close) and every label SystemUI shows in it – the app's actions and the platform's own
+     * buttons – or null when the menu never showed. The menu is left up; [waitMenuGone] before
+     * the next tap on the window.
+     */
+    private fun menuButtons(win: Rect): List<String>? {
+        openPipMenu(win, "Close") ?: return null
+        val labels = LinkedHashSet<String>()
+        for (window in ui.windows) {
+            val root = window.root ?: continue
+            if (root.packageName?.toString() != SYSTEM_UI) continue
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            var visited = 0
+            while (queue.isNotEmpty() && visited < 2_000) {
+                val node = queue.removeFirst()
+                visited++
+                node.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let(labels::add)
+                node.text?.toString()?.takeIf { it.isNotBlank() }?.let(labels::add)
+                for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+            }
+        }
+        return labels.toList()
+    }
+
+    /** The menu hides itself 3.5 s after it shows; a tap while it is up would hide it instead of opening it. */
+    private fun waitMenuGone() {
+        poll(6_000) { findInWindows(SYSTEM_UI) { it == "Close" } == null }
+        SystemClock.sleep(500)
+    }
+
+    /**
+     * The clip's element as the page has it: its box against the viewport (in view when its centre
+     * is inside), `paused`, `currentTime`, `duration` and whether its `controls` attribute is on.
+     */
+    private data class ClipRead(
+        val top: Double, val bottom: Double, val left: Double, val right: Double,
+        val viewportWidth: Double, val viewportHeight: Double,
+        val paused: Boolean, val time: Double, val duration: Double, val controls: Boolean
+    ) {
+        val inView: Boolean
+            get() {
+                val centreY = (top + bottom) / 2
+                val centreX = (left + right) / 2
+                return centreY >= 0 && centreY <= viewportHeight && centreX >= 0 && centreX <= viewportWidth
+            }
+
+        override fun toString() = "box x %.0f..%.0f y %.0f..%.0f in a %.0fx%.0f viewport (in view: %s); paused=%s currentTime=%.2f duration=%.2f controls=%s".format(
+            left, right, top, bottom, viewportWidth, viewportHeight, inView, paused, time, duration, controls
+        )
+    }
+
+    private fun readClip(tabId: String = TAB): ClipRead? {
+        val raw = pageJs(
+            "(function(){var e=document.getElementById('media');if(!e)return null;var r=e.getBoundingClientRect();" +
+                "return JSON.stringify({t:r.top,b:r.bottom,l:r.left,r:r.right,w:innerWidth,h:innerHeight,p:e.paused,c:e.currentTime,d:e.duration,k:e.hasAttribute('controls')})})()",
+            tabId
+        )
+        if (raw.isEmpty()) return null
+        val json = (JSONTokener(raw).nextValue() as? String)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
+        return ClipRead(
+            json.getDouble("t"), json.getDouble("b"), json.getDouble("l"), json.getDouble("r"),
+            json.getDouble("w"), json.getDouble("h"),
+            json.getBoolean("p"), json.getDouble("c"), json.optDouble("d", Double.NaN), json.getBoolean("k")
+        )
+    }
+
+    /**
+     * Whether the clip's time ran on from `before` to `after` across `elapsedMs` of wall time:
+     * forward by about the time that passed (the loop's wrap allowed for; up to three seconds of
+     * stall for the window's growth, during which the surface is remade), never back to a start.
+     */
+    private fun continuous(before: ClipRead, after: ClipRead, elapsedMs: Long): Boolean {
+        val expected = elapsedMs / 1000.0
+        var ran = after.time - before.time
+        if (ran < 0 && before.duration.isFinite() && before.duration > 0) ran += before.duration
+        return ran >= 0 && ran >= expected - 3.5 && ran <= expected + 1.0
     }
 
     /** Whether `view` is the size of `win` (within a few px: the window's own rounding). */
