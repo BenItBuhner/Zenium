@@ -6936,6 +6936,60 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("eanggfilgoajaocelnaflolkadkeghjp", "HARPA AI", "harpa-ai", core = ::harpaAi),
         Row("ahmapmilbkfamljbpgphfndeemhnajme", "Helperbird: Dyslexia & Accessibility Tools", "helperbird", core = popupSwitch("Helperbird", "page-a.html?helperbird", "[role=switch], input[type=checkbox], .toggle", HELPERBIRD_APPLIED, settleMs = 30_000)),
         Row("jeoacafpbcihiomhlakheieifhpjdfeo", "Disconnect - Tracker Protection", "disconnect", core = ::adBlocker),
+        // Compat round 18: ranks 421-450 by installs (`.github/scripts/ext-compat/next30-round15.json`,
+        // compiled by round 10's method for a future desktop release round to reuse), graded with
+        // the phone's feasibility classes as rounds 4-17 graded theirs. An account or a vendor's
+        // service is `n/m` with its gate surface rendered (Google Meet Attendance List and tl;dv
+        // in a Meet call behind a Google account, Lusha's and Salesforce's side panels behind
+        // their sign-ins, Toggl Track's, SignalHire's, Ahrefs' and MarketApp's popups behind
+        // theirs, Save.to's clipper behind Notion's); a WebView limit is `n/a` (Screen Recorder's
+        // capture page with no getDisplayMedia to offer it, Advanced Font Settings' options page
+        // with no per-script font preferences for `fontSettings` to set). The rest read an
+        // effect: a page changed from the popup (Zoom Video's scale on the clip, Enable right
+        // click's unblock mode on the right-click fixture), the action's own effect on the page
+        // (Web Paint's canvas, WhatRuns' panel frame, Fake Filler's dummy values in the login
+        // form, Search by Image's image-pick mode and the engine tab a tap opens), the action's
+        // own page opened (2048's board, Live Stream Downloader's job page listing the clip,
+        // Screen Recorder's recorder page), a popup's reading (Video Downloader's HLS listing off
+        // `hls.html`, Distill's monitor menu, Ice Dodo's game canvas, Screenshot & Screen Video
+        // Recorder's visible-area capture landing in its editor), a content script's effect on a
+        // live site (Scratch Addons' styles on scratch.mit.edu, Youtube-shorts block's redirect
+        // of a short to its watch page, Voice Control's record button on chatgpt.com), a video
+        // controller on the clip (Video Speed Controller - video manager), a new-tab override
+        // rendered (Muzli), a side panel rendered as a tab (SelectorsHub's selector tooling), and
+        // a sidebar mounted on every page (Smart Sidebar). The five largest bundles run last
+        // (Voice Control for ChatGPT, Video Speed Controller - video manager, Screenshot & Screen
+        // Video Recorder, Smart Sidebar, Ice Dodo), as rounds 14-17 ordered theirs.
+        Row("fbeffbjdlemaoicjdapfpikkikjoneco", "Scratch Addons", "scratch-addons", core = liveMarker("Scratch Addons", "https://scratch.mit.edu/", injectedAny("scratch-addons|\\bsa-"), settleMs = 60_000)),
+        Row("ochhcgamjcnhpaekcckimgofnedofplf", "Zoom Video - UltraWide Fill", "zoom-video", core = popupFlow("Zoom Video - UltraWide Fill", "video.html?zoomvideo", clicks = listOf("/^21:9$/"), expr = ZOOM_VIDEO_SCALED, settleMs = 25_000)),
+        Row("lfdconleibeikjpklmlahaihpnkpmlch", "Video Downloader - Download M3U8, MP4, HLS", "video-downloader-m3u8", core = mediaPopup("Video Downloader (M3U8)", "hls.html?vdm3u8", "/m3u8|stream|clip|\\bn\\/a\\b/i", probe = true, listener = "onHeadersReceived with responseHeaders and extraHeaders over <all_urls> (a .m3u8 address or an HLS content type; the playlist then fetched and parsed in the worker)")),
+        Row("appcnhiefcidclcdjeahgklghghihfok", "Google Meet Attendance List", "meet-attendance-list", core = accountGate("Google Meet Attendance List", Regex("meet\\.google\\.com|accounts\\.google\\.com|meetlist\\.io", RegexOption.IGNORE_CASE), gate = "a Google account in a Meet call (its list reads the call's participants; its scripts match meet.google.com's meeting pages alone)")),
+        Row("ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg", "2048", "2048", core = actionPage("2048", Regex("/popup\\.html"), GRID_2048, listOf("page-a.html?2048"))),
+        Row("mcebeofpilippmndlpcghpmghcljajna", "Lusha", "lusha", core = accountGate("Lusha", Regex("lusha\\.com|linkedin\\.com", RegexOption.IGNORE_CASE), gate = "a Lusha account (its side panel signs in at lusha.com) and a LinkedIn, Salesforce or HubSpot page for its scripts")),
+        Row("jjghhkepijgakdammjldcbnjehfkfmha", "Salesforce", "salesforce", core = accountGate("Salesforce", Regex("salesforce\\.com|force\\.com", RegexOption.IGNORE_CASE), gate = "a Salesforce login (its side panel signs in to an org; its scripts run in Gmail and Google Calendar)")),
+        Row("mnopmeepcnldaopgndiielmfoblaennk", "Web Paint", "web-paint", core = actionMarker("Web Paint", "page-a.html?webpaint", WEB_PAINT_PANEL)),
+        Row("inlikjemeeknofckkjolnjbpehgadgge", "Distill Web Monitor", "distill", core = popupMarker("Distill Web Monitor", DISTILL_POPUP, page = "page-a.html?distill", settleMs = 30_000)),
+        Row("ndgimibanhlabgdgjcpbbndiehljcpfh", "SelectorsHub", "selectorshub", core = ownPage("SelectorsHub", "side-panel/side-shub-panel.html", SELECTORSHUB_PANEL)),
+        Row("oejgccbfbmkkpaidnkphaiaecficdnfn", "Toggl Track", "toggl-track", core = accountGate("Toggl Track", Regex("toggl\\.com", RegexOption.IGNORE_CASE), gate = "a Toggl account (its popup signs in at toggl.com; its timer posts to its service)")),
+        Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsPage),
+        Row("ldmmifpegigmeammaeckplhnjbbpccmm", "Save.to", "save-to", core = accountGate("Save.to", Regex("notion\\.so|save\\.to", RegexOption.IGNORE_CASE), injects = "iframe[src*='popup/index.html'], iframe[src*='restricted_popup'], iframe[src*='ldmmifpegigmeammaeckplhnjbbpccmm']", gate = "a Notion login (its clipper frame reads notion.so's session)")),
+        Row("jdopnakmnlnccgpfpmjmdjjohmcdgabp", "Screen Recorder", "screen-recorder-3", core = recorderPage("Screen Recorder", Regex("/pages/popup/popup\\.html"), "/capture|record|screen|camera|microphone|stop capturing/i")),
+        Row("jiaopdjbehhjgokpphdfgmapkobbnmjp", "Youtube-shorts block", "youtube-shorts-block", core = shortsRedirect("Youtube-shorts block", "https://www.youtube.com/shorts/zV4uBH9S1KI")),
+        Row("pbeheebcldakpkohnellphloljkaanfa", "MarketApp P2P", "marketapp-p2p", core = accountGate("MarketApp P2P", Regex("market\\.csgo\\.com|steamcommunity\\.com|steampowered\\.com", RegexOption.IGNORE_CASE), gate = "a Steam login and a Market.CSGO account (its popup signs in; its scripts run on Steam's trade pages)")),
+        Row("cmkdbmfndkfgebldhnkbfhlneefdaaip", "WhatRuns", "whatruns", core = actionMarker("WhatRuns", "tech.html?whatruns", WHATRUNS_PANEL, settleMs = 30_000)),
+        Row("glcipcfhmopcgidicgdociohdoicpdfc", "Muzli", "muzli", core = newTabOverride("Muzli")),
+        Row("bnjjngeaknajbdcgpfkgnonkmififhfo", "Fake Filler", "fake-filler", core = actionMarker("Fake Filler", "login.html?fakefiller", FAKE_FILLER_FILLED)),
+        Row("lknmjhcajhfbbglglccadlfdjbaiifig", "Record, Transcribe & ChatGPT/Claude for Google Meet", "tldv", core = attachedGate("tl;dv", "https://meet.google.com/", "a Google account in a Meet call (its recorder mounts in the call's page and posts to tldv.io)")),
+        Row("looepbdllpjgdmkpdcdffhdbmpbcfekj", "Live Stream Downloader", "live-stream-downloader", core = actionPage("Live Stream Downloader", Regex("/data/job/index\\.html"), LSD_ENTRIES, listOf("hls.html?lsd", "media.html?lsd"), settleMs = 40_000)),
+        Row("aeidadjdhppdffggfgjpanbafaedankd", "SignalHire", "signalhire", core = accountGate("SignalHire", Regex("signalhire\\.com|linkedin\\.com", RegexOption.IGNORE_CASE), gate = "a SignalHire account (its popup signs in) and a LinkedIn profile for its scripts")),
+        Row("hgmoccdbjhknikckedaaebbpdeebhiei", "Ahrefs SEO Toolbar", "ahrefs-seo-toolbar", core = accountGate("Ahrefs SEO Toolbar", Regex("ahrefs\\.com", RegexOption.IGNORE_CASE), gate = "an Ahrefs account (its popup signs in at ahrefs.com; the toolbar's metrics come from its service)")),
+        Row("cnojnbdhbhnkbcieeekonklommdnndci", "Search by Image", "search-by-image", core = ::searchByImage),
+        Row("mlloloooolpffjkjaclpfpeednngpjon", "Enable right click - allow copy & select", "enable-right-click-2", core = popupSwitch("Enable right click", "right-click.html?unblock", ".abs-mode", RIGHT_CLICK_ALLOWED)),
+        Row("eollffkcakegifhacjnlnegohfdlidhn", "Voice Control for ChatGPT", "voice-control-chatgpt", core = siteGate("Voice Control for ChatGPT", "https://chatgpt.com/", "#vc-record-button, #vc-terms-accept, .vc-modal, [id^='vc-'], [class*='vc-rich-text']", Regex("^https://(chatgpt\\.com|chat\\.openai\\.com)/", RegexOption.IGNORE_CASE), "ChatGPT's composer served to the runner (its record button mounts beside the prompt box; OpenAI serves a robot check or its sign-in to a fresh browser)")),
+        Row("nkkhljadiejecbgelalchmjncoilpnlk", "Video Speed Controller - video manager", "video-speed-controller-2", core = ::videoSpeed),
+        Row("lhannfkhjdhmibllojbbdjdbpegidojj", "Screenshot & Screen Video Recorder", "screenshot-screen-video-recorder", core = popupCapture("Screenshot & Screen Video Recorder", "/^visible area$|visible area/i")),
+        Row("fnmihdojmnkclgjpcoonokmkhjpjechg", "Smart Sidebar", "smart-sidebar", core = domMarker("Smart Sidebar", "page-a.html?smartsidebar", injectedAny("aifnmjmchg"), settleMs = 30_000)),
+        Row("jhidcpailhmpjpbdbhceiaeeggkalgmd", "Ice Dodo", "ice-dodo", core = popupMarker("Ice Dodo", CANVAS_SHOWN, page = "page-a.html?icedodo", settleMs = 60_000)),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -6943,6 +6997,125 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // row's cleanup disables the blocker as it does any row's extension).
         Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
     )
+
+    // --- the core checks of compat round 18 (ranks 421-450 by installs) --------------------------
+
+    /**
+     * Youtube-shorts block: one content script over youtube.com (`main.js`, `document_start`)
+     * that reads the address, and on a `/shorts/<id>` path replaces the location with the
+     * short's `/watch?v=<id>` page (its popup holds the switch, on by default). The row opens a
+     * genuine short ([shortsUrl], one that stays on `/shorts/` in a plain browser) and waits for
+     * the tab's address to become its watch page: that is the pass, with the script's own
+     * activation line from the page's console beside it when it logged one. YouTube's consent
+     * interstitial or a tab that never reached youtube.com is `n/m` (the network, not the
+     * runtime); the tab still on the short after the wait is `F`, naming whether the script ran.
+     */
+    private fun shortsRedirect(label: String, shortsUrl: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val id = Regex("shorts/([A-Za-z0-9_-]{11})").find(shortsUrl)?.groupValues?.get(1) ?: ""
+        val tab = createTab(shortsUrl)
+        val view = waitForView(tab)
+        val started = SystemClock.uptimeMillis()
+        poll(scaled(45_000, factor), 700) { tabUrls()[tab]?.takeIf { it.contains("watch?v=$id") || it.contains("consent.") } }
+        val url = tabUrls()[tab] ?: ""
+        val console = runCatching { consoleOf(view) }.getOrDefault(emptyList())
+        val activated = console.any { it.contains("[Youtube-shorts block]") || it.contains("Youtube-shorts block", ignoreCase = true) }
+        extra.put("url", url.take(160)).put("waitedMs", SystemClock.uptimeMillis() - started).put("activated", activated).put("console", JSONArray(console.takeLast(10)))
+        if (worlds) runCatching { worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) } }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        val host = runCatching { android.net.Uri.parse(url).host ?: "" }.getOrDefault("")
+        when {
+            url.contains("watch?v=$id") -> Grade("P", "$label: the short $shortsUrl was sent to its watch page (${url.take(80)}) by the content script${if (activated) ", which logged its activation" else ""}", extra)
+            host.contains("consent") || url.contains("consent.youtube") -> Grade("n/m", "$label: YouTube served its consent interstitial instead of the short (${url.take(80)})", extra)
+            !(host == "youtube.com" || host.endsWith(".youtube.com")) -> Grade("n/m", "$label: the tab landed on ${host.ifEmpty { "nowhere" }}, not the short (network)", extra)
+            else -> Grade("F", "$label: the tab stayed on ${url.take(80)} for ${(SystemClock.uptimeMillis() - started) / 1000} s (content script ${if (activated) "ran and logged its activation" else "left no log in the page"})", extra)
+        }
+    }
+
+    /**
+     * Advanced Font Settings: an `options_page` alone (no popup, no scripts) that lists the
+     * writing scripts and, per script, the standard, serif, sans-serif and fixed fonts and their
+     * sizes, all read from and written to `chrome.fontSettings`. The page rendering its script
+     * list and its font selects is the runtime's part (the API present, its `getFontList` and
+     * `getFont` answered); the WebView has no per-script font preferences to set, so the
+     * runtime answers its reads empty and `not_controllable`, and the row is `n/a` on the page
+     * rendered (WebView limit, named). A page without its controls within the wait is `F` with
+     * the blank-page evidence.
+     */
+    private fun fontSettingsPage(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val tab = createTab("chrome-extension://${row.id}/options.html")
+        val view = waitForView(tab)
+        val found = pollExpr(view, FONT_SETTINGS_PAGE, scaled(30_000, factor))
+        found.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        extra.put("page", found).put("url", (tabUrls()[tab] ?: "").take(160))
+        if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-font-settings")
+        return if (found.optBoolean("pass")) {
+            Grade("n/a", "Advanced Font Settings: its options page renders its script list and font selects (${found.optInt("selects")} selects, ${found.optInt("scriptOptions")} scripts listed, `chrome.fontSettings` with ${found.optInt("apiKeys")} members), but the WebView has no per-script font preferences for `chrome.fontSettings` to set (the runtime answers its reads empty and not_controllable): WebView limit", extra)
+        } else {
+            Grade("F", "Advanced Font Settings: its options page shows no script list or font selects within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Search by Image: its action opens no popup but sends the tab into its image-pick mode
+     * (its worker's `scripting.executeScript` of `src/select/script.js` and the `pointer.css`
+     * style over the page: every picture gets a pointer cursor and a tap on one searches it with
+     * the chosen engines, each opening as a tab of the engine's upload or lens address). The
+     * gallery fixture settles, the action is invoked, the pick mode is polled for (the injected
+     * `pointer.css` link is its mark); then the first picture is tapped at its centre and a new
+     * tab on an engine's address (or an own page of the extension: its results or its
+     * upload-in-progress page) is awaited. Pass is the mode entered and the tab following;
+     * `PARTIAL` is the mode entered with no tab within the wait; `F` is no pick mode within the
+     * wait, with the worker's console.
+     */
+    private fun searchByImage(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("gallery.html?sbi", factor, 2_500)
+        val since = StepEvidence(row)
+        val before = tabUrls().keys
+        runCatching { coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""") }
+        val mode = pollExpr(view, SEARCH_BY_IMAGE_SELECT, scaled(25_000, factor))
+        extra.put("mode", mode)
+        var opened: Map.Entry<String, String>? = null
+        var tapped = false
+        if (mode.optBoolean("pass")) {
+            val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", ".grid img")))
+            val point = screenPoint(view, centre)
+            extra.put("image", centre)
+            if (point != null && onScreen("Search by Image: the picture")) {
+                tap(point.first, point.second)
+                tapped = true
+                opened = poll(scaled(30_000, factor), 500) {
+                    tabUrls().entries.firstOrNull { it.key !in before && (SEARCH_BY_IMAGE_ENGINES.containsMatchIn(it.value) || extensionPage(it.value, row.id)) }
+                }
+            }
+        }
+        extra.put("tapped", tapped).put("opened", opened?.value?.take(160) ?: JSONObject.NULL)
+        extra.put("tabsAfter", JSONArray(tabUrls().values.map { it.take(120) }))
+        extra.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(12))) }
+        popupView()?.takeIf { it.context == "popup" }?.let { live ->
+            extra.put("popupInstead", json(tabEval(live, DEEP_TEXT)).optString("text").take(200))
+        }
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            opened != null -> Grade("P", "Search by Image: the action put the gallery into its image-pick mode and the tap on the first picture opened ${opened.value.take(90)}", extra)
+            mode.optBoolean("pass") && tapped -> Grade("PARTIAL", "Search by Image: the action put the gallery into its image-pick mode (${mode.toString().take(120)}) but the tap on the first picture opened no engine tab within ${scaled(30_000, factor) / 1000} s", extra)
+            mode.optBoolean("pass") -> Grade("PARTIAL", "Search by Image: the action put the gallery into its image-pick mode but its first picture could not be tapped (${extra.optJSONObject("image")?.toString()?.take(100)})", extra)
+            else -> Grade("F", "Search by Image: the action put the gallery into no image-pick mode within ${scaled(25_000, factor) / 1000} s: ${mode.toString().take(200)}", extra)
+        }
+    }
 
     // --- the core checks of compat round 17 (ranks 391-420 by installs) --------------------------
 
@@ -10552,5 +10725,96 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val FEEDER_ADD_FEED =
             "(function(){var el=document.querySelector('.add-feed-button, [aria-label=\"Add feed\"], [feeder-title=\"Add feed\"]');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!(el&&el.classList.contains('feeds-available')),present:!!el,classes:el?el.className.replace(/\\s+/g,' ').trim().slice(0,80):null,text:t.slice(0,200)})})()"
+
+        // --- compat round 18 (ranks 421-450) ---
+
+        /**
+         * Zoom Video - UltraWide Fill's effect on the clip: its content script gives every video
+         * the class `scale_zoom-video-<the id's first five letters>` and writes a `<style>` rule for
+         * it (`scale: <factor> !important`) on the worker's storage change; the popup's 21:9 button
+         * asks for a scale above 1 on the 16:9 clip. Pass is a video with the class whose computed
+         * `scale` is neither `none` nor 1.
+         */
+        private const val ZOOM_VIDEO_SCALED =
+            "(function(){var vs=Array.prototype.slice.call(document.querySelectorAll('video'));var v=vs.find(function(x){return /scale_zoom-video-/.test(x.className)})||vs[0]||null;var cs=v?getComputedStyle(v):null;var sc=cs?String(cs.scale||'none'):'none';" +
+                "var rule='';Array.prototype.slice.call(document.querySelectorAll('style')).forEach(function(s){var m=/\\.scale_zoom-video-[^{]*\\{[^}]*\\}/.exec(s.textContent||'');if(m)rule=m[0]});var scaled=sc!=='none'&&sc!=='1'&&!/^1(\\s+1)?$/.test(sc);" +
+                "return JSON.stringify({pass:!!v&&/scale_zoom-video-/.test(v.className)&&scaled,videos:vs.length,classed:!!v&&/scale_zoom-video-/.test(v.className),scale:sc,rule:rule.replace(/\\s+/g,' ').slice(0,120),mounted:!!document.querySelector('[id^=\"zoom-video-\"], [class*=\"zoom-video-\"]')})})()"
+
+        /**
+         * 2048's popup page as a tab (its action opens `popup.html` in a new window through
+         * `windows.create`): the game's grid (`.grid-container` with its 16 `.grid-cell`s) laid out
+         * with a width, and its tiles counted.
+         */
+        private const val GRID_2048 =
+            "(function(){var g=document.querySelector('.grid-container');var cells=document.querySelectorAll('.grid-cell').length;var r=g?g.getBoundingClientRect():{width:0,height:0};var tiles=document.querySelectorAll('.tile').length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!g&&cells>=16&&r.width>100,grid:!!g,cells:cells,width:Math.round(r.width),height:Math.round(r.height),tiles:tiles,text:t.slice(0,120)})})()"
+
+        /**
+         * Web Paint's panel on the page after its action: its content script builds the drawing
+         * canvas (`#NOTEPAD`) over the page and its tool bar (`#NOTEPAD_controls`), both sized.
+         */
+        private const val WEB_PAINT_PANEL =
+            "(function(){var c=document.getElementById('NOTEPAD');var k=document.getElementById('NOTEPAD_controls');var rc=c?c.getBoundingClientRect():{width:0,height:0};var rk=k?k.getBoundingClientRect():{width:0,height:0};" +
+                "return JSON.stringify({pass:!!c&&!!k&&rc.width>100&&rk.width>40,canvas:!!c,controls:!!k,canvasSize:Math.round(rc.width)+'x'+Math.round(rc.height),controlsSize:Math.round(rk.width)+'x'+Math.round(rk.height),tag:c?c.tagName:null,tools:k?k.querySelectorAll('button, [class*=\"tool\"], img').length:0})})()"
+
+        /**
+         * Distill Web Monitor's popup on a fresh install: its Backbone app renders the monitor
+         * menu (Monitor full page, Monitor parts of page, Watchlist) with no account needed.
+         */
+        private const val DISTILL_POPUP =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var controls=document.querySelectorAll('button, a, [role=\"button\"], [role=\"menuitem\"], li').length;" +
+                "return JSON.stringify({pass:/monitor (full|parts of) page|watchlist/i.test(t)&&controls>0,controls:controls,text:t.slice(0,200)})})()"
+
+        /**
+         * SelectorsHub's side panel page as a tab: its selector tooling (the `.selector-button`
+         * row, `#standardBtn`, its inputs) rendered with readable text.
+         */
+        private const val SELECTORSHUB_PANEL =
+            "(function(){var b=document.querySelector('.selector-button');var s=document.getElementById('standardBtn');var inputs=document.querySelectorAll('input, textarea').length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!(b||s)&&t.length>50,selectorButton:!!b,standardBtn:!!s,inputs:inputs,text:t.slice(0,200)})})()"
+
+        /**
+         * WhatRuns' panel on the page after its action: its content script mounts
+         * `#whatruns-iframe-container-701` with `#whatruns-iframe-701` pointing at its own
+         * `popup.html`, the container laid out with a width.
+         */
+        private const val WHATRUNS_PANEL =
+            "(function(){var c=document.getElementById('whatruns-iframe-container-701');var f=document.getElementById('whatruns-iframe-701');var r=c?c.getBoundingClientRect():{width:0,height:0};var src=f?String(f.getAttribute('src')||f.src||''):'';" +
+                "return JSON.stringify({pass:!!c&&!!f&&r.width>0&&/chrome-extension:|ext\\.zenium\\.invalid/.test(src),container:!!c,frame:!!f,size:Math.round(r.width)+'x'+Math.round(r.height),src:src.slice(0,100),display:c?getComputedStyle(c).display:null})})()"
+
+        /** Fake Filler's fill of the login fixture: `#email` holds an address and `#password` a value. */
+        private const val FAKE_FILLER_FILLED =
+            "(function(){var e=document.getElementById('email');var p=document.getElementById('password');var ev=e?e.value:'';var pv=p?p.value:'';var filled=Array.prototype.slice.call(document.querySelectorAll('input')).filter(function(i){return i.value}).length;" +
+                "return JSON.stringify({pass:/@/.test(ev)&&pv.length>0,email:ev.slice(0,40),password:pv.length,filled:filled,inputs:document.querySelectorAll('input').length})})()"
+
+        /**
+         * Live Stream Downloader's job page (`data/job/index.html`, opened by its action on a tab
+         * whose media its `webRequest` listener saw): the entries (`#hrefs .entry`) listed with their
+         * names, the page's mode and whether its intro still shows.
+         */
+        private const val LSD_ENTRIES =
+            "(function(){var es=Array.prototype.slice.call(document.querySelectorAll('#hrefs .entry'));var names=es.map(function(e){var n=e.querySelector('[data-id=\"name\"]');var x=e.querySelector('[data-id=\"ext\"]');return ((n?n.textContent:'')+' '+(x?x.textContent:'')).trim().slice(0,60)});var intro=document.getElementById('intro');" +
+                "return JSON.stringify({pass:es.length>0,entries:es.length,names:names.slice(0,5),mode:document.body?document.body.getAttribute('data-mode'):null,intro:!!intro&&getComputedStyle(intro).display!=='none',text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
+
+        /**
+         * Advanced Font Settings' options page: its script list (`#scriptList`) and the four font
+         * selects (`#standardFontList` and the serif, sans-serif, fixed lists) rendered, the
+         * `chrome.fontSettings` namespace's members counted from the page.
+         */
+        private const val FONT_SETTINGS_PAGE =
+            "(function(){var s=document.getElementById('scriptList');var std=document.getElementById('standardFontList');var selects=document.querySelectorAll('select').length;var api=(typeof chrome!=='undefined'&&chrome.fontSettings)?Object.keys(chrome.fontSettings).length:0;" +
+                "return JSON.stringify({pass:!!s&&!!std&&selects>=3,scriptList:!!s,standardFontList:!!std,selects:selects,scriptOptions:s?s.options.length:0,fontOptions:std?std.options.length:0,apiKeys:api,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
+
+        /**
+         * Search by Image's image-pick mode on the page: its `src/select/script.js` (run through
+         * `scripting.executeScript` by the worker) appends a `<link>` to its `pointer.css` when the
+         * mode is on, and mounts its own frames for the selection UI where it needs them.
+         */
+        private const val SEARCH_BY_IMAGE_SELECT =
+            "(function(){var link=document.querySelector('link[href*=\"pointer.css\"]');var frames=document.querySelectorAll('iframe').length;var own=Array.prototype.slice.call(document.querySelectorAll('iframe')).filter(function(f){return /ext\\.zenium\\.invalid|chrome-extension:/.test(f.src||'')}).length;" +
+                "return JSON.stringify({pass:!!link,pointer:!!link,href:link?String(link.href).slice(0,100):null,frames:frames,ownFrames:own,cursor:(function(i){return i?getComputedStyle(i).cursor:null})(document.querySelector('.grid img'))})})()"
+
+        /** The engines Search by Image opens its results at, by address. */
+        private val SEARCH_BY_IMAGE_ENGINES = Regex("google\\.com|lens\\.google|bing\\.com|yandex\\.|baidu\\.com|tineye\\.com", RegexOption.IGNORE_CASE)
     }
 }
