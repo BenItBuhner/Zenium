@@ -2490,8 +2490,9 @@ describe('the section model', () => {
       expect(r.checked, layout).toBe(false)
       expect(r.description, layout).toBe('Only in the Collapsed sidebar layout.')
     }
-    // The default ships off: the rail stays a rail until the row is turned on.
-    expect(DEFAULT_SETTINGS.sidebarExpandOnHover).toBe(false)
+    // The default ships on (Zen's compact behaviour, Edge's): the rail flies out until the row is
+    // turned off.
+    expect(DEFAULT_SETTINGS.sidebarExpandOnHover).toBe(true)
   })
 
   it('keeps a shell’s controls to its layout: the phone bar’s rows never reach the desktop page or its search (BUG-055)', () => {
