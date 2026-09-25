@@ -4,6 +4,7 @@ import { chromeReference } from '../../shared/shortcutReference'
 import { collisions, defaultShortcuts, matchShortcut } from '../../shared/shortcuts'
 import { searchCommands } from '../../shared/commands'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type { ZenWindow } from '../window'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 
@@ -105,6 +106,7 @@ function fixture(): Fixture {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
+  closeBootTabs(browser)
   return { browser, win: browser.focusedWindow(), sent, screenshots }
 }
 

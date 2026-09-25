@@ -1,0 +1,35 @@
+name: Android lookalike demo
+
+# Records the lookalike-domain question (PS-18) in the phone chrome on a hardware-accelerated
+# Android emulator and uploads the video, the screenshots and the driver's findings: gogle.com
+# typed in the URL bar held before any request (the loopback server that answers as gogle.com sees
+# nothing while the question stands), Continue writing the allow and loading the site, a second
+# typed visit going straight through, Back from a fresh question, then the link and redirect paths
+# (paypa1.com, amazom.com) that commit and are replaced at onNavigated, with the gap between the
+# two measured by the chrome's view events, the WebView's painted document and the page's own
+# beacons – each claim asserted (the rule in DemoHarness.kt), the question page stilled light and
+# dark. Dispatch-only: it takes about ten minutes. The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file only picks the driver (LookalikeDemo.kt).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-lookalike-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: lookalike demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.LookalikeDemo
+        DEMO_DIR=lookalike-demo
+        DEMO_OUT=artifacts/android-lookalike-demo
+        DEMO_VIDEO=services-lookalike-android-demo.mp4
+      artifact-name: android-lookalike-demo
+      artifact-path: artifacts/android-lookalike-demo/

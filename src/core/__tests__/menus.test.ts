@@ -18,6 +18,7 @@ import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type {
   AppHost,
   ClipboardHost,
@@ -94,6 +95,7 @@ const DESKTOP: HostCapabilities = {
   inactiveTabs: false,
   secureDns: false,
   quitsThroughCore: false,
+  lookalikeHolds: true,
   newTabPage: true,
   pageTabs: false,
   pinShortcuts: false,
@@ -151,6 +153,7 @@ const ANDROID: HostCapabilities = {
   inactiveTabs: true,
   secureDns: false,
   quitsThroughCore: false,
+  lookalikeHolds: false,
   newTabPage: false,
   pageTabs: true,
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
@@ -368,6 +371,7 @@ function harness(
   }
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   if (opts.formFactor)
     browser.handleCommand(win, 'window.formFactor', { formFactor: opts.formFactor })

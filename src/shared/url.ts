@@ -477,7 +477,43 @@ export function crashPageOptionsOf(
  * mode's plaintext question. Both are error pages (`zen://error` with a `kind`), so the URL bar,
  * reload and copy treat them like any other page that stands in for `url`.
  */
-export type InterstitialKind = 'safebrowsing' | 'https-only'
+export type InterstitialKind = 'safebrowsing' | 'https-only' | 'lookalike'
+
+/**
+ * `zen://error?kind=lookalike`: the question before a site whose address looks like another's
+ * (PS-18). `url` is the address asked for, `target` the registrable domain it resembles, `reason`
+ * which test said so (`LookalikeReason`), `source` which list the target is on
+ * (`LookalikeSource`: the top list, or the user's own engaged sites).
+ */
+export function lookalikePageUrl(
+  url: string,
+  target: string,
+  reason: string,
+  source: string,
+  accent?: ErrorPageAccent
+): string {
+  const params = new URLSearchParams({
+    code: String(-20),
+    description: 'ERR_BLOCKED_BY_CLIENT',
+    url,
+    kind: 'lookalike',
+    target,
+    reason,
+    source
+  })
+  setAccent(params, accent)
+  return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+/** The target a lookalike page stands before (`lookalikePageUrl`'s `target`), or null for any other URL. */
+export function lookalikePageTarget(url: string): string | null {
+  if (interstitialKindOf(url) !== 'lookalike') return null
+  try {
+    return new URL(url).searchParams.get('target')
+  } catch {
+    return null
+  }
+}
 
 export function safeBrowsingPageUrl(url: string, threat: string, accent?: ErrorPageAccent): string {
   const params = new URLSearchParams({
@@ -507,7 +543,7 @@ export function interstitialKindOf(url: string): InterstitialKind | null {
   if (!url.startsWith(ERROR_URL_PREFIX)) return null
   try {
     const kind = new URL(url).searchParams.get('kind')
-    return kind === 'safebrowsing' || kind === 'https-only' ? kind : null
+    return kind === 'safebrowsing' || kind === 'https-only' || kind === 'lookalike' ? kind : null
   } catch {
     return null
   }

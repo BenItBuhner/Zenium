@@ -6,6 +6,7 @@ import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Folder, Space, SplitGroup, Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
+import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { SPRING_GENTLE, type SpringConfig } from '@shared/spring'
 
 /** The main events the flyout subscribes to, by name, so a test can play the core's answer. */
@@ -145,6 +146,11 @@ interface Scene {
   splitGroups?: SplitGroup[]
   /** The pinned / regular separator line on. */
   separator?: boolean
+  /**
+   * The settings as the app ships them (`DEFAULT_SETTINGS`), the layout alone chosen: Expand
+   * on hover is whatever the default says, not the scene's `expandOnHover`.
+   */
+  shipped?: boolean
 }
 
 /** The desktop's sidebar under the Collapsed layout with Expand on hover on, by default. */
@@ -158,7 +164,8 @@ function sidebar({
   side = 'left',
   folders = [],
   splitGroups = [],
-  separator = false
+  separator = false,
+  shipped = false
 }: Scene = {}): UIState {
   const space = {
     id: 'work',
@@ -188,15 +195,24 @@ function sidebar({
     containers: [],
     media: [],
     mods: [],
-    settings: {
-      showTabSeparator: separator,
-      sidebarExpanded: true,
-      sidebarSide: side,
-      sidebarWidth: width,
-      sidebarExpandOnHover: expandOnHover,
-      toolbarLayout: layout,
-      containerSpecificEssentials: false
-    }
+    settings: shipped
+      ? {
+          ...DEFAULT_SETTINGS,
+          showTabSeparator: separator,
+          sidebarSide: side,
+          sidebarWidth: width,
+          toolbarLayout: layout,
+          containerSpecificEssentials: false
+        }
+      : {
+          showTabSeparator: separator,
+          sidebarExpanded: true,
+          sidebarSide: side,
+          sidebarWidth: width,
+          sidebarExpandOnHover: expandOnHover,
+          toolbarLayout: layout,
+          containerSpecificEssentials: false
+        }
   } as unknown as UIState
   browserStore.set({ state })
   viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse, hover: !coarse })
@@ -347,6 +363,23 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     expect(anchors()).toEqual([])
     expect(railBoxes()).toEqual(['', '', ''])
     expect(uiStore.get().railFlyout).toBe(false)
+  })
+
+  it('is offered by the settings as shipped (W5-17): a profile that chose the Collapsed layout and nothing else flies out on hover – as Zen’s compact mode and Edge’s vertical tabs do – until the Appearance row is turned off', async () => {
+    expect(DEFAULT_SETTINGS.sidebarExpandOnHover).toBe(true)
+    sidebar({ shipped: true })
+    expect(aside().hasAttribute('data-flyout-offered')).toBe(true)
+    expect(flyout().hasAttribute('data-flyout')).toBe(false)
+    // The pointer's rest past the dwell asks for the page's picture: the open on its way.
+    pointer('pointerenter')
+    wait(RAIL_FLYOUT_DWELL_MS)
+    expect(vi.mocked(cmd)).toHaveBeenCalledWith('overlay.snapshot', { tabId: 'home' })
+    expect(flyout().dataset.flyout).toBe('opening')
+    await captured()
+    expect(uiStore.get().railFlyout).toBe(true)
+    // The same shipped settings on a touch screen offer nothing: the default is the mouse's.
+    sidebar({ shipped: true, coarse: true })
+    expect(aside().hasAttribute('data-flyout-offered')).toBe(false)
   })
 
   it('is not offered with the setting off, nor under another layout, nor to a touch screen', () => {

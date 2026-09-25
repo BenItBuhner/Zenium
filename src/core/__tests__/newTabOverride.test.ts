@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { NEW_TAB_URL } from '../../shared/url'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import { NoExtensions } from '../hostDefaults'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 
@@ -100,6 +101,8 @@ function fixture(opts: { newTabPage?: boolean } = {}): Fixture {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
+  closeBootTabs(browser)
+  loads.length = 0
   return { browser, loads, sent, override }
 }
 

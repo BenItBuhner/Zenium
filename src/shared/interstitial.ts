@@ -8,15 +8,19 @@
 /**
  * `show-tabs` is the crash page's (ERR-15): a page that crashed twice within the minute offers
  * the tab switcher so other tabs can be closed; the core opens the phone's overview for it.
+ * `suggested` is the lookalike page's (PS-18): go to the site the address looks like instead;
+ * its `proceed` continues to the address asked for and remembers the host.
  */
-export type InterstitialAction = 'back' | 'proceed' | 'continue' | 'continue-always' | 'show-tabs'
+export type InterstitialAction =
+  'back' | 'proceed' | 'continue' | 'continue-always' | 'show-tabs' | 'suggested'
 
 export const INTERSTITIAL_ACTIONS: readonly InterstitialAction[] = [
   'back',
   'proceed',
   'continue',
   'continue-always',
-  'show-tabs'
+  'show-tabs',
+  'suggested'
 ]
 
 export interface InterstitialMessage {

@@ -30,13 +30,23 @@ import { SYNC_COPY, syncScopeRowId } from '@renderer/lib/syncSetup'
 import { openClearBrowsingData } from '@renderer/lib/ui'
 import { relativeTime } from '@renderer/lib/utils'
 import { DeviceGlyph, anyDeviceKind } from '../../DeviceGlyph'
+import { ConfirmDialog } from '../../dialogs/ConfirmDialog'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { inTextField, walkRows } from '../rowKeys'
 import { usePageSearch } from '../usePageSearch'
+import { useRowSelection } from '../useRowSelection'
 
 /** Visits fetched per page; "Show more" adds another page. */
 const PAGE_SIZE = 300
-const EMPTY: ReadonlySet<string> = new Set()
+const NO_ROWS: readonly string[] = []
+
+/** The bulk delete's prompt: its `data-confirm` name, a test's and a drive's handle. */
+export const DELETE_SELECTED_PROMPT = 'history-delete-selected'
+
+/** "Delete 12 items from history?" – the count in the question (Chrome's "Delete selected items?" names none). */
+function deleteSelectedTitle(count: number): string {
+  return count === 1 ? 'Delete 1 item from history?' : `Delete ${count} items from history?`
+}
 
 /**
  * A set of other devices (their ids) the page keeps for the session – the folded groups, and
@@ -122,12 +132,6 @@ const REMOTE_COPY = {
   }
 } as const
 
-/** The picked rows and the search they were picked in. */
-interface Picked {
-  text: string
-  ids: ReadonlySet<string>
-}
-
 /**
  * The History page (`zen://history`, Ctrl+H; Chrome's `chrome://history`): a chrome page tab
  * (design language v2 §10.1) on the shared page frame (`PageFrame.tsx`) – the "History" title
@@ -163,11 +167,26 @@ interface Picked {
  * behind, a remote tab likewise, a Recently closed entry restored behind. In the mode the
  * checkbox column shows on every row while it lasts (the favicons move once, at its start), a
  * picked row sits on `--v2-selected`, a plain click picks or drops a row, Shift-click picks the
- * run from the last picked one, and the title block's slot holds the count, Delete and Cancel.
- * Cancel, Escape, dropping the last picked row or deleting the selection leaves the mode and
- * the column goes.
+ * run from the last picked one (across the day groups, as Chrome's does), and the title block's
+ * slot holds the count, Delete and Cancel. The set is `useRowSelection`'s (one hook for the list
+ * pages): it belongs to the search it was made in, and a row a live change takes from the list
+ * falls out of it. Cancel, Escape, dropping the last picked row or deleting the selection
+ * leaves the mode and the column goes.
+ * Delete on the selection asks first (HB-68; Chrome's "Delete selected items?"): the §9.23
+ * prompt with the count in its question – "Delete 12 items from history?" – and the verb in the
+ * danger ink with no default key (§6, §9.22: a verb that destroys the user's own data
+ * recommends neither answer; the #438 ruling), since a removed visit has no Undo and no way
+ * back (§10.5: a confirmation is for an act with no way back). One `history.deleteVisits` for
+ * the whole set on confirm; the list updates once through its subscription. A single record
+ * asks nothing (§10.5, §10.1): Delete on a focused row with nothing picked, and the ⋮ menu's
+ * remove, act at once as Chrome's per-row remove does.
  * Keyboard (§9.22): the arrows walk the rows, Space picks, Enter opens, Delete removes the
- * focused row or the selection, Escape leaves the mode; Ctrl+F on the tab focuses the field.
+ * focused row or asks about the selection, Escape leaves the mode; Ctrl+F on the tab focuses
+ * the field. Roles: each day's rows are a `grid` with `aria-multiselectable` – the checkbox
+ * list Chrome's page is – its rows `row` with `aria-selected`, the row's parts `gridcell`s
+ * (`display: contents` wrappers, so the row's geometry is untouched), the checkbox an
+ * `<input type=checkbox>` labelled by the row's title, the bar's count a `status` (one live
+ * region for the count, not one per row). The tasks page is the grid's precedent.
  * "Clear browsing data…" is the services dialog through the frame dialog host (§9.23).
  */
 export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
@@ -180,8 +199,6 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
   const devices = remoteTabsStore.use((s) => s.devices)
   const field = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
-  /** The last row picked or dropped: where a Shift-click's run starts. */
-  const anchor = useRef<string | null>(null)
 
   // The URL and the field, kept as one (`usePageSearch`): the tab's URL follows a settled search
   // as `zen://history?q=<text>` without a history entry.
@@ -195,15 +212,32 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
         query: value ? { q: value } : undefined
       })
   })
+  // The visits' ids in the order the page shows them (the list reports each load): the rows a
+  // Shift run and Ctrl+A read, and the rows the selection is cut to when a live change takes one.
+  const [rows, setRows] = useState<readonly string[]>(NO_ROWS)
   // The selection belongs to the list it was made in: a new search – typed or brought by the
   // URL – starts over with nothing selected.
-  const [picked, setPicked] = useState<Picked>({ text, ids: EMPTY })
-  const selected = picked.text === text ? picked.ids : EMPTY
-  const setSelected = (update: (current: ReadonlySet<string>) => ReadonlySet<string>): void =>
-    setPicked((current) => {
-      const ids = update(current.text === text ? current.ids : EMPTY)
-      return ids === current.ids && current.text === text ? current : { text, ids }
-    })
+  const selection = useRowSelection(text, rows)
+  const { selected, selecting } = selection
+  /**
+   * The set the bulk delete's prompt asks about (the bar's Delete, or the Delete key on a
+   * selection): the prompt stands while that set is the selection – the same set, by identity
+   * (`useRowSelection` hands the set itself back while nothing changed). A live change that
+   * takes a picked row from under it – another window's delete, a Clear browsing data – makes
+   * a new set, and the question is withdrawn rather than answered about a different one: the
+   * bar's count shows what is left and Delete asks again.
+   */
+  const [asking, setAsking] = useState<ReadonlySet<string> | null>(null)
+  const confirming = asking !== null && asking === selected
+  /**
+   * How the prompt left: answered (the verb) or not (Cancel, Escape, the scrim, the selection
+   * gone from under it), and – answered – the first row the delete leaves, where the keyboard
+   * lands as the prompt goes (the bar's Delete that opened it leaves with the selection).
+   */
+  const answered = useRef<{ yes: boolean; survivor: HTMLElement | null }>({
+    yes: false,
+    survivor: null
+  })
 
   useChromeShortcut('find.open', (request) => {
     if (request.tabId !== tab.id) return false
@@ -230,18 +264,8 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
   }, [])
 
   // The row's menu asked for the row (the core's "Select"): picked into the list shown now.
-  useEffect(
-    () =>
-      onEvent('history.select', ({ visitId }) => {
-        anchor.current = visitId
-        setPicked((current) => {
-          const ids = new Set(current.text === text ? current.ids : EMPTY)
-          ids.add(visitId)
-          return { text, ids }
-        })
-      }),
-    [text]
-  )
+  const pick = selection.toggle
+  useEffect(() => onEvent('history.select', ({ visitId }) => pick(visitId, true)), [pick])
 
   /**
    * A visit opens in this tab, or – a middle or Ctrl click, §10.1's one meaning – as a new tab
@@ -280,71 +304,57 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
         .filter((d) => d.tabs.length > 0),
     [devices, hidden, terms]
   )
-  /** The visits' ids in the order the page shows them. */
-  const shownIds = (): string[] =>
-    [...(list.current?.querySelectorAll('[data-visit-id]') ?? [])].map(
-      (row) => row.getAttribute('data-visit-id') ?? ''
-    )
-  const toggle = (id: string, checked: boolean): void => {
-    anchor.current = id
-    setSelected((current) => {
-      if (current.has(id) === checked) return current
-      const next = new Set(current)
-      if (checked) next.add(id)
-      else next.delete(id)
-      return next
-    })
-  }
-  /** Shift-click: the run from the last picked row to this one joins the selection. */
-  const extend = (id: string): void => {
-    const ids = shownIds()
-    const from = anchor.current ? ids.indexOf(anchor.current) : -1
-    const to = ids.indexOf(id)
-    if (from === -1 || to === -1) {
-      toggle(id, true)
-      return
-    }
-    const span = ids.slice(Math.min(from, to), Math.max(from, to) + 1)
-    setSelected((current) => new Set([...current, ...span]))
-  }
-  const selectAll = (): void => {
-    const ids = shownIds()
-    if (ids.length === 0) return
-    anchor.current = null
-    setSelected(() => new Set(ids))
-  }
+  /**
+   * Remove visits: ONE `history.deleteVisits` for the lot (the core takes the list and notifies
+   * once; the list updates once through its subscription), the rows leaving the selection at
+   * once so the bar's count is never ahead of the list.
+   */
   const remove = (ids: readonly string[]): void => {
     if (ids.length === 0) return
-    setSelected((current) => {
-      if (!ids.some((id) => current.has(id))) return current
-      const next = new Set(current)
-      for (const id of ids) next.delete(id)
-      return next
-    })
+    selection.drop(ids)
     run('history.deleteVisits', { ids: [...ids] })
   }
+  /** The bar's Delete and the Delete key on a selection: the prompt, not the act (§9.23). */
+  const askDelete = (): void => {
+    if (!selecting) return
+    answered.current = { yes: false, survivor: null }
+    setAsking(selected)
+  }
+  /** The prompt's verb: the selection goes as one; the keyboard lands on the first row left. */
+  const confirmDelete = (): void => {
+    const ids = selection.ordered()
+    const gone = new Set(ids)
+    const survivor =
+      [...(list.current?.querySelectorAll<HTMLElement>('[data-visit-id]') ?? [])]
+        .find((row) => !gone.has(row.getAttribute('data-visit-id') ?? ''))
+        ?.querySelector<HTMLElement>('[data-row-focus]') ?? null
+    answered.current = { yes: true, survivor }
+    setAsking(null)
+    remove(ids)
+  }
+  const cancelDelete = (): void => setAsking(null)
 
-  // The mode lasts while anything is picked: dropping or deleting the last row leaves it.
-  const selecting = selected.size > 0
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+    // A key from the prompt (a portal's events bubble here through React) is the prompt's.
+    if (!(e.target instanceof Node) || !e.currentTarget.contains(e.target)) return
     if (inTextField(e.target)) return
     if (e.key === 'Escape' && selecting) {
       e.preventDefault()
       e.stopPropagation()
-      setSelected(() => EMPTY)
+      selection.clear()
       return
     }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a') {
       // Ctrl+A picks every visit shown, entering the mode (the field keeps its own select-all).
       e.preventDefault()
-      selectAll()
+      selection.selectAll()
       return
     }
     if (e.key === 'Delete') {
-      // The selection when there is one, else the row the key came from.
+      // The selection when there is one – asked about first – else the row the key came from.
       const row = e.target instanceof HTMLElement ? e.target.closest('[data-visit-id]') : null
       const id = row?.getAttribute('data-visit-id')
-      if (selecting) remove([...selected])
+      if (selecting) askDelete()
       else if (id) remove([id])
       else return
       e.preventDefault()
@@ -371,15 +381,12 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
                     className="zen-v2-button"
                     data-danger=""
                     data-testid="history-delete-selected"
-                    onClick={() => remove([...selected])}
+                    aria-haspopup="dialog"
+                    onClick={askDelete}
                   >
                     Delete
                   </button>
-                  <button
-                    type="button"
-                    className="zen-v2-button"
-                    onClick={() => setSelected(() => EMPTY)}
-                  >
+                  <button type="button" className="zen-v2-button" onClick={selection.clear}>
                     Cancel
                   </button>
                 </>
@@ -433,11 +440,35 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
           quiet={remote.length > 0}
           selected={selected}
           selecting={selecting}
-          onToggle={toggle}
-          onExtend={extend}
+          onToggle={selection.toggle}
+          onExtend={selection.extend}
+          onRows={setRows}
           onOpen={open}
         />
       </div>
+      {confirming && (
+        <ConfirmDialog
+          name={DELETE_SELECTED_PROMPT}
+          title={deleteSelectedTitle(selected.size)}
+          // No glyph: a confirmation of the user's own command carries none (§9.23) – the 16
+          // glyph is for a prompt raised on a requester's behalf.
+          description={
+            selected.size === 1
+              ? 'The visit is removed from your history. Bookmarks and open tabs stay.'
+              : 'The visits are removed from your history. Bookmarks and open tabs stay.'
+          }
+          action="Delete"
+          destructive
+          onCancel={cancelDelete}
+          onConfirm={confirmDelete}
+          // A Cancel returns to its opener (the bar's Delete, or the row the key came from); a
+          // confirm to the first row the delete leaves, else the field – never `body` (§9.5).
+          returnFocus={() =>
+            answered.current.yes ? (answered.current.survivor ?? field.current ?? false) : undefined
+          }
+          data={{ 'data-dialog': `confirm:${DELETE_SELECTED_PROMPT}`, 'data-count': selected.size }}
+        />
+      )}
     </PageColumn>
   )
 }
@@ -468,12 +499,15 @@ function VisitList({
   selecting,
   onToggle,
   onExtend,
+  onRows,
   onOpen
 }: Selection & {
   text: string
   terms: string[]
   /** Another group answers the search: with no visit matching, say nothing rather than "No history matches". */
   quiet: boolean
+  /** The visits' ids in the order shown, on every load: the page's selection reads the list by them. */
+  onRows: (ids: readonly string[]) => void
   onOpen: (url: string, newTab: boolean) => void
 }): JSX.Element | null {
   const [limit, setLimit] = useState(PAGE_SIZE)
@@ -502,6 +536,11 @@ function VisitList({
     [groups]
   )
   const hasMore = visitCount >= limit
+  // The rows as shown – the day groups' order, or the flat results' – reported once per load;
+  // a list that leaves (a new search remounts it) reports none.
+  const shown = useMemo(() => (groups ?? []).flatMap((g) => g.visits.map((v) => v.id)), [groups])
+  useEffect(() => onRows(shown), [shown, onRows])
+  useEffect(() => () => onRows(NO_ROWS), [onRows])
 
   if (!loaded || !groups) return null
   if (groups.length === 0) {
@@ -536,7 +575,7 @@ function VisitList({
           aside={hasMore ? `${visitCount}+` : visitCount}
           data-testid="history-results"
         >
-          <ul className="zen-page-rows">
+          <ul {...visitGrid('zen-history-results')}>
             {visits.map((visit) => (
               <VisitRow
                 key={visit.id}
@@ -642,7 +681,7 @@ function DayGroup({
         </button>
       }
     >
-      <ul className="zen-page-rows">
+      <ul {...visitGrid(`zen-history-day-${group.dayKey}`)}>
         {group.visits.map((visit) => (
           <VisitRow
             key={visit.id}
@@ -658,6 +697,28 @@ function DayGroup({
       </ul>
     </PageGroup>
   )
+}
+
+/**
+ * A group's rows are a `grid` that selects (§9.22, HB-68): `aria-multiselectable` names the
+ * checkbox list Chrome's page is, each row `aria-selected`, its parts `gridcell`s. A `list`
+ * cannot carry a selection (`aria-selected` is no `listitem`'s), a `listbox` cannot hold a
+ * row's buttons (an `option`'s children are presentational; the bookmarks manager's file-list
+ * model has the list itself take the focus instead) – the grid holds both, as the tasks page's
+ * does. The arrows walk the rows (`walkRows`), as §9.22 has it for every list page.
+ */
+function visitGrid(labelledBy: string): {
+  className: string
+  role: 'grid'
+  'aria-multiselectable': true
+  'aria-labelledby': string
+} {
+  return {
+    className: 'zen-page-rows',
+    role: 'grid',
+    'aria-multiselectable': true,
+    'aria-labelledby': labelledBy
+  }
 }
 
 // The locale's clock, as the phone list's `visitTime` ("9:41 AM", "09:41"), one formatter for the rows.
@@ -692,76 +753,91 @@ function VisitRow({
   return (
     <li
       className="zen-v2-row zen-page-row"
+      role="row"
+      aria-selected={selected}
       data-selected={selected || undefined}
       data-visit-id={visit.id}
       onContextMenu={menu}
     >
-      {/* The checkbox column is the mode's: on every row while it lasts, none at rest. */}
+      {/*
+        The checkbox column is the mode's: on every row while it lasts, none at rest (§10.1 as
+        amended). A pick is a class flip on the row that stands – `checked` and `data-selected`
+        – not a change to its structure; the column itself comes and goes once, with the mode.
+        Each part of the row is a `gridcell` on a `display: contents` wrapper: the row's boxes
+        and their geometry are exactly the list's, the roles are the grid's.
+      */}
       {selecting && (
-        <input
-          type="checkbox"
-          className="zen-v2-checkbox zen-page-row-check"
-          checked={selected}
-          aria-label={`Select ${title}`}
-          onChange={(e) => onToggle(visit.id, e.target.checked)}
-        />
+        <span role="gridcell" className="zen-page-row-cell">
+          <input
+            type="checkbox"
+            className="zen-v2-checkbox zen-page-row-check"
+            checked={selected}
+            aria-label={`Select ${title}`}
+            onChange={(e) => onToggle(visit.id, e.target.checked)}
+          />
+        </span>
       )}
       <span className="zen-page-row-lead" aria-hidden>
         <FaviconImage src={visit.favicon} page={visit.url} />
       </span>
-      <button
-        type="button"
-        className="zen-page-row-text"
-        data-row-focus=""
-        title={presentedUrl(visit.url)}
-        onClick={(e) => {
-          // Shift-click picks the run from the last picked row (this one alone with nothing
-          // picked yet, entering the mode); Ctrl-click opens the page behind – §10.1's one
-          // meaning on every page row, never a pick; inside the mode a plain click picks or
-          // drops the row (the middle button and Enter still open it).
-          if (e.shiftKey) onExtend(visit.id)
-          else if (e.ctrlKey || e.metaKey) onOpen(visit.url, true)
-          else if (selecting) onToggle(visit.id, !selected)
-          else onOpen(visit.url, false)
-        }}
-        onAuxClick={(e) => e.button === 1 && onOpen(visit.url, true)}
-        onKeyDown={(e) => {
-          // Space picks the row (Enter, the button's own, opens it).
-          if (e.key === ' ') {
-            e.preventDefault()
-            onToggle(visit.id, !selected)
-          }
-        }}
-      >
-        <span className="zen-page-row-label">{highlight(title, terms)}</span>
-        <span className="zen-page-row-desc">{highlight(host, terms)}</span>
-      </button>
+      <span role="gridcell" className="zen-page-row-cell">
+        <button
+          type="button"
+          className="zen-page-row-text"
+          data-row-focus=""
+          title={presentedUrl(visit.url)}
+          onClick={(e) => {
+            // Shift-click picks the run from the last picked row (this one alone with nothing
+            // picked yet, entering the mode); Ctrl-click opens the page behind – §10.1's one
+            // meaning on every page row, never a pick; inside the mode a plain click picks or
+            // drops the row (the middle button and Enter still open it).
+            if (e.shiftKey) onExtend(visit.id)
+            else if (e.ctrlKey || e.metaKey) onOpen(visit.url, true)
+            else if (selecting) onToggle(visit.id, !selected)
+            else onOpen(visit.url, false)
+          }}
+          onAuxClick={(e) => e.button === 1 && onOpen(visit.url, true)}
+          onKeyDown={(e) => {
+            // Space picks the row (Enter, the button's own, opens it).
+            if (e.key === ' ') {
+              e.preventDefault()
+              onToggle(visit.id, !selected)
+            }
+          }}
+        >
+          <span className="zen-page-row-label">{highlight(title, terms)}</span>
+          <span className="zen-page-row-desc">{highlight(host, terms)}</span>
+        </button>
+      </span>
       <time
+        role="gridcell"
         className="zen-page-row-time"
         dateTime={new Date(visit.visitTime).toISOString()}
         aria-label={day ? `Visited ${day}, ${time}` : `Visited at ${time}`}
       >
         {day ? `${day} · ${time}` : time}
       </time>
-      <button
-        type="button"
-        className="zen-v2-icon-button zen-page-row-reveal"
-        title="More actions"
-        aria-label={`Actions for ${title}`}
-        aria-haspopup="menu"
-        onClick={(e) => {
-          const box = e.currentTarget.getBoundingClientRect()
-          run('history.contextMenu', {
-            visitId: visit.id,
-            url: visit.url,
-            x: Math.round(box.right),
-            y: Math.round(box.bottom),
-            keyboard: e.detail === 0
-          })
-        }}
-      >
-        <EllipsisVertical aria-hidden />
-      </button>
+      <span role="gridcell" className="zen-page-row-cell">
+        <button
+          type="button"
+          className="zen-v2-icon-button zen-page-row-reveal"
+          title="More actions"
+          aria-label={`Actions for ${title}`}
+          aria-haspopup="menu"
+          onClick={(e) => {
+            const box = e.currentTarget.getBoundingClientRect()
+            run('history.contextMenu', {
+              visitId: visit.id,
+              url: visit.url,
+              x: Math.round(box.right),
+              y: Math.round(box.bottom),
+              keyboard: e.detail === 0
+            })
+          }}
+        >
+          <EllipsisVertical aria-hidden />
+        </button>
+      </span>
     </li>
   )
 }

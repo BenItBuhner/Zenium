@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type { Platform, StoreIO, TabView, TabViewEvents, TabViewHost, WindowHost } from '../platform'
 
 /**
@@ -109,6 +110,7 @@ function fixture(): { browser: Browser; views: FakeView[]; writes: Written[] } {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
+  closeBootTabs(browser, views)
   return { browser, views, writes }
 }
 

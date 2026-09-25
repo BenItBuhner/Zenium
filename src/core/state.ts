@@ -178,10 +178,11 @@ export interface PersistedWindow {
 
 /**
  * `state.json`. v1: one window; v2: every synced window; v3: the bookmark tree; v4: the new tab
- * page's shortcuts and its "Most visited" block list; v5: the new tab page's one model.
+ * page's shortcuts and its "Most visited" block list; v5: the new tab page's one model; v6: the
+ * rail's Expand on hover on by default (a stored value is a choice from v6 on).
  */
 export interface Persisted {
-  version: 1 | 2 | 3 | 4 | 5
+  version: 1 | 2 | 3 | 4 | 5 | 6
   spaces: Space[]
   tabs: Tab[]
   essentialTabIds: string[]
@@ -246,8 +247,11 @@ export interface Persisted {
 /**
  * v5 folds the phone's `settings.newTabPhone` into `settings.newTab` and moves its pins and
  * removed hosts, with the desktop's two v4 lists, into `newTabDevice` (`shared/newTab.ts`).
+ * v6 turns the rail's Expand on hover on by default: the settings are written whole, so a
+ * profile from before v6 holds the old default (`false`) whether or not the user ever saw the
+ * row, and `applyPersisted` reads that write-back as no choice; from v6 on a stored value is one.
  */
-export const PERSISTED_VERSION = 5
+export const PERSISTED_VERSION = 6
 
 export type StateListener = () => void
 
@@ -552,7 +556,7 @@ export class BrowserState {
   /** Load the profile from disk (or create the first-run defaults). */
   load(): void {
     const data = this.store.readSync()
-    if (data && [1, 2, 3, 4, 5].includes(data.version)) {
+    if (data && [1, 2, 3, 4, 5, 6].includes(data.version)) {
       this.applyPersisted(data)
       // Profiles from before the marker count as clean; only an explicit false is a crash.
       this.uncleanExit = data.cleanExit === false
@@ -643,6 +647,12 @@ export class BrowserState {
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
     // Off only when the profile says so: an older profile, or anything but a boolean, reads on.
     this.settings.splitEdgeZones = data.settings?.splitEdgeZones !== false
+    // The rail's Expand on hover (tabs-03; W5-17): on by default since v6. A profile from before
+    // v6 was written whole by a build whose default was off, so its `false` is that default's
+    // write-back and not a choice – it reads on (a stored `true` was a choice and reads on too).
+    // From v6 on the stored value is the user's, off only where the profile says so.
+    this.settings.sidebarExpandOnHover =
+      data.version >= 6 ? data.settings?.sidebarExpandOnHover !== false : true
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }
@@ -1097,6 +1107,8 @@ export class BrowserState {
           attention: undefined,
           // A hung renderer is the session's; the page is a fresh one after a restart.
           unresponsive: undefined,
+          // A form in progress died with the page's document (OS-37).
+          formEdited: undefined,
           // So is a wake from sleep: the leaf's number is this session's (`Tabs.load`).
           memorySaver: undefined,
           errorCode: null,

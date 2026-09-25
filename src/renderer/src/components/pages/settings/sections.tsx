@@ -1791,8 +1791,9 @@ function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
 /**
  * The site "Add current site" puts on the never-unload list: the registrable domain (eTLD+1) of
  * the page Settings was opened from – the tab's opener, as Use current page reads it – which is
- * what the core's unload pass matches an entry against (`sleepCandidates`: `domainOf(tab.url)`
- * equals the entry), so `mail.google.com` goes on as `google.com` and every page of the site
+ * what the core's unload pass matches an entry against (`neverUnloaded` in
+ * `core/memoryPressure.ts`: the page's host with `www.` aside, or its registrable domain, equals
+ * the entry), so `mail.google.com` goes on as `google.com` and every page of the site
  * stays loaded. `listed` names the domain when it is on the list already – the row is laid out
  * at .4 and says so rather than adding a twin. No site for a chrome page (Settings opened from
  * the menu of a blank tab or from History), an extension page, or a private window, whose sites
