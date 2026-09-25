@@ -6,6 +6,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import type { ZenWindow } from '../window'
 
@@ -157,6 +158,12 @@ function fixture(hostTellsFocus = true): Fixture {
   browser.state.settings.onboardingDone = true
   browser.start()
   const win = browser.focusedWindow()
+  // The boot tab took the chrome's first layout, as it does (the focus its activation owed is
+  // spent on it); the scenes begin from the bare space after it, the keyboard back in the chrome.
+  const boot = win.selectedTabIn(win.activeSpace())
+  if (boot) win.applyLayout(shown([boot]))
+  closeBootTabs(browser, views)
+  keyboard.document = 'chrome'
   const openPage = (url: string): RecordedView => {
     browser.handleCommand(win, 'urlbar.submit', {
       input: url,

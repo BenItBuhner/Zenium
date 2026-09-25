@@ -12,6 +12,7 @@ import { SidePanelApi } from '../../main/platform/extensionApi/sidePanel'
 import type { PanelView, PanelViewHost } from '../../main/platform/extensionApi/sidePanelBridge'
 import type { ApiHost, LoadedExtension } from '../../main/platform/extensionApi/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import { NoExtensions } from '../hostDefaults'
 import { folderTabs } from '../model'
 import type {
@@ -197,6 +198,7 @@ function fixture(
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
+  closeBootTabs(browser, views)
   const hostOf = (win: ZenWindow): HostRecord => {
     const record = hosts.find((h) => h.host === win.host)
     if (!record) throw new Error('unknown window host')

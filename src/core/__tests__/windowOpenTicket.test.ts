@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type {
   AppHost,
   Platform,
@@ -137,6 +138,7 @@ function openerWithPage(): {
   const platform = fakePlatform()
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0]
   const parent = browser.tabs.createTab({ url: 'https://opener.example/', active: true }, win)
   const page = platform.pages.get(parent.id)
