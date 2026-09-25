@@ -210,7 +210,10 @@ export class ElectronWindow implements WindowHost {
     win.on('enter-full-screen', () => zen.onWindowStateChanged())
     win.on('leave-full-screen', () => zen.onWindowStateChanged())
     win.on('focus', () => zen.onFocused())
-    win.on('blur', () => zen.onWindowStateChanged())
+    // `blur` is the window resigning key status, which on macOS covers the app deactivating too
+    // (⌘Tab, Spotlight, a notification clicked: `windowDidResignKey` fires for the key window) –
+    // the one signal a quit hold needs to know its key up went elsewhere (`ZenWindow.onBlur`).
+    win.on('blur', () => zen.onBlur())
     win.on('resize', () => this.scheduleBoundsSave())
     win.on('move', () => this.scheduleBoundsSave())
     win.on('swipe', (_e, direction) => {

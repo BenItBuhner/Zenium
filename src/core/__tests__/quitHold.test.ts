@@ -390,6 +390,39 @@ describe('the quit chord held quits (session-08)', () => {
     expect(requestQuit).toHaveBeenCalledTimes(1)
   })
 
+  it('the hold’s window losing the keyboard ends it – ⌘Tab, a notification, Spotlight mid-hold – the panel goes and nothing quits', async () => {
+    const { browser, platform, win } = start({ os: 'darwin' })
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    const view = platform.host.views[0]!
+    const requestQuit = vi.spyOn(browser, 'requestQuit')
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    vi.advanceTimersByTime(700)
+    expect(browser.quitHold.holding).toBe(true)
+    // The key up goes to whatever took the keyboard; this window sees only its blur.
+    win.onBlur()
+    expect(browser.quitHold.holding).toBe(false)
+    expect(win.quitHold).toBeNull()
+    expect(view.showQuitHold).toHaveBeenLastCalledWith(null)
+    vi.advanceTimersByTime(QUIT_HOLD_MS)
+    await settle()
+    expect(requestQuit).not.toHaveBeenCalled()
+    expect(platform.host.quits).toBe(0)
+    // The focus flag still goes out with the blur, as before.
+    expect(win.windowState().quitHold).toBeNull()
+  })
+
+  it('another window’s blur is nothing to the hold', () => {
+    const { browser, win } = start({ os: 'darwin' })
+    const other = browser.openWindow('synced', win)
+    if (!other) throw new Error('no second window')
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    other.onBlur()
+    expect(browser.quitHold.holding).toBe(true)
+    expect(win.quitHold).not.toBeNull()
+    win.onBlur()
+    expect(browser.quitHold.holding).toBe(false)
+  })
+
   it('the window closing under a hold ends it', () => {
     const { browser, win } = start({ os: 'darwin' })
     const requestQuit = vi.spyOn(browser, 'requestQuit')

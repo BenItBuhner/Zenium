@@ -121,6 +121,18 @@ export class QuitHoldService {
     if (this.win === win) this.cancel()
   }
 
+  /**
+   * The hold's window lost the keyboard – ⌘Tab to another app, a notification banner clicked,
+   * Spotlight summoned, another window brought forward – so the key up will be delivered
+   * elsewhere and never seen here. The hold ends and nothing quits: a held quit only ever
+   * completes with the keys still down in a focused Zenium window, where the panel can be
+   * seen (the hold is the confirmation only while the user watches it, §10.5). A blur of some
+   * other window is nothing to a hold.
+   */
+  onWindowBlur(win: ZenWindow): void {
+    if (this.win === win) this.cancel()
+  }
+
   /** The panel as the window's active page paints it: the hold with the chrome's scheme and accent. */
   panelFor(win: ZenWindow, hold: QuitHoldState): QuitHoldPanel {
     const dark = this.browser.darkScheme()

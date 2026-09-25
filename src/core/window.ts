@@ -342,6 +342,15 @@ export class ZenWindow {
   }
 
   /**
+   * The host window lost the keyboard (to another app or another window). A quit hold running
+   * here ends first – its key up will never arrive – then the focus flag is republished.
+   */
+  onBlur(): void {
+    this.browser.quitHold.onWindowBlur(this)
+    this.onWindowStateChanged()
+  }
+
+  /**
    * The host window is about to close – for real: a host whose native close request comes first
    * asks the browser (`requestWindowClose`) and closes once `closeApproved` is set.
    */
