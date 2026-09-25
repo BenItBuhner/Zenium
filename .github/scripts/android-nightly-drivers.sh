@@ -97,6 +97,12 @@ setup_webview_snapshot() {
   unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
 }
 
+setup_webview_google() {
+  # A current com.google.android.webview for the API 33 image (seed 69; android-webview-google.sh
+  # says where it comes from). The shard's cache keeps the APK between runs; a hit is a no-op here.
+  bash .github/scripts/android-webview-google.sh fetch artifacts/webview-google
+}
+
 setup_ffmpeg() {
   command -v ffmpeg > /dev/null 2>&1 && return 0
   sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
@@ -117,6 +123,7 @@ if [ "${1:-}" = setup ]; then
       ublock-zip) setup_ublock_zip ;;
       ext-crx) setup_ext_crx ;;
       webview-snapshot) setup_webview_snapshot ;;
+      webview-google) setup_webview_google ;;
       ffmpeg) setup_ffmpeg ;;
       perfetto-python) setup_perfetto_python ;;
       *) echo "::error::unknown setup step '$step'"; exit 1 ;;

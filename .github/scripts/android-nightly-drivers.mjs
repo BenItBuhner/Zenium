@@ -59,7 +59,7 @@ export const DEFAULT_TIMEOUT_S = 720
 const PACKAGE = 'app.zen.chromium'
 
 /** @typedef {{ id: string, class?: string, classes?: string[], shard: string, mirrors: string, dir?: string, script?: string, out?: string, env?: Record<string, string>, setup?: string[], needs?: string[], timeout?: number, estimate: number, note?: string }} Driver */
-/** @typedef {{ title: string, 'api-level': string, target: string, profile: string, 'emulator-gpu': string, 'emulator-options': string, display: string, 'timeout-minutes': number, 'budget-minutes': number, setup?: string[], env?: Record<string, string>, note?: string }} Shard */
+/** @typedef {{ title: string, 'api-level': string, target: string, profile: string, image: string, webview: string, 'emulator-gpu': string, 'emulator-options': string, display: string, 'timeout-minutes': number, 'budget-minutes': number, setup?: string[], cache?: { path: string, key: string }, env?: Record<string, string>, note?: string }} Shard */
 /** @typedef {{ shards: Record<string, Shard>, drivers: Driver[], skip: { class?: string, workflow?: string, reason: string, absent?: boolean }[] }} Manifest */
 
 /** @returns {Manifest} */
@@ -133,7 +133,11 @@ export function matrix(manifest, shard = 'all') {
         profile: s.profile,
         'emulator-gpu': s['emulator-gpu'],
         'emulator-options': s['emulator-options'],
-        'timeout-minutes': s['timeout-minutes']
+        'timeout-minutes': s['timeout-minutes'],
+        // What a setup step fetches by a pin, kept between runs (the recipe's actions/cache
+        // inputs; empty strings for a shard without one).
+        'setup-cache-path': s.cache?.path ?? '',
+        'setup-cache-key': s.cache?.key ?? ''
       }
     })
   }
@@ -278,6 +282,17 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
       problems.push(`shard ${name}: image '${shard.image ?? ''}' is not the recipe's ${image}`)
     if (typeof shard.webview !== 'string' || !shard.webview.trim())
       problems.push(`shard ${name}: names no webview (the provider its drivers run on)`)
+    if (shard.cache !== undefined) {
+      const { path, key } = shard.cache
+      if (typeof path !== 'string' || !path.trim() || typeof key !== 'string' || !key.trim())
+        problems.push(
+          `shard ${name}: a cache needs both a path and a key (${JSON.stringify(shard.cache)})`
+        )
+    }
+    if ((shard.setup ?? []).includes('webview-google') && !shard.cache)
+      problems.push(
+        `shard ${name}: the webview-google step wants the shard's cache (a 2.2 GB fetch otherwise, every run)`
+      )
   }
   const skipped = new Map()
   for (const skip of manifest.skip) {
@@ -317,6 +332,7 @@ export const SETUP_STEPS = new Set([
   'ublock-zip',
   'ext-crx',
   'webview-snapshot',
+  'webview-google',
   'ffmpeg',
   'perfetto-python'
 ])

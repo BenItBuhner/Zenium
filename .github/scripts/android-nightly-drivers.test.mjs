@@ -32,6 +32,35 @@ const workflow = readFileSync(
   join(REPO_ROOT, '.github', 'workflows', 'android-nightly-drivers.yml'),
   'utf8'
 )
+const nightly = workflow
+const recipe = readFileSync(
+  join(REPO_ROOT, '.github', 'workflows', 'android-emulator-demo.yml'),
+  'utf8'
+)
+const share = readFileSync(
+  join(REPO_ROOT, '.github', 'workflows', 'android-share-demo.yml'),
+  'utf8'
+)
+// The pins of android-webview-google.sh (the current Google WebView for the API 33 image), as the
+// script declares them: NAME=value lines at its top.
+const WEBVIEW_GOOGLE = (() => {
+  const script = readFileSync(
+    join(REPO_ROOT, '.github', 'scripts', 'android-webview-google.sh'),
+    'utf8'
+  )
+  const pin = (name) => {
+    const match = script.match(new RegExp(`^${name}=(.+)$`, 'm'))
+    if (!match) throw new Error(`android-webview-google.sh pins no ${name}`)
+    return match[1]
+  }
+  return {
+    package: pin('WEBVIEW_PACKAGE'),
+    version: pin('WEBVIEW_VERSION'),
+    source: pin('ZIP_URL'),
+    sha1: pin('ZIP_SHA1'),
+    apkSha256: pin('APK_SHA256')
+  }
+})()
 
 const temps = []
 const temp = () => {
@@ -163,6 +192,85 @@ describe('the plan', () => {
     }
     expect(matrix(manifest, 'tablet').include).toHaveLength(1)
     expect(() => matrix(manifest, 'moon')).toThrow(/no shard 'moon'/)
+  })
+
+  it('hands a shard cache (a pinned fetch kept between runs) to the recipe, and nothing for the others', () => {
+    // The api33 shard's current Google WebView (seed 69): the key names the pinned version.
+    const [api33] = matrix(manifest, 'api33').include
+    expect(api33['setup-cache-path']).toBe('artifacts/webview-google')
+    expect(api33['setup-cache-key']).toBe(
+      `webview-google-${WEBVIEW_GOOGLE.package}-${WEBVIEW_GOOGLE.version}`
+    )
+    expect(manifest.shards.api33.env.WEBVIEW_GOOGLE_DIR).toBe(api33['setup-cache-path'])
+    expect(setupSteps(manifest, 'api33')).toEqual(['webview-google'])
+    const [phoneA] = matrix(manifest, 'phone-a').include
+    expect(phoneA['setup-cache-path']).toBe('')
+    expect(phoneA['setup-cache-key']).toBe('')
+    // The nightly workflow passes both through to the recipe, which restores and saves them.
+    expect(nightly).toContain('setup-cache-path: ${{ matrix.setup-cache-path }}')
+    expect(nightly).toContain('setup-cache-key: ${{ matrix.setup-cache-key }}')
+    expect(recipe).toContain('uses: actions/cache/restore@v6')
+    expect(recipe).toContain('uses: actions/cache/save@v6')
+    const halfCache = checkManifest(
+      {
+        shards: {
+          phone: {
+            'api-level': '33',
+            target: 'google_apis',
+            image: 'system-images;android-33;google_apis;x86_64',
+            webview: 'com.google.android.webview 145',
+            'budget-minutes': 10,
+            'timeout-minutes': 20,
+            setup: ['webview-google'],
+            cache: { path: 'artifacts/webview-google' }
+          }
+        },
+        drivers: [],
+        skip: []
+      },
+      new Map()
+    )
+    expect(halfCache).toContain(
+      'shard phone: a cache needs both a path and a key ({"path":"artifacts/webview-google"})'
+    )
+    const noCache = checkManifest(
+      {
+        shards: {
+          phone: {
+            'api-level': '33',
+            target: 'google_apis',
+            image: 'system-images;android-33;google_apis;x86_64',
+            webview: 'com.google.android.webview 145',
+            'budget-minutes': 10,
+            'timeout-minutes': 20,
+            setup: ['webview-google']
+          }
+        },
+        drivers: [],
+        skip: []
+      },
+      new Map()
+    )
+    expect(noCache).toContain(
+      "shard phone: the webview-google step wants the shard's cache (a 2.2 GB fetch otherwise, every run)"
+    )
+  })
+
+  it('pins the current Google WebView once, the fetch helper and the manifest agreeing', () => {
+    // The share demo's API 33 job carries the same pin, the manifest's webview names the version.
+    expect(manifest.shards.api33.webview).toContain(WEBVIEW_GOOGLE.version)
+    expect(share).toContain('WEBVIEW_GOOGLE_DIR=artifacts/webview-google')
+    expect(share).toContain(
+      `setup-cache-key: webview-google-${WEBVIEW_GOOGLE.package}-${WEBVIEW_GOOGLE.version}`
+    )
+    expect(share).toContain(
+      'setup-script: bash .github/scripts/android-webview-google.sh fetch artifacts/webview-google'
+    )
+    expect(WEBVIEW_GOOGLE.source).toMatch(
+      /^https:\/\/dl\.google\.com\/android\/repository\/sys-img\/google_apis\/x86_64-37\.0_r06\.zip$/
+    )
+    expect(WEBVIEW_GOOGLE.sha1).toMatch(/^[0-9a-f]{40}$/)
+    expect(WEBVIEW_GOOGLE.apkSha256).toMatch(/^[0-9a-f]{64}$/)
   })
 
   it('gives each driver its own workflow environment over the shard baseline', () => {

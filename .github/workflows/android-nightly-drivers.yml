@@ -123,6 +123,9 @@ jobs:
       ref: ${{ inputs.ref }}
       script: .github/scripts/android-nightly-drivers.sh
       setup-script: bash .github/scripts/android-nightly-drivers.sh setup
+      # A shard's pinned fetch kept between runs (the manifest's `cache`; empty for the others).
+      setup-cache-path: ${{ matrix.setup-cache-path }}
+      setup-cache-key: ${{ matrix.setup-cache-key }}
       script-env: |
         NIGHTLY_SHARD=${{ matrix.shard }}
         NIGHTLY_OUT=artifacts/nightly/${{ matrix.shard }}

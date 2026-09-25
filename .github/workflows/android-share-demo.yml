@@ -47,6 +47,14 @@ jobs:
         DEMO_DIR=share-demo
         DEMO_OUT=artifacts/android-share-demo-api33
         DEMO_VIDEO=android-share-demo-api33.mp4
+        WEBVIEW_GOOGLE_DIR=artifacts/webview-google
+      # The image's own WebView 109 keeps no profiles, so the core offers no private tabs on it and
+      # the panel's private-tab scene read N/A (seed 69): a current Google WebView goes over it
+      # first (android-webview-google.sh, the pin and its source in the script's header), the APK
+      # kept between runs under the key naming its version.
+      setup-script: bash .github/scripts/android-webview-google.sh fetch artifacts/webview-google
+      setup-cache-path: artifacts/webview-google
+      setup-cache-key: webview-google-com.google.android.webview-145.0.7632.218
       api-level: '33'
       artifact-name: android-share-demo-api33
       artifact-path: artifacts/android-share-demo-api33/
