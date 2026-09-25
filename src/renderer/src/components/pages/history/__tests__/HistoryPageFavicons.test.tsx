@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -264,5 +266,17 @@ describe('the History page draws its favicons from the cache', () => {
     } finally {
       GROUPS[0]!.visits[1]!.favicon = CLOSED_ICON
     }
+  })
+
+  it("the desktop chrome document's CSP lets an <img> load zen://favicon/<hash> (img-src zen:)", () => {
+    // Without `zen:` in `img-src` every cached icon is refused by the document itself and the
+    // rows all fall to the glyph – what the real-build probe of pass 7 first found.
+    const html = readFileSync(resolve(process.cwd(), 'src/renderer/index.html'), 'utf8')
+    const meta = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(html)
+    const imgSrc = meta?.[1]
+      .split(';')
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith('img-src '))
+    expect(imgSrc?.split(/\s+/)).toContain('zen:')
   })
 })
