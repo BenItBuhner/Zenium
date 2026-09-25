@@ -64,7 +64,6 @@ export function electronPanelViewHost(model: ApiModel, browser: Browser): PanelV
         extensionPageOpenHandler({
           views: views instanceof ElectronTabViewHost ? views : undefined,
           windowFor: () => win,
-          openerUrl: () => wc.getURL(),
           browser: {
             tabs: {
               activeTabFor: (w) => browser.tabs.activeTabFor(w),

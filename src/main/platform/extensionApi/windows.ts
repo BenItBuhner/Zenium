@@ -222,7 +222,6 @@ export class WindowsApi {
       extensionPageOpenHandler({
         views: views instanceof ElectronTabViewHost ? views : undefined,
         windowFor: () => this.lastFocusedWindowOfProfile(incognito),
-        openerUrl: () => bw.webContents.getURL(),
         browser: this.host.browser
       })
     )

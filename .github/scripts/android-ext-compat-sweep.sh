@@ -97,11 +97,14 @@ adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
 ) &
 monitor_pid=$!
 
-# RSS of every Zenium process every 5 s: the app and the WebView renderers.
+# RSS of every Zenium process every 5 s: the app and the WebView renderers. The renderer is the
+# WebView package's sandboxed service (`com.android.webview:sandboxed_process0:…` on the AOSP
+# image, `com.google.android.webview:…` on the Google one), not a process of the app's name, so
+# it is matched by its own; every WebView of the app shares the one renderer.
 (
   while true; do
     stamp=$(date +%T)
-    adb shell ps -A -o PID,RSS,NAME 2> /dev/null | grep "$app_id" | sed "s/^/$stamp /" >> "$out/memory-samples.txt" || true
+    adb shell ps -A -o PID,RSS,NAME 2> /dev/null | grep -E "$app_id|sandboxed_process" | sed "s/^/$stamp /" >> "$out/memory-samples.txt" || true
     sleep 5
   done
 ) &

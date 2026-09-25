@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_POPUP_HEIGHT,
   DEFAULT_POPUP_WIDTH,
+  isAboutBlank,
+  isOpenableUrl,
   isPopupRequested,
   openedWindowKind,
   parseWindowOpenFeatures,
@@ -75,11 +77,57 @@ describe('isPopupRequested', () => {
   })
 })
 
+describe('isOpenableUrl', () => {
+  it('lets a page open the empty page: about:blank, and window.open() with no URL at all', () => {
+    expect(isOpenableUrl('about:blank')).toBe(true)
+    expect(isOpenableUrl('')).toBe(true)
+    expect(isAboutBlank('about:blank')).toBe(true)
+    expect(isAboutBlank('')).toBe(true)
+  })
+
+  it('opens exactly about:blank of the about: pages – no other, and no lookalike', () => {
+    expect(isOpenableUrl('about:newtab')).toBe(false)
+    expect(isOpenableUrl('about:srcdoc')).toBe(false)
+    expect(isOpenableUrl('about:config')).toBe(false)
+    expect(isOpenableUrl('about:blank#x')).toBe(false)
+    expect(isOpenableUrl('about:blank?x')).toBe(false)
+    expect(isOpenableUrl('about:blank/')).toBe(false)
+    expect(isOpenableUrl(' about:blank')).toBe(false)
+    expect(isAboutBlank('about:newtab')).toBe(false)
+  })
+
+  it("keeps the browser's own blank page and documents out of a page's reach", () => {
+    expect(isOpenableUrl('zen://blank')).toBe(false)
+    expect(isOpenableUrl('zenium://blank')).toBe(false)
+    expect(isOpenableUrl('zen://newtab')).toBe(false)
+  })
+})
+
 describe('planWindowOpen', () => {
   it('denies javascript and other non-navigable URLs', () => {
     expect(planWindowOpen('javascript:alert(1)', 'new-window').action).toBe('deny')
     expect(planWindowOpen('about:config', 'new-window').action).toBe('deny')
-    expect(planWindowOpen('', 'foreground-tab').action).toBe('deny')
+    expect(planWindowOpen('about:newtab', 'foreground-tab').action).toBe('deny')
+  })
+
+  it("opens about:blank – a site's noopener idiom fills the window afterwards – as a tab beside the opener", () => {
+    expect(planWindowOpen('about:blank', 'foreground-tab')).toEqual({
+      action: 'tab',
+      chrome: 'full',
+      bounds: null,
+      active: true
+    })
+    expect(planWindowOpen('about:blank', 'background-tab').active).toBe(false)
+    // Chromium reports `window.open()` with no URL as about:blank; the empty URL is the same page.
+    expect(planWindowOpen('', 'foreground-tab').action).toBe('tab')
+  })
+
+  it('opens a sized about:blank as a toolbar-only window, as a sized page would', () => {
+    const plan = planWindowOpen('about:blank', 'new-window', 'width=500,height=400')
+    expect(plan.action).toBe('window')
+    expect(plan.chrome).toBe('popup')
+    expect(plan.bounds).toEqual({ x: 80, y: 80, width: 500, height: 400 })
+    expect(planWindowOpen('about:blank', 'new-window', '').chrome).toBe('full')
   })
 
   it('denies the browser’s own pages and documents, as Chrome denies chrome:// to a page', () => {

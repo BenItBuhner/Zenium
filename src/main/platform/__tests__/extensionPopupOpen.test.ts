@@ -4,7 +4,6 @@ import type { ZenWindow } from '../../../core/window'
 import type { Tab, WindowKind } from '../../../shared/types'
 import { popupWindowOpenTicket, type PopupOpenerHost } from '../extensionPopupOpen'
 
-const POPUP_URL = 'chrome-extension://iodihamcpbpeioajjeobimgagajmlibd/html/nassh_popup.html'
 /** Secure Shell's connection dialog: `lib.f.openWindow(url, '', features)` in libdot. */
 const NASSH_FEATURES =
   'chrome=no,close=yes,resize=yes,scrollbars=yes,minimizable=yes,top=0,left=0,height=600,width=900'
@@ -27,7 +26,6 @@ function world(kind: WindowKind = 'synced', windowsCapable = true): World {
   const createWindow = vi.fn(() => made)
   const adoptView = vi.fn(() => adopted)
   const host: PopupOpenerHost = {
-    openerUrl: POPUP_URL,
     win,
     activeTabId: 't1',
     windowsCapable,
