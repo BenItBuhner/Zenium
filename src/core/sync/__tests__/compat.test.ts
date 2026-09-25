@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { BookmarkNode, Boost, KeyBinding, Settings, SyncScope } from '../../../shared/types'
 import type { Model } from '../../model'
 import { decryptJson, deriveKey } from '../crypto'
-import { collectLocal, diffLocal, hashData, type MetaMap, type SyncRecord } from '../records'
+import {
+  DEVICE_LOCAL_SETTINGS,
+  collectLocal,
+  diffLocal,
+  hashData,
+  type MetaMap,
+  type SyncRecord
+} from '../records'
 import { sha1Hex } from '../sha1'
 import { parseDeviceFile, serializeDeviceFile } from '../transport'
 import legacy from './fixtures/legacy-device-file.json'
@@ -12,6 +19,12 @@ import golden from './fixtures/golden-sources.json'
  * Format compatibility pins for the move of the engine from src/main/sync (Electron only,
  * node:crypto) to src/core/sync (Web Crypto + scrypt-js, both hosts). Both fixtures were written
  * by the pre-move code at 04bb7748; a folder set up by that build must keep working unchanged.
+ *
+ * One difference to that build's payload is meant: the settings record carries none of the
+ * device-local keys (`DEVICE_LOCAL_SETTINGS` – `sidebarExpandOnHover` joined `onboardingDone`
+ * in W5-F3), and the old build's record carries `sidebarExpandOnHover`. The record pins below
+ * expect the golden settings record without those keys and nothing else changed; the fixtures
+ * stay as the old build wrote them (the device file is its encryption, not re-made here).
  */
 
 interface LegacyFixture {
@@ -76,6 +89,24 @@ describe('device files written before the move', () => {
   })
 })
 
+/**
+ * The golden payload as this build writes it: the old build's settings record without the
+ * device-local keys, every other record and every other key as it was (`JSON.stringify` of
+ * the parsed fixture is the fixture, so the deletions are the only difference).
+ */
+function goldenAsWritten(): { plaintext: string; settingsHash: string } {
+  const payload = JSON.parse(goldenFixture.plaintext) as { v: 1; records: SyncRecord[] }
+  const settings = payload.records.find((r) => r.type === 'settings')!.data as Record<
+    string,
+    unknown
+  >
+  // The old build's record carries the key the pin now drops: the difference is real.
+  expect(settings).toHaveProperty('sidebarExpandOnHover')
+  expect(settings).not.toHaveProperty('onboardingDone')
+  for (const key of DEVICE_LOCAL_SETTINGS) delete settings[key]
+  return { plaintext: JSON.stringify(payload), settingsHash: hashData(settings) }
+}
+
 describe('the moved engine on a fixed record set', () => {
   const sources = {
     model: goldenFixture.model,
@@ -85,18 +116,22 @@ describe('the moved engine on a fixed record set', () => {
     boosts: goldenFixture.boosts
   }
 
-  it('writes byte-identical payload JSON for the pre-move scope', () => {
+  it('writes byte-identical payload JSON for the pre-move scope, the device-local keys apart', () => {
     const local = collectLocal(sources, goldenFixture.scope)
     const diff = diffLocal({}, local, goldenFixture.now)
-    expect(JSON.stringify({ v: 1, records: diff.records })).toBe(goldenFixture.plaintext)
+    expect(JSON.stringify({ v: 1, records: diff.records })).toBe(goldenAsWritten().plaintext)
   })
 
   it('hashes every record as the old engine did (sha1 of the key-sorted JSON)', () => {
     const local = collectLocal(sources, goldenFixture.scope)
     const hashes: Record<string, string> = {}
     for (const [id, { data }] of local) hashes[id] = hashData(data)
-    expect(hashes).toEqual(goldenFixture.hashes)
-    expect(diffLocal({}, local, goldenFixture.now).meta).toEqual(goldenFixture.meta)
+    const { settingsHash } = goldenAsWritten()
+    expect(hashes).toEqual({ ...goldenFixture.hashes, settings: settingsHash })
+    expect(diffLocal({}, local, goldenFixture.now).meta).toEqual({
+      ...goldenFixture.meta,
+      settings: { ...goldenFixture.meta.settings, hash: settingsHash }
+    })
   })
 
   it('matches the payload the legacy device file carried', () => {
