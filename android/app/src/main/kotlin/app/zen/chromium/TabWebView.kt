@@ -59,6 +59,7 @@ import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.net.URLDecoder
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -217,12 +218,17 @@ class TabWebView(
      * this; the next commit of any page, or the start of any other load, clears it.
      */
     private var failedUrl: String? = null
-    /** WebView's built-in error page is the committed document, until another commit replaces it. */
+    /**
+     * The committed document is one the core's `zen://error` page stands in for, until another
+     * commit replaces it: WebView's built-in error page, or a page the core turned into a
+     * question after its commit (a lookalike reached by a link, [loadHtml]).
+     */
     private var interstitial = false
     /**
-     * The URL WebView's built-in error page last committed under. The entry stays in the
-     * back-forward list behind the core's `zen://error` page, and going back onto it would run
-     * the failed load again: [goBack] steps over it.
+     * The URL of the entry the core's `zen://error` page stands in for: the one WebView's built-in
+     * error page last committed under, or the committed page the core replaced with its question
+     * ([loadHtml]). The entry stays in the back-forward list behind the core's page, and going
+     * back onto it would run the failed load, or ask the question, again: [goBack] steps over it.
      */
     private var interstitialUrl: String? = null
     /** A certificate `onReceivedSslError` refused; the request's own failure follows and is the same news. */
@@ -1632,9 +1638,22 @@ class TabWebView(
      * extension's content script matching it runs there; the viewer's origin for a PDF with no
      * address – and fetches pdf.js and the bytes from the viewer's origin, while the history
      * entry – what [getUrl] and the navigation events show – stays `url`.
+     *
+     * A `zen://error` page for the very document that is committed – the core's question over a
+     * lookalike a link or a redirect reached, which the engine could not hold before the request
+     * and the core turned into the question on `navigated` – stands in for that entry the way
+     * WebView's own error page stands in for a failed load's: back steps over it
+     * ([interstitialUrl]), else the phone's Back would land on the lookalike and ask again. A
+     * page still on its way (`awaitingCommit`) is the failed load's case, marked at its commit;
+     * a `zen://error` page for another address (a typed lookalike the core held before any
+     * request) leaves the committed page the way back.
      */
     fun loadHtml(url: String, html: String, baseUrl: String? = null, document: PdfViewer.Document? = null) {
         rememberCurrentPage()
+        interstitialOver(url, currentDocument, awaitingCommit)?.let { replaced ->
+            interstitial = true
+            interstitialUrl = replaced
+        }
         pdfPage = if (baseUrl != null && document != null) PdfViewer.Page(url, baseUrl, document) else null
         loadDataWithBaseURL(baseUrl ?: url, html, "text/html", "utf-8", url)
     }
@@ -1850,6 +1869,15 @@ class TabWebView(
         onErrorPage = url?.startsWith(ERROR_PAGE_PREFIX) == true,
         skipped = interstitialUrl
     )
+
+    /**
+     * Whether [goBack] has an entry to land on – what [navState] tells the core and the chrome's
+     * Back key and predictive back read (`Host`, `PredictiveBack`). WebView's own answer counts
+     * the entry the core's error page stands in for: a lookalike question as a tab's first page
+     * has that entry alone behind it, and the chrome's Back then does what it does with no
+     * history (a tab a link opened closes) rather than nothing.
+     */
+    override fun canGoBack(): Boolean = backIndex() >= 0
 
     override fun goBack() {
         rememberCurrentPage()
@@ -2694,13 +2722,40 @@ class TabWebView(
         /**
          * The pure half of [backIndex]: the entry behind `currentIndex` (`entryUrlAt` reads the
          * list's actual URLs), or the one before it when the view is on the core's error page and
-         * that entry is WebView's own error page for the failed load (`skipped`). -1 with nothing behind.
+         * that entry is the one the page stands in for (`skipped`: WebView's own error page for
+         * the failed load, or the lookalike the core's question replaced). -1 with nothing behind
+         * – nothing but the skipped entry included: a tab whose first page is the question has
+         * no way back through history, and the chrome's Back takes its no-history way.
          */
         fun backIndexOf(currentIndex: Int, entryUrlAt: (Int) -> String?, onErrorPage: Boolean, skipped: String?): Int {
             val behind = currentIndex - 1
             if (behind < 0) return -1
-            if (onErrorPage && behind >= 1 && skipped != null && entryUrlAt(behind) == skipped) return behind - 1
+            if (onErrorPage && skipped != null && entryUrlAt(behind) == skipped) return behind - 1
             return behind
+        }
+
+        /**
+         * The pure half of the mark in [loadHtml]: the committed web page `committed` when the
+         * core's `zen://error` page `url` stands in for it – the page the core turned into a
+         * question after its commit – or null: for a page still on its way (`awaitingCommit`,
+         * the failed load's case, marked at its commit), for a page that is not the web's, and
+         * for a `zen://error` page about another address (a typed lookalike held before any
+         * request, whose question stands before the page that is still the way back).
+         */
+        fun interstitialOver(url: String, committed: String?, awaitingCommit: Boolean): String? {
+            if (awaitingCommit || committed == null || !url.startsWith(ERROR_PAGE_PREFIX) || !PageRules.isWebPage(committed)) return null
+            return committed.takeIf { errorPageStandsFor(url) == it }
+        }
+
+        /**
+         * The address a `zen://error` page of the core's is about: its `url` query parameter, as
+         * `errorPageUrl` in `src/shared/url.ts` spells it (`URLSearchParams`, form-encoded), or
+         * null when the page names none.
+         */
+        fun errorPageStandsFor(url: String): String? {
+            val query = url.substringAfter('?', "").substringBefore('#')
+            val raw = query.split('&').firstOrNull { it.startsWith("url=") }?.substring(4) ?: return null
+            return runCatching { URLDecoder.decode(raw, "UTF-8") }.getOrNull()
         }
 
         /**

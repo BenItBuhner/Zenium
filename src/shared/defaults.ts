@@ -228,7 +228,9 @@ export const DEFAULT_SETTINGS: Settings = {
   devtoolsDock: 'bottom',
   sidebarWidth: 240,
   sidebarExpanded: true,
-  sidebarExpandOnHover: false,
+  // The collapsed rail flies out when the pointer rests on it (tabs-03) – on, as Zen's compact
+  // mode and Edge's vertical tabs ship it; Settings › Appearance › Expand on hover turns it off.
+  sidebarExpandOnHover: true,
   borderless: false,
   windowMaterial: 'none',
   compactMode: {

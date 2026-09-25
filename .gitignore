@@ -12,6 +12,7 @@ android/app/src/main/assets/ext-janitor.js
 android/app/src/main/assets/pdf
 android/app/src/main/assets/blocking
 android/app/src/main/assets/safebrowsing
+android/app/src/main/assets/lookalikes
 android/.gradle
 android/build
 android/app/build

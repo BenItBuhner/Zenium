@@ -258,6 +258,7 @@ import {
 import {
   URLBAR_FIELD_OWNER,
   caretVerdict,
+  isNewTabUrl,
   newTabPlan,
   retryDetail,
   rowsExpected,
@@ -1592,6 +1593,35 @@ class Session {
   }
 
   /**
+   * `urlbarState`, after the fresh tab's bar when one is due: a window opens with a tab from its
+   * creation (W5-F2, core/browser.ts ensureFirstTab – a profile past onboarding boots to one new
+   * tab page, as it did with session restore off), and the core announces that tab's bar 150 ms
+   * after the chrome is ready (`newtab.opened`, onChromeReady), which is after the harness's
+   * launch step can be done with the chrome root. A bar read as down over an active new tab
+   * page is asked again until it is up or `timeoutMs` is out – then the reading stands and
+   * newTabPlan opens a tab of its own, as it would over any page with no bar.
+   */
+  async freshTabBar(timeoutMs = 2000, page = this.chrome) {
+    let shown = await this.urlbarState(page)
+    if (shown.barVisible) return shown
+    const activeUrl = await page
+      .evaluate(async () => {
+        const state = await window.zen.invoke('app.getState')
+        const id = state?.spaces?.find((sp) => sp.id === state.activeSpaceId)?.activeTabId
+        return id ? (state.tabs?.[id]?.url ?? null) : null
+      })
+      .catch(() => null)
+    if (!isNewTabUrl(activeUrl)) return shown
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      await delay(100)
+      shown = await this.urlbarState(page)
+      if (shown.barVisible) break
+    }
+    return shown
+  }
+
+  /**
    * The chrome's focused control let go, as the chrome did on `focus.page` until lib/panes.ts
    * pageTookKeyboard kept the URL bar's field (releaseChromeFocus, still the answer for any other
    * control): --force-urlbar-blur's way into the state main's boot smoke failed in.
@@ -2383,6 +2413,10 @@ async function runScenario(name, userData, sessionOptions, body) {
  * the time this runs (Session.closeUrlbar says how); the one Escape this used to send then
  * closed nothing and its 5 s wait for the bar to hide ran out (main red on 9bdc1c30, 630b7dd7
  * and 7669e6b4). Focusing the field and typing into it needs no key the field must already own.
+ * A window opens with a tab from its creation (W5-F2), so a profile past onboarding boots to one
+ * new tab page whose bar the core announces 150 ms after the chrome is ready: the bar's state is
+ * read once that bar is up (Session.freshTabBar), and the fixture's first page takes that tab
+ * in place – one sidebar row, as after the onboarding.
  *
  * The caret is read before the harness touches the field (`caret` in the result: the bar up –
  * found up after the tour, or brought up with Accel+T – with its field holding the keyboard, or
@@ -2393,7 +2427,7 @@ async function runScenario(name, userData, sessionOptions, body) {
 async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
   const input = s.urlbarInput()
   await s.settle()
-  const shown = await s.urlbarState()
+  const shown = await s.freshTabBar()
   const plan = newTabPlan(shown)
   const rowsBefore = await s.sidebarTabCount()
   // Main-process events recorded before this navigation are not its failures.

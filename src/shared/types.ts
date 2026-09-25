@@ -220,6 +220,12 @@ export interface HostCapabilities {
   /** The host can point the resolver at DNS-over-HTTPS servers (desktop); Android uses the system's Private DNS. */
   secureDns: boolean
   /**
+   * The host's request engine asks the core's lookalike check before a main-frame request goes
+   * out and holds the navigation on its word (desktop's `webRequest` handler, PS-18). Where it
+   * cannot (Android's Kotlin engine), the core asks at `navigate` and at the commit instead.
+   */
+  lookalikeHolds: boolean
+  /**
    * Every quit of the app runs through the core (`Browser.requestQuit`, the desktop), so what
    * Settings clears on exit is cleared at quit. Where the process ends unannounced (Android) the
    * on-exit clear runs at the next launch instead (`SiteDataStatus.clearsAtNextLaunch`).

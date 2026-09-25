@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import { NoopGovernor, SLEEP_CHECK_MS } from '../hostDefaults'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import { KEEP_UNDER_PRESSURE, neverUnloaded } from '../tabs'
@@ -96,6 +97,7 @@ function start(io = memoryIo()): {
   const platform = fakePlatform(io)
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   return { browser, platform, win }
 }
@@ -112,6 +114,7 @@ function startMeasuring(io = memoryIo()): ReturnType<typeof start> {
   platform.createGovernor = (browser) => new MeasuringGovernor(browser)
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   return { browser, platform, win }
 }

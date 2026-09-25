@@ -1093,6 +1093,19 @@
 .zen-interstitial-danger {
   color: var(--v2-danger);
 }
+/*
+ * The lookalike question names an IDN address in the form the user saw, its punycode beside it
+ * in the deemphasised ink (§1: 69 %) – inside the reason, the description, the title and the
+ * buttons' labels alike; the address bar keeps the punycode. On the primary's accent fill the
+ * label's own ink takes the 69 % instead (the token is the page ink).
+ */
+.zen-interstitial-punycode {
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-button[data-primary] .zen-interstitial-punycode {
+  color: inherit;
+  opacity: 0.69;
+}
 
 @layer base {
   html,

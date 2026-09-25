@@ -42,7 +42,7 @@ import {
 import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
-import type { SafeBrowsingHit } from '../../shared/privacy'
+import type { LookalikeVerdict, SafeBrowsingHit } from '../../shared/privacy'
 import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
 import { inPlaceErrorPageScript } from '../../shared/zenPages'
 import { certificateSiteOf } from '../../core/security'
@@ -693,6 +693,11 @@ export class ElectronTabView implements TabView {
   /** The request engine refused this page's navigation to `url` on Safe Browsing's word. */
   noteUnsafeNavigation(url: string, hit: SafeBrowsingHit): void {
     this.events.onUnsafeNavigation(url, hit)
+  }
+
+  /** The request engine held this page's navigation to `url` on the core's lookalike verdict (PS-18). */
+  noteLookalikeNavigation(url: string, verdict: LookalikeVerdict): void {
+    this.events.onLookalikeNavigation?.(url, verdict)
   }
 
   // --- dialogs and beforeunload ----------------------------------------------
