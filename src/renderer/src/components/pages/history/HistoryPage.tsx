@@ -1,14 +1,6 @@
 import type { JSX, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  AppWindow,
-  ChevronRight,
-  EllipsisVertical,
-  Globe,
-  RotateCcw,
-  Trash2,
-  X
-} from 'lucide-react'
+import { AppWindow, ChevronRight, EllipsisVertical, Globe, RotateCcw, X } from 'lucide-react'
 import { internalPageOf, parseInternalPageUrl } from '@shared/internalPages'
 import type {
   ClosedEntrySummary,
@@ -458,7 +450,8 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
         <ConfirmDialog
           name={DELETE_SELECTED_PROMPT}
           title={deleteSelectedTitle(selected.size)}
-          glyph={<Trash2 strokeWidth={1.5} aria-hidden />}
+          // No glyph: a confirmation of the user's own command carries none (§9.23) – the 16
+          // glyph is for a prompt raised on a requester's behalf.
           description={
             selected.size === 1
               ? 'The visit is removed from your history. Bookmarks and open tabs stay.'

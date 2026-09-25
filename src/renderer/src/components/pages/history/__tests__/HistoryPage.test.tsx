@@ -586,6 +586,8 @@ describe('the History page tab (§10.1)', () => {
     await act(async () => remove().click())
     await flush()
     expect(text(prompt()!.querySelector('[id$="title"]'))).toBe('Delete 1 item from history?')
+    // A confirmation of the user's own command carries no glyph on its title (§9.23; #496's nit).
+    expect(prompt()!.querySelector('[id$="title"] svg')).toBeNull()
     expect(text(prompt())).toContain('The visit is removed from your history.')
     // Cancel: the prompt goes, the pick stands, nothing was removed.
     await act(async () =>
