@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,downloads,notifications,restart-registration,private-taskbar,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -31,7 +31,7 @@
 //
 // Scenarios (each one launch of the executable, on profiles under one temporary root; the pages
 // they load come from boot-fixture.mjs's server on 127.0.0.1, started once per run, so a run
-// needs no internet):
+// needs no internet – `recaptcha` alone reaches www.google.com, and skips itself when it cannot):
 //   boot         first launch: onboarding (on screen – in the DOM and painted – within the
 //                first-launch render budget, then clicked through with the same budget), one
 //                visible window titled Zenium, the fixture's first page typed into the URL bar
@@ -137,6 +137,20 @@
 //                bookmark to the Bookmarks bar and its chip appears named for the page, a click
 //                on the chip from the second page's tab opens the article in that tab, "Delete"
 //                from the chip's native menu takes chip and bookmark away (Linux job)
+//   recaptcha    Google's reCAPTCHA v2 widget completes on Google's own demo page (W5-P1, the
+//                compat sweep's row 281): a profile past onboarding opens
+//                https://www.google.com/recaptcha/api2/demo from the URL bar; the anchor frame
+//                with its checkbox and then the challenge `bframe` are there within 10 s of
+//                the load (the widget's anchor asks the Storage Access API for its cookies before
+//                it answers its handshake – a prompt left pending there stalled it until its 15 s
+//                timer); one trusted click at the checkbox ticks it (aria-checked=true) or puts
+//                the image challenge up within 20 s (a fresh profile on an automated build gets
+//                the challenge; either is the handshake at work); once the timer's window has
+//                passed, no `reCAPTCHA Timeout` and no permissions-policy violation among the
+//                tab's console lines; a graceful quit. The one scenario that leaves the loopback
+//                fixture (`allow-network` in its result): the harness reaches www.google.com
+//                first and records the scenario as skipped, with the reason, when it cannot
+//                (Linux job)
 //   notifications  a page's Web Notification on the OS (os-27/os-28/os-30; notifications-
 //                scenario.mjs): a profile past onboarding whose permissions.json allows
 //                notifications for the fixture origin reads `Notification.permission ===
@@ -182,7 +196,7 @@
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
 // restore), Windows notifications, restart-registration and private-taskbar too and macOS
 // default-browser too; the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs,
-// pip, the split pair and features run on Linux under Xvfb only.
+// pip, the split pair, features and recaptcha run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -6721,6 +6735,241 @@ async function scenarioFeatures() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// recaptcha: Google's reCAPTCHA v2 widget on Google's own demo page (W5-P1)
+// ---------------------------------------------------------------------------------------------
+
+/** Google's own reCAPTCHA v2 demo: the widget on a google.com page, as Google's sign-in embeds it. */
+const RECAPTCHA_DEMO = 'https://www.google.com/recaptcha/api2/demo'
+/** The mark a scenario that leaves the loopback fixture carries in its result. */
+const ALLOW_NETWORK = 'allow-network'
+/**
+ * The challenge frame has to be there this soon after the page loaded. The widget's own timer
+ * gives its anchor 15 s before `reCAPTCHA Timeout`; a healthy handshake makes the frame in ~1 s.
+ */
+const RECAPTCHA_BFRAME_BUDGET_MS = 10000
+/** The click's outcome – the checkmark, or the image challenge put up – within this. */
+const RECAPTCHA_OUTCOME_BUDGET_MS = 20000
+/** How long after the page's load the widget's timer would have logged its failure. */
+const RECAPTCHA_TIMEOUT_WINDOW_MS = 17000
+
+/**
+ * Whether the run can reach `url` (a HEAD answered within `timeoutMs`, whatever the status).
+ * The recaptcha scenario is the one scenario that leaves the loopback fixture; a runner without
+ * a way out to www.google.com skips it with the reason instead of failing it.
+ */
+async function reachable(url, timeoutMs = 8000) {
+  const t = Date.now()
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs)
+    })
+    return { ok: true, status: res.status, ms: Date.now() - t }
+  } catch (e) {
+    const cause = e && typeof e === 'object' && e.cause ? e.cause.message || String(e.cause) : ''
+    return {
+      ok: false,
+      error: `${e && e.message ? e.message : e}${cause ? ` (${cause})` : ''}`,
+      ms: Date.now() - t
+    }
+  }
+}
+
+/**
+ * What the demo page's document says of the widget: its frames (Google's `anchor`, the
+ * checkbox's frame, and the challenge `bframe` the handshake creates), the checkbox's
+ * `aria-checked` and where it is on the page (the anchor frame is on the demo page's own origin,
+ * so its document is readable from the top one), whether the challenge box is shown (the widget
+ * flips its positioned box's visibility) and the length of the response token.
+ */
+const RECAPTCHA_WIDGET = `(() => {
+  const frames = [...document.querySelectorAll('iframe')].map((f) => ({
+    src: (f.getAttribute('src') || '').split('?')[0],
+    name: f.name || ''
+  }))
+  const anchorFrame = document.querySelector('iframe[src*="/recaptcha/api2/anchor"]')
+  const bframe = document.querySelector('iframe[src*="/recaptcha/api2/bframe"]')
+  let checkbox = null
+  try {
+    const doc = anchorFrame && anchorFrame.contentDocument
+    const box = doc && doc.querySelector('#recaptcha-anchor')
+    if (box) {
+      const f = anchorFrame.getBoundingClientRect()
+      const b = box.getBoundingClientRect()
+      checkbox = {
+        checked: box.getAttribute('aria-checked'),
+        x: Math.round(f.left + b.left + b.width / 2),
+        y: Math.round(f.top + b.top + b.height / 2)
+      }
+    }
+  } catch (e) {
+    checkbox = { error: String(e && e.message) }
+  }
+  let challenge = null
+  if (bframe) {
+    const box = bframe.closest('div[style*="visibility"]') || bframe.parentElement
+    const cs = getComputedStyle(box)
+    challenge = { visibility: cs.visibility, opacity: cs.opacity }
+  }
+  const response = document.getElementById('g-recaptcha-response')
+  return {
+    frames,
+    anchor: !!anchorFrame,
+    bframe: !!bframe,
+    checkbox,
+    challenge,
+    token: response ? response.value.length : null
+  }
+})()`
+
+/**
+ * `recaptcha` (W5-P1): Google's reCAPTCHA v2 widget completes on Google's own demo page, in a
+ * tab of a profile past onboarding. The widget's anchor frame asks the Storage Access API for
+ * its cookies before it answers its own handshake, and a permission prompt left pending there
+ * stalled the widget until its 15 s timer (the compat sweep's row 281: the anchor rendered, no
+ * challenge frame ever, `reCAPTCHA Timeout`). The steps: `widget` – the demo page opened from
+ * the URL bar, the anchor frame with its checkbox and then the challenge `bframe` within the
+ * budget of the page's load; `checkbox` – one trusted click at the checkbox (mouse events into
+ * the tab's view at the point the top document computes), after which the checkbox reads
+ * aria-checked=true or the image challenge is put up (a fresh profile on an automated build gets
+ * the challenge; either is the handshake at work); `console` – once the widget's timer window
+ * has passed, no `reCAPTCHA Timeout` and no permissions-policy violation among the tab's console
+ * lines; `quit`. Network-dependent (`allow-network`): the run reaches www.google.com first, and
+ * a runner that cannot records the scenario as skipped with the reason instead of failing it.
+ */
+async function scenarioRecaptcha() {
+  const reach = await reachable(RECAPTCHA_DEMO)
+  if (!reach.ok) {
+    const note = `www.google.com is unreachable from this runner (${reach.error}, ${reach.ms} ms): the widget cannot load, so the scenario did not run`
+    result.scenarios.recaptcha = { skipped: 'network', note, network: ALLOW_NETWORK }
+    log(`recaptcha: skipped: network (${note})`)
+    writeJson(path.join(outDir, 'result.json'), result)
+    return result.scenarios.recaptcha
+  }
+  log(`recaptcha: ${RECAPTCHA_DEMO} answered ${reach.status} in ${reach.ms} ms`)
+  const userData = freshProfile('profile-recaptcha', {
+    onboardingDone: true,
+    settings: { searchSuggestions: false }
+  })
+  return runScenario('recaptcha', userData, {}, async (s, out) => {
+    out.network = ALLOW_NETWORK
+    out.demo = { url: RECAPTCHA_DEMO, reach }
+    let tab = null
+    let loadedAt = 0
+    const widget = () => s.tabEval(tab.id, RECAPTCHA_WIDGET)
+    await s.step('widget', async () => {
+      const opened = await openUrlInNewTab(s, RECAPTCHA_DEMO)
+      tab = opened.tab
+      loadedAt = Date.now()
+      const anchor = await waitFor(
+        async () => {
+          const w = await widget()
+          return w.anchor && w.checkbox && !w.checkbox.error ? w : null
+        },
+        RECAPTCHA_BFRAME_BUDGET_MS,
+        'the anchor frame with its checkbox on the demo page'
+      )
+      const anchorMs = Date.now() - loadedAt
+      const seen = await waitFor(
+        async () => {
+          const w = await widget()
+          return w.bframe ? w : null
+        },
+        Math.max(1000, RECAPTCHA_BFRAME_BUDGET_MS - anchorMs),
+        `the challenge frame (bframe) created within ${RECAPTCHA_BFRAME_BUDGET_MS} ms of the load`
+      ).catch(async (e) => {
+        throw new Error(`${e.message}; the frames: ${JSON.stringify((await widget()).frames)}`)
+      })
+      const bframeMs = Date.now() - loadedAt
+      await s.shot('01-widget')
+      return {
+        anchorMs,
+        bframeMs,
+        frames: seen.frames,
+        ariaChecked: anchor.checkbox.checked,
+        retried: opened.retried
+      }
+    })
+    await s.step('checkbox', async () => {
+      if (!tab) throw new Error('the demo page did not open')
+      const before = await widget()
+      if (!before.checkbox || before.checkbox.error) {
+        throw new Error(`no checkbox to click: ${JSON.stringify(before)}`)
+      }
+      if (before.checkbox.checked !== 'false') {
+        throw new Error(
+          `the checkbox reads aria-checked=${before.checkbox.checked} before the click`
+        )
+      }
+      const { x, y } = before.checkbox
+      // Trusted input at the checkbox, into the tab's view (the anchor frame is on the page's
+      // own origin, so the point the top document computed is where the checkbox is).
+      await s.app.evaluate(
+        async ({ webContents }, { id, x, y }) => {
+          const wc = webContents.fromId(id)
+          if (!wc || wc.isDestroyed()) throw new Error(`tab webContents ${id} is gone`)
+          wc.focus()
+          wc.sendInputEvent({ type: 'mouseMove', x, y })
+          await new Promise((r) => setTimeout(r, 80))
+          wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+          await new Promise((r) => setTimeout(r, 60))
+          wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+        },
+        { id: tab.id, x, y }
+      )
+      const clickedAt = Date.now()
+      const outcome = await waitFor(
+        async () => {
+          const w = await widget()
+          const checked = Boolean(w.checkbox && w.checkbox.checked === 'true')
+          const challengeShown = Boolean(w.challenge && w.challenge.visibility === 'visible')
+          return checked || challengeShown ? { ...w, checked, challengeShown } : null
+        },
+        RECAPTCHA_OUTCOME_BUDGET_MS,
+        'the checkbox ticked (aria-checked=true) or the image challenge shown after the click'
+      )
+      const ms = Date.now() - clickedAt
+      await s.settle()
+      await s.shot('02-after-click')
+      return {
+        clickAt: { x, y },
+        ms,
+        ariaChecked: outcome.checkbox ? outcome.checkbox.checked : null,
+        checked: outcome.checked,
+        challengeShown: outcome.challengeShown,
+        challenge: outcome.challenge,
+        token: outcome.token
+      }
+    })
+    await s.step('console', async () => {
+      if (!tab) throw new Error('the demo page did not open')
+      // The widget's timer would have logged by now: nothing of the sweep's two lines may be
+      // among the tab's console messages (the anchor's and the page's own come through the
+      // same webContents).
+      const left = loadedAt + RECAPTCHA_TIMEOUT_WINDOW_MS - Date.now()
+      if (left > 0) await delay(left)
+      const lines = s
+        .readEvents()
+        .filter((e) => e.type === 'console' && e.wc === tab.id)
+        .map((e) => e.message)
+      const bad = lines.filter((m) => /reCAPTCHA Timeout|Permissions policy violation/i.test(m))
+      if (bad.length) {
+        throw new Error(
+          `the widget logged ${bad.length} failure line(s): ${JSON.stringify(bad.slice(0, 5))}`
+        )
+      }
+      return { consoleLines: lines.length, waitedMs: Math.max(0, left) }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      const state = assertCleanState(userData, RECAPTCHA_DEMO)
+      return { ...r, state }
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
 
 function finish(exitCode) {
   const failures = []
@@ -6834,6 +7083,7 @@ async function main() {
       pip: scenarioPip,
       split: scenarioSplit,
       features: scenarioFeatures,
+      recaptcha: scenarioRecaptcha,
       [DOWNLOADS_SCENARIO]: () =>
         scenarioDownloads({
           freshProfile,

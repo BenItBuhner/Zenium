@@ -142,6 +142,22 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label features
           --out "$SMOKE_OUT" --scenarios features --extra-args="--no-sandbox --disable-gpu"
+      - name: reCAPTCHA v2 under Xvfb (Google's demo page; allow-network)
+        # The recaptcha scenario (W5-P1, the compat sweep's row 281) on its own run of the
+        # harness: a profile past onboarding opens https://www.google.com/recaptcha/api2/demo,
+        # the widget's anchor frame and then its challenge frame (bframe) are there within 10 s
+        # of the load, one trusted click at the checkbox ticks it or puts the image challenge up
+        # within 20 s, and the tab's console carries no `reCAPTCHA Timeout` and no
+        # permissions-policy violation once the widget's timer window has passed. The one smoke
+        # leg that leaves the loopback fixture: the harness reaches www.google.com first and
+        # records the scenario as skipped, with the reason, when the runner cannot – the verdict
+        # then shows `skipped: network` rather than a red. Its own log, result.json and
+        # screenshots under smoke-out/recaptcha; runs after a red step above as well.
+        if: ${{ !cancelled() }}
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label recaptcha
+          --out "$SMOKE_OUT" --scenarios recaptcha --extra-args="--no-sandbox --disable-gpu"
       - name: Make the unpacked build's sandbox helper setuid root (for the sandboxed leg)
         # Electron evaluates service-worker preload scripts in its sandboxed renderer client
         # only; Zenium's chrome.* layer for MV3 background workers (src/preload/extension.ts,
@@ -182,7 +198,7 @@ jobs:
         if: always()
         run: >
           node .github/smoke/verdict.mjs --out "$SMOKE_OUT"
-          --expect unpacked,clear-on-exit,features,mv3-worker-sandboxed,mv3-worker-no-sandbox
+          --expect unpacked,clear-on-exit,features,recaptcha,mv3-worker-sandboxed,mv3-worker-no-sandbox
           --title linux-x64
       - name: Sign-in fidelity smoke test
         # After the boot smoke and its verdict, so a failure here never hides the boot results.
