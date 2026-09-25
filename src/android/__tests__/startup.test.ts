@@ -160,6 +160,40 @@ describe('ChromeReady', () => {
     expect(g.posts).toEqual(['chrome.ready'])
   })
 
+  it("voids the old placement in the product's order too: the store written first, then hostInsets", () => {
+    // boot.ts's `insets` handler: `platform.hostEvent` writes the store (applyHostInsets), THEN
+    // `hostInsets` is called – so by the call the store already equals the new numbers, and a
+    // reset keyed on the store lagging would leave a placement under the old insets standing.
+    // The theme not yet painted, so the placement stands without READY going out.
+    const h = harness(BARS)
+    h.ready.arm(true)
+    h.store.apply(BARS)
+    h.ready.placed()
+    expect(h.ready.state.placed).toBe(true)
+    const turned = { top: 24, right: 0, bottom: 0, left: 0 }
+    h.store.apply(turned)
+    h.ready.hostInsets(turned)
+    expect(h.ready.state.insetsApplied).toBe(true)
+    expect(h.ready.state.placed).toBe(false)
+    h.paint()
+    h.tick()
+    expect(h.posts).toEqual([])
+    // The slot's re-measure under the new insets is the placement that counts.
+    h.ready.placed()
+    h.tick()
+    expect(h.posts).toEqual(['chrome.ready'])
+    // The same numbers sent again move nothing: a placement under them stands.
+    const g = harness(BARS)
+    g.ready.arm(true)
+    g.store.apply(BARS)
+    g.ready.placed()
+    g.ready.hostInsets(BARS)
+    expect(g.ready.state.placed).toBe(true)
+    g.paint()
+    g.tick()
+    expect(g.posts).toEqual(['chrome.ready'])
+  })
+
   it('never posts on its own: no fact, no frame', () => {
     const h = harness()
     h.ready.arm(true)

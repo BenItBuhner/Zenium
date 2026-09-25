@@ -76,14 +76,21 @@ export class ChromeReady {
   /** The host sent new insets (the `insets` event): what the chrome must have applied moves with them. */
   hostInsets(insets: ReadyInsets): void {
     if (this.sent) return
+    const moved =
+      insets.top !== this.expected.top ||
+      insets.right !== this.expected.right ||
+      insets.bottom !== this.expected.bottom ||
+      insets.left !== this.expected.left
     this.expected = {
       top: insets.top,
       right: insets.right,
       bottom: insets.bottom,
       left: insets.left
     }
-    // A placement under the old insets is not one under these.
-    if (!this.insetsApplied()) this.placedUnderInsets = false
+    // A placement under the old insets is not one under these – whichever the host's event
+    // reached first, the store or this call (boot.ts writes the store, then calls here, so the
+    // store already holds the new numbers by now; the store's lag was never the test).
+    if (moved) this.placedUnderInsets = false
     this.check()
   }
 
