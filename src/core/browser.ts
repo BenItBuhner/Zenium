@@ -165,6 +165,7 @@ import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeFontSettings } from '../shared/fonts'
 import { sanitizeLanguages } from '../shared/languages'
 import { sanitizeToolbarPins } from '../shared/toolbarPins'
+import { formatWindowTitle } from '../shared/windowTitle'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -455,6 +456,9 @@ export class Browser {
     this.inactiveTabs = new InactiveTabsService(this)
     this.history.onChange((kind) => {
       for (const w of this.allWindows()) w.send('history.changed', { kind })
+      // The mac History menu lists the pages last visited: a visit, a deletion or a clear
+      // redraws it (a no-op on hosts without a menu bar).
+      this.menus.scheduleApplicationMenu()
     })
     this.newTab = new NewTabService(this)
     this.governor = platform.createGovernor?.(this) ?? new NoopGovernor(this)
@@ -591,6 +595,45 @@ export class Browser {
     }
     const win = this.createWindow({ kind, from, empty: true })
     this.tabs.createTab({ url, active: true }, win)
+  }
+
+  /**
+   * Duplicate Window (session-19): a second window like `win` – its kind, its space, its compact
+   * state – cascaded from it, `win` itself untouched. A synced window's tabs are the model's,
+   * shared by every synced window: the duplicate shows the same space with the same tab
+   * selected, and the held-tab rule decides which window holds each page. A blank or private
+   * window's tabs are its own: the duplicate gets copies – the addresses in their order, pinned
+   * as the originals are, the same tab selected – as fresh loads on demand, not the pages' state
+   * (a private page's state stays in its window). Toolbar-only popups and app windows have no
+   * tab strip to duplicate, and a host with one window nothing to duplicate into: null.
+   */
+  duplicateWindow(win: ZenWindow): ZenWindow | null {
+    if (!this.state.capabilities.windows || win.chrome !== 'full') return null
+    const source = win.activeSpace()
+    const selected = win.selectedTabIn(source)
+    const dup = this.createWindow({ kind: win.kind, from: win, empty: true })
+    if (!win.localSpace) {
+      if (selected) dup.select(dup.activeSpace(), selected)
+      this.state.commit()
+      return dup
+    }
+    const m = this.state.model
+    const copies: Tab[] = []
+    let selectedCopy: Tab | undefined
+    for (const id of source.tabIds) {
+      const tab = m.tabs[id]
+      if (!tab) continue
+      const copy = this.tabs.createTab(
+        { url: tab.url, pinned: tab.pinned, active: false, load: false },
+        dup
+      )
+      copies.push(copy)
+      if (id === selected) selectedCopy = copy
+    }
+    const shown = selectedCopy ?? copies[0]
+    if (shown) this.tabs.activateTab(shown.id, dup)
+    else this.openFreshTab(dup)
+    return dup
   }
 
   /**
@@ -752,7 +795,9 @@ export class Browser {
       displayId: win.initialDisplayId,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
-      title: app ? app.name : win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
+      // The title the frame carries until its first tab titles it: the same formatter's, so a
+      // private window reads "Zenium (Private)" from its first frame, as its title bar will.
+      title: formatWindowTitle(null, win.isPrivate, app?.name),
       chrome,
       material: win.material,
       backgroundColor: rgbToHex(theme.averageColor),
@@ -1632,6 +1677,17 @@ export class Browser {
     this.bookmarks.touch(id)
     // Same path as a typed URL so space routing applies; `background` is the new tab behind.
     this.submitUrlbar(node.url, newTab || background, tabId, background, win)
+  }
+
+  /**
+   * A row of the mac History menu's "Recently Visited" block (history-12): the page loads in
+   * `win`'s current tab, as Chrome's rows do, or in a new tab when the window has none. Not a
+   * typed navigation – the omnibox's typed counts are the URL bar's alone.
+   */
+  openRecentlyVisited(url: string, win: ZenWindow): void {
+    const active = this.tabs.activeTabFor(win)
+    if (active) this.tabs.navigate(active.id, url, { transition: 'link' })
+    else this.tabs.createTab({ url, active: true }, win)
   }
 
   /** Open every bookmark below the given nodes in new tabs (the first one becomes active). */
@@ -2826,6 +2882,9 @@ export class Browser {
       'tab.home': ({ tabId }, win) => this.goHome(tabId, win),
       'tab.back': ({ tabId }) => tabs.goBack(tabId),
       'tab.forward': ({ tabId }) => tabs.goForward(tabId),
+      'tab.backInNewTab': ({ tabId }, win) => void tabs.openNavigationStepInNewTab(tabId, -1, win),
+      'tab.forwardInNewTab': ({ tabId }, win) =>
+        void tabs.openNavigationStepInNewTab(tabId, 1, win),
       'tab.reload': ({ tabId, skipCache }) => tabs.reload(tabId, skipCache),
       'tab.stop': ({ tabId }) => tabs.stop(tabId),
       'tab.toggleMute': ({ tabId }) => tabs.toggleMute(tabId),

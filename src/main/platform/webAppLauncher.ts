@@ -71,6 +71,20 @@ function quoteDesktopArg(arg: string): string {
   return `"${escaped}"`
 }
 
+/**
+ * The one line Windows runs for a command (a shortcut's arguments, a taskbar group's relaunch
+ * command, a RunOnce entry): each part quoted when it has spaces, inner quotes escaped.
+ */
+export function windowsCommandLine(command: LaunchCommand): string {
+  return [command.program, ...command.args].map(quoteWindowsArg).join(' ')
+}
+
+/** A Windows command-line argument: quoted when it has spaces, inner quotes escaped. */
+export function quoteWindowsArg(arg: string): string {
+  if (!/[\s"]/.test(arg)) return arg
+  return `"${arg.replace(/"/g, '\\"')}"`
+}
+
 export interface DesktopEntryOptions {
   name: string
   /** The app's URL, shown as the entry's comment (Chrome writes the same). */

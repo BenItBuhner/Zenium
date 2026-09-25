@@ -141,12 +141,26 @@ export function droppedSecondInstanceSwitches(switches: CliSwitches): string | n
 export interface WindowSwitches {
   kiosk: boolean
   startMaximized: boolean
+  /**
+   * The profile `--user-data-dir` named, resolved to the directory in use (null when the launch
+   * named none): what a relaunch from a window's taskbar button repeats, so it opens on the
+   * same profile.
+   */
+  userDataDir: string | null
 }
 
-export const NO_WINDOW_SWITCHES: WindowSwitches = { kiosk: false, startMaximized: false }
+export const NO_WINDOW_SWITCHES: WindowSwitches = {
+  kiosk: false,
+  startMaximized: false,
+  userDataDir: null
+}
 
-export function windowSwitchesOf(switches: CliSwitches): WindowSwitches {
-  return { kiosk: switches.kiosk, startMaximized: switches.startMaximized }
+/** `userDataDir`: the resolved profile directory when the switches named one (the raw switch by default). */
+export function windowSwitchesOf(
+  switches: CliSwitches,
+  userDataDir: string | null = switches.userDataDir
+): WindowSwitches {
+  return { kiosk: switches.kiosk, startMaximized: switches.startMaximized, userDataDir }
 }
 
 /**

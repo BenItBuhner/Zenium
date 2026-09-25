@@ -23,8 +23,10 @@ import {
   macBundleOf,
   macInfoPlist,
   macLauncherScript,
+  quoteWindowsArg,
   tileHtml,
   TILE_SIZE,
+  windowsCommandLine,
   type LauncherManifest,
   type LaunchCommand,
   type SizedPng
@@ -161,13 +163,14 @@ export class ElectronShortcuts implements ShortcutHost {
 
   /** The command line Windows runs for a taskbar pin of an app window (`--app=<url>`). */
   static relaunchCommand(url: string): string {
-    const command = launchCommand(url, {
-      execPath: process.execPath,
-      isPackaged: app.isPackaged,
-      appPath: app.getAppPath(),
-      appImage: null
-    })
-    return [command.program, ...command.args].map(quoteWindowsArg).join(' ')
+    return windowsCommandLine(
+      launchCommand(url, {
+        execPath: process.execPath,
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        appImage: null
+      })
+    )
   }
 
   // --- The icon ---------------------------------------------------------------------------------
@@ -354,12 +357,6 @@ function safePath(get: () => string): string | null {
   } catch {
     return null
   }
-}
-
-/** A Windows command-line argument: quoted when it has spaces, inner quotes escaped. */
-function quoteWindowsArg(arg: string): string {
-  if (!/[\s"]/.test(arg)) return arg
-  return `"${arg.replace(/"/g, '\\"')}"`
 }
 
 /**

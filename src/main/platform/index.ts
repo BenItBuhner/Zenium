@@ -89,10 +89,11 @@ import { CookiePolicyEnforcer, ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
 import { ElectronPrintingHost } from './printing'
 import { ElectronUpdateHost } from './updates'
-import { applyAppIcon, iconPngPath } from './appIcon'
+import { applyAppIcon, iconPngPath, privateIconPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
 import { ElectronShortcuts } from './shortcuts'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
+import { PRIVATE_APP_USER_MODEL_ID, privateRelaunchDisplayName } from './privateTaskbar'
 import {
   NotificationRequestRelay,
   decideNotificationRequest,
@@ -496,6 +497,8 @@ export class ElectronPlatform implements Platform {
           id,
           this.browser
             .allWindows()
+            // Private windows keep the private icon, whatever the variant (os-56).
+            .filter((win) => !win.isPrivate)
             .map((win) => browserWindowOf(win))
             .filter((bw): bw is Electron.BrowserWindow => bw !== undefined)
         ),
@@ -689,9 +692,18 @@ export class ElectronPlatform implements Platform {
     // while Zenium was closed go before the enabled ones load (`extensions.start`, above).
     extensionApi.declarativeNetRequest.reconcile()
     // Toasts need the app id registered with Windows; a copy without installer shortcuts
-    // (development, portable) registers it itself.
-    if (process.platform === 'win32')
+    // (development, portable) registers it itself. The private windows' second id (os-56) the
+    // same way, with the group's name and the private icon, so Windows draws that group from
+    // its class key where no shortcut carries the id.
+    if (process.platform === 'win32') {
       void ensureWindowsAppIdRegistered(app.getName(), iconPngPath(browser.state.settings.appIcon))
+      void ensureWindowsAppIdRegistered(
+        privateRelaunchDisplayName(app.getName()),
+        privateIconPath('png'),
+        undefined,
+        PRIVATE_APP_USER_MODEL_ID
+      )
+    }
     return browser
   }
 

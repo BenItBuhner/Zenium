@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,downloads,notifications,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,downloads,notifications,restart-registration,private-taskbar,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -150,6 +150,24 @@
 //                notification's `click`, dispatched in the page under a user gesture, brings
 //                its tab back to the front through the preload's focus IPC and the core's reveal
 //                (Windows jobs; the click's app path runs everywhere)
+//   restart-registration  Windows relaunches Zenium with its session after a restart or a
+//                sign-out (os-49; restart-scenario.mjs): with the user's "restart my apps when I
+//                sign back in" toggle set on, the main window's `session-end` (emitted from the
+//                main process as Electron raises it off WM_ENDSESSION) writes this profile's
+//                RunOnce entry – the executable, `--user-data-dir=<profile>`,
+//                `--restore-last-session` – and the `[zen] restart:` line says so; a `will-quit`
+//                takes it back; the toggle off, and the Restart Manager's `close-app`, write
+//                nothing; a `logoff` end registers again and the entry stands after the process
+//                is ended the way Windows ends it (taskkill); the entry is deleted and the
+//                toggle put back at the end (Windows jobs; no runner restarts)
+//   private-taskbar  Private windows on a taskbar group of their own with the private icon
+//                (os-56; private-taskbar-scenario.mjs): a private window opened from the main
+//                window's chrome carries, in its frame's shell property store, the second
+//                AppUserModelID (`<app id>.private`), a relaunch command that opens a private
+//                window of this copy on this profile, the group's name "Zenium (Private)" and
+//                the private ICO this copy ships; the main window's frame carries none of its
+//                own; the id's class key holds the name and the private PNG (Windows jobs; the
+//                taskbar itself is on the screenshot, not judged)
 //   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
@@ -162,9 +180,9 @@
 //                (macOS jobs)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash
-// pair, clear-on-exit, the two mv3-worker legs, pip, the split pair and features run on Linux under Xvfb
-// only.
+// restore), Windows notifications, restart-registration and private-taskbar too and macOS
+// default-browser too; the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs,
+// pip, the split pair and features run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -199,6 +217,8 @@ import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-brow
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
+import { RESTART_SCENARIO, scenarioRestartRegistration } from './restart-scenario.mjs'
+import { PRIVATE_TASKBAR_SCENARIO, scenarioPrivateTaskbar } from './private-taskbar-scenario.mjs'
 import {
   COOKIE_PATH,
   FIXTURE_COOKIE,
@@ -1056,6 +1076,9 @@ class Session {
     this.quitStartedAt = null
     this.killedAt = null
     this.mainWindowId = null
+    /** The launched process (cmd.exe on Windows, see `launch`) and the browser process itself. */
+    this.pid = null
+    this.appPid = null
   }
 
   launchArgs() {
@@ -1113,6 +1136,11 @@ class Session {
       workerPartitions: [DEFAULT_CONTAINER_PARTITION]
     })
     this.timings.launchMs = Date.now() - t0
+    // The browser process's own pid. Playwright 1.63 launches Electron on Windows through
+    // cmd.exe (`shell: true` in its Electron launcher), so `proc.pid` is the shell's there and
+    // a taskkill or a window enumeration keyed on it misses the app (run 36020202657 saw no
+    // windows under it and a kill that left the app running); on Linux and macOS both are one.
+    this.appPid = await this.app.evaluate(() => process.pid)
     this.chrome = await this.waitForChromePage(RENDER_WAIT_MS)
     await this.chrome.locator('[data-testid="chrome-root"]').waitFor({
       state: 'attached',
@@ -1956,13 +1984,18 @@ class Session {
     return { ms, exit, prompt: asked }
   }
 
-  /** End the process the way a crash does: no quit path, no clean-exit marker. */
+  /**
+   * End the process the way a crash does: no quit path, no clean-exit marker. The browser
+   * process is the one ended (its children follow it); on Windows the cmd.exe Playwright
+   * launched it through exits with it, which is the exit the launch promise sees.
+   */
   async kill() {
     this.killedAt = Date.now()
-    if (IS_WIN) sh('taskkill', ['/F', '/PID', String(this.pid)], 20000)
-    else process.kill(this.pid, 'SIGKILL')
+    const pid = this.appPid ?? this.pid
+    if (IS_WIN) sh('taskkill', ['/F', '/PID', String(pid)], 20000)
+    else process.kill(pid, 'SIGKILL')
     const exit = await Promise.race([this.exitPromise, delay(10000).then(() => null)])
-    if (!exit) throw new Error(`process ${this.pid} still alive 10 s after SIGKILL`)
+    if (!exit) throw new Error(`process ${pid} still alive 10 s after SIGKILL`)
     return exit
   }
 
@@ -1972,11 +2005,15 @@ class Session {
     this.quitStartedAt ??= Date.now()
     await Promise.race([this.app.close().catch(() => undefined), delay(8000)])
     if (!this.exit && this.pid) {
-      log(`force killing pid ${this.pid}`)
-      if (IS_WIN) sh('taskkill', ['/F', '/T', '/PID', String(this.pid)], 20000)
+      // The tree under the browser process; the launching shell, where there is one, exits
+      // with it (a tree kill from the shell's pid would take the browser too, but the shell
+      // may already be gone while the app lives on).
+      const pid = this.appPid ?? this.pid
+      log(`force killing pid ${pid}`)
+      if (IS_WIN) sh('taskkill', ['/F', '/T', '/PID', String(pid)], 20000)
       else {
         try {
-          process.kill(this.pid, 'SIGKILL')
+          process.kill(pid, 'SIGKILL')
         } catch {
           // already gone
         }
@@ -2017,7 +2054,8 @@ class Session {
     const failures = this.failures()
     return {
       scenario: this.scenario,
-      pid: this.pid,
+      pid: this.appPid ?? this.pid,
+      launcherPid: this.pid,
       hook: this.hookResult,
       timings: this.timings,
       exit: this.exit,
@@ -6824,6 +6862,29 @@ async function main() {
           // The installed build's shortcuts carry the AUMID (the installer's WinShell); the
           // unpacked build has none and rides on the class key it registers for itself.
           expectShortcuts: IS_WIN && opts.label === 'installed',
+          isWin: IS_WIN
+        }),
+      [RESTART_SCENARIO]: () =>
+        scenarioRestartRegistration({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          ps,
+          isWin: IS_WIN
+        }),
+      [PRIVATE_TASKBAR_SCENARIO]: () =>
+        scenarioPrivateTaskbar({
+          freshProfile,
+          runScenario,
+          waitFor,
+          log,
+          grabScreen,
+          ps,
+          // The private ICO and the class key's PNG have to be this build's (under the
+          // executable's directory).
+          exe: opts.exe,
           isWin: IS_WIN
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>

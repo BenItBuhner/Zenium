@@ -137,12 +137,16 @@
 ; the install mode – hence HKCU, not SHELL_CONTEXT). The per-sender key under
 ; Software\Microsoft\Windows\CurrentVersion\Notifications\Settings is Windows's own record of the
 ; app having notified and stays, as it does for any uninstalled app. An update's uninstall (the
-; --updated run) removes it too; the new build writes it again on its first start.
+; --updated run) removes it too; the new build writes it again on its first start. The private
+; windows' second id (src/main/platform/privateTaskbar.ts: the app's with `.private`, their own
+; taskbar group) has a class key of the same shape, written and removed the same way.
 !define ZENIUM_APP_USER_MODEL_ID_KEY "Software\Classes\AppUserModelId\${APP_ID}"
+!define ZENIUM_PRIVATE_APP_USER_MODEL_ID_KEY "Software\Classes\AppUserModelId\${APP_ID}.private"
 
 !macro customUnInstall
   !insertmacro unregisterDefaultBrowser
   DeleteRegKey HKCU "${ZENIUM_APP_USER_MODEL_ID_KEY}"
+  DeleteRegKey HKCU "${ZENIUM_PRIVATE_APP_USER_MODEL_ID_KEY}"
 !macroend
 
 !macro customInstall
