@@ -838,8 +838,12 @@ class Extensions(private val host: Host) {
                 } ?: ""
                 // The page a message speaks of, when it names one (a content script's report of
                 // what it found on its page carries the page's address: the sweep reads the
-                // discovery off this line).
-                val about = (data as? JSONObject)?.optString("url", "")?.takeIf { it.isNotEmpty() }
+                // discovery off this line), at the top or one level down in a `data`, `payload`,
+                // `message` or `params` object (RSS Feed Reader's `{type, data: {feeds, url}}`).
+                val about = (data as? JSONObject)?.let { d ->
+                    (listOf(d) + listOf("data", "payload", "message", "params").mapNotNull { d.optJSONObject(it) })
+                        .firstNotNullOfOrNull { o -> o.optString("url", "").ifEmpty { null } }
+                }
                 listOfNotNull(
                     target?.opt("tabId")?.let { "tab=$it" },
                     target?.opt("frameId")?.let { "frame=$it" },

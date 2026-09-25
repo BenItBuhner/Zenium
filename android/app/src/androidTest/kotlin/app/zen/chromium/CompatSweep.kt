@@ -3754,9 +3754,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /**
      * An effect drawn in the row's popup over a settled fixture tab (The QR Code Generator's SVG
      * of the tab's address, Boxel Rebound's game canvas): the popup opens, `expr` (a
-     * `JSON.stringify` of `{pass, ...}`) is polled in it.
+     * `JSON.stringify` of `{pass, ...}`) is polled in it. A popup whose text matches
+     * `platformLimit` is the platform's refusal, `n/a` with `limitNote` (Distill's "The OPFS is
+     * not available": its store wants SharedArrayBuffer).
      */
-    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = ""): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, fixtureSettleMs)
@@ -3774,9 +3776,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // The popup up but its answer the service's refusal (`notMeasurable` on what it shows,
         // Scribbr's "something went wrong" from its citation API): the gate, not the runtime.
         val refused = popup != null && !found.optBoolean("pass") && notMeasurable != null && notMeasurable.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
+        val limited = popup != null && !found.optBoolean("pass") && platformLimit != null && platformLimit.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
         when {
             found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
             refused -> Grade("n/m", "$label: popup renders and answers with $gate's refusal (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
+            limited -> Grade("n/a", "$label: popup renders and reports the platform's refusal (\"${extra.optString("popupText").take(100)}\"; probe ${JSONObject(found.toString()).apply { remove("console"); remove("text") }.toString().take(160)}): $limitNote", extra)
             else -> Grade("F", "$label: popup ${if (popup == null) "did not render in the core check" else found.toString().take(240)}", extra)
         }
     }
@@ -4342,7 +4346,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * "Pick color from web page" and the picker it injects, Shimeji's ON and its mascot, Web
      * Developer's CSS > Disable All Styles and the fixture's stylesheet off, User-Agent
      * Switcher's pick and the header echo the fixture shows after its reload, SEOquake's
-     * consent and the fixture's title read in the popup.
+     * consent and the fixture's title read in the popup. `probe` is a pair of scripts for the
+     * popup: the first run once it renders, before the taps (a listener armed on
+     * `window`), the second at the end, its JSON on `extra.probe` (Zoom Video's storage
+     * writes).
      */
     private fun popupFlow(
         label: String,
@@ -4352,7 +4359,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         onPage: Boolean = true,
         settleMs: Long = 25_000,
         opens: Regex? = null,
-        prepare: ((WebView) -> Unit)? = null
+        prepare: ((WebView) -> Unit)? = null,
+        probe: Pair<String, String>? = null
     ): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
@@ -4365,6 +4373,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var landed = 0
         if (popup != null) {
             SystemClock.sleep(scaled(2_500, factor))
+            probe?.let { extra.put("probeArmed", tabEval(popup, it.first).take(80)) }
             extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(240))
             for ((i, words) in clicks.withIndex()) {
                 val optional = words.startsWith("?")
@@ -4409,6 +4418,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         extra.put("page", found).put("tabUrl", tabUrls()[tab] ?: "")
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        probe?.let { p ->
+            popupView()?.takeIf { it.context == "popup" }?.let { live -> extra.put("probe", runCatching { json(tabEval(live, p.second)) }.getOrElse { JSONObject().put("error", it.message ?: "eval failed") }) }
+                ?: extra.put("probe", JSONObject().put("error", "popup gone before the read"))
+        }
         since.record(extra, "atEnd")
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-core")
@@ -6979,14 +6992,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // (Voice Control for ChatGPT, Video Speed Controller - video manager, Screenshot & Screen
         // Video Recorder, Smart Sidebar, Ice Dodo), as rounds 14-17 ordered theirs.
         Row("fbeffbjdlemaoicjdapfpikkikjoneco", "Scratch Addons", "scratch-addons", core = liveMarker("Scratch Addons", "https://scratch.mit.edu/", injectedAny("scratch-addons|\\bsa-"), settleMs = 60_000)),
-        Row("ochhcgamjcnhpaekcckimgofnedofplf", "Zoom Video - UltraWide Fill", "zoom-video", core = popupFlow("Zoom Video - UltraWide Fill", "video.html?zoomvideo", clicks = listOf("/^21:9$/"), expr = ZOOM_VIDEO_SCALED, settleMs = 25_000)),
+        Row("ochhcgamjcnhpaekcckimgofnedofplf", "Zoom Video - UltraWide Fill", "zoom-video", core = ::zoomVideo),
         Row("lfdconleibeikjpklmlahaihpnkpmlch", "Video Downloader - Download M3U8, MP4, HLS", "video-downloader-m3u8", core = mediaPopup("Video Downloader (M3U8)", "hls.html?vdm3u8", "/m3u8|stream|clip|\\bn\\/a\\b/i", probe = true, listener = "onHeadersReceived with responseHeaders and extraHeaders over <all_urls> (a .m3u8 address or an HLS content type; the playlist then fetched and parsed in the worker)")),
         Row("appcnhiefcidclcdjeahgklghghihfok", "Google Meet Attendance List", "meet-attendance-list", core = accountGate("Google Meet Attendance List", Regex("meet\\.google\\.com|accounts\\.google\\.com|meetlist\\.io", RegexOption.IGNORE_CASE), gate = "a Google account in a Meet call (its list reads the call's participants; its scripts match meet.google.com's meeting pages alone)")),
         Row("ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg", "2048", "2048", core = actionPage("2048", Regex("/popup\\.html"), GRID_2048, listOf("page-a.html?2048"))),
         Row("mcebeofpilippmndlpcghpmghcljajna", "Lusha", "lusha", core = accountGate("Lusha", Regex("lusha\\.com|linkedin\\.com", RegexOption.IGNORE_CASE), gate = "a Lusha account (its side panel signs in at lusha.com) and a LinkedIn, Salesforce or HubSpot page for its scripts")),
         Row("jjghhkepijgakdammjldcbnjehfkfmha", "Salesforce", "salesforce", core = accountGate("Salesforce", Regex("salesforce\\.com|force\\.com", RegexOption.IGNORE_CASE), gate = "a Salesforce login (its side panel signs in to an org; its scripts run in Gmail and Google Calendar)")),
         Row("mnopmeepcnldaopgndiielmfoblaennk", "Web Paint", "web-paint", core = actionMarker("Web Paint", "page-a.html?webpaint", WEB_PAINT_PANEL)),
-        Row("inlikjemeeknofckkjolnjbpehgadgge", "Distill Web Monitor", "distill", core = popupMarker("Distill Web Monitor", DISTILL_POPUP, page = "page-a.html?distill", settleMs = 30_000)),
+        Row(
+            "inlikjemeeknofckkjolnjbpehgadgge", "Distill Web Monitor", "distill",
+            core = popupMarker(
+                "Distill Web Monitor", DISTILL_POPUP, page = "page-a.html?distill", settleMs = 30_000,
+                platformLimit = Regex("OPFS is not available", RegexOption.IGNORE_CASE),
+                limitNote = "its sqlite-wasm store opens an OPFS VFS that needs SharedArrayBuffer (`lib/jswasm/sqlite-worker-wasm.js`, the `OpfsDb` path); a served https page in the WebView has SharedArrayBuffer only under cross-origin isolation (COOP and COEP headers the served origin does not send), and Chrome grants the extension scheme SharedArrayBuffer without them on desktop alone (`extensions/renderer/dispatcher.cc`, not on Android): WebView/platform limit"
+            )
+        ),
         Row("ndgimibanhlabgdgjcpbbndiehljcpfh", "SelectorsHub", "selectorshub", core = ownPage("SelectorsHub", "side-panel/side-shub-panel.html", SELECTORSHUB_PANEL)),
         Row("oejgccbfbmkkpaidnkphaiaecficdnfn", "Toggl Track", "toggl-track", core = accountGate("Toggl Track", Regex("toggl\\.com", RegexOption.IGNORE_CASE), gate = "a Toggl account (its popup signs in at toggl.com; its timer posts to its service)")),
         Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsPage),
@@ -7007,7 +7027,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("nkkhljadiejecbgelalchmjncoilpnlk", "Video Speed Controller - video manager", "video-speed-controller-2", core = ::videoSpeed),
         Row("lhannfkhjdhmibllojbbdjdbpegidojj", "Screenshot & Screen Video Recorder", "screenshot-screen-video-recorder", core = popupCapture("Screenshot & Screen Video Recorder", "/^visible area$|visible area/i")),
         Row("fnmihdojmnkclgjpcoonokmkhjpjechg", "Smart Sidebar", "smart-sidebar", core = domMarker("Smart Sidebar", "page-a.html?smartsidebar", injectedAny("aifnmjmchg"), settleMs = 30_000)),
-        Row("jhidcpailhmpjpbdbhceiaeeggkalgmd", "Ice Dodo", "ice-dodo", core = popupMarker("Ice Dodo", CANVAS_SHOWN, page = "page-a.html?icedodo", settleMs = 60_000)),
+        Row("jhidcpailhmpjpbdbhceiaeeggkalgmd", "Ice Dodo", "ice-dodo", core = ::iceDodo),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -7081,16 +7101,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * Search by Image: its action opens no popup but sends the tab into its image-pick mode
-     * (its worker's `scripting.executeScript` of `src/select/script.js` and the `pointer.css`
-     * style over the page: every picture gets a pointer cursor and a tap on one searches it with
-     * the chosen engines, each opening as a tab of the engine's upload or lens address). The
-     * gallery fixture settles, the action is invoked, the pick mode is polled for (the injected
-     * `pointer.css` link is its mark); then the first picture is tapped at its centre and a new
-     * tab on an engine's address (or an own page of the extension: its results or its
-     * upload-in-progress page) is awaited. Pass is the mode entered and the tab following;
-     * `PARTIAL` is the mode entered with no tab within the wait; `F` is no pick mode within the
-     * wait, with the worker's console.
+     * Search by Image: its action opens its popup – the engine list ("All search engines",
+     * "Google", "Bing", …, `vn-list-item`s titled by engine) under the search-mode picker – and
+     * an engine's tap (`onEngineClick` → `actionPopupSubmit` to the worker) sends the source
+     * tab into the image-pick mode of the default `searchModeAction`, `select` (the worker's
+     * `scripting.executeScript` of `src/select/script.js` and the `pointer.css` style over the
+     * page: every picture gets a pointer cursor and a tap on one searches it with the engine,
+     * opening as a tab of the engine's upload or lens address); round 18's BEFORE invoked the
+     * action alone and waited on a pick mode the popup was waiting for a tap to start. The
+     * gallery fixture settles, the popup opens, "Google" is tapped, the pick mode is polled for
+     * (the injected `pointer.css` link is its mark); then the first picture is tapped at its
+     * centre and a new tab on an engine's address (or an own page of the extension: its results
+     * or its upload-in-progress page) is awaited. Pass is the mode entered and the tab
+     * following; `PARTIAL` is the mode entered with no tab within the wait; `F` is no pick mode
+     * within the wait, with the worker's console.
      */
     private fun searchByImage(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -7098,7 +7122,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val (_, view) = fixture("gallery.html?sbi", factor, 2_500)
         val since = StepEvidence(row)
         val before = tabUrls().keys
-        runCatching { coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""") }
+        val steps = JSONArray()
+        val popup = openPopup(row, factor)
+        var engine = false
+        if (popup != null) {
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            // The engine list mounts after the popup's storage reads.
+            awaitLabel("/^google$/i", factor)
+            engine = tapLabel("/^google$/i", factor, steps, "engine")
+        } else {
+            steps.put("engine: no popup rendered")
+        }
+        extra.put("steps", steps)
         val mode = pollExpr(view, SEARCH_BY_IMAGE_SELECT, scaled(25_000, factor))
         extra.put("mode", mode)
         var opened: Map.Entry<String, String>? = null
@@ -7128,10 +7163,90 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-core")
         runCatching { coreCall("extension.closePopup", "null") }
         return when {
-            opened != null -> Grade("P", "Search by Image: the action put the gallery into its image-pick mode and the tap on the first picture opened ${opened.value.take(90)}", extra)
-            mode.optBoolean("pass") && tapped -> Grade("PARTIAL", "Search by Image: the action put the gallery into its image-pick mode (${mode.toString().take(120)}) but the tap on the first picture opened no engine tab within ${scaled(30_000, factor) / 1000} s", extra)
-            mode.optBoolean("pass") -> Grade("PARTIAL", "Search by Image: the action put the gallery into its image-pick mode but its first picture could not be tapped (${extra.optJSONObject("image")?.toString()?.take(100)})", extra)
-            else -> Grade("F", "Search by Image: the action put the gallery into no image-pick mode within ${scaled(25_000, factor) / 1000} s: ${mode.toString().take(200)}", extra)
+            opened != null -> Grade("P", "Search by Image: the popup's Google tap put the gallery into its image-pick mode and the tap on the first picture opened ${opened.value.take(90)}", extra)
+            mode.optBoolean("pass") && tapped -> Grade("PARTIAL", "Search by Image: the popup's Google tap put the gallery into its image-pick mode (${mode.toString().take(120)}) but the tap on the first picture opened no engine tab within ${scaled(30_000, factor) / 1000} s", extra)
+            mode.optBoolean("pass") -> Grade("PARTIAL", "Search by Image: the popup's Google tap put the gallery into its image-pick mode but its first picture could not be tapped (${extra.optJSONObject("image")?.toString()?.take(100)})", extra)
+            popup == null -> Grade("F", "Search by Image: popup did not render in the core check", extra)
+            !engine -> Grade("F", "Search by Image: no Google entry to tap in its popup (${steps.toString().take(160)}); popup \"${extra.optString("popupText").take(100)}\"", extra)
+            else -> Grade("F", "Search by Image: the popup's Google tap put the gallery into no image-pick mode within ${scaled(25_000, factor) / 1000} s: ${mode.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Ice Dodo (jhidc…): its popup IS the game (`index.html`, 105 MB of assets; "Bringing user
+     * data …" while they load), and what it shows first is the map menu – "Easy Maps … Welcome
+     * Map Coaster Lanterns Hello World Neo Slow Walk EZ Map" – over two canvases, the first
+     * unsized; the game canvas draws once a map is picked (round 18's BEFORE read [CANVAS_SHOWN]
+     * on the menu: the first canvas, 0x0). The menu is waited for, its first map ("Welcome
+     * Map") tapped, then the largest canvas read ([CANVAS_LARGEST]); a "Play" or "Start" the
+     * pick reveals is tapped too when the canvas stays unsized.
+     */
+    private fun iceDodo(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?icedodo", factor, 1_500)
+        val popup = openPopup(row, factor)
+        val steps = JSONArray()
+        var found = JSONObject()
+        var picked = false
+        if (popup != null) {
+            val menu = poll(scaled(60_000, factor), 1_000) {
+                val live = popupView()?.takeIf { it.context == "popup" } ?: return@poll null
+                json(tabEval(live, FIND_LABEL.replace("__RE__", "/^welcome map$/i"))).takeIf { it.optBoolean("clicked") }
+            }
+            steps.put("menu: ${menu?.toString()?.take(120) ?: "no Welcome Map entry within ${scaled(60_000, factor) / 1000} s"}")
+            extra.put("menu", popupView()?.takeIf { it.context == "popup" }?.let { json(tabEval(it, DEEP_TEXT)).optString("text").take(240) } ?: "")
+            if (menu != null) picked = tapLabel("/^welcome map$/i", factor, steps, "map")
+            if (picked) {
+                popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                    found = pollExpr(live, CANVAS_LARGEST, scaled(20_000, factor))
+                    if (!found.optBoolean("pass") && tapLabel("/^(play|start|go)$/i", factor, steps, "play")) {
+                        found = pollExpr(live, CANVAS_LARGEST, scaled(25_000, factor))
+                    }
+                    found.put("console", JSONArray(consoleOf(live).takeLast(10)))
+                    extra.put("popupAfter", json(tabEval(live, DEEP_TEXT)).optString("text").take(200))
+                }
+            }
+        }
+        extra.put("steps", steps).put("canvas", found)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-play-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            found.optBoolean("pass") -> Grade("P", "Ice Dodo: the game canvas draws after the map pick: ${found.toString().take(200)}", extra)
+            popup == null -> Grade("F", "Ice Dodo: popup did not render in the core check", extra)
+            !picked -> Grade("F", "Ice Dodo: no map entry reached in its menu (${steps.toString().take(200)}); menu \"${extra.optString("menu").take(100)}\"", extra)
+            else -> Grade("F", "Ice Dodo: the map picked (${steps.toString().take(160)}) and no sized canvas within the wait: ${found.toString().take(160)}", extra)
+        }
+    }
+
+    /**
+     * Zoom Video - UltraWide Fill's popup flow with its storage watched: the popup's ratio
+     * button writes `scale` into `zoom_<tab>` by a get→merge→set, and the content script on the
+     * clip writes the same key every second by another (`{screenWidth, screenHeight,
+     * videoWidth, videoHeight}` merged over its own read). On this runtime each storage call
+     * takes 100-400 ms (round 18 §7), so the script's pair spans most of every second and the
+     * popup's `scale` lands inside it to be written back by the script's stale read – a lost
+     * update Chrome's 1-5 ms calls leave no room for. [ZOOM_STORAGE_ARM] listens to
+     * `storage.onChanged` in the popup (no bridge traffic of its own) and [ZOOM_STORAGE_READ]
+     * gives the writes in order; a scale above 1 written and then written back to 1 names the
+     * lost update in the note.
+     */
+    private fun zoomVideo(row: Row, entry: JSONObject): Grade {
+        val grade = popupFlow("Zoom Video - UltraWide Fill", "video.html?zoomvideo", clicks = listOf("/^21:9$/"), expr = ZOOM_VIDEO_SCALED, settleMs = 25_000, probe = ZOOM_STORAGE_ARM to ZOOM_STORAGE_READ)(row, entry)
+        val changes = grade.extra?.optJSONObject("probe")?.optJSONArray("changes") ?: return grade
+        var landed: JSONObject? = null
+        var reverted: JSONObject? = null
+        for (i in 0 until changes.length()) {
+            val c = changes.optJSONObject(i) ?: continue
+            val scale = c.optDouble("scale", 1.0)
+            if (landed == null && scale > 1.01) landed = c
+            else if (landed != null && reverted == null && scale <= 1.01) reverted = c
+        }
+        return when {
+            grade.verdict == "P" || landed == null -> grade
+            reverted != null -> Grade(grade.verdict, "${grade.note}; storage: the popup's scale ${landed.opt("scale")} landed on ${landed.optString("key")} at +${landed.opt("t")} ms and was written back to ${reverted.opt("scale")} at +${reverted.opt("t")} ms by the content script's get→set (its every-second write of the same key, read before the popup's set landed): a lost update the storage latency opens", grade.extra)
+            else -> Grade(grade.verdict, "${grade.note}; storage: the popup's scale ${landed.opt("scale")} landed on ${landed.optString("key")} at +${landed.opt("t")} ms and stayed (${changes.length()} writes seen)", grade.extra)
         }
     }
 
@@ -10660,6 +10775,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var c=document.querySelector('#gameCanvas, canvas');var r=c?c.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!c&&c.width>100&&c.height>100&&r.width>60,w:c?c.width:0,h:c?c.height:0,shown:Math.round(r.width)+'x'+Math.round(r.height),canvases:document.querySelectorAll('canvas').length,text:t.slice(0,80)})})()"
         /**
+         * The largest canvas on the page by its drawn box (Ice Dodo's popup holds an unsized
+         * first canvas beside the game's): a sized one on screen is the pass.
+         */
+        private const val CANVAS_LARGEST =
+            "(function(){var all=Array.prototype.slice.call(document.querySelectorAll('canvas'));var best=null,br={width:0,height:0};all.forEach(function(x){var r=x.getBoundingClientRect();if(r.width*r.height>br.width*br.height){best=x;br=r}});var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!best&&best.width>100&&best.height>100&&br.width>60,w:best?best.width:0,h:best?best.height:0,shown:Math.round(br.width)+'x'+Math.round(br.height),canvases:all.length,text:t.slice(0,80)})})()"
+        /**
          * Boxel 3D's level picker ([boxel3d]): its rows are a Vue carousel – `div.item` under
          * `.carousel`, each with a `div.title` child (the level's name), a `.label` and the
          * `more_horiz` tag, no `title` attribute (round 17's hook looked for one and matched
@@ -10801,6 +10923,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var vs=Array.prototype.slice.call(document.querySelectorAll('video'));var v=vs.find(function(x){return /scale_zoom-video-/.test(x.className)})||vs[0]||null;var cs=v?getComputedStyle(v):null;var sc=cs?String(cs.scale||'none'):'none';" +
                 "var rule='';Array.prototype.slice.call(document.querySelectorAll('style')).forEach(function(s){var m=/\\.scale_zoom-video-[^{]*\\{[^}]*\\}/.exec(s.textContent||'');if(m)rule=m[0]});var scaled=sc!=='none'&&sc!=='1'&&!/^1(\\s+1)?$/.test(sc);" +
                 "return JSON.stringify({pass:!!v&&/scale_zoom-video-/.test(v.className)&&scaled,videos:vs.length,classed:!!v&&/scale_zoom-video-/.test(v.className),scale:sc,rule:rule.replace(/\\s+/g,' ').slice(0,120),mounted:!!document.querySelector('[id^=\"zoom-video-\"], [class*=\"zoom-video-\"]')})})()"
+        /**
+         * Zoom Video's storage watched from its popup ([zoomVideo]): every `zoom_<tab>` write
+         * `storage.onChanged` reports, with its `scale` before and after and the video size it
+         * carried, on `window.__zenZoom` (armed once; no storage call of its own).
+         */
+        private const val ZOOM_STORAGE_ARM =
+            "(function(){if(window.__zenZoom)return 'armed';var z={t0:Date.now(),changes:[],err:null};window.__zenZoom=z;try{chrome.storage.onChanged.addListener(function(ch,area){for(var k in ch){if(!/^zoom_/.test(k))continue;var nv=ch[k].newValue||{},ov=ch[k].oldValue||{};" +
+                "z.changes.push({t:Date.now()-z.t0,key:k,area:area,scale:nv.scale,was:ov.scale,video:(nv.videoWidth||0)+'x'+(nv.videoHeight||0)})}})}catch(e){z.err=String(e)}return 'armed'})()"
+        /** The writes [ZOOM_STORAGE_ARM] saw (the last 14), their count, and the scale the popup shows. */
+        private const val ZOOM_STORAGE_READ =
+            "(function(){var z=window.__zenZoom||{};var c=z.changes||[];var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ');var m=/(\\d+\\.\\d\\d)\\s*x/.exec(t);" +
+                "return JSON.stringify({changes:c.slice(-14),n:c.length,err:z.err||null,shown:m?m[1]:null})})()"
 
         /**
          * 2048's popup page as a tab (its action opens `popup.html` in a new window through
@@ -10822,10 +10956,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /**
          * Distill Web Monitor's popup on a fresh install: its Backbone app renders the monitor
          * menu (Monitor full page, Monitor parts of page, Watchlist) with no account needed.
+         * Beside it the platform probe its store depends on: `SharedArrayBuffer` present,
+         * `crossOriginIsolated`, and `navigator.storage.getDirectory` (OPFS) there.
          */
         private const val DISTILL_POPUP =
             "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var controls=document.querySelectorAll('button, a, [role=\"button\"], [role=\"menuitem\"], li').length;" +
-                "return JSON.stringify({pass:/monitor (full|parts of) page|watchlist/i.test(t)&&controls>0,controls:controls,text:t.slice(0,200)})})()"
+                "return JSON.stringify({pass:/monitor (full|parts of) page|watchlist/i.test(t)&&controls>0,controls:controls,sab:typeof SharedArrayBuffer!=='undefined',coi:!!self.crossOriginIsolated,opfs:!!(navigator.storage&&navigator.storage.getDirectory),text:t.slice(0,200)})})()"
 
         /**
          * SelectorsHub's side panel page as a tab: its selector tooling (the `.selector-button`
