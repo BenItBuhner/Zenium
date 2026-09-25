@@ -13,6 +13,7 @@ import {
   CONTENT_SETTING_TYPES,
   CONTENT_SETTING_TYPE_NAMES
 } from './contentSettings'
+import { CONSTANTS as FONT_SETTINGS_CONSTANTS, FONT_SETTINGS_PERMISSION } from './fontSettings'
 import { OFFSCREEN_PERMISSION, OFFSCREEN_REASON_CONSTANTS } from './offscreen'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
@@ -1076,6 +1077,36 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['webRequest', 'webRequestBlocking'],
     eventStyle: 'webRequest'
+  },
+  // Absent from Electron (Chrome's font preferences are the browser's, not the engine's). The
+  // host lays extensions' values over the page fonts setting (Settings › Appearance › Customize
+  // fonts, CT-25) with Chrome's precedence, `core/extensions/api/fontSettings.ts` has the shape:
+  // the common script's family of the four slotted generic families and the two sizes are
+  // controllable, the rest answer `not_controllable`. The font list is the installed families.
+  fontSettings: {
+    methods: {
+      getFontList: { params: [] },
+      getFont: { params: [object('details')] },
+      setFont: { params: [object('details')] },
+      clearFont: { params: [object('details')] },
+      getDefaultFontSize: { params: [object('details', true)] },
+      setDefaultFontSize: { params: [object('details')] },
+      clearDefaultFontSize: { params: [object('details', true)] },
+      getDefaultFixedFontSize: { params: [object('details', true)] },
+      setDefaultFixedFontSize: { params: [object('details')] },
+      clearDefaultFixedFontSize: { params: [object('details', true)] },
+      getMinimumFontSize: { params: [object('details', true)] },
+      setMinimumFontSize: { params: [object('details')] },
+      clearMinimumFontSize: { params: [object('details', true)] }
+    },
+    events: {
+      onFontChanged: {},
+      onDefaultFontSizeChanged: {},
+      onDefaultFixedFontSizeChanged: {},
+      onMinimumFontSizeChanged: {}
+    },
+    constants: FONT_SETTINGS_CONSTANTS,
+    permissions: [FONT_SETTINGS_PERMISSION]
   },
   // Absent from Electron altogether (Chrome's preference service is not part of the engine),
   // and probed at start-up by uBlock Origin and Privacy Badger. The settings live in the host

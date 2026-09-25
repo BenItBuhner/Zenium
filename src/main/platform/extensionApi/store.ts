@@ -5,6 +5,7 @@ import { JsonStore } from '../../../core/store/JsonStore'
 import type { Alarm } from '../../../core/extensions/api/alarms'
 import type { ContentSettingRule } from '../../../core/extensions/api/contentSettings'
 import type { PersistedMenuItem } from '../../../core/extensions/api/contextMenus'
+import type { FontValues } from '../../../core/extensions/api/fontSettings'
 import type { InstanceIdRecord } from '../../../core/extensions/api/instanceId'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { ScopedValues } from '../../../core/extensions/api/privacy'
@@ -27,6 +28,8 @@ interface PersistedApi {
   privacy?: Record<string, Record<string, ScopedValues>>
   /** `chrome.proxy.settings` values per extension (canonical configs as JSON text), by scope. */
   proxy?: Record<string, ScopedValues>
+  /** `chrome.fontSettings` values per extension (the slotted families and the two sizes). */
+  fontSettings?: Record<string, FontValues>
   /** `chrome.contentSettings` rules per extension, by type name (regular scope only). */
   contentSettings?: Record<string, Record<string, ContentSettingRule[]>>
   /**
@@ -49,6 +52,7 @@ function emptyPersisted(): PersistedApi {
     sidePanelOnActionClick: {},
     privacy: {},
     proxy: {},
+    fontSettings: {},
     contentSettings: {},
     contextMenus: {},
     instanceIds: {}
@@ -167,6 +171,17 @@ export class ApiStore {
     this.save()
   }
 
+  fontSettingsValues(extensionId: string): FontValues {
+    return this.data.fontSettings?.[extensionId] ?? {}
+  }
+
+  setFontSettingsValues(extensionId: string, values: FontValues): void {
+    const fontSettings = this.data.fontSettings ?? (this.data.fontSettings = {})
+    if (Object.keys(values).length === 0) delete fontSettings[extensionId]
+    else fontSettings[extensionId] = values
+    this.save()
+  }
+
   contentSettingRules(extensionId: string): Record<string, ContentSettingRule[]> {
     return this.data.contentSettings?.[extensionId] ?? {}
   }
@@ -212,6 +227,7 @@ export class ApiStore {
     delete this.data.sidePanelOnActionClick?.[extensionId]
     delete this.data.privacy?.[extensionId]
     delete this.data.proxy?.[extensionId]
+    delete this.data.fontSettings?.[extensionId]
     delete this.data.contentSettings?.[extensionId]
     delete this.data.contextMenus?.[extensionId]
     delete this.data.instanceIds?.[extensionId]
