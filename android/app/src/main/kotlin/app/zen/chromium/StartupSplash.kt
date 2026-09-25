@@ -3,6 +3,8 @@ package app.zen.chromium
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.app.Activity
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -223,8 +225,31 @@ class StartupSplash internal constructor(
         lift("watchdog")
     }
 
-    /** Before the window's first frame (MainActivity.onCreate): take the splash view when the platform hands it over. */
-    fun attach(splashScreen: SplashScreen) {
+    /**
+     * Lets the platform's exit listener go at the lift; set by [attach], run once. With no listener
+     * registered, the next resume of the activity reports `handleSplashScreenExit = false`
+     * (`ResumeActivityItem.postExecute` → `ActivityRecord.setCustomizeSplashScreenExitAnimation`),
+     * and a starting window transferred to this window later – the icon trampoline's, on a
+     * `NEW_TASK`-alone relaunch over the running chrome – is never copied to the client: the
+     * platform's own splash runs its exit and removes itself, and nothing is reparented. The copy
+     * path (`transferSplashScreenIfNeeded` → the copy attached to the decor, the shell's window
+     * hidden through a leash, `onSplashScreenAttachComplete`'s `cancelAnimation` reparenting the
+     * shell's surface back before its removal lands) is the flash runs 7–9 of #454 recorded.
+     */
+    internal var release: (() -> Unit)? = null
+
+    /** Whether the platform's listener has been let go (the lift ran [release]). */
+    var released = false
+        private set
+
+    /**
+     * Before the window's first frame (MainActivity.onCreate): take the splash view when the
+     * platform hands it over, and let the listener go at the lift through [release] – the app
+     * passes [platformRelease]. Below API 33 the platform's listener cannot be cleared, so the copy
+     * still comes on a relaunch and [SplashHold.HandOver.LATE] sends it away at once.
+     */
+    fun attach(splashScreen: SplashScreen, release: (() -> Unit)? = null) {
+        this.release = release
         splashScreen.setOnExitAnimationListener { view -> handOver(PlatformSplashSurface(view)) }
     }
 
@@ -304,7 +329,21 @@ class StartupSplash internal constructor(
         clock.removeCallbacks(watchdog)
         hold.lift(by)
         heldForMs = clock.uptimeMillis() - handedOverAt
+        releaseListener()
         depart(view, skinned?.iconView)
+    }
+
+    /** The lift's release of the platform's listener: once, before the exit motion starts; a failure is logged and the view still departs. */
+    private fun releaseListener() {
+        val release = this.release ?: return
+        this.release = null
+        try {
+            release()
+            released = true
+            note("splash: the platform's exit listener released at the lift; a starting window transferred here later is the platform's to end")
+        } catch (error: RuntimeException) {
+            warn("splash: the platform's exit listener could not be released; a later hand-over departs at once", error)
+        }
     }
 
     /** The view leaves on the exit motion – or the reduced-motion fade – and the bars take the chrome's tone as the last one is gone. */
@@ -342,6 +381,15 @@ class StartupSplash internal constructor(
         const val WATCHDOG_MS = 10_000L
         /** The longest hold read on the recipe's emulator (ms), the watchdog's derivation; pinned by the test. */
         const val LONGEST_HELD_SEEN_MS = 4_205L
+
+        /**
+         * The release for [attach]: API 33+ clears the platform's exit listener
+         * (`android.window.SplashScreen.clearOnExitAnimationListener`); below it, nothing can, and
+         * the release is a no-op – a relaunch's copy still comes and departs at once.
+         */
+        fun platformRelease(activity: Activity): () -> Unit = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) activity.splashScreen.clearOnExitAnimationListener()
+        }
     }
 }
 

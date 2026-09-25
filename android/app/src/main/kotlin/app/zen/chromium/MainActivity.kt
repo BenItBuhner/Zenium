@@ -123,7 +123,7 @@ class MainActivity : BrowserActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         startupSplash = StartupSplash(window)
-        startupSplash.attach(splashScreen)
+        startupSplash.attach(splashScreen, StartupSplash.platformRelease(this))
 
         root = FrameLayout(this)
         fullscreenLayer = FrameLayout(this).apply {

@@ -121,7 +121,7 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         scheme = resolveScheme(record)
         splash = WebAppSplash(this, WebAppSplash.ground(record.backgroundColor, pageColor))
         startupSplash = StartupSplash(window, skin = splash::skin)
-        startupSplash.attach(splashScreen)
+        startupSplash.attach(splashScreen, StartupSplash.platformRelease(this))
         reportedDisplay = WebAppRules.reportedDisplay(record.display, inScope = true, barsHidden = WebAppRules.immersive(record.display))
 
         shell = FrameLayout(this)
