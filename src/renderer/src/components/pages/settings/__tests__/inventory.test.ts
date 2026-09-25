@@ -1041,6 +1041,10 @@ describe('the AI Agents › Agent skill group', () => {
           {
             ...target('claude', 'Claude Code', true, false),
             note: 'A copy Zenium did not install is there; installing replaces it'
+          },
+          {
+            ...target('cursor', 'Cursor', true, true),
+            note: 'Left in place: SKILL.md – it was edited since Zenium installed it'
           }
         ]
       })
@@ -1054,14 +1058,20 @@ describe('the AI Agents › Agent skill group', () => {
     expect(status.leading).toBeUndefined()
     if (!isValidElement<{ className?: string }>(status.trailing)) throw new Error('no glyph')
     expect(status.trailing.props.className).toBe('zen-settings-trailing-glyph')
+    // The installer's cautions warn and do not fail: the warn ink, on both of its sentences.
     const claude = findRow([group], 'skill:claude')!
     expect(claude.kind === 'switch' && claude.description).toBe(
       'A copy Zenium did not install is there; installing replaces it'
     )
     expect(claude.tone).toBe('warn')
+    const cursor = findRow([group], 'skill:cursor')!
+    expect(cursor.description).toBe(
+      'Left in place: SKILL.md – it was edited since Zenium installed it'
+    )
+    expect(cursor.tone).toBe('warn')
   })
 
-  it('keeps the count on the status line, in the danger tone, when one agent’s install failed and the others are in: only that row says why', () => {
+  it('keeps the count on the status line, in the danger tone, when one agent’s install failed and the others are in: only that row says why, in the danger ink', () => {
     const sentence =
       'Could not install: something else is in the way at ~/.codex/skills/zenium-browser'
     const group = skill(
@@ -1084,10 +1094,13 @@ describe('the AI Agents › Agent skill group', () => {
     expect(status.tone).toBe('danger')
     if (!isValidElement<{ className?: string }>(status.trailing)) throw new Error('no glyph')
     expect(status.trailing.props.className).toBe('zen-settings-trailing-glyph')
+    // One failure, one ink (the lead's #468 delta read): the row's sentence is a failure, so it
+    // wears the danger ink the status row wears for it (a switch row has no glyph slot; the
+    // glyph is the status row's).
     const codex = findRow([group], 'skill:codex')!
     expect(codex.kind === 'switch' && codex.checked).toBe(false)
     expect(codex.description).toBe(sentence)
-    expect(codex.tone).toBe('warn')
+    expect(codex.tone).toBe('danger')
     for (const id of ['skill:claude', 'skill:cursor']) {
       const row = findRow([group], id)!
       expect(row.kind === 'switch' && row.checked).toBe(true)
@@ -1117,6 +1130,7 @@ describe('the AI Agents › Agent skill group', () => {
     expect(noneStatus.tone).toBe('danger')
     expect(isValidElement(noneStatus.trailing)).toBe(true)
     expect(findRow([none], 'skill:codex')?.description).toBe(sentence)
+    expect(findRow([none], 'skill:codex')?.tone).toBe('danger')
 
     // A failure of the operation as a whole (the record could not be saved) is no row's: the
     // status line says it, whatever is installed.

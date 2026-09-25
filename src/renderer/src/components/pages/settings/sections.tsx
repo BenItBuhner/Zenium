@@ -4429,9 +4429,13 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
  * while any agent has the skill: the status row keeps its count in the danger tone with the
  * glyph (the lead's tidy from the #460 r3 delta read); the line carries the sentence itself when
  * the operation failed as a whole (its record could not be saved – a sentence no row carries) or
- * when no agent has the skill. Remove everywhere asks nothing and wears no danger ink (§10.5 as
- * amended on #450): the files are Zenium's copies, an edited one is spared by the installer's
- * own rule, and Install brings them back in one click. No modal: the group is the nudge.
+ * when no agent has the skill. An agent's row wears the ink of its sentence's kind, not of its
+ * place (the lead's #468 delta read): a failure takes the danger ink wherever it is said, a
+ * caution – an edited copy left in place, a copy Zenium did not install – the warn ink; no
+ * row trails a glyph (§9.33: the glyph marks the row whose whole point is the status). Remove
+ * everywhere asks nothing and wears no danger ink (§10.5 as amended on #450): the files are
+ * Zenium's copies, an edited one is spared by the installer's own rule, and Install brings them
+ * back in one click. No modal: the group is the nudge.
  */
 function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
   const detected = skills.targets.filter((t) => t.detected)
@@ -4463,7 +4467,7 @@ function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
       id: `skill:${t.id}`,
       label: t.label,
       description: t.note ?? t.dir,
-      tone: t.note ? 'warn' : undefined,
+      tone: t.note ? (isSkillFailure(t.note) ? 'danger' : 'warn') : undefined,
       keywords: ['skill', t.dir],
       checked: t.installed,
       onChange: (v) => run(v ? 'agent.installSkill' : 'agent.uninstallSkill', { targets: [t.id] })
@@ -4499,6 +4503,16 @@ function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
       'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs. Zenium keeps a copy in each agent’s skills folder.',
     rows
   }
+}
+
+/**
+ * Whether an agent's skill `note` reports a failure – the installer's `Could not <operation>: …`
+ * sentence (`failedAt` in `src/main/agent/skills.ts`, the same sentence the status line carries
+ * as `error`) – rather than a caution (an edited copy left in place, a copy Zenium did not
+ * install). The renderer cannot import the installer, so the sentence's opener is the contract.
+ */
+function isSkillFailure(note: string): boolean {
+  return note.startsWith('Could not ')
 }
 
 // ---------------------------------------------------------------------------
