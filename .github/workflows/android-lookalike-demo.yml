@@ -1,0 +1,34 @@
+name: Android lookalike demo (temporary)
+
+# TEMPORARY – PS-18's on-device scene for #478 (ANDROID's condition 1), removed before the PR is
+# nod-ready. A sibling of android-safebrowsing-demo.yml rather than a second class in its run: that
+# workflow records one driver with its own handshake directory and video, so a second class on
+# the same boot would run unrecorded and mix artifacts. The wrapper script writes the WebView's
+# command-line file (host-resolver rules that send gogle.com, paypa1.com and amazom.com to the
+# driver's loopback server) before the driver starts the app, then runs android-gesture-demo.sh.
+on:
+  push:
+    branches:
+      - cursor/services-pass-8-24d1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-lookalike-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: lookalike demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-lookalike-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.LookalikeDemo
+        DEMO_DIR=lookalike-demo
+        DEMO_OUT=artifacts/android-lookalike-demo
+        DEMO_VIDEO=services-pass-8-lookalike-android-demo.mp4
+      artifact-name: android-lookalike-demo
+      artifact-path: artifacts/android-lookalike-demo/
