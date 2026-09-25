@@ -33,7 +33,7 @@ import {
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
 import { macTitleBarDoubleClickAction } from '../../core/captionDoubleClick'
-import { permissionSite } from '../../core/permissions'
+import { isStorageAccessPermission, permissionSite } from '../../core/permissions'
 import type {
   AppHost,
   ClipboardHost,
@@ -800,6 +800,11 @@ export class ElectronPlatform implements Platform {
           .then(callback)
         return
       }
+      // Chromium does not tell us whether a Storage Access API request had a gesture behind it
+      // either, and the web platform refuses one without: the core's activation clock stands in
+      // (`popups.activation`), as it does for launches of other applications above.
+      if (isStorageAccessPermission(permission) && tabId)
+        request.userGesture = this.browser.popups.activation(tabId).isActive(Date.now())
       void permissions.decide(permission, url, request).then(callback)
     })
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>
