@@ -2794,7 +2794,7 @@ export class Browser {
       // A host whose engine reports audibility itself (Electron's `audio-state-changed`) sends
       // the Media Session report alone; `playing` is the page script's word where it tracks it.
       if (message.playing !== undefined) {
-        tab.audible = Boolean(message.playing)
+        this.tabs.noteAudible(tabId, Boolean(message.playing))
         this.governor.onMedia(tabId, Boolean(message.playing))
       }
       if (message.media) this.mediaSession.onReport(tabId, message.media)

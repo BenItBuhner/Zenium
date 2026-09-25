@@ -4,7 +4,7 @@ import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
 import { NoopGovernor, SLEEP_CHECK_MS } from '../hostDefaults'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
-import { DISCARD_BATCH_INTERVAL_MS, neverUnloaded } from '../memoryPressure'
+import { DISCARD_BATCH_INTERVAL_MS, neverUnloaded, RECENTLY_AUDIBLE_MS } from '../memoryPressure'
 import type { ZenWindow } from '../window'
 
 function memoryIo(): StoreIO {
@@ -246,6 +246,26 @@ describe('sleeping tabs on a host without a resource governor', () => {
     expect(browser.tabs.tab(kept.id)!.discarded).toBe(true)
     expect(browser.tabs.tab(recent.id)!.discarded).toBe(false)
     expect(browser.tabs.activeTabFor(win)!.discarded).toBe(false)
+  })
+
+  it('keeps a page that just went quiet for a minute: the gap between two songs is not idleness', () => {
+    const { browser, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadEnabled: false })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const radio = browser.tabs.createTab({ url: 'https://radio.example/', active: false }, win)
+    browser.tabs.load(radio.id, win)
+    browser.tabs.tab(radio.id)!.lastActiveAt = Date.now() - 60 * 60_000
+    // The page script's word on Android, the engine's on the desktop: the same note.
+    browser.tabs.noteAudible(radio.id, true)
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(browser.tabs.tab(radio.id)!.discarded).toBe(false)
+    browser.tabs.noteAudible(radio.id, false)
+    vi.advanceTimersByTime(RECENTLY_AUDIBLE_MS - 1_000)
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(browser.tabs.tab(radio.id)!.discarded).toBe(false)
+    vi.advanceTimersByTime(1_000)
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(browser.tabs.tab(radio.id)!.discarded).toBe(true)
   })
 
   it('a newer signal replaces the pending batches, and a page gone back to is left alone', () => {

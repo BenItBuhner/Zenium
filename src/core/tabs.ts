@@ -879,9 +879,7 @@ export class TabManager {
         )
       },
       onAudioStateChanged: (audible) => {
-        const was = this.tab(tabId)?.audible === true
-        if (was && !audible) this.quietAt.set(tabId, Date.now())
-        update((t) => (t.audible = audible), true)
+        this.noteAudible(tabId, audible)
         this.browser.updateMedia()
       },
       onMediaStateChanged: (playing) => {
@@ -4298,6 +4296,19 @@ export class TabManager {
       this.pressureTimer = null
     }
     this.discardNextBatch()
+  }
+
+  /**
+   * The page started or stopped being heard – the engine's word (`onAudioStateChanged`) or the
+   * page script's (`browser.ts`, the `media` message's `playing`). The moment it went quiet is
+   * kept for the sleep policies' grace ([quietAt]).
+   */
+  noteAudible(tabId: string, audible: boolean): void {
+    const tab = this.tab(tabId)
+    if (!tab) return
+    if (tab.audible && !audible) this.quietAt.set(tabId, Date.now())
+    tab.audible = audible
+    this.browser.state.commitVolatile()
   }
 
   /** The ids a pressure signal has yet to sleep, oldest first, and the timer for the next batch. */
