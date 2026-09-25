@@ -48,6 +48,26 @@ xvfb-run -a -s '-screen 0 1600x1000x24' node .github/smoke/smoke.mjs \
 The fixture extension lives under `fixtures/mv3-worker` (its worker logs the `chrome` surface it
 starts with; the hook in `smoke.mjs` reads the line off the session's ServiceWorkers console).
 
+## reCAPTCHA v2 (`recaptcha`, allow-network)
+
+The one scenario that leaves the loopback fixture: it opens Google's own reCAPTCHA v2 demo
+(`https://www.google.com/recaptcha/api2/demo`) in a tab and requires the widget's anchor frame
+and then its challenge frame (`bframe`) within 10 s of the load, one trusted click at the
+checkbox to tick it (`aria-checked=true`) or put the image challenge up within 20 s (a fresh
+profile on an automated build gets the challenge – either is the widget's handshake at work),
+and no `reCAPTCHA Timeout` or permissions-policy violation among the tab's console lines once
+the widget's 15 s timer window has passed (W5-P1: the anchor asks the Storage Access API for its
+cookies before it answers, and a permission prompt left pending there stalled the widget until
+that timer). The harness reaches `www.google.com` first (a HEAD within 8 s); when it cannot, the
+scenario is recorded as `skipped: network` with the reason in `result.json` and the log, and the
+verdict stays green – the result carries `network: "allow-network"` either way.
+
+```sh
+xvfb-run -a -s '-screen 0 1600x1000x24' node .github/smoke/smoke.mjs \
+  --exe dist/linux-unpacked/zenium --label recaptcha --out /tmp/smoke-out \
+  --scenarios recaptcha --extra-args="--no-sandbox --disable-gpu"
+```
+
 ## Windows installer
 
 `win-install.ps1` installs the NSIS build silently and uninstalls it, and judges the

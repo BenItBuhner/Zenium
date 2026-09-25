@@ -229,6 +229,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         }
         activate(START_TAB)
         settle()
+        // The host's side of the bridge's timing goes on with the page's marks (BridgeLatency.kt).
+        BridgeLatency.enabled = true
         finding("chrome probe: ${installProbe()}")
         // Pay for the touch pipeline off the record: one swipe there and back.
         flingLeft()
@@ -1473,13 +1475,26 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      */
     private fun scene(name: String, kind: JankBudget.Kind, baseline: String? = null, profile: Boolean = false, block: () -> Unit): FrameStats.Scene {
         resetProbe()
+        BridgeLatency.reset()
         val activeBefore = activeTabId()
         val sampling = if (profile) startProfile() else null
-        val result = traceFrames(name, kind, baseline, block)
+        // The scene's bounds in the trace's clock (`System.nanoTime() / 1000`): the host's
+        // receipt-to-dispatch samples are read inside them, so a string sent after the gesture
+        // (the settle's, the dump's) is not the scene's.
+        var fromUs = 0L
+        var toUs = 0L
+        val result = traceFrames(name, kind, baseline) {
+            fromUs = BridgeLatency.now()
+            block()
+            toUs = BridgeLatency.now()
+        }
         val profiled = if (profile) stopProfile() else null
         val probe = readProbe()
+        // The host's side of the bridge's timing (BridgeLatency.kt, on beside the page's marks):
+        // when each string arrived at the host's route and when its task began, per kind and channel.
+        val bridge = BridgeLatency.drain(fromUs, toUs)
         val json = JSONObject().put("scene", name).put("kind", kind.key).put("activeBefore", activeBefore).put("activeAfter", activeTabId())
-            .put("probe", probe)
+            .put("probe", probe).put("bridge", bridge)
         result.trace?.let { json.put("trace", JSONObject(it.toJson())) }
         result.traceMissing?.let { json.put("traceMissing", it) }
         profiled?.let { json.put("profile", it) }
@@ -1488,7 +1503,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         val frames = result.trace?.frames ?: 0
         finding(
             "[$name] ${result.trace?.describe() ?: "trace: ${result.traceMissing}"}; probe: ${describeProbe(probe, frames)}; " +
-                "listeners: ${describeEvents(probe)}; commands: ${describeCommands(probe)}" +
+                "listeners: ${describeEvents(probe)}; commands: ${describeCommands(probe)}; " +
+                "host receipt→dispatch: ${BridgeLatency.describe(bridge)}" +
                 (if (sampling != null) "; script by function ($sampling): ${profiled?.let { describeProfile(it) } ?: "none"}" else "")
         )
         return result

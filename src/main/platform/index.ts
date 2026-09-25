@@ -33,7 +33,7 @@ import {
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
 import { macTitleBarDoubleClickAction } from '../../core/captionDoubleClick'
-import { permissionSite } from '../../core/permissions'
+import { isStorageAccessPermission, permissionSite } from '../../core/permissions'
 import type {
   AppHost,
   ClipboardHost,
@@ -187,7 +187,14 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Every session's `Accept-Language` follows the preferred languages (`session.setUserAgent`).
   pageLanguages: true,
   // Blink on the desktop maps `serif` / `sans-serif` / `monospace` through the web preferences.
-  genericFontFamilies: true
+  genericFontFamilies: true,
+  // DESKTOP FYI (Q1, the observable landing): the page's `WebContentsView` composites above the
+  // chrome and the main process places it synchronously, so the chrome's stand-ins leave as
+  // they always have; nothing here answers a placement with the view's drawn frame. Were the
+  // desktop ever to want the §11 rule too (`hideFollowsCover` records the frame it lost on the
+  // hide side, #299 F1), the answer would be `ElectronTabView`'s, from the view's
+  // `paint`/`did-frame-finish-load`-class signal, and this flag turns the chrome's waits on.
+  placementAnswered: false
 }
 
 /**
@@ -812,6 +819,11 @@ export class ElectronPlatform implements Platform {
           .then(callback)
         return
       }
+      // Chromium does not tell us whether a Storage Access API request had a gesture behind it
+      // either, and the web platform refuses one without: the core's activation clock stands in
+      // (`popups.activation`), as it does for launches of other applications above.
+      if (isStorageAccessPermission(permission) && tabId)
+        request.userGesture = this.browser.popups.activation(tabId).isActive(Date.now())
       void permissions.decide(permission, url, request).then(callback)
     })
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>

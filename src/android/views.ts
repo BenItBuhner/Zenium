@@ -32,7 +32,7 @@ import type {
 } from '@core/platform'
 import { looksLikeStatements } from '@core/agent/util'
 import { isKeepableHostState, NAVIGATION_ENTRIES_MAX, sanitizeSnapshot } from '@core/session'
-import type { Bridge } from './bridge'
+import { bridgeTraced, type Bridge } from './bridge'
 
 /** Navigation state Kotlin mirrors into JS on every navigation event. */
 export interface ViewNavState {
@@ -120,6 +120,16 @@ export interface ViewEventPayloads {
 }
 
 /**
+ * Who hears the host's answer to a placement (`view.shown`, Q1): the view host relays it to the
+ * chrome as the `view.shown` event (`platform.ts`).
+ */
+export interface PlacementListener {
+  onShown(tabId: string, shown: boolean): void
+}
+
+const noPlacementListener: PlacementListener = { onShown: () => {} }
+
+/**
  * A page living in a Kotlin `WebView`. Every method is a bridge call; the read accessors answer
  * from the mirror Kotlin keeps up to date, so the core never has to await a round trip.
  */
@@ -149,6 +159,7 @@ export class AndroidTabView implements TabView {
       pdf: () => null
     },
     private readonly navigation: NavigationBridge = new NavigationBridge(bridge),
+    private readonly placement: PlacementListener = noPlacementListener,
     /** Told of every `setBounds`: the boot's READY counts the first placement (`startup.ts`). */
     private readonly placed: () => void = () => {}
   ) {}
@@ -602,8 +613,42 @@ export class AndroidTabView implements TabView {
   }
 
   setVisible(visible: boolean): void {
+    const landing = visible && !this.visible
     this.visible = visible
     this.bridge.batched('view.setVisible', { tabId: this.tabId, visible })
+    if (landing) this.askShown()
+  }
+
+  /**
+   * Q1, the observable landing (the §11 stand-in rule): a view brought back is a landing, and
+   * the chrome's stand-in for the page leaves on the host's word that the page is on screen,
+   * not on a clock. The word is the answer to `view.shown`, asked right after the batch that
+   * placed the view: `call` flushes the batch queue before its own string, and this microtask
+   * runs after the flush's, queued at the batch's first op – so the ask follows the whole
+   * placement through the port, and the host reads it in the page's order (`BridgePort` posts
+   * the strings to the main thread one by one, in order; no ordering machinery of its own).
+   * The host replies `true` from the view's drawn frame (`Host.kt` `view.shown`,
+   * `PlacementAnswer.kt`), `false` at once for a view it does not have or does not show, and
+   * `false` after its bound when no frame comes; a call the host refuses is `false` as well.
+   * The answer goes to the chrome as the `view.shown` event (`PlacementListener`), marked on
+   * arrival under the bridge's trace flag so a scene's trace shows the landing's sequence.
+   */
+  private askShown(): void {
+    queueMicrotask(() => {
+      if (this.destroyed) {
+        this.answered(false)
+        return
+      }
+      this.bridge.call<unknown>('view.shown', { tabId: this.tabId }).then(
+        (shown) => this.answered(shown === true),
+        () => this.answered(false)
+      )
+    })
+  }
+
+  private answered(shown: boolean): void {
+    if (bridgeTraced()) performance.mark(`bridge:answer:view.shown:${this.tabId}:${shown}`)
+    this.placement.onShown(this.tabId, shown)
   }
 
   isVisible(): boolean {
@@ -818,11 +863,16 @@ export interface ZenPageLookups {
 }
 
 /** Creates and tracks the JS mirrors of Kotlin's tab WebViews. */
-export class AndroidTabViewHost implements TabViewHost {
+export class AndroidTabViewHost implements TabViewHost, PlacementListener {
   private readonly views = new Map<string, AndroidTabView>()
   readonly pages: ZenPageLookups = { reader: () => null, image: () => null, pdf: () => null }
   /** Shared by the views: what the host offers is learnt once for the run, not per view. */
   private readonly navigation: NavigationBridge
+  /**
+   * Where the host's answers to the views' placements go (Q1, `AndroidTabView.askShown`): the
+   * platform sets it to the chrome's `view.shown` event; until then they are heard by no one.
+   */
+  shown: (tabId: string, shown: boolean) => void = () => {}
   /**
    * Hears every view's `setBounds` (the layout report placing the page slot): the boot's READY
    * takes the first one under the applied insets (`startup.ts`); null once nothing listens.
@@ -834,8 +884,19 @@ export class AndroidTabViewHost implements TabViewHost {
     this.navigation = new NavigationBridge(bridge)
   }
 
+  onShown(tabId: string, shown: boolean): void {
+    this.shown(tabId, shown)
+  }
+
   createView(tab: Tab, events: TabViewEvents): TabView {
-    const view = new AndroidTabView(tab.id, this.bridge, this.pages, this.navigation, this.placed)
+    const view = new AndroidTabView(
+      tab.id,
+      this.bridge,
+      this.pages,
+      this.navigation,
+      this,
+      this.placed
+    )
     view.events = events
     this.views.set(tab.id, view)
     this.bridge.send('view.create', { tabId: tab.id, containerId: tab.containerId })
@@ -844,7 +905,14 @@ export class AndroidTabViewHost implements TabViewHost {
 
   /** Register a view Kotlin created itself (a `window.open` popup adopted as a tab). */
   registerAdopted(tabId: string): AndroidTabView {
-    const view = new AndroidTabView(tabId, this.bridge, this.pages, this.navigation, this.placed)
+    const view = new AndroidTabView(
+      tabId,
+      this.bridge,
+      this.pages,
+      this.navigation,
+      this,
+      this.placed
+    )
     this.views.set(tabId, view)
     return view
   }
