@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NativeImage, WebContents } from 'electron'
-import type { Tab, TabSection } from '../../../shared/types'
+import type { Space, Tab, TabSection } from '../../../shared/types'
 import { BLANK_URL, isNavigableUrl } from '../../../shared/url'
 import type { ZenWindow } from '../../../core/window'
 import {
@@ -270,9 +270,18 @@ export class TabsApi {
           ? own
           : this.resolveWindow(ctx, p.windowId)
       if (target !== own) {
-        throw new ApiError('Tabs can only be moved within their own window in Zenium.')
+        // Chrome moves a tab between any two tabbed windows of one profile
+        // (`kCanOnlyMoveTabsWithinSameProfileError` otherwise). Zenium's synced windows share
+        // their spaces, so a tab is already in every one of them; a window that owns its tabs
+        // (a blank or private window's space) can take one, as the tear-off gives it one. The
+        // synced window a tear-off makes under "sync only pinned tabs" owns its tab by
+        // `Tab.windowId`, not a space, and stays with the drag path for now.
+        if (target.isPrivate !== own.isPrivate)
+          throw new ApiError('Tabs can only be moved between windows in the same profile.')
+        if (!target.localSpace)
+          throw new ApiError('Tabs can only be moved within their own window in Zenium.')
       }
-      this.moveToIndex(tab, own, index)
+      this.moveToIndex(tab, target, index, target !== own ? target.localSpace : null)
       if (index >= 0) index += 1
       moved.push(this.chromeTab(ctx.extension, tab))
     }
@@ -280,25 +289,30 @@ export class TabsApi {
   }
 
   /**
-   * Put a tab at a Chrome index of its window: Chrome indices run across Essentials, pinned and
-   * regular tabs; the neighbour at the target index decides the space and section.
+   * Put a tab at a Chrome index of a window: Chrome indices run across Essentials, pinned and
+   * regular tabs; the neighbour at the target index decides the space and section. Into another
+   * window (`into`, the window's own space): its space, and its pinned section for an Essential,
+   * which blank and private windows do not have.
    */
-  private moveToIndex(tab: Tab, win: ZenWindow, index: number): void {
+  private moveToIndex(tab: Tab, win: ZenWindow, index: number, into: Space | null = null): void {
     const others = this.model.tabsInWindow(win).filter((t) => t.id !== tab.id)
     const at = index < 0 || index > others.length ? others.length : index
     const before = others.slice(0, at)
     const neighbour = others[at] ?? others[at - 1]
     let section: TabSection
     let spaceId: string | undefined
-    if (tab.essential) {
+    if (tab.essential && !into) {
       section = 'essential'
-    } else if (tab.pinned) {
+    } else if (tab.pinned || tab.essential) {
       section = 'pinned'
-      spaceId = tab.spaceId ?? undefined
+      spaceId = into?.id ?? tab.spaceId ?? undefined
     } else {
       section = 'regular'
       spaceId =
-        (neighbour && !neighbour.essential ? neighbour.spaceId : null) ?? tab.spaceId ?? undefined
+        into?.id ??
+        (neighbour && !neighbour.essential ? neighbour.spaceId : null) ??
+        tab.spaceId ??
+        undefined
     }
     const sectionIndex = before.filter((t) => {
       if (section === 'essential') return t.essential

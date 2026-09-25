@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Handler
 import android.util.Log
 import android.view.ActionMode
 import android.view.Menu
@@ -47,6 +48,8 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     private val landing = Landing.Stash()
     /** `window.__zenNative`: the chrome's calls into Kotlin (its queue's refusals are readable for instrumentation). */
     val bridge = JsBridge(host)
+    /** The bridge's asynchronous channel for this document ([BridgePort]): null until the page asks, and on a WebView without it. */
+    private var bridgePort: BridgePort? = null
 
     init {
         // Named in the view hierarchy (`R.id.zen_chrome`) so the accessibility tree tells the
@@ -98,6 +101,8 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                 // The new document's core has not asked for its boot answer yet: a landing before
                 // it does rides that answer, as on a cold start (`land`).
                 landing.reset()
+                // The old document's channel goes with it; the new document asks for its own.
+                closeBridgePort()
                 Log.w("ZenChrome", "the chrome document is being replaced ($url); dropping the old core's tab views")
                 host.onChromeDocumentReplaced()
             }
@@ -116,6 +121,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
             override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
                 ready = false
                 whenReady.clear()
+                closeBridgePort()
                 Log.e(
                     "ZenChrome",
                     "chrome renderer gone (${if (detail.didCrash()) "crashed" else "killed"}, priority at exit " +
@@ -204,6 +210,42 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     /** Run once the chrome document has loaded (queued before that). */
     fun onReady(block: () -> Unit) {
         if (ready) block() else whenReady.add(block)
+    }
+
+    // --- the bridge's asynchronous channel (BridgePort.kt) ---------------------------------
+
+    /**
+     * The page asks for the channel (`bridge.port`, one hop of the boot; main thread): a channel
+     * of this document's, its page end posted to the document with [token] as the message – what
+     * the page's listener wants back (`bridge.ts` `openBridgePort`) – and its host end read on
+     * [handler]'s thread into [JsBridge.call]. One channel per ask: an earlier one (a document
+     * that asked twice) is closed first. Whether one was opened; false on a WebView without the
+     * features, and the page keeps the hop.
+     */
+    fun openBridgePort(token: String, handler: Handler): Boolean {
+        closeBridgePort()
+        val opened = BridgePort.open(this, token, documentOrigin(), handler, bridge::call) ?: return false
+        bridgePort = opened
+        return true
+    }
+
+    /** Tear the channel down (a document replaced, a renderer gone, the view destroyed): nothing arriving is routed from here. */
+    private fun closeBridgePort() {
+        bridgePort?.close()
+        bridgePort = null
+    }
+
+    /** The document's origin, for the port's post: the app origin, or the dev server's while that is what is loaded. */
+    private fun documentOrigin(): Uri {
+        val current = url?.let { Uri.parse(it) }
+        val scheme = current?.scheme
+        val authority = current?.authority
+        return if (scheme != null && authority != null) Uri.parse("$scheme://$authority") else Uri.parse(APP_ORIGIN)
+    }
+
+    override fun destroy() {
+        closeBridgePort()
+        super.destroy()
     }
 
     // --- Kotlin → JS -----------------------------------------------------------------------

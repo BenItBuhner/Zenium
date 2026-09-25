@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { MediaState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { extrapolatePosition } from '@renderer/lib/media'
@@ -25,11 +25,9 @@ export interface MediaSeekSlider {
  * scrubs; until the first tick a stale `now` shows the reported position itself, the
  * extrapolation never running backwards), the thumb while it is dragged, or a seek just sent,
  * held until the page's next report answers it; `seekTo` sends `seekto` clamped to the range;
- * and the slider's handlers with the workaround for Radix committing the value it last
- * *rendered* – a pointer move is a continuous update React may not have drawn when the pointer
- * lifts (a slow renderer holds a frame of moves back), so the seek goes where the pointer last
- * was, not where the thumb was last painted – and for a key's step, which commits first and
- * reports its change after (that change is no scrub).
+ * and the slider's handlers: a change is the thumb under the finger or pointer, a commit the
+ * seek. The commit carries the value last reported – where the pointer let go, or a key's step,
+ * reported before it – which `ui/slider.tsx` sees to over Radix.
  */
 export function useMediaSeek(media: MediaState): {
   duration: number
@@ -45,10 +43,6 @@ export function useMediaSeek(media: MediaState): {
   const [pending, setPending] = useState<{ at: number; positionAt: number | undefined } | null>(
     null
   )
-  /** Where the thumb was last put by hand (see above). */
-  const slid = useRef<number | null>(null)
-  /** A key's step commits first and reports its change after: that change is no scrub. */
-  const committed = useRef<number | null>(null)
 
   useEffect(() => {
     if (!media.playing || scrub !== null) return
@@ -77,21 +71,11 @@ export function useMediaSeek(media: MediaState): {
       step: SCRUB_STEP_S,
       value: [Math.min(duration, shown)],
       onValueChange: ([at]) => {
-        if (at === undefined) return
-        if (at === committed.current) {
-          committed.current = null
-          return
-        }
-        slid.current = at
-        setScrub(at)
+        if (at !== undefined) setScrub(at)
       },
       onValueCommit: ([at]) => {
-        const target = slid.current ?? at
-        slid.current = null
         setScrub(null)
-        if (target === undefined) return
-        committed.current = target
-        seekTo(target)
+        if (at !== undefined) seekTo(at)
       }
     }
   }

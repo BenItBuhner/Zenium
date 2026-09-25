@@ -14,7 +14,7 @@
 // a copy of any value; `v2Tokens.test.ts` lists the page among the v2 surfaces.
 import chromeStylesheet from '../renderer/src/assets/main.css?raw'
 import { PHONE_MAX_WIDTH } from './formFactor'
-import type { CertificateDetails, Platform as PlatformOs } from './types'
+import type { CertificateDetails, ColorScheme, Platform as PlatformOs } from './types'
 import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 import { isCertificateError } from './siteInfo'
@@ -612,19 +612,35 @@ function errorDocumentStyle(accent: ErrorPageAccent | null): string {
 }
 
 /**
- * Puts the chrome's root attributes on the page's root from the media the tab sees, so the token
- * block's `:root[data-theme='dark']`, `[data-pointer='coarse']` and `[data-form-factor='phone']`
- * rules apply to the page as they do to the chrome. The classification is `classifyViewport`'s
- * (`formFactor.ts`), including the WebView's `pointer: fine` on plain touch screens; the theme
- * is the tab's colour scheme, the same one every page in the tab sees.
+ * Puts the chrome's root attributes on the page's root, so the token block's
+ * `:root[data-theme='dark']`, `[data-pointer='coarse']` and `[data-form-factor='phone']` rules
+ * apply to the page as they do to the chrome. The pointer and form factor come from the media
+ * the tab sees, classified as `classifyViewport` does (`formFactor.ts`), including the WebView's
+ * `pointer: fine` on plain touch screens. The theme is the app's: an explicit Light or Dark
+ * setting is written as the chrome writes its own `data-theme` – the engine's colour scheme is
+ * not asked, because on Linux `nativeTheme.themeSource` never reaches a renderer's
+ * `prefers-color-scheme` and the page would paint the OS's side under a chrome of the other –
+ * and only `system` reads the tab's media query, which is the OS's scheme everywhere.
  */
-export const ERROR_PAGE_ATTRIBUTES_SCRIPT =
-  '(function(){var d=document.documentElement,q=function(m){return matchMedia(m).matches};' +
-  "if(q('(prefers-color-scheme: dark)'))d.dataset.theme='dark';" +
-  "var hover=q('(hover: hover)'),coarse=q('(pointer: coarse)')||(navigator.maxTouchPoints>0&&!hover)," +
-  'side=coarse&&!hover?Math.min(innerWidth,innerHeight):innerWidth;' +
-  "d.dataset.pointer=coarse?'coarse':'fine';" +
-  `d.dataset.formFactor=side<${PHONE_MAX_WIDTH}?'phone':coarse?'tablet':'desktop'})()`
+export function errorPageAttributesScript(scheme: ColorScheme = 'system'): string {
+  const theme =
+    scheme === 'system'
+      ? "if(q('(prefers-color-scheme: dark)'))d.dataset.theme='dark';"
+      : scheme === 'dark'
+        ? "d.dataset.theme='dark';"
+        : ''
+  return (
+    '(function(){var d=document.documentElement,q=function(m){return matchMedia(m).matches};' +
+    theme +
+    "var hover=q('(hover: hover)'),coarse=q('(pointer: coarse)')||(navigator.maxTouchPoints>0&&!hover)," +
+    'side=coarse&&!hover?Math.min(innerWidth,innerHeight):innerWidth;' +
+    "d.dataset.pointer=coarse?'coarse':'fine';" +
+    `d.dataset.formFactor=side<${PHONE_MAX_WIDTH}?'phone':coarse?'tablet':'desktop'})()`
+  )
+}
+
+/** The attributes script of a page that follows the system (a host that hands no scheme over). */
+export const ERROR_PAGE_ATTRIBUTES_SCRIPT = errorPageAttributesScript()
 
 /** The reason with the site's name set in bold, the way Chrome names the site it could not reach. */
 function emphasiseSite(reason: string, site: string): string {
@@ -673,26 +689,30 @@ function interstitialHtml(interstitial: CertificateInterstitial, target: string)
  * page script's listeners and the entry the failure committed stay with it, and the root
  * attributes the page's inline script would set are set here (markup written this way runs no
  * scripts). Only an error document is touched; a page that did load meanwhile is left alone.
+ * `scheme` is the app's colour scheme (`errorPageAttributesScript`).
  */
-export function inPlaceErrorPageScript(url: URL): string {
-  const html = JSON.stringify(errorPageHtml(url))
+export function inPlaceErrorPageScript(url: URL, scheme: ColorScheme = 'system'): string {
+  const html = JSON.stringify(errorPageHtml(url, scheme))
   return (
     "(function(html){if(location.protocol!=='chrome-error:')return false;" +
     "var doc=new DOMParser().parseFromString(html,'text/html'),root=document.documentElement;" +
     'root.className=doc.documentElement.className;root.innerHTML=doc.documentElement.innerHTML;' +
-    `${ERROR_PAGE_ATTRIBUTES_SCRIPT};return true})(${html})`
+    `${errorPageAttributesScript(scheme)};return true})(${html})`
   )
 }
 
-/** `zen://error?code=…&description=…&url=…`: Chrome's error page, in the tab, for the failed URL. */
-export function errorPageHtml(url: URL): string {
+/**
+ * `zen://error?code=…&description=…&url=…`: Chrome's error page, in the tab, for the failed URL.
+ * `scheme` is the app's colour scheme, which the page's root takes (`errorPageAttributesScript`).
+ */
+export function errorPageHtml(url: URL, scheme: ColorScheme = 'system'): string {
   const code = Number(url.searchParams.get('code') ?? 0)
   const target = url.searchParams.get('url') ?? ''
   const kind = url.searchParams.get('kind')
   const accent = errorPageAccentOf(url.searchParams)
   if (kind === 'safebrowsing')
-    return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')), accent)
-  if (kind === 'https-only') return httpsOnlyPageHtml(target, code, accent)
+    return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')), accent, scheme)
+  if (kind === 'https-only') return httpsOnlyPageHtml(target, code, accent, scheme)
   if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
   const content = errorPageContent(
     code,
@@ -707,7 +727,7 @@ export function errorPageHtml(url: URL): string {
       ? reloadHtml(content)
       : ''
   const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
-  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${errorDocumentStyle(accent)}</style></head>
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
 <body class="zen-error-page"><main>
   <h1>${escapeHtml(content.title)}</h1>
   <p>${emphasiseSite(content.reason, content.site)}</p>${name}${controls}
@@ -863,7 +883,11 @@ function warningButton(button: WarningButton, autofocus: boolean): string {
  * stacks three, primary first). Under Details, 16 below the actions, the reason, the address at
  * 13 and the secondary that goes on regardless.
  */
-function warningPageHtml(page: WarningPage, accent: ErrorPageAccent | null): string {
+function warningPageHtml(
+  page: WarningPage,
+  accent: ErrorPageAccent | null,
+  scheme: ColorScheme
+): string {
   const data = Object.entries({ interstitial: page.kind, ...page.data })
     .map(([k, v]) => ` data-${k}="${escapeHtml(v)}"`)
     .join('')
@@ -871,7 +895,7 @@ function warningPageHtml(page: WarningPage, accent: ErrorPageAccent | null): str
     `<button type="button" id="zen-details-toggle" class="zen-v2-button zen-interstitial-action" aria-expanded="false" aria-controls="zen-details">Details</button>`,
     ...page.actions.map((b) => warningButton(b, b.primary === true))
   ]
-  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${errorDocumentStyle(accent)}</style></head>
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
 <body class="zen-error-page"><main${data}>
   <div class="zen-interstitial-title" data-tone="${page.tone}">
     ${glyph(page.glyph)}
@@ -901,7 +925,8 @@ function warningPageHtml(page: WarningPage, accent: ErrorPageAccent | null): str
 export function safeBrowsingPageHtml(
   target: string,
   threat: SafeBrowsingThreat,
-  accent: ErrorPageAccent | null = null
+  accent: ErrorPageAccent | null = null,
+  scheme: ColorScheme = 'system'
 ): string {
   const host = hostOf(target)
   const copy = SAFE_BROWSING_THREAT_LABELS[threat]
@@ -919,7 +944,8 @@ export function safeBrowsingPageHtml(
       target,
       data: { threat }
     },
-    accent
+    accent,
+    scheme
   )
 }
 
@@ -931,7 +957,8 @@ export function safeBrowsingPageHtml(
 export function httpsOnlyPageHtml(
   httpUrl: string,
   code: number,
-  accent: ErrorPageAccent | null = null
+  accent: ErrorPageAccent | null = null,
+  scheme: ColorScheme = 'system'
 ): string {
   const host = hostOf(httpUrl)
   const reason = describeNetError(code, 'The secure connection could not be made.')
@@ -952,7 +979,8 @@ export function httpsOnlyPageHtml(
       detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
       target: httpUrl
     },
-    accent
+    accent,
+    scheme
   )
 }
 
@@ -1005,12 +1033,18 @@ export function parseZenUrl(rawUrl: string): URL | null {
   }
 }
 
-/** HTML for any `zen://` URL (unknown pages fall back to the blank page). */
+/**
+ * HTML for any `zen://` URL (unknown pages fall back to the blank page). `scheme` is the app's
+ * colour scheme for the pages that paint a theme of their own (`errorPageAttributesScript`); a
+ * host whose pages' `prefers-color-scheme` follows the setting already (Android's night mode)
+ * leaves it out.
+ */
 export function zenPageHtml(
   rawUrl: string,
   reader?: ReaderPageLookup,
   image?: ImagePageLookup,
-  pdf?: PdfPageLookup
+  pdf?: PdfPageLookup,
+  scheme: ColorScheme = 'system'
 ): string {
   const url = parseZenUrl(rawUrl)
   if (!url) return blankPageHtml()
@@ -1018,7 +1052,7 @@ export function zenPageHtml(
     case 'newtab':
       return newTabPageHtml()
     case 'error':
-      return errorPageHtml(url)
+      return errorPageHtml(url, scheme)
     case 'reader':
       return (
         reader?.(url.searchParams.get('id') ?? '') ??

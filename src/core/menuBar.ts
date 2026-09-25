@@ -34,8 +34,9 @@ const SPLIT_LAYOUT_ITEMS: ReadonlyArray<{
  * Grid / Vertical / Horizontal run the chords' actions: out of a split they split the active
  * tab with the tab below it in that layout; in a split they turn it to that layout, and the
  * layout the split has is checked – choosing it again leaves the split, as the chord does.
- * Unsplit View and New Empty Split View follow, named as the key table names them. Items name
- * their `action`, so each shows its chord and the click runs the same code as the key.
+ * Swap Panes (split-07, on the active pane), Unsplit View and New Empty Split View follow, named
+ * as the key table names them. Items name their `action`, so each shows its chord and the click
+ * runs the same code as the key.
  */
 export function splitViewSubmenu(
   active: Tab | undefined,
@@ -52,6 +53,7 @@ export function splitViewSubmenu(
         enabled: Boolean(active)
       })),
       { type: 'separator' },
+      { label: 'Swap Panes', action: 'split.swap', enabled: Boolean(group) },
       { label: 'Unsplit View', action: 'split.unsplit', enabled: Boolean(group) },
       { label: 'New Empty Split View', action: 'split.newEmpty', enabled: Boolean(active) }
     ]

@@ -1,10 +1,14 @@
-import { dialog } from 'electron'
+import { dialog, nativeImage } from 'electron'
 import { copyFile, mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import type { NewTabBackgroundHost } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
+import { imageAccentHex } from '../../shared/imageColor'
 import type { ElectronWindow } from './window'
+
+/** The side of the resample the accent is read from: 2,304 pixels tell a picture's colour. */
+const ACCENT_SAMPLE_SIDE = 48
 
 /** Host of the page's custom background image (`NewTabPageState.backgroundImage`). */
 export const NEW_TAB_BACKGROUND_HOST = 'newtab-background'
@@ -94,6 +98,30 @@ export class ElectronNewTabBackground implements NewTabBackgroundHost {
     for (const name of await readdir(this.dir)) {
       const ext = extname(name).toLowerCase()
       if (name.slice(0, name.length - ext.length) === BASENAME) await unlink(join(this.dir, name))
+    }
+  }
+
+  /**
+   * The picture's colour for the space's accent (NTP-14): the file decoded in the main process
+   * with `nativeImage` – no CORS grant for a page canvas on `zen://newtab-background`, no
+   * dependency – resampled to 48 × 48 and read as BGRA. `nativeImage` decodes PNG and JPEG; a
+   * WebP, GIF, AVIF or BMP background comes back empty and suggests nothing.
+   */
+  async accent(): Promise<string | null> {
+    const file = this.file
+    if (!file) return null
+    try {
+      const image = nativeImage.createFromPath(file.path)
+      if (image.isEmpty()) return null
+      const sample = image.resize({
+        width: ACCENT_SAMPLE_SIDE,
+        height: ACCENT_SAMPLE_SIDE,
+        quality: 'good'
+      })
+      return imageAccentHex(sample.toBitmap(), 'bgra')
+    } catch (error) {
+      console.warn('[zen] new tab background colour:', (error as Error).message)
+      return null
     }
   }
 
