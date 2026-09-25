@@ -626,8 +626,12 @@ describe('errorPageHtml', () => {
   })
 
   describe('the lookalike question (PS-18)', () => {
-    const url = lookalikePageUrl('https://gogle.com/login', 'google.com', 'edit-distance')
+    const url = lookalikePageUrl('https://gogle.com/login', 'google.com', 'edit-distance', 'top')
     const page = errorPageHtml(parseZenUrl(url)!)
+    const render = (lookalike: string, target: string, reason: string, source: string): string =>
+      errorPageHtml(parseZenUrl(lookalikePageUrl(lookalike, target, reason, source))!)
+    const PUNYCODE = (host: string): string =>
+      `<span class="zen-interstitial-punycode">(${host})</span>`
 
     it('is one of the interstitial family, in warn ink, carrying its URL words', () => {
       expect(interstitialKindOf(url)).toBe('lookalike')
@@ -638,9 +642,10 @@ describe('errorPageHtml', () => {
       const parsed = new URL(url)
       expect(parsed.searchParams.get('code')).toBe(String(BLOCKED_BY_CLIENT_CODE))
       expect(parsed.searchParams.get('url')).toBe('https://gogle.com/login')
+      expect(parsed.searchParams.get('source')).toBe('top')
       expect(page).toContain('<html class="zen-error-document">')
       expect(page).toContain(
-        '<main data-interstitial="lookalike" data-reason="edit-distance" data-target="google.com">'
+        '<main data-interstitial="lookalike" data-reason="edit-distance" data-source="top" data-target="google.com">'
       )
       expect(page).toContain('data-tone="warn"')
       expect(page).toContain('<title>Did you mean google.com?</title>')
@@ -650,7 +655,7 @@ describe('errorPageHtml', () => {
       )
     })
 
-    it('offers Go to <target> as the one primary, Continue to <lookalike> beside it, Back under Details', () => {
+    it('offers Go to <target> as the one primary, Continue to <lookalike> beside it; no Back row: Details holds the reason and the address', () => {
       expect(page.match(/<button[^>]* data-primary/g)).toHaveLength(1)
       expect(page).toContain(
         'class="zen-v2-button zen-interstitial-action" data-primary autofocus data-action="suggested"><span class="zen-interstitial-label">Go to google.com</span>'
@@ -663,54 +668,123 @@ describe('errorPageHtml', () => {
       expect(page.indexOf('data-action="proceed"')).toBeLessThan(
         page.indexOf('data-action="suggested"')
       )
-      // Back is under Details, after the address.
-      expect(page).toContain(
-        'class="zen-v2-button zen-interstitial-action" data-action="back"><span class="zen-interstitial-label">Back</span>'
+      // Under Details: the reason, then the address, and no row of actions – the browser's own
+      // back is the way back (the family's `back` message stays for the phone's key and the bar).
+      expect(page).not.toContain('data-action="back"')
+      expect(page.match(/class="zen-interstitial-actions"/g)).toHaveLength(1)
+      const details = page.slice(
+        page.indexOf('<section id="zen-details"'),
+        page.indexOf('</section>')
       )
-      expect(page.indexOf('id="zen-details"')).toBeLessThan(page.indexOf('data-action="back"'))
-      expect(page.indexOf('zen-interstitial-address">https://gogle.com/login</p>')).toBeLessThan(
-        page.indexOf('data-action="back"')
+      expect(details).toContain('<p><strong>gogle.com</strong> is one character off')
+      expect(details.indexOf('is one character off')).toBeLessThan(
+        details.indexOf('zen-interstitial-address">https://gogle.com/login</p>')
       )
+      expect(details).not.toContain('<button')
       // Nothing here is a danger control: the way on is a question, not a Safe Browsing bypass.
       expect(page).not.toMatch(/<button[^>]*zen-interstitial-danger/)
-      expect(page.match(/class="zen-interstitial-spinner"/g)).toHaveLength(3)
+      expect(page.match(/class="zen-interstitial-spinner"/g)).toHaveLength(2)
       expect(page).toContain(
         `window.postMessage({${INTERSTITIAL_MESSAGE_KEY}:{action:b.dataset.action,url:"https://gogle.com/login"}},"*")`
       )
     })
 
-    it('names the test that matched under Details, in each of its three wordings', () => {
+    it('names the test that matched under Details, in each of its three wordings, and the address it will not ask about again', () => {
       expect(page).toContain(
-        '<p><strong>gogle.com</strong> is one character off <strong>google.com</strong>, a site many people visit.'
+        '<p><strong>gogle.com</strong> is one character off <strong>google.com</strong>, a site many people visit. If you meant to open gogle.com, Continue takes you there and Zenium will not ask about it again.</p>'
       )
-      const embedding = errorPageHtml(
-        parseZenUrl(lookalikePageUrl('https://paypal-login.com/', 'paypal.com', 'embedding'))!
-      )
+      const embedding = render('https://paypal-login.com/', 'paypal.com', 'embedding', 'top')
       expect(embedding).toContain(
-        '<strong>paypal-login.com</strong> contains the name of <strong>paypal.com</strong>'
+        '<p><strong>paypal-login.com</strong> contains the name of <strong>paypal.com</strong>, a site many people visit, but is not part of that site. If you meant to open paypal-login.com, Continue'
       )
-      const skeleton = errorPageHtml(
-        parseZenUrl(lookalikePageUrl('https://xn--pple-43d.com/', 'apple.com', 'skeleton'))!
-      )
+      const skeleton = render('https://paypa1.com/', 'paypal.com', 'skeleton', 'top')
       expect(skeleton).toContain(
-        '<strong>xn--pple-43d.com</strong> is spelled with characters that look like those of <strong>apple.com</strong>'
+        '<p><strong>paypa1.com</strong> is spelled with characters that look like those of <strong>paypal.com</strong>, a site many people visit. If you meant to open paypa1.com, Continue'
       )
-      expect(skeleton).toContain('<title>Did you mean apple.com?</title>')
+      expect(skeleton).toContain('<title>Did you mean paypal.com?</title>')
     })
 
-    it('escapes the target and the address, and falls back for a reason it does not know', () => {
+    it("says whose site the target is: the top list's, or one the user visits", () => {
+      expect(page).toContain('data-source="top"')
+      expect(page).toContain(', a site many people visit.')
+      const engaged = render(
+        'https://mybamk.example/',
+        'mybank.example',
+        'edit-distance',
+        'engaged'
+      )
+      expect(engaged).toContain('data-source="engaged"')
+      expect(engaged).toContain(
+        '<p><strong>mybamk.example</strong> is one character off <strong>mybank.example</strong>, a site you visit. If you meant to open mybamk.example, Continue'
+      )
+      expect(engaged).not.toContain('many people')
+    })
+
+    it('names an IDN address in the form the user saw, its punycode beside it in the deemphasised ink; an ASCII one once', () => {
+      // аррӏе.com in Cyrillic: the lookalike the user saw, under the punycode the address bar keeps.
+      const idn = render('https://xn--80ak6aa92e.com/login', 'apple.com', 'skeleton', 'top')
+      const shown = '\u0430\u0440\u0440\u04cf\u0435.com'
+      const both = `${shown} ${PUNYCODE('xn--80ak6aa92e.com')}`
+      expect(idn).toContain('<h1>Did you mean apple.com?</h1>')
+      expect(idn).toContain(
+        `The address <strong>${shown}</strong> ${PUNYCODE('xn--80ak6aa92e.com')} looks like <strong>apple.com</strong>.`
+      )
+      expect(idn).toContain(
+        `data-action="proceed"><span class="zen-interstitial-label">Continue to ${both}</span>`
+      )
+      expect(idn).toContain(
+        `<p><strong>${shown}</strong> ${PUNYCODE('xn--80ak6aa92e.com')} is spelled with characters that look like those of <strong>apple.com</strong>, a site many people visit. If you meant to open ${both}, Continue`
+      )
+      expect(idn).toContain(
+        `<p class="zen-interstitial-address">https://${shown}/login ${PUNYCODE('xn--80ak6aa92e.com')}</p>`
+      )
+      // The page's URL words and `data-target` keep the punycode: the machine-readable forms.
+      expect(idn).toContain('data-target="apple.com"')
+      expect(idn).toContain('url:"https://xn--80ak6aa92e.com/login"')
+      // The rule the span reads is in the page's stylesheet: the family's deemphasised ink.
+      expect(idn).toContain(
+        '.zen-interstitial-punycode {\n  color: var(--v2-text-deemphasized);\n}'
+      )
+
+      // An IDN target: the title and the primary name it in both forms too.
+      const target = render(
+        'https://xn--mnchen-3ya.de.evil.example/',
+        'xn--mnchen-3ya.de',
+        'embedding',
+        'engaged'
+      )
+      expect(target).toContain('<title>Did you mean m\u00fcnchen.de (xn--mnchen-3ya.de)?</title>')
+      expect(target).toContain(
+        `<h1>Did you mean m\u00fcnchen.de ${PUNYCODE('xn--mnchen-3ya.de')}?</h1>`
+      )
+      expect(target).toContain(
+        `data-action="suggested"><span class="zen-interstitial-label">Go to m\u00fcnchen.de ${PUNYCODE('xn--mnchen-3ya.de')}</span>`
+      )
+      expect(target).toContain('data-target="xn--mnchen-3ya.de"')
+
+      // An ASCII address is named once, and no span is rendered.
+      expect(page).not.toContain('zen-interstitial-punycode"')
+      expect(page).toContain('<p class="zen-interstitial-address">https://gogle.com/login</p>')
+    })
+
+    it('escapes the target and the address, and falls back for a reason or a source it does not know', () => {
       const hostile = errorPageHtml(
         parseZenUrl(
-          lookalikePageUrl('https://gogle.com/', '<img src=x onerror=alert(1)>', 'edit-distance')
+          lookalikePageUrl(
+            'https://gogle.com/',
+            '<img src=x onerror=alert(1)>',
+            'edit-distance',
+            'top'
+          )
         )!
       )
       expect(hostile).not.toContain('<img')
       expect(hostile).toContain('&lt;img')
-      const odd = errorPageHtml(
-        parseZenUrl(lookalikePageUrl('https://gogle.com/', 'google.com', 'made-up'))!
-      )
+      const odd = render('https://gogle.com/', 'google.com', 'made-up', 'made-up')
       expect(odd).toContain('data-reason="edit-distance"')
+      expect(odd).toContain('data-source="top"')
       expect(odd).toContain('is one character off')
+      expect(odd).toContain('a site many people visit')
     })
   })
 })

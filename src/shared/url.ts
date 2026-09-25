@@ -482,12 +482,14 @@ export type InterstitialKind = 'safebrowsing' | 'https-only' | 'lookalike'
 /**
  * `zen://error?kind=lookalike`: the question before a site whose address looks like another's
  * (PS-18). `url` is the address asked for, `target` the registrable domain it resembles, `reason`
- * which test said so (`LookalikeReason`).
+ * which test said so (`LookalikeReason`), `source` which list the target is on
+ * (`LookalikeSource`: the top list, or the user's own engaged sites).
  */
 export function lookalikePageUrl(
   url: string,
   target: string,
   reason: string,
+  source: string,
   accent?: ErrorPageAccent
 ): string {
   const params = new URLSearchParams({
@@ -496,7 +498,8 @@ export function lookalikePageUrl(
     url,
     kind: 'lookalike',
     target,
-    reason
+    reason,
+    source
   })
   setAccent(params, accent)
   return `${ERROR_URL_PREFIX}?${params.toString()}`

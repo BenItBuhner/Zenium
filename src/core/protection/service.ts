@@ -432,6 +432,7 @@ export class ProtectionService {
       url,
       verdict.target,
       verdict.reason,
+      verdict.source,
       this.browser.tabs.errorPageAccent(tabId)
     )
   }

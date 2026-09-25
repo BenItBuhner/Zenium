@@ -11,7 +11,6 @@ import {
   MAX_TOP_DOMAINS,
   MIN_EDIT_TARGET_LENGTH,
   decodePunycodeLabel,
-  describeLookalikeReason,
   isEditDistanceOne,
   parseConfusables,
   skeletonOf,
@@ -149,28 +148,29 @@ describe('the three tests', () => {
 
 describe('LookalikeChecker.check: the table', () => {
   const checker = loaded()
+  /** A verdict naming a top-list target. */
+  const top = (
+    target: string,
+    reason: string
+  ): { target: string; reason: string; source: string } => ({ target, reason, source: 'top' })
   const cases: Array<
-    [url: string, verdict: { target: string; reason: string } | null, why: string]
+    [url: string, verdict: { target: string; reason: string; source: string } | null, why: string]
   > = [
     ['https://google.com/', null, 'the target itself'],
     ['https://www.google.com/search?q=x', null, 'a subdomain of the target'],
-    [
-      'https://gogle.com/',
-      { target: 'google.com', reason: 'edit-distance' },
-      'a dropped character'
-    ],
-    ['https://googlee.com/', { target: 'google.com', reason: 'edit-distance' }, 'an inserted one'],
-    ['https://g00gle.com/', { target: 'google.com', reason: 'skeleton' }, 'digits for letters'],
-    ['https://paypa1.com/', { target: 'paypal.com', reason: 'skeleton' }, 'a one for an l'],
-    ['https://rnicrosoft.com/', { target: 'microsoft.com', reason: 'skeleton' }, 'rn for m'],
+    ['https://gogle.com/', top('google.com', 'edit-distance'), 'a dropped character'],
+    ['https://googlee.com/', top('google.com', 'edit-distance'), 'an inserted one'],
+    ['https://g00gle.com/', top('google.com', 'skeleton'), 'digits for letters'],
+    ['https://paypa1.com/', top('paypal.com', 'skeleton'), 'a one for an l'],
+    ['https://rnicrosoft.com/', top('microsoft.com', 'skeleton'), 'rn for m'],
     [
       'https://paypal.com.evil.example/login',
-      { target: 'paypal.com', reason: 'embedding' },
+      top('paypal.com', 'embedding'),
       'the target as a run of labels'
     ],
     [
       'https://paypal-login.com/',
-      { target: 'paypal.com', reason: 'embedding' },
+      top('paypal.com', 'embedding'),
       'the target as the hyphen-joined start of a label'
     ],
     ['https://google.co/', null, 'a difference in the suffix alone'],
@@ -188,7 +188,7 @@ describe('LookalikeChecker.check: the table', () => {
   it('warns for an IDN spelled in look-alike characters, naming the Latin target', () => {
     const url = new URL('https://\u0430pple.com/').href // Cyrillic а
     expect(url).toContain('xn--')
-    expect(checker.check(url, context())).toEqual({ target: 'apple.com', reason: 'skeleton' })
+    expect(checker.check(url, context())).toEqual(top('apple.com', 'skeleton'))
   })
 
   it('never warns about an engaged site, and takes engaged sites as targets in their own right', () => {
@@ -197,18 +197,35 @@ describe('LookalikeChecker.check: the table', () => {
     // A site with engagement is a target: its one-off neighbour is a lookalike of it.
     expect(checker.check('https://mybamk.example/', context(['mybank.example']))).toEqual({
       target: 'mybank.example',
-      reason: 'edit-distance'
+      reason: 'edit-distance',
+      source: 'engaged'
     })
     expect(
       checker.check('https://mybank.example.evil.example/', context(['mybank.example']))
-    ).toEqual({ target: 'mybank.example', reason: 'embedding' })
+    ).toEqual({ target: 'mybank.example', reason: 'embedding', source: 'engaged' })
     expect(checker.check('https://myb\u0430nk.example/', context(['mybank.example']))).toEqual({
       target: 'mybank.example',
-      reason: 'skeleton'
+      reason: 'skeleton',
+      source: 'engaged'
     })
     // Below the length floor an engaged name is nobody's target either.
     expect('bank'.length).toBeLessThan(MIN_EDIT_TARGET_LENGTH)
     expect(checker.check('https://bamk.example/', context(['bank.example']))).toBeNull()
+  })
+
+  it("names the list the target is on, and a site the user visits is theirs even when it is the top list's too", () => {
+    // google.com is on the top list: its neighbour is "a site many people visit" – until the
+    // user engages with google.com, when the same neighbour is one of "a site you visit".
+    expect(checker.check('https://gogle.com/', context())?.source).toBe('top')
+    expect(checker.check('https://gogle.com/', context(['google.com']))).toEqual({
+      target: 'google.com',
+      reason: 'edit-distance',
+      source: 'engaged'
+    })
+    expect(checker.check('https://g00gle.com/', context(['google.com']))?.source).toBe('engaged')
+    expect(checker.check('https://paypal-login.com/', context(['paypal.com']))?.source).toBe(
+      'engaged'
+    )
   })
 
   it('never warns about a host the user continued to, asking by host and by domain', () => {
@@ -218,10 +235,9 @@ describe('LookalikeChecker.check: the table', () => {
     const sub = context([], ['www.gogle.com'])
     expect(checker.check('https://www.gogle.com/', sub)).toBeNull()
     // Another host of the same lookalike domain that was not allowed still asks.
-    expect(checker.check('https://mail.gogle.com/', context([], ['www.gogle.com']))).toEqual({
-      target: 'google.com',
-      reason: 'edit-distance'
-    })
+    expect(checker.check('https://mail.gogle.com/', context([], ['www.gogle.com']))).toEqual(
+      top('google.com', 'edit-distance')
+    )
   })
 
   it('keeps the top list quiet about itself, whatever the neighbours in it', () => {
@@ -232,17 +248,5 @@ describe('LookalikeChecker.check: the table', () => {
       if (checker.check(`https://${domain}/`, context())) warned++
     }
     expect(warned).toBe(0)
-  })
-
-  it('words each reason for the page', () => {
-    expect(describeLookalikeReason('edit-distance', 'gogle.com', 'google.com')).toBe(
-      'gogle.com is one character off google.com.'
-    )
-    expect(describeLookalikeReason('embedding', 'paypal-login.com', 'paypal.com')).toContain(
-      'contains the name paypal.com'
-    )
-    expect(describeLookalikeReason('skeleton', 'g00gle.com', 'google.com')).toContain(
-      'characters that look like'
-    )
   })
 })

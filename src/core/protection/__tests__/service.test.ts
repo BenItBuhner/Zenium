@@ -690,7 +690,8 @@ describe('ProtectionService: the lookalike-domain warning (PS-18)', () => {
     info.mockRestore()
     expect(f.browser.protection.checkLookalike(LOOKALIKE)).toEqual({
       target: 'google.com',
-      reason: 'edit-distance'
+      reason: 'edit-distance',
+      source: 'top'
     })
     expect(f.browser.protection.checkLookalike('https://google.com/')).toBeNull()
     // The check sits under the Safe Browsing switch.
@@ -717,6 +718,7 @@ describe('ProtectionService: the lookalike-domain warning (PS-18)', () => {
     expect(warning.searchParams.get('url')).toBe(LOOKALIKE)
     expect(warning.searchParams.get('target')).toBe('google.com')
     expect(warning.searchParams.get('reason')).toBe('edit-distance')
+    expect(warning.searchParams.get('source')).toBe('top')
     view.commit(warning.href)
     expect(f.browser.tabs.tab(view.tabId)!.errorCode).toBe(-20)
     // The verdict was consumed: another failure of the tab is its own.
@@ -791,7 +793,8 @@ describe('ProtectionService: the lookalike-domain warning (PS-18)', () => {
     // A verdict noted for one address does not explain the failure of another.
     f.browser.protection.notePendingLookalike(view.tabId, LOOKALIKE, {
       target: 'google.com',
-      reason: 'edit-distance'
+      reason: 'edit-distance',
+      source: 'top'
     })
     view.events.onFailLoad(-102, 'net::ERR_CONNECTION_REFUSED', 'https://other.example/')
     expect(lastLoad(view).searchParams.get('kind')).toBeNull()
@@ -812,10 +815,11 @@ describe('ProtectionService: the lookalike-domain warning (PS-18)', () => {
     for (let i = 0; i < ENGAGED_VISITS; i++)
       f.browser.history.visit(`https://mybank.example/page${i % 3}`, 'Bank', null)
     expect(f.browser.protection.engaged()).toContain('mybank.example')
-    // The engaged site is a target: its neighbour is a lookalike of it.
+    // The engaged site is a target: its neighbour is a lookalike of it, "a site you visit".
     expect(f.browser.protection.checkLookalike('https://mybamk.example/')).toEqual({
       target: 'mybank.example',
-      reason: 'edit-distance'
+      reason: 'edit-distance',
+      source: 'engaged'
     })
     // Below the bar nothing changes.
     f.browser.history.visit('https://twice.example/', 'Twice', null, { transition: 'typed' })
@@ -894,13 +898,16 @@ describe('ProtectionService: the lookalike-domain warning (PS-18)', () => {
     await tablesLoaded(f)
     const page = f.browser.protection.lookalikePage('tab', LOOKALIKE, {
       target: 'google.com',
-      reason: 'edit-distance'
+      reason: 'edit-distance',
+      source: 'engaged'
     })
     const url = new URL(page)
     expect(url.protocol).toBe('zen:')
     expect(url.searchParams.get('kind')).toBe('lookalike')
     expect(url.searchParams.get('code')).toBe('-20')
     expect(url.searchParams.get('target')).toBe('google.com')
+    expect(url.searchParams.get('reason')).toBe('edit-distance')
+    expect(url.searchParams.get('source')).toBe('engaged')
   })
 })
 

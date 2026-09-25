@@ -1,6 +1,7 @@
 import { hostnameOf, registrableDomain } from '../blocking/domain'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
-import type { LookalikeReason, LookalikeVerdict } from '../../shared/privacy'
+import type { LookalikeReason, LookalikeSource, LookalikeVerdict } from '../../shared/privacy'
+import { unicodeHost } from '../../shared/punycode'
 
 /**
  * The lookalike-domain check behind the `zen://error?kind=lookalike` warning (PS-18; Chrome's
@@ -36,7 +37,10 @@ export const MIN_EDIT_TARGET_LENGTH = 5
 /** The top list is cut here at load, whatever the file holds. */
 export const MAX_TOP_DOMAINS = 2_500
 
-export type { LookalikeReason, LookalikeVerdict }
+export type { LookalikeReason, LookalikeSource, LookalikeVerdict }
+// The Punycode decoder lives with the shared code so the question page can name an IDN address
+// in the form the user saw; it is the engine's primitive still.
+export { decodePunycodeLabel, unicodeHost } from '../../shared/punycode'
 
 /** The two bundled tables, as text: one registrable domain per line; `source ; target` rows. */
 export interface LookalikeTables {
@@ -147,69 +151,6 @@ function suffixOf(domain: string): string {
   return dot === -1 ? '' : domain.slice(dot + 1)
 }
 
-/**
- * RFC 3492 Punycode, one label: `xn--pple-43d` → `аpple`. The URL parser hands hostnames over in
- * their ASCII form, and the skeleton needs the characters the user saw. A malformed label comes
- * back as it was.
- */
-export function decodePunycodeLabel(label: string): string {
-  if (!label.startsWith('xn--')) return label
-  const input = label.slice(4)
-  if (!input) return label
-  const base = 36
-  const tMin = 1
-  const tMax = 26
-  const skew = 38
-  const damp = 700
-  let n = 128
-  let i = 0
-  let bias = 72
-  const basic = input.lastIndexOf('-')
-  const output: number[] = []
-  for (let j = 0; j < Math.max(basic, 0); j++) {
-    const c = input.charCodeAt(j)
-    if (c >= 0x80) return label
-    output.push(c)
-  }
-  const digit = (c: number): number =>
-    c - 48 < 10 ? c - 22 : c - 65 < 26 ? c - 65 : c - 97 < 26 ? c - 97 : base
-  const adapt = (delta: number, numPoints: number, first: boolean): number => {
-    let d = first ? Math.floor(delta / damp) : delta >> 1
-    d += Math.floor(d / numPoints)
-    let k = 0
-    while (d > ((base - tMin) * tMax) >> 1) {
-      d = Math.floor(d / (base - tMin))
-      k += base
-    }
-    return k + Math.floor(((base - tMin + 1) * d) / (d + skew))
-  }
-  for (let index = basic > 0 ? basic + 1 : 0; index < input.length;) {
-    const oldI = i
-    let w = 1
-    for (let k = base; ; k += base) {
-      if (index >= input.length) return label
-      const d = digit(input.charCodeAt(index++))
-      if (d >= base) return label
-      i += d * w
-      const t = k <= bias ? tMin : k >= bias + tMax ? tMax : k - bias
-      if (d < t) break
-      w *= base - t
-    }
-    const len = output.length + 1
-    bias = adapt(i - oldI, len, oldI === 0)
-    n += Math.floor(i / len)
-    i %= len
-    if (n > 0x10ffff) return label
-    output.splice(i++, 0, n)
-  }
-  return String.fromCodePoint(...output)
-}
-
-/** A hostname with its IDN labels decoded to the characters they show (`xn--…` → Unicode). */
-export function unicodeHost(host: string): string {
-  return host.includes('xn--') ? host.split('.').map(decodePunycodeLabel).join('.') : host
-}
-
 /** What `check` needs from the browser besides the URL. */
 export interface LookalikeContext {
   /** Registrable domains with engagement (typed visits in history): never warned about, and targets in their own right. */
@@ -296,6 +237,19 @@ export class LookalikeChecker {
   }
 
   /**
+   * The verdict naming `target`, with the list it came from: a site the user engages with is
+   * "a site you visit" to them even when the top list carries it too, so `engaged` wins.
+   */
+  private verdict(
+    target: string,
+    reason: LookalikeReason,
+    context: LookalikeContext
+  ): LookalikeVerdict {
+    const source: LookalikeSource = context.engaged.has(target) ? 'engaged' : 'top'
+    return { target, reason, source }
+  }
+
+  /**
    * Skeletons are compared to skeletons (UTS #39: `m`'s prototype is `rn`, so `microsoft.com`
    * and `rnicrosoft.com` share one), the top list's precomputed at load, the engaged sites' –
    * a handful – here.
@@ -303,10 +257,10 @@ export class LookalikeChecker {
   private skeletonMatch(domain: string, context: LookalikeContext): LookalikeVerdict | null {
     const skeleton = skeletonOf(domain, this.confusables)
     const top = this.topBySkeleton.get(skeleton)
-    if (top && top !== domain) return { target: top, reason: 'skeleton' }
+    if (top && top !== domain) return this.verdict(top, 'skeleton', context)
     for (const site of context.engaged)
       if (site !== domain && skeletonOf(site, this.confusables) === skeleton)
-        return { target: site, reason: 'skeleton' }
+        return this.verdict(site, 'skeleton', context)
     return null
   }
 
@@ -318,9 +272,9 @@ export class LookalikeChecker {
       isEditDistanceOne(domain, target) && nameOf(target) !== name
     for (const target of context.engaged)
       if (nameOf(target).length >= MIN_EDIT_TARGET_LENGTH && near(target))
-        return { target, reason: 'edit-distance' }
+        return this.verdict(target, 'edit-distance', context)
     for (const target of this.editTargets)
-      if (near(target)) return { target, reason: 'edit-distance' }
+      if (near(target)) return this.verdict(target, 'edit-distance', context)
     return null
   }
 
@@ -339,7 +293,7 @@ export class LookalikeChecker {
         for (let take = 2; take <= Math.min(4, labels.length - i - 1); take++) {
           const run = labels.slice(i, i + take).join('.')
           if (this.isTarget(run, context) && run !== domain)
-            return { target: run, reason: 'embedding' }
+            return this.verdict(run, 'embedding', context)
         }
       }
       // A target's name as the hyphen-joined start of a label: `paypal-login.com`,
@@ -351,26 +305,10 @@ export class LookalikeChecker {
         for (const suffix of new Set([suffixOf(domain), 'com'])) {
           const target = suffix ? `${name}.${suffix}` : name
           if (target !== domain && this.isTarget(target, context))
-            return { target, reason: 'embedding' }
+            return this.verdict(target, 'embedding', context)
         }
       }
     }
     return null
-  }
-}
-
-/** The reason in the warning page's words. */
-export function describeLookalikeReason(
-  reason: LookalikeReason,
-  lookalike: string,
-  target: string
-): string {
-  switch (reason) {
-    case 'edit-distance':
-      return `${lookalike} is one character off ${target}.`
-    case 'embedding':
-      return `${lookalike} contains the name ${target}, but is not part of that site.`
-    case 'skeleton':
-      return `${lookalike} is spelled with characters that look like those of ${target}.`
   }
 }

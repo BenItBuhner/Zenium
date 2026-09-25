@@ -134,7 +134,7 @@ describe('SafeBrowsingHandler', () => {
 })
 
 describe('LookalikeHandler', () => {
-  const VERDICT: LookalikeVerdict = { target: 'google.com', reason: 'edit-distance' }
+  const VERDICT: LookalikeVerdict = { target: 'google.com', reason: 'edit-distance', source: 'top' }
   const asking = (): {
     lookup: { check: (url: string) => LookalikeVerdict | null }
     asked: string[]
