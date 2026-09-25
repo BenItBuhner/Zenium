@@ -434,12 +434,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 onFrame()
             } else {
                 view.postVisualStateCallback(++shownSeq, object : WebView.VisualStateCallback() {
-                    override fun onComplete(requestId: Long) = afterFrames(2, onFrame)
+                    override fun onComplete(requestId: Long) {
+                        // Flag-gated, the motion profile's (BridgeLatency.SHOWN): the frame the
+                        // callback names, and the reply two frames on; 0 and nothing when off.
+                        val drawnUs = BridgeLatency.stamp()
+                        afterFrames(2) {
+                            onFrame()
+                            BridgeLatency.arrived(BridgeLatency.SHOWN, BridgeLatency.FRAME, drawnUs, "view.shown:$tabId")?.dispatched()
+                        }
+                    }
                 })
             }
         },
-        armDeadline = { onDeadline ->
-            val deadline = Runnable { onDeadline() }
+        armDeadline = { tabId, onDeadline ->
+            val deadline = Runnable {
+                onDeadline()
+                BridgeLatency.arrived(BridgeLatency.SHOWN, BridgeLatency.DEADLINE, BridgeLatency.stamp(), "view.shown:$tabId")?.dispatched()
+            }
             main.postDelayed(deadline, PageVisibility.DRAWN_DEADLINE_MS)
             val disarm: () -> Unit = { main.removeCallbacks(deadline) }
             disarm

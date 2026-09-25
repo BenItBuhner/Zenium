@@ -45,6 +45,22 @@ object BridgeLatency {
     const val POST = "post"
     const val BATCH = "batch"
 
+    /**
+     * Not a string of the chrome's but the host's answer to one (Q1, `view.shown`,
+     * [PlacementAnswer]): `arrivedUs` is the moment the answer's signal came – the view's
+     * visual-state callback, the frame that shows the page ([FRAME]), or the deadline with no
+     * frame ([DEADLINE]) – and `dispatchedUs` the moment the reply left for the chrome (after
+     * the two frames [Host.afterFrames] counts past the callback). `what` is
+     * `view.shown:<tabId>`. Beside the page's `bridge:answer:view.shown:<tabId>:<shown>` and
+     * `cover:drop:<tabId>` marks, the placement batch's and the ask's own samples, it puts the
+     * landing's whole sequence – the batch's main task, the view's draw, the answer, the
+     * chrome's drop – on the trace's one clock. An ask refused at once (no view, not shown)
+     * leaves no sample: the ask's `call` sample and the page's `false` mark are its record.
+     */
+    const val SHOWN = "shown"
+    const val FRAME = "frame"
+    const val DEADLINE = "deadline"
+
     /** One string: where it came from, what it was, when it arrived and when its work began. */
     class Sample(val kind: String, val via: String, val arrivedUs: Long) {
         /** The method (a batch's methods joined with `+`), set once the route knows it. */

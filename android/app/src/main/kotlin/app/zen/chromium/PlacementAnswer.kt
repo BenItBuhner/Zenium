@@ -40,8 +40,8 @@ class PlacementAnswer(
      * the host shows.
      */
     private val armFrame: (tabId: String, onFrame: () -> Unit) -> Unit,
-    /** Arm `onDeadline` for [PageVisibility.DRAWN_DEADLINE_MS] from now; answers with its disarm. */
-    private val armDeadline: (onDeadline: () -> Unit) -> (() -> Unit)
+    /** Arm `onDeadline` for `tabId`'s ask, [PageVisibility.DRAWN_DEADLINE_MS] from now; answers with its disarm. */
+    private val armDeadline: (tabId: String, onDeadline: () -> Unit) -> (() -> Unit)
 ) {
     /** Asks answered at once, without a frame armed (a view not shown). */
     var refused = 0L
@@ -68,7 +68,7 @@ class PlacementAnswer(
                 reply(shown)
             }
         }
-        disarm = armDeadline { once(false) }
+        disarm = armDeadline(tabId) { once(false) }
         armFrame(tabId) { once(true) }
     }
 }

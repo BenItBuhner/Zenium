@@ -27,7 +27,7 @@ class PlacementAnswerTest {
     private val answer = PlacementAnswer(
         showing = { tabId -> visible[tabId] == true },
         armFrame = { tabId, onFrame -> frames += tabId to onFrame },
-        armDeadline = { onDeadline ->
+        armDeadline = { _, onDeadline ->
             deadlines += onDeadline
             val disarm: () -> Unit = { deadlines.remove(onDeadline); disarmed += onDeadline }
             disarm
