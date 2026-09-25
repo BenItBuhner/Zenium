@@ -171,6 +171,13 @@ export interface HostCapabilities {
   /** The host has a system share sheet (`app.share`); menus offer Share items when true. */
   share: boolean
   /**
+   * The browser's own share panel stands in for the system sheet (Android below 14, SH-03): a
+   * share the menu starts comes back to the chrome as `share.panel`, so the menu's Share row
+   * holds its sheet for the panel to take over (§9.38's hand-off) instead of leaving first.
+   * False wherever the share sheet is the system's alone.
+   */
+  sharePanel: boolean
+  /**
    * The OS itself confirms copies with a clipboard chip (Android 13+); the chrome then stays
    * quiet instead of toasting "Link copied" a second time.
    */

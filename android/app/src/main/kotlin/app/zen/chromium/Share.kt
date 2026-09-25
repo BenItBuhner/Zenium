@@ -366,7 +366,7 @@ class Share(private val host: Host, private val io: Executor) {
      * promise until it is answered ([Panel.awaited]). A page's files keep the system sheet, as
      * Chrome's do. Android 14 and later keep the system sheet as it is.
      */
-    private fun panelStandsIn(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+    private fun panelStandsIn(): Boolean = panelStandsIn(Build.VERSION.SDK_INT, files = false)
 
     /**
      * A share the panel is showing: its intent, kept for the chrome's answer, and the `app.share`
@@ -387,8 +387,17 @@ class Share(private val host: Host, private val io: Executor) {
             reply(result)
         }
 
+        /**
+         * The chrome's action on the panel, as the `app.share` call hears it: a page's awaited
+         * share gets [awaitedPanelAnswer]'s word (none for More, whose word is the system sheet's);
+         * the browser's own was answered at the event and hears nothing more.
+         */
+        fun settle(kind: String, started: Boolean = true) {
+            if (awaited) awaitedPanelAnswer(kind, started)?.let { answer(it) } else answer(null)
+        }
+
         /** The answer when the panel goes without a share: nothing for the browser's own, `aborted` for a page's. */
-        fun release() = answer(if (awaited) SHARE_ABORTED else null)
+        fun release() = settle("dismiss")
     }
 
     /** One app of the panel's row. */
@@ -522,7 +531,7 @@ class Share(private val host: Host, private val io: Executor) {
                 val flat = args.str("component")
                 val component = ComponentName.unflattenFromString(flat)
                 if (component == null) {
-                    entry.release()
+                    entry.settle("target", started = false)
                     reply(Host.Rejection("no such app"))
                     return
                 }
@@ -531,14 +540,14 @@ class Share(private val host: Host, private val io: Executor) {
                 try {
                     activity.startActivity(direct)
                     io.execute { history.record(entry.type, flat, entry.private) }
-                    entry.answer(if (entry.awaited) SHARE_SHARED else null)
+                    entry.settle("target")
                 } catch (e: ActivityNotFoundException) {
                     toast("That app is no longer installed")
                     io.execute { history.forget(flat) }
-                    entry.release()
+                    entry.settle("target", started = false)
                 } catch (e: SecurityException) {
                     toast("That app could not be opened")
-                    entry.release()
+                    entry.settle("target", started = false)
                 }
             }
             "more" -> launchChooser(entry.send, entry.url, entry.tabId, { result ->
@@ -551,13 +560,13 @@ class Share(private val host: Host, private val io: Executor) {
             }, awaitOutcome = entry.awaited)
             "qr" -> {
                 entry.url?.let { showQrCode(it) }
-                entry.answer(if (entry.awaited) SHARE_SHARED else null)
+                entry.settle("qr")
             }
             "copyImage" -> {
                 copyImage(entry.send)
-                entry.answer(if (entry.awaited) SHARE_SHARED else null)
+                entry.settle("copyImage")
             }
-            "chip" -> entry.answer(if (entry.awaited) SHARE_SHARED else null)
+            "chip" -> entry.settle("chip")
             else -> entry.release()
         }
         reply(null)
@@ -828,6 +837,29 @@ class Share(private val host: Host, private val io: Executor) {
         /** The sheet's way out before the row's Long screenshot is relayed: its stitch copies the page off the screen. */
         private const val SCREENSHOT_DELAY_MS = 450L
         private const val FETCH_TIMEOUT_MS = 10_000
+
+        /**
+         * Whether Zenium's own share panel stands in for the system sheet: below Android 14 (where
+         * the sheet has no row for the sharing app's actions), for a link, text or an image – a
+         * page's awaited `navigator.share` included, as Chrome's hub takes one – but never for a
+         * page's files, which Chrome too hands to the system sheet.
+         */
+        fun panelStandsIn(sdkInt: Int, files: Boolean): Boolean = !files && sdkInt < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+
+        /**
+         * What a page's awaited share hears for the panel's answer (`share.panelAction`), as
+         * Chrome's hub answers a Web Share's `TargetChosenCallback`: [SHARE_SHARED] when an app
+         * took the share (`started`), when one of the browser's own chips ran (a first-party
+         * tap calls `callTargetChosenCallback()` in Chrome), for QR and Copy image; [SHARE_ABORTED]
+         * for a dismissal or an app that would not start; nothing for More – the system sheet
+         * it opens answers for itself ([Outcome]).
+         */
+        fun awaitedPanelAnswer(kind: String, started: Boolean = true): String? = when (kind) {
+            "target" -> if (started) SHARE_SHARED else SHARE_ABORTED
+            "chip", "qr", "copyImage" -> SHARE_SHARED
+            "more" -> null
+            else -> SHARE_ABORTED
+        }
 
         /** The sheet's type for a set of files: their one type, the group's wildcard (`image` slash star) for pictures of several kinds, else anything. */
         fun commonMimeType(types: List<String>): String {
