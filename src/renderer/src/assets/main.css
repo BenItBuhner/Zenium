@@ -12948,7 +12948,10 @@ ol.zen-page-prose-list {
 }
 /*
  * The window form (`.zen-tasks-window`: the task manager in its own window, W5-18 C2–C4): the
- * frame's bar is the title, so the search field leads the content at the page's 16; the table
+ * frame's bar is the title, so the search field leads the content at the page's 16 – the 16 is
+ * the HEADER's padding (the title block's 16 in the tab form), not the search wrapper's: the
+ * field's glyph and clear button are absolute against that wrapper and would stay 16 high of a
+ * field the wrapper had pushed down (R1). The table
  * takes the window – no 728 column: the field, the body and the footer's verbs run to the
  * window's edges with the 32 held at both (the page's 16 plus the rows' 16), the figure columns
  * keeping their fixed widths right-aligned at the trailing 32 and the Task column taking the
@@ -12958,7 +12961,7 @@ ol.zen-page-prose-list {
  * window's default content width, 664 + 2 × 32 + the gutter's 8 = 736, the column stands at
  * 32 / 32 as the tab form's does.
  */
-.zen-tasks-window .zen-page-search {
+.zen-tasks-window .zen-page-header {
   padding-top: 16px;
 }
 .zen-tasks-window .zen-page-search,

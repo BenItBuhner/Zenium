@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +19,8 @@ import type { Tab, TaskInfo, TaskList, UIState } from '@shared/types'
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const css = readFileSync(resolve(__dirname, '../../../../assets/main.css'), 'utf8')
 
 const MB = 1024 * 1024
 
@@ -542,6 +546,13 @@ describe('TasksPage', () => {
     expect(el.querySelector('.zen-page-header')!.firstElementChild).toBe(
       field.closest('.zen-page-search')
     )
+    // R1: the 16 above the field is the HEADER's padding, never the search wrapper's – the
+    // glyph (and the clear button, once there is text) are absolute against that wrapper at the
+    // field's centre, so a padded wrapper would push the field down and leave them 16 high.
+    const wrapper = field.closest('.zen-page-search')!
+    expect(el.querySelector('.zen-page-search-glyph')!.closest('.zen-page-search')).toBe(wrapper)
+    expect(css).toMatch(/\.zen-tasks-window \.zen-page-header \{[^}]*padding-top: 16px;/)
+    expect(css).not.toMatch(/\.zen-tasks-window \.zen-page-search[^{]*\{[^}]*padding/)
     const table = el.querySelector<HTMLElement>('[data-testid="tasks-table"]')!
     expect(table.getAttribute('aria-label')).toBe('Task Manager')
     expect(table.getAttribute('data-form')).toBe('window')
@@ -569,6 +580,7 @@ describe('TasksPage', () => {
     // The field's text is the first Escape's: cleared, the key taken.
     await type(field, 'wiki')
     expect(pids(el)).toEqual([201])
+    expect(el.querySelector('.zen-page-search-clear')!.closest('.zen-page-search')).toBe(wrapper)
     expect(await escapeOn(field)).toBe(true)
     expect(field.value).toBe('')
     await act(async () => {
