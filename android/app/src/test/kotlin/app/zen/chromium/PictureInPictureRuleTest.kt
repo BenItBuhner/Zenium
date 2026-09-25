@@ -4,11 +4,33 @@ import app.zen.chromium.PictureInPictureRule.End
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PictureInPictureRuleTest {
     private val pip = "t1"
+
+    /** A page's video session on `tabId`, as the core resolves it. */
+    private fun session(tabId: String, playing: Boolean = true) = MediaSessionInfo(
+        tabId = tabId,
+        title = "Clip",
+        artist = "video.example",
+        album = "",
+        artwork = null,
+        playing = playing,
+        video = true,
+        width = 1920,
+        height = 1080,
+        duration = 120.0,
+        position = 10.0,
+        playbackRate = 1.0,
+        hasPosition = true,
+        positionAt = 1_000_000L,
+        actions = setOf("play", "pause"),
+        fullscreen = false,
+        private = false
+    )
 
     // --- endings by themselves (Chrome's dismissals) ---
 
@@ -171,5 +193,52 @@ class PictureInPictureRuleTest {
         assertEquals("t1", PictureInPictureRule.controlTab(shownFor = "t1", sessionTabId = "t2"))
         assertEquals("t2", PictureInPictureRule.controlTab(shownFor = null, sessionTabId = "t2"))
         assertNull(PictureInPictureRule.controlTab(shownFor = null, sessionTabId = null))
+    }
+
+    // --- the window's params follow its own tab's session alone ---
+
+    @Test
+    fun withoutTheWindowTheParamsFollowTheSession() {
+        val s = session("t2")
+        assertSame(s, PictureInPictureRule.windowSession(pipTabId = null, session = s))
+        assertNull(PictureInPictureRule.windowSession(pipTabId = null, session = null))
+    }
+
+    @Test
+    fun theWindowKeepsItsOwnTabsButtonsWhileItsSessionHoldsTheControls() {
+        val playing = session("t1")
+        assertSame(playing, PictureInPictureRule.windowSession(pip, playing))
+        // Paused by its own word: its play button, still its own.
+        val paused = session("t1", playing = false)
+        assertSame(paused, PictureInPictureRule.windowSession(pip, paused))
+    }
+
+    @Test
+    fun anotherTabsSessionTakingTheControlsDropsTheWindowsButtons() {
+        // t2's audio took the OS controls while t1's video is the small window. t1's own session
+        // may have ended behind t2's – the host hears the resolved session alone, and t1's buttons
+        // kept would act on nothing – so the window's params are those of no session: the shape
+        // kept, the actions emptied. SystemUI's row on it is then the active session's, t2's,
+        // acting on t2 – Chrome's window, whose params never set actions of their own.
+        assertNull(PictureInPictureRule.windowSession(pip, session("t2")))
+        assertNull(PictureInPictureRule.windowSession(pip, session("t2", playing = false)))
+    }
+
+    @Test
+    fun theWindowsOwnSessionGoneWithNoOthersDropsItsButtons() {
+        // The element removed, the page's session cleared, no other tab's: the core resolves none
+        // and the window shows the X and expand alone.
+        assertNull(PictureInPictureRule.windowSession(pip, null))
+    }
+
+    @Test
+    fun theWindowsOwnSessionTakingTheControlsBackBringsItsButtonsBack() {
+        var params = PictureInPictureRule.windowSession(pip, session("t1"))
+        assertEquals("t1", params?.tabId)
+        params = PictureInPictureRule.windowSession(pip, session("t2"))
+        assertNull(params)
+        val back = session("t1")
+        params = PictureInPictureRule.windowSession(pip, back)
+        assertSame(back, params)
     }
 }

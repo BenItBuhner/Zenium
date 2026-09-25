@@ -575,19 +575,21 @@ class MediaSessions(private val host: Host, private val io: Executor) {
      * actions. While a chrome player holds the controls they are those of no session (as after
      * [clear]): no video to frame, and a page's auto-enter from before must not linger and pull
      * the player's tab into the small window from Home. While the window is the small one its
-     * params are its own tab's: a session another tab's audio takes meanwhile (the core resolves
-     * the playing one) neither reshapes the window to its ratio nor hands it buttons for a page
-     * the window does not show – the window keeps the params it has until its tab reports again.
-     * Its own tab's session gone (the element removed, the page's session cleared: the core
-     * resolves none) takes the buttons with it – the window keeps its shape and shows the
-     * platform's X and expand alone, as SystemUI's row follows the session's state in Chrome.
+     * params follow its own tab's session alone ([PictureInPictureRule.windowSession]): a session
+     * another tab's audio takes meanwhile (the core resolves the playing one) neither reshapes the
+     * window to its ratio nor hands it buttons for a page the window does not show, and the
+     * window's own buttons go with it – its tab's session may have ended behind the other's (the
+     * host hears the resolved session alone), and buttons kept for a session that is gone act on
+     * nothing. The window keeps its shape; its row is then SystemUI's own for the package's
+     * active media session – the other tab's play / pause, acting on that tab through [callback]
+     * – or, its own tab's session gone with no other's (the element removed, the page's session
+     * cleared: the core resolves none, [clear]), the platform's X and expand alone: Chrome's
+     * window's row in either state, whose params set no actions at all. Its own tab's session
+     * taking the controls back brings its buttons back.
      */
     private fun updatePictureInPictureParams() {
         if (!pictureInPictureSupported || destroyed) return
-        val session = current
-        val pipTab = pictureInPictureTab
-        if (pipTab != null && session != null && session.tabId != pipTab) return
-        val info = session?.takeIf(MediaControls::pictureInPictureEligible)
+        val info = PictureInPictureRule.windowSession(pictureInPictureTab, current)?.takeIf(MediaControls::pictureInPictureEligible)
         runCatching { activity.setPictureInPictureParams(paramsOf(info, autoEnter(info))) }
     }
 

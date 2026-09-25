@@ -26,7 +26,14 @@ package app.zen.chromium
  *
  * A dismissal that comes within [MIN_EXIT_DELAY_MS] of the entry waits it out (Chrome's
  * `MIN_EXIT_DELAY_MILLIS`): the system is still animating the window in, and a
- * `moveTaskToBack` under that animation leaves it in a bad state.
+ * `moveTaskToBack` under that animation leaves it in a bad state. One decided with the screen
+ * off or the keyguard up is held for the activity's next `onStart` instead ([shouldDeferEnding],
+ * Chrome's `mDismissPending`).
+ *
+ * While the window is up its params follow its own tab's session alone ([windowSession]): a
+ * session another tab's audio takes meanwhile is none for the window, whose own buttons go with
+ * it – Chrome's window sets no actions of its own, and SystemUI's row on it is the package's
+ * active media session's.
  *
  * How the window ends when the user ends it – expanded back to the app, or closed with its X –
  * is [onLeft]: expanded, the page resumes as it was; closed, the video pauses (Chrome's `onStop`
@@ -118,9 +125,25 @@ object PictureInPictureRule {
 
     /**
      * The tab a control from the system acts on: the tab the button was shown for when it carries
-     * one (the picture-in-picture window's actions name the window's tab – the window keeps its
-     * tab's buttons while another tab's audio holds the session), else the session's tab (the
-     * notification's and the lock screen's buttons are the session's own). Null: nothing to act on.
+     * one (the picture-in-picture window's own actions name the window's tab, [windowSession]),
+     * else the session's tab (the notification's and the lock screen's buttons are the session's
+     * own, as is SystemUI's row on a window with no actions of its own). Null: nothing to act on.
      */
     fun controlTab(shownFor: String?, sessionTabId: String?): String? = shownFor ?: sessionTabId
+
+    /**
+     * The session the picture-in-picture window's params follow: without the window, the session
+     * as the core resolved it (the auto-enter rule, the shape and buttons the window would open
+     * with); with the window up, its own tab's session alone. Another tab's session holding the
+     * OS controls (a background tab's audio – the core resolves the tab whose media started last)
+     * is none for the window: its params become those of no session – the shape kept, the actions
+     * emptied ([MediaSessions.paramsOf] with null) – since the window's own tab's session may have
+     * ended behind the other's (the host hears the resolved session alone, and buttons kept for a
+     * session that is gone act on nothing). Chrome's window sets no actions of its own; SystemUI's
+     * row on it is the package's active media session's – the other tab's play / pause, acting on
+     * that tab – or the X and expand alone with no session active: the row this leaves, in either
+     * state. The window's own tab's session taking the controls back brings its buttons back.
+     */
+    fun windowSession(pipTabId: String?, session: MediaSessionInfo?): MediaSessionInfo? =
+        if (pipTabId == null || session?.tabId == pipTabId) session else null
 }
