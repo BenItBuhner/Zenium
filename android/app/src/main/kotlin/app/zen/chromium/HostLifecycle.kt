@@ -109,24 +109,9 @@ class HostLifecycle(private val clock: () -> Long = System::currentTimeMillis) {
         /**
          * Whether a memory trim at `level` should drop the back previews. Only once the app is on
          * the system's LRU list: UI_HIDDEN alone is not pressure, the user may be right back, and
-         * the previews are what makes the first back gesture after a wake look right.
+         * the previews are what makes the first back gesture after a wake look right. What a trim
+         * means for the pages – the sleeping tabs – is [MemoryPressure]'s (OS-37).
          */
         fun trimDropsSnapshots(level: Int): Boolean = level >= TRIM_MEMORY_BACKGROUND
-
-        /**
-         * How pressing a memory trim at `level` is for the pages (sleeping tabs, CT-22): the core
-         * puts hidden pages to sleep ahead of their timeout on `"low"` and every hidden page on
-         * `"critical"`; `null` is no pressure. The two families of levels are not ordered by
-         * severity, hence the table: in the foreground, RUNNING_LOW means the device is short and
-         * RUNNING_CRITICAL that background processes are being killed (Zenium's could be next once
-         * it leaves the screen); on the LRU list, MODERATE is the middle of it and COMPLETE its
-         * end. RUNNING_MODERATE, UI_HIDDEN and BACKGROUND alone are not pressure: the user may be
-         * right back, and a page put to sleep for nothing is a reload for nothing.
-         */
-        fun memoryPressure(level: Int): String? = when (level) {
-            TRIM_MEMORY_RUNNING_LOW, TRIM_MEMORY_MODERATE -> "low"
-            TRIM_MEMORY_RUNNING_CRITICAL, TRIM_MEMORY_COMPLETE -> "critical"
-            else -> null
-        }
     }
 }

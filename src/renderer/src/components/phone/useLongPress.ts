@@ -97,6 +97,11 @@ export function useLongPress(
    * leave that touch to the window listeners until the next press, so neither drives it twice.
    */
   const winPointer = useRef<number | null>(null)
+  /**
+   * The pending hold: what the timer runs at 380 ms, kept so the browser's own long press can
+   * run it first (see `onContextMenu`).
+   */
+  const pending = useRef<(() => void) | null>(null)
   const callback = useRef(onLongPress)
   const opts = useRef(options)
   useLayoutEffect(() => {
@@ -111,6 +116,7 @@ export function useLongPress(
   const clear = (): void => {
     if (timer.current) clearTimeout(timer.current)
     timer.current = null
+    pending.current = null
     touch.current = null
     unblock()
   }
@@ -171,8 +177,10 @@ export function useLongPress(
             /* the pointer is gone */
           }
         }
-        timer.current = setTimeout(() => {
+        const hold = (): void => {
+          if (timer.current) clearTimeout(timer.current)
           timer.current = null
+          pending.current = null
           held.current = true
           try {
             navigator.vibrate?.(8)
@@ -247,7 +255,9 @@ export function useLongPress(
             }
           }
           o?.onHold?.(at.current)
-        }, LONG_PRESS_MS)
+        }
+        pending.current = hold
+        timer.current = setTimeout(hold, LONG_PRESS_MS)
       },
       onPointerMove: (e) => {
         const t = touch.current
@@ -277,6 +287,15 @@ export function useLongPress(
         // draggable element it is not the menu's cue – the finger may be about to move – so the
         // hold runs on and the callback comes at the lift, as it does on a host without the event.
         if (held.current && opts.current?.onDrag) return
+        // Chromium's long press runs on the touch's own clock from about 400 ms, the timer from
+        // the down's dispatch to the page: a down that reached the page late (a busy main
+        // thread, a slow frame – the emulator's dark run of 25 Sep held History 2.6 s and never
+        // lifted it, the moves scrolling the sheet) lets the browser's event come first. On a
+        // draggable element that event IS the hold's cue: the hold begins now, the timer is spent.
+        if (pending.current && touch.current && opts.current?.onDrag) {
+          pending.current()
+          return
+        }
         clear()
         held.current = false
         swallow.current = true

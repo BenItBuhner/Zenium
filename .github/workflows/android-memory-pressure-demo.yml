@@ -1,0 +1,101 @@
+name: Android memory pressure demo
+
+# Records the memory-pressure row (matrix OS-37, W6-6) under the platform's own signals on a
+# hardware-accelerated Android emulator: thirty fixture pages opened in the background with a few
+# megabytes each, `am send-trim-memory` delivering RUNNING_MODERATE (nothing shown within the
+# minute sleeps), RUNNING_LOW (half of what may sleep, the pages shown longest ago first) and
+# RUNNING_CRITICAL (the rest) with the page in front and the page playing audio untouched, the
+# overview's sleeping cards, the return to a sleeping page (its last picture until the first
+# commit, then the page reloaded at its scroll, the sequence read off the host thirty times a
+# second), the renderer priorities of the shown, hidden and chrome WebViews (every one at the
+# platform default, IMPORTANT unwaived), and BACKGROUND with the app behind Home – not pressure
+# on its own, graded by the MemoryInfo reading beside it, nothing sleeping at the switch with the
+# emulator's gigabytes free. Every check is a line of
+# android-memory-pressure-findings.txt in the artifact, with the memory table (`dumpsys meminfo`
+# PSS / RSS of the app and the renderer at each step); a FAIL fails the run once the stills are
+# taken.
+#
+# Two acts, in parallel, each on its own emulator: the light and the dark colour scheme (the dark
+# act puts the device in night mode; the same claims; the return's still is the design record's).
+# Dispatch-only, like the web app window demo: it says nothing about a change being correct beyond
+# what the findings record. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file picks the driver and the theme. One more boot per act when
+# the emulator itself went away under the driver (adb lost the device), and never when the driver
+# failed: a run is then spent on the demo rather than on the runner.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-memory-pressure-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Memory pressure demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MemoryPressureDemo
+        DEMO_DIR=memory-pressure-demo
+        DEMO_OUT=artifacts/android-memory-pressure-demo
+        DEMO_VIDEO=android-memory-pressure-demo-light.mp4
+        DEMO_THEME=light
+      # The guest kernel's console in the log, should the emulator go away mid-demo (a trim under
+      # thirty pages is the one demo that asks the guest for memory on purpose).
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-memory-pressure-demo-light
+      artifact-path: artifacts/android-memory-pressure-demo/
+
+  light-again:
+    name: Memory pressure demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MemoryPressureDemo
+        DEMO_DIR=memory-pressure-demo
+        DEMO_OUT=artifacts/android-memory-pressure-demo
+        DEMO_VIDEO=android-memory-pressure-demo-light.mp4
+        DEMO_THEME=light
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-memory-pressure-demo-light-second-boot
+      artifact-path: artifacts/android-memory-pressure-demo/
+
+  dark:
+    name: Memory pressure demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MemoryPressureDemo
+        DEMO_DIR=memory-pressure-demo
+        DEMO_OUT=artifacts/android-memory-pressure-demo
+        DEMO_VIDEO=android-memory-pressure-demo-dark.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-memory-pressure-demo-dark
+      artifact-path: artifacts/android-memory-pressure-demo/
+
+  dark-again:
+    name: Memory pressure demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MemoryPressureDemo
+        DEMO_DIR=memory-pressure-demo
+        DEMO_OUT=artifacts/android-memory-pressure-demo
+        DEMO_VIDEO=android-memory-pressure-demo-dark.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-memory-pressure-demo-dark-second-boot
+      artifact-path: artifacts/android-memory-pressure-demo/

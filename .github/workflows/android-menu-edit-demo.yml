@@ -1,0 +1,50 @@
+name: Android menu edit demo
+
+# Records the phone app menu's edit mode – Edge's Change menu (matrix TB-22) and its motion
+# (MOT-23) – on a hardware-accelerated Android emulator, once in each colour scheme, and uploads
+# the videos, the stills and the findings. Every step is a real touch: the sheet's last row,
+# Change Menu, opening the pose in place with the same items named by their places and Done in
+# the header; a finger held on the icon row's star lifting it (scale 1.02, the level 2 shadow,
+# 90 %), dragged over two siblings while they glide aside and dropped to settle, with the
+# sequence read frame by frame off the chrome; Done saving `settings.menuOrder` and the next
+# opening showing the order; History dragged two rows up across a hairline under the frame trace
+# (RULING 5: within the spring budget, no long task by CPU, the startup sweeps held); the Move
+# up / Move down / Move to start controls under touch exploration and the live region reading a
+# move back; Reset to Default putting the default back. Dispatch-only, like the menu sheet demo:
+# it takes about ten minutes a scheme and says nothing about a change being correct. The build,
+# the emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the
+# driver and runs it once per colour scheme. The retry for a harness reason is a second dispatch:
+# the theme matrix has no single emulator-died output to key a second boot on (as the widget demo).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-menu-edit-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Menu edit demo (${{ matrix.theme }})
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header). The
+      # startup sweeps are held so the trace reads the reorder alone (as the motion perf demos do).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MenuEditDemo
+        DEMO_DIR=menu-edit-demo
+        DEMO_OUT=artifacts/android-menu-edit-demo
+        DEMO_VIDEO=android-menu-edit-demo-${{ matrix.theme }}.mp4
+        DEMO_THEME=${{ matrix.theme }}
+        DEMO_ARGS=-e holdBackgroundWork true
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-menu-edit-demo-${{ matrix.theme }}
+      artifact-path: artifacts/android-menu-edit-demo/

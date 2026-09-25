@@ -2,7 +2,6 @@ package app.zen.chromium
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -87,18 +86,5 @@ class HostLifecycleTest {
         assertFalse(HostLifecycle.trimDropsSnapshots(HostLifecycle.TRIM_MEMORY_BACKGROUND - 1))
         assertTrue(HostLifecycle.trimDropsSnapshots(HostLifecycle.TRIM_MEMORY_BACKGROUND))
         assertTrue(HostLifecycle.trimDropsSnapshots(80))
-    }
-
-    @Test
-    fun `memory pressure grades the trim levels for sleeping tabs`() {
-        assertEquals("low", HostLifecycle.memoryPressure(HostLifecycle.TRIM_MEMORY_RUNNING_LOW))
-        assertEquals("low", HostLifecycle.memoryPressure(HostLifecycle.TRIM_MEMORY_MODERATE))
-        assertEquals("critical", HostLifecycle.memoryPressure(HostLifecycle.TRIM_MEMORY_RUNNING_CRITICAL))
-        assertEquals("critical", HostLifecycle.memoryPressure(HostLifecycle.TRIM_MEMORY_COMPLETE))
-        // Not pressure: the user may be right back.
-        assertNull(HostLifecycle.memoryPressure(HostLifecycle.TRIM_MEMORY_RUNNING_MODERATE))
-        assertNull(HostLifecycle.memoryPressure(HostLifecycle.TRIM_MEMORY_UI_HIDDEN))
-        assertNull(HostLifecycle.memoryPressure(HostLifecycle.TRIM_MEMORY_BACKGROUND))
-        assertNull(HostLifecycle.memoryPressure(0))
     }
 }

@@ -564,6 +564,16 @@ export interface Tab {
    * without a hang monitor (Android's WebView) and on records older than the field.
    */
   unresponsive?: true
+  /**
+   * The user typed into a form field of the current document (OS-37; Chrome's
+   * `kHasFormInteraction` protection): the sleep policies leave the page loaded, timer and
+   * memory pressure alike – a discard would lose what was typed. Set by the page script's
+   * first trusted `input` on the top document (the `formEdited` page message,
+   * `Tabs.noteFormEdited`), cleared when a navigation commits. A session's own (not
+   * persisted); absent on hosts that do not report it (the desktop today) and on records
+   * older than the field.
+   */
+  formEdited?: true
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**
@@ -2598,6 +2608,17 @@ export interface Settings {
   /** Phone layout: the controls either side of the address pill (Settings › Navigation bar). */
   phoneBar: PhoneBarLayout
   /**
+   * Phone layout: the app menu's items in the user's order (Edge's Change menu, TB-22) – the
+   * items' stable keys (`MenuItemDescriptor.key`; `shared/menuOrder.ts` reads it against the
+   * build's default: named items first in this order, the rest after them in the default order,
+   * a key the build has no item for dropped). Absent until the user reorders; the Reset row
+   * writes the EMPTY list, which is kept and synced as a value – both read as the default order,
+   * but the empty list says so to the other devices where an absent key says nothing
+   * (`core/sync/records.ts` sends the settings' keys as they are and never one they lack). The
+   * desktop's menus never read it.
+   */
+  menuOrder?: string[]
+  /**
    * The homepage (SET-36 / NTP-30): what the phone's Home button – the bar's optional item, the
    * app menu's icon-row glyph otherwise – opens, or that there is none. Absent in profiles from
    * before it existed (`sanitizeHomepage` reads the new tab page, Chrome's default). Synced
@@ -4206,6 +4227,12 @@ export interface MenuDeviceMark {
 
 export interface MenuItemDescriptor {
   id: string
+  /**
+   * The item's stable name across openings (the phone app menu's items: `icon.forward`,
+   * `row.settings`, `sep.3`), what the sheet's edit mode (Change Menu, TB-22) reorders and
+   * saves as `settings.menuOrder`. `id` is numbered per opening and names the click alone.
+   */
+  key?: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
   label: string
   enabled: boolean
@@ -4303,6 +4330,13 @@ export interface MenuDescriptor {
     | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
   title?: string
+  /**
+   * The phone app menu's item keys in the build's default order (`shared/menuOrder.ts`), for its
+   * edit mode's Reset row (TB-22): the order the items are shown in is `settings.menuOrder`'s,
+   * applied by the core; this is what the default would put them back to. Absent on every other
+   * menu.
+   */
+  defaultOrder?: string[]
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null

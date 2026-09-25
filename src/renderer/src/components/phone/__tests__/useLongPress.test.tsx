@@ -282,6 +282,44 @@ describe('a hold handed to a drag (NTP-06)', () => {
     expect(q.press).toHaveBeenCalledTimes(1)
   })
 
+  it('the contextmenu arriving before the timer on a draggable element is the hold’s cue: the hold begins there, once, and the drag follows', () => {
+    // The down reached the page late: the browser's long press (on the touch's own clock) comes
+    // before the hook's 380 ms.
+    const p = mount(true)
+    pointer('pointerdown', p.el, 100, 100)
+    elapse(200)
+    contextmenu(p.el)
+    expect(p.hold).toHaveBeenCalledTimes(1)
+    expect(p.hold).toHaveBeenCalledWith({ x: 100, y: 100 })
+    expect(p.press).not.toHaveBeenCalled()
+    // The timer is spent: nothing fires a second time at 380 ms…
+    elapse(400)
+    expect(p.hold).toHaveBeenCalledTimes(1)
+    // …the page may not scroll under the held finger…
+    const move = new TouchEvent('touchmove', { bubbles: true, cancelable: true })
+    p.el.dispatchEvent(move)
+    expect(move.defaultPrevented).toBe(true)
+    // …and the finger moving past the slop is the drag, as after a hold the timer made.
+    pointer('pointermove', p.el, 130, 100)
+    expect(p.drag).toHaveBeenCalledTimes(1)
+    expect(p.moves).toHaveLength(1)
+    pointer('pointerup', p.el, 130, 100)
+    expect(p.ends).toEqual([[expect.any(PointerEvent), false]])
+    elapse(1000)
+    expect(p.press).not.toHaveBeenCalled()
+    click(p.el)
+    expect(p.swallowed).toEqual([true])
+    // A hold begun that way and lifted without moving is the menu at the lift, as any hold.
+    const q = mount(true)
+    pointer('pointerdown', q.el, 100, 100)
+    elapse(200)
+    contextmenu(q.el)
+    pointer('pointerup', q.el, 100, 100)
+    expect(q.holdEnd).toHaveBeenCalledTimes(1)
+    elapse(250)
+    expect(q.press).toHaveBeenCalledTimes(1)
+  })
+
   it('without a drag the contextmenu is the menu at once, as for the mouse', () => {
     const p = mount(false)
     pointer('pointerdown', p.el, 100, 100)

@@ -151,6 +151,7 @@ import {
 } from '../shared/defaults'
 import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
+import { sanitizeMenuOrder } from '../shared/menuOrder'
 import { sanitizeHomepage } from '../shared/homepage'
 import { PRIVATE_THEME, captionColors, editedTheme, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
@@ -2776,6 +2777,12 @@ export class Browser {
       this.keys.setEditing(tabId, message.editing === true)
       return
     }
+    if (message.type === 'formEdited') {
+      // The user typed into the page (once per document, the Android page script's word): a form
+      // in progress, which no sleep under memory pressure takes (OS-37; Chrome's HadFormInteraction).
+      this.tabs.noteFormEdited(tabId)
+      return
+    }
     if (message.type === 'pdf') {
       if (message.pdf && typeof message.pdf === 'object')
         this.pdf.onReport(tabId, message.pdf, message.pdfToken)
@@ -2810,7 +2817,7 @@ export class Browser {
       // A host whose engine reports audibility itself (Electron's `audio-state-changed`) sends
       // the Media Session report alone; `playing` is the page script's word where it tracks it.
       if (message.playing !== undefined) {
-        tab.audible = Boolean(message.playing)
+        this.tabs.noteAudible(tabId, Boolean(message.playing))
         this.governor.onMedia(tabId, Boolean(message.playing))
       }
       if (message.media) this.mediaSession.onReport(tabId, message.media)
@@ -3828,6 +3835,15 @@ export class Browser {
         s.appIcon = sanitizeAppIcon(value)
       } else if (key === 'phoneBar') {
         s.phoneBar = sanitizePhoneBar(value)
+      } else if (key === 'menuOrder') {
+        // The sheet's Done sends the keys in the user's order; its Reset sends the empty list,
+        // STORED as the setting's value (the default order, stated) rather than deleting the
+        // key: so the reset persists and reaches the peers as an edit of a key their records
+        // read, where a record without the key says nothing (`core/sync/records.ts`). A list is
+        // kept sanitised, empty when nothing in it is valid; anything but a list changes
+        // nothing – a malformed patch must not read as the Reset and throw a saved order away.
+        const order = sanitizeMenuOrder(value)
+        if (order !== undefined) s.menuOrder = order
       } else if (key === 'homepage' && value && typeof value === 'object') {
         // A one-key patch (the picker's `mode`) keeps the address; the address is normalised.
         s.homepage = sanitizeHomepage({

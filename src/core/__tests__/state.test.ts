@@ -619,3 +619,47 @@ describe('state.json v6 (Expand on hover on by default)', () => {
     expect(again.settings.sidebarExpandOnHover).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The phone app menu's order (TB-22): a list loads as a list, the empty one included
+// ---------------------------------------------------------------------------
+
+describe('settings.menuOrder on load', () => {
+  const stored = (value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value !== undefined) settings.menuOrder = value
+    return state(
+      fakeIo(legacyProfile(6, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('has no key on a fresh profile or one that never held it, keeps a saved list sanitised, and keeps the empty list of a Reset as a value', () => {
+    expect('menuOrder' in DEFAULT_SETTINGS).toBe(false)
+    expect('menuOrder' in state(fakeIo()).settings).toBe(false)
+    expect('menuOrder' in stored(undefined).settings).toBe(false)
+    expect(stored(['row.settings', 3, 'row.newTab', 'row.settings']).settings.menuOrder).toEqual([
+      'row.settings',
+      'row.newTab'
+    ])
+    // The Reset's write: kept, so it persists across a relaunch and travels in the sync record.
+    expect(stored([]).settings.menuOrder).toEqual([])
+    expect(stored([3, null]).settings.menuOrder).toEqual([])
+  })
+
+  it('reads anything that is no list as no setting', () => {
+    for (const bad of [null, 'row.settings', 42, { 0: 'row.settings' }]) {
+      expect('menuOrder' in stored(bad).settings, JSON.stringify(bad)).toBe(false)
+    }
+  })
+
+  it('writes the empty list back, so a Reset survives a relaunch', async () => {
+    const io = fakeIo(legacyProfile(6))
+    const s = state(io)
+    s.settings.menuOrder = []
+    s.commit()
+    await s.flush()
+    const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
+    expect(written.settings.menuOrder).toEqual([])
+    expect(state(fakeIo(io.writes.at(-1) ?? '{}')).settings.menuOrder).toEqual([])
+  })
+})

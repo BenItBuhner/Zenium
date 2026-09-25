@@ -89,6 +89,23 @@ import {
   setOverviewSheet,
   type OverviewSheet as Sheet
 } from '@renderer/lib/overviewUi'
+import {
+  OverviewWindowContext,
+  cancelFill,
+  claimOverviewWindow,
+  fillCards,
+  fillEveryCard,
+  guessWindow,
+  newOverviewWindowToken,
+  overviewRowPitch,
+  overviewWindowStore,
+  readWindow,
+  releaseOverviewWindow,
+  scheduleFill,
+  windowOf,
+  type CellRect,
+  type GridItem
+} from '@renderer/lib/overviewWindow'
 import { coveredNow, pageCovered, pageViewStore } from '@renderer/lib/pageView'
 import { PRIVATE_TAB_PLACEHOLDER, privateLockStore } from '@renderer/lib/privateLock'
 import {
@@ -394,12 +411,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // box spans the window less its horizontal insets (the layer covers the sidebar) – and the
   // picture's ratio the page frame's, which is `area`, beside the sidebar.
   const sideInsets = uiStore.use((s) => s.insets.left + s.insets.right)
+  const cardAspect = tablet
+    ? tabletCardAspect(area, viewportWidth - sideInsets, columns, cardHeaderHeight())
+    : 3 / 4
   const cardAspectStyle = tablet
-    ? ({
-        '--zen-overview-card-aspect': String(
-          tabletCardAspect(area, viewportWidth - sideInsets, columns, cardHeaderHeight())
-        )
-      } as CSSProperties)
+    ? ({ '--zen-overview-card-aspect': String(cardAspect) } as CSSProperties)
     : undefined
 
   const boxRef = useRef<HTMLDivElement>(null)
@@ -629,6 +645,124 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       grid.scrollTop = scroll.top
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the mount alone
   }, [])
+
+  // The grid's WINDOW (`lib/overviewWindow.ts`, W6-0): which cells are built as cards. Read
+  // from the layout the commit made – after the hero's card has been scrolled into view and the
+  // shell swap's scroll restored, both above – on the commits that can change the geometry: the
+  // cards or the columns (a query, a close, a fold, a rotation), the frame, the pane. The cells
+  // in view and a row's margin the mount's guess missed fill in this very commit (the store's
+  // word reaches each cell before the frame paints); once the overview has settled the rest
+  // fill in idle time, nearest first, and not before – the pull's and the spring's frames are
+  // the morph's. The phase reads no layout: the settle starts the idle fill from the last read,
+  // a drag, a close or the landing held after one cancels it (a read at the close would force
+  // the style and layout of a grid about to unmount). A grid with no layout to read (the tests'
+  // DOM) builds every card. The grid's scroll re-reads the window (below).
+  const foldKey = groups
+    .filter((f) => f.collapsed)
+    .map((f) => f.id)
+    .join('|')
+  // The mount's GUESS at the window (`guessWindow`): the render builds these cards outright,
+  // before there is a layout to read, so a mount whose guess holds builds its cards in one pass.
+  // The grid's items in its order – the pinned cards, the groups (a folded one or one of a
+  // single card is a cell of the flow; one spanning the grid lays its cards in rows of its own),
+  // the loose cards – laid into rows by the columns and the cards' aspect; the hero's row at the
+  // view's foot when it must scroll into view. A guessed card stays a card: the guess is recorded
+  // in the store on the commit it is rendered in (below).
+  const gridItems: GridItem[] = [
+    ...pinned.map((t): GridItem => ({ kind: 'cell', key: t.id, card: true })),
+    ...groups.flatMap((folder): GridItem[] => {
+      const tabs = members.get(folder.id) ?? []
+      if (tabs.length === 0) return []
+      if (folder.collapsed) return [{ kind: 'cell', key: `group:${folder.id}`, card: false }]
+      if (tabs.length === 1) return [{ kind: 'cell', key: tabs[0].id, card: true }]
+      return [{ kind: 'row', key: `group:${folder.id}`, cards: tabs.map((t) => t.id) }]
+    }),
+    ...loose.map((t): GridItem => ({ kind: 'cell', key: t.id, card: true }))
+  ]
+  const guessed = new Set(
+    guessWindow(
+      gridItems,
+      heroCellKey,
+      columns,
+      area.height,
+      overviewRowPitch(viewportWidth - sideInsets, columns, cardAspect)
+    )
+  )
+  // The window is THIS grid's (`lib/overviewWindow.ts`): a token minted at the render, so the
+  // cells read the store under it from their first render, claimed in the grid's first layout
+  // effect – the store starts afresh – and released as that effect's cleanup. Two grids stand in
+  // one commit when the shell swaps with the overview open (a phone window widened into the
+  // tablet layout, or a tablet's narrowed, TABLET-08: `App.tsx` mounts the other shell's
+  // `TabOverview` in the commit that unmounts this one's): React runs the old grid's layout
+  // cleanup before the new grid's layout effects, so the release goes before the claim, and a
+  // passive cleanup after them – a plain reset from one wiped the rows the new grid had just
+  // built beyond its guess, placeholders in view for a frame. The release touches only a window
+  // still this grid's, whatever the order. The close keeps the overview mounted while the
+  // landing is held (`PhoneStage`, `landOverview`), its hero at the page's frame: the window
+  // stands until the grid goes, and not before.
+  const [windowToken] = useState(newOverviewWindowToken)
+  useLayoutEffect(() => {
+    claimOverviewWindow(windowToken)
+    return () => releaseOverviewWindow(windowToken)
+  }, [windowToken])
+  // The guess is the store's from the commit it is rendered in: `eager` builds a guessed card
+  // whatever the store says, and a render that guesses differently with no read between – a
+  // drag's stand-in moving through the grid re-orders the cards under the finger (`shown`,
+  // above) while the cards' key, the state's order, stands – must not take a card back to a
+  // placeholder when the order reverts (the drag cancelled). Recorded, the card stays a card.
+  const guessKey = [...guessed].join('|')
+  useLayoutEffect(() => {
+    fillCards(guessed)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the guess's keys
+  }, [guessKey])
+  // The last read's cards outside the window, nearest first: the idle fill's order when the
+  // overview settles after the read.
+  const restRef = useRef<readonly string[]>([])
+  // Where a cell will REST, once the tracker has this commit's measurement (it commits before
+  // this effect on every settled commit): a glide in flight is drawn by a transform, which the
+  // cell's own box includes, and a fold's or a whole-group close's moves the rows below by more
+  // than the margin – read where they are drawn, the rows the glide brings into view would
+  // arrive as placeholders and wait for the idle fill, no scroll event firing for a glide. Short
+  // of the settle the tracker only observes, and the drawn box is the one there is.
+  const restRect: CellRect = (el, key) => flip.layoutRect(key) ?? el.getBoundingClientRect()
+  const rewindow = (scrolled = false): void => {
+    const grid = scrollRef.current
+    if (scrolled) {
+      // A scroll with every card built has nothing to read the layout for.
+      const { all, filled } = overviewWindowStore.get()
+      if (all || (pinned.every((t) => filled.has(t.id)) && regular.every((t) => filled.has(t.id))))
+        return
+    }
+    const read = grid ? readWindow(grid, settled ? restRect : undefined) : null
+    if (!read) {
+      restRef.current = []
+      fillEveryCard()
+      return
+    }
+    const { shown, rest } = windowOf(read.view, read.cells)
+    restRef.current = rest
+    fillCards(shown)
+    if (settled) scheduleFill(rest)
+    else cancelFill()
+  }
+  useLayoutEffect(() => {
+    rewindow()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read when the layout inputs change
+  }, [cardsKey, foldKey, columns, area.width, area.height, pane])
+  useEffect(() => {
+    if (settled) scheduleFill(restRef.current)
+    else cancelFill()
+  }, [settled])
+  // The rows a fold or a whole-group close brings in set off when the tracker releases its hold
+  // – the group's height has settled and the cells below glide to their slots (v2 §11.4). The
+  // tracker measures afresh at the release, and the window is re-read from where the cells will
+  // rest: what the commit's read built stands, and a destination that moved meanwhile (a second
+  // fold, a retarget) is caught. Subscribed once; the read is the latest render's.
+  const rewindowLatest = useRef(rewindow)
+  useLayoutEffect(() => {
+    rewindowLatest.current = rewindow
+  })
+  useEffect(() => flip.onRelease(() => rewindowLatest.current(true)), [flip])
 
   // Escape closes the overview – unless a sheet or the Spaces drawer is up over it; the top
   // surface takes the key, and the next Escape reaches the overview. The search field takes it
@@ -1439,6 +1573,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       // descent's first frame and through the close's rise (§9.36; a slot that fills by a cut at
       // the settle is no motion of §11's).
       hidden={!tablet && tab.id === heroTabId && p < 1}
+      // The hero's card is built from the first frame whatever the window holds: the morph
+      // lands on it, the tablet's layer shows it as it comes down (W6-0). So are the cards the
+      // mount's guess puts in view (`guessed`, above): the one pass a right guess makes.
+      eager={tab.id === heroTabId || guessed.has(tab.id)}
       onPick={pick}
       onClose={(t) => closeTabs([t])}
       onSwipeClose={swipedAway}
@@ -1855,6 +1993,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                 onScroll={(e) => {
                   noteOverviewScroll(pane, e.currentTarget.scrollTop)
                   measure()
+                  rewindow(true)
                 }}
               >
                 {searching && found === 0 && (
@@ -1901,25 +2040,33 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                   className="relative grid gap-3"
                   style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
                 >
-                  {pinned.map(card)}
-                  {groupCards.map(({ folder, tabs, gone }) => (
-                    <GroupCard
-                      key={folder.id}
-                      folder={folder}
-                      tabs={tabs}
-                      card={card}
-                      columns={columns}
-                      onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                      onCloseGroup={closeGroup}
-                      onDelete={deleteGroupOf}
-                      forming={tabs.length > 0 && forming(folder, tabs)}
-                      dissolving={tabs.length === 0}
-                      held={gone?.count}
-                      onDissolved={dissolvedGroup}
-                      onRelease={subscribeRelease}
-                    />
-                  ))}
-                  {loose.map(card)}
+                  {/*
+                    The cards under here are WINDOWED (`lib/overviewWindow.ts`, W6-0): a cell
+                    is a card when this grid's window – the token's – holds it, a sized
+                    placeholder until then. The group cards' members are the same cells, through
+                    `card`.
+                  */}
+                  <OverviewWindowContext.Provider value={windowToken}>
+                    {pinned.map(card)}
+                    {groupCards.map(({ folder, tabs, gone }) => (
+                      <GroupCard
+                        key={folder.id}
+                        folder={folder}
+                        tabs={tabs}
+                        card={card}
+                        columns={columns}
+                        onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                        onCloseGroup={closeGroup}
+                        onDelete={deleteGroupOf}
+                        forming={tabs.length > 0 && forming(folder, tabs)}
+                        dissolving={tabs.length === 0}
+                        held={gone?.count}
+                        onDissolved={dissolvedGroup}
+                        onRelease={subscribeRelease}
+                      />
+                    ))}
+                    {loose.map(card)}
+                  </OverviewWindowContext.Provider>
                   {!searching && <NewTabCard pane={pane} disabled={selecting} />}
                 </div>
                 {searching && !privatePane && (
