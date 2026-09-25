@@ -6804,7 +6804,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // image; read on the AOSP lane.
         Row(
             "hhdobjgopfphlmjbmnpglhfcgppchgje", "AdGuard VPN", "adguard-vpn",
-            notOnGoogleImage = "the emulator's host renderer stopped answering under WebView 113's first paint of this row's documents (popup.html, consent.html) on every attempt on the API 34 Google image with -gpu swangle (six in round 16 §7.0: four times the guest frozen whole and qemu gone without a record, twice the app hung with WebView's GPU thread in the goldfish pipe under eglCreateSyncKHR; no chromium crash, no runtime frame); the row is read on the AOSP lane (156), where it passed whole three of three times",
+            notOnGoogleImage = "the emulator's host side dies under WebView 113's first paint of this row's documents (popup.html, consent.html) on every attempt on the API 34 Google image with -gpu swangle (nine in round 16 §7.0: seven times qemu-system-x86_64-headless dead of SIGSEGV on a vCPU thread in the gfxstream render channel – RenderChannelImpl::tryRead, free(), tcmalloc::SLL_Next, a corrupted heap free list while serving the guest's GPU pipe read – the guest frozen whole while the kernel wrote the core; twice the app hung with WebView's GPU thread waiting in that same pipe under eglCreateSyncKHR; no chromium crash, no runtime frame); the row is read on the AOSP lane (156), where it passed whole three of three times",
             core = vpn("AdGuard VPN", pac = true)
         ),
         Row("adlpodnneegcnbophopdmhedicjbcgco", "Free VPN for Chrome - Troywell VPN", "troywell-vpn", core = vpn("Troywell VPN", pac = true, consent = true)),
