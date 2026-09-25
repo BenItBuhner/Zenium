@@ -264,9 +264,9 @@ describe('EDGE-12: the selection toolbar’s Listen starts at the selected text'
     select(inShadow, 0, inShadow, inShadow.textContent!.length)
 
     // The walk descends `childNodes`, never a shadow tree: the shadow's text is in no block, and
-    // a selection there intersects none. The core fails the session `no-text` on an empty answer.
-    const blocks = extract(document, fromSelectionOn).blocks
-    expect(blocks.some((b) => b.text.includes('Shadow'))).toBe(false)
+    // a selection there intersects none – the answer is EMPTY (not the light text either: the
+    // selection starts in no block of the document). The core fails the session `no-text` on it.
+    expect(extract(document, fromSelectionOn).blocks).toEqual([])
   })
 
   it('LIMIT: a collapsed selection (a caret, the mode already gone) reads nothing – selectionMemory.ts stands the cleared one in on the phone', () => {
