@@ -73,6 +73,8 @@
       "api-level": "34",
       "target": "google_apis",
       "profile": "pixel_6",
+      "image": "system-images;android-34;google_apis;x86_64",
+      "webview": "com.google.android.webview 113.0.5672.136, the image's",
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
