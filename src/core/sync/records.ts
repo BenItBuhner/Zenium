@@ -642,9 +642,38 @@ export interface DiffResult {
   changed: boolean
 }
 
+export interface DiffLocalOptions {
+  /**
+   * The `modified` a record takes when its hash differs from its `previous` entry: the
+   * wall-clock moment the change was made, or `null` to keep the previous `modified`.
+   *
+   * THE RULE: an edit is stamped where it is MADE, never where it is NOTICED. The engine's state
+   * subscriber (`SyncEngine.onLocalChange`) runs at the commit that carries an edit and stamps
+   * it `now`; the engine's round (`SyncEngine.run`) only notices, and passes `null`. A hash the
+   * round alone finds changed was not a user's edit: a build's new settings default that the
+   * load spread onto the settings, a sanitiser's new normal form, this device normalising a
+   * remote value differently from the peer that sent it (the boot seed, `SyncEngine.seedMeta`,
+   * adopts the first two before any round). Stamped at the round, such a change would publish a
+   * whole-record edit no one made, which wins last-writer-wins over a peer's real change this
+   * device had not pulled – the settings record at every device's first sync after a release.
+   *
+   * A record without a previous entry takes `modified = 0` either way; a vanished record's
+   * tombstone is stamped `now` either way (its deletion is what the diff notices, and a device
+   * that stops holding a record has, so far, always done so by the user's hand or a merge).
+   */
+  stamp: number | null
+  tombstoneTtlMs?: number
+  frozen?: (id: string, prev: RecordMeta) => boolean
+}
+
+const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
 /**
- * Compare the current local snapshot with the metadata of the last sync: changed records get a
- * fresh `modified`, vanished records become tombstones, everything else keeps its timestamp.
+ * Compare the current local snapshot with the metadata of the last sync: changed records get
+ * `options.stamp` as their `modified` (or keep the previous one, see `DiffLocalOptions`),
+ * vanished records become tombstones at `now`, everything else keeps its timestamp. Without
+ * options the change is stamped `now` – the subscriber's mode, and the one the pre-move engine
+ * had (`__tests__/compat.test.ts` pins it).
  *
  * Records seen for the first time get `modified = 0`: they still replicate to devices that lack
  * them, but a copy that already exists elsewhere wins – so joining a sync folder merges *into*
@@ -657,9 +686,9 @@ export function diffLocal(
   previous: MetaMap,
   current: Map<string, { type: RecordType; data: unknown }>,
   now: number,
-  tombstoneTtlMs = 30 * 24 * 60 * 60 * 1000,
-  frozen: (id: string, prev: RecordMeta) => boolean = () => false
+  options: DiffLocalOptions = { stamp: now }
 ): DiffResult {
+  const { stamp, tombstoneTtlMs = TOMBSTONE_TTL_MS, frozen = () => false } = options
   const meta: MetaMap = {}
   const records: SyncRecord[] = []
   let changed = false
@@ -669,7 +698,7 @@ export function diffLocal(
     let modified: number
     if (!prev) modified = 0
     else if (prev.hash === hash && !prev.deleted) modified = prev.modified
-    else modified = now
+    else modified = stamp ?? prev.modified
     if (!prev || prev.hash !== hash || prev.deleted) changed = true
     meta[id] = { type, hash, modified, deleted: false }
     records.push({ id, type, modified, deleted: false, data })
