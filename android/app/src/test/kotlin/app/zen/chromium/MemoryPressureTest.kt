@@ -31,16 +31,18 @@ class MemoryPressureTest {
     }
 
     @Test
-    fun `the cached trims take the foreground family's three grades in order`() {
-        // BACKGROUND on its own is the gentlest grade: since API 34 it comes at every app switch
-        // (USE_MODERN_TRIM), no shortage implied; the MemoryInfo reading beside it is what lifts it.
-        assertEquals(Level.MODERATE, MemoryPressure.ofTrim(TRIM_MEMORY_BACKGROUND))
+    fun `the legacy cached trims grade a half and all`() {
+        // MODERATE / COMPLETE: the process in the middle / at the end of the cached list under a
+        // short system (API 33 and before; never delivered since API 34).
         assertEquals(Level.LOW, MemoryPressure.ofTrim(TRIM_MEMORY_MODERATE))
         assertEquals(Level.CRITICAL, MemoryPressure.ofTrim(TRIM_MEMORY_COMPLETE))
     }
 
     @Test
-    fun `UI_HIDDEN and unknown levels are not pressure`() {
+    fun `BACKGROUND, UI_HIDDEN and unknown levels are not pressure on their own`() {
+        // BACKGROUND comes at every app switch since API 34 (USE_MODERN_TRIM), no shortage
+        // implied: a page slept on it is a reload for nothing on the return (the ruling, round 2).
+        assertNull(MemoryPressure.ofTrim(TRIM_MEMORY_BACKGROUND))
         assertNull(MemoryPressure.ofTrim(TRIM_MEMORY_UI_HIDDEN))
         assertNull(MemoryPressure.ofTrim(0))
         assertNull(MemoryPressure.ofTrim(99))
@@ -76,16 +78,38 @@ class MemoryPressureTest {
     }
 
     @Test
-    fun `a trim with the reading beside it takes the higher, a trim that is not pressure stays none`() {
-        // A BACKGROUND trim on a device that is truly short is a critical, not a moderate.
-        assertEquals(Level.CRITICAL, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, Level.CRITICAL))
-        assertEquals(Level.LOW, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, Level.LOW))
-        assertEquals(Level.MODERATE, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, null))
+    fun `a trim with the reading beside it takes the higher of the two`() {
         assertEquals(Level.CRITICAL, MemoryPressure.ofTrimWith(TRIM_MEMORY_RUNNING_CRITICAL, Level.LOW))
+        assertEquals(Level.CRITICAL, MemoryPressure.ofTrimWith(TRIM_MEMORY_RUNNING_MODERATE, Level.CRITICAL))
         assertEquals(Level.LOW, MemoryPressure.ofTrimWith(TRIM_MEMORY_MODERATE, Level.MODERATE))
-        // UI_HIDDEN on a busy device is still only the user leaving.
-        assertNull(MemoryPressure.ofTrimWith(TRIM_MEMORY_UI_HIDDEN, Level.CRITICAL))
-        assertNull(MemoryPressure.ofTrimWith(0, Level.LOW))
+        assertEquals(Level.MODERATE, MemoryPressure.ofTrimWith(TRIM_MEMORY_RUNNING_MODERATE, null))
+    }
+
+    @Test
+    fun `a trim that is not pressure on its own lets the reading stand`() {
+        // BACKGROUND at the app switch: the device asked once, and only a short device grades –
+        // the reading's low or critical, never a moderate of the trim's own.
+        assertNull(MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, null))
+        assertEquals(Level.LOW, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, Level.LOW))
+        assertEquals(Level.CRITICAL, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, Level.CRITICAL))
+        assertNull(MemoryPressure.ofTrimWith(TRIM_MEMORY_UI_HIDDEN, null))
+        assertEquals(Level.CRITICAL, MemoryPressure.ofTrimWith(TRIM_MEMORY_UI_HIDDEN, Level.CRITICAL))
+        assertNull(MemoryPressure.ofTrimWith(0, null))
+        assertEquals(Level.LOW, MemoryPressure.ofTrimWith(0, Level.LOW))
+    }
+
+    @Test
+    fun `the BACKGROUND arrival graded end to end from the device's numbers`() {
+        // What run 2 saw: 2.4 GB of 3.9 GB free, threshold 216 MB – nothing sleeps at the switch.
+        val threshold = 216 * mb
+        val roomy = MemoryPressure.ofMemoryInfo(availMem = 2_413 * mb, threshold = threshold, lowMemory = false)
+        assertNull(MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, roomy))
+        // A device approaching the LMK's line (under two thresholds free) sleeps half at the switch.
+        val tight = MemoryPressure.ofMemoryInfo(availMem = 400 * mb, threshold = threshold, lowMemory = false)
+        assertEquals(Level.LOW, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, tight))
+        // The system's own word (lowMemory): everything that may sleep does.
+        val short = MemoryPressure.ofMemoryInfo(availMem = 150 * mb, threshold = threshold, lowMemory = true)
+        assertEquals(Level.CRITICAL, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, short))
     }
 
     @Test
