@@ -396,7 +396,16 @@ declare const __zenExtBoot: Boot
       },
       engineTransport,
       primordials,
-      receiver ? { root, receiver } : { root }
+      {
+        root,
+        ...(receiver ? { receiver } : {}),
+        // A content world's `runtime.getURL` follows the script recovery: a script file's URL
+        // is the page-origin alias once the page's policy refused a module graph of this
+        // extension and the alias carried it (`extensionScriptRecovery.ts`, `aliasFor`).
+        ...(context === 'content'
+          ? { scriptAlias: (url: string) => scriptRecovery?.aliasFor(url) ?? null }
+          : {})
+      }
     )
     engines.set(endpointId, engine)
     return engine

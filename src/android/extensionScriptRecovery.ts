@@ -53,10 +53,27 @@ import { pageAliasUrl, presentExtensionUrl } from '@core/extensions/runtime/exte
  * `import()` of the alias (`importModule`), so the graph evaluates in the world beside the
  * content script's `chrome`, as Chrome's would have; on the one-realm WebView the alias goes
  * into the module `<script>` in the nonce's place, bracketed by the host as the served graph is.
+ * A page whose nonced scripts serve another directive while its `script-src` names hosts alone
+ * (YouTube's `'self' https://…`, NoteGPT's loader, compat round 17) refuses the nonced module
+ * at the served origin as well: that element's `error` asks once more from the alias, the
+ * nonce kept, before the refusal is recorded.
  * A policy that names neither a nonce nor the page's origin refuses the alias too (Flipkart's
  * nonce-only `script-src` on an isolated-world WebView, Buyhatke): that refusal is recorded and
  * nothing is retried further – the alias is not an extension URL, so its own violation is not
  * this recovery's.
+ *
+ * The retry is one hop: the graph is imported again beside the extension's own rejected
+ * promise. A graph whose first module imports more by `chrome.runtime.getURL`-built specifiers
+ * (Vite's preload helper in a CRXJS build: Buyhatke's on flipkart.com, whose policy admits
+ * `'self'`, compat round 16) asks for its chunks at the served origin again, the same policy
+ * refuses them, and the helper's own `import()` promises – which its code awaits – stay
+ * rejected whether or not the chunks are retried from the alias. So once an isolated world's
+ * refused graph was asked for from the alias, `runtime.getURL` of a script file answers the
+ * alias in that world (`aliasFor`, the engine's `scriptAlias`): the chunks load where the
+ * first module did, the helper's promises resolve, and Chrome's shape holds – an extension URL
+ * the page's policy cannot refuse. Only script files change spelling (a page, an image, a
+ * fetch keep the served origin; a stylesheet has the `<link>` recovery), and only after the
+ * refusal: a world whose page admits the served origin never sees the alias.
  */
 
 /** What the bootstrap lends the recovery: the attached extensions, the bridge and a file read. */
@@ -138,10 +155,20 @@ export interface ScriptRecovery {
   done(id: string, error: string | null): void
   /** Requests still waiting for the host, and module retries still loading (tests, diagnostics). */
   pending(): number
+  /**
+   * What `runtime.getURL` answers for `url` (a served extension URL) in this world: its
+   * page-origin alias when the world is isolated, the page's policy refused a module of that
+   * extension and the alias was asked for it, and `url` is a script file; null otherwise (the
+   * served URL stands).
+   */
+  aliasFor(url: string): string | null
 }
 
 /** The directives a refused script fetch is reported under (`script-src-elem` falls back to `script-src`). */
 const SCRIPT_DIRECTIVES = new Set(['script-src-elem', 'script-src'])
+
+/** A script file's path (`.js`, `.mjs`, `.cjs`), a query or fragment after it or not. */
+const SCRIPT_FILE = /\.[cm]?js(?:[?#]|$)/i
 
 /** The document's constructed-sheet surface the stylesheet recovery uses. */
 interface AdoptingDocument {
@@ -239,37 +266,28 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
     )
   }
 
-  const retryModule = (url: string): void => {
-    const doc = host.document
-    if (!doc) return
-    if (!host.pageModules) {
-      const alias = aliasOf(url)
-      const importModule = host.importModule
-      if (alias === null || !importModule) {
-        ;(host.warn ?? host.error)(
-          `[Zenium] ${url}: the page's policy refused the extension's module, and the isolated world cannot load one past it (recorded)`
-        )
-        return
-      }
-      importAlias(url, alias, importModule)
-      return
-    }
-    const nonce = pageNonce(doc)
-    // No nonce to carry: the graph from the page's own origin, which `'self'` or the page's
-    // host admits, in the served URL's place; a policy admitting neither refuses this too and
-    // the element's `error` records it.
-    const alias = nonce === null ? aliasOf(url) : null
-    if (nonce === null && alias === null) {
-      host.error(`[Zenium] ${url} could not load past the page's policy: the page lends no nonce`)
-      return
-    }
+  /** The extensions whose refused graph this isolated world asked for from the alias (`aliasFor`). */
+  const aliased = new Set<string>()
+
+  /**
+   * The one-realm retry's element: a `<script type="module">` of the document at `src` (the
+   * served URL under the page's nonce, or the page-origin alias), `refused` run when the policy
+   * refuses that one too.
+   */
+  const insertModule = (
+    doc: ModuleDocumentLike,
+    url: string,
+    src: string,
+    nonce: string | null,
+    refused: () => void
+  ): void => {
     let element: ModuleScriptLike
     try {
       element = doc.createElement('script')
       element.type = 'module'
       if (nonce !== null) element.nonce = nonce
       // A Trusted Types sink: an enforcing page without the shield's policy refuses the string.
-      element.src = alias ?? url
+      element.src = src
     } catch (reason) {
       host.error(`[Zenium] ${url} could not be retried past the page's policy: ${String(reason)}`)
       return
@@ -288,11 +306,7 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
     element.addEventListener('load', settle)
     element.addEventListener('error', () => {
       settle()
-      host.error(
-        alias === null
-          ? `[Zenium] ${url} could not load past the page's policy from a module script with its nonce`
-          : `[Zenium] ${url} could not load past the page's policy from a module script at its page-origin alias ${alias}`
-      )
+      refused()
     })
     const parent = doc.head ?? doc.documentElement
     try {
@@ -302,6 +316,60 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
       settle()
       host.error(`[Zenium] ${url} could not be retried past the page's policy: ${String(reason)}`)
     }
+  }
+
+  const retryModule = (url: string): void => {
+    const doc = host.document
+    if (!doc) return
+    if (!host.pageModules) {
+      const alias = aliasOf(url)
+      const importModule = host.importModule
+      if (alias === null || !importModule) {
+        ;(host.warn ?? host.error)(
+          `[Zenium] ${url}: the page's policy refused the extension's module, and the isolated world cannot load one past it (recorded)`
+        )
+        return
+      }
+      // Before the import: the graph's first module asks for its chunks while it evaluates.
+      const extId = extensionFor(url)
+      if (extId !== null) aliased.add(extId)
+      importAlias(url, alias, importModule)
+      return
+    }
+    const nonce = pageNonce(doc)
+    const alias = aliasOf(url)
+    if (nonce === null && alias === null) {
+      host.error(`[Zenium] ${url} could not load past the page's policy: the page lends no nonce`)
+      return
+    }
+    const fromAlias = (): void => {
+      insertModule(doc, url, alias as string, nonce, () => {
+        host.error(
+          `[Zenium] ${url} could not load past the page's policy from a module script at its page-origin alias ${alias}`
+        )
+      })
+    }
+    // No nonce to carry: the graph from the page's own origin, which `'self'` or the page's
+    // host admits, in the served URL's place; a policy admitting neither refuses this too and
+    // the element's `error` records it.
+    if (nonce === null) {
+      fromAlias()
+      return
+    }
+    insertModule(doc, url, url, nonce, () => {
+      if (alias === null) {
+        host.error(
+          `[Zenium] ${url} could not load past the page's policy from a module script with its nonce`
+        )
+        return
+      }
+      // The page's nonce is not this policy's word: its nonced scripts serve another directive
+      // and its `script-src` names hosts alone (YouTube's `'self' https://…` under NoteGPT's
+      // loader on a one-realm WebView, compat round 17 row 28). A policy of that shape admits
+      // the page's own origin, so the graph is asked for once more from the alias, the nonce
+      // kept for a second policy that would want it.
+      fromAlias()
+    })
   }
 
   const recoverStyle = (link: ScriptLike, href: string, extId: string): void => {
@@ -386,7 +454,13 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
       respell(entry.script, 'src', entry.url)
       entry.script.dispatchEvent(new Event('error'))
     },
-    pending: () => waiting.size + styles + modules
+    pending: () => waiting.size + styles + modules,
+    aliasFor(url) {
+      if (host.pageModules || aliased.size === 0 || !SCRIPT_FILE.test(url)) return null
+      const extId = extensionFor(url)
+      if (extId === null || !aliased.has(extId)) return null
+      return aliasOf(url)
+    }
   }
 }
 
