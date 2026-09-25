@@ -18,6 +18,18 @@ export function holdBackgroundWorkRequested(argv: readonly string[]): boolean {
   return argv.includes(HOLD_BACKGROUND_WORK_FLAG)
 }
 
+/**
+ * The drives' other flag: the quit chord holds on this OS as it does on macOS (session-08's
+ * "Hold ⌘Q to Quit"), so the overlay can be driven under an X server. Never set in a normal
+ * launch; `AppHost.quitHoldEverywhere`.
+ */
+export const TEST_QUIT_HOLD_FLAG = '--test-quit-hold'
+
+/** Whether `argv` (the process's) carries {@link TEST_QUIT_HOLD_FLAG}. */
+export function quitHoldEverywhereRequested(argv: readonly string[]): boolean {
+  return argv.includes(TEST_QUIT_HOLD_FLAG)
+}
+
 /** What the adapter needs of a `worker_threads` worker (the tests hand in a stand-in). */
 export type NodeWorkerLike = Pick<Worker, 'postMessage' | 'on' | 'terminate'>
 

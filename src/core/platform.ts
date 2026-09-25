@@ -1775,6 +1775,13 @@ export interface AppHost {
    * empty caption room follows it (`captionDoubleClickEffect`), and toggles maximise elsewhere.
    */
   titleBarDoubleClickAction?(): TitleBarDoubleClickAction
+  /**
+   * The desktop drives' stand-in for the macOS hold-to-quit (`--test-quit-hold` on the command
+   * line; never set in a normal launch): the quit chord holds on this host whatever its OS, so
+   * the "Hold ⌘Q to Quit" overlay can be driven and measured under an X server. Hosts without
+   * it hold on macOS alone (`QuitHoldService.applies`).
+   */
+  quitHoldEverywhere?(): boolean
 }
 
 /** The three choices of macOS's title-bar double-click setting. */

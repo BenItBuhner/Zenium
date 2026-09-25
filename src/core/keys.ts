@@ -28,6 +28,10 @@ export class KeyboardHandler {
   handle(input: KeyEventInput, sourceTabId: string | null, win: ZenWindow): boolean {
     // Esc held in a fullscreen window leaves it (both edges of the key are needed for that).
     if (input.key === 'Escape') this.browser.fullscreen.onEscape(input, win)
+    // The quit chord held quits (session-08): any key coming up while the hold runs releases it
+    // – Chrome's panel waits for the next key up, whichever key – so the release is read here,
+    // before the table, which sees key downs alone.
+    if (input.type === 'keyUp') this.browser.quitHold.keyUp()
     if (input.type !== 'keyDown') return false
     if (isModifierKey(input.key)) return false
     // The Settings recorder owns the chrome's keys while it listens: the chord it records must
@@ -53,6 +57,9 @@ export class KeyboardHandler {
         this.browser.toast(`"${shortcut.label}" is not available in this build yet.`, 'info', win)
         return true
       }
+      // The quit chord on a host that holds (macOS with Warn Before Quitting on): the press arms
+      // the hold in this window instead of quitting; the chord is consumed either way.
+      if (shortcut.action === 'app.quit' && this.browser.quitHold.keyDown(win)) return true
       this.browser.actions.run(shortcut.action, { sourceTabId, win })
       return true
     }

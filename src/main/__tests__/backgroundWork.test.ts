@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { BackgroundWork } from '../../core/background/work'
 import {
   HOLD_BACKGROUND_WORK_FLAG,
+  TEST_QUIT_HOLD_FLAG,
   electronPerformanceHost,
   holdBackgroundWorkRequested,
   nodeWorkerHandle,
+  quitHoldEverywhereRequested,
   type NodeWorkerLike
 } from '../platform/backgroundWork'
 
@@ -46,6 +48,16 @@ describe('the desktop hold flag (--hold-background-work)', () => {
     expect(electronPerformanceHost({ holdBackgroundWork: false }).holdBackgroundWork?.()).toBe(
       false
     )
+  })
+})
+
+describe('the drives’ hold-to-quit flag (--test-quit-hold, session-08)', () => {
+  it('is read off the command line, whole word, and off by default', () => {
+    expect(TEST_QUIT_HOLD_FLAG).toBe('--test-quit-hold')
+    expect(quitHoldEverywhereRequested(['/usr/bin/zenium'])).toBe(false)
+    expect(quitHoldEverywhereRequested(['/usr/bin/zenium', 'https://example.com/'])).toBe(false)
+    expect(quitHoldEverywhereRequested(['/usr/bin/zenium', '--test-quit-hold'])).toBe(true)
+    expect(quitHoldEverywhereRequested(['zenium', '--test-quit-hold=1'])).toBe(false)
   })
 })
 

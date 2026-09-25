@@ -3351,6 +3351,16 @@ export type OverlayKind =
   /** The print preview (`zen://print`) on a host without page tabs: a tab-modal dialog over the page. */
   | 'print'
 
+/**
+ * A quit chord held down (`QuitHoldService`): when the hold began (the host's clock, epoch ms)
+ * and how long it must last before the app quits. The chrome draws the hold's progress from
+ * the two; the hold ends – the state goes null – when a key comes up or the time is reached.
+ */
+export interface QuitHoldState {
+  startedAt: number
+  durationMs: number
+}
+
 export interface WindowState {
   id: string
   kind: WindowKind
@@ -3364,6 +3374,12 @@ export interface WindowState {
   htmlFullscreenTabId: string | null
   /** A window-modal question waiting for an answer ("Close N tabs?"), if any. */
   prompt: WindowPrompt | null
+  /**
+   * The quit chord being held in this window (session-08, the macOS hold): the chrome shows
+   * "Hold ⌘Q to Quit" with the hold's progress; null while no hold runs. Desktop hosts alone
+   * ever set it (the phone has no quit chord).
+   */
+  quitHold: QuitHoldState | null
   /** The web app a standalone window shows (`chrome` `app`); null for browser windows. */
   app: AppWindowInfo | null
   /**

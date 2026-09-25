@@ -281,6 +281,8 @@ export class ElectronPlatform implements Platform {
     private readonly userDataDir: string,
     options: {
       holdBackgroundWork?: boolean
+      /** `--test-quit-hold` was on the command line: the quit chord holds on every OS (the drives). */
+      quitHoldEverywhere?: boolean
       /** The launch's `--kiosk` / `--start-maximized` (`cli.ts`), for every browser window. */
       windowSwitches?: WindowSwitches
     } = {}
@@ -524,7 +526,10 @@ export class ElectronPlatform implements Platform {
                 systemPreferences.getUserDefault('AppleActionOnDoubleClick', 'string')
               )
           }
-        : {})
+        : {}),
+      // The desktop drives' stand-in for the macOS hold-to-quit (`--test-quit-hold`): present
+      // only when the launch asked, so a normal launch's host holds on macOS alone.
+      ...(options.quitHoldEverywhere === true ? { quitHoldEverywhere: () => true } : {})
     }
     this.theme = {
       systemDark: () => nativeTheme.shouldUseDarkColors,
