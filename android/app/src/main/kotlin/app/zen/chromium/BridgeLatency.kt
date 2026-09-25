@@ -113,12 +113,14 @@ object BridgeLatency {
         val byKind = JSONObject()
         for ((key, group) in inWindow.filter { it.dispatchedUs != 0L }.groupBy { "${it.kind}/${it.via}" }.toSortedMap()) {
             val latencies = group.map { it.dispatchedUs - it.arrivedUs }.sorted()
+            // Nearest rank, as the harness's `BlinkTrace.Stat` takes it.
+            val rank = maxOf(1, Math.ceil(0.95 * latencies.size).toInt())
             byKind.put(
                 key,
                 JSONObject()
                     .put("n", latencies.size)
                     .put("meanUs", latencies.average().toLong())
-                    .put("p95Us", latencies[((latencies.size - 1) * 0.95).toInt()])
+                    .put("p95Us", latencies[rank - 1])
                     .put("maxUs", latencies.last())
             )
         }
