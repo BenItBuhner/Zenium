@@ -1,0 +1,72 @@
+name: Android page-class seam demo
+
+# Records the CLASS-CHANGE SEAM of the page tabs (W6-S1, #499: the page follows the window's
+# class) on a hardware-accelerated emulator of the pixel_tablet profile laid out at 1280 x 800 dp
+# at one px per dp (`wm size 1280x800`, `wm density 160`, as the tablet layout demo), and uploads
+# the video, the stills and the driver's findings. The scenes, once in each colour scheme: the
+# tablet opens `zen://history` as a tab from its app menu under a finger; `wm size 1280x590`
+# narrows the window under the 600 dp line into the phone class and the tab is handed to the
+# phone's surface – the History panel up, no tab holding the page, the tab it was opened over
+# active again, nothing in Recently closed; `wm size 1280x800` with the panel up widens the
+# window back and the panel gives way to the tab again (the reverse seam); narrowed once more,
+# the panel again, taken down by the system back; widened with nothing up, the tablet has no
+# History tab. The driver judges every step from the chrome's and the core's own state and fails
+# the run when a claim does not hold; see PageClassSeamDemo.kt. Dispatch-only, like the tablet
+# layout demo (#273's recipe: a push of this file on its branch registered the workflow and was
+# the run while the PR was open; the branch-scoped push trigger is gone from the final head).
+# The build, the emulator and its caches live in android-emulator-demo.yml; this file picks the
+# driver, the profile and the display. The nightly sweep's shard for it is #482's manifest to add.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-page-class-seam-b0d8
+    paths:
+      - .github/workflows/android-page-class-seam-demo.yml
+      - android/app/src/androidTest/kotlin/app/zen/chromium/PageClassSeamDemo.kt
+      - android/app/src/androidTest/assets/page-class-seam-demo-state.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-page-class-seam-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Page-class seam demo (light, then dark)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the seam is the tablet's page tab meeting the phone class.
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PageClassSeamDemo
+        DEMO_DIR=page-class-seam-demo
+        DEMO_OUT=artifacts/android-page-class-seam-demo
+        DEMO_VIDEO=page-class-seam-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-page-class-seam-demo
+      artifact-path: artifacts/android-page-class-seam-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Page-class seam demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PageClassSeamDemo
+        DEMO_DIR=page-class-seam-demo
+        DEMO_OUT=artifacts/android-page-class-seam-demo
+        DEMO_VIDEO=page-class-seam-demo.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-page-class-seam-demo-second-boot
+      artifact-path: artifacts/android-page-class-seam-demo/
