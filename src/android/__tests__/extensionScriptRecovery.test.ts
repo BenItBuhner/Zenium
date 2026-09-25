@@ -218,15 +218,75 @@ describe('extension-origin stylesheets the page CSP refused', () => {
     expect(missing.getAttribute('href')).toBe(`${ORIGIN}/gone.css`)
     expect(errors).toHaveLength(1)
     expect(String(errors[0]?.[0])).toContain('gone.css')
+    // The href set back starts a load of the link's own, refused as the first was: swallowed,
+    // the element's listeners had their one error, and nothing is read again.
     const again = errorEvent(missing)
     recovery.onError(again)
-    expect(again.stopped).toBe(false)
+    expect(again.stopped).toBe(true)
+    expect(missing.events).toEqual(['error'])
+    expect(errors).toHaveLength(1)
 
     const { host: plain } = harness([EXT], { [`${ORIGIN}/a.css`]: '.a{}' })
     const old = new FakeLink(`${ORIGIN}/a.css`, false)
     createScriptRecovery(plain).onError(errorEvent(old))
     await tick()
     expect(old.events).toEqual(['error'])
+  })
+
+  it("swallows the loads a recovered <link>'s respelled href starts on its own, so the element's listeners get the verdict alone (Buyhatke's Vite preload helper on flipkart.com, compat round 18)", async () => {
+    const { host, reads, errors } = harness([EXT], {
+      [`${ORIGIN}/assets/applyThems-tywSzSq-.css`]: '.bh{color:red}'
+    })
+    const recovery = createScriptRecovery(host)
+    const link = new FakeLink(`${ORIGIN}/assets/applyThems-tywSzSq-.css`)
+    // The helper's own listeners: a rejection of the whole graph on the first `error`.
+    const helper: string[] = []
+    link.addEventListener('load', () => helper.push('resolve'))
+    link.addEventListener('error', () => helper.push('reject'))
+    recovery.onError(errorEvent(link))
+    expect(reads).toHaveLength(1)
+    // 3 ms later, before the relay answered: the load the respelled href started, refused by
+    // the same `style-src` (`chrome-extension:` is no host of the page's and no scheme of the
+    // WebView's). Not the helper's to see, not a second read.
+    const respelled = errorEvent(link)
+    recovery.onError(respelled)
+    expect(respelled.stopped).toBe(true)
+    expect(helper).toEqual([])
+    expect(reads).toHaveLength(1)
+    expect(recovery.pending()).toBe(1)
+    await tick()
+    expect(helper).toEqual(['resolve'])
+    expect(link.ownerDocument.adoptedStyleSheets).toHaveLength(1)
+    expect(recovery.pending()).toBe(0)
+    // A load of the element's own after the verdict (the page setting the href again) is
+    // swallowed too: the verdict was the one event.
+    const late = errorEvent(link)
+    recovery.onError(late)
+    expect(late.stopped).toBe(true)
+    expect(helper).toEqual(['resolve'])
+    expect(errors).toEqual([])
+
+    // The recovery's own verdict passes the window's listener while it is dispatched: a file
+    // that cannot be read ends in the one `error` the helper was owed, and the served href set
+    // back starts a load whose refusal is swallowed.
+    const missing = new FakeLink(`${ORIGIN}/assets/gone.css`)
+    const seenDuringDispatch: boolean[] = []
+    missing.addEventListener('error', () => {
+      const during = errorEvent(missing)
+      recovery.onError(during)
+      seenDuringDispatch.push(during.stopped)
+    })
+    recovery.onError(errorEvent(missing))
+    await tick()
+    expect(missing.events).toEqual(['error'])
+    expect(seenDuringDispatch).toEqual([false])
+    expect(missing.getAttribute('href')).toBe(`${ORIGIN}/assets/gone.css`)
+    const refusedAgain = errorEvent(missing)
+    recovery.onError(refusedAgain)
+    expect(refusedAgain.stopped).toBe(true)
+    expect(missing.events).toEqual(['error'])
+    expect(reads).toEqual([`${ORIGIN}/assets/applyThems-tywSzSq-.css`, `${ORIGIN}/assets/gone.css`])
+    expect(errors).toHaveLength(1)
   })
 
   it("ignores the page's own stylesheets, other rels and a host without a file read", () => {
