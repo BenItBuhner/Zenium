@@ -4,10 +4,14 @@
  * the host owns the timers and the persistence.
  */
 
+/**
+ * Chrome's bindings read `null` for an optional property as the property left out, and
+ * extensions lean on it (`{ periodInMinutes: null, delayInMinutes: 1 }` is a one-shot alarm).
+ */
 export interface AlarmCreateInfo {
-  when?: number
-  delayInMinutes?: number
-  periodInMinutes?: number
+  when?: number | null
+  delayInMinutes?: number | null
+  periodInMinutes?: number | null
 }
 
 export interface Alarm {
@@ -34,7 +38,9 @@ export function scheduleAlarm(
   info: AlarmCreateInfo,
   options: ScheduleOptions
 ): { alarm: Alarm; error: null } | { alarm: null; error: string } {
-  const { when, delayInMinutes, periodInMinutes } = info
+  const when = info.when ?? undefined
+  const delayInMinutes = info.delayInMinutes ?? undefined
+  const periodInMinutes = info.periodInMinutes ?? undefined
   if (when !== undefined && delayInMinutes !== undefined) {
     return { alarm: null, error: 'Cannot set both when and delayInMinutes.' }
   }
