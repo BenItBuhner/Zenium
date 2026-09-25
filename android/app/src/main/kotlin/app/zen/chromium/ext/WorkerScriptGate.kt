@@ -33,8 +33,9 @@ import java.util.concurrent.ConcurrentHashMap
  * (the page's tag must never be refused; a stale entry is cleared by the next document's answer).
  *
  * WebView's IO threads call [documentServed] and [scriptRequest] in the requests' order (the
- * document's answer is out before its parser asks for the script); the main thread calls
- * [reset]. Pure, so the JVM unit tests cover it.
+ * document's answer is out before its parser asks for the script); the main thread reads
+ * [refusals] for the one count line as the background view goes, then calls [forget], and
+ * [reset] for a new runtime. Pure, so the JVM unit tests cover it.
  */
 class WorkerScriptGate {
     enum class Verdict { SERVE, REFUSE, REFUSED_AGAIN }
@@ -45,7 +46,10 @@ class WorkerScriptGate {
     private val refused = ConcurrentHashMap<String, Int>()
 
     /** The background document itself is being served: its own `<script src>` is still to come. */
-    fun documentServed(extensionId: String) {
+    fun documentServed(extensionId: String) = forget(extensionId)
+
+    /** The background view went (stopped, restarted): nothing is remembered until its next document. */
+    fun forget(extensionId: String) {
         served.remove(extensionId)
         refused.remove(extensionId)
     }

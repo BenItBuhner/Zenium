@@ -61,6 +61,20 @@ class WorkerScriptGateTest {
     }
 
     @Test
+    fun `a stopped background is forgotten, its count read first, and the next document is served once again`() {
+        val gate = WorkerScriptGate()
+        gate.documentServed(tldv)
+        assertEquals(Verdict.SERVE, gate.scriptRequest(tldv))
+        assertEquals(Verdict.REFUSE, gate.scriptRequest(tldv))
+        assertEquals(Verdict.REFUSED_AGAIN, gate.scriptRequest(tldv))
+        // stopBackground: the count goes to the log, then the document is forgotten.
+        assertEquals(2, gate.refusals(tldv))
+        gate.forget(tldv)
+        assertEquals(0, gate.refusals(tldv))
+        assertEquals(Verdict.SERVE, gate.scriptRequest(tldv))
+    }
+
+    @Test
     fun `a reset forgets every document, and the next requests are served once again`() {
         val gate = WorkerScriptGate()
         gate.documentServed(tldv)

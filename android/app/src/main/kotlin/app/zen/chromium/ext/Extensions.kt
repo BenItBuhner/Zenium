@@ -743,9 +743,9 @@ class Extensions(private val host: Host) {
     /** A new core runtime starts from nothing: every extension of the previous one goes. */
     private fun reset() {
         attachEpochs.reset()
-        workerScriptGate.reset()
         closePopup()
         for (id in backgrounds.keys.toList()) stopBackground(id)
+        workerScriptGate.reset()
         for (id in units.keys.toList()) {
             for (view in handlers.keys.toList()) removeExtension(view, id)
             io.execute { compiler.forget(id) }
@@ -1941,6 +1941,12 @@ class Extensions(private val host: Host) {
 
     private fun stopBackground(id: String) {
         val view = backgrounds.remove(id) ?: return
+        // The document's count of refused requests for its own script, once, as it goes: Blink
+        // reports a failed sub-resource to the console from the network source, which WebView's
+        // onConsoleMessage never sees, so this line is the only count of them in the log.
+        val refusals = workerScriptGate.refusals(id)
+        if (refusals > 0) Log.i(TAG, "the ${id.take(8)} background document asked for its own script as a sub-resource $refusals time(s) beyond the page's own tag; all refused (WorkerScriptGate)")
+        workerScriptGate.forget(id)
         onDocumentGone(view)
         host.detachHidden(view)
         view.destroy()
