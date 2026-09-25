@@ -19,10 +19,6 @@ name: Android cold start pair
 # correct, only that the two builds' cold starts measured within the gate on the recipe's
 # emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
-  # TEMPORARY (W6-1, picture-in-picture, round 4): the P0 pair re-run over #484 on the re-rebased
-  # head – main's tip against this head (Host.kt carries both PRs' hunks) – removed before the PR is ready.
-  push:
-    branches: [cursor/android-pip-253d]
   workflow_dispatch:
     inputs:
       base-ref:
