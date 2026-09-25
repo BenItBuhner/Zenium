@@ -11,6 +11,8 @@ name: Android startup demo
 # the three moments. The claims fail the run under `assert`. Dispatch-only, like the other demos;
 # the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  push:
+    branches: [cursor/android-startup-9615]
   workflow_dispatch:
     inputs:
       assert:
