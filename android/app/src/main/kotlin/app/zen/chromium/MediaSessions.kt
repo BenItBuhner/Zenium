@@ -19,6 +19,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaControllerCompat
@@ -31,6 +32,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import app.zen.chromium.ext.ExtensionNotifications
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -108,6 +110,8 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     private var pictureInPictureRequested: MediaSessionInfo? = null
     /** Why the host is ending the window itself ([endPictureInPicture]), for the `media.pip` the system's answer reports. */
     private var pictureInPictureEnding: PictureInPictureRule.End? = null
+    /** An ending held for the screen to come on (Chrome's `mDismissPending`, [endPictureInPicture]); finished from the activity's `onStart`. */
+    private var pictureInPictureEndPending: PictureInPictureRule.End? = null
 
     /** Whether this device has picture-in-picture at all (Android TV and some Go devices do not). */
     val pictureInPictureSupported: Boolean =
@@ -149,6 +153,13 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         ContextCompat.registerReceiver(context, receiver, IntentFilter(ACTION_CONTROL), ContextCompat.RECEIVER_NOT_EXPORTED)
         session.setCallback(callback, main)
         session.setSessionActivity(openIntent(null))
+        // Chrome's `onStart`: an ending held while the screen was off finishes once the activity starts again (the unlock).
+        activity.lifecycle.addObserver(LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) pictureInPictureEndPending?.let { pending ->
+                pictureInPictureEndPending = null
+                endPictureInPicture(pending)
+            }
+        })
     }
 
     // --- the core's MediaSessionHost -------------------------------------------------------------
@@ -431,6 +442,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         val ending = pictureInPictureEnding
         pictureInPictureTab = null
         pictureInPictureEnding = null
+        pictureInPictureEndPending = null
         host.tabs.fillWindow(null)
         // A window the host ended goes with its task, whichever state the callback finds the activity in.
         val exit = PictureInPictureRule.onLeft(
@@ -492,6 +504,10 @@ class MediaSessions(private val host: Host, private val io: Executor) {
      * `media.pip`'s `reason`. Within Chrome's exit delay of the entry the end waits it out
      * ([PictureInPictureRule.exitDelayMs]): the system is still animating the window in. A
      * window the system has already taken down (the states drifted) only drops the record.
+     * With the screen off or the keyguard up the end is held, as Chrome holds its own ("turning
+     * off pip while the screen is off or the keyguard is active gets Android into a bad state"):
+     * the window's tab's media pauses now – what the end would have done – and the task goes to
+     * the back from the activity's next `onStart`, after the unlock.
      */
     private fun endPictureInPicture(end: PictureInPictureRule.End) {
         val tabId = pictureInPictureTab ?: return
@@ -500,6 +516,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         if (!activity.isInPictureInPictureMode) {
             Log.w(TAG, "picture-in-picture record for $tabId without the window; dropped ($end)")
             pictureInPictureTab = null
+            pictureInPictureEndPending = null
             host.tabs.fillWindow(null)
             return
         }
@@ -510,9 +527,25 @@ class MediaSessions(private val host: Host, private val io: Executor) {
             main.postDelayed({ if (pictureInPictureTab == tabId && pictureInPictureEnteredAt == enteredAt) endPictureInPicture(end) }, delay)
             return
         }
+        val power = context.getSystemService(PowerManager::class.java)
+        if (power != null && !power.isInteractive) {
+            Log.i(TAG, "picture-in-picture for $tabId ends with the screen off: held for onStart ($end)")
+            pictureInPictureEndPending = end
+            if (pictureInPicturePlaying) act(tabId, MediaControl.PAUSE)
+            return
+        }
         Log.i(TAG, "ending picture-in-picture for $tabId: $end")
         pictureInPictureEnding = end
-        runCatching { activity.moveTaskToBack(true) }.onFailure { Log.w(TAG, "moveTaskToBack refused: $it") }
+        val moved = runCatching { activity.moveTaskToBack(true) }
+            .onFailure { Log.w(TAG, "moveTaskToBack refused: $it") }
+            .getOrDefault(false)
+        // Refused (the task is not the root's, or the activity is not its front): the window
+        // stands, and so must the record – an ending flag left set would swallow every later
+        // ending and read the next expand as a close.
+        if (!moved) {
+            Log.w(TAG, "moveTaskToBack answered false for $tabId ($end); the window stands")
+            pictureInPictureEnding = null
+        }
     }
 
     /**
@@ -536,15 +569,25 @@ class MediaSessions(private val host: Host, private val io: Executor) {
      * params are its own tab's: a session another tab's audio takes meanwhile (the core resolves
      * the playing one) neither reshapes the window to its ratio nor hands it buttons for a page
      * the window does not show – the window keeps the params it has until its tab reports again.
+     * Its own tab's session gone (the element removed, the page's session cleared: the core
+     * resolves none) takes the buttons with it – the window keeps its shape and shows the
+     * platform's X and expand alone, as SystemUI's row follows the session's state in Chrome.
      */
     private fun updatePictureInPictureParams() {
         if (!pictureInPictureSupported || destroyed) return
-        val info = current?.takeIf(MediaControls::pictureInPictureEligible)
+        val session = current
         val pipTab = pictureInPictureTab
-        if (pipTab != null && info?.tabId != pipTab) return
+        if (pipTab != null && session != null && session.tabId != pipTab) return
+        val info = session?.takeIf(MediaControls::pictureInPictureEligible)
         runCatching { activity.setPictureInPictureParams(paramsOf(info, autoEnter(info))) }
     }
 
+    /**
+     * The params for `info`'s session, or for none: the system keeps every field a call leaves
+     * unset (`PictureInPictureParams.copyOnlySet`), so no session sets the actions to none
+     * outright – the window's last buttons would stand for a session that is gone – and leaves
+     * the ratio as it is.
+     */
     private fun paramsOf(info: MediaSessionInfo?, autoEnter: Boolean): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder()
         if (info != null) {
@@ -552,6 +595,8 @@ class MediaSessions(private val host: Host, private val io: Executor) {
             builder.setAspectRatio(Rational(width, height))
             builder.setActions(MediaControls.pictureInPictureControls(info).map { remoteAction(info.tabId, it) })
             sourceRect(info.tabId)?.let(builder::setSourceRectHint)
+        } else {
+            builder.setActions(emptyList())
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setAutoEnterEnabled(autoEnter)
@@ -575,6 +620,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
 
     fun destroy() {
         destroyed = true
+        pictureInPictureEndPending = null
         clear()
         runCatching { context.unregisterReceiver(receiver) }
         session.release()

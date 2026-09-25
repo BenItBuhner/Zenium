@@ -155,7 +155,11 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     /** Tear a view down (already removed from [views]); the chrome is not told. */
     private fun drop(view: TabWebView) {
         host.tabRemoved(view)
-        if (filled?.tabId == view.tabId) filled = null
+        // The window's own view going: the fill ends the way every fill ends – the record dropped
+        // (the view is out of [views], so nothing is laid back) and the host told, whose reader
+        // hold on the chrome lifts with it. A silent drop left the chrome out of a screen
+        // reader's tree until the next window or veil (PR #481's review, REQUIRED 1).
+        if (filled?.tabId == view.tabId) fillWindow(null)
         host.exitFullscreen(view)
         view.backTransition?.abort()
         view.cover.reset()
