@@ -28,7 +28,8 @@ import type {
   KeyEventInput,
   MenuItemTemplate,
   PageContextParams,
-  PopupFrame
+  PopupFrame,
+  WindowOpenDisposition
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
 import {
@@ -104,8 +105,10 @@ import {
 } from './extensionStore'
 import type { ExtensionApiHooks } from './extensionApi'
 import { ExtensionErrorConsole } from './extensionErrors'
+import { popupWindowOpenTicket } from './extensionPopupOpen'
 import { liveWebContents } from './popupContents'
 import type { SessionManager } from './sessions'
+import { ElectronTabViewHost } from './views'
 import type { ElectronWindow } from './window'
 
 interface Manifest {
@@ -1472,12 +1475,48 @@ export class ExtensionService implements ExtensionHost {
         this.closePopup('escape')
       }
     })
-    wc.setWindowOpenHandler(({ url }) => {
-      // Extension pages (options, dashboards) open as tabs like any site the popup links to.
-      if (/^(https?|chrome-extension):/.test(url))
-        this.browser.tabs.createTab({ url, active: true }, win)
-      this.closePopup()
-      return { action: 'deny' }
+    wc.setWindowOpenHandler(({ url, disposition, features, referrer }) => {
+      // Chrome gives the popup's `window.open` a real page, so the call's return value is a
+      // live window (Secure Shell opens an empty one and sets its location to its connection
+      // dialog): the page Chromium made for the call is adopted into a tab of this window, or
+      // into a toolbar-only window for a sized open, the way a tab's own `window.open` is
+      // (`ElectronTabView`); the popup then closes, as Chrome's does when the new page takes
+      // the focus. Without the tab path (no view for the active tab), or for a URL no page may
+      // open, the popup's links to sites and extension pages still open as tabs.
+      const views = this.browser.platform.views
+      const active = this.browser.tabs.activeTabFor(win)
+      const opener =
+        active && views instanceof ElectronTabViewHost ? views.viewForTab(active.id) : undefined
+      const ticket =
+        opener && active
+          ? popupWindowOpenTicket(url, disposition as WindowOpenDisposition, features ?? '', {
+              openerUrl: wc.getURL(),
+              win,
+              activeTabId: active.id,
+              windowsCapable: this.browser.state.capabilities.windows,
+              createWindow: (opts) => this.browser.createWindow(opts),
+              adoptView: (page, opts, target) => this.browser.tabs.adoptView(page, opts, target)
+            })
+          : null
+      if (!ticket || !opener || !(views instanceof ElectronTabViewHost)) {
+        if (/^(https?|chrome-extension):/.test(url))
+          this.browser.tabs.createTab({ url, active: true }, win)
+        this.closePopup()
+        return { action: 'deny' }
+      }
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        createWindow: (options) => {
+          const guest = (options as { webContents?: WebContents }).webContents
+          const contents = views.openTicket(ticket, opener, guest, { httpReferrer: referrer })
+          // A tick later: Chromium is still handing the new page over when this runs.
+          setTimeout(() => {
+            if (this.popup?.view === view) this.closePopup()
+          }, 0)
+          return contents
+        }
+      }
     })
     // The document closed itself (`window.close()`, as Chrome's popups may): the popup is over
     // for the chrome and for `action.openPopup`, which Chrome refuses while one shows.

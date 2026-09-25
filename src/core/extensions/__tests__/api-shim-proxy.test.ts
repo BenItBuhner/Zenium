@@ -14,10 +14,10 @@ interface FakeHost extends ShimHost {
   deliver(namespace: string, event: string, args: unknown[]): void
 }
 
-function fakeHost(): FakeHost {
+function fakeHost(kind: 'frame' | 'worker' = 'worker'): FakeHost {
   let listener: ((namespace: string, event: string, args: unknown[]) => void) | null = null
   const host: FakeHost = {
-    kind: 'worker',
+    kind,
     calls: [],
     notifications: [],
     respond: () => ({ ok: true, value: undefined }),
@@ -58,7 +58,10 @@ interface Inert {
   settings: Any
 }
 
-function install(permissions: string[] = ['proxy']): { chrome: Any; host: FakeHost; inert: Inert } {
+function install(
+  permissions: string[] = ['proxy'],
+  kind: 'frame' | 'worker' = 'worker'
+): { chrome: Any; host: FakeHost; inert: Inert } {
   const g = globalThis as Any
   const manifest = { manifest_version: 3, name: 'Probe', version: '1.0', permissions }
   const nativeEvent = (): Any => ({
@@ -81,9 +84,25 @@ function install(permissions: string[] = ['proxy']): { chrome: Any; host: FakeHo
   }
   Object.defineProperty(g, 'chrome', { value: chrome, configurable: true, writable: true })
   Object.defineProperty(g, 'browser', { value: chrome, configurable: true, writable: true })
-  const host = fakeHost()
+  const host = fakeHost(kind)
   installExtensionApi(host, API_SPEC)
   return { chrome: g.chrome, host, inert }
+}
+
+/**
+ * ZeroOmega's `SettingsProxyImpl` as its worker (a strict-mode ES module) hands it to the API:
+ * `applyProfile` passes the unbound `_proxyChangeListener` to `proxy.settings.get`, and the
+ * method reads `this._proxyChangeWatchers`. Chrome calls a worker's callbacks with the worker
+ * global, where the field is undefined and the listener does nothing; with `this` undefined the
+ * read throws, on every profile change.
+ */
+function unboundListener(seen: unknown[]): (details: unknown) => unknown[] {
+  return function (this: { _proxyChangeWatchers?: unknown[] | null }, details: unknown) {
+    'use strict'
+    seen.push(this)
+    const watchers = this._proxyChangeWatchers ?? []
+    return watchers.map(() => details)
+  }
 }
 
 function flush(): Promise<void> {
@@ -210,5 +229,37 @@ describe('chrome.proxy in the shim', () => {
     host.deliver('proxy', 'onProxyError', [error])
     expect(failed).toHaveBeenCalledWith(error)
     expect(changed).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls a worker\u2019s callbacks and listeners with the worker global as this, as Chrome does, and a frame\u2019s with undefined', async () => {
+    const details = { value: { mode: 'system' }, levelOfControl: 'controllable_by_this_extension' }
+    const answer = (_ns: string, method: string): InvokeResult =>
+      method === 'get' ? { ok: true, value: details } : { ok: true, value: undefined }
+    // ZeroOmega's worker: the unbound method as a `get` callback and as an onChange listener.
+    const worker = install()
+    worker.host.respond = answer
+    const seenByWorker: unknown[] = []
+    const listener = unboundListener(seenByWorker)
+    worker.chrome.proxy.settings.get({}, listener)
+    await flush()
+    worker.chrome.proxy.settings.onChange.addListener(listener)
+    worker.host.deliver('proxy', 'settings.onChange', [details])
+    await flush()
+    expect(seenByWorker).toEqual([globalThis, globalThis])
+    delete g.chrome
+    delete g.browser
+    // A frame's get the undefined receiver Chrome hands Blink for documents.
+    const frame = install(['proxy'], 'frame')
+    frame.host.respond = answer
+    const seenByFrame: unknown[] = []
+    const probe = vi.fn(function (this: unknown) {
+      seenByFrame.push(this)
+    })
+    frame.chrome.proxy.settings.get({}, probe)
+    await flush()
+    frame.chrome.proxy.settings.onChange.addListener(probe)
+    frame.host.deliver('proxy', 'settings.onChange', [details])
+    expect(probe).toHaveBeenCalledTimes(2)
+    expect(seenByFrame).toEqual([undefined, undefined])
   })
 })

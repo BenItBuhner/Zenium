@@ -5,6 +5,11 @@
   other package and process, so a custom tab it starts is a genuine cross-app custom tab and
   closing it lands back in it. Exported because the driver, which runs in Zenium's process,
   starts it; singleTask so a later start hands it the next custom tab to open (onNewIntent).
+
+  And the share target the share panel demo sends to (ShareTargetActivity.java): "Nimbus Notes",
+  a text/plain ACTION_SEND handler Zenium's <queries> make visible, so the panel's row has an app
+  whose window the driver can read back. Exported as any share target is; singleTop so the
+  second share of the ranking check lands in onNewIntent.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="Nimbus News">
@@ -14,5 +19,17 @@
             android:label="Nimbus News"
             android:launchMode="singleTask"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <activity
+            android:name="app.zen.chromium.ShareTargetActivity"
+            android:exported="true"
+            android:label="Nimbus Notes"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

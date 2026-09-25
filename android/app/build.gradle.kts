@@ -287,6 +287,11 @@ dependencies {
     // The pages' media on the OS controls: MediaSessionCompat behind the media-style notification,
     // the lock screen and the headset buttons (MediaSessions.kt, MediaPlaybackService.kt).
     implementation("androidx.media:media:1.7.0")
+    // A foldable's posture for the chrome (Posture.kt, the `posture` host event, OS-11): the
+    // window's FoldingFeature. `window-java` is the callback adapter, so the listener needs no
+    // coroutine code of ours; the library still pulls kotlinx-coroutines in, which R8 trims.
+    implementation("androidx.window:window:1.3.0")
+    implementation("androidx.window:window-java:1.3.0")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry and the
     // vault key wrapping format. The extension and vault tests build org.json documents, which

@@ -466,7 +466,7 @@ describe('createEmulatedEngine', () => {
     expect(clicks).toEqual([{ id: 1 }])
   })
 
-  it('queues an event pushed before any listener exists and replays it on addListener', () => {
+  it('queues an event pushed before any listener exists and replays it after the registering script, to every listener it added', async () => {
     const h = harness()
     h.engine.receive({
       t: 'event',
@@ -475,8 +475,34 @@ describe('createEmulatedEngine', () => {
       args: [{ reason: 'install' }]
     })
     const seen: unknown[] = []
-    ;(h.chrome.runtime.onInstalled as Listenable).addListener((d) => seen.push(d))
-    expect(seen).toEqual([{ reason: 'install' }])
+    // Rabby's shape: the listener reads module state its script's async boot fills after the
+    // top-level registration; Chrome never calls a listener from inside its own addListener.
+    const service: { store?: { armed: boolean } } = {}
+    ;(h.chrome.runtime.onInstalled as Listenable).addListener((d) =>
+      seen.push(['first', d, service.store?.armed])
+    )
+    ;(h.chrome.runtime.onInstalled as Listenable).addListener((d) => seen.push(['second', d]))
+    service.store = { armed: true }
+    expect(seen).toEqual([])
+    await flush()
+    expect(seen).toEqual([
+      ['first', { reason: 'install' }, true],
+      ['second', { reason: 'install' }]
+    ])
+  })
+
+  it('an event arriving while queued ones wait for their task keeps its place behind them', async () => {
+    const h = harness()
+    h.engine.receive({ t: 'event', ns: 'alarms', name: 'onAlarm', args: [{ name: 'first' }] })
+    const seen: unknown[] = []
+    ;(h.chrome.alarms.onAlarm as Listenable).addListener((a) => seen.push(a))
+    h.engine.receive({ t: 'event', ns: 'alarms', name: 'onAlarm', args: [{ name: 'second' }] })
+    expect(seen).toEqual([])
+    await flush()
+    expect(seen).toEqual([{ name: 'first' }, { name: 'second' }])
+    // With nothing queued, a delivery to a live listener is immediate, as before.
+    h.engine.receive({ t: 'event', ns: 'alarms', name: 'onAlarm', args: [{ name: 'third' }] })
+    expect(seen).toEqual([{ name: 'first' }, { name: 'second' }, { name: 'third' }])
   })
 
   it('serialises scripting.executeScript functions as source', () => {

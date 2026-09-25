@@ -3,11 +3,14 @@ import type {
   HostCapabilities,
   NewTabPageState,
   Platform as PlatformOs,
+  SpaceTheme,
   Tab
 } from '../../shared/types'
-import { PRIVATE_CONTAINER_ID } from '../../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
+import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
+import { makeTheme, resolveTheme, unfollowedTheme } from '../../shared/theme'
 import { Browser } from '../browser'
 import type { RequestContext } from '../blocking/rules'
 import { MAX_NEW_TAB_SHORTCUTS, normalizeShortcutInput } from '../newtab'
@@ -55,13 +58,19 @@ interface Fixture {
   browser: Browser
   views: Recorded[]
   sent: Array<{ name: string; payload: unknown }>
-  background: { current: string | null; picks: number }
+  background: { current: string | null; picks: number; accent: string | null; accentReads: number }
 }
 
 function fixture(opts: { newTabPage?: boolean; withBackground?: boolean } = {}): Fixture {
   const views: Recorded[] = []
   const sent: Array<{ name: string; payload: unknown }> = []
-  const background = { current: null as string | null, picks: 0 }
+  const background = {
+    current: null as string | null,
+    picks: 0,
+    /** What the host's decoder reads from the image (NTP-14), and how often it was asked. */
+    accent: null as string | null,
+    accentReads: 0
+  }
   const capabilities = stub<HostCapabilities>({
     windows: true,
     updates: false,
@@ -155,6 +164,10 @@ function fixture(opts: { newTabPage?: boolean; withBackground?: boolean } = {}):
           },
           clear: async () => {
             background.current = null
+          },
+          accent: async () => {
+            background.accentReads += 1
+            return background.accent
           }
         }
       : undefined
@@ -387,6 +400,27 @@ describe('NewTabService: state for the page', () => {
     expect(state.greeting).toBe(false)
     expect(state.canPickImage).toBe(false)
     expect(f.browser.newTab.stateFor('tab_nope')).toBeNull()
+  })
+
+  it("carries the default engine's favicon for the field's leading glyph, following the pick", async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const engines = f.browser.state.searchEngines
+    const picked = engines.find((e) => e.id === f.browser.state.settings.searchEngineId)!
+    expect(picked.favicon).toBeTruthy()
+    expect(f.browser.newTab.stateFor(tab.id)!.engineFavicon).toBe(picked.favicon)
+    const view = f.views.find((v) => v.tabId === tab.id)!
+    await settle()
+    const n = view.pushes.length
+    const other = engines.find((e) => e.id !== picked.id && e.favicon)!
+    f.browser.updateSettings({ searchEngineId: other.id }, win)
+    expect(f.browser.newTab.stateFor(tab.id)!.engineFavicon).toBe(other.favicon)
+    // A settings commit re-pushes the page, so the live field's glyph follows the new default.
+    await settle()
+    expect(view.pushes.length).toBe(n + 1)
+    expect(view.pushes.at(-1)!.engineFavicon).toBe(other.favicon)
   })
 
   it('a tab that left the page gets no state and its actions are ignored', () => {
@@ -898,6 +932,72 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(commands).toEqual([{ type: 'remove-tile', id: 'site:news.example' }])
   })
 
+  describe('hide a section with Undo (NTP-18)', () => {
+    function page(f: Fixture): { tab: Tab; commands: unknown[] } {
+      const commands: unknown[] = []
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'newtab.open', undefined)
+      const tab = activeTab(f)!
+      f.browser.tabs.view(tab.id)!.sendNewTabCommand = (command) => {
+        commands.push(command)
+      }
+      return { tab, commands }
+    }
+
+    it('Hide Greeting turns the section off through the model and raises the page toast; Undo restores the layout whole', () => {
+      const f = fixture()
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'settings.update', { newTab: { preset: 'inspirational' } })
+      const { tab, commands } = page(f)
+      const svc = f.browser.newTab
+      svc.hideSection(tab.id, 'greeting')
+      expect(f.browser.state.settings.newTab).toMatchObject({
+        preset: 'custom',
+        modules: { greeting: false }
+      })
+      expect(svc.stateFor(tab.id)!.greeting).toBe(false)
+      expect(commands).toEqual([{ type: 'section-hidden', section: 'greeting' }])
+      svc.handleAction(tab.id, { type: 'show-section', section: 'greeting' })
+      expect(f.browser.state.settings.newTab.preset).toBe('inspirational')
+      expect(svc.stateFor(tab.id)!.greeting).toBe(true)
+      // A section that is off already: nothing changes and no toast is raised.
+      svc.hideSection(tab.id, 'greeting')
+      f.browser.handleCommand(win, 'settings.update', { newTab: { preset: 'focused' } })
+      svc.hideSection(tab.id, 'greeting')
+      expect(commands).toHaveLength(2)
+    })
+
+    it('Hide Shortcuts keeps the mode for its Undo; a change in between makes Undo turn the section on only', () => {
+      const f = fixture()
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: { ...f.browser.state.settings.newTab, mode: 'my-shortcuts' }
+      })
+      const { tab, commands } = page(f)
+      const svc = f.browser.newTab
+      svc.hideSection(tab.id, 'shortcuts')
+      expect(svc.stateFor(tab.id)!.shortcutsMode).toBe('hidden')
+      expect(commands).toEqual([{ type: 'section-hidden', section: 'shortcuts' }])
+      svc.showSection('shortcuts')
+      expect(svc.stateFor(tab.id)!.shortcutsMode).toBe('my-shortcuts')
+      expect(f.browser.state.settings.newTab.preset).toBe('focused')
+      // Hidden, then the greeting turned on from Settings: Undo does not take that back.
+      svc.hideSection(tab.id, 'shortcuts')
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: {
+          ...f.browser.state.settings.newTab,
+          modules: { ...f.browser.state.settings.newTab.modules, greeting: true }
+        }
+      })
+      svc.handleAction(tab.id, { type: 'show-section', section: 'shortcuts' })
+      expect(f.browser.state.settings.newTab).toMatchObject({
+        preset: 'custom',
+        mode: 'my-shortcuts',
+        modules: { greeting: true, shortcuts: true }
+      })
+    })
+  })
+
   it('Customise opens Settings at the New Tab section', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
@@ -952,6 +1052,100 @@ describe('NewTabService: my shortcuts and most visited', () => {
     await svc.clearBackgroundImage()
     expect(f.browser.state.settings.newTab.background).toBe('space')
     expect(svc.stateFor(tab.id)?.backgroundImage).toBeNull()
+  })
+
+  describe('reset (NTP-22 / NTP-12)', () => {
+    it('the page menu’s Restore Default Shortcuts: no pins, no removed sites, the most visited mode, the page’s toast raised; Undo puts the three back', () => {
+      const f = fixture()
+      f.browser.history.visit('https://news.example/a', 'News', null)
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'newtab.open', undefined)
+      const tab = activeTab(f)!
+      const svc = f.browser.newTab
+      const commands: unknown[] = []
+      f.browser.tabs.view(tab.id)!.sendNewTabCommand = (command) => {
+        commands.push(command)
+      }
+      // The default grid: the row is greyed, the restore does nothing, keeps nothing and raises
+      // no toast.
+      expect(svc.canRestoreDefaultShortcuts()).toBe(false)
+      svc.restoreDefaultShortcutsFromPage(tab.id)
+      expect(commands).toEqual([])
+      expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
+      svc.addShortcut('Docs', 'docs.example')
+      expect(svc.canRestoreDefaultShortcuts()).toBe(true)
+      svc.handleAction(tab.id, { type: 'hide-site', url: 'https://news.example/a' })
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: { ...f.browser.state.settings.newTab, mode: 'my-shortcuts' }
+      })
+      const before = f.browser.state.newTabDevice
+      svc.restoreDefaultShortcutsFromPage(tab.id)
+      expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+      expect(f.browser.state.settings.newTab.mode).toBe('most-visited')
+      expect(svc.stateFor(tab.id)!.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
+      // The page's toast ("Default shortcuts restored", Undo alone) is the command's.
+      expect(commands).toEqual([{ type: 'defaults-restored' }])
+      svc.handleAction(tab.id, { type: 'undo-restore-default-shortcuts' })
+      expect(f.browser.state.newTabDevice).toEqual(before)
+      expect(f.browser.state.settings.newTab.mode).toBe('my-shortcuts')
+      // Undo is one-shot, and a later change to the grid forgets the snapshot.
+      expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
+      expect(svc.restoreDefaultShortcuts()).toBe(true)
+      svc.addShortcut('Again', 'again.example')
+      expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
+      expect(f.browser.state.newTabDevice.shortcuts.map((s) => s.url)).toEqual([
+        'https://again.example/'
+      ])
+    })
+
+    it('resetBackground: the space gradient with the picked image let go; nothing else moves', async () => {
+      const f = fixture({ withBackground: true })
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'newtab.open', undefined)
+      const svc = f.browser.newTab
+      svc.addShortcut('Docs', 'docs.example')
+      await svc.pickBackgroundImage(win)
+      expect(f.browser.state.settings.newTab.background).toBe('image')
+      await f.browser.handleCommand(win, 'newtab.resetBackground', undefined)
+      expect(f.background.current).toBeNull()
+      expect(f.browser.state.settings.newTab.background).toBe('space')
+      expect(f.browser.state.settings.newTab.preset).toBe('custom')
+      expect(f.browser.state.newTabDevice.shortcuts).toHaveLength(1)
+      // A solid colour resets the same way without an image on the device.
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: { ...f.browser.state.settings.newTab, background: 'solid' }
+      })
+      await svc.resetBackground()
+      expect(f.browser.state.settings.newTab.background).toBe('space')
+    })
+
+    it('reset: the page as DEFAULT_NEW_TAB_SETTINGS has it, the device sets cleared, `enabled` kept', async () => {
+      const f = fixture({ withBackground: true })
+      const win = f.browser.focusedWindow()
+      f.browser.handleCommand(win, 'newtab.open', undefined)
+      const tab = activeTab(f)!
+      const svc = f.browser.newTab
+      svc.addShortcut('Docs', 'docs.example')
+      svc.handleAction(tab.id, { type: 'hide-site', url: 'https://news.example/a' })
+      await svc.pickBackgroundImage(win)
+      f.browser.handleCommand(win, 'settings.update', {
+        newTab: {
+          ...f.browser.state.settings.newTab,
+          enabled: false,
+          mode: 'my-shortcuts',
+          modules: { ...f.browser.state.settings.newTab.modules, greeting: true }
+        }
+      })
+      await f.browser.handleCommand(win, 'newtab.reset', undefined)
+      expect(f.browser.state.settings.newTab).toEqual({
+        ...DEFAULT_NEW_TAB_SETTINGS,
+        enabled: false
+      })
+      expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+      expect(f.background.current).toBeNull()
+      // No restore snapshot survives a reset.
+      expect(svc.undoRestoreDefaultShortcuts()).toBe(false)
+    })
   })
 
   it('a picked image is shown: on a layout without a wallpaper the section comes on', async () => {
@@ -1011,14 +1205,238 @@ describe('NewTabService: my shortcuts and most visited', () => {
   it('the chrome state says whether an image is set and whether the host can pick one', async () => {
     const f = fixture({ withBackground: true })
     const win = f.browser.focusedWindow()
-    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({ image: false, canPick: true })
+    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({
+      image: false,
+      canPick: true,
+      accent: null
+    })
     f.browser.handleCommand(win, 'newtab.open', undefined)
     await f.browser.newTab.pickBackgroundImage(win)
-    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({ image: true, canPick: true })
+    expect(f.browser.state.snapshot(win).newTabBackground).toEqual({
+      image: true,
+      canPick: true,
+      accent: null
+    })
     const bare = fixture()
     expect(bare.browser.state.snapshot(bare.browser.focusedWindow()).newTabBackground).toEqual({
       image: false,
-      canPick: false
+      canPick: false,
+      accent: null
+    })
+  })
+
+  describe("the picture's colour (NTP-14)", () => {
+    /** The host's decoder answering at the test's word, not at once: a read is under way between. */
+    function slowDecoder(f: Fixture): (accent: string | null) => void {
+      let answer: (accent: string | null) => void = () => {}
+      f.browser.platform.newTabBackground!.accent = () => {
+        f.background.accentReads += 1
+        return new Promise((resolve) => {
+          answer = resolve
+        })
+      }
+      return (accent) => answer(accent)
+    }
+
+    it('the chrome state carries the colour once the host has read it – one read per image', async () => {
+      const f = fixture({ withBackground: true })
+      const answer = slowDecoder(f)
+      const win = f.browser.focusedWindow()
+      // No image: nothing to read, nothing asked.
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      expect(f.background.accentReads).toBe(0)
+      await f.browser.newTab.pickBackgroundImage(win)
+      // The pick starts the read; the state answers null until the read's end commits the answer.
+      expect(f.background.accentReads).toBe(1)
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      answer('#3b6fd6')
+      await settle()
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBe('#3b6fd6')
+      f.browser.state.snapshot(win)
+      f.browser.state.snapshot(win)
+      expect(f.background.accentReads).toBe(1)
+      // The image let go: no colour, and nothing read for nothing.
+      await f.browser.handleCommand(win, 'newtab.clearBackgroundImage', undefined)
+      await settle()
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      expect(f.background.accentReads).toBe(1)
+    })
+
+    /** A theme of the user's own: one red on the wheel, every other setting off the defaults. */
+    const OWN: SpaceTheme = {
+      type: 'gradient',
+      colors: [{ c: [200, 40, 40], x: 0.2, y: 0.2, isPrimary: true }],
+      opacity: 0.8,
+      texture: 0.2,
+      algorithm: 'analogous',
+      monochrome: true,
+      rotation: 45
+    }
+
+    it("the switch on seeds the active space's theme, keeps its other settings and marks it as following", async () => {
+      const f = fixture({ withBackground: true })
+      f.background.accent = '#3b6fd6'
+      const win = f.browser.focusedWindow()
+      win.activeSpace().theme = { ...OWN }
+      f.browser.state.commit()
+      // Before the colour is known the switch does nothing and says so.
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', { on: true })).toBe(false)
+      expect(win.activeSpace().theme).toEqual(OWN)
+      await f.browser.newTab.pickBackgroundImage(win)
+      await settle()
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', { on: true })).toBe(true)
+      const theme = win.activeSpace().theme!
+      expect(theme.colors).toHaveLength(1)
+      expect(theme.colors[0]).toMatchObject({ c: [59, 111, 214], isPrimary: true })
+      expect(theme).toMatchObject({
+        opacity: 0.8,
+        texture: 0.2,
+        algorithm: 'analogous',
+        rotation: 45,
+        monochrome: false,
+        fromImage: true
+      })
+      expect(resolveTheme(theme, false).accent).toEqual([59, 111, 214])
+      // A space with no theme yet takes the seeded theme whole.
+      win.activeSpace().theme = null
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', { on: true })).toBe(true)
+      expect(win.activeSpace().theme).toEqual({ ...makeTheme('#3b6fd6'), fromImage: true })
+    })
+
+    it('the switch off ends the following and keeps the colours; off already, nothing changes', async () => {
+      const f = fixture({ withBackground: true })
+      f.background.accent = '#3b6fd6'
+      const win = f.browser.focusedWindow()
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', { on: false })).toBe(false)
+      await f.browser.newTab.pickBackgroundImage(win)
+      await settle()
+      f.browser.handleCommand(win, 'newtab.useImageColor', { on: true })
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', { on: false })).toBe(true)
+      expect(win.activeSpace().theme).toEqual(makeTheme('#3b6fd6'))
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', { on: false })).toBe(false)
+    })
+
+    it('a new picture recolours the spaces that follow it and leaves the others alone', async () => {
+      const f = fixture({ withBackground: true })
+      // The host names each picked file anew, as the desktop's `?v=` does.
+      f.browser.platform.newTabBackground!.pick = async () => {
+        f.background.picks += 1
+        f.background.current = `zen://newtab-background?v=${f.background.picks}`
+        return f.background.current
+      }
+      const answer = slowDecoder(f)
+      const win = f.browser.focusedWindow()
+      const following = win.activeSpace()
+      await f.browser.newTab.pickBackgroundImage(win)
+      answer('#3b6fd6')
+      await settle()
+      f.browser.handleCommand(win, 'newtab.useImageColor', { on: true })
+      // A second space, themed by hand, is not following.
+      const ownId = f.browser.handleCommand(win, 'space.create', {
+        name: 'Own',
+        icon: '',
+        containerId: DEFAULT_CONTAINER_ID,
+        theme: { ...OWN }
+      }) as string
+      const own = f.browser.state.model.spaces.find((s) => s.id === ownId)!
+      await f.browser.newTab.pickBackgroundImage(win)
+      // The read of the new picture is under way; the spaces wait for its answer.
+      expect(f.background.accentReads).toBe(2)
+      expect(following.theme!.colors[0].c).toEqual([59, 111, 214])
+      answer('#2a8f5c')
+      await settle()
+      expect(following.theme!.colors[0]).toMatchObject({ c: [42, 143, 92], isPrimary: true })
+      expect(following.theme!.fromImage).toBe(true)
+      expect(own.theme).toEqual(OWN)
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBe('#2a8f5c')
+      // Off: the next picture leaves the space as it is.
+      f.browser.tabs.switchSpace(following.id, win)
+      f.browser.handleCommand(win, 'newtab.useImageColor', { on: false })
+      await f.browser.newTab.pickBackgroundImage(win)
+      answer('#3b6fd6')
+      await settle()
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBe('#3b6fd6')
+      expect(following.theme!.colors[0].c).toEqual([42, 143, 92])
+    })
+
+    it('the picture found at boot is read for the chrome but followed by no space', async () => {
+      const f = fixture({ withBackground: true })
+      f.background.accent = '#2a8f5c'
+      const win = f.browser.focusedWindow()
+      const space = win.activeSpace()
+      space.theme = { ...makeTheme('#3b6fd6'), fromImage: true }
+      // The picture is on the disk already: no pick happened on this device this session.
+      f.background.current = 'zen://newtab-background?v=4'
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      await settle()
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBe('#2a8f5c')
+      expect(space.theme.colors[0].c).toEqual([59, 111, 214])
+      expect(space.theme.fromImage).toBe(true)
+    })
+
+    it("the theme editor's colours end the following; its other edits keep it; it never starts it", async () => {
+      const f = fixture({ withBackground: true })
+      f.background.accent = '#3b6fd6'
+      const win = f.browser.focusedWindow()
+      const space = win.activeSpace()
+      await f.browser.newTab.pickBackgroundImage(win)
+      await settle()
+      f.browser.handleCommand(win, 'newtab.useImageColor', { on: true })
+      const seeded = space.theme!
+      // Texture, opacity, angle, algorithm, monochrome: the colours stand, the following stays –
+      // from an editor whose copy of the theme predates the switch too.
+      f.browser.handleCommand(win, 'space.update', {
+        spaceId: space.id,
+        patch: { theme: { ...unfollowedTheme(seeded), texture: 0.5, monochrome: true } }
+      })
+      expect(space.theme).toMatchObject({ texture: 0.5, monochrome: true, fromImage: true })
+      expect(space.theme!.colors).toEqual(seeded.colors)
+      // A colour of the user's own: the following ends with it.
+      f.browser.handleCommand(win, 'space.update', {
+        spaceId: space.id,
+        patch: { theme: { ...space.theme!, colors: OWN.colors } }
+      })
+      expect(space.theme!.colors).toEqual(OWN.colors)
+      expect(space.theme!.fromImage).toBeUndefined()
+      // The editor's stale copy still carries the mark; it cannot bring the following back.
+      f.browser.handleCommand(win, 'space.update', {
+        spaceId: space.id,
+        patch: { theme: { ...space.theme!, fromImage: true, opacity: 0.3 } }
+      })
+      expect(space.theme).toMatchObject({ opacity: 0.3 })
+      expect(space.theme!.fromImage).toBeUndefined()
+      f.browser.handleCommand(win, 'space.update', { spaceId: space.id, patch: { theme: null } })
+      expect(space.theme).toBeNull()
+    })
+
+    it('a host that reads no colour, or has no decoder, suggests nothing', async () => {
+      const f = fixture({ withBackground: true })
+      const win = f.browser.focusedWindow()
+      await f.browser.newTab.pickBackgroundImage(win)
+      await settle()
+      expect(f.browser.state.snapshot(win).newTabBackground.accent).toBeNull()
+      expect(f.background.accentReads).toBe(1)
+      expect(f.browser.handleCommand(win, 'newtab.useImageColor', { on: true })).toBe(false)
+      const plain = fixture({ withBackground: true })
+      delete plain.browser.platform.newTabBackground!.accent
+      plain.background.accent = '#3b6fd6'
+      const other = plain.browser.focusedWindow()
+      await plain.browser.newTab.pickBackgroundImage(other)
+      await settle()
+      expect(plain.browser.state.snapshot(other).newTabBackground.accent).toBeNull()
+      expect(plain.browser.handleCommand(other, 'newtab.useImageColor', { on: true })).toBe(false)
+    })
+
+    it('a private window keeps its own theme (v2 §9.19)', async () => {
+      const f = fixture({ withBackground: true })
+      f.background.accent = '#3b6fd6'
+      const win = f.browser.focusedWindow()
+      await f.browser.newTab.pickBackgroundImage(win)
+      await settle()
+      const priv = f.browser.openWindow('private')!
+      const before = priv.activeSpace().theme
+      expect(f.browser.handleCommand(priv, 'newtab.useImageColor', { on: true })).toBe(false)
+      expect(priv.activeSpace().theme).toBe(before)
     })
   })
 

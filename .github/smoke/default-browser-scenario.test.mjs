@@ -6,7 +6,13 @@ import {
   DEFAULT_BROWSER_SCENARIO,
   LAUNCH_SERVICES_DOMAIN,
   WEB_SCHEMES,
+  WINDOWS_11_BUILD,
+  WINDOWS_PROG_ID,
+  WINDOWS_REGISTERED_APP,
+  WINDOWS_SETTINGS_PROCESS,
   clickUseScript,
+  commandNamesExe,
+  describeUserChoice,
   dialogOnScreen,
   dialogReading,
   findDefaultBrowserDialog,
@@ -15,9 +21,16 @@ import {
   parseWindowScan,
   requestProblems,
   requestReading,
+  schemeClaimProblems,
+  schemeClassProblems,
   urlTypeProblems,
   webHandlers,
-  windowScanScript
+  windowScanScript,
+  windowsRegistrationProblems,
+  windowsRequestProblems,
+  windowsRequestReading,
+  windowsSettingsPages,
+  windowsStatusProblems
 } from './default-browser-scenario.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -116,6 +129,459 @@ describe('the scenario constants', () => {
     const yml = read('electron-builder.yml')
     for (const scheme of WEB_SCHEMES)
       expect(yml).toMatch(new RegExp(`schemes:\\n(?:\\s+- \\w+\\n)*\\s+- ${scheme}\\b`))
+  })
+
+  it('keeps the Windows names in step with the app’s host and the installer script', () => {
+    const host = read('src/main/platform/defaultBrowser.ts')
+    expect(host).toContain(`const WINDOWS_REGISTERED_APP = '${WINDOWS_REGISTERED_APP}'`)
+    expect(host).toContain(`const WINDOWS_11_BUILD = ${WINDOWS_11_BUILD}`)
+    // The app claims no scheme on Windows: setAsDefaultProtocolClient is the macOS path alone.
+    expect(host).toMatch(/case 'win32':\s+return this\.windowsRequest\(\)/)
+    expect(host).toContain('`ms-settings:defaultapps?registeredAppUser=${WINDOWS_REGISTERED_APP}`')
+    const script = read('.github/smoke/win-install.ps1')
+    expect(script).toContain(`$ProductName = '${WINDOWS_REGISTERED_APP}'`)
+    expect(script).toContain(`$ProgId = '${WINDOWS_PROG_ID}'`)
+    expect(script).toContain("'registration' {")
+    expect(script).toContain('[string]$Exe')
+    expect(script).toContain('[string]$Stage')
+    expect(script).toContain('Software\\Classes\\$scheme\\shell\\open\\command')
+    expect(script).toContain('UrlAssociations\\$scheme\\UserChoice')
+    expect(script).toContain('"$Label-registration-$Stage.json"')
+  })
+
+  it('runs on both Windows legs, last, and closes the Settings app by its process name', () => {
+    const yml = read('.github/workflows/desktop-smoke.yml')
+    for (const label of ['unpacked', 'installed']) {
+      expect(yml).toMatch(
+        new RegExp(
+          `--label ${label} --out "\\$env:SMOKE_OUT" --scenarios [a-z,-]*,default-browser\\b`
+        )
+      )
+    }
+    expect(WINDOWS_SETTINGS_PROCESS).toBe('SystemSettings')
+    expect(read('.github/smoke/win-session.ps1')).toContain('[string]$ProcessName')
+  })
+})
+
+describe('windowsSettingsPages', () => {
+  it('opens the app’s own Default apps page first from Windows 11 on, the plain page as the fallback', () => {
+    expect(windowsSettingsPages('10.0.26100')).toEqual([
+      'ms-settings:defaultapps?registeredAppUser=Zenium',
+      'ms-settings:defaultapps'
+    ])
+    expect(windowsSettingsPages('10.0.22000')).toEqual([
+      'ms-settings:defaultapps?registeredAppUser=Zenium',
+      'ms-settings:defaultapps'
+    ])
+  })
+
+  it('opens the plain page alone on Windows 10, and without a release', () => {
+    expect(windowsSettingsPages('10.0.19045')).toEqual(['ms-settings:defaultapps'])
+    expect(windowsSettingsPages('')).toEqual(['ms-settings:defaultapps'])
+    expect(windowsSettingsPages(undefined)).toEqual(['ms-settings:defaultapps'])
+  })
+})
+
+describe('windowsRequestProblems', () => {
+  const pages = windowsSettingsPages('10.0.26100')
+  const pending = { settled: false, result: undefined, error: null }
+  const resolved = (result) => ({ settled: true, result, error: null })
+  const opened = (url) => ({ url, at: 1, settled: true, error: null })
+  const refused = (url) => ({ url, at: 1, settled: true, error: 'ShellExecute failed' })
+
+  it('accepts the registered build opening its own page and waiting for the choice', () => {
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [opened(pages[0])],
+        request: pending,
+        pages
+      })
+    ).toEqual([])
+    // Not yet settled by the OS: nothing to judge about the request either.
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [{ url: pages[0], at: 1, settled: false, error: null }],
+        request: pending,
+        pages
+      })
+    ).toEqual([])
+  })
+
+  it('accepts the plain page after the OS refused the deep link, and false once every page was refused', () => {
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [refused(pages[0]), opened(pages[1])],
+        request: pending,
+        pages
+      })
+    ).toEqual([])
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [refused(pages[0]), refused(pages[1])],
+        request: resolved(false),
+        pages
+      })
+    ).toEqual([])
+  })
+
+  it('names a registered build that opened nothing, the wrong page, or a second page the OS did not ask for', () => {
+    expect(
+      windowsRequestProblems({ registered: true, calls: [], opens: [], request: pending, pages })
+    ).toEqual([
+      'defaultBrowser.request opened no Settings page (expected ms-settings:defaultapps?registeredAppUser=Zenium)'
+    ])
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [opened(pages[1])],
+        request: pending,
+        pages
+      })
+    ).toEqual([
+      'the first Settings page opened was ms-settings:defaultapps, expected ms-settings:defaultapps?registeredAppUser=Zenium'
+    ])
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [opened(pages[0]), opened(pages[1])],
+        request: pending,
+        pages
+      })
+    ).toEqual([
+      'a second Settings page (ms-settings:defaultapps) was opened although the OS took the first (ms-settings:defaultapps?registeredAppUser=Zenium)'
+    ])
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [refused(pages[0]), opened(pages[1]), opened(pages[1])],
+        request: pending,
+        pages
+      })
+    ).toEqual(['3 Settings pages were opened, at most 2 expected'])
+  })
+
+  it('names a request that settled while Settings is open, or stayed pending after every refusal', () => {
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [opened(pages[0])],
+        request: resolved(false),
+        pages
+      })
+    ).toEqual([
+      'the request resolved false although Settings is open and the user has not chosen (it waits for the choice)'
+    ])
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [refused(pages[0]), refused(pages[1])],
+        request: pending,
+        pages
+      })
+    ).toEqual(['the request is still pending although the OS refused every Settings page'])
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [],
+        opens: [refused(pages[0]), refused(pages[1])],
+        request: resolved(null),
+        pages
+      })
+    ).toEqual([
+      'the request resolved null although the OS refused every Settings page, expected false'
+    ])
+  })
+
+  it('requires the unregistered build to open nothing and resolve false at once', () => {
+    expect(
+      windowsRequestProblems({
+        registered: false,
+        calls: [],
+        opens: [],
+        request: resolved(false),
+        pages
+      })
+    ).toEqual([])
+    expect(
+      windowsRequestProblems({
+        registered: false,
+        calls: [],
+        opens: [opened(pages[0])],
+        request: pending,
+        pages
+      })
+    ).toEqual([
+      'Settings was opened (ms-settings:defaultapps?registeredAppUser=Zenium) although Zenium is not registered with Windows (Settings would not list it)',
+      'the request is still pending although Zenium is not registered with Windows (it resolves false at once)'
+    ])
+    expect(
+      windowsRequestProblems({
+        registered: false,
+        calls: [],
+        opens: [],
+        request: resolved(null),
+        pages
+      })
+    ).toEqual([
+      'the request resolved null although Zenium is not registered with Windows, expected false'
+    ])
+    expect(
+      windowsRequestProblems({
+        registered: false,
+        calls: [],
+        opens: [],
+        request: { settled: true, result: undefined, error: 'boom' },
+        pages
+      })
+    ).toEqual([
+      'the request threw boom although Zenium is not registered with Windows, expected false'
+    ])
+  })
+
+  it('requires a build that already holds the role to resolve true and open nothing', () => {
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        isDefaultBefore: true,
+        calls: [],
+        opens: [],
+        request: resolved(true),
+        pages
+      })
+    ).toEqual([])
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        isDefaultBefore: true,
+        calls: [],
+        opens: [opened(pages[0])],
+        request: pending,
+        pages
+      })
+    ).toEqual([
+      'Settings was opened (ms-settings:defaultapps?registeredAppUser=Zenium) although the app already held the role',
+      'the request did not resolve true although the app already held the role (pending)'
+    ])
+  })
+
+  it('names every scheme claim, whatever the branch', () => {
+    const claim = [
+      "the app called app.setAsDefaultProtocolClient('http') on Windows: that writes HKCU\\Software\\Classes\\http\\shell\\open\\command, which the user's choice overrides and the uninstaller does not remove"
+    ]
+    expect(schemeClaimProblems([set('http'), is('http', false)])).toEqual(claim)
+    expect(schemeClaimProblems([is('http', false)])).toEqual([])
+    expect(schemeClaimProblems([])).toEqual([])
+    expect(schemeClaimProblems(undefined)).toEqual([])
+    expect(
+      windowsRequestProblems({
+        registered: true,
+        calls: [set('http')],
+        opens: [opened(pages[0])],
+        request: pending,
+        pages
+      })
+    ).toEqual(claim)
+    expect(
+      windowsRequestProblems({
+        registered: false,
+        calls: [{ method: 'removeAsDefaultProtocolClient', args: ['https'], result: true }],
+        opens: [],
+        request: resolved(false),
+        pages
+      })
+    ).toEqual([
+      "the app called app.removeAsDefaultProtocolClient('https') on Windows: that writes HKCU\\Software\\Classes\\https\\shell\\open\\command, which the user's choice overrides and the uninstaller does not remove"
+    ])
+  })
+
+  it('reads the hand-over for the log', () => {
+    expect(
+      windowsRequestReading({
+        registered: true,
+        opens: [opened(pages[0])],
+        request: pending
+      })
+    ).toBe('ms-settings:defaultapps?registeredAppUser=Zenium → opened; request pending')
+    expect(
+      windowsRequestReading({
+        registered: true,
+        opens: [refused(pages[0]), { url: pages[1], at: 1, settled: false, error: null }],
+        request: pending
+      })
+    ).toBe(
+      'ms-settings:defaultapps?registeredAppUser=Zenium → refused (ShellExecute failed); ms-settings:defaultapps → opening; request pending'
+    )
+    expect(windowsRequestReading({ registered: false, opens: [], request: resolved(false) })).toBe(
+      'not registered with Windows: no Settings page opened, request resolved false'
+    )
+    expect(
+      windowsRequestReading({
+        registered: true,
+        isDefaultBefore: true,
+        opens: [],
+        request: resolved(true)
+      })
+    ).toBe('not asked: the app already held the role (resolved true)')
+    expect(windowsRequestReading({ registered: true, opens: [], request: null })).toBe(
+      'no Settings page opened; request not fired'
+    )
+  })
+})
+
+describe('windowsRegistrationProblems', () => {
+  const complete = {
+    registered: true,
+    registration: {
+      registeredApplications: 'Software\\Clients\\StartMenuInternet\\Zenium\\Capabilities'
+    },
+    registrationProblems: []
+  }
+
+  it('accepts a complete registration for the installed build', () => {
+    expect(windowsRegistrationProblems(complete, { expectRegistered: true })).toEqual([])
+  })
+
+  it('names a missing RegisteredApplications entry and passes the installer script’s lines through', () => {
+    expect(
+      windowsRegistrationProblems(
+        {
+          registered: false,
+          registration: { registeredApplications: null },
+          registrationProblems: ['HKCU\\Software\\Clients\\StartMenuInternet\\Zenium is missing']
+        },
+        { expectRegistered: true }
+      )
+    ).toEqual([
+      "HKCU\\Software\\RegisteredApplications Zenium does not name the Capabilities key (null): the app's windowsIsRegistered would send nobody to Settings",
+      'HKCU\\Software\\Clients\\StartMenuInternet\\Zenium is missing'
+    ])
+    expect(
+      windowsRegistrationProblems(
+        {
+          ...complete,
+          registrationProblems: [
+            'HKCU\\Software\\Classes\\ZeniumHTML\\shell\\open\\command (default) is \'"C:\\other\\zenium.exe" "%1"\', expected \'"C:\\exe\\zenium.exe" "%1"\''
+          ]
+        },
+        { expectRegistered: true }
+      )
+    ).toEqual([
+      'HKCU\\Software\\Classes\\ZeniumHTML\\shell\\open\\command (default) is \'"C:\\other\\zenium.exe" "%1"\', expected \'"C:\\exe\\zenium.exe" "%1"\''
+    ])
+  })
+
+  it('records, never judges, an unpacked build’s reading – and names an unreadable one', () => {
+    expect(
+      windowsRegistrationProblems(
+        { registered: false, registration: {}, registrationProblems: ['a', 'b'] },
+        { expectRegistered: false }
+      )
+    ).toEqual([])
+    expect(windowsRegistrationProblems(null, { expectRegistered: false })).toEqual([
+      'the registration could not be read'
+    ])
+  })
+})
+
+describe('schemeClassProblems', () => {
+  const exe = 'C:\\Users\\runneradmin\\AppData\\Local\\Programs\\zenium\\zenium.exe'
+
+  it('tells a command naming the executable from any other, slashes and case aside', () => {
+    expect(commandNamesExe(`"${exe}" "%1"`, exe)).toBe(true)
+    expect(commandNamesExe(`"${exe.toUpperCase()}" "%1"`, exe)).toBe(true)
+    expect(commandNamesExe(`"${exe.replace(/\\/g, '/')}" "%1"`, exe)).toBe(true)
+    expect(
+      commandNamesExe(
+        '"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe" --single-argument %1',
+        exe
+      )
+    ).toBe(false)
+    expect(commandNamesExe(null, exe)).toBe(false)
+    expect(commandNamesExe(`"${exe}" "%1"`, '')).toBe(false)
+  })
+
+  it('accepts classes that are absent or another browser’s, and names one the app left', () => {
+    expect(schemeClassProblems({ http: { command: null }, https: { command: null } }, exe)).toEqual(
+      []
+    )
+    expect(schemeClassProblems(undefined, exe)).toEqual([])
+    expect(
+      schemeClassProblems(
+        {
+          http: { command: '"C:\\Program Files\\Mozilla Firefox\\firefox.exe" -osint -url "%1"' },
+          https: { command: null }
+        },
+        exe
+      )
+    ).toEqual([])
+    expect(
+      schemeClassProblems(
+        { http: { command: `"${exe}" "%1"` }, https: { command: `"${exe}" "%1"` } },
+        exe
+      )
+    ).toEqual([
+      `HKCU\\Software\\Classes\\http\\shell\\open\\command names the executable ("${exe}" "%1"): the class app.setAsDefaultProtocolClient writes, which the app must not touch on Windows`,
+      `HKCU\\Software\\Classes\\https\\shell\\open\\command names the executable ("${exe}" "%1"): the class app.setAsDefaultProtocolClient writes, which the app must not touch on Windows`
+    ])
+  })
+})
+
+describe('windowsStatusProblems', () => {
+  const edge = { http: 'MSEdgeHTM', https: 'MSEdgeHTM' }
+  const ours = { http: WINDOWS_PROG_ID, https: WINDOWS_PROG_ID }
+
+  it('expects not-default while the user’s choice names another browser, or nobody', () => {
+    expect(windowsStatusProblems({ isDefault: false, prompt: null }, edge)).toEqual([])
+    expect(
+      windowsStatusProblems({ isDefault: false, prompt: null }, { http: null, https: null })
+    ).toEqual([])
+    expect(windowsStatusProblems({ isDefault: true, prompt: null }, edge)).toEqual([
+      "state.defaultBrowser.isDefault reads true although the user's choice does not name ZeniumHTML (http → MSEdgeHTM, https → MSEdgeHTM): the status must come from the user's choice, not a class write"
+    ])
+  })
+
+  it('expects default once the choice names the app’s ProgID for both schemes', () => {
+    expect(windowsStatusProblems({ isDefault: true, prompt: null }, ours)).toEqual([])
+    expect(windowsStatusProblems({ isDefault: false, prompt: null }, ours)).toEqual([
+      "state.defaultBrowser.isDefault reads false although the user's choice names ZeniumHTML for http and https"
+    ])
+    // One scheme alone is not the role.
+    expect(
+      windowsStatusProblems(
+        { isDefault: false, prompt: null },
+        { http: WINDOWS_PROG_ID, https: 'MSEdgeHTM' }
+      )
+    ).toEqual([])
+  })
+
+  it('names a host that never answered', () => {
+    expect(windowsStatusProblems({ isDefault: null, prompt: null }, edge)).toEqual([
+      'state.defaultBrowser.isDefault reads null: the host never answered (windowsIsDefault reads the shell association for http:// and https://)'
+    ])
+    expect(windowsStatusProblems(null, edge)).toEqual([
+      'state.defaultBrowser.isDefault reads null: the host never answered (windowsIsDefault reads the shell association for http:// and https://)'
+    ])
+  })
+
+  it('reads the choice for the log', () => {
+    expect(describeUserChoice(edge)).toBe('http → MSEdgeHTM, https → MSEdgeHTM')
+    expect(describeUserChoice({ http: null, https: undefined })).toBe(
+      'http → system default, https → system default'
+    )
+    expect(describeUserChoice(null)).toBe('http → system default, https → system default')
   })
 })
 

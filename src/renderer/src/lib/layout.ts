@@ -207,6 +207,36 @@ export function overviewColumns(width: number): number {
   return 4
 }
 
+/** The overview grid's gutter each side and the gap between its cells (`px-3`, `gap-3`), in px. */
+const OVERVIEW_GRID_GUTTER = 12
+const OVERVIEW_GRID_GAP = 12
+
+/**
+ * The tablet overview card's aspect (v2 §9.36: "a card's picture takes the frame's aspect –
+ * landscape on a landscape tablet, the phone's on a phone"): the cell is the column's width over
+ * the picture at the frame's ratio plus the title row above it, so the picture under the row is
+ * the page as the frame shows it. The column is the GRID's width – the layer's box, which on the
+ * tablet spans the window less its horizontal insets, over the sidebar the layer covers – less
+ * the grid's gutters, shared by the width's columns; the frame is the page's, beside the sidebar,
+ * and gives the picture its ratio alone. On the tablet shard's 1280 × 800 the grid is 1280 wide
+ * and the frame 1032 × 652 under the toolbar beside the sidebar (1.58 : 1): the column 305, the
+ * picture 305 × 193 at the frame's ratio, the card 305 × 237 with its 44 row, about 1.29 : 1.
+ * A frame or a grid without a size yet draws the phone's ratio. `TabOverview` sets it on the
+ * layer's box as `--zen-overview-card-aspect`, which the cells read (`CARD_ASPECT` in
+ * `OverviewCard`).
+ */
+export function tabletCardAspect(
+  frame: { width: number; height: number },
+  grid: number,
+  columns: number,
+  header: number
+): number {
+  const column = (grid - 2 * OVERVIEW_GRID_GUTTER - (columns - 1) * OVERVIEW_GRID_GAP) / columns
+  if (!(frame.width > 0) || !(frame.height > 0) || !(column > 0)) return 3 / 4
+  const picture = column * (frame.height / frame.width)
+  return column / (picture + header)
+}
+
 export function layoutLabel(layout: SplitLayout): string {
   return layout === 'grid' ? 'Grid' : layout === 'vertical' ? 'Side by side' : 'Stacked'
 }

@@ -24,22 +24,35 @@ export const OVERVIEW_SEARCH_ID = 'overview-search'
  * (`TabOverview`): with a query it clears the field and keeps it up; empty, it closes the field.
  * The field takes the keyboard only from the header's magnifier (a user's tap, `inputRef`),
  * never as the overview opens.
+ *
+ * `inline` is the tablet header's pose (TABLET-14): the same field standing in the header row
+ * itself, where the phone has the magnifier – always there while the pane is searchable, so it
+ * has no close, and its X stands only over a query (`.zen-overview-search-inline`).
  */
 export function OverviewSearchField({
   value,
   inputRef,
   onChange,
   onClear,
-  onClose
+  onClose,
+  inline = false
 }: {
   value: string
   inputRef: RefObject<HTMLInputElement | null>
   onChange: (value: string) => void
   onClear: () => void
   onClose: () => void
+  inline?: boolean
 }): JSX.Element {
   return (
-    <div className="zen-overview-search shrink-0 px-3 pb-2" data-testid="overview-search">
+    <div
+      className={
+        inline
+          ? 'zen-overview-search zen-overview-search-inline shrink-0'
+          : 'zen-overview-search shrink-0 px-3 pb-2'
+      }
+      data-testid="overview-search"
+    >
       <div className="zen-phone-field zen-overview-search-field">
         <Search className="zen-phone-field-icon h-5 w-5" strokeWidth={1.75} aria-hidden />
         <input
@@ -56,19 +69,21 @@ export function OverviewSearchField({
           enterKeyHint="search"
           onChange={(e) => onChange(e.target.value)}
         />
-        <button
-          type="button"
-          className="zen-phone-field-clear zen-v2-field-clear"
-          aria-label={value ? 'Clear search' : 'Close search'}
-          data-testid="overview-search-clear"
-          // The press never takes the focus (the omnibox's Clear the same): the input keeps it
-          // and the keyboard stays where it is. Otherwise the button's moment of focus would
-          // send the host a hide, the input's refocus a show right after, and the two race.
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={value ? onClear : onClose}
-        >
-          <X className="h-5 w-5" strokeWidth={1.75} />
-        </button>
+        {(!inline || value) && (
+          <button
+            type="button"
+            className="zen-phone-field-clear zen-v2-field-clear"
+            aria-label={value ? 'Clear search' : 'Close search'}
+            data-testid="overview-search-clear"
+            // The press never takes the focus (the omnibox's Clear the same): the input keeps it
+            // and the keyboard stays where it is. Otherwise the button's moment of focus would
+            // send the host a hide, the input's refocus a show right after, and the two race.
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={value ? onClear : onClose}
+          >
+            <X className="h-5 w-5" strokeWidth={1.75} />
+          </button>
+        )}
       </div>
     </div>
   )

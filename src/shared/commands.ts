@@ -97,6 +97,13 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     layouts: SIDEBAR_LAYOUTS
   },
   {
+    id: 'swap-split',
+    label: 'Swap Split Panes',
+    keywords: ['split', 'swap', 'reverse', 'panes', 'left', 'right'],
+    action: 'split.swap',
+    layouts: SIDEBAR_LAYOUTS
+  },
+  {
     id: 'pin',
     label: 'Pin / Unpin Tab',
     keywords: ['pin', 'unpin', 'tab'],

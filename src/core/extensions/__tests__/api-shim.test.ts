@@ -328,7 +328,7 @@ describe('installExtensionApi', () => {
     ])
   })
 
-  it('holds a delivery the host could not match to the filtered listener’s own UrlFilters', () => {
+  it('holds a delivery the host could not match to the filtered listener’s own UrlFilters', async () => {
     // PDF Viewer's shape: a worker woken by the navigation registers its `file://*.pdf`-filtered
     // `onBeforeNavigate` listener only once its script runs, after the host queued the event with
     // its URL. Delivered unfiltered, the listener turns every http(s) tab into its viewer.
@@ -355,8 +355,10 @@ describe('installExtensionApi', () => {
         { urlPrefix: 'file://', pathSuffix: '.PDF' }
       ]
     })
+    // The queue reaches the script's listeners in the task after it (F3 of round 8).
+    await flush()
     expect(seen).toEqual(['file:///home/me/doc.pdf#page=2'])
-    // The first listener consumed the queue (as before); a later unfiltered one sees what follows.
+    // The queue is spent; a listener added later sees what follows.
     g.chrome.webNavigation.onBeforeNavigate.addListener((d: Any) => everyone.push(d.url))
     // Live listeners, a worker still in its start-up window: the same rule, the URL against
     // this listener's filters when the host did not name it.
@@ -701,15 +703,38 @@ describe('installExtensionApi', () => {
     expect(typeof ev.addRules).toBe('function')
   })
 
-  it('queues events that arrive before the first listener (worker start-up)', () => {
+  it('queues events that arrive before the first listener (worker start-up) for a task after the registering script', async () => {
     installExtensionApi(host, API_SPEC)
     host.push('runtime', 'onInstalled', { reason: 'install' })
     const fn = vi.fn()
     g.chrome.runtime.onInstalled.addListener(fn)
+    // Chrome dispatches a wake-up event after the worker's evaluation, never from addListener.
+    expect(fn).not.toHaveBeenCalled()
+    await flush()
     expect(fn).toHaveBeenCalledWith({ reason: 'install' })
     const later = vi.fn()
     g.chrome.runtime.onInstalled.addListener(later)
+    await flush()
     expect(later).not.toHaveBeenCalled()
+  })
+
+  it('a queued event reaches a listener that read the wake-up as its own alarm without throwing (Rabby)', async () => {
+    installExtensionApi(host, API_SPEC)
+    host.push('alarms', 'onAlarm', { name: 'ALARMS_USER_ENABLE' })
+    // The module registers at its top level and fills `store` right after: with the replay inside
+    // addListener the listener read `store.sendEnableTime` of undefined and threw.
+    const service: { store?: { sendEnableTime: number } } = {}
+    const seen: number[] = []
+    g.chrome.alarms.onAlarm.addListener((alarm: { name: string }) => {
+      if (alarm.name !== 'ALARMS_USER_ENABLE') return
+      const store = service.store
+      if (!store)
+        throw new TypeError("Cannot read properties of undefined (reading 'sendEnableTime')")
+      seen.push(store.sendEnableTime)
+    })
+    service.store = { sendEnableTime: 7 }
+    await flush()
+    expect(seen).toEqual([7])
   })
 
   it('delivers action events to browserAction listeners as well', () => {
@@ -739,6 +764,49 @@ describe('installExtensionApi', () => {
     expect(g.chrome.storage.local.QUOTA_BYTES).toBeUndefined()
     const got = await new Promise((resolve) => g.chrome.storage.local.get(null, resolve))
     expect(got).toEqual({})
+  })
+
+  it('notifies storage.local writes in the form Chrome stores: methods and undefined dropped, the write resolved (Rabby)', async () => {
+    installExtensionApi(host, API_SPEC)
+    // The host's transport clones structurally and refuses a function, as ipcRenderer does.
+    host.notify = (kind, payload) => {
+      const check = (value: unknown): void => {
+        if (typeof value === 'function') throw new Error('An object could not be cloned.')
+        if (value && typeof value === 'object') Object.values(value).forEach(check)
+      }
+      check(payload)
+      host.notifications.push({ kind, payload })
+    }
+    class Preference {
+      balanceMap = { a: 1 }
+      hidden = undefined
+      list = [1, (): number => 2, undefined]
+      patch(): void {
+        this.balanceMap.a += 1
+      }
+    }
+    await expect(
+      g.chrome.storage.local.set({ preference: new Preference(), fn: (): number => 1, n: 3 })
+    ).resolves.toBeUndefined()
+    const changes = host.notifications
+      .filter((n) => n.kind === 'storage-changed')
+      .map((n) => n.payload)
+    expect(changes).toEqual([
+      {
+        area: 'local',
+        changes: {
+          preference: { newValue: { balanceMap: { a: 1 }, list: [1, null, null] } },
+          n: { newValue: 3 }
+        }
+      }
+    ])
+    // The host-kept areas get the same form, which is what can cross to them.
+    await g.chrome.storage.sync.set({ preference: new Preference(), fn: (): number => 1 })
+    expect(host.calls.at(-1)).toEqual({
+      namespace: 'storage',
+      method: 'set',
+      args: ['sync', { preference: { balanceMap: { a: 1 }, list: [1, null, null] } }]
+    })
   })
 
   it('routes storage.sync and storage.managed through the host', async () => {

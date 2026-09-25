@@ -150,7 +150,7 @@ import {
 import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeHomepage } from '../shared/homepage'
-import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
+import { PRIVATE_THEME, captionColors, editedTheme, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
@@ -513,6 +513,7 @@ export class Browser {
       sync: this.sync.status(),
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
+      agentSkills: this.agents.skillStatus(),
       updates: this.updates.status(),
       passwords: this.passwords.status(),
       defaultBrowser: this.defaultBrowser.status(),
@@ -1169,6 +1170,8 @@ export class Browser {
       this.menus.scheduleApplicationMenu()
       // Open new tab pages follow the model (shortcuts, most visited, theme) live.
       this.newTab.push()
+      // The left pane's link rule follows the splits (a swap, a pane joining or leaving).
+      this.tabs.syncSplitLinkFlags()
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
@@ -2709,6 +2712,9 @@ export class Browser {
       case 'navigate':
         this.tabs.navigate(tabId, message.url)
         return
+      case 'split-link':
+        this.tabs.openInSplitPane(tabId, message.url)
+        return
     }
   }
 
@@ -2783,6 +2789,9 @@ export class Browser {
       },
       'app.quit': () => void this.requestQuit(),
       'app.share': (payload, win) => this.share(payload, win),
+      // The host's own share panel (Android below 14, SH-03): the chrome's answer goes straight
+      // to the host holding the share; nothing on a host without the panel.
+      'share.panelAction': (action) => void platform.shell.sharePanelAction?.(action),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
       'app.openNotificationSettings': (_a, win) => this.openNotificationSettings(win),
       // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
@@ -2904,7 +2913,8 @@ export class Browser {
         if (!space) return
         if (patch.name !== undefined) space.name = patch.name.trim() || space.name
         if (patch.icon !== undefined) space.icon = patch.icon
-        if (patch.theme !== undefined) space.theme = patch.theme
+        // The editor's colours are the user's: they end a theme's following of the picture.
+        if (patch.theme !== undefined) space.theme = editedTheme(space.theme, patch.theme)
         if (
           patch.containerId !== undefined &&
           !space.windowId &&
@@ -3010,6 +3020,9 @@ export class Browser {
       'split.resize': ({ groupId, sizes }) => tabs.resizeSplit(groupId, sizes),
       'split.newEmpty': (_a, win) => tabs.newEmptySplit(win),
       'split.addTab': ({ groupId, tabId }) => tabs.addToSplit(groupId, tabId),
+      'split.swap': ({ tabId }, win) => tabs.swapPanes(tabId, win),
+      'split.paneMenu': ({ tabId, ...anchor }, win) =>
+        this.menus.showSplitPaneMenu(tabId, win, anchor),
       'split.pickTab': ({ paneTabId, tabId }, win) => tabs.pickTabForPane(paneTabId, tabId, win),
 
       'glance.open': ({ url, parentTabId, originX, originY }, win) =>
@@ -3184,6 +3197,9 @@ export class Browser {
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
+      'newtab.resetBackground': () => this.newTab.resetBackground(),
+      'newtab.reset': () => this.newTab.reset(),
+      'newtab.useImageColor': ({ on }, win) => this.newTab.useImageColor(on, win),
       'newtab.backgroundImage': () => this.newTab.backgroundImage(),
       'newtab.setBackgroundImage': ({ dataUrl }) => this.newTab.setBackgroundImage(dataUrl),
 
@@ -3485,6 +3501,9 @@ export class Browser {
       'agent.releaseTab': ({ tabId }) => this.agents.releaseTab(tabId),
       'agent.forget': ({ name }) => this.agents.forget(name),
       'agent.regenerateToken': () => this.agents.regenerateToken(),
+      'agent.installSkill': ({ targets }) => this.agents.installSkill(targets),
+      'agent.uninstallSkill': ({ targets }) => this.agents.uninstallSkill(targets),
+      'agent.refreshSkill': () => this.agents.refreshSkill(),
 
       'updates.check': () => this.updates.check({ manual: true }),
       'updates.download': () => this.updates.download(),

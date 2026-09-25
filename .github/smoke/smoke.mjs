@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads,notifications,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,downloads,notifications,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -106,10 +106,32 @@
 //                pointer) joins as the right pane, in thirds; its header's un-split button with
 //                Shift held leaves a two-pane split in halves with the third tab still open; the
 //                divider dragged right by 15 % of the area moves the ratio to 0.65 / 0.35 and the
-//                views with it; a graceful quit persists the group; the relaunch (split-restore)
-//                shows the same group, tabs and ratio without "Restore pages?"; Unsplit View
-//                (Ctrl+Alt+U) dissolves it, the active tab's view has the whole area, all three
-//                tabs stay (Linux job; two launches: split and split-restore)
+//                views with it; the left pane's segment dragged from the split row onto the
+//                right pane ("Swap panes") reverses the group's tabs with the slots' sizes kept
+//                and each tab placed where the other stood; a graceful quit persists the group;
+//                the relaunch (split-restore) shows the same group, tabs and ratio without
+//                "Restore pages?"; Unsplit View (Ctrl+Alt+U) dissolves it, the active tab's view
+//                has the whole area, all three tabs stay. At every state the panes are held
+//                against the chrome's own layout report (`layout.report`, read off the app's
+//                invoke handler): a placement per pane and no other, side by side to the sizes,
+//                each view standing at its placement's rect (Linux job; two launches: split and
+//                split-restore)
+//   features     the feature legs (ci-04), one launch of a profile past onboarding with search
+//                suggestions off and the bookmarks bar always on, a step each: the omnibox –
+//                "second page" typed over the first page brings up a history row for the
+//                fixture's second page (closed before, so it is history and no open tab), the
+//                arrow key selects it, Enter navigates the tab to it in place, no engine asked;
+//                three Settings `?row=` landings (zenium://settings/look?row=split-edge-zones,
+//                tabs?row=pinned-close, resources?row=protect-pinned) – the row's group at the
+//                column's top under its scroll padding, the row within the column, the page
+//                carrying data-landing; Reader View on the fixture's article – the tab read as
+//                readerable, Ctrl+Alt+R puts it on zen://reader for the article with the pill's
+//                Reader View chip aria-pressed=true and the article's words in the reader
+//                document, again brings the article back with the chip unpressed; the bookmarks
+//                bar – Ctrl+D's star bubble ("Bookmark added"), the Folder menulist files the
+//                bookmark to the Bookmarks bar and its chip appears named for the page, a click
+//                on the chip from the second page's tab opens the article in that tab, "Delete"
+//                from the chip's native menu takes chip and bookmark away (Linux job)
 //   notifications  a page's Web Notification on the OS (os-27/os-28/os-30; notifications-
 //                scenario.mjs): a profile past onboarding whose permissions.json allows
 //                notifications for the fixture origin reads `Notification.permission ===
@@ -136,7 +158,7 @@
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
 // restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash
-// pair, clear-on-exit, the two mv3-worker legs, pip and the split pair run on Linux under Xvfb
+// pair, clear-on-exit, the two mv3-worker legs, pip, the split pair and features run on Linux under Xvfb
 // only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
@@ -536,7 +558,7 @@ async function shot(name, session = null) {
 // the process exiting mid-quit; the harness reads the file, never main-process memory.
 // ---------------------------------------------------------------------------------------------
 
-function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, options) {
+function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session, ipcMain }, options) {
   const g = globalThis
   if (g.__smoke) return { hooked: false, reason: 'already hooked' }
   let fsModule = null
@@ -895,7 +917,34 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
   wrapDialog('showOpenDialogSync', 'file-sync')
   wrapDialog('showSaveDialog', 'file')
   wrapDialog('showSaveDialogSync', 'file-sync')
-  return { hooked: true, transport: smoke.transport, sessionClears, workerPartitions }
+
+  // The chrome's layout reports – `layout.report`, the placements the chrome asks of the core
+  // for every page view it shows (a split's panes among them; useLayoutReporter.ts) – read off
+  // the app's one `zen:cmd` invoke handler on its way through: Electron keeps the handlers in
+  // ipcMain's `_invokeHandlers` map (Electron 44, lib/browser/api/ipc-main-impl.ts), and the
+  // app's is wrapped there. The last 64, stamped and named for the window whose chrome sent
+  // them; `layouts` stays null where the map or the handler is not there, and a reader says so.
+  smoke.layouts = null
+  const invokeHandlers = safe(() => ipcMain._invokeHandlers, null)
+  const cmdHandler = invokeHandlers instanceof Map ? invokeHandlers.get('zen:cmd') : null
+  if (typeof cmdHandler === 'function') {
+    smoke.layouts = []
+    invokeHandlers.set('zen:cmd', (event, ...rest) => {
+      if (rest[0] === 'layout.report') {
+        const w = safe(() => BrowserWindow.fromWebContents(event.sender), null)
+        smoke.layouts.push({ t: Date.now(), windowId: w ? w.id : null, report: rest[1] })
+        if (smoke.layouts.length > 64) smoke.layouts.splice(0, smoke.layouts.length - 64)
+      }
+      return cmdHandler(event, ...rest)
+    })
+  }
+  return {
+    hooked: true,
+    transport: smoke.transport,
+    sessionClears,
+    workerPartitions,
+    layoutReports: smoke.layouts !== null
+  }
 }
 
 // The persistent session every extension loads into (src/main/platform/sessions.ts partitionFor:
@@ -1740,7 +1789,9 @@ class Session {
 
   /**
    * Where the view of tab `tabId` is on the screen: the window's content origin plus the view's
-   * bounds within it (DIPs), with the display's scale factor for tools that count device pixels.
+   * bounds within it (DIPs), with the display's scale factor for tools that count device pixels,
+   * and under `local` the view's bounds within the window's content – the chrome page's own
+   * coordinates, what a layout report's placement names.
    */
   tabViewScreenRect(tabId, windowId = this.mainWindowId) {
     return this.app.evaluate(
@@ -1766,11 +1817,33 @@ class Session {
           y: content.y + local.y,
           width: local.width,
           height: local.height,
-          scale: screen.getDisplayMatching(content).scaleFactor
+          scale: screen.getDisplayMatching(content).scaleFactor,
+          local
         }
       },
       { tabId, windowId }
     )
+  }
+
+  /**
+   * The last layout report the chrome of window `windowId` sent the core (hookMain's read of
+   * `layout.report`): `report.placements` – a tab id, the rect its view takes in the window's
+   * content (CSS px, the chrome page's coordinates) and its radius – with `contentHidden`,
+   * under a stamp. Null while none was seen since the hook; throws where the hook has no read.
+   */
+  lastLayoutReport(windowId = this.mainWindowId) {
+    return this.app.evaluate((_electron, windowId) => {
+      const layouts = globalThis.__smoke.layouts
+      if (!layouts) {
+        throw new Error(
+          "no read of the chrome's layout reports: the hook found no zen:cmd invoke handler to wrap"
+        )
+      }
+      for (let i = layouts.length - 1; i >= 0; i--) {
+        if (layouts[i].windowId === windowId) return layouts[i]
+      }
+      return null
+    }, windowId)
   }
 
   /**
@@ -5586,10 +5659,71 @@ function assertVerticalPanes(panes, sizes, tolerance = 0.04) {
 }
 
 /**
+ * The chrome's layout report has the split's panes as the views stand: a placement for each of
+ * the group's tabs and no other (a vertical split shows its panes and nothing else), side by
+ * side in the group's order on one row, each one's share of the placements' width its size
+ * (within `tolerance`), and each pane's view standing in the window at the rect its placement
+ * names – the core sets the view's bounds to the placement's rounded rect (window.ts
+ * applyLayout), so the two agree within a pixel. Returns the placements in the group's order.
+ */
+function assertReportedPanes(report, group, panes, sizes, tolerance = 0.04) {
+  if (!report) throw new Error('no layout report from the chrome since the hook')
+  if (report.report.contentHidden) {
+    throw new Error("the chrome's last layout report hides the content")
+  }
+  const placements = report.report.placements
+  const placed = placements.map((p) => p.tabId)
+  if (JSON.stringify([...placed].sort()) !== JSON.stringify([...group.tabIds].sort())) {
+    throw new Error(
+      `the layout report places ${JSON.stringify(placed)}; the split's tabs are ${JSON.stringify(group.tabIds)}`
+    )
+  }
+  const ordered = group.tabIds.map((id) => placements.find((p) => p.tabId === id))
+  const total = ordered.reduce((sum, p) => sum + p.rect.width, 0)
+  const near = (a, b, by) => Math.abs(a - b) <= by
+  for (let i = 0; i < ordered.length; i++) {
+    const r = ordered[i].rect
+    if (i > 0) {
+      const prev = ordered[i - 1].rect
+      if (r.x < prev.x + prev.width) {
+        throw new Error(
+          `placement ${i} overlaps placement ${i - 1} in the layout report: ${JSON.stringify(ordered)}`
+        )
+      }
+      if (!near(r.y, prev.y, 0.5) || !near(r.height, prev.height, 0.5)) {
+        throw new Error(
+          `placements ${i - 1} and ${i} are not on one row in the layout report: ${JSON.stringify(ordered)}`
+        )
+      }
+    }
+    if (!near(r.width / total, sizes[i], tolerance)) {
+      throw new Error(
+        `placement ${i} takes ${(r.width / total).toFixed(3)} of the reported width, its size is ${sizes[i].toFixed(3)}: ${JSON.stringify(ordered)}`
+      )
+    }
+    const view = panes[i].rect ? panes[i].rect.local : null
+    if (!view) throw new Error(`pane ${i} has no view bounds to hold against the report`)
+    if (
+      !near(view.x, r.x, 1) ||
+      !near(view.y, r.y, 1) ||
+      !near(view.width, r.width, 1) ||
+      !near(view.height, r.height, 1)
+    ) {
+      throw new Error(
+        `pane ${i}'s view stands at ${JSON.stringify(view)} in the window; the layout report places it at ${JSON.stringify(r)}`
+      )
+    }
+  }
+  return ordered
+}
+
+/**
  * The state once it holds exactly one vertical split of `n` panes, every one of its tabs pointing
- * back at it, and the panes' views placed as its sizes say – a change of the model reaches the
- * chrome's state a broadcast later and the views a layout after that, so both are polled. The
- * group, the state and the panes with their shares; on the timeout, the last thing wrong.
+ * back at it, the panes' views placed as its sizes say, and the chrome's last layout report
+ * placing those panes where the views stand – a change of the model reaches the chrome's state
+ * a broadcast later, the chrome's report follows its layout and the views that report, so all
+ * of it is polled. The group, the state, the panes with their shares, the report's placements
+ * in the group's order and the report's stamp; on the timeout, the last thing wrong.
  */
 async function waitForVerticalPanes(s, n, what, timeoutMs = 10000) {
   let last = null
@@ -5611,7 +5745,9 @@ async function waitForVerticalPanes(s, n, what, timeoutMs = 10000) {
         throw new Error(`the group's tabs do not all point back at it: ${JSON.stringify(state)}`)
       }
       const panes = assertVerticalPanes(await paneRects(s, group, state.tabs), group.sizes)
-      return { group, state, panes }
+      const report = await s.lastLayoutReport()
+      const placements = assertReportedPanes(report, group, panes, group.sizes)
+      return { group, state, panes, placements, reportedAt: report.t }
     } catch (e) {
       last = e
     }
@@ -5658,7 +5794,7 @@ async function scenarioSplit() {
       // Toggle Split View Vertical: the active tab with its neighbour in the list, side by side,
       // in equal halves; the sidebar shows the group's row.
       await s.press(SPLIT_VERTICAL_COMBO)
-      const { group, panes } = await waitForVerticalPanes(
+      const { group, panes, placements } = await waitForVerticalPanes(
         s,
         2,
         'one vertical split of the two tabs, its panes side by side in halves'
@@ -5679,7 +5815,7 @@ async function scenarioSplit() {
       }
       await s.settle()
       await s.shot('01-split-created')
-      return { group, panes, sizes: group.sizes }
+      return { group, panes, placements, sizes: group.sizes }
     })
     await s.step('drag-to-edge', async () => {
       // A third tab, opened (so shown alone), then the split brought back with a click on one
@@ -5730,7 +5866,7 @@ async function scenarioSplit() {
           await s.shot('02-drag-over-right-edge')
         }
       })
-      const { group, panes, state } = await waitForVerticalPanes(
+      const { group, panes, placements, state } = await waitForVerticalPanes(
         s,
         3,
         'the split with the third tab as its right pane, in thirds'
@@ -5747,7 +5883,7 @@ async function scenarioSplit() {
       if (windows !== 1) throw new Error(`${windows} windows after the drop: the tab tore off`)
       await s.settle()
       await s.shot('03-three-panes')
-      return { zone: (lit ?? '').trim(), group, panes, target, rowBox }
+      return { zone: (lit ?? '').trim(), group, panes, placements, target, rowBox }
     })
     await s.step('close-pane', async () => {
       // The right pane's un-split button on its header, Shift held (the split keeps the focus):
@@ -5762,7 +5898,7 @@ async function scenarioSplit() {
         throw new Error(`${boxes.length} un-split buttons on the headers, not 3`)
       boxes.sort((p, q) => q.box.x - p.box.x)
       await buttons.nth(boxes[0].i).click({ modifiers: ['Shift'], timeout: 5000 })
-      const { group, panes, state } = await waitForVerticalPanes(
+      const { group, panes, placements, state } = await waitForVerticalPanes(
         s,
         2,
         'the split back to two panes in halves'
@@ -5779,7 +5915,7 @@ async function scenarioSplit() {
       }
       const rows = await s.sidebarTabCount()
       if (rows !== 3) throw new Error(`${rows} sidebar rows, the third tab should stay open`)
-      return { group, panes, sidebarTabs: rows, buttons: boxes.length }
+      return { group, panes, placements, sidebarTabs: rows, buttons: boxes.length }
     })
     await s.step('resize', async () => {
       // The divider dragged right by RESIZE_SHARE of the area: the left pane grows by that
@@ -5805,7 +5941,7 @@ async function scenarioSplit() {
         `the left pane at ${expected[0].toFixed(3)} of the split after the drag`,
         200
       )
-      const { group, panes } = await waitForVerticalPanes(
+      const { group, panes, placements } = await waitForVerticalPanes(
         s,
         2,
         'the split placed to the dragged ratio'
@@ -5818,6 +5954,96 @@ async function scenarioSplit() {
         before: before.sizes,
         expected,
         after: group.sizes,
+        panes,
+        placements
+      }
+    })
+    await s.step('swap', async () => {
+      // The left pane's tab, dragged by its segment in the sidebar's split row onto the right
+      // pane: a pane of the split shown is a drop target that reads "Swap panes" for a tab of
+      // the same split (ContentArea.tsx SplitDropZones; the core's replaceTabInSplit), and the
+      // two change places – the group's tabs reversed, the slots' sizes as the resize left them,
+      // the layout report placing each tab where the other stood, the dragged tab active. (The
+      // Swap panes command W5-12 is building is not on main: its chord's leg is pending.)
+      const before = await waitForVerticalPanes(s, 2, 'the two-pane split before the swap')
+      const [left, right] = before.group.tabIds
+      const segment = s.chrome.locator(`${SPLIT_ROW} [data-tab-id="${left}"]`).first()
+      const segBox = await segment.boundingBox()
+      const page = await s.chrome.locator('[data-tear-zone]').first().boundingBox()
+      if (!segBox || !page) {
+        throw new Error(
+          `no box for the left pane's segment (${JSON.stringify(segBox)}) or the page (${JSON.stringify(page)})`
+        )
+      }
+      // A quarter into the right pane at mid height: inside its zone and clear of the edge zones
+      // (the right one is the framed area's last 22 %, the top and bottom ones its first and
+      // last 18 % in height), which win where they overlap a pane's.
+      const s0 = before.group.sizes[0]
+      const target = {
+        x: page.x + page.width * (s0 + (1 - s0) * 0.25),
+        y: page.y + page.height / 2
+      }
+      const zone = s.chrome.locator(`[data-drop="pane:${right}"]`).first()
+      let label = null
+      await mouseDrag(s.chrome, centre(segBox), target, {
+        steps: 16,
+        before: async () => {
+          await zone.waitFor({ state: 'visible', timeout: 5000 })
+          await s.chrome.mouse.move(target.x + 1, target.y)
+          await waitFor(
+            async () => ((await zone.getAttribute('class')) ?? '').includes('border-white') || null,
+            5000,
+            "the right pane's zone lit under the pointer"
+          )
+          label = ((await zone.textContent()) ?? '').trim()
+          await s.shot('05-drag-over-right-pane')
+        }
+      })
+      await waitFor(
+        async () => {
+          const st = await splitState(s)
+          const g = st.groups[0]
+          return g && g.tabIds[0] === right && g.tabIds[1] === left ? st : null
+        },
+        10000,
+        `the split's tabs swapped in the model (${right} left, ${left} right)`,
+        200
+      )
+      const { group, panes, placements, state } = await waitForVerticalPanes(
+        s,
+        2,
+        'the swapped panes placed as the layout report says'
+      )
+      if (label !== 'Swap panes') {
+        throw new Error(`the pane's zone read "${label}" under the pointer, not "Swap panes"`)
+      }
+      if (group.sizes.some((v, i) => Math.abs(v - before.group.sizes[i]) > 0.001)) {
+        throw new Error(
+          `the slots' sizes changed with the swap: ${JSON.stringify(group.sizes)} from ${JSON.stringify(before.group.sizes)}`
+        )
+      }
+      if (state.activeTabId !== left) {
+        throw new Error(
+          `the dragged tab ${left} is not the active one after the swap: ${state.activeTabId}`
+        )
+      }
+      // Each tab is placed where the other stood (the slots kept their sizes, so within a pixel).
+      const was = Object.fromEntries(before.placements.map((p) => [p.tabId, p.rect]))
+      const now = Object.fromEntries(placements.map((p) => [p.tabId, p.rect]))
+      const same = (a, b) => ['x', 'y', 'width', 'height'].every((k) => Math.abs(a[k] - b[k]) <= 1)
+      if (!same(now[left], was[right]) || !same(now[right], was[left])) {
+        throw new Error(
+          `the layout report after the swap places ${JSON.stringify(now)}; before it placed ${JSON.stringify(was)}`
+        )
+      }
+      await s.settle()
+      await s.shot('06-swapped')
+      return {
+        label,
+        before: before.group.tabIds,
+        after: group.tabIds,
+        sizes: group.sizes,
+        placements,
         panes
       }
     })
@@ -5843,7 +6069,7 @@ async function scenarioSplit() {
       // same order, the dragged ratio; both pages loaded, the panes placed to the ratio.
       await s.waitForTab(pages.a.url, 30000)
       await s.waitForTab(pages.b.url, 30000)
-      const { group, panes, state } = await waitForVerticalPanes(
+      const { group, panes, placements, state } = await waitForVerticalPanes(
         s,
         2,
         'the split restored with its two panes placed to the persisted ratio'
@@ -5867,8 +6093,8 @@ async function scenarioSplit() {
       const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
       if (restoreBar) throw new Error('"Restore pages?" offered after a clean quit')
       await s.settle()
-      await s.shot('05-restored-split')
-      return { group, panes, sidebarTabs: await s.sidebarTabCount() }
+      await s.shot('07-restored-split')
+      return { group, panes, placements, sidebarTabs: await s.sidebarTabCount() }
     })
     await s.step('unsplit', async () => {
       // Unsplit View: the group is gone, both tabs stay open on their own, the active tab's view
@@ -5900,7 +6126,7 @@ async function scenarioSplit() {
       if (rows !== 3)
         throw new Error(`${rows} sidebar rows after the unsplit, the tabs should stay`)
       await s.settle()
-      await s.shot('06-unsplit')
+      await s.shot('08-unsplit')
       return { active: active?.url ?? null, view: rect, panesBefore: before, sidebarTabs: rows }
     })
     await s.step('quit', async () => {
@@ -5910,6 +6136,519 @@ async function scenarioSplit() {
       if ((raw.splitGroups ?? []).length) {
         throw new Error(`state.json still holds a split: ${JSON.stringify(raw.splitGroups)}`)
       }
+      return { ...r, state }
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
+// features: the feature e2e legs (parity row ci-04)
+// ---------------------------------------------------------------------------------------------
+
+// The reader chip in the address pill (SidebarTop.tsx through PillChip.tsx): a toggle button
+// whose `aria-pressed` is the Reader View state. Unlit it is a tool the pill folds away at a
+// narrow width; lit, on the reader tab, it is never hidden.
+const READER_CHIP = 'button[data-pill-chip][aria-label="Reader View"]'
+// The Chrome preset's Toggle Reader View (shared/shortcuts.ts key_toggleReaderMode).
+const READER_COMBO = `${ACCEL}+Alt+r`
+// The star bubble Accel+D opens (StarDialog.tsx) and its Folder menulist (FolderField.tsx; the
+// popup is the shared MenulistPopover, a listbox named Folder).
+const STAR_DIALOG = '[role="dialog"][aria-labelledby="zen-bm-star-title"]'
+const STAR_FOLDER = '#zen-bm-star-folder'
+const FOLDER_LIST = '[role="listbox"][aria-label="Folder"]'
+// The bookmarks bar (BookmarksBar.tsx) and a page's chip on it.
+const BOOKMARKS_BAR = '[role="toolbar"][aria-label="Bookmarks bar"]'
+const BAR_CHIP = 'button.zen-bm-chip[data-bm-chip="url"]'
+// The omnibox's rows (Urlbar.tsx): the row carries the kind, its body is the option.
+const OMNIBOX_ROW = 'li.zen-omnibox-row'
+const OMNIBOX_SELECTED = '.zen-omnibox [role="option"][aria-selected="true"]'
+// The `?row=` landings the leg asks of Settings: one row in each of three sections
+// (sections.tsx: Look's Split view group, Tabs' Pinned tabs group, Resources' Never touch
+// group). Each section runs longer than the column, so the group can reach the column's top:
+// a section shorter than the column (Search at 1600x1000) lands its row short by the
+// difference – SettingsPage.tsx's landing pad reads the column's clamped scrollHeight – a
+// product defect the W5-14 report routes, not a fact this leg gates on.
+const SETTINGS_LANDINGS = [
+  { section: 'look', row: 'split-edge-zones' },
+  { section: 'tabs', row: 'pinned-close' },
+  { section: 'resources', row: 'protect-pinned' }
+]
+// How far under the column's top (past its scroll padding) a landed group may sit, in px: the
+// column's own rounding, and the group's outline.
+const LANDING_SLACK = 8
+
+/**
+ * The tabs (with the reader detector's word on each), the active tab, the bookmarks and the
+ * bar's mode as the chrome's state has them.
+ */
+function featureState(s) {
+  return s.chrome.evaluate(async () => {
+    const st = await window.zen.invoke('app.getState')
+    const space = st.spaces.find((sp) => sp.id === st.activeSpaceId)
+    return {
+      activeTabId: space ? space.activeTabId : null,
+      tabs: Object.values(st.tabs).map((t) => ({
+        id: t.id,
+        url: t.url,
+        title: t.title,
+        readerable: Boolean(t.readerable)
+      })),
+      bookmarks: (st.bookmarks || []).map((b) => ({
+        id: b.id,
+        parentId: b.parentId ?? null,
+        type: b.type,
+        title: b.title,
+        url: b.url ?? null
+      })),
+      bookmarksBar: st.settings ? st.settings.bookmarksBar : null
+    }
+  })
+}
+
+/** The active tab as the chrome's state has it (null: none). */
+async function activeFeatureTab(s) {
+  const st = await featureState(s)
+  return st.tabs.find((t) => t.id === st.activeTabId) ?? null
+}
+
+/**
+ * Where the Settings page put row `row` (SettingsPage.tsx: the row's group scrolled to the
+ * column's top under its scroll padding, the page carrying `data-landing` while a row is
+ * asked): the page's layout, the landing flag and the end pad, and the column's, the group's
+ * and the row's boxes. `error` when the page or the row is not there.
+ */
+function settingsLanding(s, row) {
+  return s.chrome.evaluate((row) => {
+    const page = document.querySelector('.zen-settings-page')
+    if (!page) return { error: 'no Settings page in the chrome' }
+    const facts = {
+      layout: page.dataset.layout ?? null,
+      landing: page.hasAttribute('data-landing'),
+      pad: page.style.getPropertyValue('--zen-settings-landing-pad') || null
+    }
+    const el = page.querySelector(`[data-row="${row}"]`)
+    if (!el) return { ...facts, error: `no row ${row} on the page` }
+    const group = el.closest('[data-group]')
+    const column = group ? group.closest('.zen-settings-scroll, .zen-settings-content') : null
+    if (!group || !column) return { ...facts, error: `row ${row} is in no group or no column` }
+    const c = column.getBoundingClientRect()
+    const g = group.getBoundingClientRect()
+    const r = el.getBoundingClientRect()
+    return {
+      ...facts,
+      group: group.getAttribute('data-group'),
+      inset: parseFloat(getComputedStyle(column).scrollPaddingTop) || 0,
+      columnTop: c.top,
+      columnBottom: c.bottom,
+      groupTop: g.top,
+      rowTop: r.top,
+      rowBottom: r.bottom,
+      scrollTop: column.scrollTop,
+      scrollHeight: column.scrollHeight,
+      clientHeight: column.clientHeight
+    }
+  }, row)
+}
+
+/** The URL bar brought up over the active tab (Accel+L) with its field holding the keyboard. */
+async function openUrlbarOverActiveTab(s) {
+  await s.press(`${ACCEL}+l`)
+  const input = s.urlbarInput()
+  await input.waitFor({ state: 'visible', timeout: 8000 })
+  await waitFor(
+    async () => (await s.keyboardOwner()) === URLBAR_FIELD_OWNER || null,
+    5000,
+    'the keyboard in the URL bar'
+  )
+  return input
+}
+
+/**
+ * The feature legs (ci-04), each a step of its own on one launch of a profile past onboarding
+ * with search suggestions off (the omnibox asks no engine for anything, so nothing leaves the
+ * loopback) and the bookmarks bar always shown (so the chip the bookmarks leg files has a bar
+ * over a web page to appear on): the omnibox's rows and Enter, three Settings `?row=` landings,
+ * Reader View on and off on the fixture's article with the chip's `aria-pressed`, and a
+ * bookmark's life on the bar – added with Accel+D, filed to the bar, opened from another tab,
+ * deleted from its own menu. The state read is the chrome's (`app.getState`), the views' the
+ * main process's; screenshots go with each leg.
+ */
+async function scenarioFeatures() {
+  const userData = freshProfile('profile-features', {
+    onboardingDone: true,
+    settings: { searchSuggestions: false, bookmarksBar: 'always' }
+  })
+  const pages = { first: bootSite.first, second: bootSite.second }
+  const article = bootSite.article
+  return runScenario('features', userData, {}, async (s, out) => {
+    out.fixture = {
+      origin: bootSite.origin,
+      pages: { first: pages.first.url, second: pages.second.url, article: article.url }
+    }
+    await s.step('omnibox-suggestions', async () => {
+      // Two pages into two tabs, the second closed again: it is history and no open tab (an
+      // open tab's row would switch to it rather than navigate). Accel+L over the first page,
+      // "second page" typed: a history row for the second page comes up among the rows; the
+      // arrow key selects it and Enter navigates the first tab to it in place.
+      await openUrlInNewTab(s, pages.first.url)
+      await openUrlInNewTab(s, pages.second.url)
+      await s.press(`${ACCEL}+w`)
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === 1 || null,
+        10000,
+        'one sidebar row after Accel+W'
+      )
+      await waitFor(
+        async () => {
+          const t = await activeFeatureTab(s)
+          return t && t.url === pages.first.url ? t : null
+        },
+        5000,
+        'the first page active again'
+      )
+      const input = await openUrlbarOverActiveTab(s)
+      await input.fill('')
+      await input.pressSequentially('second page', { delay: 40 })
+      const rows = s.chrome.locator(OMNIBOX_ROW)
+      const readRows = () =>
+        rows.evaluateAll((els) =>
+          els.map((el) => `${el.dataset.kind}: ${(el.textContent ?? '').trim().slice(0, 80)}`)
+        )
+      const historyRow = s.chrome
+        .locator(`${OMNIBOX_ROW}[data-kind="history"]`, { hasText: pages.second.title })
+        .first()
+      await historyRow.waitFor({ state: 'visible', timeout: 10000 }).catch(async (e) => {
+        throw new Error(
+          `no history row for "${pages.second.title}" under "second page"; the rows read ${JSON.stringify(
+            await readRows()
+          )} (${e.message.split('\n')[0]})`
+        )
+      })
+      const seen = await readRows()
+      await s.shot('01-omnibox-rows')
+      // ArrowDown moves the selection a row at a time until the history row is the selected
+      // option (the field's own key; the keyboard is in the field).
+      const selected = s.chrome.locator(OMNIBOX_SELECTED).first()
+      let picked = null
+      for (let i = 0; i <= seen.length; i++) {
+        const text = (await selected.count()) ? ((await selected.textContent()) ?? '') : ''
+        if (text.includes(pages.second.title)) {
+          picked = text.trim()
+          break
+        }
+        await s.chrome.keyboard.press('ArrowDown')
+        await s.settle()
+      }
+      if (!picked) {
+        throw new Error(
+          `the history row never took the selection through ${seen.length + 1} ArrowDowns; the rows: ${JSON.stringify(seen)}`
+        )
+      }
+      await s.press('Enter')
+      const view = await s.waitForTab(pages.second.url, 30000)
+      await input.waitFor({ state: 'hidden', timeout: 8000 })
+      const active = await activeFeatureTab(s)
+      if (!active || active.url !== pages.second.url) {
+        throw new Error(`the active tab after Enter is ${JSON.stringify(active)}`)
+      }
+      const sidebarTabs = await s.sidebarTabCount()
+      if (sidebarTabs !== 1) {
+        throw new Error(`${sidebarTabs} sidebar rows: Enter opened a tab instead of navigating`)
+      }
+      return { typed: 'second page', rows: seen, picked, landed: view.url, sidebarTabs }
+    })
+    let shotIndex = 2
+    for (const landing of SETTINGS_LANDINGS) {
+      await s.step(`settings-row-landing-${landing.section}`, async () => {
+        // `zenium://settings/<section>?row=<id>` typed over the active tab: Settings opens (in
+        // its own tab from a web page; the Settings tab moves for the next ones) with the row's
+        // group scrolled to the column's top under its scroll padding, the row within the
+        // column, and the page carrying `data-landing` – the deep link's landing.
+        const url = `zenium://settings/${landing.section}?row=${landing.row}`
+        const prefix = `zen://settings/${landing.section}`
+        const tabsBefore = (await featureState(s)).tabs.length
+        await openUrlbarOverActiveTab(s)
+        await s.submitUrl(url)
+        const tab = await waitFor(
+          async () => {
+            const t = await activeFeatureTab(s)
+            return t && t.url.startsWith(prefix) && /[?&]row=/.test(t.url) ? t : null
+          },
+          10000,
+          `the active tab on ${prefix}?row=${landing.row}`
+        )
+        const read = await waitFor(
+          async () => {
+            const r = await settingsLanding(s, landing.row)
+            return r.error || !r.landing ? null : r
+          },
+          10000,
+          `the Settings page landed on row ${landing.row}`
+        ).catch(async (e) => {
+          throw new Error(`${e.message}: ${JSON.stringify(await settingsLanding(s, landing.row))}`)
+        })
+        await s.settle()
+        await s.shot(`0${shotIndex++}-settings-${landing.section}`)
+        const ceiling = read.columnTop + read.inset + LANDING_SLACK
+        if (read.groupTop < read.columnTop - 1 || read.groupTop > ceiling) {
+          throw new Error(
+            `the row's group sits at ${read.groupTop.toFixed(1)}; the column's top is ${read.columnTop.toFixed(1)} plus ${read.inset} of scroll padding: the landing did not bring the group to the top (${JSON.stringify(read)})`
+          )
+        }
+        if (read.rowTop < read.columnTop - 1 || read.rowBottom > read.columnBottom + 1) {
+          throw new Error(`the row is not within the column: ${JSON.stringify(read)}`)
+        }
+        return {
+          url,
+          tab: tab.url,
+          tabsOpened: (await featureState(s)).tabs.length - tabsBefore,
+          ...read
+        }
+      })
+    }
+    await s.step('reader-toggle', async () => {
+      // The fixture's article into a tab of its own: the detector reads it as an article. The
+      // Chrome preset's Toggle Reader View puts the tab on zen://reader for it (the chip pressed,
+      // the reader document carrying the article's words) and, pressed again, brings the article
+      // back (the chip unpressed where the pill shows it).
+      const opened = await openUrlInNewTab(s, article.url)
+      const tab = await waitFor(
+        async () => {
+          const t = await activeFeatureTab(s)
+          return t && t.url === article.url && t.readerable ? t : null
+        },
+        15000,
+        'the article tab active and read as readerable'
+      )
+      const chip = s.chrome.locator(READER_CHIP).first()
+      const chipBefore = (await chip.count()) ? await chip.getAttribute('aria-pressed') : null
+      if (chipBefore !== null && chipBefore !== 'false') {
+        throw new Error(`the reader chip reads aria-pressed=${chipBefore} on the article`)
+      }
+      await s.press(READER_COMBO)
+      const readerView = await waitFor(
+        async () =>
+          (await s.tabs()).find(
+            (v) => v.id === opened.tab.id && v.url.startsWith('zen://reader') && !v.loading
+          ) ?? null,
+        15000,
+        'the tab on zen://reader'
+      )
+      const named = new URL(readerView.url).searchParams.get('url')
+      if (named !== article.url) {
+        throw new Error(`the reader URL names ${named}, not the article ${article.url}`)
+      }
+      await chip.waitFor({ state: 'visible', timeout: 5000 })
+      await waitFor(
+        async () => (await chip.getAttribute('aria-pressed')) === 'true' || null,
+        5000,
+        'the reader chip pressed'
+      )
+      const text = String(
+        await s.tabEval(opened.tab.id, 'document.body ? document.body.innerText : ""')
+      )
+      if (!text.includes(article.marker)) {
+        throw new Error(
+          `the reader document lacks the article's words ("${article.marker}"): ${text.slice(0, 200)}`
+        )
+      }
+      await s.settle()
+      await s.shot('05-reader-view')
+      await s.press(READER_COMBO)
+      const back = await waitFor(
+        async () =>
+          (await s.tabs()).find(
+            (v) => v.id === opened.tab.id && v.url === article.url && !v.loading
+          ) ?? null,
+        15000,
+        'the tab back on the article'
+      )
+      const chipAfter = await waitFor(
+        async () => {
+          if (!(await chip.count())) return { shown: false }
+          const pressed = await chip.getAttribute('aria-pressed')
+          return pressed === 'false' ? { shown: true, pressed } : null
+        },
+        5000,
+        'the reader chip unpressed (or folded away) back on the article'
+      )
+      return {
+        tab: tab.id,
+        readerable: tab.readerable,
+        chipBefore,
+        readerUrl: readerView.url,
+        readerTextLength: text.length,
+        chipAfter,
+        back: back.url
+      }
+    })
+    await s.step('bookmarks-bar', async () => {
+      // Accel+D on the article: the star bubble ("Bookmark added") with the bookmark filed where
+      // Chrome files it (Other bookmarks); the Folder menulist moves it to the Bookmarks bar and
+      // its chip appears on the bar, named for the page. From the second page's tab a click on
+      // the chip opens the article in that tab; "Delete" from the chip's menu takes the chip and
+      // the bookmark away.
+      const active = await activeFeatureTab(s)
+      if (!active || active.url !== article.url) {
+        throw new Error(`the active tab is ${JSON.stringify(active)}, not the article`)
+      }
+      const bar = s.chrome.locator(BOOKMARKS_BAR).first()
+      await bar.waitFor({ state: 'visible', timeout: 5000 })
+      const chipsBefore = await bar.locator(BAR_CHIP).count()
+      if (chipsBefore) throw new Error(`${chipsBefore} chips on the bar before any bookmark`)
+      await s.press(`${ACCEL}+d`)
+      const dialog = s.chrome.locator(STAR_DIALOG).first()
+      await dialog.waitFor({ state: 'visible', timeout: 8000 })
+      const title = ((await dialog.locator('#zen-bm-star-title').textContent()) ?? '').trim()
+      if (!title.includes('Bookmark added')) throw new Error(`the star bubble is titled "${title}"`)
+      const folder = dialog.locator(STAR_FOLDER).first()
+      const folderBefore = ((await folder.textContent()) ?? '').trim()
+      await folder.click({ timeout: 5000 })
+      const list = s.chrome.locator(FOLDER_LIST).first()
+      await list.waitFor({ state: 'visible', timeout: 5000 })
+      const target = list.getByRole('option', { name: 'Bookmarks bar', exact: true })
+      await target.waitFor({ state: 'visible', timeout: 5000 })
+      // The pick is the keyboard's (MenulistPopover: the current option holds the focus as the
+      // list comes up, ArrowDown moves it a row, Enter picks): a pointer cannot be relied on
+      // here – the bubble's panel (z-index 70) paints over its own child popup, which has no
+      // z-index of its own, so the option's pixels can belong to the bubble (a product defect
+      // the W5-14 report routes). What the option's centre pixel belongs to goes into the
+      // detail as evidence either way.
+      const optionCover = await target.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+        if (!hit) return { covered: true, by: 'nothing' }
+        if (el.contains(hit)) return { covered: false, by: null }
+        const owner = hit.closest('[role]')
+        return {
+          covered: true,
+          by: owner
+            ? `${owner.getAttribute('role')}${owner.id ? '#' + owner.id : ''}${
+                owner.getAttribute('aria-labelledby')
+                  ? ' ' + owner.getAttribute('aria-labelledby')
+                  : ''
+              }`
+            : `${hit.tagName.toLowerCase()}.${String(hit.className).split(' ')[0]}`
+        }
+      })
+      const focusedOption = () =>
+        list.evaluate((el) => {
+          const a = document.activeElement
+          return a && el.contains(a) ? (a.textContent ?? '').trim() : null
+        })
+      const focusBefore = await focusedOption()
+      const optionCount = await list.getByRole('option').count()
+      let focused = focusBefore
+      for (let i = 0; i < optionCount && focused !== 'Bookmarks bar'; i++) {
+        await s.chrome.keyboard.press('ArrowDown')
+        focused = await focusedOption()
+      }
+      if (focused !== 'Bookmarks bar') {
+        throw new Error(
+          `the Folder list's focus never reached "Bookmarks bar" through ${optionCount} ArrowDowns (it came up on ${JSON.stringify(focusBefore)}, ended on ${JSON.stringify(focused)})`
+        )
+      }
+      await s.chrome.keyboard.press('Enter')
+      await waitFor(
+        async () => ((await folder.textContent()) ?? '').trim() === 'Bookmarks bar' || null,
+        5000,
+        'the Folder menulist reading Bookmarks bar after Enter on its option'
+      )
+      await list.waitFor({ state: 'hidden', timeout: 5000 })
+      const chip = bar.locator(BAR_CHIP).first()
+      await chip.waitFor({ state: 'visible', timeout: 8000 })
+      await s.settle()
+      await s.shot('06-bookmark-added')
+      await dialog.getByRole('button', { name: 'Done', exact: true }).click({ timeout: 5000 })
+      await dialog.waitFor({ state: 'hidden', timeout: 5000 })
+      const filed = await waitFor(
+        async () =>
+          (await featureState(s)).bookmarks.find(
+            (b) => b.type === 'url' && b.url === article.url && b.parentId === '1'
+          ) ?? null,
+        5000,
+        'the bookmark in the Bookmarks bar folder'
+      )
+      const chipId = await chip.getAttribute('data-bm-id')
+      const chipLabel = ((await chip.locator('.zen-bm-chip-label').textContent()) ?? '').trim()
+      const chipTooltip = await chip.getAttribute('data-tooltip')
+      if (chipId !== filed.id || chipTooltip !== article.url) {
+        throw new Error(
+          `the chip is ${chipId} for ${chipTooltip}; the bookmark is ${filed.id} for ${article.url}`
+        )
+      }
+      if (chipLabel !== article.title) {
+        throw new Error(`the chip is labelled "${chipLabel}", the page is "${article.title}"`)
+      }
+      await s
+        .sidebarTab(pages.second.title)
+        .first()
+        .click({ timeout: 5000 })
+        .catch((e) => {
+          throw new Error(
+            `no sidebar row for the second page "${pages.second.title}" to click: ${e.message.split('\n')[0]}`
+          )
+        })
+      const other = await waitFor(
+        async () => {
+          const t = await activeFeatureTab(s)
+          return t && t.url === pages.second.url ? t : null
+        },
+        5000,
+        'the second page active'
+      )
+      await chip.click({ timeout: 5000 })
+      const landed = await waitFor(
+        async () => {
+          const st = await featureState(s)
+          const t = st.tabs.find((x) => x.id === other.id)
+          return t && t.url === article.url ? t : null
+        },
+        15000,
+        'the chip opening the article in the current tab'
+      )
+      await waitFor(
+        async () =>
+          (await s.tabs()).filter((v) => v.url === article.url && !v.loading).length === 2 || null,
+        15000,
+        'two views on the article, both loaded'
+      )
+      const activeAfter = (await featureState(s)).activeTabId
+      if (activeAfter !== other.id) {
+        throw new Error(
+          `the chip moved the active tab to ${activeAfter}; it opens in the current tab ${other.id}`
+        )
+      }
+      await s.settle()
+      await s.shot('07-bookmark-opened')
+      const menu = await pickFromNextMenu(s, 'Delete', () =>
+        chip.click({ button: 'right', timeout: 5000 })
+      )
+      await chip.waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () =>
+          (await featureState(s)).bookmarks.some((b) => b.id === filed.id) ? null : true,
+        5000,
+        'the bookmark gone from the model'
+      )
+      const chipsAfter = await bar.locator(BAR_CHIP).count()
+      if (chipsAfter) throw new Error(`${chipsAfter} chips left on the bar after the delete`)
+      await s.settle()
+      await s.shot('08-bookmark-removed')
+      return {
+        title,
+        folderBefore,
+        folderList: { cameUpOn: focusBefore, options: optionCount, optionCover },
+        bookmark: filed,
+        chip: { id: chipId, label: chipLabel, tooltip: chipTooltip },
+        openedIn: landed.id,
+        menu: menu.labels,
+        chipsAfter
+      }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      const state = assertCleanState(userData, article.url)
       return { ...r, state }
     })
   })
@@ -6028,6 +6767,7 @@ async function main() {
       'mv3-worker': scenarioMv3Worker,
       pip: scenarioPip,
       split: scenarioSplit,
+      features: scenarioFeatures,
       [DOWNLOADS_SCENARIO]: () =>
         scenarioDownloads({
           freshProfile,
@@ -6069,9 +6809,16 @@ async function main() {
           grabScreen,
           sh,
           osascript,
+          ps,
           exe: opts.exe,
           outDir,
-          isMac: IS_MAC
+          // Windows: the installed build is the one the installer registered; the registration
+          // has to point at this executable. The OS build decides which Settings page the
+          // request opens.
+          label: opts.label,
+          osRelease: os.release(),
+          isMac: IS_MAC,
+          isWin: IS_WIN
         })
     }[name]
     if (!run) {

@@ -122,6 +122,13 @@ const PREVIEW_COOKIE_MODES: readonly ThirdPartyCookieMode[] = ['allow', 'block-p
 export const PREVIEW_PRIVATE_MAX = 6
 
 /**
+ * What the browser's own share panel is up for (`share=<kind>`; Android below 14, SH-03): the
+ * active page and its link, a selection's text, or an image (`previewShare.ts`).
+ */
+export const PREVIEW_SHARE_KINDS = ['link', 'text', 'image'] as const
+export type PreviewShareKind = (typeof PREVIEW_SHARE_KINDS)[number]
+
+/**
  * The phone new tab page's field on its way to the omnibox (`ntp=<pose>`; NTP-02 / MOT-08,
  * `lib/fakeboxMorph.ts`): `rest` is the page as it opens, `morph:<n>` the field held n percent
  * of the way from the page to the omnibox with the bar open under it (the stills' source; the
@@ -547,6 +554,17 @@ export type PreviewState =
        */
       kind: 'voice'
       script: string
+    }
+  | {
+      /**
+       * The browser's own share panel (Android below 14; SH-03) up for a share from the active
+       * tab: the page (`share=link`), a selection's text (`share=text`) or an image
+       * (`share=image`), with a stand-in row of apps (`previewShare.ts`). `&private` makes it a
+       * private tab's share, over a private tab on the page.
+       */
+      kind: 'share'
+      share: PreviewShareKind
+      private: boolean
     }
   | {
       /** The tab overview over the active page, as a pull on the pill opens it. */
@@ -999,6 +1017,10 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const voice = params.get('voice')
   if (voice !== null) return { kind: 'voice', script: voice || 'heard' }
+  const share = params.get('share')
+  if (share !== null && (PREVIEW_SHARE_KINDS as readonly string[]).includes(share)) {
+    return { kind: 'share', share: share as PreviewShareKind, private: params.has('private') }
+  }
   if (params.has('overview')) {
     const state: Extract<PreviewState, { kind: 'overview' }> = { kind: 'overview' }
     const then = parsePreviewSteps(params.get('then'))

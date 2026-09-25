@@ -77,4 +77,35 @@ class ShareTest {
         assertEquals("*/*", Share.commonMimeType(listOf("image/jpeg", "text/plain")))
         assertEquals("application/octet-stream", Share.commonMimeType(listOf("")))
     }
+
+    // --- SH-02: Zenium's row in Android 14's share sheet ------------------------------------------
+
+    @Test
+    fun theSheetsRowReadsAsThePanelsChipsDo() {
+        // §9.38, the design gate's (c): Copy link, QR code, Long screenshot, Print on both paths –
+        // the sheet's row on Android 14 and the panel's chips below it, the same words in the same order.
+        val row = Share.browserRow(withTab = true)
+        assertEquals(listOf("Copy link", "QR code", "Long screenshot", "Print"), row.map { it.label })
+        assertEquals(listOf(Share.KIND_COPY, Share.KIND_QR, Share.KIND_LONG_SCREENSHOT, Share.KIND_PRINT), row.map { it.kind })
+        // Four glyphs, one each.
+        assertEquals(4, row.map { it.icon }.toSet().size)
+    }
+
+    @Test
+    fun theRowsThirdActionIsTheLongScreenshotTheChromeRoutesToTheEditor() {
+        // The kind is the word the chrome's platform reads off the tap (`share.action`, `routeShareAction`):
+        // `longScreenshot` opens the long-screenshot editor (SH-08), as the panel's chip does; the
+        // viewport shot's `screenshot` is not on the row.
+        val row = Share.browserRow(withTab = true)
+        assertEquals("longScreenshot", Share.KIND_LONG_SCREENSHOT)
+        assertEquals(Share.KIND_LONG_SCREENSHOT, row[2].kind)
+        assertEquals("Long screenshot", row[2].label)
+        assertEquals(emptyList<String>(), row.map { it.kind }.filter { it == "screenshot" })
+    }
+
+    @Test
+    fun aShareWithoutATabHasNoPageActions() {
+        // Long screenshot and Print work on the sharing tab: a bare link's share goes with Copy link and QR code alone.
+        assertEquals(listOf(Share.KIND_COPY, Share.KIND_QR), Share.browserRow(withTab = false).map { it.kind })
+    }
 }
