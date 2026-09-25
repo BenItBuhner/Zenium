@@ -521,6 +521,77 @@ describe('extension-origin stylesheets the page CSP refused', () => {
     expect(imported).toHaveLength(2)
   })
 
+  it("spells a script file's URL as the page-origin alias for runtime.getURL once an isolated world's refused graph was asked for from the alias, so a two-hop graph's own chunk imports load (Buyhatke's Vite preload helper on flipkart.com, compat round 16 7.8)", async () => {
+    const { host, errors } = harness([EXT, 'zyxwvutsrqponmlkzyxwvutsrqponmlk'])
+    const imported: Array<{ url: string; resolve: () => void; reject: (e: unknown) => void }> =
+      []
+    host.document = new FakeDocument(null)
+    host.pageModules = false
+    host.pageOrigin = 'https://www.flipkart.com'
+    host.importModule = (url) =>
+      new Promise<void>((resolve, reject) => void imported.push({ url, resolve, reject }))
+    const recovery = createScriptRecovery(host)
+    const chunk = `${ORIGIN}/assets/addToCart.js-7VOB0Zfo.js`
+    // Nothing refused yet: the served URL stands for every file.
+    expect(recovery.aliasFor(chunk)).toBeNull()
+    // The content script's own import refused and asked for from the alias: from here the
+    // graph's `chrome.runtime.getURL`-built chunk specifiers are alias URLs – the first module
+    // builds them while it evaluates, before the alias import settles.
+    const entry = `${ORIGIN}/assets/preload-helper-DwIMeJeZ.js`
+    recovery.onViolation(violation(entry))
+    expect(imported.map((i) => i.url)).toEqual([
+      `https://www.flipkart.com/.zenium-ext/${EXT}/assets/preload-helper-DwIMeJeZ.js`
+    ])
+    expect(recovery.aliasFor(chunk)).toBe(
+      `https://www.flipkart.com/.zenium-ext/${EXT}/assets/addToCart.js-7VOB0Zfo.js`
+    )
+    expect(recovery.aliasFor(`${ORIGIN}/assets/worker.mjs?v=3`)).toBe(
+      `https://www.flipkart.com/.zenium-ext/${EXT}/assets/worker.mjs?v=3`
+    )
+    // Script files only: a page, an image, a fetch and a stylesheet keep the served origin (the
+    // stylesheet has the `<link>` recovery, a page is never served from the alias).
+    for (const other of [
+      `${ORIGIN}/popup.html`,
+      `${ORIGIN}/assets/icon.png`,
+      `${ORIGIN}/assets/config.json`,
+      `${ORIGIN}/assets/style-Cx1.css`,
+      `${ORIGIN}/assets/js/`
+    ])
+      expect(recovery.aliasFor(other)).toBeNull()
+    // Another attached extension's files, and a URL of no extension's, stand as served.
+    expect(
+      recovery.aliasFor('https://zyxwvutsrqponmlkzyxwvutsrqponmlk.ext.zenium.invalid/a.js')
+    ).toBeNull()
+    expect(recovery.aliasFor('https://www.flipkart.com/own.js')).toBeNull()
+    imported[0]!.resolve()
+    await tick()
+    expect(recovery.pending()).toBe(0)
+    expect(errors).toEqual([])
+    // The alias stays the answer after the import settled (the helper asks at run time).
+    expect(recovery.aliasFor(chunk)).not.toBeNull()
+
+    // The one-realm WebView (the nonced or aliased module script of the page's, bracketed by
+    // the host) keeps the served spelling: the whole graph loads under the page's nonce there.
+    const realm = harness()
+    realm.host.document = new FakeDocument('n0nce')
+    realm.host.pageModules = true
+    realm.host.pageOrigin = 'https://www.flipkart.com'
+    const oneRealm = createScriptRecovery(realm.host)
+    oneRealm.onViolation(violation(entry))
+    expect(oneRealm.aliasFor(chunk)).toBeNull()
+    // An isolated world that could not ask for the alias (no page origin to root it under)
+    // recorded the refusal and answers the served URL still.
+    const bare = harness()
+    bare.host.document = new FakeDocument(null)
+    bare.host.pageModules = false
+    bare.host.pageOrigin = 'null'
+    bare.host.importModule = host.importModule
+    bare.host.warn = () => undefined
+    const noAlias = createScriptRecovery(bare.host)
+    noAlias.onViolation(violation(entry))
+    expect(noAlias.aliasFor(chunk)).toBeNull()
+  })
+
   it("puts the page-origin alias in the module script's src where the page lends no nonce (a host-only policy on the one-realm WebView), the nonce first where there is one", () => {
     const { host, errors } = harness()
     const doc = new FakeDocument(null)

@@ -57,6 +57,19 @@ import { pageAliasUrl, presentExtensionUrl } from '@core/extensions/runtime/exte
  * nonce-only `script-src` on an isolated-world WebView, Buyhatke): that refusal is recorded and
  * nothing is retried further – the alias is not an extension URL, so its own violation is not
  * this recovery's.
+ *
+ * The retry is one hop: the graph is imported again beside the extension's own rejected
+ * promise. A graph whose first module imports more by `chrome.runtime.getURL`-built specifiers
+ * (Vite's preload helper in a CRXJS build: Buyhatke's on flipkart.com, whose policy admits
+ * `'self'`, compat round 16) asks for its chunks at the served origin again, the same policy
+ * refuses them, and the helper's own `import()` promises – which its code awaits – stay
+ * rejected whether or not the chunks are retried from the alias. So once an isolated world's
+ * refused graph was asked for from the alias, `runtime.getURL` of a script file answers the
+ * alias in that world (`aliasFor`, the engine's `scriptAlias`): the chunks load where the
+ * first module did, the helper's promises resolve, and Chrome's shape holds – an extension URL
+ * the page's policy cannot refuse. Only script files change spelling (a page, an image, a
+ * fetch keep the served origin; a stylesheet has the `<link>` recovery), and only after the
+ * refusal: a world whose page admits the served origin never sees the alias.
  */
 
 /** What the bootstrap lends the recovery: the attached extensions, the bridge and a file read. */
@@ -138,10 +151,20 @@ export interface ScriptRecovery {
   done(id: string, error: string | null): void
   /** Requests still waiting for the host, and module retries still loading (tests, diagnostics). */
   pending(): number
+  /**
+   * What `runtime.getURL` answers for `url` (a served extension URL) in this world: its
+   * page-origin alias when the world is isolated, the page's policy refused a module of that
+   * extension and the alias was asked for it, and `url` is a script file; null otherwise (the
+   * served URL stands).
+   */
+  aliasFor(url: string): string | null
 }
 
 /** The directives a refused script fetch is reported under (`script-src-elem` falls back to `script-src`). */
 const SCRIPT_DIRECTIVES = new Set(['script-src-elem', 'script-src'])
+
+/** A script file's path (`.js`, `.mjs`, `.cjs`), a query or fragment after it or not. */
+const SCRIPT_FILE = /\.[cm]?js(?:[?#]|$)/i
 
 /** The document's constructed-sheet surface the stylesheet recovery uses. */
 interface AdoptingDocument {
@@ -239,6 +262,9 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
     )
   }
 
+  /** The extensions whose refused graph this isolated world asked for from the alias (`aliasFor`). */
+  const aliased = new Set<string>()
+
   const retryModule = (url: string): void => {
     const doc = host.document
     if (!doc) return
@@ -251,6 +277,9 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
         )
         return
       }
+      // Before the import: the graph's first module asks for its chunks while it evaluates.
+      const extId = extensionFor(url)
+      if (extId !== null) aliased.add(extId)
       importAlias(url, alias, importModule)
       return
     }
@@ -386,7 +415,13 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
       respell(entry.script, 'src', entry.url)
       entry.script.dispatchEvent(new Event('error'))
     },
-    pending: () => waiting.size + styles + modules
+    pending: () => waiting.size + styles + modules,
+    aliasFor(url) {
+      if (host.pageModules || aliased.size === 0 || !SCRIPT_FILE.test(url)) return null
+      const extId = extensionFor(url)
+      if (extId === null || !aliased.has(extId)) return null
+      return aliasOf(url)
+    }
   }
 }
 
