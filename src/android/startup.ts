@@ -1,4 +1,18 @@
+import type { Browser } from '@core/browser'
+import type { ZenWindow } from '@core/window'
 import type { Bridge } from './bridge'
+
+/**
+ * What `bootAndroid` arms READY with once the core has started: whether the boot has a page to
+ * place – the active tab restored as a page view – before the first frame counts. A window with
+ * no tab (the phone's first run, a space emptied of its tabs: `Browser.ensureFirstTab` opens no
+ * tab on a host without the new tab page, the chrome draws its own surfaces there) and a chrome
+ * page (the new tab page) have no view, so there is nothing to wait for.
+ */
+export function bootNeedsPlacement(browser: Browser, win: ZenWindow): boolean {
+  const active = browser.tabs.activeTabFor(win)
+  return active !== undefined && !browser.pages.isChromePage(active)
+}
 
 /** The four sides as the host sends them and the chrome's store keeps them. */
 export interface ReadyInsets {
