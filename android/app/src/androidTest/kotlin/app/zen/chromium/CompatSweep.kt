@@ -66,7 +66,8 @@ import kotlin.math.roundToInt
  * Everything lands in `files/ext-compat-sweep/results.json` (rewritten after every extension, so
  * a run that dies keeps what it had) and `ext-android-compat-*.png`. The instrumentation argument
  * `only` (comma-separated ids) restricts the run to a subset; `skipInstall` keeps what an earlier
- * run left under `files/zen/extensions` instead of installing again.
+ * run left under `files/zen/extensions` instead of installing again; `repeat` (an integer) runs
+ * the selected rows that many times over on one boot, each pass its own row entries.
  */
 @RunWith(AndroidJUnit4::class)
 class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat", "ext-compat-sweep") {
@@ -88,6 +89,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      */
     private val last: Set<String> = arguments.getString("last")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
         ?: setOf(UBO_MV2)
+    /**
+     * How many times over the selected rows run on this boot (`repeat`, 1 by default; a pass is
+     * the table's order with `last` moved to the end, then the next pass): the repeated-row lane
+     * of compat round 17 (SingleFile six times per WebView, round 16 §7.7's reading attributed
+     * against each pass's own console). Every pass grades the row from its install again (the row's
+     * end takes its extension down as any row's does), and each reading is its own entry in
+     * results.json with its `attempt` number.
+     */
+    private val repeat: Int = arguments.getString("repeat")?.trim()?.toIntOrNull()?.coerceIn(1, 20) ?: 1
     private val skipInstall = arguments.getString("skipInstall") == "1"
     /** Prompts no reachable button answered on screen, answered through the chrome's command instead. */
     private var promptsAnsweredByCommand = 0
@@ -222,9 +232,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     override fun demo() {
         snap("browser-idle")
-        // The table's order, the `last` ids moved to the end (a stable sort keeps the rest in place).
-        val list = table.filter { only == null || it.id in only }.sortedBy { if (it.id in last) 1 else 0 }
+        // The table's order, the `last` ids moved to the end (a stable sort keeps the rest in place);
+        // a `repeat` above one runs that order again, pass after pass.
+        val ordered = table.filter { only == null || it.id in only }.sortedBy { if (it.id in last) 1 else 0 }
+        val list = if (repeat > 1) (1..repeat).flatMap { ordered } else ordered
         results.put("order", JSONArray(list.map { it.id }))
+        results.put("repeat", repeat)
         results.put("heapAtStartKb", heapKb())
         for ((index, row) in list.withIndex()) {
             mainThread.row = "${index + 1} ${row.name}"
@@ -243,6 +256,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 break
             }
             val entry = JSONObject().put("id", row.id).put("name", row.name).put("feasible", row.feasible)
+            if (repeat > 1 && ordered.isNotEmpty()) entry.put("attempt", index / ordered.size + 1)
             rows.put(entry)
             rowEntry = entry
             if (row.notOnGoogleImage != null && googleImage) {
@@ -6839,6 +6853,56 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("kjacjjdnoddnpbbcjilcajfhhbdhkpgk", "Forest: stay focused, be present", "forest", core = ::forest),
         Row("ipdjnhgkpapgippgcgkfcbpdpcgifncb", "Emoji Keyboard by JoyPixels", "emoji-keyboard", core = ::emojiKeyboard),
         Row("aomkpefnllinimbhddlfhelelngakbbn", "Ultimate Car Driving Game", "ultimate-car", core = actionPage("Ultimate Car Driving Game", Regex("Game_Source/index\\.html"), CANVAS_SHOWN, listOf("page-a.html?game"), settleMs = 45_000)),
+        // Compat round 17: ranks 391-420 by installs (`.github/scripts/ext-compat/next30-round14.json`,
+        // compiled by round 10's method for a future desktop release round to reuse), graded with
+        // the phone's feasibility classes as rounds 4-16 graded theirs. An account or a vendor's
+        // service is `n/m` with its gate surface rendered (WA Web Plus behind WhatsApp Web's
+        // login, Exporter for Followers behind Instagram's, Reflect in Seesaw behind Seesaw's,
+        // GMass behind a Google account, Snov.io behind its own); a native companion is `n/a` on
+        // the phone (Mirroring360 Sender's receiver over its native host, with `desktopCapture` /
+        // `tabCapture` the WebView has no stream for). The rest read an effect: a page restyled
+        // from the popup (OpenDyslexic's font class, Dark Theme's inverting filter, Helperbird's
+        // body class, Cursor Helper's cursor style), an item in the image long-press menu (Save
+        // Image As PNG, its PNG landing as the phone's `downloads.download` lands it), a popup's
+        // reading of the page (Email Extract's count off `emails.html`, Substital's video list off
+        // `video.html`, RSS Subscription's feed off `feed.html`, CouponBirds' and Alitools' own
+        // surfaces), a YouTube control on the desktop site (Speak Subtitles', Adblocker for
+        // Youtube's, NoteGPT's, Looper's), a new-tab override rendered (Infinity New Tab,
+        // daily.dev), trackers stopped by bundled rulesets (Blockify, Disconnect), a proxy set
+        // (1ClickVPN Proxy), the action's own effect (Page Ruler's ruler, HARPA's frame), and the
+        // vendor pages a popup opens (Google Docs Quick Create, Privacy Test). The five largest
+        // bundles run last (daily.dev, Infinity New Tab, HARPA AI, Helperbird, Disconnect), as
+        // rounds 14-16 ordered theirs.
+        Row("ekcgkejcjdcmonfpmnljobemcbpnkamh", "WA Web Plus by Elbruz Technologies", "wa-web-plus", core = attachedGate("WA Web Plus", "https://web.whatsapp.com/", "a WhatsApp Web login (its QR code scanned by the phone's WhatsApp)")),
+        Row("cdnapgfjopgaggbmfgbiinmmbdcglnam", "OpenDyslexic for Chrome", "opendyslexic", core = popupSwitch("OpenDyslexic", "page-a.html?opendyslexic", "input.toggle, input[type=checkbox]", OPENDYSLEXIC_APPLIED)),
+        Row("ejecpjcajdpbjbmlcojcohgenjngflac", "Email Extract - Email Extractor Tool", "email-extract", core = popupMarker("Email Extract", EMAILS_FOUND, page = "emails.html?extract", settleMs = 25_000)),
+        Row("gjjbmfigjpgnehjioicaalopaikcnheo", "Dark Theme - Dark mode for Chrome", "dark-theme", core = popupSwitch("Dark Theme", "styled-light.html?darktheme", "img[src*=\"power-icon\"]", DARK_FILTER_APPLIED)),
+        Row("fjoiihoancoimepbgfcmopaciegpigpa", "Speak Subtitles for YouTube", "speak-subtitles", core = { row, entry -> youtube(row, entry, injectedAny("yss-"), "Speak Subtitles' player control on a watch page", desktopSite = true) }),
+        Row("nkokmeaibnajheohncaamjggkanfbphi", "Save Image As PNG", "save-image-as-png", core = ::saveImageAsPng),
+        Row("bldgenmjegcnjebiongilahhcjldgmlm", "Google Docs Quick Create", "docs-quick-create", core = popupOpens("Google Docs Quick Create", "/document/i", Regex("docs\\.google\\.com|accounts\\.google\\.com", RegexOption.IGNORE_CASE))),
+        Row("iaigceaehdihlnolehbapjfbbfpnlngg", "Mirroring360 Sender for Chrome", "mirroring360", core = serviceBacked("Mirroring360 Sender", "it streams the screen or a tab to a Mirroring360 receiver found through its native host (`nativeMessaging`), the stream sourced by `desktopCapture` / `tabCapture`, none of which the phone gives", native = true)),
+        Row("nmnhoiehpdfllknopjkhjgoddkpnmfpa", "Exporter for Followers", "exporter-for-followers", core = accountGate("Exporter for Followers", Regex("instagram\\.com", RegexOption.IGNORE_CASE), gate = "an Instagram login (its popup asks to sign in at instagram.com and try again)")),
+        Row("jcbmcnpepaddcedmjdcmhbekjhbfnlff", "Page Ruler", "page-ruler", core = actionMarker("Page Ruler", "page-a.html?ruler", PAGE_RULER_SHOWN)),
+        Row("lhgiigkiddoalobhmmcpdhddlccindjj", "Reflect in Seesaw Extension", "reflect-in-seesaw", core = accountGate("Reflect in Seesaw", Regex("seesaw\\.me", RegexOption.IGNORE_CASE), gate = "a Seesaw account (its capture posts to app.seesaw.me)")),
+        Row("maekfnoeejhpjfkfmdlckioggdcdofpg", "Adblocker for Youtube", "adblocker-for-youtube", core = { row, entry -> youtube(row, entry, injectedAny("yt-ext|yt-extender"), "Adblocker for Youtube's control bar on a watch page", desktopSite = true) }),
+        Row("pdabfienifkbhoihedcgeogidfmibmhp", "Privacy Test", "privacy-test", core = popupOpens("Privacy Test", "/run privacy test/i", Regex("hotcleaner\\.com", RegexOption.IGNORE_CASE))),
+        Row("pnedebpjhiaidlbbhmogocmffpdolnek", "CouponBirds: Coupons & Deals", "couponbirds", core = popupMarker("CouponBirds", COUPONBIRDS_POPUP, page = "page-a.html?couponbirds", settleMs = 30_000)),
+        Row("ehomdgjhgmbidokdgicgmdiedadncbgf", "GMass: Powerful mail merge for Gmail", "gmass", core = attachedGate("GMass", "https://mail.google.com/", "a Google account (Gmail's sign-in)")),
+        Row("baecjmoceaobpnffgnlkloccenkoibbb", "NoteGPT", "notegpt", core = { row, entry -> youtube(row, entry, injectedAny("ng-yt-extension|ystn-|notegpt"), "NoteGPT's panel on a watch page", desktopSite = true) }),
+        Row("einnffiilpmgldkapbikhkeicohlaapj", "Email Finder by Snov.io", "snov-io", core = accountGate("Email Finder by Snov.io", Regex("snov\\.io", RegexOption.IGNORE_CASE), gate = "a Snov.io account (its popup's \"Log in to start\")")),
+        Row("nfmlkliedggdodlbgghmmchhgckjoaml", "Spotify Ad Blocker - Blockify", "blockify", core = ::adBlocker),
+        Row("bogabmgabnjabjbiggmfkdocbjgackfo", "Cursor Helper - Custom Cursors", "cursor-helper", core = cursorPack("Cursor Helper")),
+        Row("iggpfpnahkgpnindfkdncknoldgnccdg", "Looper for YouTube", "looper-for-youtube", core = { row, entry -> youtube(row, entry, injectedAny("action-panel-loop|ytlooper|looper"), "Looper's loop control on a watch page", desktopSite = true) }),
+        Row("eenflijjbchafephdplkdmeenekabdfb", "Alitools Shopping Assistant", "alitools", core = popupMarker("Alitools", POPUP_HAS_TEXT, page = "page-a.html?alitools", settleMs = 30_000)),
+        Row("nlbjncdgjeocebhnmkbbbdekmmmcbfjd", "RSS Subscription Extension (by Google)", "rss-subscription", core = feedDetector("RSS Subscription Extension", "feed.html?rsssub", "Zenium fixture feed")),
+        Row("pphgdbgldlmicfdkhondlafkiomnelnk", "1ClickVPN Proxy for Chrome", "1clickvpn-proxy", core = vpn("1ClickVPN Proxy", connectWords = "/^(connect|start|turn on|enable|quick connect|united states|france|canada|germany|netherlands|united kingdom|singapore)/i")),
+        Row("kkkbiiikppgjdiebcabomlbidfodipjg", "Substital", "substital", core = popupMarker("Substital", SUBSTITAL_VIDEOS, page = "video.html?substital", settleMs = 30_000)),
+        Row("jpcmhcelnjdmblfmjabdeclccemkghjk", "View Image", "view-image", core = liveMarker("View Image", "https://www.google.com/search?q=zenium+browser&tbm=isch&hl=en", VIEW_IMAGE_BUTTON, settleMs = 60_000, desktop = true)),
+        Row("jlmpjdjjbgclbocgajdjefcidcncaied", "daily.dev", "daily-dev", core = newTabOverride("daily.dev")),
+        Row("dbfmnekepjoapopniengjbcpnbljalfg", "Infinity New Tab", "infinity-new-tab", core = newTabOverride("Infinity New Tab")),
+        Row("eanggfilgoajaocelnaflolkadkeghjp", "HARPA AI", "harpa-ai", core = ::harpaAi),
+        Row("ahmapmilbkfamljbpgphfndeemhnajme", "Helperbird: Dyslexia & Accessibility Tools", "helperbird", core = popupSwitch("Helperbird", "page-a.html?helperbird", "[role=switch], input[type=checkbox], .toggle", HELPERBIRD_APPLIED, settleMs = 30_000)),
+        Row("jeoacafpbcihiomhlakheieifhpjdfeo", "Disconnect - Tracker Protection", "disconnect", core = ::adBlocker),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -6846,6 +6910,178 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // row's cleanup disables the blocker as it does any row's extension).
         Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
     )
+
+    // --- the core checks of compat round 17 (ranks 391-420 by installs) --------------------------
+
+    /**
+     * A switch in the row's popup and its effect on the fixture page (OpenDyslexic's toggle and
+     * the font class its content script puts on the body on the worker's `tabs.sendMessage`,
+     * Dark Theme's power control and the inverting `#dark-reader-style` its worker injects into
+     * every tab through `scripting.executeScript` on the storage change, Helperbird's first
+     * feature switch and its body class): the fixture settles, the popup opens, the control
+     * (`switch`, a CSS selector; a popup app mounts it after its script runs, so it is waited
+     * for) is tapped at its centre, and `expr` (a `JSON.stringify` of `{pass, …}`) is polled on
+     * the fixture. A tap the control did not take is followed by a script click on it (recorded
+     * as such) and the effect polled once more; a control never found is `F` with the popup's
+     * text.
+     */
+    private fun popupSwitch(label: String, page: String, switch: String, expr: String, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture(page, factor, 2_500)
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        var control = JSONObject()
+        var how = "none"
+        if (popup != null) {
+            control = poll(scaled(12_000, factor), 500) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", switch))).takeIf { it.has("x") } } ?: JSONObject()
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (control.has("x")) {
+                val point = screenPoint(popup, control)
+                if (point != null && onScreen("$label: the switch")) {
+                    tap(point.first, point.second)
+                    how = "tap"
+                }
+            }
+        }
+        extra.put("control", control).put("selector", switch)
+        var found = if (how == "tap") pollExpr(view, expr, scaled(settleMs, factor)) else json(tabEval(view, expr))
+        if (!found.optBoolean("pass") && control.has("x") && popupView()?.takeIf { it.context == "popup" } != null) {
+            extra.put("scriptClick", tabEval(popup!!, "(function(){var e=document.querySelector(${JSONObject.quote(switch)});if(!e)return 'gone';e.click();return 'clicked'})()"))
+            how = "script"
+            found = pollExpr(view, expr, scaled(12_000, factor))
+        }
+        found.put("how", how)
+        popupView()?.takeIf { it.context == "popup" }?.let { live ->
+            extra.put("popupAfter", json(tabEval(live, DEEP_TEXT)).optString("text").take(200)).put("popupConsole", JSONArray(consoleOf(live).takeLast(8)))
+        }
+        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10))).put("action", extensionAction(row.id) ?: JSONObject.NULL)
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-switch-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val pressed = if (how == "tap") "tapped" else "clicked by script"
+        when {
+            found.optBoolean("pass") -> Grade("P", "$label: the popup's switch ($pressed) restyled the fixture: ${found.toString().take(220)}", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
+            !control.has("x") -> Grade("F", "$label: no `$switch` control in the popup within ${scaled(12_000, factor) / 1000} s (\"${extra.optString("popupText").take(100)}\")", extra)
+            else -> Grade("F", "$label: the switch was $pressed and the fixture shows no effect within ${scaled(settleMs, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Save Image As PNG: a `contextMenus` row (one `image`-context item, `nl.robwu.exporttopng`,
+     * created at install) with no popup and no options page. Its item's place on the phone is
+     * the image long-press menu (the core's `pageContextMenuItems`, after the browser's own
+     * entries): a real long press on the gallery fixture's first picture brings the sheet up,
+     * the item's label is looked for among the sheet's rows and tapped; its `onClicked` fetches
+     * the picture, converts it in its offscreen document and hands the PNG to
+     * `downloads.download`, which the phone's runtime lands as a tab on the address
+     * (`extensionApi.ts`): a new tab on a `data:image/png` or `blob:` address within the wait is
+     * the pass. No sheet after the press is the driver's (`F`, named); the sheet without the item
+     * is `F` (the registration or the menu surface, ours); the item tapped with no tab following
+     * is `F` with the worker's console.
+     */
+    private fun saveImageAsPng(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("gallery.html?png", factor, 2_500)
+        val since = StepEvidence(row)
+        val before = tabUrls().keys
+        val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", ".grid img")))
+        val point = screenPoint(view, centre)
+        extra.put("image", centre)
+        var sheet: List<String> = emptyList()
+        var item: android.graphics.Rect? = null
+        if (point != null && onScreen("Save Image As PNG: the long press")) {
+            Finger().apply {
+                down(point.first, point.second)
+                hold(900)
+                up()
+            }
+            poll(scaled(8_000, factor), 400) {
+                sheet = sheetsPresented()
+                item = findByLabel { it.contains("Save Image As PNG", ignoreCase = true) }
+                if (item != null) true else null
+            }
+        }
+        val menuItem = item
+        extra.put("sheets", JSONArray(sheet)).put("item", menuItem?.toShortString() ?: JSONObject.NULL)
+        SystemClock.sleep(400)
+        snap("${entry.optString("slug")}-image-menu")
+        var opened: Map.Entry<String, String>? = null
+        if (menuItem != null) {
+            tap(menuItem.exactCenterX(), menuItem.exactCenterY())
+            opened = poll(scaled(30_000, factor), 500) {
+                tabUrls().entries.firstOrNull { it.key !in before && (it.value.startsWith("data:image/png") || it.value.startsWith("blob:")) }
+            }
+        } else if (sheet.isNotEmpty() || sheetsPresented().isNotEmpty()) {
+            key(KeyEvent.KEYCODE_BACK)
+            SystemClock.sleep(600)
+        }
+        extra.put("opened", opened?.value?.take(80) ?: JSONObject.NULL).put("tabsAfter", JSONArray(tabUrls().values.map { it.take(80) }))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        return when {
+            opened != null -> Grade("P", "Save Image As PNG: its item in the image long-press menu, tapped, landed the PNG as a tab (${opened.value.take(40)}…)", extra)
+            menuItem != null -> Grade("F", "Save Image As PNG: its item was in the image menu and tapped, no PNG tab followed within ${scaled(30_000, factor) / 1000} s (tabs ${tabUrls().values.joinToString().take(100)})", extra)
+            point == null -> Grade("F", "Save Image As PNG: the gallery's first picture has no on-screen centre (driver): ${centre.toString().take(80)}", extra)
+            sheet.isEmpty() -> Grade("F", "Save Image As PNG: the long press on the picture opened no menu sheet (driver: the press was not read as a long press)", extra)
+            else -> Grade("F", "Save Image As PNG: the image menu is up without its item (sheets ${sheet.joinToString().take(80)})", extra)
+        }
+    }
+
+    /**
+     * A new-tab override rendered (Infinity New Tab's `newtab/index.html`, daily.dev's
+     * `index.html`): Momentum's reading ([momentum]) for any row – the override opted in, the
+     * browser's new tab opened, the pass the extension's page there with text or imagery in it.
+     */
+    private fun newTabOverride(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val inner = momentum(row, entry)
+        Grade(inner.verdict, "$label: ${inner.note}", inner.extra)
+    }
+
+    /**
+     * HARPA AI: an `action.onClicked` row without a popup; its worker (`bg.js`) opens its side
+     * panel when its setting prefers one, otherwise shows its frame in the page
+     * (`controller.showFrame`: `harpa.html`, a web-accessible resource, in an iframe its content
+     * script mounts). The fixture settles, the action is clicked, and the page is polled for the
+     * frame (an iframe on `harpa.html`, or its `HrpQab` quick-action bar); a tab on its own page
+     * or its app opened instead (the side-panel path, which the phone hosts as a tab) is the
+     * pass too.
+     */
+    private fun harpaAi(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?harpa", factor, 2_500)
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        var found = JSONObject()
+        var landed: Map.Entry<String, String>? = null
+        poll(scaled(30_000, factor), 1_000) {
+            found = json(tabEval(view, HARPA_FRAME))
+            landed = tabUrls().entries.firstOrNull { it.key !in before && (extensionPage(it.value, row.id) || it.value.contains("harpa.ai")) }
+            if (found.optBoolean("pass") || landed != null) true else null
+        }
+        val opened = landed
+        extra.put("page", found).put("opened", opened?.value?.take(120) ?: JSONObject.NULL).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-action-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            found.optBoolean("pass") -> Grade("P", "HARPA AI: its frame is in the fixture after the action click: ${found.toString().take(200)}", extra)
+            opened != null -> Grade("P", "HARPA AI: the action click opened ${extensionPath(opened.value).take(80)} (its panel document as a tab)", extra)
+            else -> Grade("F", "HARPA AI: no frame in the fixture and no page opened within ${scaled(30_000, factor) / 1000} s after the action click: ${found.toString().take(200)}", extra)
+        }
+    }
 
     // --- the core checks of compat round 16 (ranks 361-390 by installs) --------------------------
 
@@ -9686,6 +9922,55 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val CANVAS_SHOWN =
             "(function(){var c=document.querySelector('#gameCanvas, canvas');var r=c?c.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!c&&c.width>100&&c.height>100&&r.width>60,w:c?c.width:0,h:c?c.height:0,shown:Math.round(r.width)+'x'+Math.round(r.height),canvases:document.querySelectorAll('canvas').length,text:t.slice(0,80)})})()"
+
+        // --- compat round 17 ---
+
+        /** OpenDyslexic applied to the fixture: its `#opendyslexic-font-styles` sheet, the body's `opendyslexic-font-*` class, or the font in the body's computed family. */
+        private const val OPENDYSLEXIC_APPLIED =
+            "(function(){var s=document.getElementById('opendyslexic-font-styles');var cls=Array.prototype.filter.call(document.body.classList,function(c){return /opendyslexic/i.test(c)});var ff=getComputedStyle(document.body).fontFamily||'';" +
+                "return JSON.stringify({pass:!!s||cls.length>0||/opendyslexic/i.test(ff),style:!!s,classes:cls,fontFamily:ff.slice(0,60)})})()"
+
+        /** Email Extract's popup over `emails.html`: its count line ("Emails found on the page: N") at three or more, or three of the fixture's addresses listed. */
+        private const val EMAILS_FOUND =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var m=/emails? found[^0-9]{0,40}([0-9]+)/i.exec(t);var n=m?parseInt(m[1],10):0;var listed=(t.match(/[a-z0-9._-]+@(example\\.(com|org|net|edu)|zenium\\.example)/gi)||[]).length;" +
+                "return JSON.stringify({pass:n>=3||listed>=3,count:n,listed:listed,text:t.slice(0,200)})})()"
+
+        /** Dark Theme applied to the fixture: its `#dark-reader-style` sheet carrying the inverting filter (`html { -webkit-filter: invert(100%) hue-rotate(180deg) … }`), or that filter computed on the root. */
+        private const val DARK_FILTER_APPLIED =
+            "(function(){var s=document.getElementById('dark-reader-style');var cs=getComputedStyle(document.documentElement);var f=(cs.filter||'')+' '+(cs.webkitFilter||'');var css=s?s.textContent.replace(/\\s+/g,' '):'';" +
+                "return JSON.stringify({pass:(!!s&&/invert/.test(css))||/invert/.test(f),style:!!s,filter:f.trim().slice(0,80),css:css.slice(0,100),shader:!!document.getElementById('screen-shader')})})()"
+
+        /** Helperbird's effect on the fixture: a `helperbird-*` class on the body (a font, spacing or focus feature switched on) or a stylesheet of its own. */
+        private const val HELPERBIRD_APPLIED =
+            "(function(){var cls=Array.prototype.filter.call(document.body.classList,function(c){return /helperbird/i.test(c)});var style=document.querySelector('style[id*=\"helperbird\"], link[id*=\"helperbird\"]');var marks=document.querySelectorAll('[id^=\"helperbird-\"], [class*=\"helperbird-\"]').length;" +
+                "return JSON.stringify({pass:cls.length>0||!!style,classes:cls.slice(0,6),style:!!style,marks:marks})})()"
+
+        /** Page Ruler's ruler on the fixture after the action click: its `.rulermode-container` (the info panel and the rectangle inside it). */
+        private const val PAGE_RULER_SHOWN =
+            "(function(){var c=document.querySelector('.rulermode-container, [class*=\"rulermode\"]');var r=c?c.getBoundingClientRect():null;return JSON.stringify({pass:!!c,shown:r?Math.round(r.width)+'x'+Math.round(r.height):null,n:document.querySelectorAll('[class*=\"rulermode\"]').length})})()"
+
+        /** CouponBirds' popup rendered with its stores or deals (its trending deals, a store search, cash back), not a sign-in alone. */
+        private const val COUPONBIRDS_POPUP =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();return JSON.stringify({pass:t.length>20&&/trending|deal|coupon|store|search|cash ?back/i.test(t),text:t.slice(0,200)})})()"
+
+        /** A popup with text in it (Alitools' own surface over a page that is no shop). */
+        private const val POPUP_HAS_TEXT =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();return JSON.stringify({pass:t.length>20,text:t.slice(0,200)})})()"
+
+        /** Substital's popup over `video.html`: its subtitle search offered for the page's clip, not its "No videos found on this page." */
+        private const val SUBSTITAL_VIDEOS =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var none=/no videos? found/i.test(t);var offer=/search subtitles|subtitle/i.test(t);return JSON.stringify({pass:offer&&!none,none:none,offer:offer,text:t.slice(0,200)})})()"
+
+        /** View Image's button in Google Images' viewer: the first result tapped once (its anchor), then the `.vi_ext_addon` elements the content script adds looked for. */
+        private const val VIEW_IMAGE_BUTTON =
+            "(function(){var added=document.querySelectorAll('.vi_ext_addon');if(added.length>0)return JSON.stringify({pass:true,n:added.length,label:(added[0].textContent||'').trim().slice(0,30)});" +
+                "var thumbs=document.querySelectorAll('img.rg_i, img.YQ4gaf, div[data-id] img, a[jsname] img');if(thumbs.length>0&&!window.__zenViewImageTapped){window.__zenViewImageTapped=true;var t=thumbs[0];var a=t.closest('a')||t;a.click()}" +
+                "return JSON.stringify({pass:false,thumbs:thumbs.length,tapped:!!window.__zenViewImageTapped,title:document.title.slice(0,60),url:location.href.slice(0,100)})})()"
+
+        /** HARPA's frame in the page after the action click: an iframe on its `harpa.html`, or its `HrpQab` quick-action bar. */
+        private const val HARPA_FRAME =
+            "(function(){var frames=Array.prototype.slice.call(document.querySelectorAll('iframe')).filter(function(f){return /harpa/i.test(f.src||'')});var bar=document.querySelectorAll('[class*=\"HrpQab\"], [id*=\"harpa\"], [class*=\"harpa\"]').length;var r=frames[0]?frames[0].getBoundingClientRect():null;" +
+                "return JSON.stringify({pass:frames.length>0||bar>0,frames:frames.length,shown:r?Math.round(r.width)+'x'+Math.round(r.height):null,bar:bar})})()"
 
         /** 7TV mounted on a Twitch page: its `seventv-extension` element or stylesheet, or its site bundle among the page's scripts. */
         private const val SEVENTV_MOUNTED =

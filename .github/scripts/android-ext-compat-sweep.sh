@@ -14,6 +14,8 @@
 #   SWEEP_ONLY    – comma-separated extension ids: run those rows alone (the driver's `only`)
 #   SWEEP_LAST    – comma-separated extension ids to run after every other row (the driver's `last`;
 #                   uBlock Origin MV2 when unset)
+#   SWEEP_REPEAT  – an integer: the selected rows run that many times over on one boot (the driver's
+#                   `repeat`; each pass its own row entries with an `attempt` number)
 #   SWEEP_OUT     – artifact directory (default artifacts/android-ext-compat-sweep)
 #   HANG_SILENCE_S   – seconds the app's process may stand silent in logcat while the guest logs
 #                      before its stacks are taken (dump_hang below; default 300)
@@ -472,6 +474,7 @@ dump_hang() {
 args=()
 if [ -n "${SWEEP_ONLY:-}" ]; then args+=(-e only "$SWEEP_ONLY"); fi
 if [ -n "${SWEEP_LAST:-}" ]; then args+=(-e last "$SWEEP_LAST"); fi
+if [ -n "${SWEEP_REPEAT:-}" ]; then args+=(-e repeat "$SWEEP_REPEAT"); fi
 start_driver() {
   adb shell am instrument -w -e class app.zen.chromium.CompatSweep "${args[@]}" "$runner" > "$out/instrument.txt" 2>&1 &
   driver_pid=$!
