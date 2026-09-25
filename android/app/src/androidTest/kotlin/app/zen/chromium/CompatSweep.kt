@@ -3849,9 +3849,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * A row whose action click opens its own page over the fixture tabs (Session Buddy's
      * `session-buddy.html` listing the open tabs, Instant Data Scraper's `popup.html?tabid=`
      * showing the table fixture's rows): the fixtures open, the action is clicked, the page
-     * matching `page` is waited for and `expr` polled in it.
+     * matching `page` is waited for, its controls labelled `taps` tapped in order when the page
+     * needs a step before the reading (2048's `Classic 2048` in its mode menu, [tapOnPage]), and
+     * `expr` polled in it.
      */
-    private fun actionPage(label: String, page: Regex, expr: String, fixtures: List<String>, settleMs: Long = 30_000): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun actionPage(label: String, page: Regex, expr: String, fixtures: List<String>, settleMs: Long = 30_000, taps: List<String> = emptyList()): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         for (f in fixtures) fixture(f, factor, 1_000)
@@ -3864,6 +3866,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (opened != null) {
             val view = waitForView(opened.key)
             showTab(opened.key)
+            if (taps.isNotEmpty()) extra.put("taps", tapOnPage(view, taps, factor))
             found = pollExpr(view, expr, scaled(settleMs, factor))
             found.put("url", opened.value.take(160)).put("console", JSONArray(consoleOf(view).takeLast(10)))
             if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
@@ -3881,6 +3884,31 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "$label: ${if (opened == null) "the action click opened no ${page.pattern} page within ${scaled(30_000, factor) / 1000} s" else "${extensionPath(opened.value).take(50)} opened: ${found.toString().take(220)}"}",
             extra
         )
+    }
+
+    /**
+     * Controls of an extension's own page tapped in order: each found by its label (a regex over
+     * aria-label, title, value or text, [FIND_LABEL]) once the page draws it (within 10 s), then
+     * tapped through the view as a finger taps ([tapSettled]); the flow stops at the first one
+     * missing. 2048's mode menu (round 18 §7): its `popup.html` opens on `Classic 2048 Multiplayer
+     * Speedrun Private Lobby` with the board's cells laid out at 0x0 behind the menu until a mode
+     * is picked, so `Classic 2048` is tapped ahead of the grid read. The steps' record.
+     */
+    private fun tapOnPage(view: WebView, words: List<String>, factor: Double): JSONArray {
+        val steps = JSONArray()
+        for (re in words) {
+            val hit = poll(scaled(10_000, factor), 500) {
+                json(tabEval(view, FIND_LABEL.replace("__RE__", re))).takeIf { it.optBoolean("clicked") }
+            }
+            if (hit == null) {
+                steps.put("$re: no such control; the page reads ${JSONObject.quote(json(tabEval(view, DEEP_TEXT)).optString("text").take(120))}")
+                break
+            }
+            val note = tapSettled(view, hit, factor)
+            steps.put("$re: tapped ${hit.optString("tag")} ${JSONObject.quote(hit.optString("label"))} at ${hit.optInt("x")},${hit.optInt("y")}${note?.let { " – $it" } ?: ""}")
+            SystemClock.sleep(scaled(1_500, factor))
+        }
+        return steps
     }
 
     /**
@@ -7051,7 +7079,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ochhcgamjcnhpaekcckimgofnedofplf", "Zoom Video - UltraWide Fill", "zoom-video", core = ::zoomVideo),
         Row("lfdconleibeikjpklmlahaihpnkpmlch", "Video Downloader - Download M3U8, MP4, HLS", "video-downloader-m3u8", core = mediaPopup("Video Downloader (M3U8)", "hls.html?vdm3u8", "/m3u8|stream|clip|\\bn\\/a\\b/i", probe = true, listener = "onHeadersReceived with responseHeaders and extraHeaders over <all_urls> (a .m3u8 address or an HLS content type; the playlist then fetched and parsed in the worker)")),
         Row("appcnhiefcidclcdjeahgklghghihfok", "Google Meet Attendance List", "meet-attendance-list", core = accountGate("Google Meet Attendance List", Regex("meet\\.google\\.com|accounts\\.google\\.com|meetlist\\.io", RegexOption.IGNORE_CASE), gate = "a Google account in a Meet call (its list reads the call's participants; its scripts match meet.google.com's meeting pages alone)")),
-        Row("ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg", "2048", "2048", core = actionPage("2048", Regex("/popup\\.html"), GRID_2048, listOf("page-a.html?2048"))),
+        Row("ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg", "2048", "2048", core = actionPage("2048", Regex("/popup\\.html"), GRID_2048, listOf("page-a.html?2048"), taps = listOf("/^classic 2048$/i"))),
         Row("mcebeofpilippmndlpcghpmghcljajna", "Lusha", "lusha", core = accountGate("Lusha", Regex("lusha\\.com|linkedin\\.com", RegexOption.IGNORE_CASE), gate = "a Lusha account (its side panel signs in at lusha.com) and a LinkedIn, Salesforce or HubSpot page for its scripts")),
         Row("jjghhkepijgakdammjldcbnjehfkfmha", "Salesforce", "salesforce", core = accountGate("Salesforce", Regex("salesforce\\.com|force\\.com", RegexOption.IGNORE_CASE), gate = "a Salesforce login (its side panel signs in to an org; its scripts run in Gmail and Google Calendar)")),
         Row("mnopmeepcnldaopgndiielmfoblaennk", "Web Paint", "web-paint", core = actionMarker("Web Paint", "page-a.html?webpaint", WEB_PAINT_PANEL)),
@@ -7611,8 +7639,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Map Coaster Lanterns Hello World Neo Slow Walk EZ Map" – over two canvases, the first
      * unsized; the game canvas draws once a map is picked (round 18's BEFORE read [CANVAS_SHOWN]
      * on the menu: the first canvas, 0x0). The menu is waited for, its first map ("Welcome
-     * Map") tapped, then the largest canvas read ([CANVAS_LARGEST]); a "Play" or "Start" the
-     * pick reveals is tapped too when the canvas stays unsized.
+     * Map") tapped, then the largest canvas read ([CANVAS_LARGEST]). When the menu stays drawn
+     * (round 18's AFTER: the same tap started the game on 113 and not on 156), a popup item over
+     * it is confirmed ("OK", "Play", "Start", …) and then the card itself is clicked from the
+     * page ([ICE_DODO_CLICK_CARD] – the card's own `onClickMap`, the tap's target through its
+     * label); the note says which step started the game.
      */
     private fun iceDodo(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -7622,6 +7653,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val steps = JSONArray()
         var found = JSONObject()
         var picked = false
+        var startedBy = "nothing"
         if (popup != null) {
             val menu = poll(scaled(60_000, factor), 1_000) {
                 val live = popupView()?.takeIf { it.context == "popup" } ?: return@poll null
@@ -7633,20 +7665,31 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (picked) {
                 popupView()?.takeIf { it.context == "popup" }?.let { live ->
                     found = pollExpr(live, CANVAS_LARGEST, scaled(20_000, factor))
-                    if (!found.optBoolean("pass") && tapLabel("/^(play|start|go)$/i", factor, steps, "play")) {
+                    if (found.optBoolean("pass")) startedBy = "the tap on the map"
+                    // The menu still drawn after the tap (round 18's 156: the card's label tapped,
+                    // the game not started, the same tap starting it on 113): a popup item the
+                    // app put over the menu is confirmed, then the card itself is clicked from
+                    // the page (Vue's handler on `main.mapListing`, the same `onClickMap`).
+                    if (!found.optBoolean("pass") && tapLabel("/^(ok|okay|continue|got it|i understand|proceed|yes|play|start|go)$/i", factor, steps, "overlay")) {
+                        found = pollExpr(live, CANVAS_LARGEST, scaled(20_000, factor))
+                        if (found.optBoolean("pass")) startedBy = "the tap on the map and its overlay's confirm"
+                    }
+                    if (!found.optBoolean("pass")) {
+                        steps.put("card: ${tabEval(live, ICE_DODO_CLICK_CARD)}")
                         found = pollExpr(live, CANVAS_LARGEST, scaled(25_000, factor))
+                        if (found.optBoolean("pass")) startedBy = "the card clicked from the page after the tap did not take"
                     }
                     found.put("console", JSONArray(consoleOf(live).takeLast(10)))
                     extra.put("popupAfter", json(tabEval(live, DEEP_TEXT)).optString("text").take(200))
                 }
             }
         }
-        extra.put("steps", steps).put("canvas", found)
+        extra.put("steps", steps).put("canvas", found).put("startedBy", startedBy)
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-play-core")
         runCatching { coreCall("extension.closePopup", "null") }
         return when {
-            found.optBoolean("pass") -> Grade("P", "Ice Dodo: the game canvas draws after the map pick: ${found.toString().take(200)}", extra)
+            found.optBoolean("pass") -> Grade("P", "Ice Dodo: the game canvas draws after the map pick ($startedBy): ${found.toString().take(200)}", extra)
             popup == null -> Grade("F", "Ice Dodo: popup did not render in the core check", extra)
             !picked -> Grade("F", "Ice Dodo: no map entry reached in its menu (${steps.toString().take(200)}); menu \"${extra.optString("menu").take(100)}\"", extra)
             else -> Grade("F", "Ice Dodo: the map picked (${steps.toString().take(160)}) and no sized canvas within the wait: ${found.toString().take(160)}", extra)
@@ -11338,6 +11381,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val CANVAS_LARGEST =
             "(function(){var all=Array.prototype.slice.call(document.querySelectorAll('canvas'));var best=null,br={width:0,height:0};all.forEach(function(x){var r=x.getBoundingClientRect();if(r.width*r.height>br.width*br.height){best=x;br=r}});var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!best&&best.width>100&&best.height>100&&br.width>60,w:best?best.width:0,h:best?best.height:0,shown:Math.round(br.width)+'x'+Math.round(br.height),canvases:all.length,text:t.slice(0,80)})})()"
+        /**
+         * Ice Dodo's Welcome Map card (`main.mapListing`, Vue's `onClickMap` on the card itself)
+         * clicked from the page, for the reading after a finger's tap on its label left the menu
+         * drawn (round 18's 156); what was clicked, or the cards found.
+         */
+        private const val ICE_DODO_CLICK_CARD =
+            "(function(){var cards=document.querySelectorAll('main.mapListing');for(var i=0;i<cards.length;i++){if(/welcome map/i.test(cards[i].textContent||'')){cards[i].click();return 'clicked card '+(i+1)+' of '+cards.length}}return 'no Welcome Map card among '+cards.length+' (page: '+(document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):'')+')'})()"
         /**
          * Boxel 3D's level picker ([boxel3d]): its rows are a Vue carousel – `div.item` under
          * `.carousel`, each with a `div.title` child (the level's name), a `.label` and the
