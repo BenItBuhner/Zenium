@@ -10,16 +10,20 @@ import kotlin.math.roundToInt
 /**
  * Records the phone's link menu on a tab in NO group (PUI-17, Chrome for Android 152's link
  * context menu) on the shared recipe's phone AVD: the rows read by name off the sheet's DOM,
- * against Chrome's list, and "Open Link in New Tab in Group" – Chrome's first row, kept on a
- * loose tab – MAKING the group: the opener and the link's tab a group of two. Every press a real
- * touch on a box read from the chrome's DOM, every outcome read off the core's state.
+ * against Chrome's list, and "Open Link in New Tab in Group" – a row Chrome keeps on a loose tab
+ * – MAKING the group: the opener and the link's tab a group of two. Every press a real touch on
+ * a box read from the chrome's DOM, every outcome read off the core's state.
  *
  *  A. LIGHT, on Home (the active tab, loose): a hold on the page's link raises the sheet with
  *     the link's header (the link's text over its address); the rows are read by name and
- *     written down in Zenium's order, then each of Chrome 152's rows is looked up – Open in new
- *     tab in group, Open in new tab, Open in Incognito tab (Open Link in Private Tab), Copy link
- *     address, Copy link text, Download link (Save Link As…), Share link (Share Link…), Preview
- *     page (Open Link in Glance); Read later has no row, a stated limit (no reading list). The
+ *     written down in Zenium's order, then each of Chrome 152's rows is looked up, in CHROME'S
+ *     order (`ChromeContextMenuPopulator.java` at 152.0.7977.89 – the plain row BEFORE the
+ *     group row since Chrome 140's swap, permanent by 144) – Open in new tab, Open in new tab in
+ *     group, Open in Incognito tab (Open Link in Private Tab), Open in new window (multi-window
+ *     devices; Zenium Android is one window, no row), Preview page (Open Link in Glance), Copy
+ *     link address, Copy link text, Download link (Save Link As…), Add to reading list (no row, a
+ *     stated limit: no reading list), Share link (Share Link…). Zenium's order is its own –
+ *     the group row first, then the plain – and stays as found: the design lead's (b). The
  *     private row is the host's to offer: the core draws it under `capabilities.privateTabs`,
  *     which Android sets only on a WebView with profiles (Chrome 111+); the shared recipe's
  *     Google APIs image ships WebView 113 without them, so there the row is absent, by design –
@@ -114,36 +118,39 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         items.forEachIndexed { i, row -> finding("    ${i + 1}. $row") }
         val privateTabs = privateTabsCapability()
         finding("  the host: capabilities.privateTabs $privateTabs (${webViewPackage()})")
-        finding("  Chrome 152's rows, each looked up (its position in Zenium's list):")
+        finding("  Chrome 152's rows in Chrome's order (the populator at 152.0.7977.89), each looked up (its position in Zenium's list):")
         var missing = 0
-        for ((chrome, ours) in CHROME_152) {
+        for (row in CHROME_152) {
+            val ours = row.ours
             if (ours == null) {
-                finding("    $chrome -> none: a STATED LIMIT (no reading list)")
+                finding("    ${row.chrome} -> none: ${row.whenNone}")
                 continue
             }
             if (ours == PRIVATE_ROW && !privateTabs) {
-                finding("    $chrome -> $ours: no row on THIS host, by design (capabilities.privateTabs off: the WebView keeps no profiles); drawn where it is on")
+                finding("    ${row.chrome} -> $ours: no row on THIS host, by design (capabilities.privateTabs off: the WebView keeps no profiles); drawn where it is on")
                 continue
             }
             val at = items.indexOf(ours)
             if (at < 0) missing++
-            finding("    $chrome -> $ours ${if (at < 0) "MISSING" else "(${at + 1})"}")
+            finding("    ${row.chrome} -> $ours ${if (at < 0) "MISSING" else "(${at + 1})"}")
         }
-        val mapped = CHROME_152.mapNotNull { it.second }
+        val mapped = CHROME_152.mapNotNull { it.ours }
         val own = items.filter { it !in mapped }
         finding("  Zenium's own rows, not in Chrome's list: $own")
-        check("$act: Open Link in New Tab in Group is the first row on a tab in no group (Chrome's first)", items.indexOf(GROUP_ROW) == 0, "rows $items")
-        check("$act: Open Link in New Tab is second (Chrome's second)", items.indexOf(PLAIN_ROW) == 1, "rows $items")
+        // Zenium's order as found – the group row, then the plain; Chrome 152 has the pair the
+        // other way round (plain first since 140's swap). Recorded here as Zenium's; not judged.
+        check("$act: Open Link in New Tab in Group is the first row on a tab in no group (Zenium's order as found; Chrome 152 puts it second)", items.indexOf(GROUP_ROW) == 0, "rows $items")
+        check("$act: Open Link in New Tab is second (Zenium's order as found; Chrome 152's first)", items.indexOf(PLAIN_ROW) == 1, "rows $items")
         check(
-            "$act: Open Link in Private Tab (Chrome's Incognito) is on the sheet exactly where capabilities.privateTabs is on" +
+            "$act: Open Link in Private Tab (Chrome's Incognito, third in both lists) is on the sheet exactly where capabilities.privateTabs is on" +
                 if (privateTabs) ", third" else " – off on this WebView, so no row",
             if (privateTabs) items.indexOf(PRIVATE_ROW) == 2 else PRIVATE_ROW !in items,
             "privateTabs $privateTabs, rows $items"
         )
-        check("$act: every Chrome 152 row the host offers has its Zenium row (Read later the stated limit)", missing == 0, "$missing missing")
-        check("$act: Open Link in Glance (Chrome's Preview page) is on the sheet", "Open Link in Glance" in items)
-        check("$act: no Read later row (the stated limit)", items.none { it.contains("Read later", ignoreCase = true) || it.contains("Reading list", ignoreCase = true) })
-        finding("  the rows' order against Chrome 152's is the design lead's (b): recorded, not judged here")
+        check("$act: every Chrome 152 row the host offers has its Zenium row (Add to reading list the stated limit; Open in new window the multi-window devices')", missing == 0, "$missing missing")
+        check("$act: Open Link in Glance (Chrome's Preview page) is on the sheet, among the open rows before the copies as in Chrome 152", "Open Link in Glance" in items && items.indexOf("Open Link in Glance") < items.indexOf("Copy Link Address"))
+        check("$act: no reading-list row (the stated limit)", items.none { it.contains("Read later", ignoreCase = true) || it.contains("Reading list", ignoreCase = true) })
+        finding("  the rows' order against Chrome 152's is the design lead's (b): recorded, not judged here – Chrome's differs in the plain/group pair, Download after the copies, Share last")
         shot("design-rows-$scheme")
         return items
     }
@@ -235,20 +242,28 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         private const val HEADER_URL = ".zen-sheet .zen-menu-link-url"
         private const val STRIP = ".zen-group-strip:not([aria-hidden])"
 
+        /** One of Chrome's rows against Zenium's ([ours] null: no row of ours, [whenNone] says why). */
+        private data class ChromeRow(val chrome: String, val ours: String?, val whenNone: String = "")
+
         /**
-         * Chrome for Android 152's link context menu, in Chrome's order, each row against
-         * Zenium's (null: no row of ours – Read later, a stated limit: Zenium has no reading list).
+         * Chrome for Android 152's link context menu on a loose tab, in CHROME'S order – read off
+         * `ChromeContextMenuPopulator.java` (`:601-611`, `:678-717`) and `android_chrome_strings.grd`
+         * at tag 152.0.7977.89: the plain row before the group row (Chrome 140's swap, permanent by
+         * 144), Preview page among the open rows, the copies before Download, Share last. (Chrome
+         * up to 136 led with the group row and ended with Preview page; that older list is what run
+         * 36198125137's findings were written against – the mapping is the same, the order not.)
          */
-        private val CHROME_152: List<Pair<String, String?>> = listOf(
-            "Open in new tab in group" to GROUP_ROW,
-            "Open in new tab" to PLAIN_ROW,
-            "Open in Incognito tab" to PRIVATE_ROW,
-            "Copy link address" to "Copy Link Address",
-            "Copy link text" to "Copy Link Text",
-            "Download link" to "Save Link As…",
-            "Share link" to "Share Link…",
-            "Read later" to null,
-            "Preview page" to "Open Link in Glance"
+        private val CHROME_152: List<ChromeRow> = listOf(
+            ChromeRow("Open in new tab", PLAIN_ROW),
+            ChromeRow("Open in new tab in group", GROUP_ROW),
+            ChromeRow("Open in Incognito tab", PRIVATE_ROW),
+            ChromeRow("Open in new window", null, "multi-window devices only; Zenium Android is one window (capabilities.windows off)"),
+            ChromeRow("Preview page", "Open Link in Glance"),
+            ChromeRow("Copy link address", "Copy Link Address"),
+            ChromeRow("Copy link text", "Copy Link Text"),
+            ChromeRow("Download link", "Save Link As…"),
+            ChromeRow("Add to reading list", null, "a STATED LIMIT (no reading list)"),
+            ChromeRow("Share link", "Share Link…")
         )
 
         /** A page with the link the menu is held on, its colours following the device's scheme. */
