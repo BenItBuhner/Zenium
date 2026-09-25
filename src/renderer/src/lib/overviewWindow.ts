@@ -27,6 +27,18 @@ import { createStore } from './store'
  * The model is pure (`windowOf`, `guessWindow`); the store says which cells are cards and each
  * cell reads its own key, so a fill step re-renders the cells it fills and nothing else – not
  * the grid, whose FLIP set and hero measure stay where the commit left them.
+ *
+ * The window is ONE grid's – the store's `owner`, a token the grid mints at its render
+ * (`newOverviewWindowToken`) and claims in its first layout effect (`claimOverviewWindow`), and
+ * releases with the grid (`releaseOverviewWindow`). Two grids stand in one commit when the shell
+ * swaps (a phone window widened into the tablet layout, or a tablet's narrowed, TABLET-08): the
+ * new grid's cells render while the old grid's window is still the store's, and React runs the
+ * new grid's layout effects before the old grid's passive cleanup. A cell reads the store under
+ * its own grid's token, so the new grid's first render builds its guess and nothing the old grid
+ * had built (a fully filled old grid would otherwise mount every card again, the very task the
+ * window splits); the claim starts the store afresh for the new grid; and the old grid's release
+ * finds the token no longer its and does nothing – a plain reset there wiped the rows the new
+ * grid had just built beyond its guess, placeholders in view for a frame.
  */
 
 /**
@@ -169,19 +181,34 @@ export function windowOf(
 }
 
 /**
+ * A cell's box along the grid's scroll axis, in the view's space. The default is where the cell
+ * is DRAWN (`getBoundingClientRect`, a transform in flight included); the grid reads where the
+ * cells will REST from its FLIP tracker when it has this commit's measurement, so a glide in
+ * flight is read at its destination: a fold's or a whole-group close's moves the rows below by
+ * more than the margin, and read where they are drawn the rows the glide brings in would arrive
+ * as placeholders and wait for the idle fill – no scroll event fires for a glide.
+ */
+export type CellRect = (el: HTMLElement, key: string) => { top: number; bottom: number }
+
+const drawnRect: CellRect = (el) => el.getBoundingClientRect()
+
+/**
  * Read the grid's cells for the window: the scroller's box and every `[data-cell]` under it,
  * from one layout (the first rect forces it; the rest read it). Null when the grid has no
  * layout to read – a box without height, as in a DOM that lays nothing out – in which case the
  * grid builds every card, as it always did.
  */
-export function readWindow(grid: HTMLElement): { view: ViewBox; cells: CellBox[] } | null {
+export function readWindow(
+  grid: HTMLElement,
+  rectOf: CellRect = drawnRect
+): { view: ViewBox; cells: CellBox[] } | null {
   const box = grid.getBoundingClientRect()
   if (!(box.height > 0)) return null
   const cells: CellBox[] = []
   for (const el of grid.querySelectorAll<HTMLElement>('[data-cell]')) {
     const key = el.getAttribute('data-cell')
     if (!key) continue
-    const r = el.getBoundingClientRect()
+    const r = rectOf(el, key)
     cells.push({
       key,
       top: r.top,
@@ -194,6 +221,8 @@ export function readWindow(grid: HTMLElement): { view: ViewBox; cells: CellBox[]
 }
 
 interface OverviewWindowState {
+  /** The grid whose window this is, by its token (`claimOverviewWindow`); `NO_GRID` between grids. */
+  owner: number
   /** Every cell is a card: the grid measured nothing to window by. */
   all: boolean
   /** The cells built as cards, by key. Grows; never shrinks while the grid stands. */
@@ -201,25 +230,60 @@ interface OverviewWindowState {
 }
 
 const EMPTY: ReadonlySet<string> = new Set()
+/** The token of no grid: the context's default, and the store's owner between grids. */
+export const NO_GRID = 0
+const FRESH: OverviewWindowState = { owner: NO_GRID, all: false, filled: EMPTY }
 
-export const overviewWindowStore = createStore<OverviewWindowState>(
-  { all: false, filled: EMPTY },
-  'overviewWindow'
-)
+export const overviewWindowStore = createStore<OverviewWindowState>(FRESH, 'overviewWindow')
 
 /**
- * Whether the cards under it are windowed: `TabOverview` provides `true` over its grid, and a
- * card rendered anywhere else – a test's, a preview's – is a card, as it always was.
+ * The token of the grid the cards under it belong to: `TabOverview` provides its own over its
+ * grid (`newOverviewWindowToken`), and a card rendered anywhere else – a test's, a preview's –
+ * finds `NO_GRID` and is a card, as it always was.
  */
-export const OverviewWindowContext = createContext(false)
+export const OverviewWindowContext = createContext(NO_GRID)
 
 /**
  * Whether the cell is built as a card: its own key's word, so a fill re-renders it alone. An
  * `eager` cell (the hero's, the mount's guess) is a card whatever the store says, and a fill –
- * which its key may be part of – re-renders it not at all.
+ * which its key may be part of – re-renders it not at all. The store's word counts only under
+ * the grid that owns the window (`token`): a cell of a grid mounting while another's window is
+ * still the store's reads nothing of it.
  */
-export function useCardFilled(key: string, eager = false): boolean {
-  return overviewWindowStore.use((s) => eager || s.all || s.filled.has(key))
+export function useCardFilled(key: string, eager = false, token = NO_GRID): boolean {
+  return overviewWindowStore.use(
+    (s) => eager || (s.owner === token && (s.all || s.filled.has(key)))
+  )
+}
+
+let tokens = NO_GRID
+
+/**
+ * A token for a grid about to mount, minted at its render so that its cells read the store
+ * under it from their first render – before the grid's first layout effect has claimed the
+ * window (`claimOverviewWindow`), while the store may still be the last grid's.
+ */
+export function newOverviewWindowToken(): number {
+  return ++tokens
+}
+
+/**
+ * The window is now this grid's: nothing built, no fill pending – the grid's first read builds
+ * the cards in view. Taken in the grid's first layout effect, before that read.
+ */
+export function claimOverviewWindow(token: number): void {
+  cancelFill()
+  overviewWindowStore.set({ ...FRESH, owner: token })
+}
+
+/**
+ * The grid is going: back to the start, unless a newer grid has claimed the window meanwhile –
+ * the shell swap mounts the new grid's `TabOverview` in the commit that unmounts the old one's,
+ * and the old grid's release must not wipe what the new grid has built.
+ */
+export function releaseOverviewWindow(token: number): void {
+  if (overviewWindowStore.get().owner !== token) return
+  resetOverviewWindow()
 }
 
 /** Build these cells as cards (no change when they are). */
@@ -241,10 +305,13 @@ export function fillEveryCard(): void {
   overviewWindowStore.set({ all: true })
 }
 
-/** Back to the start: nothing built – the next grid windows afresh. Cancels a pending fill. */
+/**
+ * Back to the start, whoever owns the window: no grid, nothing built, no fill pending. The
+ * grids release theirs by token (`releaseOverviewWindow`); this is the tests' clean slate.
+ */
 export function resetOverviewWindow(): void {
   cancelFill()
-  overviewWindowStore.set({ all: false, filled: EMPTY })
+  overviewWindowStore.set(FRESH)
 }
 
 /**

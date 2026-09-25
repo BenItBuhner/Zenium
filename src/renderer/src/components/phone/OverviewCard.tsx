@@ -4,7 +4,7 @@ import { Moon, Plus, VenetianMask, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
 import { closeTabLabel, tabCardLabel } from '@renderer/lib/overviewLabels'
-import { OverviewWindowContext, useCardFilled } from '@renderer/lib/overviewWindow'
+import { NO_GRID, OverviewWindowContext, useCardFilled } from '@renderer/lib/overviewWindow'
 import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
@@ -82,8 +82,11 @@ interface Props {
  * at the card's elevation, no title row, favicon or picture, nothing for the accessibility tree
  * (`aria-hidden`, no role, no name: TalkBack's "tab 2 of 30" is the cards', whose count is the
  * pane's tabs whatever the window holds). The cell's own element never changes, so the FLIP
- * tracker's set, the hero's measure and the exits' rects hold through the fill. A card rendered
- * outside a windowed grid (a test's, a preview's) is a card, as it always was.
+ * tracker's set, the hero's measure and the exits' rects hold through the fill. The context is
+ * the grid's token: the store's word counts under the grid that owns the window, so a cell of a
+ * grid mounting while the last grid's window is still the store's (the shell swap) reads nothing
+ * of it. A card rendered outside a windowed grid (a test's, a preview's) is a card, as it always
+ * was.
  *
  * In the select-tabs mode the card is the checkbox for assistive technology (`role="checkbox"`,
  * `aria-checked`), the box a presentational span inside it drawn by the shared
@@ -93,8 +96,8 @@ interface Props {
 export function OverviewCard(props: Props): JSX.Element {
   const { tab, eager = false } = props
   const cellRef = useRef<HTMLDivElement>(null)
-  const windowed = useContext(OverviewWindowContext)
-  const filled = useCardFilled(tab.id, eager || !windowed)
+  const grid = useContext(OverviewWindowContext)
+  const filled = useCardFilled(tab.id, eager || grid === NO_GRID, grid)
   return (
     <div
       ref={cellRef}

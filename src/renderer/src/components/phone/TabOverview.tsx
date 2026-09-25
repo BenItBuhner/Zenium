@@ -92,15 +92,18 @@ import {
 import {
   OverviewWindowContext,
   cancelFill,
+  claimOverviewWindow,
   fillCards,
   fillEveryCard,
   guessWindow,
+  newOverviewWindowToken,
   overviewRowPitch,
   overviewWindowStore,
   readWindow,
-  resetOverviewWindow,
+  releaseOverviewWindow,
   scheduleFill,
   windowOf,
+  type CellRect,
   type GridItem
 } from '@renderer/lib/overviewWindow'
 import { coveredNow, pageCovered, pageViewStore } from '@renderer/lib/pageView'
@@ -663,8 +666,8 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // The grid's items in its order – the pinned cards, the groups (a folded one or one of a
   // single card is a cell of the flow; one spanning the grid lays its cards in rows of its own),
   // the loose cards – laid into rows by the columns and the cards' aspect; the hero's row at the
-  // view's foot when it must scroll into view. A guessed card stays a card: the layout effect
-  // below records the guess in the store with what it read.
+  // view's foot when it must scroll into view. A guessed card stays a card: the guess is recorded
+  // in the store on the commit it is rendered in (below).
   const gridItems: GridItem[] = [
     ...pinned.map((t): GridItem => ({ kind: 'cell', key: t.id, card: true })),
     ...groups.flatMap((folder): GridItem[] => {
@@ -685,9 +688,42 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       overviewRowPitch(viewportWidth - sideInsets, columns, cardAspect)
     )
   )
+  // The window is THIS grid's (`lib/overviewWindow.ts`): a token minted at the render, so the
+  // cells read the store under it from their first render, claimed in the grid's first layout
+  // effect – the store starts afresh – and released with the grid. Two grids stand in one commit
+  // when the shell swaps with the overview open (a phone window widened into the tablet layout,
+  // or a tablet's narrowed, TABLET-08: `App.tsx` mounts the other shell's `TabOverview` in the
+  // commit that unmounts this one's), and React runs the new grid's layout effects – its claim,
+  // its first read – before the old grid's cleanup: the old grid's release finds the token no
+  // longer its and leaves the new grid's window alone (a plain reset there wiped the rows the new
+  // grid had built beyond its guess – placeholders in view for a frame). The close keeps the
+  // overview mounted while the landing is held (`PhoneStage`, `landOverview`), its hero at the
+  // page's frame: the window stands until the grid goes, and not before.
+  const [windowToken] = useState(newOverviewWindowToken)
+  useLayoutEffect(() => {
+    claimOverviewWindow(windowToken)
+    return () => releaseOverviewWindow(windowToken)
+  }, [windowToken])
+  // The guess is the store's from the commit it is rendered in: `eager` builds a guessed card
+  // whatever the store says, and a render that guesses differently with no read between – a
+  // drag's stand-in moving through the grid re-orders the cards under the finger (`shown`,
+  // above) while the cards' key, the state's order, stands – must not take a card back to a
+  // placeholder when the order reverts (the drag cancelled). Recorded, the card stays a card.
+  const guessKey = [...guessed].join('|')
+  useLayoutEffect(() => {
+    fillCards(guessed)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the guess's keys
+  }, [guessKey])
   // The last read's cards outside the window, nearest first: the idle fill's order when the
   // overview settles after the read.
   const restRef = useRef<readonly string[]>([])
+  // Where a cell will REST, once the tracker has this commit's measurement (it commits before
+  // this effect on every settled commit): a glide in flight is drawn by a transform, which the
+  // cell's own box includes, and a fold's or a whole-group close's moves the rows below by more
+  // than the margin – read where they are drawn, the rows the glide brings into view would
+  // arrive as placeholders and wait for the idle fill, no scroll event firing for a glide. Short
+  // of the settle the tracker only observes, and the drawn box is the one there is.
+  const restRect: CellRect = (el, key) => flip.layoutRect(key) ?? el.getBoundingClientRect()
   const rewindow = (scrolled = false): void => {
     const grid = scrollRef.current
     if (scrolled) {
@@ -696,7 +732,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       if (all || (pinned.every((t) => filled.has(t.id)) && regular.every((t) => filled.has(t.id))))
         return
     }
-    const read = grid ? readWindow(grid) : null
+    const read = grid ? readWindow(grid, settled ? restRect : undefined) : null
     if (!read) {
       restRef.current = []
       fillEveryCard()
@@ -704,7 +740,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     }
     const { shown, rest } = windowOf(read.view, read.cells)
     restRef.current = rest
-    fillCards(scrolled ? shown : [...guessed, ...shown])
+    fillCards(shown)
     if (settled) scheduleFill(rest)
     else cancelFill()
   }
@@ -716,10 +752,16 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     if (settled) scheduleFill(restRef.current)
     else cancelFill()
   }, [settled])
-  // The window is this grid's: it starts afresh when the grid goes, and not before. The close
-  // keeps the overview mounted while the landing is held (`PhoneStage`, `landOverview`), its
-  // hero at the page's frame; a reset there would turn every card into a placeholder and back.
-  useEffect(() => () => resetOverviewWindow(), [])
+  // The rows a fold or a whole-group close brings in set off when the tracker releases its hold
+  // – the group's height has settled and the cells below glide to their slots (v2 §11.4). The
+  // tracker measures afresh at the release, and the window is re-read from where the cells will
+  // rest: what the commit's read built stands, and a destination that moved meanwhile (a second
+  // fold, a retarget) is caught. Subscribed once; the read is the latest render's.
+  const rewindowLatest = useRef(rewindow)
+  useLayoutEffect(() => {
+    rewindowLatest.current = rewindow
+  })
+  useEffect(() => flip.onRelease(() => rewindowLatest.current(true)), [flip])
 
   // Escape closes the overview – unless a sheet or the Spaces drawer is up over it; the top
   // surface takes the key, and the next Escape reaches the overview. The search field takes it
@@ -1999,10 +2041,11 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                 >
                   {/*
                     The cards under here are WINDOWED (`lib/overviewWindow.ts`, W6-0): a cell
-                    is a card when the window holds it, a sized placeholder until then. The
-                    group cards' members are the same cells, through `card`.
+                    is a card when this grid's window – the token's – holds it, a sized
+                    placeholder until then. The group cards' members are the same cells, through
+                    `card`.
                   */}
-                  <OverviewWindowContext.Provider value={true}>
+                  <OverviewWindowContext.Provider value={windowToken}>
                     {pinned.map(card)}
                     {groupCards.map(({ folder, tabs, gone }) => (
                       <GroupCard

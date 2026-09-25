@@ -16,7 +16,10 @@ import type { OverviewState } from '@renderer/lib/gestures/stage'
  * settled, the idle fill builds them nearest first under its budget. The hero's card is built
  * from the first frame wherever it stands; a folded group's members are not built at the
  * commit; a query re-windows the cards it leaves; a cell never goes back to a placeholder; and
- * a card built in the window is, byte for byte, the card main's grid built for every tab.
+ * a card built in the window is, byte for byte, the card main's grid built for every tab. The
+ * window is one grid's, by token: a grid mounted in the commit that unmounts another (the shell
+ * swap) keeps what it builds; the guess is the store's from the render it is made in; a fold is
+ * read where the cells will rest, and re-read when the tracker releases.
  */
 
 const SPACE = 'space'
@@ -46,8 +49,11 @@ const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { resetOverviewUi, setOverviewSearch } = await import('@renderer/lib/overviewUi')
+const { liftStore } = await import('../useCardLift')
 const {
+  NO_GRID,
   OverviewWindowContext,
+  claimOverviewWindow,
   fillCards,
   overviewWindowStore,
   pendingFill,
@@ -156,7 +162,7 @@ function installLayout(): void {
     const grid = this.closest<HTMLElement>('.zen-overview-grid')
     if (!grid || !this.hasAttribute('data-cell')) return measured.call(this)
     if (!this.hasAttribute('data-tab-id') && this.classList.contains('zen-group'))
-      return new DOMRect(0, layoutOffset - PITCH, AREA.width, 40)
+      return new DOMRect(0, layoutOffset - PITCH - grid.scrollTop, AREA.width, 40)
     const cells = [...grid.querySelectorAll<HTMLElement>('[data-cell][data-tab-id]')]
     // The New Tab card (the one cell without a tab id) is the grid's last.
     const i = this.hasAttribute('data-tab-id') ? cells.indexOf(this) : cells.length
@@ -192,7 +198,7 @@ let root: Root | null = null
 let host: HTMLElement | null = null
 let sizes: Array<[string, PropertyDescriptor | undefined]> = []
 
-function render(state: UIState, overview: OverviewState): HTMLElement {
+function render(state: UIState, overview: OverviewState, key?: string): HTMLElement {
   if (!root) {
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -203,7 +209,15 @@ function render(state: UIState, overview: OverviewState): HTMLElement {
       createElement(
         FrameDialogHost,
         null,
-        createElement(TabOverview, { state, overview, area: AREA, edge: 'bottom' })
+        // Keyed, a wrapper makes one grid mount while the other unmounts in the same commit –
+        // the shell swap's shape (`App.tsx`, TABLET-08).
+        key === undefined
+          ? createElement(TabOverview, { state, overview, area: AREA, edge: 'bottom' })
+          : createElement(
+              'div',
+              { key },
+              createElement(TabOverview, { state, overview, area: AREA, edge: 'bottom' })
+            )
       )
     )
   )
@@ -509,6 +523,141 @@ describe('the grid windowed at the mount', () => {
   })
 })
 
+describe("the window through the grid's life", () => {
+  it('a grid unmounted and another mounted in one commit: the new grid keeps what it built (the shell swap)', () => {
+    // The first-line review's probe (TABLET-08): the new grid's layout effects – its claim,
+    // its read – run before the old grid's cleanup; a plain reset from that cleanup wiped the
+    // rows the new grid had built beyond its guess for a frame.
+    const state = stateOf(thirty())
+    act(() => browserStore.set({ state }))
+    render(state, OPEN, 'A')
+    expect(cardIds()).toEqual(ids(0, 7))
+    const first = overviewWindowStore.get().owner
+    expect(first).not.toBe(NO_GRID)
+    act(() => {
+      grid().scrollTop = 4 * PITCH
+      grid().dispatchEvent(new Event('scroll'))
+    })
+    expect(cardIds()).toEqual(ids(0, 15))
+    // The swap. The new grid restores the scroll (`noteOverviewScroll` took it) and reads its
+    // window there: rows 3–7 in view and margin, t6–t15, built with the commit and standing
+    // after the old grid's cleanup has run; the store is the new grid's.
+    render(state, OPEN, 'B')
+    expect(grid().scrollTop).toBe(4 * PITCH)
+    expect(cardIds()).toEqual(expect.arrayContaining(ids(6, 15)))
+    expect(overviewWindowStore.get().owner).not.toBe(first)
+    expect(overviewWindowStore.get().owner).not.toBe(NO_GRID)
+    expect([...overviewWindowStore.get().filled].sort()).toEqual(ids(0, 15).sort())
+    // The idle fill is the new grid's: it goes on from its read.
+    expect(idle.size).toBe(1)
+    runIdleAll()
+    expect(cardIds()).toEqual(ids(0, 29))
+  })
+
+  it("the new grid's first render builds its guess, not the old grid's cards: a filled old grid does not mount every card again", () => {
+    const state = stateOf(thirty())
+    act(() => browserStore.set({ state }))
+    render(state, OPEN, 'A')
+    runIdleAll()
+    expect(cardIds()).toEqual(ids(0, 29))
+    // The swap at the top: the new grid's window is the guess and the read, eight cards; the
+    // twenty-two the old grid had built in idle time are placeholders again, to be built in
+    // the new grid's idle time – not in its mount.
+    render(state, OPEN, 'B')
+    expect(cardIds()).toEqual(ids(0, 7))
+    expect(placeholderIds()).toEqual(ids(8, 29))
+    expect(pendingFill()).toBe(22)
+  })
+
+  it('the last grid to go releases the window: nothing built, no owner, no fill pending', () => {
+    show(stateOf(thirty()), OPEN)
+    expect(overviewWindowStore.get().owner).not.toBe(NO_GRID)
+    expect(pendingFill()).toBe(22)
+    act(() => root?.unmount())
+    expect(overviewWindowStore.get()).toEqual({ owner: NO_GRID, all: false, filled: new Set() })
+    expect(pendingFill()).toBe(0)
+    expect(idle.size).toBe(0)
+  })
+
+  it('a card the guess builds mid-drag stays a card when the drag is cancelled: the store owns the guess', () => {
+    show(stateOf(thirty()), OPEN)
+    expect(cardIds()).toEqual(ids(0, 7))
+    expect(gridReads).toBe(1)
+    // t0's stand-in to the grid's end: t1–t8 move up a slot under the finger and t8 – row 3
+    // now, the margin – is guessed in and built. The cards' key is the state's order, so no
+    // window is read for the drag's render.
+    act(() =>
+      liftStore.set({ tabId: 't0', phase: 'dragging', slot: { folderId: null, index: 29 } })
+    )
+    expect(cardIds()).toContain('t8')
+    expect(gridReads).toBe(1)
+    // The drag cancelled: the order reverts, t8 is out of the guess – and stays a card.
+    act(() => liftStore.set({ tabId: null, phase: 'idle', slot: null }))
+    expect(cardIds()).toEqual(ids(0, 8))
+    expect(placeholderIds()).toEqual(ids(9, 29))
+    expect(overviewWindowStore.get().filled.has('t8')).toBe(true)
+  })
+
+  it("a fold is read where the cells will rest, and the window is re-read at the tracker's release", () => {
+    const folder: Folder = {
+      id: 'g',
+      spaceId: SPACE,
+      name: 'Research',
+      icon: '📚',
+      collapsed: false,
+      color: 'blue'
+    }
+    const members = Array.from({ length: 8 }, (_, i) => tab(`g${i}`, { folderId: 'g' }))
+    const gs = members.map((t) => t.id)
+    const open = stateOf([...members, ...thirty()], 'g0', [folder])
+    show(open, OPEN)
+    // The group's eight cards take rows 0–3 (the view and the margin); the loose cards from
+    // row 4 down are placeholders. Four rows down, rows 4–6 are the view and 3 and 7 the
+    // margin: t0–t7 build (the group's last row, g6 and g7, stood built already).
+    expect(cardIds()).toEqual(gs)
+    act(() => {
+      grid().scrollTop = 4 * PITCH
+      grid().dispatchEvent(new Event('scroll'))
+    })
+    expect(cardIds()).toEqual([...gs, ...ids(0, 7)])
+    const reads = gridReads
+    // The fold. The group's card runs its height from the header plus its body (300, this
+    // DOM's `offsetHeight`) to the header; the tracker holds the rows below where they are
+    // drawn and knows where they will rest, 300 px up (`layoutRect`): row 8 – t8, t9 – is
+    // drawn at 1088, past the margin's 1060, and rests at 788, in view. Read where it is
+    // drawn the row would set off as placeholders and wait for the idle fill; read at rest it
+    // is built with the fold's commit. (The fold's guess lays the rows from the grid's top –
+    // the group's one cell and t0–t6 – and reaches none of this; the read does.)
+    const folded = stateOf([...members, ...thirty()], 'g0', [{ ...folder, collapsed: true }])
+    show(folded, OPEN)
+    expect(gridReads).toBe(reads + 1)
+    expect(layoutAnimations.any()).toBe(true)
+    expect(cardIds()).toEqual([...gs, ...ids(0, 9)])
+    expect(placeholderIds()).toEqual(ids(10, 29))
+    // The height settles: the tracker releases its hold, measures afresh and the window is
+    // re-read from the rest positions (this DOM's rows do not move; nothing shrinks).
+    act(() => layoutAnimations.end('group:g'))
+    expect(layoutAnimations.any()).toBe(false)
+    expect(gridReads).toBe(reads + 2)
+    expect(cardIds()).toEqual([...gs, ...ids(0, 9)])
+  })
+
+  it('a change of columns re-guesses the rows the view holds, and shrinks nothing', () => {
+    show(stateOf(thirty()), OPEN)
+    expect(cardIds()).toEqual(ids(0, 7))
+    // Rotated to a width of four columns (`overviewColumns`): the guess lays the cards four
+    // to a row at the wider pitch – three rows in view and one more, sixteen cards – and the
+    // read on the new columns follows. This DOM's rows stay two wide, so what the read finds
+    // in view is what it found before: the sixteen come from the guess, and the eight stand.
+    act(() => viewportStore.set({ ...viewportStore.get(), width: 900 }))
+    expect(cardIds()).toEqual(ids(0, 15))
+    expect(placeholderIds()).toEqual(ids(16, 29))
+    // Back to two columns: the eight-card guess is inside what is built; nothing shrinks.
+    act(() => viewportStore.set({ ...viewportStore.get(), width: AREA.width }))
+    expect(cardIds()).toEqual(ids(0, 15))
+  })
+})
+
 // --- the card ----------------------------------------------------------------------------------
 
 /**
@@ -553,6 +702,8 @@ describe('a windowed cell, once built, is the card main built', () => {
       onDrop: () => undefined
     }
   })
+  /** A grid's token, as `TabOverview` provides over its cards. */
+  const GRID = 7
   const mount = (windowed: boolean): string => {
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -562,7 +713,7 @@ describe('a windowed cell, once built, is the card main built', () => {
         windowed
           ? createElement(
               OverviewWindowContext.Provider,
-              { value: true },
+              { value: GRID },
               createElement(OverviewCard, props())
             )
           : createElement(OverviewCard, props())
@@ -576,6 +727,7 @@ describe('a windowed cell, once built, is the card main built', () => {
   })
 
   it("under the window the cell is a placeholder until filled, then main's card, byte for byte", () => {
+    act(() => claimOverviewWindow(GRID))
     const before = mount(true)
     expect(before).toBe(
       '<div class="relative" style="aspect-ratio: var(--zen-overview-card-aspect, 3 / 4);" data-tab-id="t1" data-cell="t1">' +
@@ -586,5 +738,15 @@ describe('a windowed cell, once built, is the card main built', () => {
     expect(host!.innerHTML).toBe(MAIN_CARD)
     // The same cell element through the fill: the FLIP set and the hero's measure hold it.
     expect(host!.firstElementChild).toBe(cell)
+  })
+
+  it("a fill under another grid's window is not this cell's: it reads the store under its own grid", () => {
+    act(() => claimOverviewWindow(GRID + 1))
+    mount(true)
+    act(() => fillCards(['t1']))
+    expect(placeholderIds()).toEqual(['t1'])
+    act(() => claimOverviewWindow(GRID))
+    act(() => fillCards(['t1']))
+    expect(cardIds()).toEqual(['t1'])
   })
 })

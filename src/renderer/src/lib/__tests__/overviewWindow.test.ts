@@ -1,12 +1,18 @@
+// @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   FILL_BUDGET_MS,
+  NO_GRID,
   cancelFill,
+  claimOverviewWindow,
   fillCards,
   guessWindow,
+  newOverviewWindowToken,
   overviewRowPitch,
   overviewWindowStore,
   pendingFill,
+  readWindow,
+  releaseOverviewWindow,
   resetOverviewWindow,
   scheduleFill,
   windowOf,
@@ -281,7 +287,97 @@ describe('the idle fill', () => {
     runIdle(deadline(50))
     expect(filled()).toEqual(['x', 'y'])
     resetOverviewWindow()
-    expect(overviewWindowStore.get()).toEqual({ all: false, filled: new Set() })
+    expect(overviewWindowStore.get()).toEqual({ owner: NO_GRID, all: false, filled: new Set() })
     expect(pendingFill()).toBe(0)
+  })
+})
+
+describe("the window's owner: one grid at a time, by token", () => {
+  afterEach(() => {
+    cancelFill()
+    resetOverviewWindow()
+    vi.unstubAllGlobals()
+  })
+
+  it('a claim starts the store afresh under the token and drops a pending fill; a release by the owner resets it', () => {
+    vi.stubGlobal('requestIdleCallback', () => 1)
+    vi.stubGlobal('cancelIdleCallback', () => undefined)
+    const a = newOverviewWindowToken()
+    expect(a).not.toBe(NO_GRID)
+    fillCards(['stale'])
+    scheduleFill(['x', 'y'])
+    claimOverviewWindow(a)
+    expect(overviewWindowStore.get()).toEqual({ owner: a, all: false, filled: new Set() })
+    expect(pendingFill()).toBe(0)
+    fillCards(['t0'])
+    releaseOverviewWindow(a)
+    expect(overviewWindowStore.get()).toEqual({ owner: NO_GRID, all: false, filled: new Set() })
+  })
+
+  it("a release by a grid that no longer owns the window does nothing: the shell swap's old grid", () => {
+    // The new grid claims in its layout effect; the old grid's cleanup releases after it.
+    const old = newOverviewWindowToken()
+    claimOverviewWindow(old)
+    fillCards(['t0', 't1'])
+    const fresh = newOverviewWindowToken()
+    expect(fresh).toBeGreaterThan(old)
+    claimOverviewWindow(fresh)
+    fillCards(['t6', 't7'])
+    releaseOverviewWindow(old)
+    expect(overviewWindowStore.get().owner).toBe(fresh)
+    expect([...overviewWindowStore.get().filled].sort()).toEqual(['t6', 't7'])
+    // The owner's own release is the one that counts.
+    releaseOverviewWindow(fresh)
+    expect(overviewWindowStore.get().owner).toBe(NO_GRID)
+  })
+})
+
+describe('readWindow: the cells from the layout, drawn or at rest', () => {
+  const rect = (top: number, height = 260): DOMRect => new DOMRect(0, top, 200, height)
+  function grid(): HTMLElement {
+    const el = document.createElement('div')
+    el.getBoundingClientRect = () => rect(0, 800)
+    for (const key of ['t0', 't1', 'new-tab']) {
+      const cell = document.createElement('div')
+      cell.setAttribute('data-cell', key)
+      if (key !== 'new-tab') cell.setAttribute('data-tab-id', key)
+      // Drawn 500 px lower than it will rest: a glide in flight. Out of the window as drawn
+      // (no card in view, the margin is 35% of the view: 1080).
+      cell.getBoundingClientRect = () => rect(key === 't0' ? 1100 : key === 't1' ? 1372 : 1644)
+      el.appendChild(cell)
+    }
+    return el
+  }
+
+  it('reads where the cells are drawn by default', () => {
+    const read = readWindow(grid())!
+    expect(read.view).toEqual({ top: 0, bottom: 800 })
+    expect(read.cells.map((c) => [c.key, c.top, c.card])).toEqual([
+      ['t0', 1100, true],
+      ['t1', 1372, true],
+      ['new-tab', 1644, false]
+    ])
+  })
+
+  it("reads through the rect given – the FLIP tracker's rest positions – where it has one, the drawn box where it has none", () => {
+    const rest = new Map([
+      ['t0', rect(600)],
+      ['t1', rect(872)]
+    ])
+    const read = readWindow(grid(), (el, key) => rest.get(key) ?? el.getBoundingClientRect())!
+    expect(read.cells.map((c) => [c.key, c.top])).toEqual([
+      ['t0', 600],
+      ['t1', 872],
+      ['new-tab', 1644]
+    ])
+    // Read at rest, t0 is in view and t1 the margin; drawn, both were out of the window.
+    expect(windowOf(read.view, read.cells).shown).toEqual(['t0', 't1'])
+    expect(windowOf(read.view, readWindow(grid())!.cells).shown).toEqual([])
+  })
+
+  it('answers null for a grid with no height to read', () => {
+    const el = document.createElement('div')
+    el.getBoundingClientRect = () => rect(0, 0)
+    expect(readWindow(el)).toBeNull()
   })
 })
