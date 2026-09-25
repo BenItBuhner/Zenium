@@ -425,13 +425,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Whether the core booted in the current chrome (`chrome.ready`); false again across a rebuild. */
     private var coreUp = false
     /**
-     * A rebuilt chrome's load held for the window (OS-37): the renderer went while the app was
-     * away – the system's cheapest kill under the waiving policy ([RendererPriorities]) – and a
-     * load then would only start a renderer again in the background, to be taken again. Run at
-     * [onStart].
-     */
-    private var pendingChromeLoad: Runnable? = null
-    /**
      * Each tab's last pushed list and the `hostState` behind it, for the synchronous
      * `view.navigationEntries` and `view.navigationHostState` the core makes from the bridge
      * thread, where the WebView cannot be asked (see [NavigationMirror]).
@@ -561,20 +554,29 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * The lifecycle gate on a renderer exit: the activity's window is on screen (at least
      * STARTED). Stopped, the app is away and the exit is nobody's crash – the system reclaiming
-     * a background renderer, the commonest exit – so the pages come back quietly; the tabs'
-     * `View.VISIBLE` (which does not know the activity stopped) cannot tell that, and the
-     * renderer's priority at exit only agrees (WAIVED with the window off the screen under the
-     * pages' waiving policy, [RendererPriorities]; IMPORTANT whatever shows while media plays).
+     * a background renderer, the commonest exit – so the pages come back quietly; neither the
+     * tabs' `View.VISIBLE` (which does not know the activity stopped) nor the renderer's priority
+     * at exit (IMPORTANT under the default policy, WebView showing or not) can tell that.
      */
     private fun windowUp(): Boolean = activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 
-    // --- memory pressure and the shared renderer's priority (OS-37) --------------------------------
+    // --- memory pressure (OS-37) ------------------------------------------------------------------
+    //
+    // The one renderer every WebView shares – the chrome's (the UI and the core) and the pages' –
+    // keeps the platform's default priority policy, IMPORTANT and not waived when no view shows:
+    // at the app's own priority behind other apps, it dies only as the app would. Waiving it would
+    // make the whole renderer the system's cheapest kill and every return after one a chrome
+    // booting blank; Chrome's UI is native and outlives its renderers, ours is one. So the memory
+    // this row gives back is the discards' (`WebView.destroy` of the sleeping pages), and OS-37's
+    // "hidden renderers waived" is not applicable under WebView's one-renderer model (the
+    // coordinator's ruling, round 2).
 
     /**
      * `ComponentCallbacks2.onTrimMemory` (MainActivity, the one hunk there): the trim graded with
      * the `MemoryInfo` reading beside it ([MemoryPressure.ofTrimWith]) and the core told
-     * ([onMemoryPressure]); UI_HIDDEN and the levels the table does not know are not pressure.
-     * The back previews are the activity's own to drop, as before.
+     * ([onMemoryPressure]); BACKGROUND, UI_HIDDEN and the levels the table does not know are not
+     * pressure on their own – their arrival reads the device once, and the reading grades. The
+     * back previews are the activity's own to drop, as before.
      */
     fun onTrimMemory(level: Int) {
         memoryPressure.onTrim(level)
@@ -594,25 +596,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         chrome.hostEvent("memoryPressure", json("level" to level.wire, "background" to background))
         restoredPictures.releaseAll("memory pressure")
     }
-
-    override val waivesHiddenRenderers: Boolean get() = true
-
-    /**
-     * The chrome WebView's renderer priority policy ([RendererPriorities.forChrome]): IMPORTANT
-     * while the window shows and waived with it, so that behind other apps the one renderer
-     * every page shares is the system's cheapest kill ahead of this process, which holds the
-     * session and rebuilds the chrome once the window is back ([rebuildChrome], [onStart]) –
-     * unless the renderer is held: media playing or a capture running, which the screen's
-     * leaving must not end. Applied at the chrome's READY and as the media session or the
-     * capture ledger changes ([MediaSessions], [CaptureNotifications]).
-     */
-    fun applyRendererPriority() {
-        val policy = RendererPriorities.forChrome(rendererHeld())
-        chrome.setRendererPriorityPolicy(policy.priority, policy.waivedWhenNotVisible)
-    }
-
-    /** Whether the renderer carries something that must outlive the screen (the harness reads it). */
-    fun rendererHeld(): Boolean = RendererPriorities.held(media.current?.playing == true, capture.cards().isNotEmpty())
 
     override fun rendererGone(tab: TabWebView, didCrash: Boolean, priorityAtExit: Int): JSONObject? {
         val exit = rendererExits.gone(didCrash, priorityAtExit, windowUp(), visibleTabIds())
@@ -1106,12 +1089,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "chrome.ready" -> {
                 activity.onChromeReady()
                 reply(null)
-                // The core is up: the memory poll starts and the chrome's renderer policy goes
-                // on (OS-37) – after the READY mark, a service lookup, a post and one priority
-                // update; nothing the frame mark waits for (the P0 pair in the PR body).
+                // The core is up: the memory poll starts (OS-37) – after the READY mark, a
+                // service lookup and a post; nothing the frame mark waits for (the P0 pair in
+                // the PR body).
                 coreUp = true
                 if (windowUp()) memoryPressure.start()
-                applyRendererPriority()
             }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
             // The chrome asks for the bridge's asynchronous channel once its boot is answered
@@ -2162,11 +2144,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * no-op unless something paused them; it costs nothing to be certain.
      */
     fun onStart() {
-        // A chrome rebuilt while the app was away loads now that the window is back (OS-37).
-        pendingChromeLoad?.let {
-            pendingChromeLoad = null
-            it.run()
-        }
         chrome.resumeTimers()
         // The window is up again: the memory poll runs while it is, once the core is there to hear it.
         if (coreUp) memoryPressure.start()
@@ -2504,7 +2481,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (dead !== chrome || activity.isFinishing || activity.isDestroyed) return
         cancelProbe()
         endUnresponsivePrompt()
-        pendingChromeLoad = null
         // The core that boots in the fresh chrome says READY again; until then no poll (OS-37).
         coreUp = false
         if (memoryPressureMonitor.isInitialized()) memoryPressure.stop()
@@ -2532,25 +2508,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             fresh.load()
             if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) fresh.requestFocus()
         }
-        when {
-            // Away, the renderer was the system's cheapest kill under the pages' waiving policy
-            // (RendererPriorities, OS-37); a load now would start one again behind other apps, to
-            // be taken again. The fresh view stands empty – no document, no renderer – and loads
-            // as the window comes back (onStart). The escalation above is for a chrome that dies
-            // in front of the user, not for this.
-            !windowUp() -> {
-                Log.i(TAG, "the chrome went while the app was away; it loads when the window is back")
-                pendingChromeLoad = load
-            }
-            delay > 0 -> main.postDelayed(load, delay)
-            else -> load.run()
-        }
+        if (delay > 0) main.postDelayed(load, delay) else load.run()
     }
 
     fun destroy() {
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
         restoredPictures.releaseAll("host destroyed")
-        pendingChromeLoad = null
         if (memoryPressureMonitor.isInitialized()) memoryPressure.stop()
         connectivity.stop()
         extensions.destroy()

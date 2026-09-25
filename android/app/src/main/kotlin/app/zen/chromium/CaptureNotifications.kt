@@ -108,8 +108,6 @@ class CaptureNotifications(private val host: Host) {
     /** Draw the ledger: the first card as the service's, the rest beside it, nothing when nothing captures. */
     private fun render() {
         schedule()
-        // A capture running holds the shared renderer behind other apps (RendererPriorities, OS-37).
-        host.applyRendererPriority()
         val cards = ledger.cards()
         val first = cards.firstOrNull()
         val rest = cards.drop(1)

@@ -154,8 +154,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         updatePictureInPictureParams()
         // A chrome player's session playing holds audio focus for its speech stream (ReadAloud.kt, the source note's 2.4).
         host.readAloud.onSession(info)
-        // A session playing holds the shared renderer behind other apps (RendererPriorities, OS-37).
-        host.applyRendererPriority()
     }
 
     /** The controls go: the session ended (its tab closed, its media gone). */
@@ -170,7 +168,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         session.setPlaybackState(PlaybackStateCompat.Builder().setState(PlaybackStateCompat.STATE_NONE, 0L, 0f).build())
         if (had) updatePictureInPictureParams()
         if (had) host.readAloud.onSession(null)
-        if (had) host.applyRendererPriority()
     }
 
     /**

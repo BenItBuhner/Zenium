@@ -104,14 +104,6 @@ interface PageHost {
     val formsEnabled: Boolean get() = true
     /** The autofill provider of the pages: `zenium` takes the WebViews out of the system framework. */
     val autofillProvider: String get() = SystemAutofill.PROVIDER_SYSTEM
-    /**
-     * Whether the pages' views ask a waiving renderer priority ([RendererPriorities], OS-37): the
-     * browser window does – behind other apps its renderer is the system's cheapest kill, and
-     * the host rebuilds the chrome when the window is back. A custom tab reloads its page at the
-     * callback, which behind other apps would only start the renderer again to be taken again,
-     * so it keeps the platform's default.
-     */
-    val waivesHiddenRenderers: Boolean get() = false
 
     /** Something happened to one page: `navigated`, `title`, `startLoading`, … (see [TabWebView]). */
     fun viewEvent(tabId: String, name: String, payload: Any?)
