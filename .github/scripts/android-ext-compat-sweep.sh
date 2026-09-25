@@ -22,8 +22,9 @@
 #                      qemu process's threads and their stacks) and, on a second sample, the driver
 #                      ended so the rows before keep their reading; unset: never (the sweeps). The
 #                      same host capture then joins dump_hang, and once the process is gone its
-#                      core (apport's report or a core file) is read by gdb into
-#                      host-emulator-core-bt.txt. A single-row lane sets it.
+#                      core (systemd-coredump's journal entry and dump, apport's report, or a core
+#                      file) is read: `coredumpctl info` into host-emulator-core-info.txt, gdb
+#                      over the dump into host-emulator-core-bt.txt. A single-row lane sets it.
 #   GUEST_PROBE_S    – seconds the `adb shell echo alive` probe of that check may take before the
 #                      guest counts as not answering (default 20; a frozen guest answers nothing,
 #                      so a lane racing a short-lived qemu sets it low)
@@ -249,22 +250,59 @@ note_emulator_death() {
       # attempt caught qemu with every thread in do_exit and one in vfs_coredump – the "frozen
       # guest" death is a fatal signal in qemu, the forty seconds of silence the kernel writing a
       # 5 GB dump, and the crashing thread's stack is in that dump, not in the live process. Where
-      # the kernel put it is core_pattern's: a file (in the process's cwd), or apport's pipe
-      # (/var/crash/*.crash, the dump inside as CoreDump). The backtrace is read only under
-      # GUEST_SILENCE_S (a single-row lane): gdb over such a dump takes minutes.
+      # the kernel put it is core_pattern's: systemd-coredump's pipe on the Ubuntu runners (the
+      # eighth attempt read the pattern; the journal then carries the signal and the crashing
+      # thread's stack as systemd wrote them at dump time, the dump itself sits compressed under
+      # /var/lib/systemd/coredump and `coredumpctl dump` unpacks it), apport's pipe on a desktop
+      # (/var/crash/*.crash, the dump inside as CoreDump), or a plain file in the process's cwd.
+      # The backtrace is read only under GUEST_SILENCE_S (a single-row lane): gdb over such a dump
+      # takes minutes. Every command here tolerates failure – under pipefail an unguarded one would
+      # end the driver before `collect` (the eighth attempt's `find` did).
       echo "== host core dump"
-      echo "core_pattern: $(cat /proc/sys/kernel/core_pattern 2> /dev/null)"
+      core_pattern=$(cat /proc/sys/kernel/core_pattern 2> /dev/null || true)
+      echo "core_pattern: $core_pattern"
       echo "core limit (this shell): $(ulimit -c)"
-      # apport, or the kernel itself, may still be writing: wait up to a minute for a report.
-      for _ in 1 2 3 4 5 6; do
-        ls /var/crash/*.crash > /dev/null 2>&1 && break
-        sleep 10
-      done
-      ls -la /var/crash/ 2> /dev/null || echo "no /var/crash"
-      core_file=$(find "$PWD" /tmp/android-runner "$HOME" /tmp -maxdepth 2 -type f \( -name 'core' -o -name 'core.*' -o -name '*.core' \) -mmin -90 -size +10M 2> /dev/null | head -n 1)
-      [ -n "$core_file" ] && echo "core file: $core_file ($(stat -c %s "$core_file") bytes)"
+      core_file=""
+      if printf '%s' "$core_pattern" | grep -q systemd-coredump && command -v coredumpctl > /dev/null 2>&1; then
+        # systemd is still compressing and storing the dump for a while after the process is gone.
+        for _ in $(seq 1 18); do
+          sudo -n coredumpctl list --no-pager --no-legend 2> /dev/null | grep -q qemu && break
+          sleep 10
+        done
+        echo "-- coredumpctl list ($(date +%T))"
+        sudo -n coredumpctl list --no-pager 2>&1 | tail -n 5 | cut -c1-240 || true
+        echo "-- journal, systemd-coredump"
+        sudo -n journalctl -t systemd-coredump --no-pager -o short-iso 2>&1 | tail -n 60 | cut -c1-300 || true
+        if [ "${GUEST_SILENCE_S:-0}" -gt 0 ] && sudo -n coredumpctl list --no-pager --no-legend 2> /dev/null | grep -q qemu; then
+          # The dump's own account first (fast, no gdb): the signal, the storage, systemd's stack of
+          # the crashing thread. The match is the pid the freeze capture recorded, else the comm.
+          core_match=$(sed -n 's/^== \([0-9][0-9]*\): .*/\1/p' "$out"/host-emulator-frozen-1.txt 2> /dev/null | head -n 1 || true)
+          [ -n "$core_match" ] || core_match=qemu-system-x86
+          echo "-- coredumpctl info $core_match into host-emulator-core-info.txt"
+          sudo -n coredumpctl -1 info "$core_match" --no-pager > "$out/host-emulator-core-info.txt" 2>&1 || true
+          sed -n '/Message:/,$p' "$out/host-emulator-core-info.txt" 2> /dev/null | head -n 50 | cut -c1-300 || true
+          grep -E '^ *(PID|Signal|Timestamp|Executable|Storage|Size on Disk):' "$out/host-emulator-core-info.txt" 2> /dev/null | cut -c1-300 || true
+          df -h /tmp 2> /dev/null | tail -n 1 || true
+          rm -f /tmp/qemu.core
+          if timeout 600 sudo -n coredumpctl -1 dump "$core_match" -o /tmp/qemu.core > /dev/null 2>&1 && [ -s /tmp/qemu.core ]; then
+            sudo -n chown "$(id -u)" /tmp/qemu.core 2> /dev/null || true
+            core_file=/tmp/qemu.core
+          else
+            echo "-- coredumpctl dump gave no core (not stored, truncated, or the disk short)"
+          fi
+        fi
+      else
+        # apport, or the kernel itself, may still be writing: wait up to a minute for a report.
+        for _ in 1 2 3 4 5 6; do
+          ls /var/crash/*.crash > /dev/null 2>&1 && break
+          sleep 10
+        done
+        ls -la /var/crash/ 2> /dev/null || echo "no /var/crash"
+        core_file=$( { find "$PWD" /tmp/android-runner "$HOME" /tmp -maxdepth 2 -type f \( -name 'core' -o -name 'core.*' -o -name '*.core' \) -mmin -90 -size +10M 2> /dev/null || true; } | head -n 1)
+        [ -n "$core_file" ] && echo "core file: $core_file ($(stat -c %s "$core_file") bytes)"
+      fi
       if [ "${GUEST_SILENCE_S:-0}" -gt 0 ]; then
-        crash=$(ls -t /var/crash/*qemu*.crash 2> /dev/null | head -n 1)
+        crash=$( { ls -t /var/crash/*qemu*.crash 2> /dev/null || true; } | head -n 1)
         if [ -n "$crash" ]; then
           echo "-- apport report: $crash ($(stat -c %s "$crash") bytes)"
           grep -E '^(ProblemType|Signal|ExecutablePath|ProcCmdline|Date|Title|SegvAnalysis|SegvReason|StacktraceTop):' "$crash" 2> /dev/null | cut -c1-300 || true
