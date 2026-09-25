@@ -1656,8 +1656,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         else Grade("F", "popup did not render: ${entry.optJSONObject("popup")?.optString("note")?.take(160)}")
     }
 
-    /** Momentum: with the override opted in, the browser's new tab is the extension's page. */
+    /**
+     * Momentum: with the override opted in, the browser's new tab is the extension's page. The
+     * page is read for its app's mounted root (round 17's D16: Infinity New Tab has no text at
+     * all and its wallpaper's arrival flips with the boot – its app removes the body's
+     * `hide-opacity` once loaded and fills `.site-items` with its icon grid, `.search-box` with
+     * its search; a filled root or the body shown with children counts), or for text or imagery
+     * (Momentum's greeting and photograph, daily.dev's feed), within the row's budget.
+     */
     private fun momentum(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
         coreCall("extension.setNewTabOverride", JSONObject().put("id", row.id).put("enabled", true).toString())
         SystemClock.sleep(1_000)
         val before = tabUrls().keys
@@ -1675,9 +1683,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return Grade("F", "new tab override: tab.new opened ${if (newTabs.isEmpty()) "no tab" else newTabs.joinToString().take(120)}, not the extension's page (record newTabOverride=${record?.opt("newTabOverride")}, newTabPage=${record?.opt("newTabPage")})", extra)
         }
         val view = waitForView(opened.key)
-        val found = pollExpr(view, "JSON.stringify({pass: (document.body ? document.body.innerText.trim().length > 20 : false) || document.querySelectorAll('img, canvas, .background, [class*=\"background\"]').length > 0, text: document.body ? document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120) : '', url: location.href})", 25_000)
+        val started = SystemClock.uptimeMillis()
+        val found = pollExpr(view, NEW_TAB_RENDERED, scaled(25_000, factor))
+        found.put("ms", SystemClock.uptimeMillis() - started).put("budgetMs", scaled(25_000, factor))
         extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
-        return Grade(if (found.optBoolean("pass")) "P" else "F", "new tab override: ${found.toString().take(260)}", extra)
+        val by = when {
+            found.optInt("textLength") > 20 -> "text"
+            found.optInt("imagery") > 0 -> "imagery"
+            found.optInt("mounted") > 0 -> "its app's mounted root (${found.optInt("mounted")} elements)"
+            else -> "nothing"
+        }
+        return Grade(if (found.optBoolean("pass")) "P" else "F", "new tab override: the page read by $by after ${found.optLong("ms")} ms: ${found.toString().take(240)}", extra)
     }
 
     /** Stylus: a `.user.css` opens its install page, the style installs, the page it targets turns red. */
@@ -2955,7 +2971,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             }
             val found = pollExpr(view, expr, scaled(settleMs, factor))
             page = json(tabEval(view, DOM_REPORT))
-            attempt.put("page", found).put("document", page).put("complete", complete).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            // The runtime's own lines kept whatever the page logs after them (round 17's Buyhatke
+            // attempts lost the `[Zenium]` chunk-refusal and alias-retry lines under Flipkart's noise).
+            attempt.put("page", found).put("document", page).put("complete", complete).put("console", JSONArray(consoleKeepingRuntime(view, 10)))
             if (desktop) attempt.put("userAgent", tabEval(view, "navigator.userAgent").trim('"').take(160))
             if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { attempt.put("world", json(it)) }
             SystemClock.sleep(600)
@@ -7343,9 +7361,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * canvas has no box until a level plays, so round 16's read of [CANVAS_SHOWN] on the menu was
      * the menu, not the game (§7.4). Here the home's Play (`setPage('level-picker')`) is pressed,
      * then the level picker's first entry (round 17's BEFORE pressed the home Play and waited on a
-     * picker "Play" that is the page's heading, not a control: the picker lists its levels in
-     * `.list` as elements with a `title` attribute – "Slip & Slide 1-1" first – whose click is
-     * `app.playLevel`), and the canvas read after it; the menu's fixed width against the sheet is
+     * picker "Play" that is the page's heading, not a control; its AFTER looked for `[title]`
+     * entries the picker does not have: the picker is a Vue carousel of `.item` rows – "Slip &
+     * Slide 1-1" first – whose first click selects and second click plays, [BOXEL_LEVEL_ENTRY]),
+     * and the canvas read after it; the menu's fixed width against the sheet is
      * recorded, not failed on (the popup sheet's width is the program's phone shape, a settled
      * line).
      */
@@ -7594,26 +7613,38 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * feed – the badge is the unread count of an account's feeds, off by default – so the rows of
      * rounds 15 and 16 waited on an observable the bundle does not produce; and the Android
      * runtime's `setIcon` keeps the manifest's icon (per-tab variants are not drawn yet,
-     * `extensionApi.ts`), so the icon cannot be read either. What can: the content script's own
-     * log when the page's URL carries `feeder_rss_logging=1` (a `textarea` it appends to the body
-     * with "findFeedLinks: eval found: <href> <title>"), the `contentScript:feedsFound` message on
-     * the bridge, and the popup's "Add feed" control, which takes the class `feeds-available` (and
-     * a solid plus) once the worker's `/-extension-api/feeds-in-tab` has answered the active
-     * tab's feeds; tapped, it lists them under "Available feeds" with the fixture's title. Round
-     * 15's account prompt, when it shows, is taken past on its no-account control and the popup
-     * opened again (the choice closes it and opens the web app as a tab).
+     * `extensionApi.ts`), so the icon cannot be read either. What can: the `contentScript:feedsFound`
+     * message on the bridge (its trace line names the page it reports on, `url=`), and the popup's
+     * "Add feed" control, which takes the class `feeds-available` (and a solid plus) once the
+     * worker's `/-extension-api/feeds-in-tab` has answered the active tab's feeds; tapped, it lists
+     * them under "Available feeds" with the fixture's title. Round 17 read the content script's own
+     * log under its `feeder_rss_logging=1` flag and the flag broke the discovery it was to show:
+     * the logger writes each line into a `textarea` on the body, the document mutates between the
+     * XPath iterator's steps and Blink invalidates it (`InvalidStateError` in `useFeedChecker`,
+     * before `feedsFound` is sent – Chrome does the same under the flag). So the fixture loads
+     * without the flag and the discovery is the bridge's `feedsFound` line about the fixture's
+     * page (D6, round 18). Round 15's account prompt, when it shows, is taken past on its
+     * no-account control and the popup opened again (the choice closes it and opens the web app
+     * as a tab).
      */
     private fun rssFeedReader(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val title = "Zenium fixture feed"
-        val page = "feed.html?rss&feeder_rss_logging=1"
+        val page = "feed.html?rss"
         val since = StepEvidence(row)
         val (_, view) = fixture(page, factor, 2_000)
-        val log = pollExpr(view, FEEDER_LOG, scaled(15_000, factor))
-        extra.put("contentLog", log)
+        // The content script's report of the fixture's feed on the bridge: the `feedsFound` line
+        // naming the fixture's page (feeder.co's own pages, opened after the account choice, send
+        // the same message about themselves and are told apart by the address).
+        val discoveryLine = poll(scaled(15_000, factor), 500) {
+            since.trace().firstOrNull { it.contains("type=contentScript:feedsFound") && (it.contains("url=") && it.contains("feed.html") || !it.contains("url=")) }
+        }
+        val log = JSONObject().put("pass", discoveryLine != null).put("present", discoveryLine != null).put("found", discoveryLine?.substringAfter("url=", "")?.take(120) ?: "").put("line", discoveryLine?.take(200) ?: JSONObject.NULL)
+        extra.put("discovery", log).put("pageConsole", JSONArray(consoleOf(view).takeLast(8)))
         fun bridgeCounts(trace: List<String>) = JSONObject()
             .put("feedsFound", trace.count { it.contains("type=contentScript:feedsFound") })
+            .put("feedsFoundAboutFixture", trace.count { it.contains("type=contentScript:feedsFound") && it.contains("feed.html") })
             .put("setIcon", trace.count { it.contains("action.setIcon") })
             .put("lines", trace.size)
         extra.put("bridgeAfterLoad", bridgeCounts(since.trace()))
@@ -7653,8 +7684,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runCatching { coreCall("extension.closePopup", "null") }
         val discovered = log.optBoolean("pass")
         val offered = addFeed.optBoolean("pass")
-        val logLine = if (log.optBoolean("present")) "the content script's log \"${log.optString("found").take(100)}\"" else "no content-script log in the page (its logging flag unread, or its check never ran)"
-        val bridgeLine = "${bridge.optInt("feedsFound")} feedsFound message(s) and ${bridge.optInt("setIcon")} setIcon call(s) on the bridge"
+        val logLine = if (discovered) "the content script's feedsFound message about ${log.optString("found").ifEmpty { "the page" }.take(100)} on the bridge" else "no feedsFound message about the fixture's page on the bridge within ${scaled(15_000, factor) / 1000} s of its load (the content script's discovery never reached the worker)"
+        val bridgeLine = "${bridge.optInt("feedsFound")} feedsFound message(s) in all (${bridge.optInt("feedsFoundAboutFixture")} about the fixture) and ${bridge.optInt("setIcon")} setIcon call(s) on the bridge"
         return when {
             listed.optBoolean("pass") -> Grade("P", "RSS Feed Reader: the page's one feed discovered ($logLine; $bridgeLine) and offered in the popup – \"Add feed\" marked feeds-available=$offered, its list names the feed: \"${listed.optString("text").take(120)}\"", extra)
             offered -> Grade("PARTIAL", "RSS Feed Reader: the page's one feed discovered ($logLine; $bridgeLine) and the popup's \"Add feed\" marked feeds-available; its list did not name the feed within the wait: \"${listed.optString("text").take(120)}\" (${steps.toString().take(140)})", extra)
@@ -8209,26 +8240,47 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * RSS Feed Reader: its content script reads the page's `<link rel="alternate">` feeds and
-     * the worker counts them on the action's badge; the popup over the page offers the feed by
-     * its title. Over `feed.html` (one RSS link to `feed.xml`, "Zenium fixture feed"): a badge
-     * count of one or more, or the popup naming the feed, is the pass. A popup that opens on
-     * its account prompt first (RSS Feed Reader's "Create an account / Log in / Continue without
-     * account", round 15) is taken past it on its own no-account control, and read again. The
-     * choice closes the popup with it (RSS Feed Reader 8.1.0 sets its sync type in the worker a
-     * second after the tap and opens its web app as a tab; the badge was read before the choice,
-     * while the worker's state was `undecided`), so the read-again is over a fresh feed page and
-     * a fresh popup once the worker settled: the badge polled again, the popup opened again.
+     * A feed detector (RSS Subscription Extension, Google's): its content script reads the
+     * page's `<link rel="alternate">` feeds and reports them to the worker, which keeps them in
+     * `storage.local` under the reporting tab's id and sets the action's title and its per-tab
+     * icon for that tab – never a badge (round 17 §7: the wait on one was the driver's). Over
+     * `feed.html` (one RSS link to `feed.xml`, "Zenium fixture feed") the popup's `main()` finds
+     * the one feed and takes its single-feed path: `preview(feeds[0].href)` opens
+     * `subscribe.html?<feed url>` as a tab and closes the popup (`popup.js`, the bundle's own
+     * code; Chrome's popup does the same). So the pass is either that tab following the popup's
+     * opening, or the popup naming the feed (the several-feeds path, where it lists them). A
+     * badge count, when a detector sets one, still passes. A popup that opens on an account
+     * prompt first (RSS Feed Reader's "Create an account / Log in / Continue without account",
+     * round 15) is taken past it on its own no-account control, and read again over a fresh
+     * feed page and a fresh popup once the worker settled.
      */
     private fun feedDetector(label: String, page: String, feedTitle: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, 3_000)
-        var badge = poll(scaled(15_000, factor), 500) { extensionAction(row.id)?.optString("badgeText")?.takeIf { Regex("[1-9]").containsMatchIn(it) } }
-        extra.put("action", extensionAction(row.id)).put("badge", badge ?: JSONObject.NULL)
+        // The action as the worker left it once the content script reported (a title naming the
+        // feed, a badge where a detector sets one); read within a short wait, not waited out.
+        val action = poll(scaled(8_000, factor), 500) {
+            extensionAction(row.id)?.takeIf { a -> Regex("[1-9]").containsMatchIn(a.optString("badgeText")) || Regex("feed|subscribe|rss", RegexOption.IGNORE_CASE).containsMatchIn(a.optString("title")) }
+        } ?: extensionAction(row.id)
+        var badge = action?.optString("badgeText")?.takeIf { Regex("[1-9]").containsMatchIn(it) }
+        extra.put("action", action ?: JSONObject.NULL).put("badge", badge ?: JSONObject.NULL)
+        val before = tabUrls().keys
         val popup = openPopup(row, factor)
+        // The single-feed path: the popup gone to its `subscribe.html?<feed>` tab.
+        val subscribe = poll(scaled(15_000, factor), 500) {
+            tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) && it.value.contains("subscribe.html") }
+        }
         var found = JSONObject()
-        if (popup != null) {
+        if (subscribe != null) {
+            extra.put("subscribeTab", subscribe.value.take(200))
+            runCatching {
+                val view = waitForView(subscribe.key)
+                val preview = pollExpr(view, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:${JSONObject.quote(feedTitle)}.split(' ').every(function(w){return text.toLowerCase().indexOf(w.toLowerCase())>=0})||/feed\\.xml/.test(text),frames:document.querySelectorAll('iframe').length,text:"), scaled(15_000, factor))
+                preview.put("console", JSONArray(consoleOf(view).takeLast(10)))
+                extra.put("subscribePage", preview)
+            }.onFailure { extra.put("subscribePage", JSONObject().put("error", it.toString().take(160))) }
+        } else if (popup != null) {
             val names = DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:${JSONObject.quote(feedTitle)}.split(' ').every(function(w){return text.toLowerCase().indexOf(w.toLowerCase())>=0})||/feed\\.xml|1 feed|feeds? (found|detected|on this page)/i.test(text),text:")
             found = pollExpr(popup, names, scaled(20_000, factor))
             if (!found.optBoolean("pass") && Regex("without (an )?account|skip|continue", RegexOption.IGNORE_CASE).containsMatchIn(found.optString("text"))) {
@@ -8260,15 +8312,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
             }
         }
-        extra.put("popup", found)
+        extra.put("popup", found).put("tabsAfter", JSONArray(tabUrls().values.map { it.take(120) }))
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-feed")
         runCatching { coreCall("extension.closePopup", "null") }
+        val titleLine = action?.optString("title")?.takeIf { it.isNotEmpty() }?.let { "action title \"${it.take(60)}\"" } ?: "no action title"
         when {
-            badge != null || found.optBoolean("pass") -> Grade("P", "$label: over a page announcing one feed, badge \"${badge ?: ""}\"; popup ${found.toString().take(200)}", extra)
-            popup == null -> Grade("F", "$label: no badge count on the feed page and the popup did not render", extra)
-            else -> Grade("F", "$label: no badge count on the feed page and the popup does not name the feed: ${found.toString().take(200)}", extra)
+            subscribe != null -> Grade("P", "$label: over a page announcing one feed, the popup took its single-feed path to ${extensionPath(subscribe.value).take(90)} as a tab ($titleLine; the subscribe page ${extra.optJSONObject("subscribePage")?.toString()?.take(140)})", extra)
+            badge != null || found.optBoolean("pass") -> Grade("P", "$label: over a page announcing one feed, badge \"${badge ?: ""}\", $titleLine; popup ${found.toString().take(200)}", extra)
+            popup == null -> Grade("F", "$label: over the feed page no subscribe tab followed the popup's opening within ${scaled(15_000, factor) / 1000} s ($titleLine) and the popup did not render", extra)
+            else -> Grade("F", "$label: over the feed page no subscribe tab followed the popup's opening ($titleLine) and the popup does not name the feed: ${found.toString().take(200)}", extra)
         }
     }
 
@@ -8669,6 +8723,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             }
         }
         return list
+    }
+
+    /**
+     * The view's last `tail` console lines, with every line of the runtime's own (`[Zenium]`,
+     * the chunk refusals, alias retries and policy notes of `extensionRuntime.ts`) kept ahead of
+     * them in order, however much the page logged after – so a live page's noise does not push
+     * the runtime's account of the row out of the record (round 17 §7, Buyhatke's attempts).
+     */
+    private fun consoleKeepingRuntime(view: WebView, tail: Int): List<String> {
+        val all = consoleOf(view)
+        val last = all.takeLast(tail)
+        val runtime = all.dropLast(last.size).filter { it.contains("[Zenium]") }.takeLast(20)
+        return runtime + last
     }
 
     /** `evaluateJavascript` on the main thread; JSON strings are decoded to their text. */
@@ -10593,14 +10660,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var c=document.querySelector('#gameCanvas, canvas');var r=c?c.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!c&&c.width>100&&c.height>100&&r.width>60,w:c?c.width:0,h:c?c.height:0,shown:Math.round(r.width)+'x'+Math.round(r.height),canvases:document.querySelectorAll('canvas').length,text:t.slice(0,80)})})()"
         /**
-         * Boxel 3D's level picker ([boxel3d]): the first level entry in its `.list` (an element with
-         * a `title` attribute – the level's name – whose click is `app.playLevel`), clicked; nothing
-         * clicked while the list is not drawn.
+         * Boxel 3D's level picker ([boxel3d]): its rows are a Vue carousel – `div.item` under
+         * `.carousel`, each with a `div.title` child (the level's name), a `.label` and the
+         * `more_horiz` tag, no `title` attribute (round 17's hook looked for one and matched
+         * nothing, §7 there). Its click handler selects the row first and a second click on the
+         * selected row plays (`app.playLevel`), so the first sized row is clicked twice, the second
+         * click half a second after the first; nothing clicked while the carousel is not drawn.
          */
         private const val BOXEL_LEVEL_ENTRY =
-            "(function(){var list=document.querySelector('.level-picker .list, .levels .list, .list');var entries=list?Array.prototype.slice.call(list.querySelectorAll('[title]')).filter(function(n){var r=n.getBoundingClientRect();return r.width>20&&r.height>20&&!/exit|home|search|setting/i.test(n.getAttribute('title')||'')}):[];" +
-                "var hit=entries[0];if(!hit)return JSON.stringify({clicked:false,list:!!list,entries:entries.length,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)});var r=hit.getBoundingClientRect();hit.click();" +
-                "return JSON.stringify({clicked:true,title:String(hit.getAttribute('title')).slice(0,60),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2,entries:entries.length})})()"
+            "(function(){var list=document.querySelector('.carousel');var entries=list?Array.prototype.slice.call(list.querySelectorAll('.item')).filter(function(n){var r=n.getBoundingClientRect();return r.width>20&&r.height>20}):[];" +
+                "var hit=entries[0];if(!hit)return JSON.stringify({clicked:false,list:!!list,entries:entries.length,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)});var r=hit.getBoundingClientRect();var t=hit.querySelector('.title');hit.click();setTimeout(function(){hit.click()},500);" +
+                "return JSON.stringify({clicked:true,title:String(t?t.textContent:hit.textContent).replace(/\\s+/g,' ').trim().slice(0,60),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2,entries:entries.length,twice:true})})()"
 
         // --- compat round 17 ---
 
@@ -10713,14 +10783,6 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val SCREENSHOT_SAVE_CLICK =
             "(function(){var w=document.getElementById('as_select_wrapper');var sr=w&&w.shadowRoot;var el=sr?sr.querySelector('#awesome_screenshot_capture'):null;if(!el)return 'absent';el.click();return 'clicked'})()"
 
-        /**
-         * RSS Feed Reader's content script's own log in the page (its `feeder_rss_logging=1` flag: a `textarea`
-         * at z-index 100000000 appended to the body): the "findFeedLinks: eval found: <href> <title>" line is the
-         * discovery; the page's announced feed links are counted beside it.
-         */
-        private const val FEEDER_LOG =
-            "(function(){var ta=Array.prototype.slice.call(document.querySelectorAll('textarea')).find(function(t){return t.style&&t.style.zIndex==='100000000'});var v=ta?ta.value:'';var m=/findFeedLinks: eval found: (\\S+) ([^\\n]*)/.exec(v);" +
-                "var links=document.querySelectorAll('link[rel~=\"alternate\"][type*=\"rss\"], link[rel~=\"alternate\"][type*=\"atom\"]').length;return JSON.stringify({pass:!!m,present:!!ta,found:m?m[1]+' '+m[2]:'',lines:v?v.split('\\n').filter(Boolean).length:0,log:v.slice(0,600),links:links})})()"
         /** RSS Feed Reader's popup: its "Add feed" control (`.add-feed-button`, aria-label "Add feed") marked `feeds-available` once the worker answered the tab's feeds. */
         private const val FEEDER_ADD_FEED =
             "(function(){var el=document.querySelector('.add-feed-button, [aria-label=\"Add feed\"], [feeder-title=\"Add feed\"]');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
@@ -10816,5 +10878,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
         /** The engines Search by Image opens its results at, by address. */
         private val SEARCH_BY_IMAGE_ENGINES = Regex("google\\.com|lens\\.google|bing\\.com|yandex\\.|baidu\\.com|tineye\\.com", RegexOption.IGNORE_CASE)
+
+        /**
+         * A new-tab override's page rendered ([momentum]): text of more than twenty characters,
+         * imagery (an image, a canvas, a background element), or the app's mounted root filled –
+         * Infinity New Tab's icon grid in `.site-items` or its search in `.search-box`, a framework
+         * root (`#app`, `#root`, `main`) with children – with the body shown (Infinity keeps
+         * `hide-opacity` on the body until its app has loaded).
+         */
+        private const val NEW_TAB_RENDERED =
+            "(function(){var b=document.body;var text=b?b.innerText.replace(/\\s+/g,' ').trim():'';var imagery=document.querySelectorAll('img, canvas, .background, [class*=\"background\"]').length;" +
+                "var mounted=document.querySelectorAll('.site-items .items-card, .site-items a, .search-box input, .search-box form, #app > *, #root > *, main > *').length;var shown=!!b&&!b.classList.contains('hide-opacity');" +
+                "return JSON.stringify({pass:text.length>20||imagery>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,mounted:mounted,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
     }
 }

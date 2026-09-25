@@ -816,11 +816,16 @@ class Extensions(private val host: Host) {
                 val kind = (data as? JSONObject)?.let { d ->
                     listOf("type", "t", "handler", "action", "method", "kind", "cmd").firstNotNullOfOrNull { k -> d.optString(k, "").ifEmpty { null } }
                 } ?: ""
+                // The page a message speaks of, when it names one (a content script's report of
+                // what it found on its page carries the page's address: the sweep reads the
+                // discovery off this line).
+                val about = (data as? JSONObject)?.optString("url", "")?.takeIf { it.isNotEmpty() }
                 listOfNotNull(
                     target?.opt("tabId")?.let { "tab=$it" },
                     target?.opt("frameId")?.let { "frame=$it" },
                     kind.takeIf { it.isNotEmpty() }?.let { "type=$it" },
-                    (message.optJSONObject("sender")?.has("tab"))?.let { "senderTab=$it" }
+                    (message.optJSONObject("sender")?.has("tab"))?.let { "senderTab=$it" },
+                    about?.let { "url=${it.take(80)}" }
                 ).joinToString(" ")
             }
             "msgReply" -> "handled=${message.opt("handled")} willRespond=${message.opt("willRespond")} listeners=${message.opt("listeners")}"
