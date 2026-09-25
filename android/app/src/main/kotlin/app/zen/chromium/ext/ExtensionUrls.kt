@@ -28,6 +28,23 @@ object ExtensionUrls {
     /** True for either spelling of an extension page's URL. */
     fun isExtensionUrl(url: String): Boolean = CHROME_EXTENSION.matches(url) || SERVED.matches(url)
 
+    /**
+     * The path segment under a web page's own origin where the host serves an extension's
+     * web-accessible files a second time, `/.zenium-ext/<id>/<path>`: a module graph a page's
+     * `script-src` refused at the served origin is asked for again from there by the bootstrap
+     * (`extensionScriptRecovery.ts`), as `'self'` or the page's host admits it. The TypeScript
+     * twin is `PAGE_ALIAS_SEGMENT` / `pageAliasUrl`; the two must agree.
+     */
+    const val PAGE_ALIAS_SEGMENT = ".zenium-ext"
+
+    private val PAGE_ALIAS = Regex("^/\\.zenium-ext/([a-p]{32})(?:/(.*))?$", RegexOption.IGNORE_CASE)
+
+    /** The extension id and the file path (no leading slash) of an alias path, or null for any other path. */
+    fun pageAlias(path: String): Pair<String, String>? {
+        val m = PAGE_ALIAS.matchEntire(path) ?: return null
+        return m.groupValues[1].lowercase() to (m.groupValues.getOrNull(2) ?: "")
+    }
+
     /** A path that may be empty or start at `?` / `#` gets its root slash, as URL parsing would give it. */
     private fun rooted(rest: String): String = if (rest.startsWith("/")) rest else "/$rest"
 }

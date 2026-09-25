@@ -605,6 +605,25 @@ export interface SavedGroupTab {
   favicon?: string | null
 }
 
+/**
+ * The mark an MCP agent's group carries (`Folder.agent`): whose it is, and since when. `name` is
+ * the display name of the session that made the group, kept current while that session lives
+ * (`zen_session rename`) and replaced when another session adopts the group; an empty string
+ * says the maker is unknown (a group stamped by the one-time upgrade of state written before
+ * the mark existed, when its name did not carry the agent's). `createdAt` is ms since the epoch.
+ */
+export interface FolderAgentMark {
+  name: string
+  createdAt: number
+}
+
+/**
+ * The mark a space of the agents' carries (`Space.agent`): the one shared `Agents` space every
+ * agent's home group is made in (`shared`), or a space one agent made for itself (`own`, with
+ * that session's display name at the time and when).
+ */
+export type SpaceAgentMark = { kind: 'shared' } | { kind: 'own'; name: string; createdAt: number }
+
 export interface Folder {
   id: string
   spaceId: string
@@ -613,6 +632,14 @@ export interface Folder {
   collapsed: boolean
   /** Group colour; folders made before groups had colours (or on desktop) carry none. */
   color?: FolderColor | null
+  /**
+   * The group is an MCP agent's (S3 of the MCP program): stamped when the agent service makes
+   * or adopts it, so the group stays recognisable as an agent's – and, without a live owner
+   * session, as orphaned and adoptable – across restarts, wherever it sits. Read by the agent
+   * service alone; the chrome draws nothing for it. Additive: a folder without it is the user's,
+   * as every folder was before the field. Travels with the folder's sync record when set.
+   */
+  agent?: FolderAgentMark | null
   /**
    * Chrome's saved tab groups (Android's Tab groups pane, TAB-16): the group's pages as they
    * were when its last live member closed – the whole group on "Close group" (`folder.close`),
@@ -644,6 +671,14 @@ export interface Space {
   pinnedCollapsed: boolean
   /** Set for the private space of a blank / private window (never persisted). */
   windowId?: string
+  /**
+   * The space is the agents' (S3 of the MCP program): the shared `Agents` space, found by this
+   * mark and never by its name – a space the user calls "Agents" is theirs – or a space one
+   * agent made for itself. Stamped by the agent service when it makes the space; read by it
+   * alone. Additive: a space without it is the user's. Travels with the space's sync record
+   * when set.
+   */
+  agent?: SpaceAgentMark | null
 }
 
 export type SplitLayout = 'grid' | 'vertical' | 'horizontal'

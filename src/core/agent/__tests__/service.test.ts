@@ -4,6 +4,7 @@ import type { AgentSettings, AgentSkillStatus } from '../../../shared/types'
 import { Bridge, type NativeBridge, type NativeCall } from '../../../android/bridge'
 import { AndroidStoreIO } from '../../../android/storeIo'
 import type { Browser } from '../../browser'
+import { emptyModel } from '../../model'
 import type { AgentSkillsHost, AgentTransport, StoreIO } from '../../platform'
 import { AgentService } from '../service'
 
@@ -128,6 +129,8 @@ function fakeBrowser(
       agentSkills
     },
     state: {
+      // `start()` reads the model for the one-time upgrade of the agents' marks.
+      model: emptyModel([{ id: 'default', name: 'Default', color: '#888' } as never]),
       settings: {
         agents: { ...DEFAULT_AGENT_SETTINGS, enabled: true, port: PORT, ...settings }
       },

@@ -91,8 +91,10 @@ class JsBridge(
      * parsed, and is answered off its head so the chrome's promise still settles. Then the parse
      * and the dispatch:
      *
-     *  - every call but a storage call is parsed HERE, on the bridge thread, and dispatched on the
-     *    main thread (`Host.dispatch`), as ever;
+     *  - every call but a storage call is parsed HERE, on the thread it came in on – the bridge
+     *    thread for a hop, the port's handler thread for a string off the asynchronous channel
+     *    ([BridgePort]: the thumbnail read, `thumbnail.load`, since services perf pass 3) – and
+     *    dispatched on the main thread (`Host.dispatch`), as ever;
      *  - a STORAGE CALL ([STORAGE_CALLS]: the core's stores writing their documents – `state.json`
      *    on its debounce, the history, the downloads, a document in pieces – and removing one) is
      *    handed to the storage thread AS THE RAW STRING and parsed THERE, then dispatched there

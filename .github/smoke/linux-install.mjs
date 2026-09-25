@@ -109,18 +109,19 @@ export function splitList(value) {
 }
 
 /**
- * What is wrong with a Zenium desktop entry (`problems`, each a failed assertion) and what is
- * merely untidy (`warnings`). `exec` is how Exec= has to start: the installed binary for the deb,
- * `AppRun` inside the AppImage. The URL schemes come from `protocols` in electron-builder.yml
- * (the default-browser registration reads them back through this file's MimeType); the actions
- * from `linux.desktop.entry.Actions` and `desktopActions` there.
+ * What is wrong with a Zenium desktop entry (`problems`, each a failed assertion). `exec` is how
+ * Exec= has to start: the installed binary for the deb, `AppRun` inside the AppImage. The URL
+ * schemes come from `protocols` in electron-builder.yml (the default-browser registration reads
+ * them back through this file's MimeType); the actions from `linux.desktop.entry.Actions` and
+ * `desktopActions` there. A MIME type listed more than once is a failure: electron-builder
+ * used to append the schemes to the configuration's own `mimeTypes` once per Linux target of a
+ * build (patches/app-builder-lib+26.15.3.patch stops it), and `desktop-file-validate` only warns.
  */
 export function checkDesktopEntry(text, { exec, name = 'Zenium', icon = 'zenium' } = {}) {
   const problems = []
-  const warnings = []
   const groups = parseDesktopEntry(text)
   const entry = groups['Desktop Entry']
-  if (!entry) return { problems: ['no [Desktop Entry] group'], warnings, entry: null }
+  if (!entry) return { problems: ['no [Desktop Entry] group'], entry: null }
   if (entry.Type !== 'Application') problems.push(`Type is ${JSON.stringify(entry.Type)}`)
   if (entry.Name !== name) problems.push(`Name is ${JSON.stringify(entry.Name)}, not ${name}`)
   if (entry.Icon !== icon) problems.push(`Icon is ${JSON.stringify(entry.Icon)}, not ${icon}`)
@@ -137,7 +138,7 @@ export function checkDesktopEntry(text, { exec, name = 'Zenium', icon = 'zenium'
   }
   const seen = new Set()
   for (const type of mimeTypes) {
-    if (seen.has(type)) warnings.push(`MimeType lists ${type} more than once`)
+    if (seen.has(type)) problems.push(`MimeType lists ${type} more than once`)
     seen.add(type)
   }
   const actions = splitList(entry.Actions)
@@ -153,7 +154,7 @@ export function checkDesktopEntry(text, { exec, name = 'Zenium', icon = 'zenium'
   if (!splitList(entry.Categories).includes('Network')) {
     problems.push(`Categories lacks Network: ${JSON.stringify(entry.Categories)}`)
   }
-  return { problems, warnings, entry }
+  return { problems, entry }
 }
 
 /** LINUX_DESKTOP_ID as src/main/platform/defaultBrowser.ts declares it, or null. */
@@ -379,7 +380,6 @@ export async function appimageFacts(opts) {
       const check = checkDesktopEntry(text, { exec: 'AppRun' })
       payload.desktopEntry.entry = check.entry
       payload.desktopEntry.problems = check.problems
-      payload.desktopEntry.warnings = check.warnings
       payload.desktopEntry.validate = validateDesktopFile(path.join(root, 'zenium.desktop'))
       facts.problems.push(...check.problems.map((p) => `zenium.desktop: ${p}`))
       if (payload.desktopEntry.validate.available && payload.desktopEntry.validate.exit !== 0) {

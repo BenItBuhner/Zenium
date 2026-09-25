@@ -66,6 +66,22 @@ export interface FakeBrowser {
   openedTab(result: ToolResult): string
   /** The group id a `zen_groups create` result names. */
   createdGroup(result: ToolResult): string
+  /**
+   * The browser restarted on this one's state: the model as `state.json` holds it (a JSON round
+   * trip – spaces and folders travel whole, as `State.persisted()` writes them), a fresh
+   * `AgentService` over it with nothing in memory (no sessions, views or pages), and its
+   * `start()` run as the boot does. `stop()` the result when the test is done with it.
+   */
+  restart(): FakeBrowser
+  /** End the service (the sweeper, the server): what the real browser does on quit. */
+  stop(): Promise<void>
+  /** How many times the service asked the state to persist (`state.commit()`). */
+  readonly commits: number
+}
+
+export interface FakeBrowserOptions {
+  /** A model to run on – a restart's persisted state – instead of a fresh one with `Work`. */
+  model?: Model
 }
 
 export function textOf(result: ToolResult): string {
@@ -102,15 +118,23 @@ function pageFor(tab: Tab): FakePage {
   ])
 }
 
-export function fakeBrowser(settings: Partial<AgentSettings> = {}): FakeBrowser {
-  const model = emptyModel([{ id: 'default', name: 'Default', color: '#888' } as never])
-  const userSpace = createSpace('Work', '💼')
-  model.spaces.push(userSpace)
-  model.activeSpaceId = userSpace.id
+export function fakeBrowser(
+  settings: Partial<AgentSettings> = {},
+  options: FakeBrowserOptions = {}
+): FakeBrowser {
+  const model =
+    options.model ?? emptyModel([{ id: 'default', name: 'Default', color: '#888' } as never])
+  let userSpace = getSpace(model, model.activeSpaceId)
+  if (!userSpace) {
+    userSpace = model.spaces[0] ?? createSpace('Work', '💼')
+    if (!model.spaces.includes(userSpace)) model.spaces.push(userSpace)
+    model.activeSpaceId = userSpace.id
+  }
   const pages = new Map<string, FakePage>()
   const views = new Map<string, TabView>()
   const input = new Map<string, AgentInputEvent[]>()
   const gates = new Map<string, Promise<void>>()
+  let commits = 0
   const transport: AgentTransport = {
     start: async (options) => ({ port: options.port, lanAddresses: [] }),
     stop: async () => undefined
@@ -287,7 +311,9 @@ export function fakeBrowser(settings: Partial<AgentSettings> = {}): FakeBrowser 
       settings: {
         agents: { ...DEFAULT_AGENT_SETTINGS, enabled: true, approveNewAgents: false, ...settings }
       },
-      commit: () => undefined,
+      commit: () => {
+        commits += 1
+      },
       commitVolatile: () => undefined,
       defaultSearchEngine: () => ({
         id: 'test',
@@ -394,6 +420,19 @@ export function fakeBrowser(settings: Partial<AgentSettings> = {}): FakeBrowser 
       const m = /Created group (folder_[\w-]+)/.exec(textOf(result))
       if (!m) throw new Error(`no group created: ${textOf(result)}`)
       return m[1]
+    },
+    restart: () => {
+      const persisted = JSON.parse(JSON.stringify(model)) as Model
+      // Local (blank / private window) spaces never survive a restart; nor do live views.
+      persisted.localSpaces = {}
+      for (const t of Object.values(persisted.tabs)) t.discarded = true
+      const next = fakeBrowser(settings, { model: persisted })
+      next.service.start()
+      return next
+    },
+    stop: () => service.stop(),
+    get commits() {
+      return commits
     }
   }
 }

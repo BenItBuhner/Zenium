@@ -125,6 +125,12 @@ export interface BootStats {
   /** The Trusted Types shield of an isolated world: policy created, sinks patched. */
   trustedTypes: { policy: boolean; patched: number } | null
   /**
+   * The engine builtins the bootstrap gave this realm because the WebView lacked them
+   * (`extensionPolyfills.ts`: an isolated world's or an extension page's realm only, never a
+   * web page's), by name; empty where the engine has them all.
+   */
+  polyfills?: string[]
+  /**
    * This copy's bridge traffic so far: messages it posted to the host (`hostBound`) and messages
    * the host delivered to it (`pageBound`), every unit of the world counted together. The frame
    * budget reads the two around a scroll for the messages per second the runtime moved.

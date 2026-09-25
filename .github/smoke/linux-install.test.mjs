@@ -16,9 +16,10 @@ import {
   waitForGone
 } from './linux-install.mjs'
 
-// The entry electron-builder 26 writes into the deb from electron-builder.yml (the MimeType
-// duplication included: computeDesktop pushes the protocols' schemes into the config's own
-// mimeTypes array, so the second Linux target of a build gets them twice).
+// The entry electron-builder 26 writes into the deb from electron-builder.yml, every MIME type
+// once (patches/app-builder-lib+26.15.3.patch: unpatched, computeDesktopEntry pushed the
+// protocols' schemes into the config's own mimeTypes array, so the second Linux target of a
+// build got them twice).
 const debEntry = `[Desktop Entry]
 Name=Zenium
 Exec=/opt/Zenium/zenium %U
@@ -28,7 +29,7 @@ Icon=zenium
 StartupWMClass=zenium
 Actions=new-window;new-private-window;
 Comment=Zenium: Zen Browser’s Spaces, Essentials, Glance, Split View and Compact Mode on the Blink engine.
-MimeType=text/html;application/xhtml+xml;multipart/related;image/svg+xml;image/webp;image/avif;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/http;x-scheme-handler/https;
+MimeType=text/html;application/xhtml+xml;multipart/related;image/svg+xml;image/webp;image/avif;application/pdf;x-scheme-handler/http;x-scheme-handler/https;
 Categories=Network;
 
 [Desktop Action new-window]
@@ -103,22 +104,31 @@ describe('splitList', () => {
 })
 
 describe('checkDesktopEntry', () => {
-  it('accepts the deb entry, warning about the duplicated schemes only', () => {
-    const { problems, warnings, entry } = checkDesktopEntry(debEntry, {
-      exec: '/opt/Zenium/zenium'
-    })
+  it('accepts the deb entry', () => {
+    const { problems, entry } = checkDesktopEntry(debEntry, { exec: '/opt/Zenium/zenium' })
     expect(problems).toEqual([])
-    expect(warnings).toEqual([
-      'MimeType lists x-scheme-handler/http more than once',
-      'MimeType lists x-scheme-handler/https more than once'
-    ])
     expect(entry.StartupWMClass).toBe('zenium')
   })
 
+  it('fails an entry that lists a MIME type more than once', () => {
+    // What the second Linux target of a build got before the app-builder-lib patch.
+    const twice = debEntry.replace(
+      /^MimeType=(.*);$/m,
+      'MimeType=$1;x-scheme-handler/http;x-scheme-handler/https;'
+    )
+    expect(checkDesktopEntry(twice, { exec: '/opt/Zenium/zenium' }).problems).toEqual([
+      'MimeType lists x-scheme-handler/http more than once',
+      'MimeType lists x-scheme-handler/https more than once'
+    ])
+    const pdfTwice = debEntry.replace('MimeType=text/html;', 'MimeType=application/pdf;text/html;')
+    expect(checkDesktopEntry(pdfTwice, { exec: '/opt/Zenium/zenium' }).problems).toEqual([
+      'MimeType lists application/pdf more than once'
+    ])
+  })
+
   it('accepts the entry embedded in the AppImage', () => {
-    const { problems, warnings } = checkDesktopEntry(appImageEntry, { exec: 'AppRun' })
+    const { problems } = checkDesktopEntry(appImageEntry, { exec: 'AppRun' })
     expect(problems).toEqual([])
-    expect(warnings).toEqual([])
   })
 
   it('wants Exec to start with the given program', () => {

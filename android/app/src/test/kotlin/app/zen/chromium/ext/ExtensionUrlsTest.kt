@@ -42,4 +42,27 @@ class ExtensionUrlsTest {
             assertFalse(other, ExtensionUrls.isExtensionUrl(other))
         }
     }
+
+    @Test
+    fun readsThePageOriginAliasPathAndNoOther() {
+        // `/.zenium-ext/<id>/<path>` under a page's own origin, the path without its leading
+        // slash as `Served.webAccessible` matches it; the id in lower case (`pageAliasUrl`'s twin).
+        assertEquals(id to "assets/widget.js", ExtensionUrls.pageAlias("/.zenium-ext/$id/assets/widget.js"))
+        assertEquals(id to "a/b/c.css", ExtensionUrls.pageAlias("/.ZENIUM-EXT/${id.uppercase()}/a/b/c.css"))
+        assertEquals(id to "", ExtensionUrls.pageAlias("/.zenium-ext/$id/"))
+        assertEquals(id to "", ExtensionUrls.pageAlias("/.zenium-ext/$id"))
+        assertEquals(".zenium-ext", ExtensionUrls.PAGE_ALIAS_SEGMENT)
+        for (other in listOf(
+            "/",
+            "/assets/widget.js",
+            "/zenium-ext/$id/a.js",
+            "/.zenium-ext/not-an-id/a.js",
+            "/.zenium-ext/${id.dropLast(1)}/a.js",
+            "/.zenium-ext/${id}q/a.js",
+            "/x/.zenium-ext/$id/a.js",
+            ""
+        )) {
+            assertEquals(other, null, ExtensionUrls.pageAlias(other))
+        }
+    }
 }

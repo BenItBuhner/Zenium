@@ -14,8 +14,10 @@ import java.util.concurrent.TimeUnit
  * The bridge's asynchronous channel apart from the WebView (`BridgePort.Receiver`, services perf
  * pass 2 – #455's finding): a string off the port goes into the bridge's `call` route exactly as
  * a hop's string does – admission first, a storage call parsed and dispatched on the storage
- * thread, one FIFO with the hops before it – and what is not a string, or arrives after the
- * channel closed, is dropped and logged, never routed.
+ * thread, one FIFO with the hops before it; a thumbnail read (the port's other class, services
+ * perf pass 3) parsed where it came in and dispatched on the main thread, never the storage
+ * thread – and what is not a string, or arrives after the channel closed, is dropped and logged,
+ * never routed.
  */
 class BridgePortTest {
     private val heap192 = 192L * 1024 * 1024
@@ -121,6 +123,50 @@ class BridgePortTest {
 
         assertEquals(listOf("main tab.activate #21 on test-main"), dispatched)
         assertEquals(listOf("test-port"), parsed.map { it.second })
+        assertEquals(0L, admission.queuedChars)
+    }
+
+    @Test
+    fun `a thumbnail read off the port is parsed on the port's thread and dispatched on the main thread, never the storage thread`() {
+        // The port's other class (services perf pass 3): `thumbnail.load` takes the route of any
+        // call that is not a storage call – parsed where it came in, dispatched on the main thread,
+        // where `Host.dispatch` hands it to the io pool as the hop's did.
+        arrives(call(31, "thumbnail.load", "{\"tabId\":\"t1\",\"url\":\"https://a/\"}"))
+        drain()
+
+        assertEquals(listOf("main thumbnail.load #31 on test-main"), dispatched)
+        assertEquals(listOf("test-port"), parsed.map { it.second })
+        assertTrue("on the storage thread: $dispatched $parsed", (dispatched + parsed.map { it.second }).none { it.contains("test-storage") })
+        assertTrue(rejected.isEmpty())
+        assertEquals(1, receiver.received.get())
+        assertEquals(0L, admission.queuedChars)
+    }
+
+    @Test
+    fun `a thumbnail read between two storage writes on the port does not wait behind the storage queue, and the writes keep their order`() {
+        // The two classes share the channel and nothing else: a read is another subject on another
+        // thread, so the storage FIFO's hold is not the read's – it is dispatched while the writes wait.
+        val hold = CountDownLatch(1)
+        storageThread.execute { hold.await(5, TimeUnit.SECONDS) }
+        arrives(storageWrite(1, "state.json", 2_000))
+        arrives(call(2, "thumbnail.load", "{\"tabId\":\"t1\",\"url\":\"https://a/\"}"))
+        arrives(storageWrite(3, "state.json", 2_000))
+        val mainDone = CountDownLatch(1)
+        mainThread.execute { mainDone.countDown() }
+        assertTrue(mainDone.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("main thumbnail.load #2 on test-main"), dispatched)
+
+        hold.countDown()
+        drain()
+        assertEquals(
+            listOf(
+                "main thumbnail.load #2 on test-main",
+                "storage storage.write #1 on test-storage (state.json)",
+                "storage storage.write #3 on test-storage (state.json)"
+            ),
+            dispatched
+        )
+        assertEquals(3, receiver.received.get())
         assertEquals(0L, admission.queuedChars)
     }
 

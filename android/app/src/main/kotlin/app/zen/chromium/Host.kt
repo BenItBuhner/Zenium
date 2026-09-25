@@ -210,8 +210,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * The thread the bridge's asynchronous channel is received on ([BridgePort]): started when the
      * chrome first asks for a port, so a WebView without the ports (or a chrome that never asks)
      * never pays for it. The messages only cross it – the storage calls go straight on to the
-     * storage thread from here, the way [JsBridge.Calls] routes them – so it never runs anything
-     * long; it exists so that no message is ever received on the main thread.
+     * storage thread from here, the way [JsBridge.Calls] routes them, and a thumbnail read
+     * (`thumbnail.load`, the port's other class since services perf pass 3) is parsed here, a line
+     * of JSON, and posted to the main thread, where [dispatch] hands it to [io] as it always has –
+     * so it never runs anything long; it exists so that no message is ever received on the main
+     * thread.
      */
     private var bridgePortThread: HandlerThread? = null
     private fun bridgePortHandler(): Handler {

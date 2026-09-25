@@ -18,12 +18,14 @@
  * comes back asynchronously anyway (`__zenHost.resolve`, once the document has landed), and the
  * synchronous hop it paid to hand the string over was 4–68 ms of the chrome's frame on the
  * emulator with 1 ms of it on the CPU (#455's finding, on the thirty-tab overview fold). So the
- * host offers an ASYNCHRONOUS CHANNEL for the storage calls: a `MessagePort` (the WebView's
+ * host offers an ASYNCHRONOUS CHANNEL for such calls: a `MessagePort` (the WebView's
  * `WebMessageChannel`) it hands the page at boot ({@link openBridgePort}); `postMessage` on it is
  * a pipe write that never blocks the JS thread, and the reply still comes through `__zenHost`.
- * One rule keeps the order: once the page holds the port, EVERY call of {@link PORTED} goes
- * through it and none through `call` (one FIFO into the host's one storage thread); a host
- * without the channel answers `false` and the page keeps `call` for them, as before.
+ * One rule keeps the order: a CLASS of calls – the calls that must keep their order among
+ * themselves – goes through the port whole or not at all; once the page holds the port, EVERY
+ * call of {@link PORTED} (the storage class, #458; the thumbnail read, a class of one) goes
+ * through it and none through `call`; a host without the channel answers `false` and the page
+ * keeps `call` for them, as before.
  */
 export interface NativeBridge {
   call(json: string): void
@@ -61,33 +63,82 @@ export interface BridgePort {
 }
 
 /**
- * The calls that take the asynchronous channel once the host has handed one over: the core's
- * stores writing and removing their documents through `AndroidStoreIO` (`storeIo.ts`) – the
- * `STORAGE_CALLS` the host parses and dispatches on its storage thread (`JsBridge.kt`), every
- * one an awaited `call` whose answer arrives through `__zenHost` after the write has landed.
- * The class goes through the port whole or not at all: two channels reorder against each other,
- * one FIFO does not.
+ * The storage class: the core's stores writing and removing their documents through
+ * `AndroidStoreIO` (`storeIo.ts`) – the `STORAGE_CALLS` the host parses and dispatches on its
+ * storage thread (`JsBridge.kt`), every one an awaited `call` whose answer arrives through
+ * `__zenHost` after the write has landed. Ordered among themselves (a later write of a document
+ * supersedes the one before it; a document in pieces lands piece by piece), so one FIFO into the
+ * host's one storage thread: the class goes through the port whole or not at all – two channels
+ * reorder against each other, one FIFO does not (services perf pass 2, #458).
  */
-export const PORTED: ReadonlySet<string> = new Set([
+export const STORAGE_CLASS: readonly string[] = [
   'storage.write',
   'storage.remove',
   'storage.writeBegin',
   'storage.writeChunk',
   'storage.writeEnd',
   'storage.writeAbort'
-])
+]
+
+/**
+ * The thumbnail read, a class of one (services perf pass 3): `thumbnail.load`, a card's picture
+ * asked for as the overview shows it – an awaited `call` the host answers off its io pool with
+ * the file's bytes (`Host.kt` `"thumbnail.load" -> io.execute`). Its wait was the hop and nothing
+ * else: in #458's runs the fold of a thirty-tab group left the JavaBridge thread two tasks, both
+ * `thumbnail.load`, 2.4–4.0 ms of the JS thread's frame for the pair with 0.1–0.4 ms of Java in
+ * them. It is ordered against NOTHING, which is why it is its own class and not the storage
+ * class's seventh member: not against the storage calls (another subject – the pictures' files,
+ * not the stores' documents – and another host thread, `io`, never the storage thread, so the
+ * two were never ordered against each other through the hop either); not against its siblings
+ * (each read is its own file, and the pool runs them side by side); not against the thumbnail
+ * commands that keep the hop (`thumbnail.drop` / `sweep` / `configure`: a drop runs on the
+ * pictures' disk thread and a load on `io`, so a load racing a drop reads the picture or reads
+ * nothing, as before – `loadPicture` answers null for a picture of another page). A class of one
+ * has no order to keep, so the switch to the port and the fallback from it can never reorder it;
+ * the host routes it as it routes any call off the port that is not a storage call – parsed on
+ * the port's thread, dispatched on the main thread – into the same `io.execute` as today.
+ */
+export const THUMBNAIL_CLASS: readonly string[] = ['thumbnail.load']
+
+/**
+ * The calls that take the asynchronous channel once the host has handed one over: the classes
+ * above, each whole. The port is one FIFO into the host's receiving thread, so two classes on it
+ * keep their order against each other as well – but no class here needs that.
+ */
+export const PORTED: ReadonlySet<string> = new Set([...STORAGE_CLASS, ...THUMBNAIL_CLASS])
 
 /** The method the page asks the host for its channel with (`Host.dispatch`); the token comes back as the port's message. */
 export const PORT_REQUEST = 'bridge.port'
 
 /**
- * Whether the bridge marks its hops in the performance timeline (`bridge:<call|port>:<method>`,
- * the `blink.user_timing` category of the WebView's trace): the motion profile's probe
- * (`MotionPerfDemo`) turns it on for a scene, so the trace tells a hop's task by the method that
- * paid it; off, a hop costs no mark. Read on every hop so a probe installed after boot is heard.
+ * Whether the bridge marks its hops in the performance timeline (`bridge:<entry>:<method>` as a
+ * hop leaves and the same name with `:ret` as the host's entry point returns, the entry being
+ * `call`, `port`, `post`, `sync` or `batch` – a batch named by its commands' methods joined with
+ * `+` – in the `blink.user_timing` category of the WebView's trace): the motion profile's probe
+ * (`MotionPerfDemo`) turns it on for a scene, so the trace tells every hop's task by the entry
+ * point and the method that paid it, and the pair of marks tells the JS thread's wait in the hop
+ * itself, whatever else the task around it did; off, a hop costs no mark. Read on every hop so a
+ * probe installed after boot is heard.
  */
 const traced = (): boolean =>
   (globalThis as { __zenBridgeTrace?: unknown }).__zenBridgeTrace === true
+
+const noMark = (): void => {}
+
+/**
+ * Mark a hop as it leaves (`bridge:<entry>:<method>`) and hand back the mark of its return
+ * (`…:ret`); nothing when untraced – not even the name is built then, so a hop in production pays
+ * one flag read and no string. A batch's name is its commands' methods joined, so it is passed as
+ * a thunk and joined only under the flag.
+ */
+const markHop = (entry: string, method: string | (() => string)): (() => void) => {
+  if (!traced()) return noMark
+  const name = `bridge:${entry}:${typeof method === 'function' ? method() : method}`
+  performance.mark(name)
+  return () => {
+    performance.mark(`${name}:ret`)
+  }
+}
 
 export class Bridge {
   private seq = 0
@@ -136,9 +187,10 @@ export class Bridge {
   private hop(method: string, json: string): void {
     const port = this.port
     if (port !== null && PORTED.has(method)) {
-      if (traced()) performance.mark(`bridge:port:${method}`)
+      const returned = markHop('port', method)
       try {
         port.postMessage(json)
+        returned()
         return
       } catch (error) {
         // A port that will not take a string (closed under the page: the host closed its
@@ -147,8 +199,9 @@ export class Bridge {
         console.warn('[zen] the bridge port failed; back to call', error)
       }
     }
-    if (traced()) performance.mark(`bridge:call:${method}`)
+    const returned = markHop('call', method)
     this.native.call(json)
+    returned()
   }
 
   /** Fire-and-forget variant for the many tiny view updates (bounds, visibility, …). */
@@ -171,8 +224,10 @@ export class Bridge {
       return
     }
     this.flush()
+    const returned = markHop('post', method)
     try {
       this.native.post(JSON.stringify({ method, args } satisfies NativeCommand))
+      returned()
     } catch (error) {
       console.warn(`[zen] native ${method} failed`, error)
     }
@@ -204,8 +259,10 @@ export class Bridge {
     if (this.queue.length === 0 || typeof this.native.batch !== 'function') return
     const commands = this.queue
     this.queue = []
+    const returned = markHop('batch', () => commands.map((c) => c.method).join('+'))
     try {
       this.native.batch(JSON.stringify(commands))
+      returned()
     } catch (error) {
       console.warn(
         `[zen] native batch of ${commands.map((c) => c.method).join(', ')} failed`,
@@ -216,7 +273,9 @@ export class Bridge {
 
   callSync<T>(method: string, args: unknown = {}): T {
     this.flush()
+    const returned = markHop('sync', method)
     const raw = this.native.callSync(JSON.stringify({ id: 0, method, args } satisfies NativeCall))
+    returned()
     return (raw === '' ? undefined : JSON.parse(raw)) as T
   }
 
@@ -279,18 +338,18 @@ export function openBridgePort(bridge: Bridge, target: PortTarget, token = portT
     if (!port) return
     stop()
     bridge.adoptPort(port)
-    console.debug('[zen] bridge: the storage calls take the host’s port')
+    console.debug('[zen] bridge: the storage calls and the thumbnail reads take the host’s port')
   }
   target.addEventListener('message', onMessage)
   bridge.call<boolean>(PORT_REQUEST, { token }).then(
     (offered) => {
       if (offered === true) return
       stop()
-      console.debug('[zen] bridge: no port from this host; the storage calls take the hop')
+      console.debug('[zen] bridge: no port from this host; the ported calls take the hop')
     },
     (error: unknown) => {
       stop()
-      console.debug('[zen] bridge: no port from this host; the storage calls take the hop', error)
+      console.debug('[zen] bridge: no port from this host; the ported calls take the hop', error)
     }
   )
 }
