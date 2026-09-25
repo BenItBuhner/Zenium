@@ -1,0 +1,61 @@
+name: Android reader entry demo
+
+# Records the reader entry and the crossing into Reader View on the phone (parity rows PUI-14,
+# MOT-36; v2 §9.33, §11): an article page loaded from the driver's loopback servers (four
+# addresses, four sites to the entry's per-site memory), the "Show Reader View?" strip on the
+# frame's top banner stack, Show under a real finger and the crossing – the page's picture, the
+# reader's surface fading in, the reader document landing in its place – read as a frame scene
+# (`reader-crossing-enter`), the app menu's Reader View row bringing the article back the same
+# way (`reader-crossing-exit`), then the memory: a swipe, the X and leaving the page with the
+# offer standing each mute their site for the session (another article of the site brings no
+# offer), a page the probe does not read as an article brings no strip; then the strip, the
+# crossing and the reader document in dark. The driver writes `reader-entry-findings.txt` with a
+# PASS or FAIL per check and fails when any did. Dispatch-only, like the other demos. The build,
+# the emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the
+# driver and the demo it runs.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W6-2, #491): the branch's pushes run the demo while the driver is being brought
+  # up; removed before the PR is marked ready.
+  push:
+    branches:
+      - cursor/android-reader-entry-7706
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-reader-entry-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Reader entry demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ReaderEntryDemo
+        DEMO_DIR=reader-entry-demo
+        DEMO_OUT=artifacts/android-reader-entry-demo
+        DEMO_VIDEO=android-reader-entry-demo.mp4
+      artifact-name: android-reader-entry-demo
+      artifact-path: artifacts/android-reader-entry-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Reader entry demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ReaderEntryDemo
+        DEMO_DIR=reader-entry-demo
+        DEMO_OUT=artifacts/android-reader-entry-demo
+        DEMO_VIDEO=android-reader-entry-demo.mp4
+      artifact-name: android-reader-entry-demo-second-boot
+      artifact-path: artifacts/android-reader-entry-demo/
