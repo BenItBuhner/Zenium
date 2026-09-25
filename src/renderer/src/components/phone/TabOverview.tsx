@@ -89,6 +89,17 @@ import {
   setOverviewSheet,
   type OverviewSheet as Sheet
 } from '@renderer/lib/overviewUi'
+import {
+  OverviewWindowContext,
+  cancelFill,
+  fillCards,
+  fillEveryCard,
+  overviewWindowStore,
+  readWindow,
+  resetOverviewWindow,
+  scheduleFill,
+  windowOf
+} from '@renderer/lib/overviewWindow'
 import { coveredNow, pageCovered, pageViewStore } from '@renderer/lib/pageView'
 import { PRIVATE_TAB_PLACEHOLDER, privateLockStore } from '@renderer/lib/privateLock'
 import {
@@ -629,6 +640,42 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       grid.scrollTop = scroll.top
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the mount alone
   }, [])
+
+  // The grid's WINDOW (`lib/overviewWindow.ts`, W6-0): which cells are built as cards. Read
+  // from the layout the commit made – after the hero's card has been scrolled into view and the
+  // shell swap's scroll restored, both above – on the commits that can change it: the cards or
+  // the columns (a query, a close, a fold, a rotation), the frame, the phase. The cells in view
+  // and a row's margin fill in this very commit (the store's word reaches each cell before the
+  // frame paints); once the overview has settled the rest fill in idle time, nearest first, and
+  // not before – the pull's and the spring's frames are the morph's. A grid with no layout to
+  // read (the tests' DOM) builds every card. The grid's scroll re-reads the window (below).
+  const foldKey = groups
+    .filter((f) => f.collapsed)
+    .map((f) => f.id)
+    .join('|')
+  const rewindow = (scrolled = false): void => {
+    const grid = scrollRef.current
+    if (scrolled) {
+      // A scroll with every card built has nothing to read the layout for.
+      const { all, filled } = overviewWindowStore.get()
+      if (all || (pinned.every((t) => filled.has(t.id)) && regular.every((t) => filled.has(t.id))))
+        return
+    }
+    const read = grid ? readWindow(grid) : null
+    if (!read) {
+      fillEveryCard()
+      return
+    }
+    const { shown, rest } = windowOf(read.view, read.cells)
+    fillCards(shown)
+    if (settled) scheduleFill(rest)
+    else cancelFill()
+  }
+  useLayoutEffect(() => {
+    rewindow()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read when the layout inputs change
+  }, [cardsKey, foldKey, columns, area.width, area.height, phase, pane])
+  useEffect(() => () => resetOverviewWindow(), [])
 
   // Escape closes the overview – unless a sheet or the Spaces drawer is up over it; the top
   // surface takes the key, and the next Escape reaches the overview. The search field takes it
@@ -1439,6 +1486,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       // descent's first frame and through the close's rise (§9.36; a slot that fills by a cut at
       // the settle is no motion of §11's).
       hidden={!tablet && tab.id === heroTabId && p < 1}
+      // The hero's card is built from the first frame whatever the window holds: the morph
+      // lands on it, the tablet's layer shows it as it comes down (W6-0).
+      eager={tab.id === heroTabId}
       onPick={pick}
       onClose={(t) => closeTabs([t])}
       onSwipeClose={swipedAway}
@@ -1855,6 +1905,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                 onScroll={(e) => {
                   noteOverviewScroll(pane, e.currentTarget.scrollTop)
                   measure()
+                  rewindow(true)
                 }}
               >
                 {searching && found === 0 && (
@@ -1901,25 +1952,32 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                   className="relative grid gap-3"
                   style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
                 >
-                  {pinned.map(card)}
-                  {groupCards.map(({ folder, tabs, gone }) => (
-                    <GroupCard
-                      key={folder.id}
-                      folder={folder}
-                      tabs={tabs}
-                      card={card}
-                      columns={columns}
-                      onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                      onCloseGroup={closeGroup}
-                      onDelete={deleteGroupOf}
-                      forming={tabs.length > 0 && forming(folder, tabs)}
-                      dissolving={tabs.length === 0}
-                      held={gone?.count}
-                      onDissolved={dissolvedGroup}
-                      onRelease={subscribeRelease}
-                    />
-                  ))}
-                  {loose.map(card)}
+                  {/*
+                    The cards under here are WINDOWED (`lib/overviewWindow.ts`, W6-0): a cell
+                    is a card when the window holds it, a sized placeholder until then. The
+                    group cards' members are the same cells, through `card`.
+                  */}
+                  <OverviewWindowContext.Provider value={true}>
+                    {pinned.map(card)}
+                    {groupCards.map(({ folder, tabs, gone }) => (
+                      <GroupCard
+                        key={folder.id}
+                        folder={folder}
+                        tabs={tabs}
+                        card={card}
+                        columns={columns}
+                        onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                        onCloseGroup={closeGroup}
+                        onDelete={deleteGroupOf}
+                        forming={tabs.length > 0 && forming(folder, tabs)}
+                        dissolving={tabs.length === 0}
+                        held={gone?.count}
+                        onDissolved={dissolvedGroup}
+                        onRelease={subscribeRelease}
+                      />
+                    ))}
+                    {loose.map(card)}
+                  </OverviewWindowContext.Provider>
                   {!searching && <NewTabCard pane={pane} disabled={selecting} />}
                 </div>
                 {searching && !privatePane && (

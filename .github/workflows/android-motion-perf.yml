@@ -34,8 +34,9 @@ on:
   # TEMPORARY (W6-0, the overview's windowed grid: the BEFORE arm on main's tip and the AFTER
   # arms on this branch, both themes – no token in the project can dispatch); removed before the
   # PR is nod-ready. The push run's scene default below is `overview` in place of `all`; the
-  # functional drivers run on the AFTER arms as a dispatch's do; the `profile-dark` job below is
-  # the same temporary measure's dark arm.
+  # functional drivers run on the light arm as a dispatch's do (the BEFORE arm, run 36146891460,
+  # ran without them); the `profile-dark` job below is the same temporary measure's dark arm,
+  # its drivers off (they are the light arm's proof).
   push:
     branches: [cursor/android-overview-windowed-grid-82b6]
   workflow_dispatch:
@@ -84,7 +85,7 @@ jobs:
       script: .github/scripts/android-motion-perf.sh
       script-env: |
         PERF_OUT=artifacts/android-motion-perf
-        PERF_FUNCTIONAL=${{ github.event_name == 'push' && '0' || (format('{0}', inputs.functional-drivers) == 'false' && '0' || '1') }}
+        PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
         DEMO_SCENES=${{ inputs.scenes || 'overview' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
@@ -129,7 +130,7 @@ jobs:
       script: .github/scripts/android-motion-perf.sh
       script-env: |
         PERF_OUT=artifacts/android-motion-perf
-        PERF_FUNCTIONAL=${{ github.event_name == 'push' && '0' || (format('{0}', inputs.functional-drivers) == 'false' && '0' || '1') }}
+        PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
         DEMO_SCENES=${{ inputs.scenes || 'overview' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
