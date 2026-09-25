@@ -59,14 +59,18 @@ class SplashHold {
  * sequence (WM Shell's SplashScreenExitAnimation) – the icon fades first, then the splash over the
  * app, the app's frame under it the whole way – with its durations
  * (`starting_window_app_reveal_icon_fade_out_duration`, `…_anim_delay`, `…_anim_duration`).
+ * Under reduced motion the departure is v2 §11.3's: a 120 ms opacity fade in place, the icon
+ * with the view (the chrome's `REDUCED_FADE_MS`), not a cut.
  */
 object SplashExit {
     const val ICON_FADE_MS = 133L
     const val REVEAL_DELAY_MS = 83L
     const val REVEAL_MS = 266L
-    val iconCurve = LinearInterpolator()
-    /** The shell's app reveal is a standard ease (fast out, slow in). */
-    val revealCurve = PathInterpolator(0.4f, 0f, 0.2f, 1f)
+    const val REDUCED_FADE_MS = 120L
+    /** Lazily: the interpolators are the platform's classes, and the JVM test reads the numbers alone. */
+    val iconCurve by lazy { LinearInterpolator() }
+    /** The shell's app reveal is a standard ease (fast out, slow in); the reduced-motion fade takes it too. */
+    val revealCurve by lazy { PathInterpolator(0.4f, 0f, 0.2f, 1f) }
 }
 
 /**
@@ -75,6 +79,37 @@ object SplashExit {
  * tone the system bars' icons keep while the splash is held (light for a light ground).
  */
 class SplashSkin(val iconView: View?, val lightBars: Boolean)
+
+/**
+ * The platform's splash view as the hold works it – dressed by a skin, faded at the exit, taken
+ * away – behind an interface, so the hold's decisions run on the JVM against a recording fake
+ * (StartupSplashTest); [PlatformSplashSurface] is the app's, over the library's provider.
+ */
+interface SplashSurface {
+    /** The skin's dress of the platform's view (PWA-06); null where there is no view to dress. */
+    fun dress(skin: (SplashScreenViewProvider) -> SplashSkin): SplashSkin?
+    /**
+     * The exit motion ([SplashExit]): the icon – `icon` when the skin put one on, else the
+     * platform's – fades first, then the whole view over the app; `onEnd` as the view is gone.
+     */
+    fun exit(icon: View?, onEnd: () -> Unit)
+    /** The reduced-motion departure: the view, icon and all, fades in place over [SplashExit.REDUCED_FADE_MS]; `onEnd` as it is gone. */
+    fun fadeInPlace(onEnd: () -> Unit)
+    /** Gone at once, no motion (the activity's end). */
+    fun remove()
+}
+
+/** The system bars' icon tone: read at the hand-over, written at the lift. The window's controller in the app, a fake in the test. */
+interface SplashBars {
+    var light: Boolean
+}
+
+/** The main thread's clock and delayed work (the watchdog, the held time for the log): a Handler in the app, a fake in the test. */
+interface SplashClock {
+    fun uptimeMillis(): Long
+    fun postDelayed(work: Runnable, delayMs: Long)
+    fun removeCallbacks(work: Runnable)
+}
 
 /**
  * The cold start's splash (OS-26): the platform's starting window – the launcher's mark on the
@@ -103,49 +138,62 @@ class SplashSkin(val iconView: View?, val lightBars: Boolean)
  *
  * The system bars' icon tone during the hold is the splash theme's (light icons over the indigo);
  * what the chrome asks for meanwhile (Host.applyTheme → [systemBarsLight]) is kept and applied
- * as the splash lifts, so the icons do not go dark over the indigo for the hold and the bars do
- * not flip twice.
+ * at the exit's END – the splash's colour is on screen until the last frame of the motion, and
+ * dark icons over the indigo for its 350 ms would be the flip the hold exists to avoid.
  *
- * Reduced motion (the animator duration scale at zero – Settings' "Remove animations") lifts the
- * splash on the plain cut, no motion.
+ * Reduced motion (the animator duration scale at zero – Settings' "Remove animations" sets it;
+ * nothing else is read) lifts the splash on §11.3's 120 ms opacity fade in place.
  */
-class StartupSplash(
-    private val window: Window,
-    private val main: Handler = Handler(Looper.getMainLooper()),
-    private val animatorsEnabled: () -> Boolean = { ValueAnimator.areAnimatorsEnabled() },
+class StartupSplash internal constructor(
+    private val clock: SplashClock,
+    private val bars: SplashBars,
+    private val animatorsEnabled: () -> Boolean,
     /** A window's own dress for the platform's splash view, applied once at the hand-over (PWA-06); null for the browser's. */
-    private val skin: ((SplashScreenViewProvider) -> SplashSkin)? = null
+    private val skin: ((SplashScreenViewProvider) -> SplashSkin)?,
+    private val warn: (String, Throwable?) -> Unit
 ) {
+    /** The app's: the window's bars, the main thread's Handler and clock, the platform's animator switch, logcat. */
+    constructor(window: Window, skin: ((SplashScreenViewProvider) -> SplashSkin)? = null) : this(
+        HandlerSplashClock(Handler(Looper.getMainLooper())),
+        WindowSplashBars(window),
+        { ValueAnimator.areAnimatorsEnabled() },
+        skin,
+        { message, error -> Log.w(TAG, message, error) }
+    )
+
     val hold = SplashHold()
-    private var provider: SplashScreenViewProvider? = null
+    private var surface: SplashSurface? = null
     private var skinned: SplashSkin? = null
     private var barsLight: Boolean? = null
     private var handedOverAt = 0L
+    /** The exit motion is running: the splash's colour is still on screen, the bars keep its tone. */
+    private var exiting = false
     private val watchdog = Runnable {
         if (!hold.watchdog()) return@Runnable
-        Log.w(TAG, "splash: the chrome did not report ready within $WATCHDOG_MS ms of the hand-over; lifting")
+        warn("splash: the chrome did not report ready within $WATCHDOG_MS ms of the hand-over; lifting", null)
         lift("watchdog")
     }
 
     /** Before the window's first frame (MainActivity.onCreate): take the splash view when the platform hands it over. */
     fun attach(splashScreen: SplashScreen) {
-        splashScreen.setOnExitAnimationListener { view -> handOver(view) }
+        splashScreen.setOnExitAnimationListener { view -> handOver(PlatformSplashSurface(view)) }
     }
 
-    private fun handOver(view: SplashScreenViewProvider) {
-        provider = view
-        handedOverAt = SystemClock.uptimeMillis()
+    /** The platform handed its splash view over (the exit listener, at the window's first frame). */
+    internal fun handOver(view: SplashSurface) {
+        surface = view
+        handedOverAt = clock.uptimeMillis()
         // The library applied the post theme's bar tone as it handed the view over; the splash is
         // still up, so the splash's tone stays until it lifts – and the theme's is what the lift
         // restores when the chrome has asked for none by then.
-        if (barsLight == null) barsLight = WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars
-        skinned = skin?.let { dress -> runCatching { dress(view) }.onFailure { Log.w(TAG, "splash: the skin failed; the platform's view stays", it) }.getOrNull() }
-        applyBars(light = skinned?.lightBars ?: false)
+        if (barsLight == null) barsLight = bars.light
+        skinned = skin?.let { dress -> runCatching { view.dress(dress) }.onFailure { warn("splash: the skin failed; the platform's view stays", it) }.getOrNull() }
+        bars.light = skinned?.lightBars ?: false
         if (hold.handOver()) {
             lift("ready")
             return
         }
-        main.postDelayed(watchdog, WATCHDOG_MS)
+        clock.postDelayed(watchdog, WATCHDOG_MS)
     }
 
     /** The chrome's first real frame is on screen: lift the splash if the platform has handed it over, else as soon as it does. */
@@ -155,11 +203,11 @@ class StartupSplash(
 
     /**
      * The tone the chrome asks the bars' icons for (dark icons for a light chrome): applied now
-     * when the splash is not up, kept for the lift when it is.
+     * when nothing of the splash is on screen, kept for the exit's end while it is.
      */
     fun systemBarsLight(light: Boolean) {
         barsLight = light
-        if (!held) applyBars(light)
+        if (!held && !exiting) bars.light = light
     }
 
     /** The splash is up over this window (handed over, not lifted). */
@@ -170,43 +218,100 @@ class StartupSplash(
         private set
 
     private fun lift(by: String) {
-        val view = provider ?: return
-        provider = null
-        main.removeCallbacks(watchdog)
+        val view = surface ?: return
+        surface = null
+        clock.removeCallbacks(watchdog)
         hold.lift(by)
-        heldForMs = SystemClock.uptimeMillis() - handedOverAt
-        barsLight?.let { applyBars(it) }
-        if (!animatorsEnabled()) {
-            view.remove()
-            return
+        heldForMs = clock.uptimeMillis() - handedOverAt
+        exiting = true
+        val gone: () -> Unit = {
+            exiting = false
+            barsLight?.let { bars.light = it }
         }
-        val icon = skinned?.iconView ?: runCatching { view.iconView }.getOrNull()
-        icon?.animate()?.alpha(0f)?.setDuration(SplashExit.ICON_FADE_MS)?.setInterpolator(SplashExit.iconCurve)?.start()
-        view.view.animate()
-            .alpha(0f)
-            .setStartDelay(SplashExit.REVEAL_DELAY_MS)
-            .setDuration(SplashExit.REVEAL_MS)
-            .setInterpolator(SplashExit.revealCurve)
-            .withEndAction { view.remove() }
-            .start()
+        if (animatorsEnabled()) view.exit(skinned?.iconView, gone) else view.fadeInPlace(gone)
     }
 
     /** The activity is going: nothing left to lift, no watchdog to fire into a dead window. */
     fun cancel() {
-        main.removeCallbacks(watchdog)
-        provider?.remove()
-        provider = null
-    }
-
-    private fun applyBars(light: Boolean) {
-        val controller = WindowInsetsControllerCompat(window, window.decorView)
-        controller.isAppearanceLightStatusBars = light
-        controller.isAppearanceLightNavigationBars = light
+        clock.removeCallbacks(watchdog)
+        surface?.remove()
+        surface = null
+        exiting = false
     }
 
     companion object {
         const val TAG = "ZenStartup"
-        /** The safety net after the hand-over, well past any boot that ends in a chrome. */
-        const val WATCHDOG_MS = 6_000L
+        /**
+         * The safety net after the hand-over. Derived, not asserted: the longest hold the
+         * harness has read is 4205 ms (the status bar driver's first boot in its process on the
+         * API 35 image, a 14 MB seeded history; the startup scene's cold starts hold 1.2–3.5 s,
+         * the pair's 1.7–2.1 s) – twice that, rounded up, so a slower runner's boot still ends
+         * in the chrome under a splash lifted by READY, and a boot that has not painted its
+         * chrome 10 s after the platform's first frame is one whose window is shown as it is.
+         */
+        const val WATCHDOG_MS = 10_000L
+        /** The longest hold read on the recipe's emulator (ms), the watchdog's derivation; pinned by the test. */
+        const val LONGEST_HELD_SEEN_MS = 4_205L
     }
+}
+
+/** The library's provider as a [SplashSurface]: the exit motion and the reduced-motion fade on the platform's view. */
+class PlatformSplashSurface(private val provider: SplashScreenViewProvider) : SplashSurface {
+    override fun dress(skin: (SplashScreenViewProvider) -> SplashSkin): SplashSkin = skin(provider)
+
+    override fun exit(icon: View?, onEnd: () -> Unit) {
+        val fading = icon ?: runCatching { provider.iconView }.getOrNull()
+        fading?.animate()?.alpha(0f)?.setDuration(SplashExit.ICON_FADE_MS)?.setInterpolator(SplashExit.iconCurve)?.start()
+        provider.view.animate()
+            .alpha(0f)
+            .setStartDelay(SplashExit.REVEAL_DELAY_MS)
+            .setDuration(SplashExit.REVEAL_MS)
+            .setInterpolator(SplashExit.revealCurve)
+            .withEndAction {
+                provider.remove()
+                onEnd()
+            }
+            .start()
+    }
+
+    override fun fadeInPlace(onEnd: () -> Unit) {
+        // Not an animator: the setting that brings the lift here scales every animator's duration
+        // to zero (a ViewPropertyAnimator would end on its first frame – the cut §11.3 rules out),
+        // so the fade is stepped on the frame clock from the uptime itself.
+        val view = provider.view
+        val started = SystemClock.uptimeMillis()
+        view.postOnAnimation(object : Runnable {
+            override fun run() {
+                val t = ((SystemClock.uptimeMillis() - started).toFloat() / SplashExit.REDUCED_FADE_MS).coerceIn(0f, 1f)
+                view.alpha = 1f - SplashExit.revealCurve.getInterpolation(t)
+                if (t < 1f) {
+                    view.postOnAnimation(this)
+                } else {
+                    provider.remove()
+                    onEnd()
+                }
+            }
+        })
+    }
+
+    override fun remove() = provider.remove()
+}
+
+/** The window's bars through the insets controller: the status bar's tone read, both bars' written. */
+class WindowSplashBars(private val window: Window) : SplashBars {
+    override var light: Boolean
+        get() = WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars
+        set(value) {
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.isAppearanceLightStatusBars = value
+            controller.isAppearanceLightNavigationBars = value
+        }
+}
+
+class HandlerSplashClock(private val handler: Handler) : SplashClock {
+    override fun uptimeMillis(): Long = SystemClock.uptimeMillis()
+    override fun postDelayed(work: Runnable, delayMs: Long) {
+        handler.postDelayed(work, delayMs)
+    }
+    override fun removeCallbacks(work: Runnable) = handler.removeCallbacks(work)
 }

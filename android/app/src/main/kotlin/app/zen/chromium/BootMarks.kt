@@ -39,4 +39,19 @@ object BootMarks {
     /** `name=ms` pairs in the order passed, the log line's body. */
     @Synchronized
     fun line(): String = marks.entries.joinToString(" ") { "${it.key}=${it.value}" }
+
+    private var logged = false
+
+    /**
+     * The line for the log, once per process: the marks are the process's first boot's (first
+     * of a name), so a later activity's READY in the same process – the status bar driver's nine
+     * boots, a relaunch – would print the same line again and read as a boot of its own. Null
+     * after the first call.
+     */
+    @Synchronized
+    fun lineOnce(): String? {
+        if (logged) return null
+        logged = true
+        return line()
+    }
 }

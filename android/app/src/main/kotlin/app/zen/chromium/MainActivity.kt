@@ -421,7 +421,8 @@ class MainActivity : BrowserActivity() {
                     "chrome ready: frame drawn ${SystemClock.uptimeMillis() - posted} ms after the chrome's word; " +
                         "splash held ${startupSplash.heldForMs ?: -1} ms, lifted by ${startupSplash.hold.liftedBy ?: "nothing yet"}"
                 )
-                Log.i(StartupSplash.TAG, "boot marks: ${BootMarks.line()}")
+                // The process's first boot's marks, once: a re-created activity's READY has no marks of its own to add.
+                BootMarks.lineOnce()?.let { Log.i(StartupSplash.TAG, "boot marks: $it") }
             }
         })
     }

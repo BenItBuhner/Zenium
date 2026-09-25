@@ -300,8 +300,20 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         view.visibility = View.VISIBLE
         installDisplayScript(view)
         // The splash waits for this view's first painted document (a fresh view after a crash
-        // under a splash still up takes the wait over).
-        if (!startupSplash.hold.lifted) view.onDocumentPainted = { onPagePainted(view) }
+        // under a splash still up takes the wait over). Until then the view wears the app's
+        // ground instead of WebView's white: the platform draws this window's first frame before
+        // the splash view it hands over is attached, and that frame is the page view – white
+        // under the app's bars for a frame in the launch recordings, a flash in dark. In the
+        // ground it is the app's colour without its tile, the same frame the browser's boot theme
+        // gives (Theme.Zen.Boot). The white comes back with the paint: a document with no
+        // background of its own shows the base colour, and the app's is not it.
+        if (!startupSplash.hold.lifted) {
+            view.setBackgroundColor(splash.color)
+            view.onDocumentPainted = {
+                view.setBackgroundColor(Color.WHITE)
+                onPagePainted(view)
+            }
+        }
     }
 
     /**
