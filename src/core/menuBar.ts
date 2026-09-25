@@ -360,15 +360,16 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Select Previous Tab', action: 'tab.prev', enabled: Boolean(active) },
       { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) },
       { type: 'separator' },
-      // Chrome's Window › Name Window…, in a group of its own as Chrome's menu has it; Duplicate
-      // Window (session-19) is the group's other row about this window – not for a popup or an
-      // app window, which have no tab strip to duplicate.
-      { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
+      // The group about this window, in the order More Tools has the pair (one order in both
+      // menus): Duplicate Window (session-19) – greyed for a popup or an app window, which have
+      // no tab strip to duplicate, as a menu bar greys rather than hides – then Chrome's
+      // Window › Name Window…, in a group of its own as Chrome's menu has it.
       {
         label: 'Duplicate Window',
         action: 'window.duplicate',
         enabled: Boolean(win) && win!.chrome === 'full'
       },
+      { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
       { type: 'separator' },
       { label: 'Next Space', action: 'space.next', enabled: Boolean(win) && !local },
       { label: 'Previous Space', action: 'space.prev', enabled: Boolean(win) && !local },

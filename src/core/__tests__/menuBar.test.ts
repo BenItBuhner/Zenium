@@ -207,12 +207,13 @@ describe('the macOS menu bar', () => {
     const labels = window.map((i) => (i.type === 'separator' ? '-' : i.label))
     const at = labels.indexOf('Name Window…')
     expect(at).toBeGreaterThan(0)
-    // The group about this window: its name, then its double (session-19).
-    expect(labels.slice(at - 2, at + 4)).toEqual([
+    // The group about this window: its double (session-19), then its name – the order More
+    // Tools lists the pair in (one order in both menus).
+    expect(labels.slice(at - 3, at + 3)).toEqual([
       'Search Tabs…',
       '-',
-      'Name Window…',
       'Duplicate Window',
+      'Name Window…',
       '-',
       'Next Space'
     ])
