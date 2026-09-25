@@ -471,12 +471,9 @@ class MainActivity : BrowserActivity() {
         // Backgrounded and on the system's LRU list: the back previews are the one cache worth
         // dropping (see HostLifecycle for why UI_HIDDEN is not pressure).
         if (HostLifecycle.trimDropsSnapshots(level)) host.snapshots.clear()
-        // Short of memory: the core puts hidden pages to sleep ahead of their timeout (CT-22).
-        HostLifecycle.memoryPressure(level)?.let {
-            host.chrome.hostEvent("memoryPressure", json("level" to it))
-            // A restored tab's picture still up is a bitmap the page beneath will replace anyway.
-            host.restoredPictures.releaseAll("memory pressure")
-        }
+        // Short of memory: the trim graded beside the platform's reading, and the core puts
+        // hidden pages to sleep ahead of their timeout (CT-22, OS-37; MemoryPressure.kt).
+        host.onTrimMemory(level)
     }
 
     // --- keyboard --------------------------------------------------------------------------------

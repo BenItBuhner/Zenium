@@ -581,7 +581,9 @@ class StartupSplashTest {
         }
         assertTrue("view.load offers the picture", branch("view.load").contains("restoredPictures.offer(tab, url)"))
         val restore = branch("view.restoreNavigation")
-        assertTrue("view.restoreNavigation offers it for the entry the list is loading", restore.contains("NavigationState.currentUrl(entries, index)?.let { restoredPictures.offer(tab, it) }"))
+        // A restored list is the second reason the picture is wanted (a sleeping tab shown again,
+        // OS-37): the offer names it, so the picture is placed outside the boot's restore too.
+        assertTrue("view.restoreNavigation offers it for the entry the list is loading", restore.contains("NavigationState.currentUrl(entries, index)?.let { restoredPictures.offer(tab, it, restoredList = true) }"))
         assertTrue("only a list that was restored has an entry loading", restore.contains("if (restored) NavigationState.currentUrl"))
         assertEquals("the two sites, and no third", 2, Regex("""restoredPictures\.offer\(""").findAll(host).count())
     }
@@ -629,10 +631,14 @@ class StartupSplashTest {
     }
 
     @Test
-    fun theRestoredPictureIsForTheBootsRestoreOnlyOverAnUnpaintedViewOnce() {
-        assertTrue(RestoredPictures.wanted(restoring = true, painted = false, shown = false))
-        assertFalse("a load after READY is the user's", RestoredPictures.wanted(restoring = false, painted = false, shown = false))
-        assertFalse("a page that has drawn is not covered", RestoredPictures.wanted(restoring = true, painted = true, shown = false))
-        assertFalse("one per tab", RestoredPictures.wanted(restoring = true, painted = false, shown = true))
+    fun theRestoredPictureIsForTheBootsRestoreOrARestoredListOverAnUnpaintedViewOnce() {
+        assertTrue(RestoredPictures.wanted(restoredList = false, restoring = true, painted = false, shown = false))
+        assertFalse("a load after READY is the user's", RestoredPictures.wanted(restoredList = false, restoring = false, painted = false, shown = false))
+        assertFalse("a page that has drawn is not covered", RestoredPictures.wanted(restoredList = false, restoring = true, painted = true, shown = false))
+        assertFalse("one per tab", RestoredPictures.wanted(restoredList = false, restoring = true, painted = false, shown = true))
+        // A sleeping tab shown again after READY: its list restored under a fresh view (OS-37).
+        assertTrue(RestoredPictures.wanted(restoredList = true, restoring = false, painted = false, shown = false))
+        assertFalse("a restored list over a page that has drawn is not covered", RestoredPictures.wanted(restoredList = true, restoring = false, painted = true, shown = false))
+        assertFalse("one per tab, restored list or not", RestoredPictures.wanted(restoredList = true, restoring = false, painted = false, shown = true))
     }
 }

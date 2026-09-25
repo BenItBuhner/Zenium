@@ -253,6 +253,17 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     } else {
       domReady()
     }
+    // The user typing into the page (OS-37): one `formEdited` per document, the core's "form in
+    // progress" guard on the sleep memory pressure asks of hidden pages (Chrome's
+    // HadFormInteraction). The user's own edits (`isTrusted`: a field, a textarea, an editable
+    // region), not a script's synthetic events; the top frame's, since the view hears the main
+    // frame alone (`TabWebView.onPageMessage`) – a frame's form is that document's own.
+    const onInput = (event: Event): void => {
+      if (!event.isTrusted) return
+      document.removeEventListener('input', onInput, true)
+      up({ type: 'formEdited' })
+    }
+    document.addEventListener('input', onInput, true)
   }
 
   // This script runs in the page's own world, so the WebAuthn observer installs directly.

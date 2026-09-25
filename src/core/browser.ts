@@ -2760,6 +2760,12 @@ export class Browser {
       this.keys.setEditing(tabId, message.editing === true)
       return
     }
+    if (message.type === 'formEdited') {
+      // The user typed into the page (once per document, the Android page script's word): a form
+      // in progress, which no sleep under memory pressure takes (OS-37; Chrome's HadFormInteraction).
+      this.tabs.noteFormEdited(tabId)
+      return
+    }
     if (message.type === 'pdf') {
       if (message.pdf && typeof message.pdf === 'object')
         this.pdf.onReport(tabId, message.pdf, message.pdfToken)
@@ -2794,7 +2800,7 @@ export class Browser {
       // A host whose engine reports audibility itself (Electron's `audio-state-changed`) sends
       // the Media Session report alone; `playing` is the page script's word where it tracks it.
       if (message.playing !== undefined) {
-        tab.audible = Boolean(message.playing)
+        this.tabs.noteAudible(tabId, Boolean(message.playing))
         this.governor.onMedia(tabId, Boolean(message.playing))
       }
       if (message.media) this.mediaSession.onReport(tabId, message.media)

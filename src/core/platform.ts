@@ -234,6 +234,11 @@ export interface PageMessage {
      * the Electron preload alone): the caret's ⌘← / ⌘→ stay the field's (`KeyboardHandler`).
      */
     | 'editing'
+    /**
+     * The top document took its first trusted `input` (`android/pageScript`): a form is in
+     * progress, so memory pressure leaves the tab alone until its next document (OS-37).
+     */
+    | 'formEdited'
   url?: string
   /** `editing`: whether a text field of the reporting frame has the keyboard. */
   editing?: boolean

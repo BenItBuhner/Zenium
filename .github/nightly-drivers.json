@@ -58,6 +58,18 @@
       "budget-minutes": 68,
       "note": "The fifth phone shard (#344): the drivers the first four could not hold under about 58 minutes once every estimate was trued up to the minutes the nightly measured. Same recipe as phone-a."
     },
+    "phone-f": {
+      "title": "Phone F: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "note": "The sixth phone shard (W6-6, OS-37): the five before it stand at 66 to 68 of their 68 minutes, and the memory-pressure driver's five would fit on none of them. Same recipe as phone-a; the room for what wave 6 adds after it."
+    },
     "api35": {
       "title": "Phone, API 35 Google APIs, pixel_6",
       "api-level": "35",
@@ -996,6 +1008,19 @@
       "timeout": 1200,
       "estimate": 8.5,
       "note": "The wrapper sets the device PIN and lets its authentication age 75 s; the runner clears the PIN after."
+    },
+    {
+      "id": "memory-pressure",
+      "class": "MemoryPressureDemo",
+      "shard": "phone-f",
+      "mirrors": "android-memory-pressure-demo.yml:light",
+      "dir": "memory-pressure-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "timeout": 900,
+      "estimate": 5,
+      "note": "The memory-pressure row (OS-37, W6-6): thirty background pages with ballast, am send-trim-memory at RUNNING_MODERATE / RUNNING_LOW / RUNNING_CRITICAL and BACKGROUND behind Home, the return to a sleeping page read thirty times a second, the renderer priorities, the memory table from dumpsys meminfo. The workflow runs light and dark; the nightly runs light. The driver waits out the core's one-minute recency guard once (the thirty pages' creation), and Home and back once. The estimate is the author's, not yet a nightly's measure. First on phone-f, the shard opened for it."
     },
     {
       "id": "sheet-leave",
