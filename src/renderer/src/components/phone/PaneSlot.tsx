@@ -33,6 +33,12 @@ interface SlotProps {
    * pane fades in on its own class whenever it comes up).
    */
   switching?: boolean
+  /**
+   * The slot's element as it comes up for a new `pane`, in the commit that brought it (after
+   * `onLeave`'s still is taken): for the surface's own entrance – the Space slot's slide from
+   * the side the new Space stands on (`TabOverview`, MOT-05). `from` is the pane that left.
+   */
+  onEnter?: (el: HTMLDivElement, from: string) => void
   children: ReactNode
 }
 
@@ -55,8 +61,12 @@ export class PaneSlot extends Component<SlotProps> {
     return takeStill(el, root)
   }
 
-  componentDidUpdate(_prev: SlotProps, _state: unknown, still: PaneStill | null): void {
+  componentDidUpdate(prev: SlotProps, _state: unknown, still: PaneStill | null): void {
     if (still) this.props.onLeave(still)
+    // The still is up before the entrance is asked for: `el` is the new pane's element now (the
+    // key changed it), so a slide it starts here shows on the frame the still fades over.
+    const el = this.el.current
+    if (prev.pane !== this.props.pane && el) this.props.onEnter?.(el, prev.pane)
   }
 
   render(): JSX.Element {
@@ -109,6 +119,12 @@ function takeStill(el: HTMLElement, root: HTMLElement): PaneStill {
   // The copy's scroller is marked before the hooks go, so the still finds it to scroll it.
   node.querySelector<HTMLElement>(SCROLLER)?.setAttribute('data-still-scroller', '')
   node.classList.remove('zen-overview-pane')
+  // A pane leaving mid-entrance (a second Space picked inside the slide's 250 ms) is drawn
+  // where and as faint as it stood: its box above is the drawn one, and the entrance's opacity
+  // – an animation, which a copy does not carry – is written onto the copy, so the still's fade
+  // starts from it and not from a jump to solid.
+  const opacity = el.ownerDocument.defaultView?.getComputedStyle(el).opacity
+  if (opacity && opacity !== '1') node.style.opacity = opacity
   for (const hook of node.querySelectorAll(
     [...HOOKS.map((attr) => `[${attr}]`), '.zen-overview-grid'].join(', ')
   )) {

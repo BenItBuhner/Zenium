@@ -29,6 +29,9 @@ export const SPACE_SLIDE_PX = 120
 /** §11's standard curve for a state change. */
 export const SPACE_EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 
+/** The slide's `Animation.id`, for whoever finds the slot's animations (tests, the drivers). */
+export const SPACE_SLIDE_ID = 'zen-space-slide'
+
 /**
  * Where the incoming Space stands relative to the outgoing one: `forward` when later in the
  * strip's order (the incoming grid comes from the trailing side), `back` when earlier, `none` when
