@@ -111,6 +111,68 @@ describe('planUnits', () => {
     expect(planned.units[0].groups.map((g) => g.js)).toEqual([['ex.js'], ['all.js']])
   })
 
+  it('plans a main-world unit without sources over the externally connectable pages', () => {
+    // Speak Subtitles for YouTube: its MAIN-world scripts on www.youtube.com reach the worker
+    // through the page's own `chrome.runtime.sendMessage(<its id>, …)`.
+    const manifest = manifestOf({
+      externally_connectable: {
+        matches: [
+          'https://www.youtube.com/*',
+          'https://*.example.org/*',
+          '<all_urls>',
+          '*://*/*',
+          '*://*.com/*',
+          'not a pattern',
+          42
+        ]
+      },
+      content_scripts: [
+        { matches: ['https://www.youtube.com/*'], js: ['content.js'], world: 'MAIN' },
+        { matches: ['https://github.com/*'], js: ['gh.js'] }
+      ]
+    })
+    const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
+    expect(boot.externallyConnectable).toEqual([
+      'https://www.youtube.com/*',
+      'https://*.example.org/*'
+    ])
+    const planned = planUnits(boot, manifest, env)
+    // www.youtube.com has the MAIN group's unit already, which carries the patterns: one copy
+    // for both; example.org gets a unit without sources.
+    expect(planned.units.map((u) => u.key)).toEqual([
+      'isolated:https://github.com',
+      'main:https://*.example.org',
+      'main:https://www.youtube.com'
+    ])
+    const connectable = planned.units[1]
+    expect(connectable.groups).toEqual([])
+    expect(connectable.worldName).toBeNull()
+    expect(connectable.isolation).toBe('none')
+    expect(connectable.config.extension.externallyConnectable).toEqual(boot.externallyConnectable)
+    expect(planned.units[2].groups.map((g) => g.js)).toEqual([['content.js']])
+    expect(planned.units[2].config.extension.externallyConnectable).toEqual(
+      boot.externallyConnectable
+    )
+    // Without worlds the unit is still the main world's own, not the `with` fallback's.
+    const without = planUnits(boot, manifest, { ...env, isolatedWorlds: false })
+    expect(without.units.find((u) => u.key === 'main:https://*.example.org')?.isolation).toBe(
+      'none'
+    )
+    // A main-world unit over every origin covers the connectable pages too.
+    const everywhere = manifestOf({
+      externally_connectable: { matches: ['https://www.youtube.com/*'] },
+      content_scripts: [{ matches: ['<all_urls>'], js: ['main.js'], world: 'MAIN' }]
+    })
+    const everywhereBoot = buildExtensionBoot(ID, everywhere, null, [], 'world')
+    expect(planUnits(everywhereBoot, everywhere, env).units.map((u) => u.key)).toEqual(['main:*'])
+    // Without the key no page gets the API, and nothing is planned for it.
+    const plain = buildExtensionBoot(ID, manifestOf({}), null, [], 'world')
+    expect(plain.externallyConnectable).toBeUndefined()
+    expect(planUnits(plain, manifestOf({}), env).units).toEqual([])
+    const idsOnly = manifestOf({ externally_connectable: { ids: ['*'] } })
+    expect(buildExtensionBoot(ID, idsOnly, null, [], 'world').externallyConnectable).toBeUndefined()
+  })
+
   it('gives user scripts their own world and carries the messaging switch', () => {
     const manifest = manifestOf({ permissions: ['userScripts'], host_permissions: ['<all_urls>'] })
     const registered: RegisteredContentScript[] = [

@@ -9,7 +9,7 @@ import type {
   UnitWorld
 } from '@core/extensions/runtime/boot'
 import { localizeCss } from '@core/extensions/api/i18n'
-import type { FrameContext } from '@core/extensions/api/matchPattern'
+import { matchesAnyPattern, type FrameContext } from '@core/extensions/api/matchPattern'
 import { decideFrameBoot } from '@core/extensions/runtime/frameBoot'
 import {
   capturePrimordials,
@@ -58,6 +58,7 @@ import { installPdfDocumentType } from './extensionPdfDocument'
 import { installExtensionPolyfills, type PolyfillRealm } from './extensionPolyfills'
 import { installSpeechSynthesis } from './extensionSpeechSynthesis'
 import { installUrlOrigin, scopedUrlClass } from './extensionUrlOrigin'
+import { completeChromeObject } from '@shared/chromeObject'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -266,10 +267,15 @@ declare const __zenExtBoot: Boot
   /**
    * One endpoint per extension per copy of this script; under the `with` fallback the copy also
    * holds an extension's user-script scope next to its content scope (two units of one main
-   * world), and that engine's endpoint is told apart by its context.
+   * world), and that engine's endpoint is told apart by its context (`u`); the engine behind the
+   * web page's own `chrome.runtime` (`externally_connectable`, below) by its `x`.
    */
-  const endpointIdFor = (extId: string, context: EngineContextKind = 'content'): string =>
-    `${docId}.${nonce}${context === 'userScript' ? 'u' : ''}.${extId.slice(0, 8)}`
+  const endpointIdFor = (
+    extId: string,
+    context: EngineContextKind = 'content',
+    external = false
+  ): string =>
+    `${docId}.${nonce}${context === 'userScript' ? 'u' : external ? 'x' : ''}.${extId.slice(0, 8)}`
   const realWindow = window as unknown as Any
   const engineTransport = { post }
 
@@ -369,9 +375,11 @@ declare const __zenExtBoot: Boot
     root: object,
     world: boolean,
     /** The MV3 worker page's `self`: what its callbacks and listeners get as `this`, as in a worker of Chrome's. */
-    receiver?: object
+    receiver?: object,
+    /** The engine behind a web page's `chrome.runtime` (`externally_connectable`): its messages and ports go out marked external. */
+    external = false
   ): EmulatedEngine {
-    const endpointId = endpointIdFor(ext.id, context)
+    const endpointId = endpointIdFor(ext.id, context, external)
     const engine = createEmulatedEngine(
       {
         id: ext.id,
@@ -390,6 +398,7 @@ declare const __zenExtBoot: Boot
         url: frame.url,
         isTopFrame: frame.isTopFrame,
         world,
+        ...(external ? { externalSender: true } : {}),
         ...(typeof boot.config.messageLimit === 'number' && boot.config.messageLimit > 0
           ? { maxMessageLength: boot.config.messageLimit }
           : {})
@@ -937,8 +946,16 @@ declare const __zenExtBoot: Boot
         ext,
         engine: null,
         window: realWindow,
-        chrome: realWindow.chrome,
-        browser: realWindow.browser,
+        // The page's own `chrome`, read when a script runs rather than when the scope is made:
+        // a connectable extension's page API (`installPageApi`) may land on the window after
+        // another unit made this scope, and a `document_idle` script of a `world: "MAIN"`
+        // declaration is what calls `chrome.runtime.sendMessage(<its id>, …)` (Speak Subtitles).
+        get chrome() {
+          return realWindow.chrome
+        },
+        get browser() {
+          return realWindow.browser
+        },
         isolation,
         mirror: mirrorOnto(realWindow)
       }
@@ -1009,6 +1026,99 @@ declare const __zenExtBoot: Boot
     }
     scopes.set(key, scope)
     return scope
+  }
+
+  // --- externally_connectable: the page's own chrome.runtime -----------------------------------
+
+  /** The engines behind the page's `chrome.runtime`, one per connectable extension, by id. */
+  const pageEngines = new Map<string, EmulatedEngine>()
+  /** The document's `chrome.runtime` once a connectable extension installed it. */
+  let pageRuntime: Record<string, unknown> | null = null
+
+  const define = (target: object, name: string, value: unknown): void => {
+    try {
+      Object.defineProperty(target, name, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      })
+    } catch {
+      /* the page froze the object first: it keeps its own */
+    }
+  }
+
+  /** Whether `ext`'s `externally_connectable.matches` covers this frame's document. */
+  const connectableHere = (ext: ExtensionBoot): boolean =>
+    Array.isArray(ext.externallyConnectable) &&
+    ext.externallyConnectable.length > 0 &&
+    matchesAnyPattern(frame.url, ext.externallyConnectable)
+
+  /**
+   * Chrome's `chrome.runtime` for a web page a connectable extension's `externally_connectable.
+   * matches` covers: `sendMessage(extensionId, message, options?, callback?)`,
+   * `connect(extensionId, connectInfo?)` and `lastError`, and nothing else of the extension's
+   * (no `id`, no `getURL`, no events). One object per document, shared by every connectable
+   * extension of this copy's world, each with an engine of its own behind it: a content
+   * endpoint of the extension's in this frame whose `chrome` sits on a private root the page
+   * never sees, its messages and ports marked external (`EngineConfig.externalSender`), so the
+   * router describes the sender as the page – url, origin, tab, frame, no `id` – and the
+   * extension hears them on `runtime.onMessageExternal` / `onConnectExternal`. An id no
+   * connectable extension here owns goes through any of the engines: the router answers it as
+   * Chrome answers a page that names an absent extension, "Receiving end does not exist". A call
+   * without an id string throws Chrome's error for a web page. The window without a `chrome`
+   * object (the WebView's) gets one with Chrome's `app`, `csi()` and `loadTimes()` next to the
+   * `runtime` (shared/chromeObject.ts: a Chrome user agent whose `chrome` has no `app` reads as
+   * an embedded browser to Google's sign-in); a page's own `chrome.runtime` is left alone.
+   */
+  function installPageApi(ext: ExtensionBoot): void {
+    if (pageEngines.has(ext.id)) return
+    pageEngines.set(ext.id, makeEngine(ext, 'content', frame, {}, false, undefined, true))
+    if (stats) (stats.pageApi ??= []).push(ext.id)
+    if (pageRuntime) return
+    const runtime: Record<string, unknown> = {}
+    type EngineRuntime = {
+      sendMessage: (...args: unknown[]) => unknown
+      connect: (...args: unknown[]) => unknown
+      lastError?: unknown
+    }
+    const runtimeOf = (engine: EmulatedEngine): EngineRuntime =>
+      (engine.chrome as { runtime: EngineRuntime }).runtime
+    const engineFor = (extensionId: unknown, method: string): EngineRuntime => {
+      if (typeof extensionId !== 'string' || !/^[a-p]{32}$/.test(extensionId))
+        throw new TypeError(
+          `chrome.runtime.${method}() called from a webpage must specify an Extension ID (string) for its first argument.`
+        )
+      const engine = pageEngines.get(extensionId) ?? pageEngines.values().next().value
+      if (!engine) throw new TypeError(`chrome.runtime.${method}() is not available here.`)
+      return runtimeOf(engine)
+    }
+    define(runtime, 'sendMessage', function sendMessage(extensionId: unknown, ...rest: unknown[]) {
+      return engineFor(extensionId, 'sendMessage').sendMessage(extensionId, ...rest)
+    })
+    define(runtime, 'connect', function connect(extensionId: unknown, ...rest: unknown[]) {
+      return engineFor(extensionId, 'connect').connect(extensionId, ...rest)
+    })
+    // Set while a callback of one of the engines runs with an error, as its own `lastError` is.
+    Object.defineProperty(runtime, 'lastError', {
+      get: (): unknown => {
+        for (const engine of pageEngines.values()) {
+          const error = runtimeOf(engine).lastError
+          if (error !== undefined) return error
+        }
+        return undefined
+      },
+      enumerable: true,
+      configurable: true
+    })
+    let chrome = realWindow.chrome as Record<string, unknown> | undefined
+    if (!chrome || typeof chrome !== 'object') {
+      chrome = {}
+      define(realWindow, 'chrome', chrome)
+      completeChromeObject(realWindow as unknown as Window)
+    }
+    if (!('runtime' in chrome)) define(chrome, 'runtime', runtime)
+    pageRuntime = runtime
   }
 
   const isolationOf = (ext: ExtensionBoot, group: BootGroup | null): IsolationMode =>
@@ -1198,6 +1308,9 @@ declare const __zenExtBoot: Boot
    */
   const apply = (ext: ExtensionBoot, late: boolean, unit: UnitContext, started: number): void => {
     if (!attached.some((e) => e.id === ext.id)) attached.push(ext)
+    // The page's `chrome.runtime` comes with the extension's main-world unit (units.ts plans one
+    // over the connectable pages' origins), ahead of any `world: "MAIN"` script of the unit's.
+    if (unit.world === 'main' && connectableHere(ext)) installPageApi(ext)
     const due = decideFrameBoot(ext, frame, late).groups
     if (stats) stats.matchMs += performance.now() - started
     if (late) scopeFor(ext, ext.isolation === 'none' ? 'with' : ext.isolation, contentUnit)

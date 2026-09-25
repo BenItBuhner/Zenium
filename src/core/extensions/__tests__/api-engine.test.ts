@@ -626,6 +626,59 @@ describe('createEmulatedEngine', () => {
     expect(fromUserScripts).toEqual(['u'])
   })
 
+  it("a web page's engine (externally_connectable) marks its messages external; they land on onMessageExternal alone", () => {
+    // The engine behind a page's `chrome.runtime`: a content endpoint with `externalSender`.
+    const page = harness({
+      context: 'content',
+      externalSender: true,
+      url: 'https://www.youtube.com/watch?v=1'
+    })
+    void (page.chrome.runtime.sendMessage as Fn)(EXT, { op: 'settings' }, {}, () => undefined)
+    expect(page.last()).toMatchObject({
+      t: 'msg',
+      target: { extensionId: EXT },
+      data: { op: 'settings' },
+      callback: true,
+      external: true
+    })
+    expect(page.last().userScript).toBeUndefined()
+    void (page.chrome.runtime.connect as Fn)(EXT, { name: 'yss' })
+    expect(page.last()).toMatchObject({ t: 'connect', name: 'yss', target: { extensionId: EXT }, external: true })
+
+    const bg = harness()
+    const plain: unknown[] = []
+    const external: Array<{ message: unknown; sender: unknown }> = []
+    const ports: Array<{ name: string; sender: unknown }> = []
+    ;(bg.chrome.runtime.onMessage as Listenable).addListener((m) => plain.push(m))
+    ;(bg.chrome.runtime.onMessageExternal as Listenable).addListener((message, sender) =>
+      external.push({ message, sender })
+    )
+    ;(bg.chrome.runtime.onConnectExternal as Listenable).addListener((port) => {
+      const p = port as { name: string; sender: unknown }
+      ports.push({ name: p.name, sender: p.sender })
+    })
+    // The router's sender for a page: url, origin, tab and frame, no id.
+    const sender = {
+      url: 'https://www.youtube.com/watch?v=1',
+      origin: 'https://www.youtube.com',
+      frameId: 0,
+      tab: { id: 1 }
+    }
+    bg.engine.receive({ t: 'deliver', id: 1, data: 'from-page', sender, external: true })
+    bg.engine.receive({ t: 'deliver', id: 2, data: 'from-cs', sender: { id: EXT } })
+    expect(plain).toEqual(['from-cs'])
+    expect(external).toEqual([{ message: 'from-page', sender }])
+    bg.engine.receive({ t: 'portConnect', portId: 'x:1', name: 'yss', sender, external: true })
+    expect(ports).toEqual([{ name: 'yss', sender }])
+    expect(bg.sent).toContainEqual(
+      expect.objectContaining({ t: 'portAccept', portId: 'x:1', accept: true })
+    )
+    // A page's message to an extension without the external listener: no receiving end.
+    const deaf = harness()
+    deaf.engine.receive({ t: 'deliver', id: 3, data: 'x', sender, external: true })
+    expect(deaf.last()).toMatchObject({ t: 'msgReply', id: 3, handled: false, listeners: false })
+  })
+
   it('exposes engine-side helpers: platform info, privacy settings, identity redirect', async () => {
     const h = harness({ permissions: ['privacy', 'identity', 'idle'] })
     await expect((h.chrome.runtime.getPlatformInfo as Fn)() as Promise<unknown>).resolves.toEqual({

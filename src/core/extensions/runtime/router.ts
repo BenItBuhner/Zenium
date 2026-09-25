@@ -126,7 +126,8 @@ export class MessageRouter {
           Number(message.id),
           (message.target ?? {}) as MessageTarget,
           message.data,
-          message.callback === true
+          message.callback === true,
+          message.external === true
         )
         return true
       case 'msgReply':
@@ -137,7 +138,8 @@ export class MessageRouter {
           sender,
           String(message.portId),
           String(message.name ?? ''),
-          (message.target ?? {}) as MessageTarget
+          (message.target ?? {}) as MessageTarget,
+          message.external === true
         )
         return true
       case 'portAccept': {
@@ -210,7 +212,12 @@ export class MessageRouter {
     )
   }
 
-  senderInfo(endpoint: Endpoint): MessageSender {
+  /**
+   * The `MessageSender` a message or port from `endpoint` carries. `external`: the endpoint is a
+   * web page's connection (`externally_connectable`), which Chrome describes by its `url`,
+   * `origin`, tab and frame and no `id` (the id names an extension; a page has none).
+   */
+  senderInfo(endpoint: Endpoint, external = false): MessageSender {
     const inFrame = endpoint.context === 'content' || endpoint.context === 'userScript'
     // An extension page names itself as Chrome spells it, `chrome-extension://<id>/popup.html`,
     // whatever origin the WebView loaded it from: Tampermonkey's background admits its own
@@ -218,7 +225,7 @@ export class MessageRouter {
     // `origin` stays the served one, the `location.origin` the page itself sees – which is what
     // a background compares it with.
     const info: MessageSender = {
-      id: endpoint.extensionId,
+      ...(external ? {} : { id: endpoint.extensionId }),
       url: inFrame ? endpoint.url : presentExtensionUrl(endpoint.url)
     }
     // Chrome attributes a sender to the tab it is hosted in, an extension page open as a tab as
@@ -252,7 +259,8 @@ export class MessageRouter {
     senderMessageId: number,
     target: MessageTarget,
     data: unknown,
-    callback = false
+    callback = false,
+    external = false
   ): void {
     const targets = this.targetsFor(sender, target)
     if (typeof targets === 'string' || targets.length === 0) {
@@ -275,11 +283,20 @@ export class MessageRouter {
       callback
     }
     this.pending.set(rid, pending)
-    const info = this.senderInfo(sender)
-    // A user script's message lands on runtime.onUserScriptMessage, never on onMessage.
-    const flag = sender.context === 'userScript' ? { userScript: true } : {}
+    const info = this.senderInfo(sender, external)
+    // A user script's message lands on runtime.onUserScriptMessage, never on onMessage; a web
+    // page's (externally_connectable) on runtime.onMessageExternal.
+    const flag = this.deliveryFlag(sender, external)
     for (const endpoint of targets)
       this.outbox.send(endpoint.id, { t: 'deliver', id: rid, data, sender: info, ...flag })
+  }
+
+  private deliveryFlag(
+    sender: Endpoint,
+    external: boolean
+  ): { userScript?: true; external?: true } {
+    if (external) return { external: true }
+    return sender.context === 'userScript' ? { userScript: true } : {}
   }
 
   private onMessageReply(from: string, message: Record<string, unknown>): void {
@@ -335,7 +352,13 @@ export class MessageRouter {
 
   // --- ports -----------------------------------------------------------------------------------
 
-  private connect(sender: Endpoint, portId: string, name: string, target: MessageTarget): void {
+  private connect(
+    sender: Endpoint,
+    portId: string,
+    name: string,
+    target: MessageTarget,
+    external = false
+  ): void {
     const targets = this.targetsFor(sender, target)
     if (typeof targets === 'string' || targets.length === 0) {
       this.outbox.send(sender.id, {
@@ -354,8 +377,8 @@ export class MessageRouter {
       queue: []
     }
     this.ports.set(portId, port)
-    const info = this.senderInfo(sender)
-    const flag = sender.context === 'userScript' ? { userScript: true } : {}
+    const info = this.senderInfo(sender, external)
+    const flag = this.deliveryFlag(sender, external)
     for (const endpoint of targets)
       this.outbox.send(endpoint.id, { t: 'portConnect', portId, name, sender: info, ...flag })
   }

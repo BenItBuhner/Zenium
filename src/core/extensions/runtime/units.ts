@@ -141,6 +141,23 @@ export function planUnits(
   for (const group of boot.groups) {
     add(worldOf(group), sortedOrigins(originRulesFor(group.matches)), [group])
   }
+  // The pages `externally_connectable.matches` lets speak to the extension need a main-world
+  // copy of the bootstrap: it installs the page API (`chrome.runtime.sendMessage` / `connect`
+  // taking the extension's id) on the page's own `chrome` where a pattern covers the frame, and
+  // an engine behind it for the extension's `onMessageExternal` / `onConnectExternal`. Every
+  // main-world unit carries the patterns, so origins a `world: "MAIN"` declaration's unit
+  // already covers need no second copy (Speak Subtitles' MAIN scripts and its connectable pages
+  // are both www.youtube.com); the rest get one unit without sources.
+  if (boot.externallyConnectable && boot.externallyConnectable.length > 0) {
+    const covered = new Set<string>()
+    for (const draft of drafts.values())
+      if (draft.world === 'main') for (const origin of draft.origins) covered.add(origin)
+    if (!covered.has('*')) {
+      const wanted = sortedOrigins(originRulesFor(boot.externallyConnectable))
+      const missing = wanted.filter((origin) => !covered.has(origin))
+      if (missing.length > 0) add('main', missing, [])
+    }
+  }
   if (env.isolatedWorlds && injectsProgrammatically(manifest)) {
     const wanted = sortedOrigins(originRulesFor(manifest.hostPermissions))
     const covered = new Set<string>()

@@ -158,6 +158,62 @@ describe('runtime.sendMessage', () => {
     expect(take('cs')).toEqual([{ t: 'reply', id: 6, ok: false, error: NO_RECEIVER }])
     expect(take('bg')).toEqual([])
   })
+
+  it("delivers a web page's message (externally_connectable) marked external, with a sender that has no id", () => {
+    const { router, take } = setup()
+    // The engine behind the page's `chrome.runtime`: a content endpoint of the extension's.
+    router.register(endpoint('page-x', { url: 'https://www.youtube.com/watch?v=1' }))
+    router.register(endpoint('bg', { context: 'background', tabId: null }))
+    router.handle('page-x', {
+      t: 'msg',
+      id: 9,
+      target: { extensionId: EXT, options: {} },
+      data: { op: 'settings' },
+      callback: true,
+      external: true
+    })
+    const toBg = take('bg')
+    expect(toBg).toHaveLength(1)
+    expect(toBg[0]).toMatchObject({ t: 'deliver', data: { op: 'settings' }, external: true })
+    expect(toBg[0].userScript).toBeUndefined()
+    const sender = toBg[0].sender as Record<string, unknown>
+    expect(sender.id).toBeUndefined()
+    expect(sender).toMatchObject({
+      url: 'https://www.youtube.com/watch?v=1',
+      origin: 'https://www.youtube.com',
+      frameId: 0
+    })
+    expect(sender.tab).toEqual({ id: 1, url: 'https://page.example/' })
+    // The page names an extension that is not this one: no receiving end, as in Chrome.
+    router.handle('page-x', {
+      t: 'msg',
+      id: 10,
+      target: { extensionId: 'a'.repeat(32) },
+      data: 1,
+      external: true
+    })
+    expect(take('page-x')).toEqual([{ t: 'reply', id: 10, ok: false, error: NO_RECEIVER }])
+    expect(take('bg')).toEqual([])
+    // Its port goes the same way: `portConnect` marked external, the sender without an id.
+    router.handle('page-x', {
+      t: 'connect',
+      portId: 'page-x:1',
+      name: 'yss',
+      target: { extensionId: EXT },
+      external: true
+    })
+    const connects = take('bg')
+    expect(connects).toHaveLength(1)
+    expect(connects[0]).toMatchObject({ t: 'portConnect', portId: 'page-x:1', name: 'yss', external: true })
+    expect((connects[0].sender as Record<string, unknown>).id).toBeUndefined()
+    expect((connects[0].sender as Record<string, unknown>).origin).toBe('https://www.youtube.com')
+    // A content script's own message stays as it was: sender with the id, no mark.
+    router.register(endpoint('cs'))
+    router.handle('cs', { t: 'msg', id: 11, target: { extensionId: null }, data: 2 })
+    const plain = take('bg')
+    expect(plain[0].external).toBeUndefined()
+    expect((plain[0].sender as Record<string, unknown>).id).toBe(EXT)
+  })
 })
 
 describe('tabs.sendMessage', () => {
