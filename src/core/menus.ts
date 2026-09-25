@@ -3709,8 +3709,15 @@ export class Menus {
       // (`homeScreenItems`: Open in the app, or Add to Home Screen).
       let hairlines = 0
       const hairline = (): Template => [{ type: 'separator', key: `sep.${++hairlines}` }]
-      const keyed = (key: string, ...items: Template): Template =>
-        items.map((item, i) => ({ ...item, key: item.key ?? (i === 0 ? key : `${key}.${i + 1}`) }))
+      const keyed = (key: string, ...items: Template): Template => {
+        // One key names one item. A group that can stand more than one unnamed item together
+        // has no place here: it names each where it is built (as `privateTabs` does), else a
+        // saved key would name a place, not a row.
+        if (items.filter((item) => item.key === undefined).length > 1) {
+          throw new Error(`Menu key ${key} would name ${items.length} items`)
+        }
+        return items.map((item) => ({ ...item, key: item.key ?? key }))
+      }
       const keyOf = (item: MenuItemTemplate): string | undefined => item.key
       const order = state.settings.menuOrder
       const list: Template = [

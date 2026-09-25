@@ -1804,48 +1804,76 @@ describe('the app menu', () => {
       expect(item(shown, 'Close Private Tabs').key).toBe('row.closePrivateTabs')
       expect(item(shown, 'Desktop Site').key).toBe('row.desktopSite')
       expect(named.some((k) => /\.\d+$/.test(k) && !k.startsWith('sep.'))).toBe(false)
-      // The desktop's and the tablet's menus carry no keys: the order is the phone's.
+      // The desktop-shaped menus are not keyed as a whole: under the desktop's capabilities they
+      // carry no key at all; where a builder of theirs is shared with the phone branch (the
+      // page controls' rows, Add to Home Screen) its items carry the phone's key as an extra
+      // property the templates never read – the Android tablet's four – and `menuOrder` moves
+      // nothing there: the order is the phone's.
       for (const other of [harness(DESKTOP), harness(DESKTOP, 'tablet')]) {
         appMenu(other)
         expect(keysOf(other.shown()).every((k) => k === undefined)).toBe(true)
       }
+      const tablet = harness(ANDROID, 'tablet')
+      const plain = appMenu(tablet)
+      const tabletKeys = keysOf(tablet.shown()).filter((k): k is string => k !== undefined)
+      expect(tabletKeys).toEqual(['row.newPrivateTab', 'row.closePrivateTabs', 'row.desktopSite'])
+      tablet.browser.state.settings.menuOrder = [
+        'row.desktopSite',
+        'row.closePrivateTabs',
+        'row.newPrivateTab'
+      ]
+      expect(appMenu(tablet)).toEqual(plain)
+      // The desktop as shipped (site darkening on) carries the darken row's key the same way
+      // once the row is live; whatever it carries is a shared row's, and the order moves nothing.
+      const desktop = harness({ ...DESKTOP, darkenSites: true })
+      const desktopPlain = appMenu(desktop)
+      expect(keysOf(desktop.shown()).every((k) => k === undefined || k.startsWith('row.'))).toBe(
+        true
+      )
+      desktop.browser.state.settings.menuOrder = ['row.darkenSite', 'row.newTab']
+      expect(appMenu(desktop)).toEqual(desktopPlain)
     })
 
-    it('reads `settings.menuOrder` per section: the named items first in the saved order, the rest after them in the default order, a key the build has no item for dropped, the Change Menu row last whatever the order says', () => {
+    it('reads `settings.menuOrder` per section: the named items in the saved order, an item the order never named after its default predecessor, a key the build has no item for dropped, the Change Menu row last whatever the order says', () => {
       const h = harness(ANDROID, 'phone')
+      const plain = appMenu(h)
+      const defaults = keysOf(h.shown()).filter(
+        (k): k is string => k !== undefined && k !== 'menu.change'
+      )
+      // Saved as the sheet saves – every key shown – while Home was on the bar (absent), with
+      // Reload dragged to the row's head, Settings and the fourth hairline's group (Find in
+      // Page…'s) to the list's head, and a key of another build's among them.
+      const rest = defaults.filter(
+        (k) => !['icon.home', 'icon.reload', 'row.settings', 'sep.4'].includes(k)
+      )
       h.browser.state.settings.menuOrder = [
-        'row.settings',
         'icon.reload',
+        'row.settings',
         'row.readAloud',
         'menu.change',
         'sep.4',
-        'row.downloads',
-        'icon.home'
+        ...rest
       ]
       const menu = appMenu(h)
+      // Reload first; Home – never named – back after Forward, the glyph it follows by default.
       expect(menu.slice(0, 7)).toEqual([
         'Reload',
-        'Home',
         'Forward',
+        'Home',
         'Bookmark',
         'Download Page',
         'Page Info',
         '-'
       ])
-      // Settings, then the fourth hairline (Find in Page…'s group's), then Downloads, then the
-      // default order less the three; the row's Zoom… group lost its hairline to Settings' side.
-      expect(menu.slice(7, 12)).toEqual([
-        'Settings',
-        '-',
-        'Downloads',
-        'New Tab',
-        'New Private Tab'
-      ])
+      // Settings, then the fourth hairline, then the default order less the two.
+      expect(menu.slice(7, 11)).toEqual(['Settings', '-', 'New Tab', 'New Private Tab'])
       expect(menu.filter((l) => l === 'Settings')).toHaveLength(1)
       expect(menu.filter((l) => l === 'Downloads')).toHaveLength(1)
       expect(menu.at(-2)).toBe('-')
       expect(menu.at(-1)).toBe('Change Menu')
       expect(menu).not.toContain('row.readAloud')
+      // The same rows (Settings' hairline, left beside another, tidied away as the core does).
+      expect(menu.filter((l) => l !== '-').sort()).toEqual(plain.filter((l) => l !== '-').sort())
     })
 
     it('saves the order through `settings.update` – sanitised – and an empty list is the Reset: the setting absent, the default order back', () => {
@@ -1859,6 +1887,17 @@ describe('the app menu', () => {
       h.browser.handleCommand(h.win, 'settings.update', { menuOrder: [] })
       expect('menuOrder' in h.browser.state.settings).toBe(false)
       expect(appMenu(h)).toEqual(before)
+    })
+
+    it('ignores a malformed `menuOrder` patch – not a list, or a list with no key in it – rather than reading it as the Reset', () => {
+      const h = harness(ANDROID, 'phone')
+      h.browser.handleCommand(h.win, 'settings.update', { menuOrder: ['row.about', 'row.newTab'] })
+      const saved = appMenu(h)
+      for (const bad of ['row.about', 42, null, true, { 0: 'row.about' }, [3, null, '']]) {
+        h.browser.handleCommand(h.win, 'settings.update', { menuOrder: bad })
+        expect(h.browser.state.settings.menuOrder).toEqual(['row.about', 'row.newTab'])
+      }
+      expect(appMenu(h)).toEqual(saved)
     })
   })
 

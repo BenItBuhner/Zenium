@@ -26,18 +26,22 @@ export const MENU_KEY_CHANGE_MENU = 'menu.change'
 
 /** A saved order longer than this is cut: the phone menu has a few dozen items at most. */
 export const MENU_ORDER_MAX = 96
+/** A key longer than this names nothing of ours (`row.closePrivateTabs` is 20): it is dropped. */
+export const MENU_KEY_MAX = 64
 
 /**
- * A persisted or synced `menuOrder` read like a profile's own: unique non-empty strings, capped.
- * Nothing valid – or an empty list, the Reset row's write – reads as the default (`undefined`),
- * so the setting is absent rather than empty.
+ * A persisted or synced `menuOrder` read like a profile's own: unique non-empty strings no
+ * longer than a key of ours, capped in number. Nothing valid – or an empty list, the Reset row's
+ * write – reads as the default (`undefined`), so the setting is absent rather than empty.
  */
 export function sanitizeMenuOrder(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined
   const seen = new Set<string>()
   const order: string[] = []
   for (const key of raw) {
-    if (typeof key !== 'string' || key === '' || seen.has(key)) continue
+    if (typeof key !== 'string' || key === '' || key.length > MENU_KEY_MAX || seen.has(key)) {
+      continue
+    }
     if (order.length >= MENU_ORDER_MAX) break
     seen.add(key)
     order.push(key)
@@ -46,11 +50,15 @@ export function sanitizeMenuOrder(raw: unknown): string[] | undefined {
 }
 
 /**
- * `items` in the saved order: the items the order names come first, in its order; the items it
- * never named – a newer build's additions, an item that was on the bar when the order was saved
- * – follow in the default order; a key the build has no item for (an older build's item, another
- * device's) is dropped. Items without a key are never named and keep to the second part. No
- * saved order, or an empty one, is the default order itself.
+ * `items` in the saved order: the items the order names come first, in its order; an item it
+ * never named – a newer build's addition, an item that was on the bar or off its condition when
+ * the order was saved (Home while the bar carries it, Add to Home Screen on an installed app) –
+ * takes its place after its DEFAULT PREDECESSOR: the item before it in the default order, or the
+ * nearest one before that which is shown, so a row returning to the menu returns beside the row
+ * it always followed, not to the section's end; one with no predecessor shown leads. Items
+ * without a key are never named and take the same route. A key the build has no item for (an
+ * older build's, another device's) is dropped. No saved order, or an empty one, is the default
+ * order itself.
  */
 export function applyMenuOrder<T>(
   items: readonly T[],
@@ -71,11 +79,21 @@ export function applyMenuOrder<T>(
     placed.add(item)
     ordered.push(item)
   }
-  for (const item of items) {
-    if (placed.has(item)) continue
+  items.forEach((item, i) => {
+    if (placed.has(item)) return
+    // The nearest default predecessor already in the order; an unnamed item placed just before
+    // this one counts, so a run of unnamed items keeps its default order.
+    let at = 0
+    for (let j = i - 1; j >= 0; j--) {
+      const index = ordered.indexOf(items[j] as T)
+      if (index >= 0) {
+        at = index + 1
+        break
+      }
+    }
     placed.add(item)
-    ordered.push(item)
-  }
+    ordered.splice(at, 0, item)
+  })
   return ordered
 }
 

@@ -187,6 +187,18 @@ describe('collectLocal', () => {
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).toHaveProperty('searchEngineId')
   })
+
+  it('sends the phone menu’s order as the empty list while it is the default, so a Reset reaches the peers', () => {
+    const src = sources()
+    const settings = (): Record<string, unknown> =>
+      collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
+    expect('menuOrder' in src.settings).toBe(false)
+    expect(settings().menuOrder).toEqual([])
+    src.settings.menuOrder = ['row.settings', 'row.newTab']
+    expect(settings().menuOrder).toEqual(['row.settings', 'row.newTab'])
+    delete src.settings.menuOrder
+    expect(settings().menuOrder).toEqual([])
+  })
 })
 
 describe('diffLocal', () => {

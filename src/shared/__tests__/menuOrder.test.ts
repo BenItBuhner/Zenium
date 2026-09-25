@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MENU_KEY_MAX,
   MENU_ORDER_MAX,
   applyMenuOrder,
   isDefaultMenuOrder,
@@ -37,28 +38,71 @@ describe('applyMenuOrder', () => {
     expect(applyMenuOrder(DEFAULT, keyOf, undefined)).not.toBe(DEFAULT)
   })
 
-  it('puts the named items first in the saved order', () => {
-    const saved = ['row.settings', 'row.downloads', 'row.newTab']
-    expect(keys(applyMenuOrder(DEFAULT, keyOf, saved)).slice(0, 3)).toEqual(saved)
-  })
-
-  it('appends the items the saved order never named, in the default order', () => {
-    const saved = ['row.settings', 'row.downloads']
-    expect(keys(applyMenuOrder(DEFAULT, keyOf, saved))).toEqual([
+  it('puts the named items in the saved order', () => {
+    const saved = [
       'row.settings',
       'row.downloads',
       'row.newTab',
+      'sep.2',
+      'row.exit',
+      'row.newPrivateTab',
+      'sep.1',
+      'row.bookmarks',
+      'row.history'
+    ]
+    expect(keys(applyMenuOrder(DEFAULT, keyOf, saved))).toEqual(saved)
+  })
+
+  it('places an item the saved order never named after its default predecessor – the item it always followed – not at the end; a run of them keeps the default order; one with nothing before it leads', () => {
+    // Saved while New Tab, History and Downloads were absent (Home on the bar, a row off its
+    // condition): each returns beside the item it follows in the default order.
+    const saved = [
+      'row.settings',
+      'row.newPrivateTab',
+      'sep.1',
+      'row.bookmarks',
+      'sep.2',
+      'row.exit'
+    ]
+    expect(keys(applyMenuOrder(DEFAULT, keyOf, saved))).toEqual([
+      'row.newTab',
+      'row.settings',
       'row.newPrivateTab',
       'sep.1',
       'row.bookmarks',
       'row.history',
+      'row.downloads',
+      'sep.2',
+      'row.exit'
+    ])
+    // The predecessor itself absent from the build: the nearest one before it that is shown.
+    const without = DEFAULT.filter((i) => i.key !== 'row.history')
+    expect(keys(applyMenuOrder(without, keyOf, saved))).toEqual([
+      'row.newTab',
+      'row.settings',
+      'row.newPrivateTab',
+      'sep.1',
+      'row.bookmarks',
+      'row.downloads',
       'sep.2',
       'row.exit'
     ])
   })
 
   it('drops a key the build has no item for', () => {
-    const saved = ['row.readAloud', 'row.settings', 'icon.forward', 'row.newTab']
+    const saved = [
+      'row.readAloud',
+      'row.settings',
+      'icon.forward',
+      'row.newTab',
+      'row.newPrivateTab',
+      'sep.1',
+      'row.bookmarks',
+      'row.history',
+      'row.downloads',
+      'sep.2',
+      'row.exit'
+    ]
     const ordered = keys(applyMenuOrder(DEFAULT, keyOf, saved))
     expect(ordered.slice(0, 2)).toEqual(['row.settings', 'row.newTab'])
     expect(ordered).not.toContain('row.readAloud')
@@ -73,9 +117,9 @@ describe('applyMenuOrder', () => {
     expect(ordered).toHaveLength(DEFAULT.length)
   })
 
-  it('keeps an unkeyed item in the unnamed part, in its default position among them', () => {
+  it('keeps an unkeyed item, which no order can name, beside its default predecessor', () => {
     const items = [item('row.a'), item(undefined, 'note'), item('row.b'), item('row.c')]
-    expect(applyMenuOrder(items, keyOf, ['row.c']).map((i) => i.label)).toEqual([
+    expect(applyMenuOrder(items, keyOf, ['row.c', 'row.a', 'row.b']).map((i) => i.label)).toEqual([
       'row.c',
       'row.a',
       'note',
@@ -85,7 +129,20 @@ describe('applyMenuOrder', () => {
 
   it('lets two sections share one saved list, each taking the keys it has items for', () => {
     const row = [item('icon.forward'), item('icon.home'), item('icon.reload')]
-    const saved = ['icon.reload', 'row.settings', 'icon.forward', 'row.newTab']
+    const saved = [
+      'icon.reload',
+      'row.settings',
+      'icon.forward',
+      'row.newTab',
+      'row.newPrivateTab',
+      'sep.1',
+      'row.bookmarks',
+      'row.history',
+      'row.downloads',
+      'sep.2',
+      'row.exit'
+    ]
+    // Home was on the bar at the save: back after Forward, the glyph it follows.
     expect(keys(applyMenuOrder(row, keyOf, saved))).toEqual([
       'icon.reload',
       'icon.forward',
@@ -118,6 +175,13 @@ describe('sanitizeMenuOrder', () => {
     const long = Array.from({ length: MENU_ORDER_MAX + 20 }, (_, i) => `row.${i}`)
     expect(sanitizeMenuOrder(long)).toHaveLength(MENU_ORDER_MAX)
   })
+
+  it('drops a key longer than any of ours, keeping the rest', () => {
+    const runaway = `row.${'x'.repeat(MENU_KEY_MAX)}`
+    expect(sanitizeMenuOrder([runaway, 'row.settings'])).toEqual(['row.settings'])
+    expect(sanitizeMenuOrder(['a'.repeat(MENU_KEY_MAX)])).toHaveLength(1)
+    expect(sanitizeMenuOrder([runaway])).toBeUndefined()
+  })
 })
 
 describe('isDefaultMenuOrder', () => {
@@ -129,7 +193,7 @@ describe('isDefaultMenuOrder', () => {
   })
 
   it('is false once the order moves an item', () => {
-    expect(isDefaultMenuOrder(DEFAULT, keyOf, ['row.settings'])).toBe(false)
+    expect(isDefaultMenuOrder(DEFAULT, keyOf, ['row.settings', 'row.newTab'])).toBe(false)
   })
 })
 
@@ -140,9 +204,9 @@ describe('menuOrderOf', () => {
   })
 
   it('round-trips through applyMenuOrder', () => {
-    const shuffled = [DEFAULT[7], DEFAULT[2], DEFAULT[0], DEFAULT[8], DEFAULT[5]] as Item[]
+    const shuffled = [7, 2, 0, 8, 5, 1, 6, 3, 4].map((i) => DEFAULT[i] as Item)
     const saved = menuOrderOf(shuffled, keyOf)
-    expect(keys(applyMenuOrder(DEFAULT, keyOf, saved)).slice(0, saved.length)).toEqual(saved)
+    expect(keys(applyMenuOrder(DEFAULT, keyOf, saved))).toEqual(saved)
   })
 })
 

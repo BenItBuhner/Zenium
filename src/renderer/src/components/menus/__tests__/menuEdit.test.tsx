@@ -436,6 +436,41 @@ describe('the Change Menu row and the edit pose', () => {
     expect(text).toContain('font-weight: var(--v2-weight-button)')
     expect(text).toContain('padding: 0 12px')
   })
+
+  it('the card in the hand is one look from the hold on: the icon card’s press fill yields to the panel while its cell is held (an unlayered rule, as the press rule is), and the row’s card paints inset on its pseudo-element so its 1.02 lands on the row’s edges inside the scroll box', () => {
+    const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    const press =
+      /\.zen-menu-edit li\[data-held\] > \.zen-v2-icon-button\.zen-menu-edit-item:active:not\(:disabled\) \{([^}]*)\}/.exec(
+        css
+      )
+    expect(press).not.toBeNull()
+    expect(press![1]).toContain('background: var(--v2-panel)')
+    // Outside every @layer: the press rule it answers is unlayered, and an unlayered rule wins
+    // over a layered one whatever the specificity.
+    const at = css.indexOf(press![0])
+    const opened = (css.slice(0, at).match(/@layer\s+\w+\s*\{/g) ?? []).length
+    const closedBlocks = css.slice(0, at)
+    let depth = 0
+    for (const ch of closedBlocks) {
+      if (ch === '{') depth++
+      else if (ch === '}') depth--
+    }
+    expect(opened).toBeGreaterThan(0)
+    expect(depth).toBe(0)
+    const row =
+      /\.zen-menu-edit li\[data-held\] > \.zen-sheet-item\.zen-menu-edit-item \{([^}]*)\}/.exec(
+        css
+      )![1]
+    expect(row).toContain('background: transparent')
+    expect(row).toContain('box-shadow: none')
+    const card =
+      /\.zen-menu-edit li\[data-held\] > \.zen-sheet-item\.zen-menu-edit-item::before \{([^}]*)\}/.exec(
+        css
+      )![1]
+    expect(card).toContain('inset: 0 4px')
+    expect(card).toContain('background: var(--v2-panel)')
+    expect(card).toContain('box-shadow: var(--zen-shadow-2)')
+  })
 })
 
 describe('without the gesture (A11Y-10)', () => {
@@ -784,5 +819,28 @@ describe('the hold and the drag (MOT-23)', () => {
       )
     ).toBe(true)
     Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+  })
+
+  it('under reduced motion the lift and the put-down are cuts: the scale written with no transition, cleared at once when the finger lifts (§11.3)', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: (query: string) => ({
+        matches: query.includes('reduce'),
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined
+      })
+    })
+    await openEditor()
+    const at = pickUp('New Private Tab')
+    const el = editItem('New Private Tab')
+    expect(el.style.transform).toBe(`scale(${MENU_LIFT_SCALE})`)
+    expect(el.style.transition).toBe('')
+    expect(cellOf('New Private Tab').dataset.held).toBe('true')
+    pointer('pointerup', el, at.x, at.y)
+    // No `transitionend` to wait for: down at once.
+    expect(el.style.transform).toBe('')
+    expect(el.style.transition).toBe('')
+    expect(cellOf('New Private Tab').dataset.held).toBeUndefined()
+    expect(cellOf('New Private Tab').dataset.cell).toBe('row.newPrivateTab')
   })
 })

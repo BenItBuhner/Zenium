@@ -4396,9 +4396,17 @@
    * transform (`menuReorder.ts`), eased over 120 ms at the hold – with the row's corners
    * rounded to the control radius while it is up. The neighbours glide on the FLIP tracker's
    * transforms. A row carries a trailing grip in the deemphasised ink, as the bar editor's rows
-   * do; the press fill stays, as the sign the finger's press registered before the hold. A
-   * hairline the draft leaves beside another or at an end collapses to a slot of no height, the
-   * way the core tidies the same hairline away when it composes the menu.
+   * do. The card in the hand is ONE look from the hold on: the press fill – the sign the
+   * finger's press registered – goes at the lift (the icon card's unlayered press rule beside
+   * `.zen-v2-icon-button` yields to the panel there). A hairline the draft leaves beside another
+   * or at an end collapses to a slot of no height, the way the core tidies the same hairline
+   * away when it composes the menu.
+   *
+   * The list row's card is the row's full width, and 1.02 of the sheet's width overhangs the
+   * body's scroll box by 4 on each side, where the box clips it: so the row's card is painted on
+   * a pseudo-element inset 4 each side – at the scale its edges land on the row's edges – and the
+   * row's own box stays clear. The icon card is 44 wide inside the row's 16 gutter: its 1.02
+   * paints on the button itself.
    */
   .zen-menu-edit li {
     position: relative;
@@ -4407,10 +4415,24 @@
     z-index: 1;
   }
   .zen-menu-edit li[data-held] > .zen-menu-edit-item {
+    position: relative;
     border-radius: 8px;
     background: var(--v2-panel);
     box-shadow: var(--zen-shadow-2);
     opacity: 0.9;
+  }
+  .zen-menu-edit li[data-held] > .zen-sheet-item.zen-menu-edit-item {
+    background: transparent;
+    box-shadow: none;
+  }
+  .zen-menu-edit li[data-held] > .zen-sheet-item.zen-menu-edit-item::before {
+    content: '';
+    position: absolute;
+    inset: 0 4px;
+    z-index: -1;
+    border-radius: 8px;
+    background: var(--v2-panel);
+    box-shadow: var(--zen-shadow-2);
   }
   .zen-menu-edit-grip {
     color: var(--v2-text-deemphasized);
@@ -9512,6 +9534,16 @@
   .zen-v2-icon-button:hover:not(:disabled) {
     background: var(--v2-fill);
   }
+}
+/*
+ * The app menu's edit pose (§9.34 modifier; `MenuEditor.tsx`, `.zen-menu-edit` in the components
+ * layer): the icon card in the hand is one look from the hold on – the panel ground under the
+ * level 2 shadow – so the press fill above, which the still finger would otherwise keep on the
+ * lifted card until its first move, yields to the panel while the card's cell is held. Unlayered
+ * as the press rule is, else the layer order would let the fill through.
+ */
+.zen-menu-edit li[data-held] > .zen-v2-icon-button.zen-menu-edit-item:active:not(:disabled) {
+  background: var(--v2-panel);
 }
 /* The print preview's paging pill steps (§9.34 modifier): 28 inside a 32 pill with 2 of
    padding, so their fill is the pill's radius less the padding – round (§10, inner = outer −

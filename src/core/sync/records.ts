@@ -562,7 +562,11 @@ export function collectLocal(
     void _o
     const data: SettingsData = {
       ...rest,
-      compactMode: { ...rest.compactMode, sidebarPersistent: false }
+      compactMode: { ...rest.compactMode, sidebarPersistent: false },
+      // The phone menu's order is absent when it is the default (the Reset row's write): sent as
+      // the empty list, which `apply` reads as the default too – else a reset would send nothing
+      // and every peer keep the order it had, one later record from a peer undoing the reset.
+      menuOrder: rest.menuOrder ?? []
     }
     out.set(SETTINGS_RECORD_ID, { type: 'settings', data })
     if (src.siteData) out.set(SITE_DATA_RECORD_ID, { type: 'site-data', data: src.siteData })

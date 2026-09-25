@@ -3821,10 +3821,15 @@ export class Browser {
         s.phoneBar = sanitizePhoneBar(value)
       } else if (key === 'menuOrder') {
         // The sheet's Done sends the keys in the user's order; its Reset sends an empty list,
-        // which reads as the default and leaves the setting absent rather than empty.
-        const order = sanitizeMenuOrder(value)
-        if (order) s.menuOrder = order
-        else delete s.menuOrder
+        // which reads as the default and leaves the setting absent rather than empty. A list
+        // is read sanitised; anything else, or a list with no key in it, is no order at all and
+        // changes nothing – a malformed patch must not read as the Reset and throw a saved
+        // order away.
+        if (Array.isArray(value)) {
+          const order = sanitizeMenuOrder(value)
+          if (order) s.menuOrder = order
+          else if (value.length === 0) delete s.menuOrder
+        }
       } else if (key === 'homepage' && value && typeof value === 'object') {
         // A one-key patch (the picker's `mode`) keeps the address; the address is normalised.
         s.homepage = sanitizeHomepage({

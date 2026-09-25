@@ -71,6 +71,12 @@ interface Session {
   box: DOMRect
   /** Its cell's box at the lift: what its layout position is measured from as the cell moves. */
   origin: DOMRect
+  /**
+   * Its cell's box now – the hole the others glide around – read once at the lift and again
+   * after each commit that moved it, shifted by each edge-scroll step: never per move or per
+   * frame, so the drag's moves force no layout (the trackers' rectangles are the same kind).
+   */
+  slot: { left: number; top: number; width: number; height: number }
   /** The finger where the drag began, and where it last chose a slot. */
   x0: number
   y0: number
@@ -81,8 +87,13 @@ interface Session {
   y: number
   /** The sections the drag set out from: what a cancelled drag goes back to. */
   base: MenuSections
-  /** The sheet body that scrolls under a finger at its edge, and the frame loop that scrolls it. */
+  /**
+   * The sheet body that scrolls under a finger at its edge, its box (read once: the sheet
+   * stands still under a held row), and the frame loop that scrolls it – running only while the
+   * finger is inside the body's edge band.
+   */
   scroller: HTMLElement | null
+  scrollerBox: DOMRect | null
   frame: number
   velocity: VelocityTracker
 }
@@ -144,14 +155,19 @@ export function useMenuReorder(
     dy: s.axis === 'y' ? s.y - s.y0 : 0
   })
 
+  /** The hole's box read afresh: after a commit that may have moved it (one read per commit). */
+  const readSlot = (s: Session): void => {
+    const r = s.li.getBoundingClientRect()
+    s.slot = { left: r.left, top: r.top, width: r.width, height: r.height }
+  }
+
   /**
    * How far the held item is drawn from its layout position: where its cell was at the lift plus
    * the finger's travel, less where its cell is now (the hole moves with the draft).
    */
   const offsetOf = (s: Session): { x: number; y: number } => {
-    const slot = s.li.getBoundingClientRect()
     const { dx, dy } = travelOf(s)
-    return { x: s.origin.left + dx - slot.left, y: s.origin.top + dy - slot.top }
+    return { x: s.origin.left + dx - s.slot.left, y: s.origin.top + dy - s.slot.top }
   }
 
   /** Draw the held item where the finger has carried it. */
@@ -168,7 +184,7 @@ export function useMenuReorder(
     let best = keys.indexOf(s.key)
     let bestDistance = Infinity
     keys.forEach((key, i) => {
-      const rect = key === s.key ? s.li.getBoundingClientRect() : tracker.layoutRect(key)
+      const rect = key === s.key ? s.slot : tracker.layoutRect(key)
       if (!rect) return
       // A collapsed hairline (beside another, or at an end) has no extent along the axis: it is
       // not a slot the finger can be nearest to.
@@ -197,28 +213,39 @@ export function useMenuReorder(
   }
 
   /**
-   * A finger held at the body's top or bottom edge scrolls the body under the item, faster the
-   * nearer the edge, frame by frame while the drag lasts; the item is redrawn under the finger
-   * and the slot looked up again after every step, since the slots moved under it.
+   * How fast the body scrolls under the finger where it is: nothing outside the body's edge
+   * bands, faster the nearer the edge inside one. The list's axis alone scrolls.
+   */
+  const edgeSpeed = (s: Session): number => {
+    const r = s.scrollerBox
+    if (!r || s.axis !== 'y') return 0
+    if (s.y < r.top + EDGE) return -EDGE_SPEED * Math.min(1, (r.top + EDGE - s.y) / EDGE)
+    if (s.y > r.bottom - EDGE) return EDGE_SPEED * Math.min(1, (s.y - (r.bottom - EDGE)) / EDGE)
+    return 0
+  }
+
+  /**
+   * A finger held at the body's top or bottom edge scrolls the body under the item, frame by
+   * frame for as long as it stays in the edge band; the loop ends with the finger's leaving it
+   * (a move that enters the band starts it again). After every step the hole has moved with the
+   * body, so the item is redrawn under the finger and the slot looked up again.
    */
   const scrollLoop = (s: Session): void => {
     s.frame = requestAnimationFrame(() => {
       if (session.current !== s) return
       const sc = s.scroller
-      if (sc && s.axis === 'y') {
-        const r = sc.getBoundingClientRect()
-        let speed = 0
-        if (s.y < r.top + EDGE) speed = -EDGE_SPEED * Math.min(1, (r.top + EDGE - s.y) / EDGE)
-        else if (s.y > r.bottom - EDGE)
-          speed = EDGE_SPEED * Math.min(1, (s.y - (r.bottom - EDGE)) / EDGE)
-        if (speed !== 0) {
-          const before = sc.scrollTop
-          sc.scrollTop = before + speed
-          if (sc.scrollTop !== before) {
-            place(s)
-            retarget(s)
-          }
-        }
+      const speed = edgeSpeed(s)
+      if (!sc || speed === 0) {
+        s.frame = 0
+        return
+      }
+      const before = sc.scrollTop
+      sc.scrollTop = before + speed
+      const moved = sc.scrollTop - before
+      if (moved !== 0) {
+        s.slot.top -= moved
+        place(s)
+        retarget(s)
       }
       scrollLoop(s)
     })
@@ -284,8 +311,10 @@ export function useMenuReorder(
   useLayoutEffect(() => {
     const s = session.current
     if (s) {
-      if (s.el.isConnected) place(s)
-      else lose(s)
+      if (s.el.isConnected) {
+        readSlot(s)
+        place(s)
+      } else lose(s)
     }
     const l = landing.current
     if (!l) return
@@ -321,7 +350,9 @@ export function useMenuReorder(
         if (session.current || spring.current?.running || sheetDragging(el)) return
         if (!menuSectionOf(sectionsRef.current, key)) return
         lifted.current = el
-        el.style.transition = LIFT_TRANSITION
+        // Under reduced motion the lift is the cut (v2 §11.3, as the card lift's scale spring
+        // does): the scale is written with no transition to ease it.
+        if (!reducedMotion()) el.style.transition = LIFT_TRANSITION
         el.style.transform = `scale(${MENU_LIFT_SCALE})`
         setHeld(key)
       },
@@ -331,8 +362,14 @@ export function useMenuReorder(
         // Nothing lifted: the hold was refused, and there is nothing to put down.
         if (!el) return
         lifted.current = null
-        // Eased back down on the lift's own transition, which goes with it.
         el.style.transform = ''
+        // Eased back down on the lift's own transition, which goes with it once it has run; a
+        // lift that was the cut (no transition written) is put down as one – `transitionend`
+        // would never come.
+        if (el.style.transition === '') {
+          setHeld(null)
+          return
+        }
         const clear = (): void => {
           el.style.transition = ''
           el.removeEventListener('transitionend', clear)
@@ -359,6 +396,7 @@ export function useMenuReorder(
         const own = li.getBoundingClientRect()
         const axis: Session['axis'] =
           rects.length > 0 && rects.every((r) => Math.abs(r.top - own.top) < 1) ? 'x' : 'y'
+        const scroller = el.closest<HTMLElement>('.zen-sheet-scroll')
         const s: Session = {
           key,
           section,
@@ -367,6 +405,7 @@ export function useMenuReorder(
           li,
           box: el.getBoundingClientRect(),
           origin: own,
+          slot: { left: own.left, top: own.top, width: own.width, height: own.height },
           x0: e.clientX,
           y0: e.clientY,
           tx: e.clientX,
@@ -374,7 +413,8 @@ export function useMenuReorder(
           x: e.clientX,
           y: e.clientY,
           base: sectionsRef.current,
-          scroller: el.closest<HTMLElement>('.zen-sheet-scroll'),
+          scroller,
+          scrollerBox: scroller?.getBoundingClientRect() ?? null,
           frame: 0,
           velocity: new VelocityTracker()
         }
@@ -389,7 +429,7 @@ export function useMenuReorder(
         session.current = s
         s.velocity.add(e.timeStamp, e.clientX, e.clientY)
         if (heldRef.current !== key) setHeld(key)
-        scrollLoop(s)
+        if (edgeSpeed(s) !== 0) scrollLoop(s)
         return {
           move: (ev) => {
             if (session.current !== s) return
@@ -400,6 +440,8 @@ export function useMenuReorder(
             s.y = ev.clientY
             s.velocity.add(ev.timeStamp, ev.clientX, ev.clientY)
             place(s)
+            // Into the body's edge band: the body scrolls under the item until the finger leaves it.
+            if (!s.frame && edgeSpeed(s) !== 0) scrollLoop(s)
             if (Math.hypot(ev.clientX - s.tx, ev.clientY - s.ty) < RETARGET_SLOP) return
             s.tx = ev.clientX
             s.ty = ev.clientY
