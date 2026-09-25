@@ -31,6 +31,13 @@ name: Android motion perf
 # profile, some ten more for the drivers. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
+  # TEMPORARY (W6-0, the overview's windowed grid: the BEFORE arm on main's tip and the AFTER
+  # arms on this branch, both themes – no token in the project can dispatch); removed before the
+  # PR is nod-ready. The push run's scene default below is `overview` in place of `all`; the
+  # functional drivers run on the AFTER arms as a dispatch's do; the `profile-dark` job below is
+  # the same temporary measure's dark arm.
+  push:
+    branches: [cursor/android-overview-windowed-grid-82b6]
   workflow_dispatch:
     inputs:
       theme:
@@ -77,9 +84,9 @@ jobs:
       script: .github/scripts/android-motion-perf.sh
       script-env: |
         PERF_OUT=artifacts/android-motion-perf
-        PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
+        PERF_FUNCTIONAL=${{ github.event_name == 'push' && '0' || (format('{0}', inputs.functional-drivers) == 'false' && '0' || '1') }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
-        DEMO_SCENES=${{ inputs.scenes || 'all' }}
+        DEMO_SCENES=${{ inputs.scenes || 'overview' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
@@ -88,6 +95,27 @@ jobs:
       artifact-name: android-motion-perf-${{ inputs.theme || 'light' }}
       artifact-path: artifacts/android-motion-perf/
       # The profile's scenes (about fifteen minutes) and then the two functional drivers.
+      timeout-minutes: 90
+
+  # TEMPORARY (W6-0's dark arm of the push run above); removed with the push trigger.
+  profile-dark:
+    name: Motion perf (dark), W6-0 push arm
+    if: ${{ github.event_name == 'push' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-motion-perf.sh
+      script-env: |
+        PERF_OUT=artifacts/android-motion-perf
+        PERF_FUNCTIONAL=0
+        DEMO_THEME=dark
+        DEMO_SCENES=overview
+        DEMO_VIDEO=android-perf-motion-dark.mp4
+        DEMO_ARGS=-e holdBackgroundWork true
+        DEMO_HANDSHAKE_S=600
+      api-level: '35'
+      jank-gate: soft
+      artifact-name: android-motion-perf-dark
+      artifact-path: artifacts/android-motion-perf/
       timeout-minutes: 90
 
   # One more boot when the emulator itself went away under the driver (adb lost the device), and
@@ -101,9 +129,9 @@ jobs:
       script: .github/scripts/android-motion-perf.sh
       script-env: |
         PERF_OUT=artifacts/android-motion-perf
-        PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
+        PERF_FUNCTIONAL=${{ github.event_name == 'push' && '0' || (format('{0}', inputs.functional-drivers) == 'false' && '0' || '1') }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
-        DEMO_SCENES=${{ inputs.scenes || 'all' }}
+        DEMO_SCENES=${{ inputs.scenes || 'overview' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
