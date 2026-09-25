@@ -101,6 +101,7 @@ import { StorageApi } from './storage'
 import { TabGroupsApi } from './tabGroups'
 import { SystemDisplayApi } from './systemDisplay'
 import { electronDisplayScreen } from './systemDisplayBridge'
+import { electronSaveBlocker, PowerApi } from './power'
 import { SystemStorageApi } from './systemStorage'
 import { SystemInfoApi } from './systemInfo'
 import { TabCaptureApi } from './tabCapture'
@@ -217,6 +218,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly instanceId: InstanceIdApi
   readonly systemDisplay: SystemDisplayApi
   readonly systemStorage: SystemStorageApi
+  readonly power: PowerApi
   readonly systemInfo: SystemInfoApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
@@ -318,6 +320,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.instanceId = new InstanceIdApi(this)
     this.systemDisplay = new SystemDisplayApi(this, electronDisplayScreen())
     this.systemStorage = new SystemStorageApi(this)
+    this.power = new PowerApi(this, electronSaveBlocker())
     this.systemInfo = new SystemInfoApi(this)
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
@@ -354,6 +357,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       instanceID: this.instanceId.handlers,
       'system.display': this.systemDisplay.handlers,
       'system.storage': this.systemStorage.handlers,
+      power: this.power.handlers,
       'system.cpu': this.systemInfo.cpuHandlers,
       'system.memory': this.systemInfo.memoryHandlers,
       tabGroups: this.tabGroups.handlers,
@@ -676,6 +680,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.tabCapture.unload(ext.id)
     this.debugger.unload(ext.id)
     this.systemDisplay.unload()
+    this.power.unload(ext.id)
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.searchProvider.unload(ext.id)
