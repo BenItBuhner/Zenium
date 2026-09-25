@@ -36,6 +36,7 @@ import { ChromeDropLayer, DragLayer } from './components/DragLayer'
 import { PopupFrame } from './components/extensions/PopupFrame'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
+import { InternalPageHost } from './components/pages/InternalPageHost'
 import { PhoneShell } from './components/phone/PhoneShell'
 import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { HorizontalChrome } from './components/strip/HorizontalChrome'
@@ -60,12 +61,16 @@ export function App(): JSX.Element {
   useStageContinuity(viewport.formFactor)
   const ui = uiStore.use()
   // A page's sized popup and a web app's window keep the one-row desktop chrome at any size and
-  // with any pointer (`formFactorFor`): the tablet shell is for a window with tabs to show.
+  // with any pointer (`formFactorFor`): the tablet shell is for a window with tabs to show. A
+  // page's utility window (the task manager) draws its page alone, whatever the form factor.
   const popupChrome = state.window.chrome === 'popup' || state.window.chrome === 'app'
+  const pageWindow = state.window.chrome === 'page'
 
   return (
     <>
-      {viewport.formFactor === 'phone' ? (
+      {pageWindow ? (
+        <PageWindowShell state={state} theme={theme} />
+      ) : viewport.formFactor === 'phone' ? (
         <PhoneShell state={state} ui={ui} isDark={theme.isDark} />
       ) : viewport.formFactor === 'tablet' && !popupChrome ? (
         <TabletShell state={state} ui={ui} isDark={theme.isDark} />
@@ -77,6 +82,46 @@ export function App(): JSX.Element {
       {/* The one status region a screen reader hears tab switches, downloads, find and zoom from. */}
       <Announcer />
     </>
+  )
+}
+
+/**
+ * A page's utility window (`WindowChrome` `page`: the task manager on Shift+Esc and More Tools ›
+ * Task Manager, a window of its own as Chrome's and Edge's is). The OS frame carries the title
+ * and the caption buttons; the chrome draws the one chrome page the window holds edge to edge –
+ * no sidebar, toolbar or pill, no gutter and no frame radius: the page's own padding is the
+ * window's. The page's dialogs (End process's confirmation) mount in the frame host over it, as
+ * they do in a tab. Escape closes the window once nothing in the page has taken the key (a
+ * dialog up, a selected row – the page clears its selection first, as it does in a tab).
+ */
+function PageWindowShell({ state, theme }: { state: UIState; theme: ResolvedTheme }): JSX.Element {
+  const tab = activeTab(state)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return
+      e.preventDefault()
+      run('window.close', undefined)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  return (
+    <div
+      className="zen-window relative flex h-full w-full flex-col overflow-hidden"
+      data-dark={theme.isDark}
+      data-window-kind={state.window.kind}
+      data-window-chrome="page"
+      data-testid="chrome-root"
+    >
+      <ModStyles mods={state.mods} />
+      {/* The window's one landmark: the page where the browser window's content frame would be. */}
+      <main className="relative min-h-0 flex-1">
+        {tab && <InternalPageHost state={state} tab={tab} />}
+        <TabDialogs state={state} />
+      </main>
+      <Tooltip />
+    </div>
   )
 }
 

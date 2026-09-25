@@ -11,10 +11,12 @@ export type ChromeWindowType = 'normal' | 'popup' | 'panel' | 'app' | 'devtools'
  * Chrome's type for a browser window by the chrome it draws: a tab strip makes a `normal`
  * window; the toolbar-only window a sized `window.open` makes (Secure Shell's connection
  * dialog) is a `popup`, as Chrome reports its own; a standalone web app's window is an `app`.
+ * A page's utility window (the task manager) is a `popup` too: one page, no tab strip.
  */
 export function windowTypeForChrome(chrome: WindowChrome): ChromeWindowType {
   switch (chrome) {
     case 'popup':
+    case 'page':
       return 'popup'
     case 'app':
       return 'app'

@@ -402,9 +402,12 @@ export type WindowSyncMode = 'all' | 'pinned' | 'off'
  * What a window's chrome shows: the sidebar with spaces and tabs; for the sized windows pages
  * open with `window.open(url, name, 'width=…')` a single toolbar row above the page; for a web
  * app launched standalone (`zenium --app=<url>`, an installed app's launcher) no browser chrome
- * at all, only the app's own title bar (Chrome's app window).
+ * at all, only the app's own title bar (Chrome's app window); for a utility window holding one
+ * of the chrome's own pages (the task manager on Shift+Esc, as Chrome's and Edge's task manager
+ * is a window of its own) no browser chrome and no title row of the chrome's either – the OS
+ * frame and the page alone (`page`).
  */
-export type WindowChrome = 'full' | 'popup' | 'app'
+export type WindowChrome = 'full' | 'popup' | 'app' | 'page'
 
 /**
  * The web app a standalone window (`WindowChrome` `app`) is showing: its name and icon for the
@@ -425,6 +428,51 @@ export interface AppWindowInfo {
 }
 /** System-drawn material behind a translucent chrome (Windows 11). */
 export type WindowMaterial = 'none' | 'mica'
+
+/**
+ * Where a page's utility window (`WindowChrome` `page`) last stood: its normal bounds and the
+ * display they were on, so the task manager comes back where it was left, as Chrome's does.
+ */
+export interface PageWindowPlacement {
+  bounds: Rect
+  displayId: number | null
+}
+
+/**
+ * The page windows' device-local placements by page id (`BrowserState.pageWindowsDevice`, the
+ * shape of `newTabDevice`): never synced – a window's place is this screen's.
+ */
+export type PageWindowsDeviceState = Record<string, PageWindowPlacement>
+
+export function emptyPageWindows(): PageWindowsDeviceState {
+  return {}
+}
+
+/** `raw` as a `PageWindowsDeviceState`: every entry that is not a whole placement is dropped. */
+export function sanitizePageWindows(raw: unknown): PageWindowsDeviceState {
+  const out: PageWindowsDeviceState = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue
+    const entry = value as { bounds?: unknown; displayId?: unknown }
+    const b = entry.bounds as Partial<Record<keyof Rect, unknown>> | null | undefined
+    if (
+      !b ||
+      typeof b !== 'object' ||
+      typeof b.x !== 'number' ||
+      typeof b.y !== 'number' ||
+      typeof b.width !== 'number' ||
+      typeof b.height !== 'number' ||
+      ![b.x, b.y, b.width, b.height].every(Number.isFinite)
+    )
+      continue
+    out[id] = {
+      bounds: { x: b.x, y: b.y, width: b.width, height: b.height },
+      displayId: typeof entry.displayId === 'number' ? entry.displayId : null
+    }
+  }
+  return out
+}
 
 // ---------------------------------------------------------------------------
 // Themes (Zen's gradient theme picker)

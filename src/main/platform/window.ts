@@ -27,7 +27,7 @@ import { TitleThrottle } from '../../shared/windowTitle'
 import { privateIconPath, privateWindowIcon, windowIcon } from './appIcon'
 import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
 import { privateAppDetails } from './privateTaskbar'
-import { placeWindow, type DisplayArea } from './windowPlacement'
+import { centredIn, placeWindow, type DisplayArea } from './windowPlacement'
 import { showWhenReady } from './windowShow'
 import { NO_WINDOW_SWITCHES, windowLaunchState, type WindowSwitches } from '../cli'
 
@@ -42,6 +42,15 @@ const POPUP_MIN_HEIGHT = 200
 /** An app window's first size (Chrome opens installed apps at about this); the app's own after. */
 const APP_DEFAULT_WIDTH = 1024
 const APP_DEFAULT_HEIGHT = 720
+/**
+ * A page's utility window (the task manager, `WindowChrome` `page`): Chrome's task manager
+ * opens at about this and comes back where it was left; a table of processes needs about the
+ * minimum to keep its columns.
+ */
+const PAGE_DEFAULT_WIDTH = 760
+const PAGE_DEFAULT_HEIGHT = 520
+const PAGE_MIN_WIDTH = 480
+const PAGE_MIN_HEIGHT = 320
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */
 const COMPACT_REVEAL_ZONE = 14
 /**
@@ -81,6 +90,8 @@ export class ElectronWindow implements WindowHost {
    * held) are refused here, and the hidden strips never come back on the cursor's edge.
    */
   readonly kiosk: boolean
+  /** The OS draws this window's frame (`WindowChrome` `page`): no caption overlay to recolour. */
+  private readonly framed: boolean
   private boundsTimer: ReturnType<typeof setTimeout> | null = null
   private compactTimer: ReturnType<typeof setInterval> | null = null
   private readonly sidebarEdge = new EdgeTracker()
@@ -102,12 +113,25 @@ export class ElectronWindow implements WindowHost {
   ) {
     const launch = windowLaunchState(switches, init)
     this.kiosk = launch.kiosk
+    // A page's utility window (the task manager) keeps the OS frame: its title bar and caption
+    // buttons are the system's, and the chrome draws the page alone inside them.
+    const framed = init.chrome === 'page'
+    this.framed = framed
     let initial = init.bounds
     let displayId = init.displayId
     if (!initial && init.cascadeFrom?.alive) {
       const from = (init.cascadeFrom.host as ElectronWindow).win
       const b = from.getNormalBounds()
-      initial = { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
+      // A browser window opens a step down and right of the one it was asked from; a utility
+      // window comes up centred over it at its own size, as a dialog would.
+      initial = framed
+        ? centredIn(
+            b,
+            { width: PAGE_DEFAULT_WIDTH, height: PAGE_DEFAULT_HEIGHT },
+            PAGE_MIN_WIDTH,
+            PAGE_MIN_HEIGHT
+          )
+        : { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
       displayId = screen.getDisplayMatching(b).id
     }
     const bounds = sanitizeBounds(initial, displayId, init.chrome)
@@ -121,24 +145,32 @@ export class ElectronWindow implements WindowHost {
     const privateIcon = zen.isPrivate && !isMac ? privateWindowIcon() : null
     this.win = new BrowserWindow({
       ...bounds,
-      minWidth: compactChrome ? POPUP_MIN_WIDTH : MIN_WIDTH,
-      minHeight: compactChrome ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
+      minWidth: framed ? PAGE_MIN_WIDTH : compactChrome ? POPUP_MIN_WIDTH : MIN_WIDTH,
+      minHeight: framed ? PAGE_MIN_HEIGHT : compactChrome ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
       show: false,
       // Chrome's kiosk mode: fullscreen from the first frame (on macOS also without the Dock and
       // the menu bar); the layout below hides the chrome for a fullscreen browser window.
       kiosk: launch.kiosk,
-      frame: false,
-      titleBarStyle: isMac ? 'hiddenInset' : CAPTION_OVERLAY ? 'hidden' : undefined,
+      frame: framed,
+      titleBarStyle: framed
+        ? undefined
+        : isMac
+          ? 'hiddenInset'
+          : CAPTION_OVERLAY
+            ? 'hidden'
+            : undefined,
       // Centred on the 38px header row (12px lights: 16 + 6 = 22 = 6 + 32 / 2); a toolbar-only
-      // window's 40px toolbar row (and an app window's title row) is centred at 20.
-      trafficLightPosition: isMac ? { x: 14, y: compactChrome ? 14 : 16 } : undefined,
-      titleBarOverlay: CAPTION_OVERLAY
-        ? {
-            color: init.captionColors.color,
-            symbolColor: init.captionColors.symbolColor,
-            height: CAPTION_HEIGHT
-          }
-        : undefined,
+      // window's 40px toolbar row (and an app window's title row) is centred at 20. A framed
+      // window's lights sit where the system puts them.
+      trafficLightPosition: isMac && !framed ? { x: 14, y: compactChrome ? 14 : 16 } : undefined,
+      titleBarOverlay:
+        CAPTION_OVERLAY && !framed
+          ? {
+              color: init.captionColors.color,
+              symbolColor: init.captionColors.symbolColor,
+              height: CAPTION_HEIGHT
+            }
+          : undefined,
       // A material window paints its web contents on a see-through background (no
       // `transparent`, which would cost the resize border); the chrome leaves the material
       // visible through its gradient.
@@ -250,7 +282,8 @@ export class ElectronWindow implements WindowHost {
       this.closePopupSurface()
       zen.onClosed()
     })
-    this.startCompactTracking()
+    // A page window has no sidebar or toolbar to bring back at its edges.
+    if (!framed) this.startCompactTracking()
 
     const wc = win.webContents
     wc.on('before-input-event', (event, input) => {
@@ -424,7 +457,7 @@ export class ElectronWindow implements WindowHost {
   }
 
   setCaptionColors(colors: CaptionColors): void {
-    if (!CAPTION_OVERLAY || !this.alive) return
+    if (!CAPTION_OVERLAY || this.framed || !this.alive) return
     const current = this.captionColors
     if (colors.color === current.color && colors.symbolColor === current.symbolColor) return
     this.captionColors = colors
@@ -659,12 +692,16 @@ function sanitizeBounds(saved: Rect | null, displayId: number | null, chrome: Wi
     {
       saved,
       displayId,
-      minWidth: chrome === 'full' ? MIN_WIDTH : POPUP_MIN_WIDTH,
-      minHeight: chrome === 'full' ? MIN_HEIGHT : POPUP_MIN_HEIGHT,
+      minWidth:
+        chrome === 'full' ? MIN_WIDTH : chrome === 'page' ? PAGE_MIN_WIDTH : POPUP_MIN_WIDTH,
+      minHeight:
+        chrome === 'full' ? MIN_HEIGHT : chrome === 'page' ? PAGE_MIN_HEIGHT : POPUP_MIN_HEIGHT,
       defaultSize:
         chrome === 'app'
           ? { width: APP_DEFAULT_WIDTH, height: APP_DEFAULT_HEIGHT }
-          : { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
+          : chrome === 'page'
+            ? { width: PAGE_DEFAULT_WIDTH, height: PAGE_DEFAULT_HEIGHT }
+            : { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
     },
     displays
   )
