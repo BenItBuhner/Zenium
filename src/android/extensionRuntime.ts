@@ -136,7 +136,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots, navigationListener, messageLimit }
  *  ext.open { id, path }                    → { manifest, locales: { <locale>: <messages.json> } }
  *  ext.configure { id, name, version, path, allowFileAccess, allowPrivate, units, served, debug }
- *                                           → { units: [{ key, chars, cached, refused? }], ms }
+ *                                           → { units: [{ key, chars, cached, refused? }], ms, dropped? }
  *  ext.detach { id }
  *  ext.expect { ids }                       the extensions about to be attached (a restored tab's page on one is held, not 404'd)
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
@@ -206,6 +206,12 @@ export interface ConfigureStats {
     refused?: number | null
   }>
   ms: number
+  /**
+   * Set when Kotlin installed nothing: the extension was detached (or the runtime reset) while
+   * its units compiled off the main thread, so the attach this configure was for is gone. The
+   * next attach configures afresh.
+   */
+  dropped?: 'detached'
 }
 
 export interface ExtMessageEvent {
@@ -695,13 +701,24 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   /** What the open sheet hosts (`ext.popup.open`'s context); the side panel hears of its sheet going. */
   private sheetContext: 'popup' | 'options' | 'sidePanel' | null = null
   /**
-   * `offscreen.createDocument` calls waiting for their page to say hello, by extension: the
+   * `offscreen.createDocument` calls waiting for their page to load, by extension: the
    * document counts as present from the call on (a second call while it loads is refused, as in
-   * Chrome), and the wait ends with the hello, a close, a detach or the load timeout.
+   * Chrome), and the wait ends with the page's `ready` (its load event, after its scripts ran:
+   * Chrome's promise "resolves when the offscreen document is created and has completed its
+   * initial page load", and SingleFile sends to the document the moment the promise settles), a
+   * close, a detach or the load timeout. `hello` (the bootstrap's first word, before the page's
+   * scripts) marks the page up and re-arms the wait for its load.
    */
   private readonly offscreenOpening = new Map<
     string,
-    { url: string; resolve: () => void; reject: (error: Error) => void; timer: unknown }
+    {
+      url: string
+      resolve: () => void
+      reject: (error: Error) => void
+      timer: unknown
+      /** The page's bootstrap has said hello: the view is up, its scripts still to run. */
+      hello: boolean
+    }
   >()
   private observing = false
   /** `ext.observeResponses` as last sent: a response-stage `webRequest` listener exists somewhere. */
@@ -1812,21 +1829,38 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   /**
    * `offscreen.createDocument`: Kotlin puts up a hidden `ExtensionWebView` on the URL (the same
-   * kind of view as the background page's); the promise settles when its bootstrap says hello
-   * as an `offscreen` endpoint, or when [OFFSCREEN_LOAD_MS] pass without one.
+   * kind of view as the background page's); the promise settles when the page reports `ready`
+   * as an `offscreen` endpoint – its load event, its listeners registered – or when
+   * [OFFSCREEN_LOAD_MS] pass without its hello. A page that said hello and whose load did not
+   * report within a further [OFFSCREEN_LOAD_MS] (a subresource hanging) is resolved as up rather
+   * than torn down: the document exists and answers messages.
    */
   openOffscreen(id: string, url: string): Promise<void> {
     this.settleOffscreen(id, new Error('The offscreen document was replaced.'))
     return new Promise<void>((resolve, reject) => {
-      const timer = this.timers.setTimeout(() => {
-        if (this.offscreenOpening.get(id)?.timer !== timer) return
-        this.offscreenOpening.delete(id)
-        this.bridge.send('ext.offscreen.close', { id })
-        reject(new Error(`The offscreen document ${url} did not load.`))
-      }, OFFSCREEN_LOAD_MS)
-      this.offscreenOpening.set(id, { url, resolve, reject, timer })
+      this.offscreenOpening.set(id, { url, resolve, reject, timer: null, hello: false })
+      this.armOffscreenWait(id)
       this.bridge.send('ext.offscreen.open', { id, url })
     })
+  }
+
+  /** The load wait of a pending `createDocument`, (re)started: [OFFSCREEN_LOAD_MS] from now. */
+  private armOffscreenWait(id: string): void {
+    const waiting = this.offscreenOpening.get(id)
+    if (!waiting) return
+    if (waiting.timer !== null) this.timers.clearTimeout(waiting.timer)
+    const timer = this.timers.setTimeout(() => {
+      const current = this.offscreenOpening.get(id)
+      if (!current || current.timer !== timer) return
+      this.offscreenOpening.delete(id)
+      if (current.hello) {
+        current.resolve()
+        return
+      }
+      this.bridge.send('ext.offscreen.close', { id })
+      current.reject(new Error(`The offscreen document ${current.url} did not load.`))
+    }, OFFSCREEN_LOAD_MS)
+    waiting.timer = timer
   }
 
   closeOffscreen(id: string): void {
@@ -1842,12 +1876,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     return this.offscreenOpening.get(id)?.url ?? null
   }
 
-  /** The pending `createDocument` of an extension, if any, resolved (its page is up) or rejected. */
+  /** The pending `createDocument` of an extension, if any, resolved (its page has loaded) or rejected. */
   private settleOffscreen(id: string, error: Error | null): void {
     const waiting = this.offscreenOpening.get(id)
     if (!waiting) return
     this.offscreenOpening.delete(id)
-    this.timers.clearTimeout(waiting.timer)
+    if (waiting.timer !== null) this.timers.clearTimeout(waiting.timer)
     if (error) waiting.reject(error)
     else waiting.resolve()
   }
@@ -1973,6 +2007,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
           this.background.onReady(id)
           this.onBackgroundReady(id)
         }
+        // The offscreen document's load: `createDocument` settles here, its listeners in place
+        // for the message the caller sends next (SingleFile's `offscreen.getBlobURL` chunks met
+        // "Receiving end does not exist." when the promise settled on the bootstrap's hello).
+        if (endpoint.context === 'offscreen' && event.top) this.settleOffscreen(id, null)
         return
       case 'msg':
       case 'connect': {
@@ -2176,7 +2214,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       }
       this.backgroundEps.set(extensionId, ep)
     }
-    if (context === 'offscreen' && event.top) this.settleOffscreen(extensionId, null)
+    if (context === 'offscreen' && event.top) {
+      // The page is up; its scripts run next and its `ready` settles the call. The load wait
+      // starts over from here (a cold WebView spends most of the first wait before the hello).
+      const waiting = this.offscreenOpening.get(extensionId)
+      if (waiting && !waiting.hello) {
+        waiting.hello = true
+        this.armOffscreenWait(extensionId)
+      }
+    }
   }
 
   onGone(eps: string[]): void {

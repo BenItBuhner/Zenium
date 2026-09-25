@@ -1840,14 +1840,15 @@ describe('AndroidExtensionRuntime: chrome.userScripts', () => {
 })
 
 describe('AndroidExtensionRuntime: chrome.offscreen', () => {
-  it('createDocument puts up one hidden page and resolves on its hello; closeDocument takes it down', async () => {
+  it('createDocument puts up one hidden page and resolves on its ready, not its hello; closeDocument takes it down', async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['offscreen'] })))
     backgroundUp(h, 'bg1')
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
     const closedEarly = await call(h, 'bg1', 'offscreen', 'closeDocument', [])
     expect(closedEarly.error).toBe('No current offscreen document.')
-    // Tampermonkey's call, its URL a path: the page is up when its bootstrap says hello.
+    // Tampermonkey's call, its URL a path: the page is up when its bootstrap says hello, and
+    // the call settles when the page reports ready (its load, its listeners registered).
     const id = nextCallId()
     message(h, 'bg1', {
       t: 'call',
@@ -1892,9 +1893,22 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     ).result as Array<Record<string, unknown>>
     expect(loadingByServed.map((c) => c.contextType)).toEqual(['OFFSCREEN_DOCUMENT'])
     hello(h, 'off1', 'offscreen', { url: servedUrl })
+    // The hello alone does not settle the call (Chrome's promise "resolves when the offscreen
+    // document is created and has completed its initial page load"; SingleFile sends its
+    // `offscreen.getBlobURL` chunks the moment it settles, and a page whose scripts had not
+    // run yet answered "Receiving end does not exist.", round 17). The page's ready does.
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    // A ready from a frame inside the page is not the page's.
+    hello(h, 'off1sub', 'offscreen', { url: `${servedUrl}#frame`, top: false })
+    h.runtime.onMessage({ ep: 'off1sub', tabId: null, top: false, origin: '', message: { t: 'ready' } })
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    message(h, 'off1', { t: 'ready' })
     await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
+    h.runtime.onGone(['off1sub'])
     // Up, it is listed once, as the page's endpoint.
     const up = (
       await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: ['OFFSCREEN_DOCUMENT'] }])
@@ -1992,6 +2006,54 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     )
     expect(h.kt.offscreens.has(ID)).toBe(false)
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
+  })
+
+  it('a page that said hello gets a fresh load window, and one whose load never reports is resolved as up, not torn down', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['offscreen'] })))
+    backgroundUp(h, 'bg1')
+    const servedUrl = `https://${ID}.ext.zenium.invalid/offscreen.html`
+    const id = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'offscreen',
+      method: 'createDocument',
+      args: [{ url: 'offscreen.html', reasons: ['BLOBS'], justification: 'blob URLs' }]
+    })
+    await until(() => h.kt.offscreens.has(ID))
+    // A cold WebView spends most of the first window before its bootstrap speaks: the hello at
+    // 19 s re-arms the wait, so the load window does not run out a second later.
+    h.tick(19_000)
+    hello(h, 'off1', 'offscreen', { url: servedUrl })
+    h.tick(2_000)
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    expect(h.kt.offscreens.has(ID)).toBe(true)
+    // The ready settles it within the fresh window.
+    message(h, 'off1', { t: 'ready' })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
+    await call(h, 'bg1', 'offscreen', 'closeDocument', [])
+    h.runtime.onGone(['off1'])
+
+    // A page up (hello) whose load never reports (a subresource hanging past the window): the
+    // document exists and answers messages, so the call resolves rather than the view going.
+    const again = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id: again,
+      ns: 'offscreen',
+      method: 'createDocument',
+      args: [{ url: 'offscreen.html', reasons: ['BLOBS'], justification: 'blob URLs' }]
+    })
+    await until(() => h.kt.offscreens.has(ID))
+    hello(h, 'off2', 'offscreen', { url: servedUrl })
+    h.tick(20_000)
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === again))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === again)?.error).toBeUndefined()
+    expect(h.kt.offscreens.has(ID)).toBe(true)
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
   })
 })
 
