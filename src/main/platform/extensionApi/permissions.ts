@@ -41,8 +41,23 @@ const TAB_REVEALING = ['tabs', 'webNavigation']
 export class PermissionsApi {
   private readonly granted = new Map<string, PermissionSet>()
   private readonly manifests = new Map<string, ManifestPermissionSets>()
+  private readonly originListeners = new Set<HostOriginsListener>()
 
   constructor(private readonly host: ApiHost) {}
+
+  /**
+   * Called after a `request` or a `remove` moved an extension's host patterns, with the granted
+   * origins as they stand (never for a move of API permissions alone). The service folds them
+   * into the manifest the engine loads, which is where Chromium's own permission set –
+   * the native `scripting.executeScript`, the content-script matcher – reads host access from.
+   * Returns the unsubscribe.
+   */
+  onOriginsChanged(listener: HostOriginsListener): () => void {
+    this.originListeners.add(listener)
+    return () => {
+      this.originListeners.delete(listener)
+    }
+  }
 
   readonly handlers: NamespaceHandlers = {
     getAll: (ctx) => this.getAll(ctx),
@@ -135,7 +150,12 @@ export class PermissionsApi {
     this.host.store.setGrants(ctx.extensionId, next)
     this.pushGrants(ctx.extensionId, next)
     this.host.dispatch(ctx.extensionId, 'permissions', 'onAdded', [missing])
+    if (missing.origins.length > 0) this.originsChanged(ctx.extensionId, next)
     return true
+  }
+
+  private originsChanged(extensionId: string, grants: PermissionSet): void {
+    for (const listener of this.originListeners) listener(extensionId, [...grants.origins])
   }
 
   /**
@@ -173,9 +193,12 @@ export class PermissionsApi {
     this.host.store.setGrants(ctx.extensionId, next)
     this.pushGrants(ctx.extensionId, next)
     this.host.dispatch(ctx.extensionId, 'permissions', 'onRemoved', [removed])
+    if (removed.origins.length > 0) this.originsChanged(ctx.extensionId, next)
     return true
   }
 }
+
+export type HostOriginsListener = (extensionId: string, origins: readonly string[]) => void
 
 /**
  * Chrome's prompt lines for what a request adds: the install-style warnings of the manifest with

@@ -19,7 +19,8 @@ import type {
   ExtensionUpdateState,
   Rect,
   SidePanelInfo,
-  Suggestion
+  Suggestion,
+  Tab
 } from '../../shared/types'
 import { JsonStore } from '../../core/store/JsonStore'
 import type { Browser } from '../../core/browser'
@@ -90,6 +91,7 @@ import {
   downloadFromStores,
   downloadUpdate,
   electronStoreFetch,
+  grantedHostPermissions,
   idForUnpackedPath,
   packageFromFile,
   parseStoreRef,
@@ -100,9 +102,12 @@ import {
   shadowUnpacked,
   storeLabel,
   sweepStagingDirs,
+  withoutGrantedHosts,
   writePackage
 } from './extensionStore'
 import type { ExtensionApiHooks } from './extensionApi'
+import type { PermissionsApi } from './extensionApi/permissions'
+import type { ApiStore } from './extensionApi/store'
 import { ExtensionErrorConsole } from './extensionErrors'
 import { extensionPageOpenHandler } from './extensionPopupOpen'
 import { liveWebContents } from './popupContents'
@@ -132,6 +137,14 @@ const POPUP_MIN = { width: 25, height: 25 }
 const POPUP_MAX = { width: 800, height: 600 }
 /** Width and height of the popup view before its document has asked for a size. */
 const POPUP_INITIAL = { width: 380, height: 200 }
+
+/**
+ * How long after a `chrome.permissions` grant or removal of host patterns the extension is
+ * reloaded with them (`hostGrantsChanged`): long enough for the extension to finish what it
+ * does on the answer – Markdown Viewer's options page tells its worker to store the origin it
+ * just got – and for several requests in a row to fold into one reload.
+ */
+const HOST_GRANT_RELOAD_DELAY_MS = 1_500
 
 /** Chrome checks about every five hours; the first check waits for the browser to settle. */
 const UPDATE_CHECK_STARTUP_DELAY_MS = 45_000
@@ -180,6 +193,16 @@ const NO_UPDATE_INFO: UpdateInfo = {
   availableVersion: null,
   error: null,
   checkedAt: null
+}
+
+/**
+ * The chrome.* API layer as the service holds it: the hooks (`ExtensionApiHooks`) and, for the
+ * runtime host grants, the persisted grants it reads at every load and the notice that a
+ * `chrome.permissions` call moved an extension's origins. `ExtensionApiHost` is one.
+ */
+export type AttachedApi = ExtensionApiHooks & {
+  readonly store: Pick<ApiStore, 'grants'>
+  readonly permissions: Pick<PermissionsApi, 'onOriginsChanged'>
 }
 
 /**
@@ -248,7 +271,15 @@ export class ExtensionService implements ExtensionHost {
   /** Install and permission prompts put to the renderer's dialog, waiting for its answer. */
   private readonly prompts: ChromePrompts
   /** The chrome.* API layer (`platform/extensionApi`): toolbar state and click routing. */
-  private api: ExtensionApiHooks | null = null
+  private api: AttachedApi | null = null
+  private detachApi: (() => void) | null = null
+  /**
+   * The runtime-granted host patterns folded into each running extension's engine manifest
+   * (`grantedHostPermissions`), as of its load; what `applyHostGrants` compares against.
+   */
+  private readonly folded = new Map<string, string[]>()
+  /** Reloads due for a grant or a removal of host patterns, by id (`hostGrantsChanged`). */
+  private readonly grantReloads = new Map<string, ReturnType<typeof setTimeout>>()
 
   /**
    * Shows the install prompt and resolves with the user's decision: the chrome's dialog when a
@@ -281,8 +312,10 @@ export class ExtensionService implements ExtensionHost {
     this.console.onChange(() => this.browser.state.commitVolatile())
   }
 
-  attachApi(api: ExtensionApiHooks): void {
+  attachApi(api: AttachedApi): void {
     this.api = api
+    this.detachApi?.()
+    this.detachApi = api.permissions.onOriginsChanged((id) => this.hostGrantsChanged(id))
   }
 
   async start(): Promise<void> {
@@ -357,22 +390,30 @@ export class ExtensionService implements ExtensionHost {
     }
     // From the manifest as declared: an install directory's `manifest.json` is the engine's copy
     // once it has been loaded (`prepareInstallDir`), the declaration is kept beside it.
-    const withheld = withheldPermissionsOf(readManifest(record.path))
+    const declared = readManifest(record.path)
+    const withheld = withheldPermissionsOf(declared)
     this.withheld.set(record.id, withheld)
     if (fresh) {
       this.reportManifestWarnings(record)
       for (const permission of withheldPermissionNames(withheld))
         this.console.report(record.id, withheldPermissionReport(record.id, permission))
     }
-    const path = await this.loadPathFor(record, withheld)
+    // The host patterns the user granted at run time go into the engine's manifest
+    // (`engineManifest`), the only way into Chromium's permission set; what the API layer and
+    // the chrome see (`loadedById`) reads as declared, the fold taken out again.
+    const granted = this.grantedOrigins(record.id)
+    const folded = declared ? grantedHostPermissions(asRecord(declared), granted) : []
+    const path = await this.loadPathFor(record, withheld, granted)
     if (!path) return
+    this.folded.set(record.id, folded)
     for (const [, ses] of this.sessions.persistent()) {
       try {
-        const ext =
+        const loaded =
           ses.extensions.getAllExtensions().find((e) => e.path === path) ??
           (await ses.extensions.loadExtension(path, {
             allowFileAccess: record.allowFileAccess
           }))
+        const ext = publishedExtension(loaded, folded)
         // Electron derives the id itself (from `manifest.key` or the path); trust what it says.
         if (ext.id !== record.id) this.rekey(record, ext.id)
         this.backfillNewTabPage(record, ext.manifest)
@@ -382,6 +423,53 @@ export class ExtensionService implements ExtensionHost {
         this.loadFailed(record, (error as Error).message)
       }
     }
+  }
+
+  /** The persisted `chrome.permissions` grants' host patterns (the API layer's store). */
+  private grantedOrigins(id: string): string[] {
+    return this.api?.store.grants(id)?.origins ?? []
+  }
+
+  /**
+   * A `chrome.permissions` call moved the extension's host patterns. Electron cannot change a
+   * running extension's permission set, so the extension is reloaded with the patterns folded
+   * into its manifest (`applyHostGrants`), once, a moment later: the extension gets to finish
+   * what it does on the answer first (Markdown Viewer's options page hands the origin to its
+   * worker to store), and requests in a row fold into one reload.
+   */
+  private hostGrantsChanged(id: string): void {
+    const pending = this.grantReloads.get(id)
+    if (pending) clearTimeout(pending)
+    const timer = setTimeout(() => {
+      this.grantReloads.delete(id)
+      void this.applyHostGrants(id)
+    }, HOST_GRANT_RELOAD_DELAY_MS)
+    timer.unref?.()
+    this.grantReloads.set(id, timer)
+  }
+
+  /**
+   * Reloads a running extension whose fold (`grantedHostPermissions`) no longer matches the
+   * grants, and brings its open pages – the options page, its own tabs – back at their URLs
+   * (the engine's unload leaves them dead); its popup closes with the reload, as it does with
+   * any. Nothing happens when the grants leave the fold as it is (a removal of a pattern the
+   * manifest no longer offers) or while an install or a load of the extension is in flight (the
+   * reload waits for it).
+   */
+  private async applyHostGrants(id: string): Promise<void> {
+    const record = this.record(id)
+    if (!record || !record.enabled || !this.loadedById.has(id)) return
+    if (this.busy.has(id) || this.loading.has(record.path)) {
+      this.hostGrantsChanged(id)
+      return
+    }
+    const declared = readManifest(record.path)
+    const next = declared ? grantedHostPermissions(asRecord(declared), this.grantedOrigins(id)) : []
+    if (sameStrings(next, this.folded.get(id) ?? [])) return
+    const pages = extensionPagesToReopen(Object.values(this.browser.state.model.tabs), id)
+    await this.reload(id)
+    if (!this.loadedById.has(id)) return
+    for (const page of pages) this.browser.tabs.navigate(page.tabId, page.url)
   }
 
   /**
@@ -395,17 +483,18 @@ export class ExtensionService implements ExtensionHost {
    */
   private async loadPathFor(
     record: ExtensionRecord,
-    withheld: WithheldPermissions
+    withheld: WithheldPermissions,
+    granted: readonly string[]
   ): Promise<string | null> {
     let problem: string
     if (record.source === 'unpacked') {
       try {
-        return await shadowUnpacked(this.root, record.id, record.path)
+        return await shadowUnpacked(this.root, record.id, record.path, granted)
       } catch (error) {
         problem = `could not shadow ${record.path}: ${(error as Error).message}`
       }
     } else {
-      if (await prepareInstallDir(record.path)) return record.path
+      if (await prepareInstallDir(record.path, granted)) return record.path
       problem = `could not prepare ${record.path} for the engine`
     }
     if (!hasWithheldPermissions(withheld)) {
@@ -456,6 +545,7 @@ export class ExtensionService implements ExtensionHost {
       }
     }
     this.loadedById.delete(record.id)
+    this.folded.delete(record.id)
     for (const listener of this.unloadedListeners) listener(record.id)
   }
 
@@ -1694,6 +1784,44 @@ export function readManifest(path: string): Manifest | null {
   } catch {
     return null
   }
+}
+
+function asRecord(manifest: Manifest): Record<string, unknown> {
+  return manifest as unknown as Record<string, unknown>
+}
+
+/**
+ * The engine's record as the service publishes it (`loaded`, `onLoaded`): the manifest as
+ * declared where the engine's copy carries the runtime host grants folded in
+ * (`withoutGrantedHosts`), so the API layer's required set and the chrome's permission lines
+ * read what the extension asked for. Electron's record itself when nothing was folded.
+ */
+function publishedExtension(ext: Extension, folded: readonly string[]): Extension {
+  if (folded.length === 0) return ext
+  const manifest: unknown = ext.manifest
+  if (!manifest || typeof manifest !== 'object') return ext
+  const declared = withoutGrantedHosts(manifest as Record<string, unknown>, folded)
+  return declared === manifest ? ext : { ...ext, manifest: declared }
+}
+
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i])
+}
+
+/**
+ * The open pages of an extension to bring back after its reload (`applyHostGrants`): the tabs
+ * showing one of its own documents – the options page, a page it opened in a tab – each at the
+ * URL it shows, in tab order. A discarded tab has no document to lose (it loads its URL when
+ * the user comes back to it), and a page of another extension is none of this one's.
+ */
+export function extensionPagesToReopen(
+  tabs: ReadonlyArray<Pick<Tab, 'id' | 'url' | 'discarded'>>,
+  extensionId: string
+): Array<{ tabId: string; url: string }> {
+  const prefix = `chrome-extension://${extensionId}/`
+  return tabs
+    .filter((tab) => !tab.discarded && tab.url.startsWith(prefix))
+    .map((tab) => ({ tabId: tab.id, url: tab.url }))
 }
 
 const IMAGE_MIME: Record<string, string> = {
