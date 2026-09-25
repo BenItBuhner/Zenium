@@ -13,6 +13,9 @@ name: Android share demo
 # correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
 # file only picks the driver and the demo it runs.
 on:
+  # TEMPORARY (H4, seed 69): the API 33 job with the current WebView – removed before the PR is ready.
+  push:
+    branches: [cursor/android-harness-h4-2ae5]
   workflow_dispatch:
 
 permissions:
@@ -25,6 +28,8 @@ concurrency:
 jobs:
   record:
     name: Share demo (API 34, the system sheet)
+    # TEMPORARY (H4): the push trigger above runs the API 33 job alone.
+    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
