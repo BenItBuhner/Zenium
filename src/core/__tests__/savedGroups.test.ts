@@ -141,6 +141,13 @@ function click(items: MenuItemTemplate[], label: string): void {
   item.click()
 }
 
+/**
+ * Let the state broadcast of the tick go out, and the events queued behind it (`afterBroadcast`:
+ * `folder.edit` names a fresh folder, so it waits for the commit's broadcast and flushes on the
+ * next `setImmediate`). A read of `sent` before this sees none of them, whatever was asked.
+ */
+const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
+
 const linkParams = (linkURL: string): PageContextParams => ({
   x: 10,
   y: 10,
@@ -526,7 +533,7 @@ describe('the link menu’s group item (TAB-15)', () => {
     expect(m.tabs[loose].folderId).toBeNull()
   })
 
-  it('makes the group for a tab in none: the opener and the new tab, a group of two (PUI-17)', () => {
+  it('makes the group for a tab in none: the opener and the new tab, a group of two (PUI-17)', async () => {
     const h = harness('phone')
     const m = h.browser.state.model
     const other = h.open('https://other.test/')
@@ -548,6 +555,9 @@ describe('the link menu’s group item (TAB-15)', () => {
       collapsed: false
     })
     expect(FOLDER_COLOR_ORDER).toContain(folder.color)
+    // The editor's `folder.edit` would go out behind the commit's broadcast, on the next tick:
+    // the tick is let go first, so a folder that had asked for its editor would have sent it.
+    await tick()
     expect(h.sent.map((e) => e.name)).not.toContain('folder.edit')
     // Both in it – the opener kept its slot, the new tab behind it in the background – and
     // the tab beside them left out.
