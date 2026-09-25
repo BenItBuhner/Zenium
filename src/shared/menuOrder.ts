@@ -1,0 +1,142 @@
+/**
+ * The phone app menu's user order (Edge's Change menu, TB-22) as data. The menu's items carry a
+ * stable key from one opening to the next (`MenuItemTemplate.key` / `MenuItemDescriptor.key`:
+ * `icon.forward`, `row.settings`, `sep.3`); the sheet's edit mode saves the keys in the user's
+ * order as `settings.menuOrder`, and the core reads that order against the build's default when
+ * it composes the menu. This module owns the reading and the sanitising so the core can persist
+ * and sync the setting and the sheet can be tested without a DOM.
+ *
+ * The icon row and the list under it are two sections ordered independently (§9.13 keeps the
+ * row's membership fixed): the same saved list is applied to each, and each takes the keys it
+ * has items for.
+ */
+
+/** The prefix of an icon-row item's key. */
+export const MENU_KEY_ICON = 'icon.'
+/** The prefix of a list row's key. */
+export const MENU_KEY_ROW = 'row.'
+/** The prefix of a hairline's key (the list's groups reorder as one list, hairlines included). */
+export const MENU_KEY_SEP = 'sep.'
+
+/**
+ * The key of the "Change Menu" row: the list's last row, outside the order – the sheet opens its
+ * edit mode in place when it is picked, and the edit mode neither moves nor saves it.
+ */
+export const MENU_KEY_CHANGE_MENU = 'menu.change'
+
+/** A saved order longer than this is cut: the phone menu has a few dozen items at most. */
+export const MENU_ORDER_MAX = 96
+/** A key longer than this names nothing of ours (`row.closePrivateTabs` is 20): it is dropped. */
+export const MENU_KEY_MAX = 64
+
+/**
+ * A persisted or synced `menuOrder` read like a profile's own: a list sanitises to a list –
+ * unique non-empty strings no longer than a key of ours, capped in number, the empty list when
+ * nothing in it is valid – and anything but a list to `undefined` (no setting). The empty list
+ * is a value, not an absence: the Reset row writes it, the profile keeps it and a peer receives
+ * it as an edit of the key – the default order, stated – where a key the record lacks says
+ * nothing (`core/sync/apply.ts`). The reading takes both as the default order.
+ */
+export function sanitizeMenuOrder(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const seen = new Set<string>()
+  const order: string[] = []
+  for (const key of raw) {
+    if (typeof key !== 'string' || key === '' || key.length > MENU_KEY_MAX || seen.has(key)) {
+      continue
+    }
+    if (order.length >= MENU_ORDER_MAX) break
+    seen.add(key)
+    order.push(key)
+  }
+  return order
+}
+
+/**
+ * `items` in the saved order: the items the order names come first, in its order; an item it
+ * never named – a newer build's addition, an item that was on the bar or off its condition when
+ * the order was saved (Home while the bar carries it, Add to Home Screen on an installed app) –
+ * takes its place after its DEFAULT PREDECESSOR: the item before it in the default order, or the
+ * nearest one before that which is shown, so a row returning to the menu returns beside the row
+ * it always followed, not to the section's end; one with no predecessor shown leads. Items
+ * without a key are never named and take the same route. A key the build has no item for (an
+ * older build's, another device's) is dropped. No saved order, or an empty one, is the default
+ * order itself.
+ */
+export function applyMenuOrder<T>(
+  items: readonly T[],
+  keyOf: (item: T) => string | undefined,
+  saved: readonly string[] | undefined
+): T[] {
+  if (!saved || saved.length === 0) return [...items]
+  const byKey = new Map<string, T>()
+  for (const item of items) {
+    const key = keyOf(item)
+    if (key !== undefined && !byKey.has(key)) byKey.set(key, item)
+  }
+  const placed = new Set<T>()
+  const ordered: T[] = []
+  for (const key of saved) {
+    const item = byKey.get(key)
+    if (item === undefined || placed.has(item)) continue
+    placed.add(item)
+    ordered.push(item)
+  }
+  items.forEach((item, i) => {
+    if (placed.has(item)) return
+    // The nearest default predecessor already in the order; an unnamed item placed just before
+    // this one counts, so a run of unnamed items keeps its default order.
+    let at = 0
+    for (let j = i - 1; j >= 0; j--) {
+      const index = ordered.indexOf(items[j] as T)
+      if (index >= 0) {
+        at = index + 1
+        break
+      }
+    }
+    placed.add(item)
+    ordered.splice(at, 0, item)
+  })
+  return ordered
+}
+
+/**
+ * Whether the saved order changes nothing about `items`: the Reset row is disabled when it
+ * would restore what is already shown.
+ */
+export function isDefaultMenuOrder<T>(
+  items: readonly T[],
+  keyOf: (item: T) => string | undefined,
+  saved: readonly string[] | undefined
+): boolean {
+  const ordered = applyMenuOrder(items, keyOf, saved)
+  return ordered.every((item, index) => item === items[index])
+}
+
+/** The keys of `items`, in their order, for the edit mode's save (unkeyed items contribute none). */
+export function menuOrderOf<T>(
+  items: readonly T[],
+  keyOf: (item: T) => string | undefined
+): string[] {
+  const order: string[] = []
+  for (const item of items) {
+    const key = keyOf(item)
+    if (key !== undefined) order.push(key)
+  }
+  return order
+}
+
+/**
+ * `items` with the item at `from` moved to `to` (both indices into `items`; a move out of range
+ * or onto itself leaves the list as it is). The edit mode's accessibility actions – Move up,
+ * Move down, Move to start – and the drag's re-targeting all reduce to this.
+ */
+export function moveMenuItem<T>(items: readonly T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) {
+    return [...items]
+  }
+  const next = [...items]
+  const [moved] = next.splice(from, 1)
+  next.splice(to, 0, moved as T)
+  return next
+}

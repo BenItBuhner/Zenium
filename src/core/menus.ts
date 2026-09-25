@@ -49,6 +49,7 @@ import {
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
+import { MENU_KEY_CHANGE_MENU, applyMenuOrder, menuOrderOf } from '../shared/menuOrder'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
@@ -250,7 +251,8 @@ export class Menus {
     win: ZenWindow,
     source: MenuSource,
     anchor?: MenuAnchor,
-    header?: MenuHeader
+    header?: MenuHeader,
+    defaultOrder?: string[]
   ): void {
     const items = withAccelerators(
       tidySeparators(template),
@@ -262,7 +264,8 @@ export class Menus {
       source,
       win,
       ...anchor,
-      ...(header ? { header } : {})
+      ...(header ? { header } : {}),
+      ...(defaultOrder ? { defaultOrder } : {})
     })
   }
 
@@ -3329,9 +3332,14 @@ export class Menus {
     // zero is disabled), so the menu keeps its shape from one opening to the next.
     const privateTabs = when(
       caps.privateTabs,
-      { label: 'New Private Tab', click: () => tabs.newPrivateTab(undefined, win) },
+      {
+        label: 'New Private Tab',
+        key: 'row.newPrivateTab',
+        click: () => tabs.newPrivateTab(undefined, win)
+      },
       {
         label: 'Close Private Tabs',
+        key: 'row.closePrivateTabs',
         enabled: tabs.privateTabs().length > 0,
         click: () => tabs.closePrivateTabs(win)
       }
@@ -3689,56 +3697,91 @@ export class Menus {
 
     // --- The phone: Chrome's phone menu, one flat list behind the icon row (TB-08). ------------
     if (phone) {
+      // Every item carries a stable key for the user's order (Edge's Change menu, TB-22:
+      // `settings.menuOrder`, read by `shared/menuOrder.ts`): the icon row's `icon.*` keys are
+      // set where the row is built, the list's rows are named here, and the hairlines are
+      // numbered so the list's groups reorder as one list – a row dragged past a hairline joins
+      // the next group (Edge's purpose: the rows one uses into the first detent). The order is
+      // applied per section: the row keeps its membership (§9.13) and its place at the head,
+      // the list follows; an item the saved order never named keeps to the default order after
+      // the named ones, a key this build has no item for is dropped. A group whose items come
+      // and go on separate conditions names each item's key where it is built (`privateTabs`,
+      // `pageControlItems`); a group of alternatives that never stand together shares one key
+      // (`homeScreenItems`: Open in the app, or Add to Home Screen).
+      let hairlines = 0
+      const hairline = (): Template => [{ type: 'separator', key: `sep.${++hairlines}` }]
+      const keyed = (key: string, ...items: Template): Template => {
+        // One key names one item. A group that can stand more than one unnamed item together
+        // has no place here: it names each where it is built (as `privateTabs` does), else a
+        // saved key would name a place, not a row.
+        if (items.filter((item) => item.key === undefined).length > 1) {
+          throw new Error(`Menu key ${key} would name ${items.length} items`)
+        }
+        return items.map((item) => ({ ...item, key: item.key ?? key }))
+      }
+      const keyOf = (item: MenuItemTemplate): string | undefined => item.key
+      const order = state.settings.menuOrder
+      const list: Template = [
+        ...keyed('row.newTab', newTab),
+        ...keyed('row.newPrivateTab', ...privateTabs),
+        ...keyed('row.newSpace', ...newSpace),
+        ...hairline(),
+        ...keyed('row.newWindow', ...newWindow),
+        ...keyed('row.newBlankWindow', ...newBlankWindow),
+        ...keyed('row.newPrivateWindow', ...newPrivateWindow),
+        ...hairline(),
+        ...keyed('row.bookmarks', bookmarks),
+        ...keyed('row.history', showHistory('History')),
+        ...keyed('row.downloads', downloads),
+        ...keyed('row.passwords', ...passwords),
+        ...keyed('row.extensions', ...extensions),
+        ...keyed('row.addons', ...addons),
+        ...hairline(),
+        ...keyed('row.changeTheme', ...changeTheme),
+        ...keyed('row.zoomSheet', ...zoomSheet),
+        ...keyed('row.zoom', ...zoom),
+        ...hairline(),
+        ...keyed('row.findInPage', findInPage),
+        ...keyed('row.readerView', readerView),
+        ...keyed('row.textPreferences', ...textPreferences),
+        ...keyed('row.listen', ...listen),
+        ...keyed('row.translate', ...translate),
+        ...keyed('row.share', ...share),
+        ...keyed('row.sendToDevices', ...sendToDevices),
+        ...keyed('row.homeScreen', ...homeScreen),
+        ...keyed('row.print', ...print),
+        ...keyed('row.screenshot', screenshot),
+        ...keyed('row.captureFullPage', captureFullPage),
+        ...keyed('row.pageControls', ...pageControls),
+        ...hairline(),
+        ...keyed('row.resources', ...resources),
+        ...keyed('row.settings', settings),
+        ...keyed('row.devtools', ...devtools),
+        ...hairline(),
+        ...keyed('row.about', about),
+        ...keyed('row.quit', ...quit)
+      ]
+      // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set, the
+      // star, Download page, Page info and Reload / Stop – less what the user's bar carries
+      // (§9.13) – which the chrome draws as a row of icon buttons from each item's glyph.
+      const iconRow = this.phoneIconRow(active, win)
       this.popup(
         [
-          // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set,
-          // the star, Download page, Page info and Reload / Stop – less what the user's bar
-          // carries (§9.13) – which the chrome draws as a row of icon buttons from each item's
-          // glyph.
-          ...this.phoneIconRow(active, win),
+          ...applyMenuOrder(iconRow, keyOf, order),
           separator,
-          newTab,
-          ...privateTabs,
-          ...newSpace,
+          ...applyMenuOrder(list, keyOf, order),
+          // Edge's "Change menu" as the list's last row, in a group of its own and outside the
+          // order: the sheet opens its edit mode in place (`MenuSheet.tsx`); no pick reaches
+          // the core.
           separator,
-          ...newWindow,
-          ...newBlankWindow,
-          ...newPrivateWindow,
-          separator,
-          bookmarks,
-          showHistory('History'),
-          downloads,
-          ...passwords,
-          ...extensions,
-          ...addons,
-          separator,
-          ...changeTheme,
-          ...zoomSheet,
-          ...zoom,
-          separator,
-          findInPage,
-          readerView,
-          ...textPreferences,
-          ...listen,
-          ...translate,
-          ...share,
-          ...sendToDevices,
-          ...homeScreen,
-          ...print,
-          screenshot,
-          captureFullPage,
-          ...pageControls,
-          separator,
-          ...resources,
-          settings,
-          ...devtools,
-          separator,
-          about,
-          ...quit
+          { label: 'Change Menu', key: MENU_KEY_CHANGE_MENU }
         ],
         win,
         'app',
-        { ...anchor, keyboard: options.keyboard }
+        { ...anchor, keyboard: options.keyboard },
+        undefined,
+        // The default order travels with the menu, for the edit mode's Reset row.
+        menuOrderOf([...iconRow, ...list], keyOf)
       )
       return
     }
@@ -4027,6 +4070,7 @@ export class Menus {
       phoneBarHas(bar, id) ? [] : [item]
     return [
       ...unlessOnBar('forward', {
+        key: 'icon.forward',
         label: 'Forward',
         glyph: 'forward',
         action: 'nav.forward',
@@ -4039,6 +4083,7 @@ export class Menus {
       // there is no Home anywhere, as Chrome's button leaves the toolbar.
       ...(this.browser.newTab.homepageUrl() !== null
         ? unlessOnBar('home', {
+            key: 'icon.home',
             label: 'Home',
             glyph: 'home',
             enabled: Boolean(active),
@@ -4052,6 +4097,7 @@ export class Menus {
       // checkbox (a stateful glyph, not a toggle): a press never unchecks it, and the mouse
       // popover would otherwise mark a checked action row.
       ...unlessOnBar('bookmark', {
+        key: 'icon.bookmark',
         label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark',
         glyph: 'star',
         action: 'bookmark.add',
@@ -4062,6 +4108,7 @@ export class Menus {
       // Chrome's Download keeps the page for later; `page.savePage` is the core's way (the host
       // writes an archive into Downloads and files it there). A page of the web only.
       {
+        key: 'icon.downloadPage',
         label: 'Download Page',
         glyph: 'download',
         action: 'page.savePage',
@@ -4073,6 +4120,7 @@ export class Menus {
       // asks for it as it asks for the zoom sheet). None for a blank or new tab, which have no
       // page, nor for a registered internal page (Settings), which has no site (§10.1).
       {
+        key: 'icon.pageInfo',
         label: 'Page Info',
         glyph: 'info',
         enabled: Boolean(active) && hasSiteInfo(active!),
@@ -4083,8 +4131,15 @@ export class Menus {
       ...unlessOnBar(
         'reload',
         active?.loading
-          ? { label: 'Stop', glyph: 'stop', action: 'nav.stop', click: () => tabs.stop(active.id) }
+          ? {
+              key: 'icon.reload',
+              label: 'Stop',
+              glyph: 'stop',
+              action: 'nav.stop',
+              click: () => tabs.stop(active.id)
+            }
           : {
+              key: 'icon.reload',
               label: 'Reload',
               glyph: 'reload',
               action: 'nav.reload',
@@ -4232,9 +4287,12 @@ export class Menus {
     const { pageControls, state } = this.browser
     const web = Boolean(active) && siteKey(active!.url) !== null
     const items: Template = []
+    // The two rows are present on their own conditions, so each names its own order key (the
+    // phone's `keyed` keeps a key an item brings) rather than taking a place in the group.
     if (state.capabilities.pageControls) {
       items.push({
         label: 'Desktop Site',
+        key: 'row.desktopSite',
         type: 'checkbox',
         enabled: web,
         checked: web && pageControls.isDesktop(active!),
@@ -4246,6 +4304,7 @@ export class Menus {
     if (state.capabilities.darkenSites && pageControls.settings.darkenSites) {
       items.push({
         label: 'Dark Theme for This Site',
+        key: 'row.darkenSite',
         type: 'checkbox',
         enabled: web,
         checked: web && pageControls.isDarkened(active!),

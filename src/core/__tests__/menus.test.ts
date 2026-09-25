@@ -1776,8 +1776,151 @@ describe('the app menu', () => {
       '-',
       'Settings',
       '-',
-      'About Zenium 1.2.3'
+      'About Zenium 1.2.3',
+      '-',
+      'Change Menu'
     ])
+  })
+
+  describe('the phone menu’s order (Edge’s Change menu, TB-22)', () => {
+    const keysOf = (items: MenuItemTemplate[]): (string | undefined)[] => items.map((i) => i.key)
+
+    it('names every item of the phone menu for the saved order – the icon row’s `icon.*`, the rows’ `row.*`, the hairlines’ `sep.*` – each once, and the Change Menu row last, outside the order', () => {
+      const h = harness(ANDROID, 'phone')
+      appMenu(h)
+      const shown = h.shown()
+      const keys = keysOf(shown)
+      // Every item carries a key but the structural hairline between the sections and the one
+      // before the Change Menu row.
+      const unkeyed = shown.filter((i) => i.key === undefined)
+      expect(unkeyed.every((i) => i.type === 'separator')).toBe(true)
+      expect(unkeyed).toHaveLength(2)
+      const named = keys.filter((k): k is string => k !== undefined)
+      expect(new Set(named).size).toBe(named.length)
+      const glyphs = shown.filter((i) => i.glyph)
+      expect(glyphs.length).toBeGreaterThan(0)
+      expect(glyphs.every((i) => i.key?.startsWith('icon.'))).toBe(true)
+      const rows = shown.filter(
+        (i) => !i.glyph && i.type !== 'separator' && i.key !== 'menu.change'
+      )
+      expect(rows.every((i) => i.key?.startsWith('row.'))).toBe(true)
+      const hairlines = shown.filter((i) => i.type === 'separator' && i.key)
+      expect(hairlines.every((i) => i.key?.startsWith('sep.'))).toBe(true)
+      expect(shown.at(-1)).toMatchObject({ label: 'Change Menu', key: 'menu.change' })
+      expect(shown.at(-1)!.click).toBeUndefined()
+      // Reload and Stop share the row's last slot and its key.
+      expect(item(shown, 'Reload').key).toBe('icon.reload')
+      // A row that comes and goes on a condition of its own is named where it is built, not by
+      // its place in a group: Close Private Tabs is not the private-tab row's second, Dark Theme
+      // for This Site not Desktop Site's, so a saved key still names the same row when the
+      // other is absent.
+      expect(item(shown, 'New Private Tab').key).toBe('row.newPrivateTab')
+      expect(item(shown, 'Close Private Tabs').key).toBe('row.closePrivateTabs')
+      expect(item(shown, 'Desktop Site').key).toBe('row.desktopSite')
+      expect(named.some((k) => /\.\d+$/.test(k) && !k.startsWith('sep.'))).toBe(false)
+      // The desktop-shaped menus are not keyed as a whole: under the desktop's capabilities they
+      // carry no key at all; where a builder of theirs is shared with the phone branch (the
+      // page controls' rows, Add to Home Screen) its items carry the phone's key as an extra
+      // property the templates never read – the Android tablet's four – and `menuOrder` moves
+      // nothing there: the order is the phone's.
+      for (const other of [harness(DESKTOP), harness(DESKTOP, 'tablet')]) {
+        appMenu(other)
+        expect(keysOf(other.shown()).every((k) => k === undefined)).toBe(true)
+      }
+      const tablet = harness(ANDROID, 'tablet')
+      const plain = appMenu(tablet)
+      const tabletKeys = keysOf(tablet.shown()).filter((k): k is string => k !== undefined)
+      expect(tabletKeys).toEqual(['row.newPrivateTab', 'row.closePrivateTabs', 'row.desktopSite'])
+      tablet.browser.state.settings.menuOrder = [
+        'row.desktopSite',
+        'row.closePrivateTabs',
+        'row.newPrivateTab'
+      ]
+      expect(appMenu(tablet)).toEqual(plain)
+      // The desktop as shipped (site darkening on) carries the darken row's key the same way
+      // once the row is live; whatever it carries is a shared row's, and the order moves nothing.
+      const desktop = harness({ ...DESKTOP, darkenSites: true })
+      const desktopPlain = appMenu(desktop)
+      expect(keysOf(desktop.shown()).every((k) => k === undefined || k.startsWith('row.'))).toBe(
+        true
+      )
+      desktop.browser.state.settings.menuOrder = ['row.darkenSite', 'row.newTab']
+      expect(appMenu(desktop)).toEqual(desktopPlain)
+    })
+
+    it('reads `settings.menuOrder` per section: the named items in the saved order, an item the order never named after its default predecessor, a key the build has no item for dropped, the Change Menu row last whatever the order says', () => {
+      const h = harness(ANDROID, 'phone')
+      const plain = appMenu(h)
+      const defaults = keysOf(h.shown()).filter(
+        (k): k is string => k !== undefined && k !== 'menu.change'
+      )
+      // Saved as the sheet saves – every key shown – while Home was on the bar (absent), with
+      // Reload dragged to the row's head, Settings and the fourth hairline's group (Find in
+      // Page…'s) to the list's head, and a key of another build's among them.
+      const rest = defaults.filter(
+        (k) => !['icon.home', 'icon.reload', 'row.settings', 'sep.4'].includes(k)
+      )
+      h.browser.state.settings.menuOrder = [
+        'icon.reload',
+        'row.settings',
+        'row.readAloud',
+        'menu.change',
+        'sep.4',
+        ...rest
+      ]
+      const menu = appMenu(h)
+      // Reload first; Home – never named – back after Forward, the glyph it follows by default.
+      expect(menu.slice(0, 7)).toEqual([
+        'Reload',
+        'Forward',
+        'Home',
+        'Bookmark',
+        'Download Page',
+        'Page Info',
+        '-'
+      ])
+      // Settings, then the fourth hairline, then the default order less the two.
+      expect(menu.slice(7, 11)).toEqual(['Settings', '-', 'New Tab', 'New Private Tab'])
+      expect(menu.filter((l) => l === 'Settings')).toHaveLength(1)
+      expect(menu.filter((l) => l === 'Downloads')).toHaveLength(1)
+      expect(menu.at(-2)).toBe('-')
+      expect(menu.at(-1)).toBe('Change Menu')
+      expect(menu).not.toContain('row.readAloud')
+      // The same rows (Settings' hairline, left beside another, tidied away as the core does).
+      expect(menu.filter((l) => l !== '-').sort()).toEqual(plain.filter((l) => l !== '-').sort())
+    })
+
+    it('saves the order through `settings.update` – sanitised – and the empty list is the Reset: STORED as the setting’s value, the default order back', () => {
+      const h = harness(ANDROID, 'phone')
+      const before = appMenu(h)
+      expect('menuOrder' in h.browser.state.settings).toBe(false)
+      h.browser.handleCommand(h.win, 'settings.update', {
+        menuOrder: ['row.about', 3, 'row.about', '', 'row.newTab']
+      })
+      expect(h.browser.state.settings.menuOrder).toEqual(['row.about', 'row.newTab'])
+      expect(appMenu(h).slice(7, 9)).toEqual(['About Zenium 1.2.3', 'New Tab'])
+      // The Reset keeps the key with the empty list – a value the profile persists and the sync
+      // record carries, so the reset reaches the other devices – and the menu is the default.
+      h.browser.handleCommand(h.win, 'settings.update', { menuOrder: [] })
+      expect(h.browser.state.settings.menuOrder).toEqual([])
+      expect(appMenu(h)).toEqual(before)
+      // A list with nothing valid in it is the empty list as well.
+      h.browser.handleCommand(h.win, 'settings.update', { menuOrder: ['row.about', 'row.newTab'] })
+      h.browser.handleCommand(h.win, 'settings.update', { menuOrder: [3, null, ''] })
+      expect(h.browser.state.settings.menuOrder).toEqual([])
+      expect(appMenu(h)).toEqual(before)
+    })
+
+    it('ignores a malformed `menuOrder` patch – anything but a list – rather than reading it as the Reset', () => {
+      const h = harness(ANDROID, 'phone')
+      h.browser.handleCommand(h.win, 'settings.update', { menuOrder: ['row.about', 'row.newTab'] })
+      const saved = appMenu(h)
+      for (const bad of ['row.about', 42, null, true, { 0: 'row.about' }]) {
+        h.browser.handleCommand(h.win, 'settings.update', { menuOrder: bad })
+        expect(h.browser.state.settings.menuOrder).toEqual(['row.about', 'row.newTab'])
+      }
+      expect(appMenu(h)).toEqual(saved)
+    })
   })
 
   it('on a phone Home is the icon row’s glyph after Forward (SET-36, v2 §9.13), never a text row: gone while Off, and it opens the homepage on the active tab', () => {
@@ -2085,13 +2228,15 @@ describe('the app menu', () => {
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).not.toContain('Dark Theme for This Site')
     h.browser.pageControls.update({ darkenSites: true })
-    expect(appMenu(h).slice(-6)).toEqual([
+    expect(appMenu(h).slice(-8)).toEqual([
       'Desktop Site',
       'Dark Theme for This Site',
       '-',
       'Settings',
       '-',
-      'About Zenium 1.2.3'
+      'About Zenium 1.2.3',
+      '-',
+      'Change Menu'
     ])
   })
 

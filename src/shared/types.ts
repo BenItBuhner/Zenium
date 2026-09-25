@@ -2658,6 +2658,17 @@ export interface Settings {
   /** Phone layout: the controls either side of the address pill (Settings › Navigation bar). */
   phoneBar: PhoneBarLayout
   /**
+   * Phone layout: the app menu's items in the user's order (Edge's Change menu, TB-22) – the
+   * items' stable keys (`MenuItemDescriptor.key`; `shared/menuOrder.ts` reads it against the
+   * build's default: named items first in this order, the rest after them in the default order,
+   * a key the build has no item for dropped). Absent until the user reorders; the Reset row
+   * writes the EMPTY list, which is kept and synced as a value – both read as the default order,
+   * but the empty list says so to the other devices where an absent key says nothing
+   * (`core/sync/records.ts` sends the settings' keys as they are and never one they lack). The
+   * desktop's menus never read it.
+   */
+  menuOrder?: string[]
+  /**
    * The homepage (SET-36 / NTP-30): what the phone's Home button – the bar's optional item, the
    * app menu's icon-row glyph otherwise – opens, or that there is none. Absent in profiles from
    * before it existed (`sanitizeHomepage` reads the new tab page, Chrome's default). Synced
@@ -4240,6 +4251,12 @@ export interface MenuDeviceMark {
 
 export interface MenuItemDescriptor {
   id: string
+  /**
+   * The item's stable name across openings (the phone app menu's items: `icon.forward`,
+   * `row.settings`, `sep.3`), what the sheet's edit mode (Change Menu, TB-22) reorders and
+   * saves as `settings.menuOrder`. `id` is numbered per opening and names the click alone.
+   */
+  key?: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
   label: string
   enabled: boolean
@@ -4337,6 +4354,13 @@ export interface MenuDescriptor {
     | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
   title?: string
+  /**
+   * The phone app menu's item keys in the build's default order (`shared/menuOrder.ts`), for its
+   * edit mode's Reset row (TB-22): the order the items are shown in is `settings.menuOrder`'s,
+   * applied by the core; this is what the default would put them back to. Absent on every other
+   * menu.
+   */
+  defaultOrder?: string[]
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
