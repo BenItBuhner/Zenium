@@ -657,11 +657,15 @@ class Extensions(private val host: Host) {
                     val refused = unit.refused ?: continue
                     if (!unit.cached) unitRefusedLine(id, name, refused)
                 }
+                // The shapes (`ExtensionScripts.SHAPE_*`) name what the chars are: a world's
+                // bootstrap once in a carrier or a holder, its other rule sets thin.
+                val shapes = compiled.filter { it.refused == null }.groupingBy { it.shape }.eachCount()
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
                         "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached, " +
                         "${compiled.count { it.refused != null }} refused) in $ms ms, " +
+                        "shapes ${shapes.entries.joinToString(" ") { (shape, n) -> "$n $shape" }}, " +
                         "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}"
                 )
                 reply(stats)

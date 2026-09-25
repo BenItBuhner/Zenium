@@ -74,6 +74,56 @@ object ExtensionScripts {
     fun named(script: String): String = script + SOURCE_URL_TAIL
 
     /**
+     * A unit's shape (`UnitShape` in the core's `units.ts`): how much of the bootstrap its script
+     * carries. The WebView keeps every registered script whole once per tab view in the app
+     * process and once per live frame in the renderer, whatever its origin rules, so a bootstrap
+     * per rule set was that many copies of 163 K characters per view and per frame (compat round
+     * 19: 21 units across the frame budget's six extensions, 3.4 M of their 17.6 M characters).
+     * In an isolated world of the extension's own, one unit carries it and the world's other rule
+     * sets attach:
+     *
+     *  - [SHAPE_WHOLE]: config, CSS, sources and the bootstrap, run at once – the main world's
+     *    shape (a carrier there would be a name the page can see) and a world with one unit;
+     *  - [SHAPE_CARRIER]: the same, the bootstrap wrapped as a function of the boot that is left
+     *    on the world's global as [CARRIER] and called once for this unit's own boot – the
+     *    world's `*`-rule unit, registered first, so it has run before any thin unit;
+     *  - [SHAPE_HOLDER]: the function alone, defined and not called (no sources to run): what a
+     *    world with several rule sets and none over every origin gets, so a frame no set
+     *    matches boots nothing;
+     *  - [SHAPE_THIN]: config, CSS and sources without the bootstrap: the unit calls the
+     *    world's [CARRIER] with its boot, and the bootstrap attaches it to the runtime the
+     *    world has (its own hand-off, token-checked) or boots the frame when it is the first
+     *    of the world to match it.
+     */
+    const val SHAPE_WHOLE = "whole"
+    const val SHAPE_CARRIER = "carrier"
+    const val SHAPE_HOLDER = "holder"
+    const val SHAPE_THIN = "thin"
+
+    /** The world global's slot for the carried bootstrap: `function (__zenExtBoot) { <bootstrap> }`. */
+    const val CARRIER = "__zenExtCarrier"
+
+    /** Around the bootstrap in a carrier or a holder; the parameter is the free name the bootstrap reads its boot by. */
+    private const val CARRIER_HEAD = "var __zenExtCarry=globalThis.$CARRIER=function(__zenExtBoot){\n"
+    private const val CARRIER_TAIL = "\n};\n"
+
+    /** A carrier's own boot, through the function it just defined. */
+    private const val CARRIER_RUN = "__zenExtCarry(__zenExtBoot);"
+
+    /**
+     * A thin unit's whole run: the world's carrier with this unit's boot. No carrier (a world
+     * whose bootstrap unit failed to register, which the plan does not allow) is a console line
+     * naming the extension, not an exception a page could observe.
+     */
+    private const val THIN_RUN = "var __zenExtCarry=globalThis.$CARRIER;" +
+        "if(typeof __zenExtCarry===\"function\")__zenExtCarry(__zenExtBoot);" +
+        "else console.error(\"[Zenium] extension \"+String((__zenExtBoot.config.extension||{}).name||\"\")+" +
+        "\": a set of its content scripts found no bootstrap in its world\");"
+
+    /** The most a shape's fixed text adds around the bootstrap (or in its place). */
+    private const val SHAPE_ROOM = 512
+
+    /**
      * The document-start script, named [SOURCE_URL]. Assembled in one builder sized for the whole
      * text and copied out once: an extension's units can run to ten million characters (Grammarly)
      * or twenty-eight million (Monica), and a 192 MB debug heap that holds the sources, the
@@ -82,16 +132,20 @@ object ExtensionScripts {
      * was the allocation that failed on the emulator). The sources of large files are
      * [Source.transient]: released as they are copied in, so the peak is two copies of the text,
      * not three (the third, Monica's 57 MB string at the copy out, was the next allocation to fail).
+     *
+     * `shape` ([SHAPE_WHOLE] unless the plan says otherwise) decides how the bootstrap goes in;
+     * an unknown shape is assembled whole, the shape that runs anywhere.
      */
     fun documentStart(
         bootstrap: String,
         configJson: String,
         groups: List<Group>,
         css: Map<String, String>,
-        debug: Boolean
+        debug: Boolean,
+        shape: String = SHAPE_WHOLE
     ): String {
         val sb = StringBuilder(
-            bootstrap.length + configJson.length + groups.sumOf { g -> g.sources.sumOf { it.length } + mirrorOf(g).length + 96 } +
+            bootstrapChars(bootstrap.length, shape) + configJson.length + groups.sumOf { g -> g.sources.sumOf { it.length } + mirrorOf(g).length + 96 } +
                 css.entries.sumOf { (key, text) -> key.length + text.length + 8 } + SOURCE_URL_TAIL.length + 4096
         )
         sb.append("(function(){var __zenExtBoot={config:").append(configJson).append(",debug:").append(debug)
@@ -110,9 +164,24 @@ object ExtensionScripts {
             sb.append(JSONObject.quote("${group.extensionId}/${group.index}")).append(':')
             appendGroupFunction(sb, group)
         }
-        sb.append("}};\n").append(bootstrap).append("\n})();").append(SOURCE_URL_TAIL)
+        sb.append("}};\n")
+        when (shape) {
+            SHAPE_CARRIER -> sb.append(CARRIER_HEAD).append(bootstrap).append(CARRIER_TAIL).append(CARRIER_RUN)
+            SHAPE_HOLDER -> sb.append(CARRIER_HEAD).append(bootstrap).append(CARRIER_TAIL)
+            SHAPE_THIN -> sb.append(THIN_RUN)
+            else -> sb.append(bootstrap)
+        }
+        sb.append("\n})();").append(SOURCE_URL_TAIL)
         return sb.toString()
     }
+
+    /**
+     * What a shape's bootstrap part comes to, in characters, from the bootstrap's length alone:
+     * how [documentStart] sizes its builder and how `UnitCompiler` measures a unit against its
+     * budget before reading a file.
+     */
+    fun bootstrapChars(bootstrapLength: Int, shape: String): Int =
+        if (shape == SHAPE_THIN) SHAPE_ROOM else bootstrapLength + SHAPE_ROOM
 
     /**
      * `function (window, self, globalThis, chrome, browser, __zenMirror) { <files> <mirror> }`.

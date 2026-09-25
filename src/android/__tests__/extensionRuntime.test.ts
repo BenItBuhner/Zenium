@@ -205,10 +205,15 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const plans = h.kt.calledWith('ext.configure')
     expect(plans).toHaveLength(2)
     const units = plans[1].units as Array<Record<string, unknown>>
-    expect(units.map((u) => u.key)).toEqual([
-      'isolated:https://example.com',
-      'isolated:https://other.example'
+    // The second rule set in the world brings the one bootstrap's holder ahead of both; the
+    // wire carries each unit's shape for the host's assembly.
+    expect(units.map((u) => [u.key, u.shape])).toEqual([
+      ['isolated:*', 'holder'],
+      ['isolated:https://example.com', 'thin'],
+      ['isolated:https://other.example', 'thin']
     ])
+    const first = plans[0].units as Array<Record<string, unknown>>
+    expect(first.map((u) => u.shape)).toEqual(['whole'])
     const saved = h.saved('extensions-runtime.json')
     expect((saved.registered as Record<string, unknown[]>)[ID]).toHaveLength(1)
   })

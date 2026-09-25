@@ -1187,6 +1187,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         key: unit.key,
         origins: unit.origins,
         world: unit.worldName,
+        shape: unit.shape,
         config: JSON.stringify(unit.config),
         groups: unit.groups,
         css: unit.css
