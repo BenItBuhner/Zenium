@@ -12321,7 +12321,10 @@
  * pointer over any of it. Selection is a mode (§9.6, §10.1): no slot is held for a checkbox at
  * rest; while anything is picked every row leads with the checkbox column (`.zen-page-row-check`,
  * the favicons moving once), and a picked row (`data-selected`) sits on `--v2-selected`, under
- * the pointer too, its checkbox filled in the accent by the primitive.
+ * the pointer too, its checkbox filled in the accent by the primitive. A pick is a class flip
+ * on the row that stands (`data-selected`, `checked`): no box of the row moves. The row's parts
+ * are `gridcell`s for the reader (§9.22) on wrappers that draw no box of their own
+ * (`.zen-page-row-cell`), so the geometry is the row's alone.
  */
 .zen-page-row {
   gap: 12px;
@@ -12329,6 +12332,9 @@
 .zen-page-row[data-selected],
 .zen-page-row[data-selected]:hover {
   background: var(--v2-selected);
+}
+.zen-page-row-cell {
+  display: contents;
 }
 .zen-page-row-check {
   width: var(--v2-checkbox);

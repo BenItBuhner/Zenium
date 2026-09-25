@@ -197,7 +197,8 @@ function emit(name: string, payload: unknown): void {
   for (const fn of listeners.get(name) ?? []) fn(payload)
 }
 
-const { HistoryPage } = await import('../HistoryPage')
+const { HistoryPage, DELETE_SELECTED_PROMPT } = await import('../HistoryPage')
+const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { syncScopeRowId } = await import('@renderer/lib/syncSetup')
 
 /** Each status a test hands in carries a version of its own: the reader asks the core once per version. */
@@ -282,17 +283,22 @@ function tab(url = 'zen://history'): Tab {
 let root: Root | null = null
 let mount: HTMLElement | null = null
 
+/** The page inside the frame's dialog host, where its bulk delete's prompt renders. */
+function page(t: Tab, s: UIState): ReturnType<typeof createElement> {
+  return createElement(FrameDialogHost, null, createElement(HistoryPage, { state: s, tab: t }))
+}
+
 async function mountPage(t: Tab = tab(), s: UIState = state()): Promise<HTMLElement> {
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
-  await act(async () => root!.render(createElement(HistoryPage, { state: s, tab: t })))
+  await act(async () => root!.render(page(t, s)))
   await flush()
   return mount
 }
 
 async function rerender(t: Tab, s: UIState = state()): Promise<void> {
-  await act(async () => root!.render(createElement(HistoryPage, { state: s, tab: t })))
+  await act(async () => root!.render(page(t, s)))
   await flush()
 }
 
@@ -326,6 +332,37 @@ function rowClick(el: HTMLElement, id: string, init: MouseEventInit = {}): void 
   el.querySelector<HTMLButtonElement>(
     `[data-visit-id="${id}"] button[data-row-focus]`
   )!.dispatchEvent(new MouseEvent('click', { bubbles: true, ...init }))
+}
+
+/** A key pressed on a visit row's target. */
+async function rowKey(el: HTMLElement, id: string, init: KeyboardEventInit): Promise<void> {
+  const target = el.querySelector<HTMLButtonElement>(
+    `[data-visit-id="${id}"] button[data-row-focus]`
+  )!
+  target.focus()
+  await act(async () =>
+    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
+  )
+}
+
+/** The bulk delete's prompt while it is up – a panel on its way out (`data-leaving`) is not one. */
+function prompt(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `[data-confirm="${DELETE_SELECTED_PROMPT}"]:not([data-leaving])`
+  )
+}
+
+/** The picked rows' ids, in the list's order. */
+function picked(el: HTMLElement): string[] {
+  return [...el.querySelectorAll('[data-selected]')].map((r) => r.getAttribute('data-visit-id')!)
+}
+
+/** The kept panels' exit animations end (happy-dom runs none): the host lets the chrome go. */
+async function endExit(): Promise<void> {
+  await act(async () => {
+    for (const panel of document.querySelectorAll('.zen-frame-dialogs-slot > [data-leaving]'))
+      panel.dispatchEvent(new Event('animationend'))
+  })
 }
 
 /** The page's session stores of folded and hidden devices, one per chrome document: fresh ones per test. */
@@ -466,7 +503,7 @@ describe('the History page tab (§10.1)', () => {
     })
   })
 
-  it('selection is a mode (§9.6, §10.1): Shift-click enters it, the checkbox column shows on every row, the slot shows the count, Delete removes the picked and leaves it', async () => {
+  it('selection is a mode (§9.6, §10.1): Shift-click enters it, the checkbox column shows on every row, the slot shows the count, Delete asks and then removes the picked as one and leaves it', async () => {
     const el = await mountPage()
     const row = el.querySelector('[data-visit-id="v1"]')!
     // Shift-click with nothing picked yet picks this row alone and so enters the mode.
@@ -483,7 +520,11 @@ describe('the History page tab (§10.1)', () => {
       el.querySelectorAll('[data-visit-id] input.zen-v2-checkbox.zen-page-row-check')
     ).toHaveLength(5)
     expect(el.querySelectorAll('[data-closed-id] .zen-page-row-check')).toHaveLength(2)
-    expect(row.firstElementChild!.classList.contains('zen-page-row-check')).toBe(true)
+    // The checkbox leads the row, in its cell (the row's boxes are the list's: `display: contents`).
+    const lead = row.firstElementChild!
+    expect(lead.getAttribute('role')).toBe('gridcell')
+    expect(lead.classList.contains('zen-page-row-cell')).toBe(true)
+    expect(lead.firstElementChild!.classList.contains('zen-page-row-check')).toBe(true)
     // In the mode a row's checkbox and a plain click on the row both pick or drop it.
     const second = el.querySelector<HTMLInputElement>('[data-visit-id="v2"] input.zen-v2-checkbox')!
     await act(async () => second.click())
@@ -500,10 +541,28 @@ describe('the History page tab (§10.1)', () => {
     ])
     expect(text(el.querySelector('.zen-page-title-count'))).toBe('2 selected')
     expect(el.querySelector('[data-visit-id="v3"]')!.hasAttribute('data-selected')).toBe(false)
-    await act(async () =>
-      el.querySelector<HTMLButtonElement>('[data-testid="history-delete-selected"]')!.click()
-    )
+    // The bar's Delete asks first (HB-68, §9.23): nothing is removed until the prompt's verb.
+    const remove = el.querySelector<HTMLButtonElement>('[data-testid="history-delete-selected"]')!
+    expect(remove.getAttribute('aria-haspopup')).toBe('dialog')
+    await act(async () => remove.click())
+    await flush()
+    expect(calls('history.deleteVisits')).toEqual([])
+    const dialog = prompt()!
+    expect(dialog.getAttribute('role')).toBe('alertdialog')
+    expect(text(dialog.querySelector('[id$="title"]'))).toBe('Delete 2 items from history?')
+    expect(dialog.getAttribute('data-count')).toBe('2')
+    // The verb is the danger-ink secondary with no primary (§6): no default key on a destructive prompt.
+    const verb = dialog.querySelector<HTMLButtonElement>('[data-action="confirm"]')!
+    expect(text(verb)).toBe('Delete')
+    expect(verb.hasAttribute('data-danger')).toBe(true)
+    expect(verb.hasAttribute('data-primary')).toBe(false)
+    expect(text(dialog.querySelector('[data-action="cancel"]'))).toBe('Cancel')
+    await act(async () => verb.click())
+    await flush()
+    await endExit()
+    // ONE deleteVisits for the whole set, in the list's order; the prompt is gone.
     expect(calls('history.deleteVisits')).toEqual([{ ids: ['v1', 'v2'] }])
+    expect(prompt()).toBeNull()
     // Deleting the selection leaves the mode: the column goes, the slot is Clear browsing
     // data… again, a plain click opens.
     expect(el.querySelector('.zen-page-title-count')).toBeNull()
@@ -517,6 +576,147 @@ describe('the History page tab (§10.1)', () => {
       tabId: 'history',
       background: false
     })
+  })
+
+  it('the prompt names the count (one item, n items); Cancel and Escape keep the selection', async () => {
+    const el = await mountPage()
+    await act(async () => rowClick(el, 'v4', { shiftKey: true }))
+    const remove = (): HTMLButtonElement =>
+      el.querySelector<HTMLButtonElement>('[data-testid="history-delete-selected"]')!
+    await act(async () => remove().click())
+    await flush()
+    expect(text(prompt()!.querySelector('[id$="title"]'))).toBe('Delete 1 item from history?')
+    // A confirmation of the user's own command carries no glyph on its title (§9.23; #496's nit).
+    expect(prompt()!.querySelector('[id$="title"] svg')).toBeNull()
+    expect(text(prompt())).toContain('The visit is removed from your history.')
+    // Cancel: the prompt goes, the pick stands, nothing was removed.
+    await act(async () =>
+      prompt()!.querySelector<HTMLButtonElement>('[data-action="cancel"]')!.click()
+    )
+    await flush()
+    await endExit()
+    expect(prompt()).toBeNull()
+    expect(picked(el)).toEqual(['v4'])
+    expect(calls('history.deleteVisits')).toEqual([])
+    // Escape on the prompt is Cancel too – the prompt's, not the page's: the mode stays.
+    await act(async () => remove().click())
+    await flush()
+    expect(prompt()).not.toBeNull()
+    await act(async () =>
+      prompt()!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    )
+    await flush()
+    await endExit()
+    expect(prompt()).toBeNull()
+    expect(picked(el)).toEqual(['v4'])
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('1 selected')
+    expect(calls('history.deleteVisits')).toEqual([])
+  })
+
+  it('the Delete key asks about the selection when there is one, and removes a focused row at once when there is none (§10.5: a single record asks nothing)', async () => {
+    const el = await mountPage()
+    // Nothing picked: Delete on the focused row is that row's remove, as the ⋮ menu's – no prompt.
+    await rowKey(el, 'v3', { key: 'Delete' })
+    expect(calls('history.deleteVisits')).toEqual([{ ids: ['v3'] }])
+    expect(prompt()).toBeNull()
+    invoke.mockClear()
+    // With a selection the key is the bar's Delete: the prompt, the ids untouched until the verb.
+    await act(async () => rowClick(el, 'v1', { shiftKey: true }))
+    await act(async () => rowClick(el, 'v2'))
+    await rowKey(el, 'v5', { key: 'Delete' })
+    await flush()
+    expect(calls('history.deleteVisits')).toEqual([])
+    expect(text(prompt()!.querySelector('[id$="title"]'))).toBe('Delete 2 items from history?')
+    await act(async () =>
+      prompt()!.querySelector<HTMLButtonElement>('[data-action="confirm"]')!.click()
+    )
+    await flush()
+    await endExit()
+    expect(calls('history.deleteVisits')).toEqual([{ ids: ['v1', 'v2'] }])
+    expect(el.querySelector('[data-selecting]')).toBeNull()
+  })
+
+  it('a row a live change takes from the list falls out of the selection; a prompt over a set so changed is withdrawn, one over an untouched set stands', async () => {
+    const el = await mountPage()
+    const without = (...ids: string[]): void => {
+      groups = GROUPS.map((g) => ({
+        ...g,
+        visits: g.visits.filter((v) => !ids.includes(v.id))
+      })).filter((g) => g.visits.length > 0)
+    }
+    const remove = (): HTMLButtonElement =>
+      el.querySelector<HTMLButtonElement>('[data-testid="history-delete-selected"]')!
+    await act(async () => rowClick(el, 'v1', { shiftKey: true }))
+    await act(async () => rowClick(el, 'v5'))
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('2 selected')
+    await act(async () => remove().click())
+    await flush()
+    expect(text(prompt()!.querySelector('[id$="title"]'))).toBe('Delete 2 items from history?')
+    // Another window removes v2 and v3, neither picked: the list reloads, the question stands.
+    without('v2', 'v3')
+    await act(async () => emit('history.changed', undefined))
+    await flush()
+    expect(el.querySelectorAll('[data-visit-id]')).toHaveLength(3)
+    expect(picked(el)).toEqual(['v1', 'v5'])
+    expect(prompt()).not.toBeNull()
+    // Then v5, a picked row: it falls out of the set, the count follows, and the question –
+    // asked about a set that is no longer the selection – is withdrawn; the mode stays.
+    without('v2', 'v3', 'v5')
+    await act(async () => emit('history.changed', undefined))
+    await flush()
+    await endExit()
+    expect(prompt()).toBeNull()
+    expect(picked(el)).toEqual(['v1'])
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('1 selected')
+    expect(el.querySelector('[data-selecting]')).not.toBeNull()
+    expect(calls('history.deleteVisits')).toEqual([])
+    // Asked again, the prompt counts what is left; a change that takes the last picked row
+    // leaves nothing to ask about, and the mode with it.
+    await act(async () => remove().click())
+    await flush()
+    expect(text(prompt()!.querySelector('[id$="title"]'))).toBe('Delete 1 item from history?')
+    groups = []
+    await act(async () => emit('history.changed', undefined))
+    await flush()
+    await endExit()
+    expect(prompt()).toBeNull()
+    expect(el.querySelector('[data-selecting]')).toBeNull()
+    expect(calls('history.deleteVisits')).toEqual([])
+  })
+
+  it('Space on a focused row picks or drops it; the rows are a multiselectable grid whose rows say aria-selected (§9.22)', async () => {
+    const el = await mountPage()
+    const grids = [...el.querySelectorAll('[data-day] ul.zen-page-rows')]
+    expect(grids).toHaveLength(4)
+    for (const grid of grids) {
+      expect(grid.getAttribute('role')).toBe('grid')
+      expect(grid.getAttribute('aria-multiselectable')).toBe('true')
+      // Labelled by its day's heading.
+      const heading = document.getElementById(grid.getAttribute('aria-labelledby')!)
+      expect(heading?.tagName).toBe('H2')
+    }
+    const row = el.querySelector('[data-visit-id="v2"]')!
+    expect(row.getAttribute('role')).toBe('row')
+    expect(row.getAttribute('aria-selected')).toBe('false')
+    // Every part of the row is a cell: the text, the time, the ⋮ – and the checkbox once the mode is on.
+    expect(row.querySelectorAll(':scope > [role="gridcell"]')).toHaveLength(3)
+    await rowKey(el, 'v2', { key: ' ' })
+    expect(row.getAttribute('aria-selected')).toBe('true')
+    expect(row.hasAttribute('data-selected')).toBe(true)
+    expect(row.querySelectorAll(':scope > [role="gridcell"]')).toHaveLength(4)
+    const check = row.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    expect(check.checked).toBe(true)
+    expect(check.getAttribute('aria-label')).toBe('Select A story')
+    // The count is the page's one live region for the selection: no row announces its own.
+    expect(
+      el.querySelectorAll('[data-visit-id] [role="status"], [data-visit-id] [aria-live]')
+    ).toHaveLength(0)
+    expect(el.querySelector('.zen-page-title-count')!.getAttribute('role')).toBe('status')
+    await rowKey(el, 'v2', { key: ' ' })
+    expect(row.getAttribute('aria-selected')).toBe('false')
+    expect(el.querySelector('[data-selecting]')).toBeNull()
   })
 
   it('Shift-click picks the run from the last picked row; Ctrl+A picks every visit shown; Escape leaves the mode', async () => {
