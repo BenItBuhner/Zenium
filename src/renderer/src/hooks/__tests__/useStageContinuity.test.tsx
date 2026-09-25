@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { FormFactor, UIState } from '@shared/types'
-import { cmd } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
+import { viewportStore } from '@renderer/lib/formFactor'
 import { drawerStore, openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { dismissStage, openOverview, stageStore } from '@renderer/lib/gestures/stage'
 import { browserStore, contentAreaStore, uiStore } from '@renderer/lib/ui'
@@ -98,7 +99,8 @@ function state(): UIState {
     tabs: { a: tab('a'), b: tab('b') },
     essentialTabIds: [],
     folders: {},
-    settings: { containerSpecificEssentials: false }
+    settings: { containerSpecificEssentials: false },
+    capabilities: { pageTabs: true }
   } as unknown as UIState
 }
 
@@ -133,7 +135,16 @@ beforeEach(() => {
   vi.spyOn(performance, 'now').mockImplementation(() => now)
   browserStore.set({ state: state() })
   contentAreaStore.set({ area: { x: 0, y: 0, width: 600, height: 900 } })
-  uiStore.set({ snapshot: null, snapshotTabId: null, floatingChrome: 0, drawerOpen: false })
+  uiStore.set({
+    snapshot: null,
+    snapshotTabId: null,
+    floatingChrome: 0,
+    drawerOpen: false,
+    overlay: 'none',
+    overlaySpaceId: null,
+    overlayFolderId: null,
+    overlaySection: null
+  })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -153,6 +164,73 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.mocked(cmd).mockClear()
+  vi.mocked(run).mockClear()
+})
+
+/*
+ * The reverse of the core's hand-over (W6-S1, `PageService.reconcileLayout`): a page's overlay
+ * up on the phone – the History panel, Bookmarks, Downloads – as the window widens into a
+ * layout that holds the page as a tab becomes that tab, through `page.open`; everything that
+ * stays an overlay on the new layout stays up.
+ */
+describe('a page’s overlay follows the window’s class (the reverse seam, W6-S1)', () => {
+  const pageOpens = (): unknown[][] =>
+    vi.mocked(run).mock.calls.filter((call) => call[0] === 'page.open')
+
+  /** The chrome's report of the class `formFactor` (the viewport's store, which the hook's argument is) and the swap's reconcile. */
+  const swapTo = (formFactor: FormFactor): void => {
+    viewportStore.set({ formFactor })
+    reconcileStageFor(formFactor)
+  }
+
+  beforeEach(() => {
+    viewportStore.set({ formFactor: 'phone' })
+  })
+
+  it('turns the History panel into the zen://history tab as the phone widens into the tablet', () => {
+    uiStore.set({ overlay: 'history' })
+    swapTo('tablet')
+    expect(uiStore.get().overlay).toBe('none')
+    expect(pageOpens()).toEqual([['page.open', { id: 'history', section: null, query: undefined }]])
+  })
+
+  it('carries the Bookmarks panel’s folder into the manager’s tab', () => {
+    uiStore.set({ overlay: 'bookmarks', overlayFolderId: 'f_work' })
+    swapTo('tablet')
+    expect(uiStore.get().overlay).toBe('none')
+    expect(uiStore.get().overlayFolderId).toBeNull()
+    expect(pageOpens()).toEqual([
+      ['page.open', { id: 'bookmarks', section: null, query: { folder: 'f_work' } }]
+    ])
+  })
+
+  it('leaves the panel up while the layout stays the phone, and an overlay of every layout up on the tablet', () => {
+    uiStore.set({ overlay: 'downloads' })
+    swapTo('phone')
+    expect(uiStore.get().overlay).toBe('downloads')
+    uiStore.set({ overlay: 'space-editor', overlaySpaceId: 'space' })
+    swapTo('tablet')
+    expect(uiStore.get().overlay).toBe('space-editor')
+    expect(pageOpens()).toEqual([])
+  })
+
+  it('does nothing with no overlay up, on any layout', () => {
+    swapTo('tablet')
+    swapTo('desktop')
+    swapTo('phone')
+    expect(uiStore.get().overlay).toBe('none')
+    expect(pageOpens()).toEqual([])
+  })
+
+  it('runs through the hook as the window widens', () => {
+    uiStore.set({ overlay: 'history' })
+    mount('phone')
+    expect(uiStore.get().overlay).toBe('history')
+    viewportStore.set({ formFactor: 'tablet' })
+    mount('tablet')
+    expect(uiStore.get().overlay).toBe('none')
+    expect(pageOpens()).toHaveLength(1)
+  })
 })
 
 describe('reconcileStageFor', () => {
