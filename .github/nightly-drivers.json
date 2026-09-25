@@ -1099,6 +1099,15 @@
       "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own). The estimate carries the group fold's four scenes (about a minute of the profile) and the group leave's three – the search, the close, the drag-out – with their off-record steps (about another minute and a half)."
     },
     {
+      "id": "lookalike",
+      "class": "LookalikeDemo",
+      "shard": "api35",
+      "mirrors": "android-lookalike-demo.yml",
+      "dir": "lookalike-demo",
+      "estimate": 4,
+      "note": "The lookalike-domain question (PS-18, #478): the driver's loopback server answers as gogle.com, paypa1.com and amazom.com through a WebView proxy override the driver sets itself, so the scene needs nothing from the runner. Here for the room (the phone shards are at their budgets) and for the current WebView; the dispatch records it on API 34."
+    },
+    {
       "id": "menu-perf",
       "class": "MenuSheetPerfDemo",
       "shard": "api35",

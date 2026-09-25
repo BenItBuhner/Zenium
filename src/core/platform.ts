@@ -90,7 +90,10 @@ import type { NotificationHostMessage, NotificationPageRequest } from '../shared
 import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
 import type { TextFragmentHostMessage } from '../shared/textFragmentScript'
 import type { FocusEdge, FocusEdgeHostMessage } from '../shared/focusEdge'
-import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
+import type { LookalikeVerdict, PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
+
+/** The lookalike check's bundled tables (`resources/lookalikes/manifest.json` names the files). */
+export type LookalikeTableName = 'tranco-top' | 'confusables'
 import type { RawWebAppManifest, ShortcutIconKind, WebAppDisplay } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
@@ -617,6 +620,13 @@ export interface TabViewEvents {
    * (Android, whose guard reads the tables itself); `onFailLoad` follows with the same URL.
    */
   onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
+  /**
+   * The host's request engine held a main-frame navigation to `url` on the core's lookalike
+   * verdict (`ProtectionService.checkLookalike`, PS-18); `onFailLoad` follows with the same URL
+   * and the tab shows the question. Hosts whose engine cannot ask the core (Android) never call
+   * it: the core asks at `navigate` and at the commit instead.
+   */
+  onLookalikeNavigation?(url: string, verdict: LookalikeVerdict): void
   /**
    * The page's renderer went away; `exitCode` is the process's where the host has it (Electron's
    * `render-process-gone` details), for the sad tab's code line; `details` what else the host
@@ -1474,6 +1484,13 @@ export interface PrivacyHost {
    * `SafeBrowsingService` persists, as text), or null when the build has no snapshot of it.
    */
   bundledSafeBrowsingFeed?(id: string): Promise<string | null>
+  /**
+   * One of the lookalike check's bundled tables (`resources/lookalikes/<name>.txt.gz`, shipped
+   * gzipped and handed over as text): `tranco-top`, the most visited registrable domains;
+   * `confusables`, Unicode's confusable characters with a Latin prototype. Null when the build
+   * has no copy – the check then stays off, as it does before the tables are read.
+   */
+  bundledLookalikeTable?(name: LookalikeTableName): Promise<string | null>
   /**
    * Who holds the Safe Browsing tables. `'core'` (the default): the service loads them from the
    * feed documents at start and answers `lookup` itself; Electron's request handler asks it for

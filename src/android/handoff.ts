@@ -52,6 +52,8 @@ export type HandoffFetch = (
   status: number
   headers: { get(name: string): string | null }
   text(): Promise<string>
+  /** The bytes, for a gzipped asset the table reader inflates itself. */
+  body?: ReadableStream<Uint8Array> | null
 }>
 
 export interface DeferredDocumentReader {
@@ -186,6 +188,45 @@ export async function readSpilledBody(
     return await response.text()
   } finally {
     release(body.token)
+  }
+}
+
+/** Where the Gradle build copies `resources/lookalikes` (`copyLookalikesSnapshot`). */
+export const BUNDLED_LOOKALIKES_PATH = '/assets/lookalikes/'
+
+/**
+ * One of the lookalike check's bundled tables (`tranco-top`, `confusables`) from the APK's
+ * assets: the inflated `.txt` the asset merger leaves, else the `.txt.gz` inflated here. Null
+ * when neither is there or the name is not a table's.
+ */
+export async function fetchBundledLookalikeTable(
+  name: string,
+  fetch: HandoffFetch,
+  origin = APP_ORIGIN
+): Promise<string | null> {
+  if (!/^[a-z-]+$/.test(name)) return null
+  const base = `${origin}${BUNDLED_LOOKALIKES_PATH}${name}`
+  try {
+    const plain = await fetch(`${base}.txt`, { cache: 'no-store' })
+    if (plain.ok) {
+      const text = await plain.text()
+      if (text) return text
+    }
+  } catch {
+    // Fall through to the gzip.
+  }
+  try {
+    const gz = await fetch(`${base}.txt.gz`, { cache: 'no-store' })
+    if (!gz.ok || !gz.body) return null
+    // lib.dom types the stream pair over `Uint8Array<ArrayBufferLike>`; the runtime pair is fine.
+    const gunzip = new DecompressionStream('gzip') as unknown as ReadableWritablePair<
+      Uint8Array,
+      Uint8Array
+    >
+    const text = await new Response(gz.body.pipeThrough(gunzip)).text()
+    return text || null
+  } catch {
+    return null
   }
 }
 
