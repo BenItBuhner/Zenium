@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEVICE_LOCAL_SETTINGS,
   ORDER_SPACES,
   applyOrder,
   collectLocal,
@@ -16,6 +17,7 @@ import {
   readSpaceAgentMark,
   stableStringify,
   winningRemote,
+  withoutDeviceLocalSettings,
   type BookmarkData,
   type MetaMap,
   type OrderData,
@@ -207,6 +209,25 @@ describe('collectLocal', () => {
     delete src.settings.menuOrder
     expect(settings()).not.toHaveProperty('menuOrder')
     expect(hashData(settings())).toBe(untouched)
+  })
+
+  it('keeps the device-local settings out of the settings record, every other key in (W5-F3)', () => {
+    const src = sources()
+    // A device that chose both ways: the record carries neither choice.
+    src.settings.sidebarExpandOnHover = false
+    src.settings.onboardingDone = true
+    const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
+    expect(DEVICE_LOCAL_SETTINGS).toEqual(['onboardingDone', 'sidebarExpandOnHover'])
+    expect(data).not.toHaveProperty('sidebarExpandOnHover')
+    expect(data).not.toHaveProperty('onboardingDone')
+    const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
+    expect(Object.keys(data)).toEqual(
+      Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key))
+    )
+    // The helper copies: the device's own settings keep their values.
+    expect(withoutDeviceLocalSettings(src.settings)).not.toBe(src.settings)
+    expect(src.settings.sidebarExpandOnHover).toBe(false)
+    expect(src.settings.onboardingDone).toBe(true)
   })
 })
 
