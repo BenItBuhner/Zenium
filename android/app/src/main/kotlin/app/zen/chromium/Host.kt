@@ -417,6 +417,34 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tabs.setVisible(tabId, visible)
         reportDrawn(tabId, visible, change)
     }
+    /** Serial of the visual-state callbacks [placementAnswer] posts (a request id per ask). */
+    private var shownSeq = 0L
+    /**
+     * Q1, the observable landing: `view.shown`'s answer – the chrome's stand-in for a page a
+     * layout just brought back leaves on it, not on a clock of the chrome's ([PlacementAnswer]
+     * has the rule). The ask follows the placement batch through the port, so the view is
+     * already `VISIBLE` (or refused, [PrivateLock.refusesShow]) when it is read here; the frame
+     * is the view's own, counted as [reportDrawn] counts `view.drawn`'s; the bound is that one's.
+     */
+    private val placementAnswer = PlacementAnswer(
+        showing = { tabId -> tabs.get(tabId)?.visibility == View.VISIBLE },
+        armFrame = { tabId, onFrame ->
+            val view = tabs.get(tabId)
+            if (view == null) {
+                onFrame()
+            } else {
+                view.postVisualStateCallback(++shownSeq, object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) = afterFrames(2, onFrame)
+                })
+            }
+        },
+        armDeadline = { onDeadline ->
+            val deadline = Runnable { onDeadline() }
+            main.postDelayed(deadline, PageVisibility.DRAWN_DEADLINE_MS)
+            val disarm: () -> Unit = { main.removeCallbacks(deadline) }
+            disarm
+        }
+    )
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
@@ -933,6 +961,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
             "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
             "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible")); reply(null) }
+            // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).
+            "view.shown" -> placementAnswer.answer(args.str("tabId")) { shown -> reply(shown) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
             "view.download" -> {
                 if (tab != null) downloads.start(args.str("url"), tab.settings.userAgentString, null, null, -1, tab.tabId)

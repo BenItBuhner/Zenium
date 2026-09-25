@@ -10,7 +10,10 @@ import { AndroidTabView } from '../views'
  * `view.setVisible`. Like the Kotlin host it reports the frame carrying a flip as drawn
  * (`view.drawn`), which `lib/pageView.ts` times the swap between the live page and its picture
  * by – without it every sheet waited out the chrome's 1 s ack timeout before it came up, and
- * nobody previewing a sheet saw its real timing.
+ * nobody previewing a sheet saw its real timing. It answers a landing's `view.shown` (Q1, the
+ * observable landing) the Kotlin host's way too: true once the frame that shows the view has been
+ * drawn – two `requestAnimationFrame`s, its reading of the visual-state callback and the two
+ * frames after it – so a stand-in previewed on the desktop leaves on the host's word as well.
  */
 
 interface HostGlobal {
@@ -94,6 +97,7 @@ describe('the preview host’s batch', () => {
   it('applies a layout’s view ops in order from one hop', async () => {
     const native = createPreviewBridge()
     const batch = vi.spyOn(native, 'batch')
+    const nativeCall = vi.spyOn(native, 'call')
     const bridge = new Bridge(native)
     const view = new AndroidTabView('t1', bridge)
     call(native, 'view.create', { tabId: 't1' })
@@ -104,6 +108,7 @@ describe('the preview host’s batch', () => {
     expect(view.isVisible()).toBe(true)
     // Still the task's: nothing has left, nothing has landed.
     expect(batch).not.toHaveBeenCalled()
+    expect(nativeCall).not.toHaveBeenCalled()
     expect(frame.style.visibility).toBe('hidden')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(batch).toHaveBeenCalledTimes(1)
@@ -114,7 +119,31 @@ describe('the preview host’s batch', () => {
     ).toEqual(['view.setBounds', 'view.setRadius', 'view.setVisible'])
     expect(frame.style.borderRadius).toBe('12px')
     expect(frame.style.visibility).toBe('visible')
+    // The flip from hidden is a landing: the view asked `view.shown` (Q1, the observable
+    // landing) as its own call AFTER the batch, so the stand-in had placed the frame before it
+    // was asked whether the frame is on screen.
+    expect(nativeCall).toHaveBeenCalledTimes(1)
+    expect((JSON.parse(nativeCall.mock.calls[0]?.[0] ?? '{}') as { method: string }).method).toBe(
+      'view.shown'
+    )
+    expect(batch.mock.invocationCallOrder[0]).toBeLessThan(nativeCall.mock.invocationCallOrder[0]!)
+    // Two frames armed: the flip's `view.drawn` report, and the first of the two frames the
+    // stand-in waits for before it answers – the Kotlin host's visual-state callback and its two
+    // frames after, in the preview's terms.
+    expect(frames).toHaveLength(2)
+    frames.shift()!(16)
+    expect(host.hostEvent).toHaveBeenCalledWith(
+      'view.drawn',
+      JSON.stringify({ tabId: 't1', visible: true })
+    )
+    expect(host.resolve).not.toHaveBeenCalled()
+    frames.shift()!(16)
     expect(frames).toHaveLength(1)
+    frames.shift()!(32)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The answer: true, the frame is on screen – and only now.
+    expect(host.resolve).toHaveBeenCalledTimes(1)
+    expect(host.resolve).toHaveBeenCalledWith(expect.any(Number), 'true')
   })
 
   /*
@@ -203,10 +232,29 @@ describe('the preview host’s batch', () => {
       'page',
       'glance'
     ])
-    // Both flips reported drawn on their frame, as the Kotlin host reports them.
-    expect(frames).toHaveLength(2)
-    // The call was answered once, after the report had landed – never before it.
+    // Both flips reported drawn on their frame, as the Kotlin host reports them; and both flips
+    // from hidden were landings, each asking `view.shown` (Q1) as a call of its own after the
+    // batch – the focus first (the call that flushed the report), then the two asks in the order
+    // of their flips – and each ask has armed the first of the stand-in's two frames.
+    expect(nativeCall).toHaveBeenCalledTimes(3)
+    expect(
+      nativeCall.mock.calls.map(
+        (c) => (JSON.parse(c[0] ?? '{}') as { method: string; args: { tabId: string } }).args.tabId
+      )
+    ).toEqual(['page', 'page', 'glance'])
+    expect(
+      nativeCall.mock.calls.map((c) => (JSON.parse(c[0] ?? '{}') as { method: string }).method)
+    ).toEqual(['view.focus', 'view.shown', 'view.shown'])
+    expect(frames).toHaveLength(4)
+    // The focus call was answered once, after the report had landed – never before it; the asks
+    // are not answered until their frames have run.
     expect(atAnswer).toEqual([{ page: 'visible', glance: 'visible', order: ['page', 'glance'] }])
+    expect(host.resolve).toHaveBeenCalledTimes(1)
+    for (const frame of frames.splice(0)) frame(16)
+    for (const frame of frames.splice(0)) frame(32)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(host.resolve).toHaveBeenCalledTimes(3)
+    expect(host.resolve.mock.calls.slice(1).map((c) => c[1])).toEqual(['true', 'true'])
     expect(host.reject).not.toHaveBeenCalled()
   })
 })

@@ -111,10 +111,12 @@ export const PORT_REQUEST = 'bridge.port'
  * trace tells every string's task by the channel, the entry and the method that paid it, and the
  * pair of marks tells the JS thread's wait in the hop (or the pipe write) itself, whatever else
  * the task around it did; off, a hop costs no mark. Read on every hop so a probe installed after
- * boot is heard.
+ * boot is heard. Exported for the marks that belong to a hop's answer rather than the hop
+ * (`views.ts` marks a `view.shown` reply's arrival under the same flag).
  */
-const traced = (): boolean =>
+export const bridgeTraced = (): boolean =>
   (globalThis as { __zenBridgeTrace?: unknown }).__zenBridgeTrace === true
+const traced = bridgeTraced
 
 const noMark = (): void => {}
 

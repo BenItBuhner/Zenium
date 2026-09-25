@@ -58,13 +58,18 @@ export function PhoneStage({
   // overview's shape alone, its progress the overview's own the same way.
   const tabsPhase = stageStore.use((s) => s.tabs.phase)
   const overview = stageStore.use(selectOverview)
+  // A landing held for the host's answer (Q1, `lib/gestures/stage.ts` `StageLanding`): the
+  // phases are at rest, but the card that stood in for the page – the track's landed card, the
+  // overview's hero at the page's frame – stays drawn until the page is on screen.
+  const landing = stageStore.use((s) => s.landing?.stage ?? null)
   const area = contentAreaStore.use((s) => s.area)
 
-  if (!area || (tabsPhase === 'idle' && overview.phase === 'closed')) return null
+  if (!area || (tabsPhase === 'idle' && overview.phase === 'closed' && landing === null))
+    return null
   return (
     <div className="absolute inset-0 z-20">
-      {tabsPhase !== 'idle' && <TabSwitchStage state={state} area={area} />}
-      {overview.phase !== 'closed' && (
+      {(tabsPhase !== 'idle' || landing === 'tabs') && <TabSwitchStage state={state} area={area} />}
+      {(overview.phase !== 'closed' || landing === 'overview') && (
         <TabOverview state={state} overview={overview} area={area} edge={edge} tablet={tablet} />
       )}
     </div>

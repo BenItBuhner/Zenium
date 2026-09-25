@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Platform } from '@shared/types'
 import {
+  awaitingShow,
   chromeUnderPages,
   COVER_WAIT_MS,
   coverPrimed,
@@ -8,6 +9,10 @@ import {
   coverStore,
   decideHidden,
   hideFollowsCover,
+  landingAnswered,
+  landingsSent,
+  markCoverDrop,
+  SHOWN_WAIT_MS,
   trackCover,
   type CoverImageLike
 } from '../cover'
@@ -332,5 +337,94 @@ describe('the ordering a sheet opens in', () => {
     frame()
     expect(status('a')).toEqual({ loading: false, painted: true })
     expect(decideHidden(true, false, status('a'), false)).toBe(true)
+  })
+})
+
+/*
+ * Q1, the observable landing (the §11 stand-in rule): a stand-in for the live page leaves when
+ * the page is confirmed on screen, and the confirmation is the host's, by a signal – its answer
+ * to the placement that brought the view back (`view.shown`) – not the chrome's, by a clock.
+ * The wait begins with the placement (`layout.applied`'s `shown`) and ends with the answer,
+ * whatever it says; the bound is for a host that never answers at all.
+ */
+describe('awaitingShow: the landing waits for the host’s answer, not for the chrome’s clock', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    coverStore.set({ awaitingShow: new Set() })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    delete (globalThis as { __zenBridgeTrace?: unknown }).__zenBridgeTrace
+    vi.restoreAllMocks()
+  })
+  const awaiting = (tabId: string): boolean => awaitingShow(coverStore.get(), tabId)
+
+  it('a layout that brought views back sets the wait for each of them, and the answer ends it', () => {
+    landingsSent(['a', 'b'])
+    expect(awaiting('a')).toBe(true)
+    expect(awaiting('b')).toBe(true)
+    expect(awaiting('c')).toBe(false)
+    landingAnswered('a')
+    expect(awaiting('a')).toBe(false)
+    expect(awaiting('b')).toBe(true)
+    landingAnswered('b')
+    expect(awaiting('b')).toBe(false)
+  })
+
+  it('a layout that brought nothing back sets no wait: nothing to wait for', () => {
+    const before = coverStore.get()
+    landingsSent([])
+    expect(coverStore.get()).toBe(before)
+    expect(awaiting('a')).toBe(false)
+  })
+
+  it('the answer ends the wait whether the page is on screen or nothing is coming: the event’s word is the same drop', () => {
+    landingsSent(['a'])
+    // `view.shown` with `shown: false` – a view the host does not show, a frame that never came
+    // within the host's bound – reaches `landingAnswered` the same way as `true`.
+    landingAnswered('a')
+    expect(awaiting('a')).toBe(false)
+  })
+
+  it('a host that never answers does not hold the stand-in for good: the bound ends the wait', () => {
+    landingsSent(['a'])
+    vi.advanceTimersByTime(SHOWN_WAIT_MS - 1)
+    expect(awaiting('a')).toBe(true)
+    vi.advanceTimersByTime(1)
+    expect(awaiting('a')).toBe(false)
+  })
+
+  it('the bound is the chrome’s patience above the host’s own, so the host’s word is heard first', () => {
+    // The host bounds its own answer by the view's frame deadline (`PageVisibility.DRAWN_DEADLINE_MS`,
+    // 600 ms); the chrome waits for the answer as long as it waits for the host's `view.drawn`.
+    expect(SHOWN_WAIT_MS).toBe(1000)
+    expect(SHOWN_WAIT_MS).toBeGreaterThan(600)
+  })
+
+  it('a landing placed again before its answer restarts its bound, and one answer ends it', () => {
+    landingsSent(['a'])
+    vi.advanceTimersByTime(SHOWN_WAIT_MS - 100)
+    landingsSent(['a'])
+    vi.advanceTimersByTime(200)
+    expect(awaiting('a')).toBe(true)
+    landingAnswered('a')
+    expect(awaiting('a')).toBe(false)
+    vi.advanceTimersByTime(SHOWN_WAIT_MS)
+    expect(awaiting('a')).toBe(false)
+  })
+
+  it('an answer for a tab not waiting changes nothing', () => {
+    const before = coverStore.get()
+    landingAnswered('a')
+    expect(coverStore.get()).toBe(before)
+  })
+
+  it('the drop of a stand-in is marked for the trace under the bridge’s flag, and costs nothing without it', () => {
+    const mark = vi.spyOn(performance, 'mark').mockImplementation(() => ({}) as PerformanceMark)
+    markCoverDrop('a')
+    expect(mark).not.toHaveBeenCalled()
+    ;(globalThis as { __zenBridgeTrace?: unknown }).__zenBridgeTrace = true
+    markCoverDrop('a')
+    expect(mark).toHaveBeenCalledWith('cover:drop:a')
   })
 })

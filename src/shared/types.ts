@@ -296,6 +296,21 @@ export interface HostCapabilities {
    * and the sizes take effect, and the phone's Settings rows are those three.
    */
   genericFontFamilies: boolean
+  /**
+   * The host answers a placement (Q1, the observable landing – the §11 stand-in rule): after
+   * the batch that places a page view and brings it back (`view.setBounds`, `view.setRadius`,
+   * `view.setVisible`), the platform asks `view.shown` and the host replies once the placement
+   * is applied AND the frame showing the view is drawn (`WebView.postVisualStateCallback`, the
+   * READY form of `view.drawn`); `false` at once for a view it does not have or does not show,
+   * `false` after its bound when no frame comes. The chrome keeps every stand-in for the live
+   * page at a landing – the cover under a sheet's close, the gesture stage's card where a swipe
+   * or the overview lands – until that answer (`Events['view.shown']`; `lib/cover.ts`
+   * `awaitingShow`), never dropping it on a clock of its own. On the Android host, whose chrome
+   * lies under the page views. Off on the desktop hosts, where the page view composites above
+   * the chrome and the main process places it synchronously: a stand-in there leaves as it does
+   * today.
+   */
+  placementAnswered: boolean
 }
 
 export interface Rect {
@@ -6256,6 +6271,14 @@ export interface Events {
    * the swap between the live page and its cover.
    */
   'view.drawn': { tabId: string; visible: boolean }
+  /**
+   * The host's answer to the placement that brought `tabId`'s page view back (Q1, the
+   * observable landing; `HostCapabilities.placementAnswered`): `shown` once the placement is
+   * applied and the frame showing the view is drawn – the stand-in for the live page may leave
+   * now – or not, at once, for a view the host does not have or does not show, and after the
+   * host's bound when no frame came: nothing is coming, and the stand-in leaves as well.
+   */
+  'view.shown': { tabId: string; shown: boolean }
   /**
    * A hardware keyboard's Tab ran past the active page's last tabbable (`forward`) or its
    * Shift+Tab past the first (`backward`) and the host handed the chrome the keyboard – the
