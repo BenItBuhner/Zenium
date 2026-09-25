@@ -78,9 +78,13 @@ const AGENT_FILE = 'agent.json'
  * after an update reads the new copy.
  */
 const SKILL_REFRESH_DELAY_MS = 2000
-/** The shared space agents' home groups live in, made once on demand. */
+/**
+ * The shared space agents' home groups live in, made once on demand. Its name and icon are what
+ * the user sees; the service knows the space by its mark (`Space.agent`), never by the name, so
+ * a space the user calls "Agents" is theirs.
+ */
 export const AGENTS_SPACE_NAME = 'Agents'
-const AGENTS_SPACE_ICON = '🤖'
+export const AGENTS_SPACE_ICON = '🤖'
 const GROUP_ICON = '🤖'
 
 /** One connected agent: its MCP session plus everything Zen knows about it. */
@@ -160,7 +164,10 @@ export type Owner =
  * Ownership is structural: a session owns the tab groups (Zen folders) it created or adopted,
  * and a tab belongs to the session whose group holds it. There is no per-session current tab –
  * every page tool names its tab – and nothing an agent does can touch a tab another live agent
- * owns.
+ * owns. What an agent makes carries a persisted mark (`Folder.agent`, `Space.agent`, stamped in
+ * the same tick), so the shared Agents space is found by its mark rather than its name, and a
+ * group whose session is gone stays an agent's – orphaned, adoptable, listed with its maker's
+ * name – across restarts, wherever it sits.
  */
 export class AgentService implements SessionStore, McpHandlers {
   readonly protocol: McpProtocol
@@ -222,6 +229,7 @@ export class AgentService implements SessionStore, McpHandlers {
 
   start(): void {
     this.started = true
+    this.upgradeMarks()
     this.sweeper = setInterval(() => this.sweep(), 60_000)
     this.onSettingsChanged()
     // The skill's once-per-update refresh, off the boot path; the rows show the result.
@@ -854,20 +862,51 @@ export class AgentService implements SessionStore, McpHandlers {
     return synced ?? this.browser.createWindow({ kind: 'synced' })
   }
 
-  /** The shared "Agents" space, made once on demand; never shown to the user by making it. */
+  /**
+   * The shared "Agents" space, made once on demand and marked `shared` in the tick it exists
+   * in; never shown to the user by making it.
+   */
   agentsSpace(): Space {
     const m = this.browser.state.model
     const found = this.findAgentsSpace()
     if (found) return found
     const win = this.agentWindow()
     const space = createSpace(AGENTS_SPACE_NAME, AGENTS_SPACE_ICON, win.activeSpace().containerId)
+    space.agent = { kind: 'shared' }
     m.spaces.push(space)
     this.browser.state.commit()
     return space
   }
 
-  private findAgentsSpace(): Space | undefined {
-    return this.browser.state.model.spaces.find((sp) => sp.name === AGENTS_SPACE_NAME)
+  /** The shared Agents space, by its mark – a space the user named "Agents" is not it. */
+  findAgentsSpace(): Space | undefined {
+    return this.browser.state.model.spaces.find((sp) => sp.agent?.kind === 'shared')
+  }
+
+  /**
+   * State written before the marks existed (S1 of the MCP program kept the agents' spaces and
+   * groups in memory): the one space that was the shared Agents space by construction – named
+   * `Agents`, wearing the robot icon, unmarked – is stamped `shared` once, and every unmarked
+   * folder in it, an agent's group by the same construction, is stamped with the agent's name
+   * read off S1's `<agent> · <id4>` group names (an empty name where the folder was named
+   * otherwise: maker unknown) and the upgrade's time. Nothing else is touched – a space the
+   * user calls Agents under another icon is theirs, so are the folders in it – and once a
+   * shared space is marked there is nothing left to upgrade, so a second run changes nothing.
+   */
+  private upgradeMarks(): void {
+    const m = this.browser.state.model
+    if (this.findAgentsSpace()) return
+    const legacy = m.spaces.find(
+      (sp) =>
+        !sp.agent && !sp.windowId && sp.name === AGENTS_SPACE_NAME && sp.icon === AGENTS_SPACE_ICON
+    )
+    if (!legacy) return
+    const now = Date.now()
+    legacy.agent = { kind: 'shared' }
+    for (const f of Object.values(m.folders))
+      if (f.spaceId === legacy.id && !f.agent)
+        f.agent = { name: legacyGroupOwner(f.name), createdAt: now }
+    this.browser.state.commit()
   }
 
   /** The session's home group, made (or re-made after the user removed it) on first use. */
@@ -880,10 +919,14 @@ export class AgentService implements SessionStore, McpHandlers {
     return folder
   }
 
-  /** A new group of the session's in `spaceId`; owned from the same tick it exists in. */
+  /**
+   * A new group of the session's in `spaceId`: owned, and marked as the agent's with its name,
+   * from the same tick it exists in.
+   */
   createGroup(s: AgentSession, name: string, spaceId: string): Folder {
     const m = this.browser.state.model
     const folder = createFolder(m, spaceId, name, GROUP_ICON, nextFolderColor(m, spaceId))
+    folder.agent = { name: s.name, createdAt: Date.now() }
     s.groupIds.add(folder.id)
     this.memo(s).groups.set(folder.id, folder.name)
     this.browser.state.commit()
@@ -892,7 +935,8 @@ export class AgentService implements SessionStore, McpHandlers {
 
   /**
    * A space of the agent's own (`zen_groups create {space: "own"}`, `zen_spaces create`), named
-   * after the agent unless told otherwise; the user's window is not switched to it.
+   * after the agent unless told otherwise and marked `own` with the agent's name; the user's
+   * window is not switched to it.
    */
   createOwnSpace(s: AgentSession, opts: { name?: string; icon?: string } = {}): Space {
     const m = this.browser.state.model
@@ -904,15 +948,21 @@ export class AgentService implements SessionStore, McpHandlers {
       opts.icon?.trim() || AGENTS_SPACE_ICON,
       this.agentWindow().activeSpace().containerId
     )
+    space.agent = { kind: 'own', name: s.name, createdAt: Date.now() }
     m.spaces.push(space)
     this.agentSpaceIds.add(space.id)
     this.browser.state.commit()
     return space
   }
 
-  /** Whether the space is agents' territory: the shared Agents space or one an agent made. */
+  /**
+   * Whether the space is agents' territory: marked – the shared Agents space or one an agent
+   * made, this run or before – or made by an agent this run (the in-memory set, kept as the
+   * belt to the mark's braces).
+   */
   isAgentSpace(spaceId: string): boolean {
-    return this.agentSpaceIds.has(spaceId) || this.findAgentsSpace()?.id === spaceId
+    if (this.agentSpaceIds.has(spaceId)) return true
+    return Boolean(this.browser.state.model.spaces.find((sp) => sp.id === spaceId)?.agent)
   }
 
   /** The session's first group in the space, made when it has none there. */
@@ -939,25 +989,38 @@ export class AgentService implements SessionStore, McpHandlers {
     return tabs.length
   }
 
-  /** Take over an orphaned group (its owner session is gone) with every tab in it. */
-  adopt(s: AgentSession, folder: Folder): Orphan | null {
-    const was = this.orphans.get(folder.id) ?? null
+  /**
+   * Take over an orphaned group (its owner session is gone) with every tab in it: the mark is
+   * re-stamped with the adopter's name (the group's own `createdAt` stays), and the former
+   * owner's name, when known, is returned for the result to say.
+   */
+  adopt(s: AgentSession, folder: Folder): string | null {
+    const was = this.orphanWas(folder.id)
     this.orphans.delete(folder.id)
     s.groupIds.add(folder.id)
+    folder.agent = { name: s.name, createdAt: folder.agent?.createdAt ?? Date.now() }
     this.memo(s).groups.set(folder.id, folder.name)
     if (!s.homeGroupId) s.homeGroupId = folder.id
-    this.browser.state.commitVolatile()
+    this.browser.state.commit()
     return was
   }
 
-  /** Rename the agent (`zen_session rename`): the label of its cursor, badges and home group. */
+  /**
+   * Rename the agent (`zen_session rename`): the label of its cursor, badges and home group, and
+   * the name its live groups' marks carry.
+   */
   rename(s: AgentSession, name: string): void {
     const before = s.name
     s.name = cleanName(name)
-    const home = s.homeGroupId ? this.browser.state.model.folders[s.homeGroupId] : undefined
+    const m = this.browser.state.model
+    for (const id of s.groupIds) {
+      const f = m.folders[id]
+      if (f) f.agent = { name: s.name, createdAt: f.agent?.createdAt ?? Date.now() }
+    }
+    const home = s.homeGroupId ? m.folders[s.homeGroupId] : undefined
     if (home && home.name === homeGroupName({ name: before, id: s.id }))
       this.browser.updateFolder(home.id, { name: homeGroupName(s) })
-    this.browser.state.commitVolatile()
+    this.browser.state.commit()
   }
 
   /** The session's groups, in the order of their spaces; the home group first. */
@@ -1034,8 +1097,10 @@ export class AgentService implements SessionStore, McpHandlers {
   }
 
   /**
-   * An agent group without a live owner: made by a session that is gone, or sitting in the
-   * Agents space (every folder there is an agent's by construction, so groups outlive restarts).
+   * An agent group without a live owner: a marked folder whose session is gone – this run or
+   * before a restart, wherever the folder sits – or one a session of this run left (the
+   * in-memory record, which also knows when). Where a folder sits says nothing: the user's
+   * folder in the Agents space stays the user's.
    */
   isOrphan(folderId: string): boolean {
     const folder = this.browser.state.model.folders[folderId]
@@ -1044,17 +1109,22 @@ export class AgentService implements SessionStore, McpHandlers {
       return false
     }
     if (this.groupOwner(folderId)) return false
-    if (this.orphans.has(folderId)) return true
-    const agents = this.findAgentsSpace()
-    return agents !== undefined && folder.spaceId === agents.id
+    return Boolean(folder.agent) || this.orphans.has(folderId)
   }
 
-  /** The former owner's name of an orphaned group, when known. */
+  /**
+   * The former owner's name of an orphaned group, when known: the session that left it this
+   * run, else the name its mark carries (null when the mark's maker is unknown, and for a group
+   * that is not orphaned at all).
+   */
   orphanWas(folderId: string): string | null {
-    return this.orphans.get(folderId)?.ownerName ?? null
+    if (this.groupOwner(folderId)) return null
+    const known = this.orphans.get(folderId)?.ownerName
+    if (known) return known
+    return this.browser.state.model.folders[folderId]?.agent?.name || null
   }
 
-  /** Every group that is an agent's: owned, or orphaned. */
+  /** Every group that is an agent's: owned by a live session, or orphaned (marked, no owner). */
   agentGroups(): Folder[] {
     const m = this.browser.state.model
     return Object.values(m.folders).filter(
@@ -1638,6 +1708,16 @@ export function withUnknownArgsNote(
 /** `<agent name> · <last 4 of the session id>`: the default name of a session's home group. */
 export function homeGroupName(s: { name: string; id: string }): string {
   return `${s.name} · ${s.id.slice(-4)}`
+}
+
+/**
+ * The agent's name in a group name of S1's shapes – `<agent> · <id4>` (a home group) or
+ * `<agent> · <id4> · <n>` (`zen_groups create` without a name), the id4 being four hex digits of
+ * the session id – for the upgrade of groups made before the mark; empty when the name has
+ * another shape (the agent named the group itself, and nothing says who it was).
+ */
+export function legacyGroupOwner(groupName: string): string {
+  return /^(.+?) · [0-9a-f]{4}(?: · \d+)?$/.exec(groupName)?.[1] ?? ''
 }
 
 function endpointUrl(host: string, port: number): string {

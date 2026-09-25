@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Right-click blocked fixture</title>
+  <link rel="stylesheet" href="probe-page.css">
+</head>
+<body>
+  <h1>Right-click blocked</h1>
+  <p id="target">This page cancels every <code>contextmenu</code> event on its document, the shape of a site
+    that disables the right-click menu. The probe below dispatches a cancelable <code>contextmenu</code> event on
+    this paragraph and reports whether the page's handler still cancels it; an extension that stops the event at
+    the capture phase (Enable Right Click's <code>onload.js</code>) leaves it uncancelled.</p>
+  <p id="state">contextmenu: blocked by the page</p>
+  <script>
+    document.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      document.getElementById('state').textContent = 'contextmenu: blocked by the page (' + new Date().toISOString() + ')';
+    }, false);
+    window.__zenRightClick = function () {
+      var target = document.getElementById('target');
+      var ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: 10, clientY: 10 });
+      var notCancelled = target.dispatchEvent(ev);
+      var result = { allowed: notCancelled && !ev.defaultPrevented, defaultPrevented: ev.defaultPrevented, at: Date.now() };
+      document.getElementById('state').textContent = 'contextmenu: ' + (result.allowed ? 'allowed (the page handler did not run or did not cancel)' : 'blocked by the page');
+      return result;
+    };
+  </script>
+</body>
+</html>

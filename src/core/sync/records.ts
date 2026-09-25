@@ -5,11 +5,13 @@ import type {
   Container,
   Credential,
   Folder,
+  FolderAgentMark,
   FolderColor,
   KeyBinding,
   PasskeyEntry,
   Settings,
   Space,
+  SpaceAgentMark,
   SpaceTheme,
   SyncScope,
   Tab
@@ -70,6 +72,12 @@ export interface SpaceData {
   containerId: string
   theme: SpaceTheme | null
   pinnedCollapsed: boolean
+  /**
+   * The agents' mark (`Space.agent`), present only on a marked space so every other record
+   * hashes as it always did; a peer without the field ignores it, and one whose record lacks it
+   * leaves the local mark alone (`readSpaceAgentMark`).
+   */
+  agent?: SpaceAgentMark
 }
 
 /** `order:spaces`, `order:containers`, `order:essentials` → `{ ids }`; `order:tabs:<spaceId>` → sections. */
@@ -91,6 +99,38 @@ export interface FolderData {
   collapsed: boolean
   /** Absent for folders without a group colour, so their records hash as they always did. */
   color?: FolderColor
+  /** The agent's mark (`Folder.agent`); absent on the user's folders, as `color` is when none. */
+  agent?: FolderAgentMark
+}
+
+/**
+ * The agent's mark a folder record carries, when it carries a well-formed one: `undefined` when
+ * the record has no such field (a peer older than the mark, or the user's folder – the local
+ * mark, if any, stays), so a malformed field is the same as none.
+ */
+export function readFolderAgentMark(data: unknown): FolderAgentMark | undefined {
+  const raw = (data as { agent?: unknown } | null)?.agent
+  if (!raw || typeof raw !== 'object') return undefined
+  const { name, createdAt } = raw as { name?: unknown; createdAt?: unknown }
+  if (typeof name !== 'string' || typeof createdAt !== 'number' || !Number.isFinite(createdAt))
+    return undefined
+  return { name, createdAt }
+}
+
+/** The agents' mark a space record carries, when well-formed; `undefined` otherwise (as above). */
+export function readSpaceAgentMark(data: unknown): SpaceAgentMark | undefined {
+  const raw = (data as { agent?: unknown } | null)?.agent
+  if (!raw || typeof raw !== 'object') return undefined
+  const mark = raw as { kind?: unknown; name?: unknown; createdAt?: unknown }
+  if (mark.kind === 'shared') return { kind: 'shared' }
+  if (
+    mark.kind === 'own' &&
+    typeof mark.name === 'string' &&
+    typeof mark.createdAt === 'number' &&
+    Number.isFinite(mark.createdAt)
+  )
+    return { kind: 'own', name: mark.name, createdAt: mark.createdAt }
+  return undefined
 }
 
 export interface TabData {
@@ -427,6 +467,7 @@ export function collectLocal(
         theme: s.theme,
         pinnedCollapsed: s.pinnedCollapsed
       }
+      if (s.agent) data.agent = s.agent
       out.set(s.id, { type: 'space', data })
     }
     const order: OrderData = { ids: m.spaces.map((s) => s.id) }
@@ -442,6 +483,7 @@ export function collectLocal(
         collapsed: f.collapsed
       }
       if (f.color) data.color = f.color
+      if (f.agent) data.agent = f.agent
       out.set(f.id, { type: 'folder', data })
     }
   }

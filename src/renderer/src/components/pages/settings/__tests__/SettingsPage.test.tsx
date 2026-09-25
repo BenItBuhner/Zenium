@@ -497,8 +497,9 @@ describe('switching categories', () => {
 
   it('a checkbox row carries its tone, so a note under it takes the status ink', () => {
     // The Agent skill group's rows are the checkbox rows that carry one: an agent whose folder
-    // could not be written keeps the failure sentence under its label in the warn ink, and the
-    // rows with nothing to say carry no tone at all.
+    // could not be written keeps the failure sentence under its label in the danger ink – the
+    // ink of a failure wherever it is said, the same as the status row's for it (the lead's #468
+    // delta read) – and the rows with nothing to say carry no tone at all.
     const s = state(DESKTOP, 'linux', {}, 'zen://settings/agents')
     const sentence =
       'Could not install: something else is in the way at ~/.codex/skills/zenium-browser'
@@ -525,7 +526,7 @@ describe('switching categories', () => {
       ]
     }
     const markup = render(s)
-    expect(markup).toMatch(/<label data-row="skill:codex" data-tone="warn"/)
+    expect(markup).toMatch(/<label data-row="skill:codex" data-tone="danger"/)
     expect(markup).toMatch(/<label data-row="skill:claude" class=/)
     expect(markup).not.toMatch(/<label data-row="skill:claude" data-tone/)
     expect(markup).toMatch(/data-row="skill-status"[^>]*data-tone="danger"/)

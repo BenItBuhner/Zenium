@@ -28,7 +28,10 @@ Serves `.github/scripts/ext-demo-pages/` as `python3 -m http.server` did, plus:
     what that load measures: a sniffer's size rule, compat round 14's item 1);
   - `/redirect?to=<path>`: a `302` to `<path>` on this server (the query's other parameters
     carried over), so a media element or a `fetch` reaches the clip through a redirect hop
-    (`fetch-player.html`: the response stage's `onBeforeRedirect` and its chain, compat round 15).
+    (`fetch-player.html`: the response stage's `onBeforeRedirect` and its chain, compat round 15);
+  - `/readme.md`: the directory's `markdown-fixture.markdown` under a `.md` URL, `text/markdown`,
+    for a Markdown viewer's URL matcher and content-type detection (Markdown Viewer, compat
+    round 16).
 
   The frame budget's fetch-heavy twin needs no route of this server: `scroll.html?fetch` is the
   same document with its `scroll-fetch.js` switched on by the query (compat round 15).
@@ -53,6 +56,11 @@ class FixtureHandler(SimpleHTTPRequestHandler):
         '.ts': 'video/mp2t',
         '.js': 'text/javascript',
         '.mjs': 'text/javascript',
+        # The Markdown document for a Markdown viewer's content-type detection: `.md` on the
+        # served URL (`/readme.md`, below), `.markdown` on the file (the repository carries no
+        # `.md` file outside its own README); this interpreter's default map may lack either.
+        '.md': 'text/markdown',
+        '.markdown': 'text/markdown',
     }
 
     def do_GET(self):
@@ -73,6 +81,11 @@ class FixtureHandler(SimpleHTTPRequestHandler):
             # The clip under an extension-less URL (a CDN's `/videoplayback?...`): the same file,
             # `video/mp4` and ranges, for a request observer whose type comes from the URL's extension.
             self.path = '/clip.mp4' + ('?' + parts.query if parts.query else '')
+        if parts.path == '/readme.md':
+            # The Markdown document under the `.md` URL a Markdown viewer's URL matcher wants
+            # (Markdown Viewer, compat round 16), served `text/markdown` from the directory's
+            # `markdown-fixture.markdown`.
+            self.path = '/markdown-fixture.markdown' + ('?' + parts.query if parts.query else '')
         path = self.translate_path(self.path)
         if os.path.isfile(path):
             self.serves_file = True
