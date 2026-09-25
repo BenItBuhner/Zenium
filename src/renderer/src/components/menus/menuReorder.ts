@@ -67,8 +67,10 @@ interface Session {
   el: HTMLElement
   /** The button's cell: the slot the item will land in, moving with the draft. */
   li: HTMLElement
-  /** The item's box at the lift, in window coordinates. */
+  /** The item's box at the lift, in window coordinates (its own size, the lift's scale taken off). */
   box: DOMRect
+  /** Its cell's box at the lift: what its layout position is measured from as the cell moves. */
+  origin: DOMRect
   /** The finger where the drag began, and where it last chose a slot. */
   x0: number
   y0: number
@@ -142,12 +144,19 @@ export function useMenuReorder(
     dy: s.axis === 'y' ? s.y - s.y0 : 0
   })
 
-  /** Draw the held item where the finger has carried it: its box at the lift plus the travel, less its cell's place. */
-  const place = (s: Session): void => {
+  /**
+   * How far the held item is drawn from its layout position: where its cell was at the lift plus
+   * the finger's travel, less where its cell is now (the hole moves with the draft).
+   */
+  const offsetOf = (s: Session): { x: number; y: number } => {
     const slot = s.li.getBoundingClientRect()
     const { dx, dy } = travelOf(s)
-    const x = s.box.left + dx - slot.left
-    const y = s.box.top + dy - slot.top
+    return { x: s.origin.left + dx - slot.left, y: s.origin.top + dy - slot.top }
+  }
+
+  /** Draw the held item where the finger has carried it. */
+  const place = (s: Session): void => {
+    const { x, y } = offsetOf(s)
     s.el.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) scale(${MENU_LIFT_SCALE})`
   }
 
@@ -161,6 +170,9 @@ export function useMenuReorder(
     keys.forEach((key, i) => {
       const rect = key === s.key ? s.li.getBoundingClientRect() : tracker.layoutRect(key)
       if (!rect) return
+      // A collapsed hairline (beside another, or at an end) has no extent along the axis: it is
+      // not a slot the finger can be nearest to.
+      if ((s.axis === 'x' ? rect.width : rect.height) < 1) return
       const d =
         s.axis === 'x'
           ? Math.abs(rect.left + rect.width / 2 - cx)
@@ -221,10 +233,7 @@ export function useMenuReorder(
    * glide, not to the drop.
    */
   const land = (s: Session): void => {
-    const slot = s.li.getBoundingClientRect()
-    const { dx, dy } = travelOf(s)
-    const x = s.box.left + dx - slot.left
-    const y = s.box.top + dy - slot.top
+    const { x, y } = offsetOf(s)
     const travel = Math.max(MIN_LANDING, Math.hypot(x, y))
     const { vx, vy } = s.velocity.velocity(performance.now())
     // The finger's speed along the way home (positive: still moving away from it).
@@ -357,6 +366,7 @@ export function useMenuReorder(
           el,
           li,
           box: el.getBoundingClientRect(),
+          origin: own,
           x0: e.clientX,
           y0: e.clientY,
           tx: e.clientX,

@@ -93,7 +93,10 @@ export function isDefaultMenuOrder<T>(
 }
 
 /** The keys of `items`, in their order, for the edit mode's save (unkeyed items contribute none). */
-export function menuOrderOf<T>(items: readonly T[], keyOf: (item: T) => string | undefined): string[] {
+export function menuOrderOf<T>(
+  items: readonly T[],
+  keyOf: (item: T) => string | undefined
+): string[] {
   const order: string[] = []
   for (const item of items) {
     const key = keyOf(item)

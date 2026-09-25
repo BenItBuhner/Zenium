@@ -1288,6 +1288,11 @@ export interface MenuPopupOptions {
    * it to the sheet; hosts with native menus have no header to draw and leave it be.
    */
   header?: MenuHeader
+  /**
+   * The phone app menu's keys in the build's default order, for the sheet's edit mode (TB-22;
+   * `MenuDescriptor.defaultOrder`). Native hosts have no edit mode and leave it be.
+   */
+  defaultOrder?: string[]
 }
 
 export interface MenuHost {

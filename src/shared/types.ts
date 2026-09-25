@@ -4301,6 +4301,13 @@ export interface MenuDescriptor {
     | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
   title?: string
+  /**
+   * The phone app menu's item keys in the build's default order (`shared/menuOrder.ts`), for its
+   * edit mode's Reset row (TB-22): the order the items are shown in is `settings.menuOrder`'s,
+   * applied by the core; this is what the default would put them back to. Absent on every other
+   * menu.
+   */
+  defaultOrder?: string[]
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null

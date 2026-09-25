@@ -49,7 +49,7 @@ import {
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
-import { MENU_KEY_CHANGE_MENU, applyMenuOrder } from '../shared/menuOrder'
+import { MENU_KEY_CHANGE_MENU, applyMenuOrder, menuOrderOf } from '../shared/menuOrder'
 import { phoneBarHas } from '../shared/phoneBar'
 import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
@@ -251,7 +251,8 @@ export class Menus {
     win: ZenWindow,
     source: MenuSource,
     anchor?: MenuAnchor,
-    header?: MenuHeader
+    header?: MenuHeader,
+    defaultOrder?: string[]
   ): void {
     const items = withAccelerators(
       tidySeparators(template),
@@ -263,7 +264,8 @@ export class Menus {
       source,
       win,
       ...anchor,
-      ...(header ? { header } : {})
+      ...(header ? { header } : {}),
+      ...(defaultOrder ? { defaultOrder } : {})
     })
   }
 
@@ -3743,13 +3745,13 @@ export class Menus {
         ...keyed('row.about', about),
         ...keyed('row.quit', ...quit)
       ]
+      // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set, the
+      // star, Download page, Page info and Reload / Stop – less what the user's bar carries
+      // (§9.13) – which the chrome draws as a row of icon buttons from each item's glyph.
+      const iconRow = this.phoneIconRow(active, win)
       this.popup(
         [
-          // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set,
-          // the star, Download page, Page info and Reload / Stop – less what the user's bar
-          // carries (§9.13) – which the chrome draws as a row of icon buttons from each item's
-          // glyph.
-          ...applyMenuOrder(this.phoneIconRow(active, win), keyOf, order),
+          ...applyMenuOrder(iconRow, keyOf, order),
           separator,
           ...applyMenuOrder(list, keyOf, order),
           // Edge's "Change menu" as the list's last row, in a group of its own and outside the
@@ -3760,7 +3762,10 @@ export class Menus {
         ],
         win,
         'app',
-        { ...anchor, keyboard: options.keyboard }
+        { ...anchor, keyboard: options.keyboard },
+        undefined,
+        // The default order travels with the menu, for the edit mode's Reset row.
+        menuOrderOf([...iconRow, ...list], keyOf)
       )
       return
     }

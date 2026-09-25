@@ -93,16 +93,15 @@ export function moveMenuSectionItem(
   return { ...sections, [section]: moveMenuItem(sections[section], from, to) }
 }
 
+/** One of the edit mode's accessibility actions: a slot up, a slot down, or to the section's start. */
+export type MenuNudge = -1 | 1 | 'start'
+
 /**
  * `sections` with the item `key` moved by `step` slots within its section (the accessibility
  * actions: Move up is −1, Move down +1), or to the section's start (`step` = `'start'`);
  * unchanged for a key of neither section or a move off either end.
  */
-export function nudgeMenuItem(
-  sections: MenuSections,
-  key: string,
-  step: 1 | -1 | 'start'
-): MenuSections {
+export function nudgeMenuItem(sections: MenuSections, key: string, step: MenuNudge): MenuSections {
   const section = menuSectionOf(sections, key)
   if (!section) return sections
   const from = sections[section].findIndex((item) => item.key === key)
@@ -130,4 +129,28 @@ export function countedItems(section: readonly MenuItemDescriptor[]): MenuItemDe
 
 export function positionOf(section: readonly MenuItemDescriptor[], key: string): number {
   return countedItems(section).findIndex((item) => item.key === key) + 1
+}
+
+/**
+ * What a nudge says to the reader (the edit pose's live region): the item, and where it went –
+ * its new place among its section's rows, or the group it joined when the slot it took was a
+ * hairline's and its place among the rows did not change. Empty for a key of neither section.
+ */
+export function movedSentence(
+  before: MenuSections,
+  after: MenuSections,
+  item: MenuItemDescriptor,
+  step: MenuNudge
+): string {
+  const key = item.key ?? ''
+  const section = menuSectionOf(after, key)
+  if (!section) return ''
+  const was = positionOf(before[section], key)
+  const now = positionOf(after[section], key)
+  const count = countedItems(after[section]).length
+  if (step === 'start') return `${item.label} moved to the start, ${now} of ${count}.`
+  if (now === was) {
+    return `${item.label} moved to the group ${step < 0 ? 'above' : 'below'}, ${now} of ${count}.`
+  }
+  return `${item.label} moved to ${now} of ${count}.`
 }

@@ -63,7 +63,8 @@ export class RendererMenuHost implements MenuHost {
       x: options.x ?? null,
       y: options.y ?? null,
       ...(options.keyboard !== undefined ? { keyboard: options.keyboard } : {}),
-      ...(options.header ? { header: options.header } : {})
+      ...(options.header ? { header: options.header } : {}),
+      ...(options.defaultOrder ? { defaultOrder: options.defaultOrder } : {})
     }
     this.open = { id, win: options.win, handlers }
     options.win.send('menu.show', descriptor)

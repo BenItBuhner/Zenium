@@ -1786,7 +1786,9 @@ describe('the app menu', () => {
       const glyphs = shown.filter((i) => i.glyph)
       expect(glyphs.length).toBeGreaterThan(0)
       expect(glyphs.every((i) => i.key?.startsWith('icon.'))).toBe(true)
-      const rows = shown.filter((i) => !i.glyph && i.type !== 'separator' && i.key !== 'menu.change')
+      const rows = shown.filter(
+        (i) => !i.glyph && i.type !== 'separator' && i.key !== 'menu.change'
+      )
       expect(rows.every((i) => i.key?.startsWith('row.'))).toBe(true)
       const hairlines = shown.filter((i) => i.type === 'separator' && i.key)
       expect(hairlines.every((i) => i.key?.startsWith('sep.'))).toBe(true)
@@ -1824,7 +1826,13 @@ describe('the app menu', () => {
       ])
       // Settings, then the fourth hairline (Find in Page…'s group's), then Downloads, then the
       // default order less the three; the row's Zoom… group lost its hairline to Settings' side.
-      expect(menu.slice(7, 12)).toEqual(['Settings', '-', 'Downloads', 'New Tab', 'New Private Tab'])
+      expect(menu.slice(7, 12)).toEqual([
+        'Settings',
+        '-',
+        'Downloads',
+        'New Tab',
+        'New Private Tab'
+      ])
       expect(menu.filter((l) => l === 'Settings')).toHaveLength(1)
       expect(menu.filter((l) => l === 'Downloads')).toHaveLength(1)
       expect(menu.at(-2)).toBe('-')
