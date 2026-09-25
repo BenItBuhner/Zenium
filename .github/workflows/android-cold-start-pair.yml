@@ -32,7 +32,7 @@ on:
           - '34'
           - '35'
       runs:
-        description: Blocks (each installs, settles and measures the base, then the head); N = runs × starts pairs
+        description: Blocks (each installs, settles and measures one arm, then the other; the order alternates block to block); N = runs × starts pairs
         required: false
         type: number
         default: 15
