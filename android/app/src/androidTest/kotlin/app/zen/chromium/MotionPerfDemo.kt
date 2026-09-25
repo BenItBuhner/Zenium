@@ -526,9 +526,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private fun switchState(): String = jsString(
         "(function(){var s=document.querySelector('.zen-overview-space');if(!s)return 'no Space slot';" +
             "var cells=s.querySelectorAll('[data-cell]').length,ph=s.querySelectorAll('.zen-overview-card-placeholder').length;" +
+            "var groups=[].map.call(s.querySelectorAll('.zen-group'),function(g){return g.querySelectorAll('[data-tab-id]').length+(g.hasAttribute('data-dissolving')?' dissolving':'')});" +
             "var anims=s.getAnimations().map(function(a){return a.id+':'+a.playState}).join(' ');" +
             "var stills=document.querySelectorAll('[data-testid=\"pane-still\"]').length;var ind=document.querySelector('.zen-overview-strip-indicator');" +
-            "return cells+' cells, '+ph+' placeholders, '+(anims?'slot animations '+anims:'the slot at rest')+', '+stills+' still(s) up, indicator at '+" +
+            "return cells+' cells, '+ph+' placeholders, '+groups.length+' group cell(s)'+(groups.length?' holding '+groups.join(', '):'')+', '+(anims?'slot animations '+anims:'the slot at rest')+', '+stills+' still(s) up, indicator at '+" +
             "(ind?Math.round(ind.getBoundingClientRect().left)+' px':'none')+', --zen-bg '+getComputedStyle(document.documentElement).getPropertyValue('--zen-bg').trim()})()"
     )
 
