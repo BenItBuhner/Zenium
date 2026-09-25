@@ -77,6 +77,27 @@ class PictureInPictureRuleTest {
         assertEquals(50L, PictureInPictureRule.exitDelayMs(nowMs = 500, enteredAtMs = 1_000))
     }
 
+    // --- the hold for the screen and the keyguard (Chrome's mDismissPending) ---
+
+    @Test
+    fun anEndingWithTheScreenOnAndNoKeyguardGoesAtOnce() {
+        assertFalse(PictureInPictureRule.shouldDeferEnding(interactive = true, keyguardLocked = false))
+    }
+
+    @Test
+    fun anEndingWithTheScreenOffIsHeldForOnStart() {
+        // Chrome's predicate (`PowerManager.isInteractive` false); the keyguard's state makes no difference to it.
+        assertTrue(PictureInPictureRule.shouldDeferEnding(interactive = false, keyguardLocked = false))
+        assertTrue(PictureInPictureRule.shouldDeferEnding(interactive = false, keyguardLocked = true))
+    }
+
+    @Test
+    fun anEndingWithTheKeyguardUpIsHeldThoughTheScreenIsOn() {
+        // The lock screen showing with the screen on (the power button pressed once more before
+        // the unlock): the case Chrome's comment names and its predicate misses.
+        assertTrue(PictureInPictureRule.shouldDeferEnding(interactive = true, keyguardLocked = true))
+    }
+
     // --- endings by the user's hand ---
 
     @Test

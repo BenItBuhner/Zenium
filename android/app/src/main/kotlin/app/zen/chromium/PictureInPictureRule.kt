@@ -82,6 +82,17 @@ object PictureInPictureRule {
         (enteredAtMs + MIN_EXIT_DELAY_MS - nowMs).coerceIn(0L, MIN_EXIT_DELAY_MS)
 
     /**
+     * Whether an ending decided now is held for the activity's next `onStart` (Chrome's
+     * `mDismissPending`, consumed in its `onStart`) rather than carried out: with the screen off
+     * (`PowerManager.isInteractive` false) or the keyguard up (`KeyguardManager.isKeyguardLocked`)
+     * a `moveTaskToBack` "gets Android into a bad state" (Chrome's `dismissActivityIfNeeded`,
+     * whose comment names both states while its predicate reads `isInteractive` alone; the
+     * keyguard is read here as the comment says). Held, the window's tab's media pauses at once –
+     * what the end would have done – and the task goes to the back after the unlock.
+     */
+    fun shouldDeferEnding(interactive: Boolean, keyguardLocked: Boolean): Boolean = !interactive || keyguardLocked
+
+    /**
      * The window left by the user's hand: `pipTabId` is the tab the window was pinned to,
      * `pipPlaying` whether THAT tab's media plays by its own last report (Chrome's `mIsPlaying`, a
      * `WebContentsObserver` on the PiP'd tab – not the session the OS controls show, which a

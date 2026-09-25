@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -112,6 +113,13 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     private var pictureInPictureEnding: PictureInPictureRule.End? = null
     /** An ending held for the screen to come on (Chrome's `mDismissPending`, [endPictureInPicture]); finished from the activity's `onStart`. */
     private var pictureInPictureEndPending: PictureInPictureRule.End? = null
+    /**
+     * The device as an ending is decided – the screen on ([PowerManager.isInteractive]) and the
+     * keyguard up ([KeyguardManager.isKeyguardLocked]) – for [PictureInPictureRule.shouldDeferEnding];
+     * the device's own word unless a test or a demo sets its own.
+     */
+    internal var screenInteractive: () -> Boolean = { context.getSystemService(PowerManager::class.java)?.isInteractive ?: true }
+    internal var keyguardLocked: () -> Boolean = { context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked ?: false }
 
     /** Whether this device has picture-in-picture at all (Android TV and some Go devices do not). */
     val pictureInPictureSupported: Boolean =
@@ -527,9 +535,10 @@ class MediaSessions(private val host: Host, private val io: Executor) {
             main.postDelayed({ if (pictureInPictureTab == tabId && pictureInPictureEnteredAt == enteredAt) endPictureInPicture(end) }, delay)
             return
         }
-        val power = context.getSystemService(PowerManager::class.java)
-        if (power != null && !power.isInteractive) {
-            Log.i(TAG, "picture-in-picture for $tabId ends with the screen off: held for onStart ($end)")
+        val interactive = screenInteractive()
+        val keyguard = keyguardLocked()
+        if (PictureInPictureRule.shouldDeferEnding(interactive, keyguard)) {
+            Log.i(TAG, "picture-in-picture for $tabId ends with the screen off or the keyguard up (interactive=$interactive, keyguard=$keyguard): held for onStart ($end)")
             pictureInPictureEndPending = end
             if (pictureInPicturePlaying) act(tabId, MediaControl.PAUSE)
             return
