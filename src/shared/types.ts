@@ -2608,6 +2608,14 @@ export interface Settings {
   /** Phone layout: the controls either side of the address pill (Settings › Navigation bar). */
   phoneBar: PhoneBarLayout
   /**
+   * Phone layout: the app menu's items in the user's order (Edge's Change menu, TB-22) – the
+   * items' stable keys (`MenuItemDescriptor.key`; `shared/menuOrder.ts` reads it against the
+   * build's default: named items first in this order, the rest after them in the default order,
+   * a key the build has no item for dropped). Absent – the default order – until the user
+   * reorders; the Reset row clears it. The desktop's menus never read it.
+   */
+  menuOrder?: string[]
+  /**
    * The homepage (SET-36 / NTP-30): what the phone's Home button – the bar's optional item, the
    * app menu's icon-row glyph otherwise – opens, or that there is none. Absent in profiles from
    * before it existed (`sanitizeHomepage` reads the new tab page, Chrome's default). Synced
@@ -4190,6 +4198,12 @@ export interface MenuDeviceMark {
 
 export interface MenuItemDescriptor {
   id: string
+  /**
+   * The item's stable name across openings (the phone app menu's items: `icon.forward`,
+   * `row.settings`, `sep.3`), what the sheet's edit mode (Change Menu, TB-22) reorders and
+   * saves as `settings.menuOrder`. `id` is numbered per opening and names the click alone.
+   */
+  key?: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
   label: string
   enabled: boolean

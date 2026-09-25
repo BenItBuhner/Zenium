@@ -20,6 +20,8 @@ export function serialiseMenu(
       if (item.click) handlers.set(itemId, item.click)
       return {
         id: itemId,
+        // The phone app menu's items keep a name across openings for the saved order.
+        ...(item.key ? { key: item.key } : {}),
         type: item.type ?? 'normal',
         label: item.label ?? '',
         enabled: item.enabled ?? true,
