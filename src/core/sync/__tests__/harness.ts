@@ -69,6 +69,8 @@ export interface Device {
   toasts: string[]
   win: ZenWindow
   io: StoreIO & { files: Record<string, string> }
+  /** The device's keystore: what wraps its vault's key (a restart hands the previous run's in). */
+  keys: FakeKeyWrap
   /** What the host was asked to post (a device with a notification shade of its own). */
   notifications: Array<Record<string, unknown>>
 }
@@ -92,6 +94,8 @@ export function device(
     pollMs?: number
     /** The device's own files (a restart hands the previous run's in). */
     io?: StoreIO & { files: Record<string, string> }
+    /** The device's keystore (a restart hands the previous run's in: the OS keeps it). */
+    keys?: FakeKeyWrap
     /** A host that posts notifications itself (Android): what it shows is recorded. */
     notifications?: boolean
     /** What the host says the device is; absent for a host (an older build) that says nothing. */
@@ -100,6 +104,7 @@ export function device(
 ): Device {
   const transports: MemoryTransport[] = []
   const io = options.io ?? memoryIo()
+  const keys = options.keys ?? new FakeKeyWrap()
   const notifications: Array<Record<string, unknown>> = []
   const webNotifications: WebNotificationHost | undefined = options.notifications
     ? {
@@ -160,7 +165,7 @@ export function device(
     sessions: stub(),
     app: stub(),
     passwords: {
-      keys: new FakeKeyWrap(),
+      keys,
       reauth: { available: async () => false, verify: async () => false }
     },
     sync: host,
@@ -178,7 +183,18 @@ export function device(
   browser.start()
   const engine = browser.sync as SyncEngine
   expect(engine).toBeInstanceOf(SyncEngine)
-  const d: Device = { name, browser, engine, host, transports, toasts, win, io, notifications }
+  const d: Device = {
+    name,
+    browser,
+    engine,
+    host,
+    transports,
+    toasts,
+    win,
+    io,
+    keys,
+    notifications
+  }
   devices.push(d)
   return d
 }

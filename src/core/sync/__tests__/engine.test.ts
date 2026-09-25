@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import type { Settings } from '../../../shared/types'
+import { DEFAULT_SETTINGS } from '../../../shared/defaults'
 import { FOLDER_LOST_MESSAGE } from '../engine'
-import { SETTINGS_RECORD_ID, hashData, type MetaMap } from '../records'
+import { SETTINGS_RECORD_ID, hashData, type MetaMap, type SyncRecord } from '../records'
 import { README_NAME, SYNC_DIR_NAME, isDeviceFileName, parseDeviceFile } from '../transport'
 import {
   type Device,
@@ -404,5 +406,445 @@ describe('a build that adds a settings key', () => {
     expect(b.browser.state.settings.colorScheme).toBe('dark')
     // The reason, stated: this build's record for an untouched device IS the previous build's.
     expect(hashData(record.data)).toBe(hashData(asThePreviousBuildWrote))
+  }, 30_000)
+})
+
+/**
+ * The settings record is one record, merged whole, last writer wins. The settings object is
+ * `{ ...DEFAULT_SETTINGS, ...persisted }` run through the sanitisers at load, and `collectLocal`
+ * spreads it whole into the record: a build that adds a default, changes what a sanitiser
+ * normalises to, or migrates a key at boot changes EVERY device's record – content and hash –
+ * with no edit by anyone. The engine used to stamp any record whose hash differed from the last
+ * sync's metadata `modified = now`, in the round as much as in the state subscriber, so each
+ * device's first sync on the new build published a whole-record settings edit no one made, which
+ * beat any peer's settings change the device had not pulled yet (an evening's phone changes while
+ * the desktop was closed) and reverted it on the peer's next round.
+ *
+ * The rule: an edit is stamped where it is MADE (`onLocalChange`, at the commit that carries it),
+ * never where it is NOTICED (`run()`). The boot seed adopts a build's hashes without a stamp.
+ */
+describe('an edit is stamped where it is made, not where it is noticed', () => {
+  type Json = Record<string, unknown>
+  type Files = Record<string, string>
+
+  /** Lets the deferred state broadcast (`onLocalChange`) run, and moves the clock by a few ms. */
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 5))
+
+  /** Close the device: its profile and sync state as this build leaves them on disk. */
+  function close(d: Device): Files {
+    d.browser.flushSync()
+    const files = { ...d.io.files }
+    d.engine.disconnect(false)
+    return files
+  }
+
+  /** Launch a device again on the files a closed one left (and its keystore, when it has a vault). */
+  function reopen(name: string, files: Files, keys?: Device['keys']): Device {
+    const io = memoryIo()
+    Object.assign(io.files, files)
+    return device(name, { io, ...(keys ? { keys } : {}) })
+  }
+
+  async function settingsRecord(d: Device): Promise<SyncRecord> {
+    const record = (await published(d)).find((r) => r.id === SETTINGS_RECORD_ID)
+    expect(record).toBeDefined()
+    return record!
+  }
+
+  /**
+   * Leave a closed device's files as the previous build left them: its settings edited in
+   * `state.json`, and its sync metadata naming the hash of the settings record as that build
+   * wrote it (`recordAsWritten`).
+   */
+  function asPreviousBuild(
+    files: Files,
+    edit: (settings: Json) => void,
+    recordAsWritten: Json
+  ): void {
+    const state = JSON.parse(files['state.json']!) as { settings: Json }
+    edit(state.settings)
+    files['state.json'] = JSON.stringify(state)
+    const sync = JSON.parse(files['sync.json']!) as { meta: MetaMap }
+    const before = sync.meta[SETTINGS_RECORD_ID]!
+    sync.meta[SETTINGS_RECORD_ID] = { ...before, hash: hashData(recordAsWritten) }
+    files['sync.json'] = JSON.stringify(sync)
+  }
+
+  interface Cause {
+    name: string
+    /**
+     * Set the closed device's files up as the previous build left them, given the settings
+     * record this build wrote for it; returns the undo of any change made to the build itself.
+     */
+    upgrade: (files: Files, record: Json) => (() => void) | undefined
+    /** Keys this build puts on every record, which the peer's record lacks. */
+    carries?: Json
+  }
+
+  const causes: Cause[] = [
+    {
+      name: "a new default (a key the previous build's record lacked, spread onto the settings at load)",
+      upgrade: (files, record) => {
+        const { searchEngineId: _absent, ...asWritten } = record
+        void _absent
+        asPreviousBuild(
+          files,
+          (s) => {
+            delete s.searchEngineId
+          },
+          asWritten
+        )
+        return undefined
+      }
+    },
+    {
+      name: 'a new default (DEFAULT_SETTINGS gains a key in this build)',
+      upgrade: (files, record) => {
+        asPreviousBuild(files, () => undefined, record)
+        const defaults = DEFAULT_SETTINGS as unknown as Json
+        defaults.releaseAddedKey = 'on'
+        return () => {
+          delete defaults.releaseAddedKey
+        }
+      },
+      carries: { releaseAddedKey: 'on' }
+    },
+    {
+      name: "a sanitiser's new normal form (resources.memoryPercent clamped to 100 at load)",
+      upgrade: (files, record) => {
+        const resources = { ...(record.resources as Json), memoryPercent: 150 }
+        asPreviousBuild(
+          files,
+          (s) => {
+            s.resources = { ...(s.resources as Json), memoryPercent: 150 }
+          },
+          { ...record, resources }
+        )
+        return undefined
+      }
+    },
+    {
+      name: "a boot migration (the phone's frozen newTabPhone folded into newTab)",
+      upgrade: (files, record) => {
+        const newTabPhone = {
+          wallpaper: 'image',
+          pinned: [{ url: 'https://zen.example/', title: 'Zen' }]
+        }
+        asPreviousBuild(
+          files,
+          (s) => {
+            s.newTabPhone = newTabPhone
+          },
+          { ...record, newTabPhone }
+        )
+        return undefined
+      }
+    }
+  ]
+
+  const edits: Array<{
+    name: string
+    patch: (s: Settings) => Partial<Settings>
+    read: (s: Settings) => unknown
+  }> = [
+    { name: 'colorScheme', patch: () => ({ colorScheme: 'dark' }), read: (s) => s.colorScheme },
+    {
+      name: 'resources.memoryPercent',
+      patch: (s) => ({ resources: { ...s.resources, memoryPercent: 42 } }),
+      read: (s) => s.resources.memoryPercent
+    }
+  ]
+
+  describe.each(causes)('$name', (cause) => {
+    it.each(edits)(
+      "the device's first sync on the new build takes the peer's unpulled edit of $name instead of reverting it",
+      async ({ patch, read }) => {
+        // The desktop and the phone in sync on the previous build, the settings untouched.
+        const a = device('Desk (Linux)')
+        const b = device('Pixel 9')
+        await setup(a)
+        await setup(b)
+        await b.engine.confirmMerge(true)
+        await a.engine.syncNow()
+        const record = (await settingsRecord(a)).data as Json
+        const untouched = read(a.browser.state.settings)
+        expect(read(b.browser.state.settings)).toEqual(untouched)
+
+        // The desktop is closed; its profile and sync state are as the previous build left them.
+        const closed = close(a)
+        const restore = cause.upgrade(closed, record)
+        try {
+          // An evening's change on the phone while the desktop is closed: made through the
+          // state, stamped by the phone's subscriber at that moment.
+          await settle()
+          b.browser.updateSettings(patch(b.browser.state.settings), b.win)
+          await settle()
+          await b.engine.syncNow()
+          const theirs = await settingsRecord(b)
+          expect(read(theirs.data as Settings)).not.toEqual(untouched)
+          expect(theirs.modified).toBeGreaterThan(0)
+
+          // The desktop launches into the upgrade and syncs for the first time on this build.
+          // The phone's change is what it had not pulled: it lands, not beaten by an edit of the
+          // desktop's own record that no one made.
+          await settle()
+          const launched = Date.now()
+          const upgraded = reopen('Desk (Linux)', closed)
+          expect(upgraded.engine.status().deviceId).toBe(a.engine.status().deviceId)
+          await upgraded.engine.syncNow()
+          expect(upgraded.engine.status().lastError).toBeNull()
+          expect(read(upgraded.browser.state.settings)).toEqual(read(theirs.data as Settings))
+          // What the desktop publishes is the phone's record (plus whatever this build puts on
+          // every record) at the PHONE's timestamp – never at its own launch.
+          const mine = await settingsRecord(upgraded)
+          expect(mine.modified).toBe(theirs.modified)
+          expect(mine.modified).toBeLessThan(launched)
+          expect(hashData(mine.data)).toBe(hashData({ ...(theirs.data as Json), ...cause.carries }))
+          // The phone's next round keeps its change, and has nothing newer to take.
+          await b.engine.syncNow()
+          expect(read(b.browser.state.settings)).toEqual(read(theirs.data as Settings))
+          expect((await settingsRecord(b)).modified).toBe(theirs.modified)
+        } finally {
+          restore?.()
+        }
+      },
+      30_000
+    )
+  })
+
+  it("the seed at start adopts the build's hash for a record and keeps its timestamp, before any state event or round", async () => {
+    const a = device('Desk (Linux)')
+    await setup(a)
+    a.browser.updateSettings({ colorScheme: 'dark' }, a.win)
+    await settle()
+    await a.engine.syncNow()
+    const stamped = await settingsRecord(a)
+    expect(stamped.modified).toBeGreaterThan(0)
+
+    // The previous build's record lacked a key this build's load puts on the settings.
+    const closed = close(a)
+    const { searchEngineId: _absent, ...asWritten } = stamped.data as Json
+    void _absent
+    asPreviousBuild(
+      closed,
+      (s) => {
+        delete s.searchEngineId
+      },
+      asWritten
+    )
+    expect(hashData(asWritten)).not.toBe(hashData(stamped.data))
+
+    // At start the metadata names this build's record, at the timestamp of the last real edit.
+    const upgraded = reopen('Desk (Linux)', closed)
+    upgraded.engine.flushSync()
+    const meta = (JSON.parse(upgraded.io.files['sync.json']!) as { meta: MetaMap }).meta[
+      SETTINGS_RECORD_ID
+    ]!
+    expect(meta.modified).toBe(stamped.modified)
+    expect(meta.hash).toBe(hashData(stamped.data))
+    // The round publishes the record as this build holds it, at that timestamp.
+    await upgraded.engine.syncNow()
+    const mine = await settingsRecord(upgraded)
+    expect(mine.modified).toBe(stamped.modified)
+    expect(hashData(mine.data)).toBe(hashData(stamped.data))
+  }, 30_000)
+
+  it("LWW intact: an edit made on the upgraded device after its restart, through the state, beats the peer's older edit", async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await a.engine.syncNow()
+    const record = (await settingsRecord(a)).data as Json
+    const closed = close(a)
+    causes[0].upgrade(closed, record)
+
+    await settle()
+    b.browser.updateSettings({ colorScheme: 'dark' }, b.win)
+    await settle()
+    await b.engine.syncNow()
+    const theirs = await settingsRecord(b)
+
+    const upgraded = reopen('Desk (Linux)', closed)
+    await upgraded.engine.syncNow()
+    expect(upgraded.browser.state.settings.colorScheme).toBe('dark')
+    // A real edit here, later than the phone's: the subscriber stamps it, and it wins.
+    await settle()
+    upgraded.browser.updateSettings({ colorScheme: 'light' }, upgraded.win)
+    await settle()
+    await upgraded.engine.syncNow()
+    const mine = await settingsRecord(upgraded)
+    expect(mine.modified).toBeGreaterThan(theirs.modified)
+    await b.engine.syncNow()
+    expect(b.browser.state.settings.colorScheme).toBe('light')
+  }, 30_000)
+
+  it('LWW intact: a fresh device never beats a record that already exists in the folder', async () => {
+    // A device that sets sync up on an empty folder publishes what it holds at `modified = 0`:
+    // nothing it has was edited under sync, so a peer's copy, whenever made, wins over it.
+    const a = device('Desk (Linux)')
+    a.browser.updateSettings({ colorScheme: 'light' }, a.win)
+    await settle()
+    await setup(a)
+    expect((await settingsRecord(a)).modified).toBe(0)
+
+    // A device joining a folder with data adopts the folder's copy of every record it also
+    // holds (`confirmMerge`), whatever it changed before joining.
+    const b = device('Pixel 9')
+    b.browser.updateSettings({ colorScheme: 'dark' }, b.win)
+    await settle()
+    await setup(b)
+    expect(b.engine.status().pendingMerge).toBe(true)
+    await b.engine.confirmMerge(true)
+    expect(b.browser.state.settings.colorScheme).toBe('light')
+    expect((await settingsRecord(b)).modified).toBe(0)
+
+    // A real edit on either device, stamped when made, beats the record at 0 everywhere.
+    await settle()
+    b.browser.updateSettings({ colorScheme: 'dark' }, b.win)
+    await settle()
+    await b.engine.syncNow()
+    const theirs = await settingsRecord(b)
+    expect(theirs.modified).toBeGreaterThan(0)
+    await a.engine.syncNow()
+    expect(a.browser.state.settings.colorScheme).toBe('dark')
+    expect((await settingsRecord(a)).modified).toBe(theirs.modified)
+  }, 30_000)
+
+  it("no ping-pong: a device that normalises a peer's value differently re-publishes at the peer's timestamp, and the peer's next round skips it", async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await a.engine.syncNow()
+
+    // The phone's build keeps a minimum font size this build's sanitiser does not offer (1–5 px
+    // read as 6): set through the state, stamped on the phone.
+    await settle()
+    b.browser.state.settings.fonts = { ...b.browser.state.settings.fonts, minimumSize: 3 }
+    b.browser.state.commit()
+    await settle()
+    await b.engine.syncNow()
+    const theirs = await settingsRecord(b)
+    expect((theirs.data as Settings).fonts.minimumSize).toBe(3)
+
+    // The desktop applies the record and holds its own normal form of it. What it publishes is
+    // that form at the PHONE's timestamp: a normalisation is not an edit.
+    await a.engine.syncNow()
+    expect(a.browser.state.settings.fonts.minimumSize).toBe(6)
+    const mine = await settingsRecord(a)
+    expect((mine.data as Settings).fonts.minimumSize).toBe(6)
+    expect(mine.modified).toBe(theirs.modified)
+    expect(hashData(mine.data)).not.toBe(hashData(theirs.data))
+
+    // The phone skips a record no newer than its own; neither device bounces the other's form.
+    await b.engine.syncNow()
+    expect(b.browser.state.settings.fonts.minimumSize).toBe(3)
+    expect((await settingsRecord(b)).modified).toBe(theirs.modified)
+    await a.engine.syncNow()
+    expect(a.browser.state.settings.fonts.minimumSize).toBe(6)
+    expect((await settingsRecord(a)).modified).toBe(theirs.modified)
+  }, 30_000)
+
+  it('run() never stamps: a change the round notices with no state event keeps its modified – an edit is stamped where it is made, by the subscriber', async () => {
+    const a = device('Desk (Linux)')
+    await setup(a)
+    a.browser.updateSettings({ colorScheme: 'dark' }, a.win)
+    await settle()
+    await a.engine.syncNow()
+    const stamped = (await settingsRecord(a)).modified
+    expect(stamped).toBeGreaterThan(0)
+
+    // The sources change under the engine with no commit – nothing was made through the state.
+    // The change is made after the last broadcast the round waits for and before its diff: from
+    // a listener behind the engine's own, which that broadcast (the round's status) runs after
+    // `onLocalChange` has looked. The round publishes the content and keeps the timestamp. Were
+    // `run()` to stamp what it notices, a build's change to every device's record would again
+    // beat the peers' real edits, and this would read `> stamped`.
+    await settle()
+    const unsubscribe = a.browser.state.subscribe(() => {
+      a.browser.state.settings.colorScheme = 'light'
+      unsubscribe()
+    })
+    await a.engine.syncNow()
+    const noticed = await settingsRecord(a)
+    expect((noticed.data as Settings).colorScheme).toBe('light')
+    expect(noticed.modified).toBe(stamped)
+
+    // The same change made through the state is an edit, and the subscriber stamps it – even
+    // when the round starts in the same tick as the commit: the broadcast is delivered before
+    // the round reads the local set.
+    await settle()
+    a.browser.updateSettings({ colorScheme: 'system' }, a.win)
+    await a.engine.syncNow()
+    const edited = await settingsRecord(a)
+    expect((edited.data as Settings).colorScheme).toBe('system')
+    expect(edited.modified).toBeGreaterThan(stamped)
+  }, 30_000)
+
+  it("the vault opens after start: its records get the seed at the first unlock, and the peer's unpulled password change lands instead of being reverted", async () => {
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await unlockVault(a)
+    await unlockVault(b)
+    const login = a.browser.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'first-secret'
+    })
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    expect(b.browser.passwords.store.get(login.id)).toMatchObject({ password: 'first-secret' })
+    const record = (await published(a)).find((r) => r.id === login.id)
+    expect(record).toBeDefined()
+
+    // The desktop is closed. The previous build put no `notes` on a login's record (this build
+    // puts '' on every login at collect, ID-34): its sync metadata names the hash of the record
+    // as that build wrote it. (ID-31's breach fields dodged this by hand – each present only when
+    // set, "so a login without one hashes exactly as it always did"; the seed covers the key a
+    // future build does not think to.)
+    const closed = close(a)
+    const { notes: _notes, ...asWritten } = record!.data as Json
+    void _notes
+    expect(hashData(asWritten)).not.toBe(hashData(record!.data))
+    const sync = JSON.parse(closed['sync.json']!) as { meta: MetaMap }
+    sync.meta[login.id] = { ...sync.meta[login.id]!, hash: hashData(asWritten) }
+    closed['sync.json'] = JSON.stringify(sync)
+
+    // The phone changes the password while the desktop is closed: stamped there, then.
+    await settle()
+    b.browser.passwords.update(login.id, { password: 'second-secret' })
+    await settle()
+    await b.engine.syncNow()
+    const theirs = (await published(b)).find((r) => r.id === login.id)!
+    expect(theirs.data).toMatchObject({ password: 'second-secret' })
+    expect(theirs.modified).toBeGreaterThan(0)
+
+    // The desktop launches: the engine starts with the vault locked, and the OS-protected vault
+    // opens silently a moment later (`passwords.start()`). The first broadcast that finds it
+    // open seeds its records – the build's shape is adopted at the timestamp of the last real
+    // edit, not stamped now – so the round takes the phone's change instead of beating it.
+    await settle()
+    const launched = Date.now()
+    const upgraded = reopen('Desk (Linux)', closed, a.keys)
+    expect(upgraded.browser.passwords.status().locked).toBe(true)
+    await upgraded.browser.passwords.whenSettled()
+    expect(upgraded.browser.passwords.status().locked).toBe(false)
+    await settle()
+    await upgraded.engine.syncNow()
+    expect(upgraded.engine.status().lastError).toBeNull()
+    expect(upgraded.browser.passwords.store.get(login.id)).toMatchObject({
+      password: 'second-secret'
+    })
+    const mine = (await published(upgraded)).find((r) => r.id === login.id)!
+    expect(mine.modified).toBe(theirs.modified)
+    expect(mine.modified).toBeLessThan(launched)
+    expect(hashData(mine.data)).toBe(hashData(theirs.data))
+    await b.engine.syncNow()
+    expect(b.browser.passwords.store.get(login.id)).toMatchObject({ password: 'second-secret' })
+    expect((await published(b)).find((r) => r.id === login.id)!.modified).toBe(theirs.modified)
   }, 30_000)
 })

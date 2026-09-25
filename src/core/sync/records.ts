@@ -216,12 +216,33 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
 }
 
 /**
- * The whole `Settings` object but the one-time flag. The new tab page's device-local sets
+ * The settings that are one device's own and travel in neither direction: this device's record
+ * carries none of them, and a peer's record carrying one (a build from before a key joined the
+ * list still sends it) leaves this device's value standing – the settings record is otherwise
+ * taken whole, last writer wins, so a stray key would land as a choice made here.
+ * - `onboardingDone`: the one-time flag.
+ * - `sidebarExpandOnHover`: a pointer's hover preference for the rail (tabs-03), on by default
+ *   since profile v6; a peer on v5 still stores that build's default `false`, no choice.
+ */
+export const DEVICE_LOCAL_SETTINGS = ['onboardingDone', 'sidebarExpandOnHover'] as const
+export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
+
+/** A copy of `settings` without the device-local keys, the other keys in their order. */
+export function withoutDeviceLocalSettings<T extends object>(
+  settings: T
+): Omit<T, DeviceLocalSetting> {
+  const out = { ...settings } as Record<string, unknown>
+  for (const key of DEVICE_LOCAL_SETTINGS) delete out[key]
+  return out as Omit<T, DeviceLocalSetting>
+}
+
+/**
+ * The whole `Settings` object but the device-local keys. The new tab page's device-local sets
  * (`BrowserState.newTabDevice`: this device's shortcuts and removed hosts) are not settings and
  * never travel; a peer on an older build may add the phone's frozen `newTabPhone` key, which the
  * apply path folds into `newTab`.
  */
-export type SettingsData = Omit<Settings, 'onboardingDone'>
+export type SettingsData = Omit<Settings, DeviceLocalSetting>
 export interface ShortcutsData {
   overrides: Record<string, KeyBinding | null>
 }
@@ -558,8 +579,6 @@ export function collectLocal(
     }
   }
   if (scope.settings) {
-    const { onboardingDone: _o, ...rest } = src.settings
-    void _o
     // The record carries the settings as they are and never a key they lack: a key invented here
     // would change every device's record – its hash, so `diffLocal` stamps it `now` at the first
     // sync after the upgrade, a whole-record edit no one made that beats and reverts a peer's
@@ -567,6 +586,7 @@ export function collectLocal(
     // along only once the settings hold it: the empty list after a Reset (`shared/menuOrder.ts`),
     // so the reset reaches the peers as an edit of the key, where a key the record lacks says
     // nothing to `apply`.
+    const rest = withoutDeviceLocalSettings(src.settings)
     const data: SettingsData = {
       ...rest,
       compactMode: { ...rest.compactMode, sidebarPersistent: false }
@@ -642,9 +662,38 @@ export interface DiffResult {
   changed: boolean
 }
 
+export interface DiffLocalOptions {
+  /**
+   * The `modified` a record takes when its hash differs from its `previous` entry: the
+   * wall-clock moment the change was made, or `null` to keep the previous `modified`.
+   *
+   * THE RULE: an edit is stamped where it is MADE, never where it is NOTICED. The engine's state
+   * subscriber (`SyncEngine.onLocalChange`) runs at the commit that carries an edit and stamps
+   * it `now`; the engine's round (`SyncEngine.run`) only notices, and passes `null`. A hash the
+   * round alone finds changed was not a user's edit: a build's new settings default that the
+   * load spread onto the settings, a sanitiser's new normal form, this device normalising a
+   * remote value differently from the peer that sent it (the boot seed, `SyncEngine.seedMeta`,
+   * adopts the first two before any round). Stamped at the round, such a change would publish a
+   * whole-record edit no one made, which wins last-writer-wins over a peer's real change this
+   * device had not pulled – the settings record at every device's first sync after a release.
+   *
+   * A record without a previous entry takes `modified = 0` either way; a vanished record's
+   * tombstone is stamped `now` either way (its deletion is what the diff notices, and a device
+   * that stops holding a record has, so far, always done so by the user's hand or a merge).
+   */
+  stamp: number | null
+  tombstoneTtlMs?: number
+  frozen?: (id: string, prev: RecordMeta) => boolean
+}
+
+const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
 /**
- * Compare the current local snapshot with the metadata of the last sync: changed records get a
- * fresh `modified`, vanished records become tombstones, everything else keeps its timestamp.
+ * Compare the current local snapshot with the metadata of the last sync: changed records get
+ * `options.stamp` as their `modified` (or keep the previous one, see `DiffLocalOptions`),
+ * vanished records become tombstones at `now`, everything else keeps its timestamp. Without
+ * options the change is stamped `now` – the subscriber's mode, and the one the pre-move engine
+ * had (`__tests__/compat.test.ts` pins it).
  *
  * Records seen for the first time get `modified = 0`: they still replicate to devices that lack
  * them, but a copy that already exists elsewhere wins – so joining a sync folder merges *into*
@@ -657,9 +706,9 @@ export function diffLocal(
   previous: MetaMap,
   current: Map<string, { type: RecordType; data: unknown }>,
   now: number,
-  tombstoneTtlMs = 30 * 24 * 60 * 60 * 1000,
-  frozen: (id: string, prev: RecordMeta) => boolean = () => false
+  options: DiffLocalOptions = { stamp: now }
 ): DiffResult {
+  const { stamp, tombstoneTtlMs = TOMBSTONE_TTL_MS, frozen = () => false } = options
   const meta: MetaMap = {}
   const records: SyncRecord[] = []
   let changed = false
@@ -669,7 +718,7 @@ export function diffLocal(
     let modified: number
     if (!prev) modified = 0
     else if (prev.hash === hash && !prev.deleted) modified = prev.modified
-    else modified = now
+    else modified = stamp ?? prev.modified
     if (!prev || prev.hash !== hash || prev.deleted) changed = true
     meta[id] = { type, hash, modified, deleted: false }
     records.push({ id, type, modified, deleted: false, data })
