@@ -2111,6 +2111,48 @@ describe('AndroidExtensionRuntime: a file:// navigation from the API', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: windows.create', () => {
+  it("answers with the window carrying the tabs the call opened alone, as Chrome (2048's worker takes win.tabs[0].id for its app tab)", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}))
+    backgroundUp(h, 'bg1')
+    const ids = h.runtime.api.tabs
+    // A popup window over one page: the one tab it opened, not the fixture tab beside it.
+    const one = await call(h, 'bg1', 'windows', 'create', [
+      { url: 'popup.html', type: 'popup', width: 500, height: 600 }
+    ])
+    expect(one.ok).toBe(true)
+    expect(h.created).toEqual([{ id: 't2', active: true }])
+    const win = one.result as { id: number; tabs: Array<Record<string, unknown>> }
+    expect(win.id).toBe(1)
+    expect(win.tabs).toHaveLength(1)
+    expect(win.tabs[0]).toMatchObject({
+      id: ids.chromeIdFor('t2'),
+      url: `chrome-extension://${ID}/popup.html`,
+      active: true
+    })
+    // Several URLs: a tab each, the first one shown.
+    const two = await call(h, 'bg1', 'windows', 'create', [{ url: ['a.html', 'b.html'] }])
+    const twoWin = two.result as { tabs: Array<Record<string, unknown>> }
+    expect(twoWin.tabs.map((t) => t.id)).toEqual([ids.chromeIdFor('t3'), ids.chromeIdFor('t4')])
+    expect(twoWin.tabs.map((t) => t.active)).toEqual([true, false])
+    // No URL: the New Tab page, one tab.
+    const blank = await call(h, 'bg1', 'windows', 'create', [{}])
+    expect((blank.result as { tabs: unknown[] }).tabs).toHaveLength(1)
+    expect(h.created[3]).toEqual({ id: 't5', active: true })
+    // An unfocused window's tab opens in the background.
+    await call(h, 'bg1', 'windows', 'create', [{ url: 'quiet.html', focused: false }])
+    expect(h.created[4]).toEqual({ id: 't6', active: false })
+    // A tab moved into the window is the window's tab; nothing is created for it.
+    const moved = await call(h, 'bg1', 'windows', 'create', [{ tabId: ids.chromeIdFor('t1') }])
+    const movedWin = moved.result as { tabs: Array<Record<string, unknown>> }
+    expect(movedWin.tabs.map((t) => t.id)).toEqual([ids.chromeIdFor('t1')])
+    expect(h.created).toHaveLength(5)
+    const missing = await call(h, 'bg1', 'windows', 'create', [{ tabId: 999 }])
+    expect(missing.error).toBe('No tab with id: 999.')
+  })
+})
+
 describe('offscreenUrl and languageCodeOf', () => {
   it('maps the forms of createDocument({ url }) onto the served origin and refuses the rest', () => {
     const origin = `https://${ID}.ext.zenium.invalid`
