@@ -14,6 +14,7 @@ import type {
   WindowHost
 } from '../platform'
 import type { ZenWindow } from '../window'
+import { closeBootTabs } from './bootTab'
 
 function memoryIo(): StoreIO {
   const files: Record<string, string> = {}
@@ -37,7 +38,11 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
 }
 
 /** A page view of the fake host, with the panel's posting under the test's eye. */
-type FakeView = TabView & { showQuitHold: Mock<(panel: QuitHoldPanel | null) => void> }
+type FakeView = TabView & {
+  /** The tab the view was made for (`closeBootTabs` drops the boot tab's record by it). */
+  tabId: string
+  showQuitHold: Mock<(panel: QuitHoldPanel | null) => void>
+}
 
 interface Host {
   quits: number
@@ -86,8 +91,9 @@ function fakePlatform(
         })
     },
     views: stub<TabViewHost>({
-      createView: () => {
+      createView: (tab) => {
         const view = stub<FakeView>({
+          tabId: tab.id,
           isDestroyed: () => false,
           isVisible: () => true,
           getZoom: () => 1,
@@ -123,6 +129,8 @@ function start(options: HostOptions): {
   const platform = fakePlatform(memoryIo(), options)
   const browser = new Browser(platform)
   browser.start()
+  // From the bare space: the scenes below count their tabs, and the boot tab (W5-F2) is not one of them.
+  closeBootTabs(browser, platform.host.views)
   const win = browser.allWindows()[0] as ZenWindow
   return { browser, platform, win }
 }
