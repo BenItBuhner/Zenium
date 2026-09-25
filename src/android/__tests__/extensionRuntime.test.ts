@@ -262,29 +262,48 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     expect(h.kt.calledWith('ext.configure')).toHaveLength(4)
   })
 
-  it('fires runtime.onInstalled once per version when the background is ready, then onStartup', async () => {
+  it('fires runtime.onInstalled once per version when the background is ready, and onStartup only at a browser start', async () => {
     const h = harness()
     await h.runtime.attach(record(h))
     backgroundUp(h, 'bg1', ['runtime.onInstalled', 'runtime.onStartup'])
     expect(events(h, 'bg1', 'runtime.onInstalled').map((e) => e.args)).toEqual([
       [{ reason: 'install' }]
     ])
-    expect(events(h, 'bg1', 'runtime.onStartup')).toHaveLength(1)
-    // The same version again (a browser restart): no install event.
+    // An install in a running session is not a browser start (Cursor Helper registers its
+    // content script from both listeners; the two from one start collided on the script id).
+    expect(events(h, 'bg1', 'runtime.onStartup')).toHaveLength(0)
+    // The same version again in the same session (disabled, then enabled): neither event.
     await h.runtime.detach(ID)
     await h.runtime.attach(record(h))
-    backgroundUp(h, 'bg2', ['runtime.onInstalled'])
+    backgroundUp(h, 'bg2', ['runtime.onInstalled', 'runtime.onStartup'])
     expect(events(h, 'bg2', 'runtime.onInstalled')).toHaveLength(0)
-    // A new version: update with the previous one named.
+    expect(events(h, 'bg2', 'runtime.onStartup')).toHaveLength(0)
+    // A new version: update with the previous one named, still no start event.
     await h.runtime.detach(ID)
     const newer = manifest({ version: '1.1.0' })
     await h.runtime.attach(
       record(h, { path: `${PATH.slice(0, -5)}1.1.0`, version: '1.1.0' }, newer)
     )
-    backgroundUp(h, 'bg3', ['runtime.onInstalled'])
+    backgroundUp(h, 'bg3', ['runtime.onInstalled', 'runtime.onStartup'])
     expect(events(h, 'bg3', 'runtime.onInstalled').map((e) => e.args)).toEqual([
       [{ reason: 'update', previousVersion: '1.0.0' }]
     ])
+    expect(events(h, 'bg3', 'runtime.onStartup')).toHaveLength(0)
+    // A browser start over the persisted state (the version already installed): onStartup
+    // alone, once, as Chrome fires it for the extensions present when the profile starts.
+    h.runtime.flushSync()
+    const restarted = harness({ files: h.files })
+    await restarted.runtime.attach(
+      record(restarted, { path: `${PATH.slice(0, -5)}1.1.0`, version: '1.1.0' }, newer)
+    )
+    backgroundUp(restarted, 'bg4', ['runtime.onInstalled', 'runtime.onStartup'])
+    expect(events(restarted, 'bg4', 'runtime.onInstalled')).toHaveLength(0)
+    expect(events(restarted, 'bg4', 'runtime.onStartup')).toHaveLength(1)
+    // Its background restarted later in that session (the worker idled out): no second start.
+    restarted.tick(30_000)
+    restarted.runtime.onGone(['bg4'])
+    backgroundUp(restarted, 'bg5', ['runtime.onStartup'])
+    expect(events(restarted, 'bg5', 'runtime.onStartup')).toHaveLength(0)
   })
 
   it('expect names the extensions about to be attached to Kotlin, ahead of the environment handshake', () => {

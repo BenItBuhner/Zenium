@@ -919,7 +919,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (installedVersion !== manifest.version) {
       this.data.installed[record.id] = manifest.version
       this.save()
-      if (manifest.background) this.installEvents.set(record.id, installedVersion ?? null)
+      if (manifest.background) {
+        this.installEvents.set(record.id, installedVersion ?? null)
+        // An install or an update in a running session is not a browser start: Chrome fires
+        // `runtime.onStartup` only for the extensions already installed when the profile starts,
+        // so this background's first start gets `onInstalled` alone (Cursor Helper runs the same
+        // `unregisterContentScripts` + `registerContentScripts` from both listeners, and the two
+        // interleaved from one start made the second registration a duplicate id).
+        this.startupFired.add(record.id)
+      }
     }
     this.armAlarms(record.id)
     // Chrome starts the background at browser start and after an install; workers and event
