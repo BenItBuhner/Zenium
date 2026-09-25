@@ -27,6 +27,7 @@ class BridgeLatencyTest {
         main = { work -> mainThread.execute(work) },
         dispatch = { _, _, _ -> },
         dispatchStorage = { _, _, _ -> },
+        dispatchOneWay = { _, _ -> },
         reject = { _, _ -> },
         log = { _, _ -> }
     )

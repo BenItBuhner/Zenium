@@ -14,32 +14,35 @@ import java.util.concurrent.atomic.AtomicInteger
  * The asynchronous channel of the chrome's bridge (services perf pass 2, #455's finding): a
  * `WebMessageChannel` per chrome document, its page end posted to the document when the page asks
  * for it (`bridge.port`, `bridge.ts` `openBridgePort`), its host end read on a background handler
- * and every string routed into the bridge's `call` route ([JsBridge.call] → [JsBridge.Calls]:
+ * and every string routed BY ITS SHAPE into the route its hop would have taken ([JsBridge.route]
+ * → [JsBridge.Calls]: a JSON array is a batch, an envelope with an id a call, one without a post;
  * admission by raw length first, a storage call to the storage thread as the raw string, anything
  * else parsed on the reading thread and dispatched on the main thread) – the dispatch the
- * synchronous hop already used, reached without the hop.
+ * synchronous hops already used, reached without the hop.
  *
  * WHY: every `@JavascriptInterface` entry point holds the chrome's JS thread across the JNI hop
  * until the Java method returns, a wait that is the JavaBridge thread's scheduling (4–68 ms per
  * storage write inside the thirty-tab overview fold on the emulator, with a millisecond of it on
- * the CPU). `port.postMessage(string)` on the page side is a Mojo pipe write that returns at once;
- * the reply still goes back through `__zenHost.resolve/reject` once the write has landed.
+ * the CPU; 52 hops and 182 ms of the JS thread across the tab swipe and the overview in #469's
+ * runs). `port.postMessage(string)` on the page side is a Mojo pipe write that returns at once;
+ * a call's reply still goes back through `__zenHost.resolve/reject` once the work is done.
  *
  * THE THREADS: the WebView receives a port message on the UI thread (Chromium's
  * `AppWebMessagePort.onMessage`, one task of a memcpy's size per message) and hands it to the
  * handler's thread, where [Receiver.onMessage] runs; nothing of the message is parsed on the main
- * thread. THE ORDER: one channel for the whole class of storage calls (`bridge.ts` `PORTED`), read
- * in the order sent into the storage executor's one FIFO queue – and a call the page made before
- * it held the port went through the hop, which handed its string over before the page went on.
- * THE OTHER CLASS (services perf pass 3): the thumbnail read, `thumbnail.load`, comes through the
- * same channel – it is ordered against nothing, a class of one – and takes the route any call off
- * the port that is not a storage call takes: parsed on the handler's thread (a line of JSON) and
- * dispatched on the main thread, where `Host.dispatch` hands it to the host's io pool as the hop's
- * did; nothing of it touches the storage thread. The host decides nothing about the classes: it
- * routes whatever arrives, and the page (`PORTED`) says what leaves through the port.
- * THE FALLBACK: a WebView without the features ([supported]) opens nothing, the page is told so
- * and keeps the hop. THE TEARDOWN: [close] with the document (replaced, rebuilt, destroyed –
- * `ChromeWebView`); the page end was transferred and dies with its document.
+ * thread. THE PORT IS THE BRIDGE (services perf pass 4; the storage class came through it in
+ * #458, the thumbnail read in #469): once the page holds it, every `call`, `post` and `batch`
+ * comes through it and none through the hops – `callSync` alone stays a hop, synchronous by
+ * nature – so the host decides nothing about what the channel carries: it routes whatever
+ * arrives by its shape. THE ORDER: one channel read on one thread, each string posted to the
+ * main thread (or handed to the storage thread) as it is read, so the main thread's dispatch
+ * order is the page's order across the kinds, a batch one task as through the hop – and a string
+ * the page sent before it held the port went through the hop, which handed it over before the
+ * page went on. THE FALLBACK: a WebView without the features ([supported]) opens nothing, the
+ * page is told so and keeps the hops. THE TEARDOWN: [close] with the document (replaced, rebuilt,
+ * destroyed – `ChromeWebView`); the page end was transferred and dies with its document, and a
+ * string of the dying document's posted into the closed channel is dropped by the platform, not
+ * reordered – the one loss the channel allows, bounded by the document's own end.
  */
 class BridgePort private constructor(
     private val port: WebMessagePortCompat,
@@ -48,12 +51,13 @@ class BridgePort private constructor(
 ) {
     /**
      * What the channel does with what arrives, apart from the platform: a string is routed into
-     * the bridge's `call` route (whose admission comes first), anything else is dropped and
-     * logged, and after [close] nothing is routed – a message the platform still delivers for a
-     * channel the host has torn down is a call from a document that is gone.
+     * the bridge's route by shape ([JsBridge.route]: a call's, a post's or a batch's, whose
+     * admission comes first), anything else is dropped and logged, and after [close] nothing is
+     * routed – a message the platform still delivers for a channel the host has torn down is a
+     * string from a document that is gone.
      */
     class Receiver(
-        /** The bridge's `call` route ([JsBridge.call]): admission, then the parse and the dispatch on their threads. */
+        /** The bridge's route by shape ([JsBridge.route]): admission, then the parse and the dispatch on their threads. */
         private val route: (json: String) -> Unit,
         private val log: (message: String) -> Unit
     ) {
@@ -111,7 +115,7 @@ class BridgePort private constructor(
          */
         fun open(view: WebView, token: String, origin: Uri, handler: Handler, route: (json: String) -> Unit): BridgePort? {
             if (!supported()) {
-                Log.i(TAG, "this WebView has no message channel; the ported calls keep the hop")
+                Log.i(TAG, "this WebView has no message channel; every kind keeps the hop")
                 return null
             }
             return runCatching {
@@ -124,9 +128,9 @@ class BridgePort private constructor(
                     }
                 })
                 WebViewCompat.postWebMessage(view, WebMessageCompat(token, arrayOf(ports[1])), origin)
-                Log.i(TAG, "channel open for $origin; the storage calls and the thumbnail reads take the port")
+                Log.i(TAG, "channel open for $origin; the port is the bridge from here (every call, post and batch)")
                 channel
-            }.onFailure { Log.w(TAG, "the channel could not be opened; the ported calls keep the hop", it) }.getOrNull()
+            }.onFailure { Log.w(TAG, "the channel could not be opened; every kind keeps the hop", it) }.getOrNull()
         }
     }
 }

@@ -218,13 +218,14 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
      * The page asks for the channel (`bridge.port`, one hop of the boot; main thread): a channel
      * of this document's, its page end posted to the document with [token] as the message – what
      * the page's listener wants back (`bridge.ts` `openBridgePort`) – and its host end read on
-     * [handler]'s thread into [JsBridge.call]. One channel per ask: an earlier one (a document
-     * that asked twice) is closed first. Whether one was opened; false on a WebView without the
-     * features, and the page keeps the hop.
+     * [handler]'s thread into [JsBridge.route], which dispatches each string by its shape into
+     * the route its hop would have taken (a call, a post, a batch). One channel per ask: an
+     * earlier one (a document that asked twice) is closed first. Whether one was opened; false
+     * on a WebView without the features, and the page keeps the hops.
      */
     fun openBridgePort(token: String, handler: Handler): Boolean {
         closeBridgePort()
-        val opened = BridgePort.open(this, token, documentOrigin(), handler, bridge::fromPort) ?: return false
+        val opened = BridgePort.open(this, token, documentOrigin(), handler, bridge::route) ?: return false
         bridgePort = opened
         return true
     }
