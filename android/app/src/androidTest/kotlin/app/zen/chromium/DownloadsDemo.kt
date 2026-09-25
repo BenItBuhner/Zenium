@@ -20,8 +20,10 @@ import org.junit.runner.RunWith
  * every attempt until the row fails with Chrome's reason and wording (`network-failed`, "Check
  * internet connection") and is completed by Resume (the server takes Range and the partial file
  * was kept), a completed file removed through `download.deleteFile` and one deleted behind the
- * browser's back (both rows read "Deleted", Retry downloads the file again), and the files in
- * the system Downloads app. The page and the files come from a small Node server on the runner
+ * browser's back (both rows read "Deleted", Retry downloads the file again), the files in
+ * the system Downloads app, and the link menu's Save Link As… asking where that one file goes
+ * through the system's save dialog while ask-where-to-save is off (HB-40: the menu's `saveAs`
+ * over `view.download`, `Downloads.bind`'s one-download ask). The page and the files come from a small Node server on the runner
  * (`.github/scripts/downloads-demo-server.mjs`, reached at `10.0.2.2:18923` from inside the
  * emulator), which generates every byte from the same formula as [expectedByte], so a resumed
  * file is checked byte for byte. The server speaks plain HTTP, so the seeded profile turns
@@ -185,10 +187,68 @@ class DownloadsDemo : DownloadsDemoBase("downloads-demo-state.json", "downloads"
             Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         )
         SystemClock.sleep(2_500)
+
+        // 7. Save Link As… (HB-40): the link menu's row asks where that one file goes – the
+        //    system's save dialog (`ACTION_CREATE_DOCUMENT`) – with ask-where-to-save off (the
+        //    seeded profile's default), as Chrome's per-file dialog does. The link's menu is
+        //    raised by the view's own `contextMenu` event for flaky.bin's link (a finger's long
+        //    press on the emulator becomes a text selection as often as a menu; ExtensionDemo
+        //    notes the same), the row under a real touch. Saving through the dialog writes the
+        //    document the picker made and the row completes on it: flaky.bin whole again (the
+        //    server's cut was its second response; this one is its third), under the name the
+        //    dialog kept, into the folder it opened on. Without a Save button to touch (another
+        //    picker), the dialog is dismissed instead and the row reads cancelled – no download.
+        closePanel()
+        ensureForeground()
+        val flakyBefore = rowFor("flaky.bin")?.optString("id").orEmpty()
+        val linkTab = activeCoreTab()?.optString("id").orEmpty()
+        check(linkTab.isNotEmpty(), "no active tab to raise the link menu on")
+        instrumentation.runOnMainSync {
+            (activity as MainActivity).host.viewEvent(
+                linkTab, "contextMenu",
+                JSONObject().put("linkURL", "$ORIGIN/flaky.bin").put("linkText", LINK_FLAKY).put("srcURL", "").put("mediaType", "none").put("x", 120).put("y", 300)
+            )
+        }
+        if (waitFor(SAVE_LINK_AS, 8_000) == null) {
+            fail("the link menu did not offer \"$SAVE_LINK_AS\"")
+        } else {
+            SystemClock.sleep(1_000)
+            shot("12-link-menu")
+            click(SAVE_LINK_AS)
+            // DocumentsUI's button reads SAVE (its text in capitals on the API 34 image); the
+            // finger goes where the tree puts it.
+            val save = waitFor({ it.equals("Save", ignoreCase = true) }, 15_000)
+            check(save != null, "Save Link As… did not open the system's save dialog (no Save button on screen)")
+            SystemClock.sleep(1_500)
+            shot("13-save-dialog")
+            if (save != null) {
+                Finger().tap(save.exactCenterX(), save.exactCenterY())
+                // A file of the name already in the folder: DocumentsUI asks before it overwrites.
+                waitFor({ it.equals("OK", ignoreCase = true) || it.equals("Overwrite", ignoreCase = true) }, 3_000)
+                    ?.let { Finger().tap(it.exactCenterX(), it.exactCenterY()) }
+                val saved = awaitRow("flaky.bin", 60_000) { it.optString("id") != flakyBefore && it.optString("state") == "completed" }
+                check(saved != null, "the download through the save dialog did not complete: ${rowFor("flaky.bin")}")
+                check(
+                    saved?.optString("savePath")?.startsWith("content:") == true,
+                    "the row does not point at the picker's document: ${saved?.optString("savePath")}"
+                )
+                SystemClock.sleep(1_500)
+                hideKeyboard()
+                shot("14-saved-through-dialog")
+            } else {
+                ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                val cancelled = awaitRow("flaky.bin", 20_000) { it.optString("id") != flakyBefore && it.optString("state") == "cancelled" }
+                check(cancelled != null, "dismissing the save dialog did not cancel the download: ${rowFor("flaky.bin")}")
+            }
+        }
         Log.i(tag, if (failures.isEmpty()) "all checks passed" else "failures: $failures")
     }
 
     companion object {
+        /** The server as the emulator reaches it (`setup-script` of the workflow starts it on the runner). */
+        const val ORIGIN = "http://10.0.2.2:18923"
+        /** The link menu's row (core `menus.ts`, the link's transfer group). */
+        const val SAVE_LINK_AS = "Save Link As\u2026"
         const val LINK_SLOW = "Download slow.bin"
         const val LINK_FLAKY = "Download flaky.bin"
         const val LINK_DEAD = "Download dead.bin"

@@ -75,6 +75,7 @@ const DESKTOP: HostCapabilities = {
   sync: true,
   print: true,
   printPreview: true,
+  savePageFormats: true,
   pdfViewer: false,
   agents: true,
   agentSkills: true,
@@ -131,6 +132,7 @@ const ANDROID: HostCapabilities = {
   sync: false,
   print: true,
   printPreview: false,
+  savePageFormats: false,
   pdfViewer: true,
   agents: true,
   agentSkills: false,
@@ -469,7 +471,7 @@ const DESKTOP_APP_MENU = [
   'Zoom > Fullscreen',
   'Reader View',
   'Save and Share',
-  'Save and Share > Save Page As…',
+  'Save and Share > Save Page As',
   'Save and Share > Web Capture…',
   'Save and Share > Print…',
   '-',
@@ -787,7 +789,7 @@ describe('the app menu', () => {
     expect(separators(h.shown())).toBe(3)
     const group = item(h.shown(), 'Save and Share').submenu!
     expect(topLabels(group)).toEqual([
-      'Save Page As…',
+      'Save Page As',
       'Create Shortcut…',
       'Manage Apps',
       'Web Capture…',
@@ -796,8 +798,11 @@ describe('the app menu', () => {
       'Send to Your Devices'
     ])
     expect(allItems(h.shown()).map((i) => i.label)).not.toContain('Cast…')
-    // The saves run the same actions as the keys, and the rows carry their chords.
-    expect(item(group, 'Save Page As…').action).toBe('page.savePage')
+    // The saves run the same actions as the keys, and the rows carry their chords: Save Page As
+    // is the formats' submenu on this host, its marked row the key's (CT-27, tested below).
+    expect(item(item(group, 'Save Page As').submenu!, 'Webpage, Complete…').action).toBe(
+      'page.savePage'
+    )
     expect(item(group, 'Web Capture…').action).toBe('capture.start')
     expect(item(group, 'Print…')).toMatchObject({
       action: 'page.printPreview',
@@ -819,10 +824,105 @@ describe('the app menu', () => {
       'Settings'
     ])
     expect(labels(item(bare.shown(), 'Save and Share').submenu!)).toEqual([
-      'Save Page As…',
+      'Save Page As',
+      'Save Page As > Webpage, Complete…',
+      'Save Page As > Webpage, HTML Only…',
+      'Save Page As > Webpage, Single File…',
       'Web Capture…',
       'Print…'
     ])
+  })
+
+  it('Save Page As is the formats’ submenu on a host that writes Chrome’s three (CT-27): radio rows in the dialog’s words, the last-used format marked and carrying Ctrl+S, a pick saving in its format and remembering it', () => {
+    const h = pageHarness(DESKTOP)
+    const saveAs = vi.spyOn(h.browser.actions, 'savePageAs').mockImplementation(() => undefined)
+    const rows = (): MenuItemTemplate[] => {
+      appMenu(h)
+      return item(item(h.shown(), 'Save and Share').submenu!, 'Save Page As').submenu!
+    }
+    // Chrome's dialog's three types, in its order; a fresh profile saves complete pages, as
+    // Chrome's dialog opens on Webpage, Complete.
+    expect(rows().map((r) => [r.label, r.type, r.checked])).toEqual([
+      ['Webpage, Complete…', 'radio', true],
+      ['Webpage, HTML Only…', 'radio', false],
+      ['Webpage, Single File…', 'radio', false]
+    ])
+    // The marked row is what the key does, so it alone carries the chord (`withAccelerators`
+    // fills it from the action); the others are picks of a format, chordless.
+    expect(item(rows(), 'Webpage, Complete…')).toMatchObject({
+      action: 'page.savePage',
+      accelerator: 'Ctrl+S'
+    })
+    expect(item(rows(), 'Webpage, HTML Only…').action).toBeUndefined()
+    expect(item(rows(), 'Webpage, HTML Only…').accelerator).toBeUndefined()
+    // A row's pick saves the active page in its format – its own click, not the action's.
+    item(rows(), 'Webpage, Single File…').click?.()
+    expect(saveAs).toHaveBeenCalledWith(h.tabId, h.win, 'singleFile')
+    // The format a save went through in is the one the key saves in next (Edge remembers the
+    // dialog's last type): the mark moves and the chord with it.
+    h.browser.updateSettings({ downloads: { savePageFormat: 'singleFile' } }, h.win)
+    expect(rows().map((r) => r.checked)).toEqual([false, false, true])
+    expect(item(rows(), 'Webpage, Single File…')).toMatchObject({
+      action: 'page.savePage',
+      accelerator: 'Ctrl+S'
+    })
+    expect(item(rows(), 'Webpage, Complete…').accelerator).toBeUndefined()
+    // The page's context menu keeps Chrome's one Save Page As… row, the key's save.
+    expect(h.menu(pageParams())).toContain('Save Page As…')
+    expect(item(h.items(), 'Save Page As…').action).toBe('page.savePage')
+    // No page up: the rows stand, disabled, as the row of before did.
+    const empty = harness(DESKTOP)
+    appMenu(empty)
+    const disabled = item(item(empty.shown(), 'Save and Share').submenu!, 'Save Page As')
+    expect(disabled.enabled).toBe(false)
+    expect(disabled.submenu!.every((r) => r.enabled === false)).toBe(true)
+    // A host without the formats – Android's WebView writes its one archive – keeps the one
+    // row, on the tablet's menu as before (the phone saves through its icon row's Download Page).
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    appMenu(tablet)
+    const row = item(item(tablet.shown(), 'Save and Share').submenu!, 'Save Page As…')
+    expect(row.submenu).toBeUndefined()
+    expect(row.action).toBe('page.savePage')
+  })
+
+  it('a Save Page As pick asks the view for its format under the title’s name, lists the file it wrote by the file’s type, and remembers the format for Ctrl+S; a cancelled dialog remembers nothing (CT-27)', async () => {
+    const h = pageHarness(DESKTOP)
+    h.browser.tabs.tab(h.tabId)!.title = 'Example Page'
+    const view = h.browser.tabs.view(h.tabId)!
+    const asked: [string, string][] = []
+    let answer: string | null = null
+    // The recording view answers nothing to a save; this one answers the dialog's path.
+    view.savePage = (name, format) => {
+      asked.push([name, format])
+      return Promise.resolve(answer)
+    }
+    const format = (): string => resolveDownloadSettings(h.browser.state.settings).savePageFormat
+    expect(format()).toBe('complete')
+    // A cancelled dialog: no file, no row, and the key's format stands.
+    h.browser.actions.savePageAs(h.tabId, h.win, 'singleFile')
+    await settle()
+    expect(asked).toEqual([['Example Page.mhtml', 'singleFile']])
+    expect(h.browser.downloads.visibleTo(false)).toEqual([])
+    expect(format()).toBe('complete')
+    // A save that went through: the row reads the written file – an archive by its extension –
+    // and the format is the key's from now on.
+    answer = '/home/u/Downloads/Example Page.mhtml'
+    h.browser.actions.savePageAs(h.tabId, h.win, 'singleFile')
+    await settle()
+    expect(h.browser.downloads.visibleTo(false).map((d) => [d.savePath, d.mimeType])).toEqual([
+      ['/home/u/Downloads/Example Page.mhtml', 'multipart/related']
+    ])
+    expect(format()).toBe('singleFile')
+    // Ctrl+S saves in the remembered format; a name the dialog was given with another extension
+    // is listed as what it is.
+    answer = '/home/u/Downloads/kept.html'
+    h.browser.actions.run('page.savePage', { sourceTabId: h.tabId, win: h.win })
+    await settle()
+    expect(asked.at(-1)).toEqual(['Example Page.mhtml', 'singleFile'])
+    expect(h.browser.downloads.visibleTo(false)[0]).toMatchObject({
+      savePath: '/home/u/Downloads/kept.html',
+      mimeType: 'text/html'
+    })
   })
 
   it('seats Edge’s Manage Apps under the install row, whatever the page shows, on a desktop host that pins launchers; its pick opens Settings › Apps (shortcuts-menus-138)', () => {
@@ -832,7 +932,7 @@ describe('the app menu', () => {
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     appMenu(h)
     let group = item(h.shown(), 'Save and Share').submenu!
-    expect(topLabels(group)).toEqual(['Save Page As…', 'Manage Apps', 'Web Capture…', 'Print…'])
+    expect(topLabels(group)).toEqual(['Save Page As', 'Manage Apps', 'Web Capture…', 'Print…'])
     const open = vi.spyOn(h.browser.pages, 'open')
     item(group, 'Manage Apps').click?.()
     expect(open).toHaveBeenCalledWith('settings', 'apps', h.win)
@@ -842,7 +942,7 @@ describe('the app menu', () => {
     appMenu(h)
     group = item(h.shown(), 'Save and Share').submenu!
     expect(topLabels(group).slice(0, 3)).toEqual([
-      'Save Page As…',
+      'Save Page As',
       'Create Shortcut…',
       'Manage Apps'
     ])
@@ -1153,7 +1253,11 @@ describe('the app menu', () => {
     const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
     // The flat menu's disabled version line is Help's About Zenium row now, which opens the
     // About page the version is on (shortcuts-menus-152).
-    const renamed: Record<string, string> = { 'About Zenium 1.2.3': 'About Zenium' }
+    // The flat menu's Save Page As… is the formats' submenu on this host (CT-27).
+    const renamed: Record<string, string> = {
+      'About Zenium 1.2.3': 'About Zenium',
+      'Save Page As…': 'Save Page As'
+    }
     for (const label of before)
       expect(everywhere, label).toContain(
         foldedIntoWebCapture.has(label) ? 'Web Capture…' : (renamed[label] ?? label)
@@ -1823,7 +1927,7 @@ describe('the app menu', () => {
     expect(appMenu(h)).toContain('Save and Share > Create Shortcut…')
     expect(appMenu(h)).not.toContain('More Tools > Create Shortcut…')
     expect(appMenu(h).indexOf('Save and Share > Create Shortcut…')).toBe(
-      appMenu(h).indexOf('Save and Share > Save Page As…') + 1
+      appMenu(h).indexOf('Save and Share > Save Page As') + 1
     )
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
     expect(appMenu(h)).not.toContain('Save and Share > Create Shortcut…')
@@ -2170,7 +2274,8 @@ describe("the phone menu's icon row", () => {
     appMenu(h)
     expect(allItems(h.shown()).filter((item) => item.action === 'page.savePage')).toHaveLength(1)
     expect(appMenu(h)).not.toContain('Save Page As…')
-    expect(appMenu(harness(DESKTOP))).toContain('Save and Share > Save Page As…')
+    expect(appMenu(h)).not.toContain('Save Page As')
+    expect(appMenu(harness(DESKTOP))).toContain('Save and Share > Save Page As')
     expect(appMenu(harness(ANDROID, 'tablet'))).toContain('Save and Share > Save Page As…')
   })
 
@@ -4591,7 +4696,7 @@ describe('Send to your devices (ID-27)', () => {
       menu.indexOf('Save and Share > Print…') + 1
     )
     expect(menu.indexOf('Save and Share > Web Capture…')).toBe(
-      menu.indexOf('Save and Share > Save Page As…') + 1
+      menu.indexOf('Save and Share > Save Page As') + 1
     )
     expect(menu[menu.indexOf('Save and Share > Send to Work laptop') + 1]).toBe('-')
     expect(menu.indexOf('Save and Share')).toBe(menu.indexOf('Reader View') + 1)

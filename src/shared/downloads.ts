@@ -4,6 +4,7 @@
  * suffix in-flight files are written under.
  */
 import type { DownloadInterruptReason, DownloadSettings, Settings } from './types'
+import { DEFAULT_SAVE_PAGE_FORMAT, isSavePageFormat } from './savePage'
 
 /** In-progress and quarantined files end in this (Chrome: `.crdownload`, Firefox: `.part`). */
 export const PARTIAL_SUFFIX = '.zeniumdownload'
@@ -205,7 +206,8 @@ export const DEFAULT_DOWNLOAD_SETTINGS: DownloadSettings = {
   openPanelOnStart: false,
   openPanelOnComplete: true,
   autoOpenTypes: [],
-  alwaysShowButton: false
+  alwaysShowButton: false,
+  savePageFormat: DEFAULT_SAVE_PAGE_FORMAT
 }
 
 /**
@@ -235,7 +237,8 @@ export function resolveDownloadSettings(
           .filter((e) => e !== '')
       : [...d.autoOpenTypes],
     alwaysShowButton:
-      typeof r.alwaysShowButton === 'boolean' ? r.alwaysShowButton : d.alwaysShowButton
+      typeof r.alwaysShowButton === 'boolean' ? r.alwaysShowButton : d.alwaysShowButton,
+    savePageFormat: isSavePageFormat(r.savePageFormat) ? r.savePageFormat : d.savePageFormat
   }
 }
 

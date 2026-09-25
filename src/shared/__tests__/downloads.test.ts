@@ -189,6 +189,22 @@ describe('download settings', () => {
     expect(settings.openPanelOnStart).toBe(false)
     expect(settings.openPanelOnComplete).toBe(false)
   })
+
+  it('remembers the Save Page As format used last, Chrome’s complete page until one was (CT-27)', () => {
+    expect(resolveDownloadSettings(undefined).savePageFormat).toBe('complete')
+    expect(
+      resolveDownloadSettings({ downloads: { savePageFormat: 'singleFile' } }).savePageFormat
+    ).toBe('singleFile')
+    expect(
+      resolveDownloadSettings({ downloads: { savePageFormat: 'htmlOnly' } }).savePageFormat
+    ).toBe('htmlOnly')
+    // A value from nowhere – another build's name, a wrong type – reads as the default.
+    expect(
+      resolveDownloadSettings({
+        downloads: { savePageFormat: 'MHTML' as unknown as 'singleFile' }
+      }).savePageFormat
+    ).toBe('complete')
+  })
 })
 
 describe('file names', () => {
