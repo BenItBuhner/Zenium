@@ -32,6 +32,7 @@ import {
   type FontFamilySlot,
   type PageFontSettings
 } from '../../../shared/fonts'
+import type { ExtensionControl } from '../../../shared/types'
 import { listFontFamilies } from './fontList'
 import { installOrderRank } from './privacy'
 import { ApiError, validated, type ApiContext, type ApiHost, type NamespaceHandlers } from './types'
@@ -269,8 +270,32 @@ export class FontSettingsApi {
     const controlled = FONT_PREFS.some((pref) => next.controllers[pref] !== null)
     if (controlled || this.layered) this.host.browser.platform.pageFonts?.apply(next.fonts)
     this.layered = controlled
+    this.publishControls(next)
     if (!prev) return
     this.announce(prev, next)
+  }
+
+  /**
+   * The Settings page's "Controlled by <extension>" rows (`UIState.extensionControls`): every
+   * preference an extension holds, under the Customize fonts row's key in `Settings['fonts']`
+   * – the six preferences are the six rows, so the key is the preference's own name.
+   */
+  private publishControls(layered: LayeredFonts): void {
+    const controls: Record<string, ExtensionControl> = {}
+    for (const pref of FONT_PREFS) {
+      const controller = layered.controllers[pref]
+      if (controller === null) continue
+      controls[`fonts.${pref}`] = { extensionId: controller, name: this.nameOf(controller) }
+    }
+    this.host.controls.publish('fontSettings', controls)
+  }
+
+  /** The extension's name as the Extensions page shows it (the id when nothing better is known). */
+  private nameOf(extensionId: string): string {
+    const info = this.host.browser.extensions.list().find((record) => record.id === extensionId)
+    if (info?.name) return info.name
+    const loaded = this.host.loaded(extensionId)
+    return loaded?.extension.name || extensionId
   }
 
   private announce(prev: LayeredFonts, next: LayeredFonts): void {

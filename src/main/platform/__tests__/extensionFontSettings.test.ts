@@ -4,6 +4,8 @@ import {
   type FontValues
 } from '../../../core/extensions/api/fontSettings'
 import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '../../../shared/fonts'
+import type { ExtensionControl } from '../../../shared/types'
+import { ExtensionControls } from '../extensionApi/controls'
 import { FontSettingsApi } from '../extensionApi/fontSettings'
 import type { ApiContext, ApiHost } from '../extensionApi/types'
 
@@ -24,6 +26,8 @@ interface World {
   persisted: Map<string, FontValues>
   /** What the pages were handed, in order. */
   applied: PageFontSettings[]
+  /** Every `UIState.extensionControls` map the state was handed, in order. */
+  controls: Array<Record<string, ExtensionControl>>
   user: PageFontSettings
   /** The state's broadcast (the page fonts service applies the user's setting on it, as at runtime). */
   broadcast(): Promise<void>
@@ -34,6 +38,7 @@ function world(options: { fonts?: string[]; attach?: boolean } = {}): World {
   const dispatched: Dispatched[] = []
   const persisted = new Map<string, FontValues>()
   const applied: PageFontSettings[] = []
+  const controls: Array<Record<string, ExtensionControl>> = []
   const listeners: Array<() => void> = []
   let userApplied = ''
   const state: World = {
@@ -42,6 +47,7 @@ function world(options: { fonts?: string[]; attach?: boolean } = {}): World {
     loaded: new Set([OLD, NEW, NO_PERMISSION]),
     persisted,
     applied,
+    controls,
     user: { ...DEFAULT_FONT_SETTINGS },
     broadcast: async () => {
       // The page fonts service's own listener: the user's setting goes out when it moved.
@@ -73,12 +79,17 @@ function world(options: { fonts?: string[]; attach?: boolean } = {}): World {
         else persisted.set(extensionId, values)
       }
     },
+    controls: new ExtensionControls({
+      setExtensionControls: (map) => {
+        controls.push(map)
+      }
+    }),
     browser: {
       extensions: {
         list: () => [
-          { id: OLD, installedAt: 1000 },
-          { id: NEW, installedAt: 2000 },
-          { id: NO_PERMISSION, installedAt: 3000 }
+          { id: OLD, name: 'Older Fonts', installedAt: 1000 },
+          { id: NEW, name: 'Advanced Font Settings', installedAt: 2000 },
+          { id: NO_PERMISSION, name: 'No Permission', installedAt: 3000 }
         ]
       },
       pageFonts: {
@@ -372,6 +383,68 @@ describe('FontSettingsApi events', () => {
       script: 'Zyyy',
       genericFamily: 'fixed',
       levelOfControl: 'controllable_by_this_extension'
+    })
+  })
+})
+
+describe('the Settings rows an extension holds (UIState.extensionControls)', () => {
+  it('publishes the controlling extension of each Customize fonts row, named as the Extensions page names it, and nothing for a preference no row sets', () => {
+    const w = world()
+    // Nothing set: the map is empty and no snapshot was committed for it.
+    expect(w.controls).toEqual([])
+    call(w, OLD, 'setFont', { genericFamily: 'standard', fontId: 'Georgia' })
+    call(w, OLD, 'setDefaultFontSize', { pixelSize: 20 })
+    expect(w.controls.at(-1)).toEqual({
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' },
+      'fonts.size': { extensionId: OLD, name: 'Older Fonts' }
+    })
+    // The fixed-width size, the cursive slot and a per-script family set no row of the page.
+    const before = w.controls.length
+    call(w, OLD, 'setDefaultFixedFontSize', { pixelSize: 14 })
+    call(w, OLD, 'setFont', { genericFamily: 'cursive', fontId: 'Zapfino' })
+    call(w, OLD, 'setFont', { genericFamily: 'sansserif', script: 'Jpan', fontId: 'Noto Sans JP' })
+    expect(w.controls.length).toBe(before)
+    // The minimum size and the other three slots each name their row.
+    call(w, OLD, 'setMinimumFontSize', { pixelSize: 12 })
+    call(w, OLD, 'setFont', { genericFamily: 'serif', fontId: 'Lora' })
+    call(w, OLD, 'setFont', { genericFamily: 'sansserif', fontId: 'Inter' })
+    call(w, OLD, 'setFont', { genericFamily: 'fixed', fontId: 'Fira Code' })
+    expect(Object.keys(w.controls.at(-1)!).sort()).toEqual([
+      'fonts.fixed',
+      'fonts.minimumSize',
+      'fonts.sansSerif',
+      'fonts.serif',
+      'fonts.size',
+      'fonts.standard'
+    ])
+  })
+
+  it("names the extension whose value is in effect – the newest install – and follows a clear, a disable and the user's own change as Chrome's indicator does", async () => {
+    const w = world()
+    call(w, OLD, 'setFont', { genericFamily: 'standard', fontId: 'Georgia' })
+    call(w, NEW, 'setFont', { genericFamily: 'standard', fontId: 'Inter' })
+    expect(w.controls.at(-1)).toEqual({
+      'fonts.standard': { extensionId: NEW, name: 'Advanced Font Settings' }
+    })
+    // The newer extension lets go: the older one's value is in effect, and its name shows.
+    call(w, NEW, 'clearFont', { genericFamily: 'standard' })
+    expect(w.controls.at(-1)).toEqual({
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' }
+    })
+    // The user's own change of the setting moves no control: the extension still holds it.
+    const before = w.controls.length
+    w.user.standard = 'Verdana'
+    await w.broadcast()
+    expect(w.controls.length).toBe(before)
+    // Disabled: the row is the user's again.
+    w.loaded.delete(OLD)
+    w.api.unload(OLD)
+    expect(w.controls.at(-1)).toEqual({})
+    // Loaded again: the persisted value holds the row again.
+    w.loaded.add(OLD)
+    w.api.load(OLD)
+    expect(w.controls.at(-1)).toEqual({
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' }
     })
   })
 })
