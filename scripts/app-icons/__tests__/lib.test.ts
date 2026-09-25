@@ -153,6 +153,35 @@ describe('renderPrivateIcon', () => {
     expect(pixel(rgba, size, c + Math.round(w * 1.2), c)).toEqual([...fill, 255])
   })
 
+  it('reads as a mask at the taskbar’s 24 px and holds as a band at 16 (the #451 lead check, C1)', () => {
+    // How much of a pixel the ink covers, back from its red channel (ink over the ground).
+    const inkAt = (rgba: Uint8Array, size: number, x: number, y: number): number => {
+      const [r, , , a] = pixel(rgba, size, x, y)
+      return a === 0 ? 0 : (r - fill[0]) / (ink[0] - fill[0])
+    }
+    // The pixels of the centre column and of an eye's column that are at least half ink.
+    const column = (size: number, x: number): number[] => {
+      const rgba = renderPrivateIcon(size)
+      const rows: number[] = []
+      for (let y = 0; y < size; y++) if (inkAt(rgba, size, x, y) >= 0.5) rows.push(y)
+      return rows
+    }
+    // 24 px: the band is 8 rows (8–15); the centre column carries the 3-row bridge (10–12)
+    // between the 2-row dip and the 3-row nose notch; the eye's column is open for 4 rows
+    // (10–13) between its brow and its cheek – holes, not a smudge.
+    expect(column(24, 12)).toEqual([10, 11, 12])
+    const eye24 = Math.round(12 + 24 * m.halfWidth * m.eye.x)
+    expect(column(24, eye24)).toEqual([8, 9, 14, 15])
+    // 16 px: a 6-row band (5–10) whose bridge is two solid rows (7–8) over a 2-row notch, the
+    // eye's column open for 2 rows (7–8) – the band still tells the group apart, holes and all.
+    expect(column(16, 8)).toEqual([7, 8])
+    const eye16 = Math.round(8 + 16 * m.halfWidth * m.eye.x)
+    expect(column(16, eye16)).toEqual([6, 9])
+    for (const x of [7, 8])
+      for (const y of [7, 8])
+        expect(inkAt(renderPrivateIcon(16), 16, x, y)).toBeGreaterThanOrEqual(0.75)
+  })
+
   it('is not the mark: the middle of a variant’s dot is ink, the mask’s ends reach further', () => {
     const indigo = renderIcon(APP_ICON_VARIANTS[0], size)
     // The mark's ring passes where the mask has nothing (straight above the centre).

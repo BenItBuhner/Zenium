@@ -99,13 +99,19 @@ export const APP_ICON_PRIVATE: { readonly folder: 'private'; accent: string; fil
  * side) with a dip cut into the top edge at the bridge and a notch into the bottom for the nose,
  * and an eye cut out of each side. Every cut is an ellipse; its centre (`x` across, `y` down,
  * `rise` up) and radii are fractions of the body's half-width / half-height.
+ *
+ * Sized for the taskbar (the #451 lead check, C1): at 24 px the body is an 18 × 8 band with
+ * 4 × 4 eye holes, a 3-row nose notch, a 2-row dip and a 3-row bridge – a mask, not an ∞ band;
+ * at 16 px (the overflow's size) a 12 × 6 band with 2 × 2 holes, a 2-row notch and a bridge of
+ * two solid rows. The nose at .85 is what keeps both: deeper halves the 16 px bridge, shallower
+ * softens the 24 px notch. Read by `scripts/app-icons/lib.ts` alone.
  */
 export const APP_ICON_MASK = {
   halfWidth: 0.36,
-  halfHeight: 0.14,
-  bridge: { y: -1.1, rx: 0.22, ry: 0.55 },
-  nose: { y: 1.05, rx: 0.18, ry: 0.6 },
-  eye: { x: 0.5, rise: 0.05, rx: 0.22, ry: 0.36 }
+  halfHeight: 0.18,
+  bridge: { y: -1.1, rx: 0.22, ry: 0.7 },
+  nose: { y: 1.05, rx: 0.18, ry: 0.85 },
+  eye: { x: 0.5, rise: 0.05, rx: 0.22, ry: 0.4 }
 } as const
 
 /**
