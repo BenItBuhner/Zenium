@@ -200,8 +200,8 @@ class MenuEditDemo : DemoHarness(
         val f = Finger()
         f.down(from.exactCenterX(), from.exactCenterY())
         f.hold(HOLD_MS)
-        val held = heldState()
-        finding("held after $HOLD_MS ms: $held")
+        val held = awaitLift()
+        finding("held after $HOLD_MS ms and the lift's ease: $held")
         record("the hold lifted the star: its cell carries data-held", held?.optString("key") == KEY_STAR)
         record(
             "the lifted item is at scale 1.02 (${held?.optDouble("scale")}), with the level 2 shadow and 90 % opacity (${held?.optString("opacity")}) on the panel colour (§9.4)",
@@ -209,7 +209,7 @@ class MenuEditDemo : DemoHarness(
         )
         still("lifted")
         // Two slots left, along the row's axis; the finger rests a moment on the slot, then lets go.
-        f.moveBy(to.exactCenterX() - from.exactCenterX(), 0f, DRAG_MS)
+        travel(f, to.exactCenterX() - from.exactCenterX(), 0f)
         f.hold(REST_MS)
         f.up()
         val landed = awaitTrue(5_000) { heldState() == null }
@@ -264,8 +264,9 @@ class MenuEditDemo : DemoHarness(
         val scene = traceFrames(SCENE_LIST, JankBudget.Kind.SPRING) {
             val f = Finger()
             f.down(from.exactCenterX(), from.exactCenterY())
-            f.hold(HOLD_MS)
-            f.moveBy(0f, to.exactCenterY() - from.exactCenterY(), DRAG_MS)
+            // Nothing read inside the measured block: the hold is given the lift's time outright.
+            f.hold(TRACED_HOLD_MS)
+            travel(f, 0f, to.exactCenterY() - from.exactCenterY())
             f.hold(REST_MS)
             f.up()
             SystemClock.sleep(LANDING_MS)
@@ -537,6 +538,35 @@ class MenuEditDemo : DemoHarness(
         return opened && editUp()
     }
 
+    /**
+     * The item in the hand at its lifted scale: the chrome's long press fires 380 ms into the
+     * hold and the lift eases over 120 ms, but the software GPU draws a frame every few hundred
+     * milliseconds, so the ease lands when it lands; the finger stays down while this waits.
+     */
+    private fun awaitLift(): JSONObject? {
+        var held: JSONObject? = null
+        awaitTrue(LIFT_MS) {
+            held = heldState()
+            held?.let { near(it.optDouble("scale"), 1.02, 0.006) } == true
+        }
+        return held ?: heldState()
+    }
+
+    /**
+     * The finger's travel over the slots: a nudge first, then the distance whole. The drag
+     * begins at the first move past the 8 px slop and the item follows the finger from there
+     * (`menuReorder.ts`: the target belongs to the finger); on the emulator the moves of a
+     * whole frame coalesce into one, so a travel that set out at speed would begin the drag a
+     * slot's worth along and land the item that much short. The nudge is that first move, small,
+     * with a frame to take it; the item then lands within the nudge of the slot's centre.
+     */
+    private fun travel(f: Finger, dx: Float, dy: Float) {
+        val nudge = NUDGE_CSS_PX * density
+        f.moveBy(nudge * Math.signum(dx), nudge * Math.signum(dy), NUDGE_MS)
+        f.hold(NUDGE_SETTLE_MS)
+        f.moveBy(dx, dy, DRAG_MS)
+    }
+
     /** Done, then the sheet away: the way out of a scene that could not run. */
     private fun leaveEdit() {
         touchTapLabel(LABEL_DONE)
@@ -635,8 +665,21 @@ class MenuEditDemo : DemoHarness(
         private val PLACE = Regex("^(.+), (\\d+) of (\\d+)$")
         private val MOVE_UP = Regex("^Move .+ up$")
 
-        /** Past the chrome's 380 ms long press, with room for the lift's 120 ms ease to land. */
+        /** Past the chrome's 380 ms long press. */
         private const val HOLD_MS = 600L
+        /**
+         * The most the lift is given to land on the software GPU's frames after that: the
+         * injected down reaches the page a frame late (a few hundred milliseconds here), the
+         * long press counts from then, and the 120 ms ease draws when a frame comes.
+         */
+        private const val LIFT_MS = 3_000L
+        /** The hold inside the traced scene, where nothing is read: the long press, its latency and the lift's ease, outright. */
+        private const val TRACED_HOLD_MS = 1_600L
+        /** The first move of a travel, in CSS px: past the chrome's 8 px slop and no further than a quarter of a row. */
+        private const val NUDGE_CSS_PX = 12f
+        private const val NUDGE_MS = 150L
+        /** A frame or two for the nudge to begin the drag before the travel proper. */
+        private const val NUDGE_SETTLE_MS = 450L
         /** The finger's travel over two slots. */
         private const val DRAG_MS = 700L
         /** The finger resting on the slot before it lets go, so the last re-targeting has drawn. */
