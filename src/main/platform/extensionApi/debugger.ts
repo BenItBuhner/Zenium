@@ -17,6 +17,7 @@ import {
   type DetachReason
 } from '../../../core/extensions/api/debugger'
 import type { Tab } from '../../../shared/types'
+import { awaitFirstPaint, paintGatedCommand } from '../firstPaint'
 import { addForeignDebuggerOwner, removeForeignDebuggerOwner } from '../pageDebugger'
 import {
   ApiError,
@@ -168,6 +169,10 @@ export class DebuggerApi {
     if (!isRecord(params))
       throw new ApiError("Error at parameter 'commandParams': Value must be an object.")
     const attachment = this.attachmentOf(ctx, target)
+    // Input the page cannot take yet – a press, a key, a wheel, a touch, text before its first
+    // paint – would be dropped by the renderer with a success ack; it waits for the paint, a
+    // bounded time (`firstPaint.ts`). Every other command goes through untouched.
+    if (paintGatedCommand(rawMethod, params)) await awaitFirstPaint(attachment.wc)
     try {
       const result: unknown = await attachment.dbg.sendCommand(rawMethod, params, target.sessionId)
       return result ?? {}

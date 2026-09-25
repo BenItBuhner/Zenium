@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { Tab } from '../../../shared/types'
-import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
+import type {
+  AgentInputEvent,
+  TabViewEvents,
+  WindowHost,
+  WindowOpenTicket
+} from '../../../core/platform'
 import {
   DEFAULT_FONT_SETTINGS,
   electronFontDefaults,
@@ -160,6 +165,21 @@ vi.mock('electron', async () => {
     }
     sendInputEvent(event: Record<string, unknown>): void {
       this.widgetEvents.push(event)
+    }
+    /**
+     * What the main frame answers the first-paint probe (`firstPaint.ts`), one answer per
+     * probe, the last repeating: painted unless a test holds the page.
+     */
+    paintAnswers: string[] = ['painted']
+    /** Every paint probe run in the main frame. */
+    readonly paintProbes: string[] = []
+    readonly mainFrame = {
+      executeJavaScript: (code: string): Promise<unknown> => {
+        this.paintProbes.push(code)
+        const answer =
+          this.paintAnswers.length > 1 ? this.paintAnswers.shift()! : this.paintAnswers[0]!
+        return Promise.resolve(answer)
+      }
     }
     /** Scripts run in the page's main world (`showErrorPage`'s in-place document). */
     readonly scripts: string[] = []
@@ -944,16 +964,42 @@ describe('ElectronTabView.sendInput and the DevTools session', () => {
     taken: boolean
     log: string[]
   }
-  const viewWithDebugger = (): { view: ElectronTabView; dbg: FakeDebug; widget: unknown[] } => {
+  /** The page as `sendInput` probes it: the frame's paint answers and how often it was asked. */
+  interface FakePaint {
+    paintAnswers: string[]
+    paintProbes: string[]
+    emit(event: string, ...args: unknown[]): boolean
+  }
+  const viewWithDebugger = (): {
+    view: ElectronTabView
+    dbg: FakeDebug
+    widget: unknown[]
+    page: FakePaint
+  } => {
     const host = new ElectronTabViewHost(sessions)
     const view = host.createView(
       { id: 'tab_agent', containerId: 'default' } as Tab,
       noEvents,
       detachedWindow
     ) as ElectronTabView
-    const wc = view.webContents as unknown as { debugger: FakeDebug; widgetEvents: unknown[] }
-    return { view, dbg: wc.debugger, widget: wc.widgetEvents }
+    const wc = view.webContents as unknown as {
+      debugger: FakeDebug
+      widgetEvents: unknown[]
+    } & FakePaint
+    return { view, dbg: wc.debugger, widget: wc.widgetEvents, page: wc }
   }
+  const CLICK: AgentInputEvent = {
+    type: 'click',
+    x: 10,
+    y: 20,
+    button: 'left',
+    clickCount: 1,
+    modifiers: []
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
   it('attaches for the action and detaches right after it, sending only Input commands', async () => {
     const { view, dbg, widget } = viewWithDebugger()
@@ -1027,6 +1073,121 @@ describe('ElectronTabView.sendInput and the DevTools session', () => {
     dbg.taken = false
     await view.sendInput({ type: 'mouseMove', x: 1, y: 1 })
     expect(dbg.log).toEqual(['attach', 'Input.dispatchMouseEvent', 'detach'])
+  })
+
+  /**
+   * Paint holding (in-house fix, row 3): before a new http(s) document's first paint the
+   * renderer drops presses and keys with a success ack. `sendInput` waits for the paint on
+   * both its paths – the DevTools protocol's and the widget fallback's – bounded, and moves
+   * go at once (they are never dropped).
+   */
+  it('holds a click on the CDP path until the page has painted, then sends it; the painted document is not asked again', async () => {
+    const { view, dbg, page } = viewWithDebugger()
+    page.paintAnswers = ['holding', 'holding', 'painted']
+    let sent = false
+    const click = view.sendInput(CLICK).then(() => {
+      sent = true
+    })
+    await new Promise((r) => setTimeout(r, 5))
+    // Asked, holding: nothing has gone to the page yet.
+    expect(page.paintProbes.length).toBeGreaterThanOrEqual(1)
+    expect(dbg.log).toEqual([])
+    expect(sent).toBe(false)
+    await click
+    expect(page.paintProbes).toHaveLength(3)
+    expect(dbg.log).toEqual([
+      'attach',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      'detach'
+    ])
+    // The next key on the same document costs no probe.
+    await view.sendInput({ type: 'key', key: 'Enter', modifiers: [] })
+    expect(page.paintProbes).toHaveLength(3)
+    expect(dbg.log.slice(5)).toEqual([
+      'attach',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+      'detach'
+    ])
+    // A new document is asked in its own right.
+    page.emit('did-start-navigation', {
+      url: 'https://b.example/',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    page.paintAnswers = ['painted']
+    await view.sendInput({ type: 'text', text: 'hi' })
+    expect(page.paintProbes).toHaveLength(4)
+  })
+
+  it('holds a click on the widget fallback the same way, and sends the sequence whole once painted', async () => {
+    const { view, dbg, widget, page } = viewWithDebugger()
+    dbg.taken = true
+    page.paintAnswers = ['holding', 'painted']
+    const click = view.sendInput(CLICK)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(widget).toEqual([])
+    await click
+    expect(page.paintProbes).toHaveLength(2)
+    expect(widget.map((e) => (e as { type: string }).type)).toEqual([
+      'mouseMove',
+      'mouseDown',
+      'mouseUp'
+    ])
+  })
+
+  it('lets a bare mouse move through without asking: moves are never dropped', async () => {
+    const { view, dbg, page } = viewWithDebugger()
+    page.paintAnswers = ['holding']
+    await view.sendInput({ type: 'mouseMove', x: 3, y: 4 })
+    expect(page.paintProbes).toEqual([])
+    expect(dbg.log).toEqual(['attach', 'Input.dispatchMouseEvent', 'detach'])
+  })
+
+  it('sends anyway after the deadline, with one warning, when the page never paints', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { view, dbg, page } = viewWithDebugger()
+      page.paintAnswers = ['holding']
+      let sent = false
+      void view.sendInput({ type: 'key', key: 'a', modifiers: [] }).then(() => {
+        sent = true
+      })
+      await vi.advanceTimersByTimeAsync(9_900)
+      expect(dbg.log).toEqual([])
+      expect(sent).toBe(false)
+      await vi.advanceTimersByTimeAsync(200)
+      expect(dbg.log).toEqual([
+        'attach',
+        'Input.dispatchKeyEvent',
+        'Input.dispatchKeyEvent',
+        'detach'
+      ])
+      expect(sent).toBe(true)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0]?.[0]).toContain('has not painted after 10 s')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('reads the paint state for hasPainted from the same place, and answers yes when unsure', async () => {
+    const { view, page } = viewWithDebugger()
+    page.paintAnswers = ['holding']
+    expect(await view.hasPainted()).toBe(false)
+    page.paintAnswers = ['loading']
+    expect(await view.hasPainted()).toBe(false)
+    page.paintAnswers = ['ready']
+    expect(await view.hasPainted()).toBe(true)
+    // Known now: a later ask costs no probe.
+    const probes = page.paintProbes.length
+    expect(await view.hasPainted()).toBe(true)
+    expect(page.paintProbes).toHaveLength(probes)
+    view.destroy()
+    expect(await view.hasPainted()).toBe(true)
   })
 })
 
