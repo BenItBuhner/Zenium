@@ -159,13 +159,34 @@ function popupBounds(features: WindowOpenFeatures): Rect {
 }
 
 /**
+ * The empty page: what Chromium reports for `window.open('about:blank')` and for a
+ * `window.open()` with no URL at all.
+ */
+export const ABOUT_BLANK = 'about:blank'
+
+/**
+ * Whether `url` is the empty page a script opens to fill afterwards: exactly `about:blank`
+ * (Blink lower-cases the scheme and there is no other spelling), or the empty URL, which
+ * `window.open` reads as about:blank.
+ */
+export function isAboutBlank(url: string): boolean {
+  return url === ABOUT_BLANK || url === ''
+}
+
+/**
  * URLs a page may open in a new tab or window: what a tab can show, plus `mailto:` links, whose
- * navigation the host then hands to the mail client through the external-app prompt – but never
- * the browser's own documents and pages (`zen://`, the user-facing alias `zenium://`): web
- * content cannot open `chrome://settings` in Chrome either. Those are the user's to open, by
- * typing, from a menu or from another app's deep link.
+ * navigation the host then hands to the mail client through the external-app prompt, plus the
+ * empty page (`about:blank`, and no URL at all) – a site's noopener idiom opens a blank window
+ * and fills it afterwards (`const w = window.open('about:blank'); w.opener = null; w.location
+ * = url`, or `document.write` into it: sign-in and payment pop-ups, print windows), and the
+ * call must return the window, as it does in Chrome; the engine's rule that an about:blank
+ * popup inherits its opener's origin is what lets the opener write into it – but never the
+ * browser's own documents and pages (`zen://`, the user-facing alias `zenium://`): web content
+ * cannot open `chrome://settings` in Chrome either. Those are the user's to open, by typing,
+ * from a menu or from another app's deep link.
  */
 export function isOpenableUrl(url: string): boolean {
+  if (isAboutBlank(url)) return true
   if (/^(zen|zenium):/i.test(url)) return false
   return isNavigableUrl(url) || url.startsWith('mailto:')
 }
