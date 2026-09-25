@@ -199,6 +199,36 @@ describe('parsePreviewSpec', () => {
     })
   })
 
+  it('stands the reader offer over the article, holds its crossing mid-fade, or lands in Reader View', () => {
+    const offer = { kind: 'readerEntry', pose: 'offer', at: 0 }
+    expect(parsePreviewSpec('readerEntry=offer')).toEqual(offer)
+    expect(parsePreviewSpec('readerEntry=crossing')).toEqual({
+      kind: 'readerEntry',
+      pose: 'crossing',
+      at: 1
+    })
+    expect(parsePreviewSpec('readerEntry=crossing:0.5')).toEqual({
+      kind: 'readerEntry',
+      pose: 'crossing',
+      at: 0.5
+    })
+    // A fraction is clamped to the fade's range; junk after the colon is the full surface.
+    const full = { kind: 'readerEntry', pose: 'crossing', at: 1 }
+    expect(parsePreviewSpec('readerEntry=crossing:7')).toEqual(full)
+    expect(parsePreviewSpec('readerEntry=crossing:x')).toEqual(full)
+    expect(parsePreviewSpec('readerEntry=landed')).toEqual({
+      kind: 'readerEntry',
+      pose: 'landed',
+      at: 1
+    })
+    // Behind Reader View itself, ahead of the network states.
+    expect(parsePreviewSpec('reader=article&readerEntry=offer')).toEqual({
+      kind: 'reader',
+      preferences: false
+    })
+    expect(parsePreviewSpec('readerEntry=offer&network=offline')).toEqual(offer)
+  })
+
   it('groups the active tab with this many members, behind a page but ahead of an overlay, its steps kept', () => {
     expect(parsePreviewSpec('group=3')).toEqual({ kind: 'group', members: 3 })
     expect(parsePreviewSpec('group=12&then=tap:Show group, Research;overview')).toEqual({

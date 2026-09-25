@@ -28,6 +28,9 @@ import { applyPrivateLock, liftLanded, privateLockStore } from '@renderer/lib/pr
 import { rememberThumbnail } from '@renderer/lib/thumbnails'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { barHideStore, dispatchBarScroll, resetBarHide } from '@renderer/lib/barHide'
+import { pageCovered } from '@renderer/lib/pageView'
+import { READER_BANNER_KEY, readerMutes } from '@renderer/lib/readerEntryMessage'
+import { readerCrossingStore, readerSurfaceColor } from '@renderer/lib/readerTransition'
 import {
   fakeboxMorphStore,
   fakeboxScrubTravel,
@@ -102,6 +105,7 @@ import {
   postPreviewManifest,
   previewQrScript,
   previewVoiceScript,
+  samplePageArticle,
   type PreviewExtensionPage
 } from './preview'
 import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '@shared/defaultBrowser'
@@ -278,6 +282,7 @@ function apply(browser: Browser, spec: string): void {
     unseedFavicon()
     unseedMedia()
     unseedSiteData(browser)
+    unseedReaderEntry(browser)
     siteInfoSteps = null
     dismissSiteInfo()
     closeOverlay()
@@ -349,6 +354,7 @@ function apply(browser: Browser, spec: string): void {
       .then(closeNewTabPage)
       .then(restoreConnectivity)
       .then(leaveHungPage)
+      .then(leaveArticlePage)
       .then(leaveErrorPage)
       .then(() =>
         dockBar(seed.bar, () =>
@@ -554,6 +560,135 @@ async function leaveHungPage(): Promise<void> {
   await new Promise<void>((resolve) =>
     untilState((s) => s.tabs[made.tabId]?.url === made.url, resolve)
   )
+}
+
+/** The stand-in site's root: the article the reader entry's frames are taken on (`samplePageTitle`'s). */
+const SAMPLE_ARTICLE_URL = `${PREVIEW_SAMPLE_ORIGIN}/`
+
+/**
+ * The tab a `readerEntry=` state took to the stand-in article (or into Reader View on it), and
+ * the page it was on before, put back before the next state (as the hung page's tab is).
+ */
+let previewArticleReturn: { tabId: string; url: string } | null = null
+
+/** The tab a state marked an article (`readerable`, the probe's answer stood in for), unmarked before the next. */
+let previewArticleTabId: string | null = null
+
+/**
+ * The page is an article to the chrome: the stand-in host cannot run the readability probe in
+ * a site's frame, so the flag the probe would set is set here (and taken back at the next
+ * state, as the probe's own answer goes with a navigation). The session's reader mutes are
+ * forgotten first: a previous state's tab went back to its own page with the offer standing –
+ * the harness's navigation, which the memory reads as the user's leaving
+ * (`readerOfferEndEffect`) – and this state's offer is a first one.
+ */
+function markArticle(browser: Browser, tabId: string): void {
+  readerMutes.clear()
+  const live = browser.tabs.tab(tabId)
+  if (!live || live.readerable) return
+  live.readerable = true
+  browser.state.commitVolatile()
+  previewArticleTabId = tabId
+}
+
+/** A held crossing goes at once, and a page marked an article by a state is a page again. */
+function unseedReaderEntry(browser: Browser): void {
+  readerCrossingStore.set({ crossing: null })
+  const tabId = previewArticleTabId
+  previewArticleTabId = null
+  const live = tabId ? browser.tabs.tab(tabId) : null
+  if (!live?.readerable) return
+  live.readerable = false
+  browser.state.commitVolatile()
+}
+
+/** The tab back on the page it was on before a reader entry state took it to the article. */
+async function leaveArticlePage(): Promise<void> {
+  const made = previewArticleReturn
+  previewArticleReturn = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state || !state.tabs[made.tabId] || state.tabs[made.tabId]?.url === made.url) return
+  await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
+  await new Promise<void>((resolve) =>
+    untilState((s) => s.tabs[made.tabId]?.url === made.url, resolve)
+  )
+}
+
+/**
+ * `then` with a site tab on the stand-in article, loaded and painted: the active tab when it is
+ * on the stand-in site already, else the space's site tab (`onSiteTab`, or the active tab when
+ * the space has none) navigated there, and put back at the next state.
+ */
+function onSampleArticle(state: UIState, active: Tab, then: (tab: Tab) => void): void {
+  onSiteTab(state, active, (site) => {
+    const tab = site ?? active
+    if (tab.url.startsWith(PREVIEW_SAMPLE_ORIGIN)) {
+      then(tab)
+      return
+    }
+    previewArticleReturn = { tabId: tab.id, url: tab.url }
+    run('tab.navigate', { tabId: tab.id, input: SAMPLE_ARTICLE_URL })
+    whenActiveTabIs(
+      (t) => t.id === tab.id && t.url === SAMPLE_ARTICLE_URL && !t.loading,
+      () =>
+        void untilPainted(tab.id).then(() => {
+          const now = browserStore.get().state?.tabs[tab.id]
+          then(now ?? tab)
+        })
+    )
+  })
+}
+
+/** `then` once a banner of `key` is on the stack and its card has had a frame to mount. */
+function whenBannerUp(key: string, then: () => void): void {
+  const up = (): boolean => uiStore.get().banners.some((b) => b.key === key && !b.leaving)
+  if (up()) {
+    afterFrames(2, then)
+    return
+  }
+  const unsubscribe = uiStore.subscribe(() => {
+    if (!up()) return
+    unsubscribe()
+    afterFrames(2, then)
+  })
+}
+
+/**
+ * The crossing into Reader View held mid-way (MOT-36, `lib/readerTransition.ts`), for a still:
+ * the page's picture is taken as the crossing takes it (`overlay.snapshot`), the crossing put in
+ * the store with its surface's opacity frozen at `at` in place of the fade, and – once the host
+ * has swapped the page for the cover, as the crossing waits for – the destination's load under
+ * way for the bar over the surface. Nothing crosses: the reader's document is never asked for,
+ * so the frame holds until the next state takes the crossing down.
+ */
+function holdReaderCrossing(state: UIState, tab: Tab, at: number, then: () => void): void {
+  const surface = readerSurfaceColor(
+    state.settings.reader.theme,
+    document.documentElement.dataset.theme === 'dark'
+  )
+  void cmd('overlay.snapshot', { tabId: tab.id })
+    .catch(() => null)
+    .then((data) => {
+      const picture = typeof data === 'string' && data ? data : null
+      readerCrossingStore.set({
+        crossing: {
+          tabId: tab.id,
+          crossing: 'enter',
+          phase: 'covering',
+          picture,
+          surface,
+          freezeAt: at
+        }
+      })
+      void pageCovered(tab.id, state.platform).promise.then(() => {
+        const held = readerCrossingStore.get().crossing
+        if (!held || held.tabId !== tab.id) return
+        readerCrossingStore.set({ crossing: { ...held, phase: 'loading' } })
+        hostGlobal().viewEvent(tab.id, 'startLoading', '')
+        hostGlobal().viewEvent(tab.id, 'progress', JSON.stringify({ progress: 0.4 }))
+        afterFrames(2, then)
+      })
+    })
 }
 
 /**
@@ -1020,13 +1155,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'menu') {
     // `article`: the page is an article to the menu (the stand-in host cannot run the
     // readability probe in a site's frame; the flag stands for the probe's answer).
-    if (target.article && tab) {
-      const live = browser.tabs.tab(tab.id)
-      if (live && !live.readerable) {
-        live.readerable = true
-        browser.state.commitVolatile()
-      }
-    }
+    if (target.article && tab) markArticle(browser, tab.id)
     // A seeded sync stands in the core before the menu is built (its Send to your devices item
     // reads the engine's status), the rest of the seed once the sheet is up, as for every menu.
     if (sync) seedSync(sync, browser)
@@ -1174,6 +1303,27 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
           }
         )
       })
+  } else if (target.kind === 'readerEntry' && tab && state) {
+    // The three frames of the reader entry on one article (PUI-14, MOT-36): the stand-in site's
+    // page, loaded and painted, then – `offer` – marked an article as the probe would, so the
+    // shell's hook puts the strip up; `crossing` – the crossing held mid-way over its picture
+    // (the strip answered: the page is not marked); `landed` – Reader View opened on the same
+    // article, as the crossing's end shows it.
+    onSampleArticle(state, tab, (article) => {
+      if (target.pose === 'offer') {
+        markArticle(browser, article.id)
+        whenBannerUp(READER_BANNER_KEY, finish)
+      } else if (target.pose === 'crossing') {
+        holdReaderCrossing(state, article, target.at, finish)
+      } else {
+        previewArticleReturn ??= { tabId: article.id, url: article.url }
+        browser.reader.open(article.id, samplePageArticle(article.url))
+        untilState(
+          (s) => Boolean(activeTab(s)?.url.startsWith(READER_URL_PREFIX)),
+          () => afterFrames(2, finish)
+        )
+      }
+    })
   } else if (target.kind === 'find' && tab) {
     uiStore.set({ findOpen: true, findTabId: tab.id })
     // The bar mounts on the next render; type into it the way a keyboard would.

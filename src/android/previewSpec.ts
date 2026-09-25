@@ -449,6 +449,18 @@ export type PreviewState =
       preferences: boolean
     }
   | {
+      /**
+       * The reader entry on the stand-in site's article (PUI-14, MOT-36), the same page through
+       * its three frames: `offer` – the page reads as an article and the "Show Reader View?"
+       * strip stands over it; `crossing` – the crossing into Reader View held mid-way, the
+       * page's picture under the reader's surface at `at` of its fade (0 … 1), the load bar over
+       * both, the destination not yet drawn; `landed` – Reader View reached on that article.
+       */
+      kind: 'readerEntry'
+      pose: 'offer' | 'crossing' | 'landed'
+      at: number
+    }
+  | {
       kind: 'error'
       /** The Chromium `net::` code the load failed with (-105 for ERR_NAME_NOT_RESOLVED, …). */
       code: number
@@ -727,7 +739,12 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * PREVIEW_READ_ALOUD_STATUSES (`readAloud=` is `playing`; `rate=<n>` sets the speed chip,
  * `voices` opens the voice picker sheet over it), `reader=article` for the active
  * tab in Reader View on a stand-in article (`reader=preferences` opens its text preferences
- * sheet over it), `network=<variant>` for the device's connectivity played over the active tab
+ * sheet over it), `readerEntry=offer` for the stand-in site's article with the "Show Reader
+ * View?" strip standing over it (`readerEntry=crossing` holds the crossing into Reader View at
+ * its surface's full opacity, `readerEntry=crossing:<0…1>` at that fraction of the surface's
+ * fade – the page's picture under the reader's ground, the load bar over both;
+ * `readerEntry=landed` is Reader View reached on that same article),
+ * `network=<variant>` for the device's connectivity played over the active tab
  * (one of PREVIEW_NETWORK_VARIANTS: `offline` for the banner, `back-online` for the toast,
  * `reloading` for an offline error page reloading itself as the device comes back),
  * `crash=<variant>` for the active tab's renderer gone one of PREVIEW_CRASH_VARIANTS' ways (the
@@ -768,7 +785,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * over `sheet`, `sheet` over the permission `prompt`, that over `ntp`, `ntp` over `private`,
  * `private` over `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along),
  * `find` over `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `readAloud`,
- * `readAloud` over `reader`, `reader` over `network`, `network` over `crash`, `crash` over
+ * `readAloud` over `reader`, `reader` over `readerEntry`, `readerEntry` over `network`,
+ * `network` over `crash`, `crash` over
  * `unresponsive`, `unresponsive` over `error`, `error` over `screenshot`, `screenshot` over
  * the messages, the messages over
  * `webapp`, `webapp` over `media`, `media` over `download`, `download` over `qr`, `qr` over
@@ -934,6 +952,18 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const reader = params.get('reader')
   if (reader !== null) return { kind: 'reader', preferences: reader === 'preferences' }
+  const readerEntry = params.get('readerEntry')
+  if (readerEntry !== null) {
+    if (readerEntry === 'landed') return { kind: 'readerEntry', pose: 'landed', at: 1 }
+    if (!readerEntry.startsWith('crossing')) return { kind: 'readerEntry', pose: 'offer', at: 0 }
+    const rest = readerEntry.slice('crossing'.length)
+    const fraction = rest === '' ? 1 : rest.startsWith(':') ? Number(rest.slice(1)) : NaN
+    return {
+      kind: 'readerEntry',
+      pose: 'crossing',
+      at: Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : 1
+    }
+  }
   const network = params.get('network')
   if (network !== null && (PREVIEW_NETWORK_VARIANTS as readonly string[]).includes(network)) {
     return { kind: 'network', variant: network as PreviewNetworkVariant }
