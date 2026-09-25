@@ -27,7 +27,7 @@ import { TitleThrottle } from '../../shared/windowTitle'
 import { privateIconPath, privateWindowIcon, windowIcon } from './appIcon'
 import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
 import { privateAppDetails } from './privateTaskbar'
-import { centredIn, placeWindow, type DisplayArea } from './windowPlacement'
+import { placeWindow, planFramedWindow, type DisplayArea } from './windowPlacement'
 import { showWhenReady } from './windowShow'
 import { NO_WINDOW_SWITCHES, windowLaunchState, type WindowSwitches } from '../cli'
 
@@ -119,22 +119,34 @@ export class ElectronWindow implements WindowHost {
     this.framed = framed
     let initial = init.bounds
     let displayId = init.displayId
+    let anchor: Rect | null = null
     if (!initial && init.cascadeFrom?.alive) {
       const from = (init.cascadeFrom.host as ElectronWindow).win
       const b = from.getNormalBounds()
       // A browser window opens a step down and right of the one it was asked from; a utility
-      // window comes up centred over it at its own size, as a dialog would.
-      initial = framed
-        ? centredIn(
-            b,
-            { width: PAGE_DEFAULT_WIDTH, height: PAGE_DEFAULT_HEIGHT },
-            PAGE_MIN_WIDTH,
-            PAGE_MIN_HEIGHT
-          )
-        : { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
+      // window comes up centred over it at its own size, as a dialog would (`planFramedWindow`).
+      if (framed) anchor = b
+      else initial = { x: b.x + 28, y: b.y + 28, width: b.width, height: b.height }
       displayId = screen.getDisplayMatching(b).id
     }
-    const bounds = sanitizeBounds(initial, displayId, init.chrome)
+    // A framed window's sizes are its PAGE's (`useContentSize`): the OS puts its title bar and
+    // borders outside them, so 760×520 is the same five rows under a Windows caption as on X11,
+    // and 480×320 is the least page, not the least frame. Its remembered bounds are outer
+    // (`getNormalBounds`, through `onBoundsChanged`) and go back through `setBounds` below –
+    // the matching setter; restoring them as a content size would grow it a frame per open.
+    const framedPlan = framed
+      ? planFramedWindow(
+          {
+            saved: initial,
+            displayId,
+            anchor,
+            minWidth: PAGE_MIN_WIDTH,
+            minHeight: PAGE_MIN_HEIGHT,
+            defaultSize: { width: PAGE_DEFAULT_WIDTH, height: PAGE_DEFAULT_HEIGHT }
+          },
+          displayAreas()
+        )
+      : null
     const isMac = process.platform === 'darwin'
     const mica = init.material === 'mica' && process.platform === 'win32'
     // Popups and app windows are as small as the page (or the app) wants, within reason.
@@ -144,9 +156,13 @@ export class ElectronWindow implements WindowHost {
     // that ships none falls back to the variant's like every other window.
     const privateIcon = zen.isPrivate && !isMac ? privateWindowIcon() : null
     this.win = new BrowserWindow({
-      ...bounds,
-      minWidth: framed ? PAGE_MIN_WIDTH : compactChrome ? POPUP_MIN_WIDTH : MIN_WIDTH,
-      minHeight: framed ? PAGE_MIN_HEIGHT : compactChrome ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
+      ...(framedPlan
+        ? framedPlan.options
+        : {
+            ...sanitizeBounds(initial, displayId, init.chrome),
+            minWidth: compactChrome ? POPUP_MIN_WIDTH : MIN_WIDTH,
+            minHeight: compactChrome ? POPUP_MIN_HEIGHT : MIN_HEIGHT
+          }),
       show: false,
       // Chrome's kiosk mode: fullscreen from the first frame (on macOS also without the Dock and
       // the menu bar); the layout below hides the chrome for a fullscreen browser window.
@@ -200,6 +216,13 @@ export class ElectronWindow implements WindowHost {
       }
     })
     const win = this.win
+    if (framedPlan) {
+      // Only now is the frame's size known (the content plus what the OS drew round it, or the
+      // content alone on X11, whose window manager frames it later): the FRAME goes where the
+      // plan centres it – or exactly back where it stood, outer for outer.
+      const [width, height] = win.getSize()
+      win.setBounds(framedPlan.outerBounds({ width, height }))
+    }
     this.titles = new TitleThrottle((title) => {
       if (this.alive) win.setTitle(title)
     }, init.title)
@@ -683,11 +706,6 @@ export class ElectronWindowFactory implements WindowHostFactory {
  * primary), fitted into its work area; see `placeWindow`.
  */
 function sanitizeBounds(saved: Rect | null, displayId: number | null, chrome: WindowChrome): Rect {
-  const primary = screen.getPrimaryDisplay()
-  const displays: DisplayArea[] = [
-    primary,
-    ...screen.getAllDisplays().filter((d) => d.id !== primary.id)
-  ].map((d) => ({ id: d.id, workArea: d.workArea }))
   return placeWindow(
     {
       saved,
@@ -703,8 +721,17 @@ function sanitizeBounds(saved: Rect | null, displayId: number | null, chrome: Wi
             ? { width: PAGE_DEFAULT_WIDTH, height: PAGE_DEFAULT_HEIGHT }
             : { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
     },
-    displays
+    displayAreas()
   )
+}
+
+/** The displays as placement sees them, the primary first. */
+function displayAreas(): DisplayArea[] {
+  const primary = screen.getPrimaryDisplay()
+  return [primary, ...screen.getAllDisplays().filter((d) => d.id !== primary.id)].map((d) => ({
+    id: d.id,
+    workArea: d.workArea
+  }))
 }
 
 /**
