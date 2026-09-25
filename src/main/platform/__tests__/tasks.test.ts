@@ -184,6 +184,49 @@ describe('the Electron task host', () => {
     expect(byPid.get(207)).toMatchObject({ kind: 'renderer', serviceName: null, tabIds: [] })
   })
 
+  it('places an MV3 worker alone in its process as its extension, by the pid its preload reported', () => {
+    const w = world()
+    w.processes.push(
+      proc(BROWSER_PID, 'Browser'),
+      proc(202, 'Tab'),
+      proc(205, 'Tab'),
+      proc(206, 'Tab'),
+      proc(207, 'Tab')
+    )
+    w.all.push(contents(2, 202, 'https://a.example/'))
+    w.tabs.set(2, 'tab-a')
+    // The extension's options page runs in 206; its worker in 205, with no document at all.
+    w.all.push(contents(6, 206, `chrome-extension://${EXT}/options.html`))
+    const workers: Array<{ osPid: number; extensionId: string }> = [
+      { osPid: 205, extensionId: EXT },
+      { osPid: 206, extensionId: EXT },
+      // A worker's word never outranks the tab that shares its process (it cannot, in practice).
+      { osPid: 202, extensionId: EXT },
+      // A pid the engine no longer lists: no row for it.
+      { osPid: 999, extensionId: EXT }
+    ]
+    w.host.attachExtensionWorkers(() => workers)
+
+    let byPid = new Map(w.host.sample().map((s) => [s.pid, s]))
+    // The same row an extension's page gets: the core names it from the registry either way.
+    expect(byPid.get(205)).toMatchObject({
+      kind: 'extension',
+      extensionId: EXT,
+      tabIds: [],
+      serviceName: null
+    })
+    expect(byPid.get(206)).toMatchObject({ kind: 'extension', extensionId: EXT })
+    expect(byPid.get(202)).toMatchObject({ kind: 'tab', tabIds: ['tab-a'] })
+    expect(byPid.get(207)).toMatchObject({ kind: 'renderer', serviceName: null })
+    expect(byPid.has(999)).toBe(false)
+
+    // The worker stopped: its process is a nameless renderer again (or gone).
+    workers.length = 0
+    byPid = new Map(w.host.sample().map((s) => [s.pid, s]))
+    expect(byPid.get(205)).toMatchObject({ kind: 'renderer', extensionId: null, serviceName: null })
+    expect(byPid.get(206)).toMatchObject({ kind: 'extension', extensionId: EXT })
+  })
+
   it('reports private bytes where the engine has them', () => {
     const w = world()
     w.processes.push(proc(BROWSER_PID, 'Browser', { privateKb: 150_000 }))

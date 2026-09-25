@@ -81,12 +81,20 @@ function eventDelivery(raw: unknown): EventDelivery | undefined {
  * withheld and no grant view when the host cannot be asked. Null when the host answers null:
  * a context of an extension it never loaded – one of the engine's own component extensions
  * (Chromium's PDF viewer), which keeps Chromium's `chrome.*` and gets no shim.
+ *
+ * This request is also the preload's first word to the host, which counts it as proof that the
+ * preload ran (`extensionApi/workerHandshake.ts`). A worker's carries its renderer's OS pid: a
+ * worker has no WebContents to read one from, and Electron reports the worker's process by a
+ * render-process-host id only, so this is how the task manager places the process.
  */
-function optionsFromHost(): ShimOptions | null {
+function optionsFromHost(kind: 'frame' | 'worker'): ShimOptions | null {
   const toggles: Record<string, boolean> = { userScripts: false }
   const options: ShimOptions = { toggles }
   try {
-    const raw: unknown = ipcRenderer.sendSync(TOGGLES)
+    const raw: unknown =
+      kind === 'worker'
+        ? ipcRenderer.sendSync(TOGGLES, { pid: process.pid })
+        : ipcRenderer.sendSync(TOGGLES)
     if (raw === null) return null
     if (typeof raw === 'object') {
       const record = raw as Record<string, unknown>
@@ -125,7 +133,7 @@ function optionsFromHost(): ShimOptions | null {
  */
 function install(kind: 'frame' | 'worker'): void {
   const host = makeHost(kind)
-  const options = optionsFromHost()
+  const options = optionsFromHost(kind)
   if (options === null) return
   try {
     if (!process.contextIsolated) {

@@ -143,12 +143,15 @@ jobs:
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label features
           --out "$SMOKE_OUT" --scenarios features --extra-args="--no-sandbox --disable-gpu"
       - name: Make the unpacked build's sandbox helper setuid root (for the sandboxed leg)
-        # Electron evaluates service-worker preload scripts in sandboxed renderers only, and
-        # Zenium's chrome.* layer for MV3 background workers (src/preload/extension.ts, registered
-        # as a service-worker preload) is one: a --no-sandbox leg, like every step above, cannot
-        # observe it. Chromium's way into the sandbox where the kernel denies unprivileged user
-        # namespaces (this runner's AppArmor default) is the setuid helper, root-owned and mode
-        # 4755, as electron-builder's installers leave it and the unpacked build does not.
+        # Electron evaluates service-worker preload scripts in its sandboxed renderer client
+        # only; Zenium's chrome.* layer for MV3 background workers (src/preload/extension.ts,
+        # registered as a service-worker preload) is one. The app asks for that client itself
+        # (--enable-sandbox, src/main/platform/sandbox.ts), so the layer is there under
+        # --no-sandbox too – the second leg below proves it – but the first leg checks it with
+        # the OS sandbox actually on. Chromium's way into the sandbox where the kernel denies
+        # unprivileged user namespaces (this runner's AppArmor default) is the setuid helper,
+        # root-owned and mode 4755, as electron-builder's installers leave it and the unpacked
+        # build does not.
         if: ${{ !cancelled() }}
         run: |
           sudo chown root:root dist/linux-unpacked/chrome-sandbox
@@ -157,16 +160,19 @@ jobs:
       - name: MV3 worker preload under the sandbox (Xvfb)
         # The mv3-worker scenario on a sandboxed launch (--sandbox, no --no-sandbox): the fixture
         # extension under .github/smoke/fixtures/mv3-worker is installed and its worker must
-        # start with Zenium's layer (chrome.permissions, windows, contextMenus defined).
+        # start with Zenium's layer (chrome.permissions, windows, contextMenus defined), and the
+        # app's self-check for a preload that did not run must stay silent.
         if: ${{ !cancelled() }}
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label mv3-worker-sandboxed
           --out "$SMOKE_OUT" --scenarios mv3-worker --sandbox --extra-args="--disable-gpu"
-      - name: MV3 worker preload without the sandbox (the negative)
-        # The same scenario under --no-sandbox must find the layer absent: the proof that the
-        # sandboxed leg above is the only one that can check it, and that a --no-sandbox run of
-        # the walkthrough is not a pass for the worker preload.
+      - name: MV3 worker preload under --no-sandbox (the in-house fix)
+        # The same scenario under --no-sandbox must find the same layer: the app's own
+        # --enable-sandbox (appended before ready) puts Electron's sandboxed renderer
+        # client on whatever the OS sandbox does, and that client is the one that runs
+        # service-worker preloads. Before the fix this leg found the engine's bare chrome.* (dom,
+        # extension, i18n, management, runtime, storage, tabs) and was kept as the negative.
         if: ${{ !cancelled() }}
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
