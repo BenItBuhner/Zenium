@@ -3311,11 +3311,11 @@ export class Menus {
     })
     // Duplicate Window (session-19), beside the other window rows of More Tools – the app
     // menu's top level has no row to spare (#396's 661 on 800 px). A popup or an app window
-    // has no tab strip to duplicate: the row stands greyed.
-    const duplicateWindow = when(caps.windows, {
+    // has no tab strip to duplicate: the row is left out, as `when`'s rule has it (an app
+    // window's menu is `showWebAppMenu`'s in any case).
+    const duplicateWindow = when(caps.windows && win.chrome === 'full', {
       label: 'Duplicate Window',
       action: 'window.duplicate',
-      enabled: win.chrome === 'full',
       click: () => void this.browser.duplicateWindow(win)
     })
     // Chrome's More tools › Name window… (shortcuts-menus-121): the desktop's, whose OS title

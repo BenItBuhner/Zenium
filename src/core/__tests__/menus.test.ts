@@ -894,7 +894,7 @@ describe('the app menu', () => {
     expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Name Window…')
   })
 
-  it('carries Duplicate Window right after New Blank Window in More Tools, making a second window on this one’s space; greyed for a popup (session-19)', () => {
+  it('carries Duplicate Window right after New Blank Window in More Tools, making a second window on this one’s space; left out for a popup (session-19)', () => {
     const h = harness(DESKTOP)
     const menu = appMenu(h)
     expect(menu.indexOf('More Tools > Duplicate Window')).toBe(
@@ -902,7 +902,8 @@ describe('the app menu', () => {
     )
     const row = deepItem(h.shown(), 'Duplicate Window')
     expect(row.action).toBe('window.duplicate')
-    expect(row.enabled).toBe(true)
+    // Never greyed: the row is there to run or not there at all.
+    expect(row.enabled).toBeUndefined()
     // Unbound in both presets: no chord after the label.
     expect(row.accelerator).toBeUndefined()
     const before = h.browser.allWindows()
@@ -913,7 +914,8 @@ describe('the app menu', () => {
     expect(dup?.kind).toBe(h.win.kind)
     expect(dup?.activeSpace().id).toBe(h.win.activeSpace().id)
     expect(dup?.cascadeFrom).toBe(h.win)
-    // A popup's toolbar-only chrome has no tab strip to duplicate: the row stands, greyed.
+    // A popup's toolbar-only chrome has no tab strip to duplicate: the row is left out rather
+    // than greyed (`when`'s rule for a row the host cannot act on); the window rows around it stay.
     const popup = h.browser.createWindow({
       kind: 'synced',
       from: h.win,
@@ -921,7 +923,10 @@ describe('the app menu', () => {
       bounds: { x: 0, y: 0, width: 400, height: 300 }
     })
     h.browser.handleCommand(popup, 'app.menu', {})
-    expect(deepItem(h.shown(), 'Duplicate Window').enabled).toBe(false)
+    const popupLabels = allItems(h.shown()).map((i) => i.label)
+    expect(popupLabels).not.toContain('Duplicate Window')
+    expect(popupLabels).toContain('New Blank Window')
+    expect(popupLabels).toContain('Name Window…')
     // A host with one window has nothing to duplicate into: no row.
     const phone = harness(ANDROID, 'phone')
     appMenu(phone)
