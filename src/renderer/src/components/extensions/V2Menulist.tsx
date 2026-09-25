@@ -37,6 +37,7 @@ interface PopupProps<T extends string> {
  */
 export function V2Menulist<T extends string>({
   label,
+  labelledBy,
   value,
   options,
   onChange,
@@ -48,6 +49,12 @@ export function V2Menulist<T extends string>({
 }: {
   /** What the list chooses (the accessible name of the control and the phone sheet's title). */
   label: string
+  /**
+   * The id of the visible text that says the same beside the control (a settings row's label):
+   * the control is then named by it (`aria-labelledby`, §9.12's association) rather than by an
+   * `aria-label` of its own, so one element names it; `label` still titles the phone's sheet.
+   */
+  labelledBy?: string
   value: T
   options: readonly MenulistOption<T>[]
   onChange: (value: T) => void
@@ -83,7 +90,8 @@ export function V2Menulist<T extends string>({
       <button
         type="button"
         className={cn('zen-v2-menulist', className)}
-        aria-label={label}
+        aria-label={labelledBy ? undefined : label}
+        aria-labelledby={labelledBy}
         aria-haspopup={viewport.coarse ? 'dialog' : 'listbox'}
         aria-expanded={anchor !== null || undefined}
         aria-readonly={readOnly || undefined}

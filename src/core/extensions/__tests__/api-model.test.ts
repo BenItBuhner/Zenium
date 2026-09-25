@@ -28,6 +28,7 @@ import {
   manifestPermissionSets,
   missingPermissions,
   normalizePermissionSet,
+  hostPermissionPattern,
   permissionSetContains,
   removePermissionSet,
   requestablePermissions
@@ -379,5 +380,45 @@ describe('permission grants', () => {
       false
     )
     expect(requestablePermissions(sets, { permissions: [], origins: ['garbage'] }).ok).toBe(false)
+  })
+
+  it('reads host permissions at origin granularity, as Chrome grants them', () => {
+    expect(hostPermissionPattern('*://*/')).toBe('*://*/*')
+    expect(hostPermissionPattern('https://a.com/some/path*')).toBe('https://a.com/*')
+    expect(hostPermissionPattern('file:///*')).toBe('file:///*')
+    expect(hostPermissionPattern('<all_urls>')).toBe('<all_urls>')
+    expect(hostPermissionPattern('garbage')).toBe('garbage')
+    // Markdown Viewer 5.3: optional_host_permissions ["*://*/"], "Allow All" requests "*://*/*".
+    const markdownViewer = manifestPermissionSets({
+      ...manifest,
+      permissions: ['storage', 'scripting'],
+      host_permissions: ['file:///*'],
+      optional_permissions: ['webRequest'],
+      optional_host_permissions: ['*://*/']
+    })
+    expect(
+      requestablePermissions(markdownViewer, { permissions: [], origins: ['*://*/*'] })
+    ).toEqual({ ok: true })
+    expect(
+      requestablePermissions(markdownViewer, { permissions: [], origins: ['https://x.com/*'] })
+    ).toEqual({ ok: true })
+    // The granted pattern covers the same origin whatever path either side names.
+    const granted = { permissions: [], origins: ['https://a.com/'] }
+    expect(permissionSetContains(granted, { permissions: [], origins: ['https://a.com/*'] })).toBe(
+      true
+    )
+    expect(
+      missingPermissions(granted, {
+        permissions: [],
+        origins: ['https://a.com/x/*', 'https://b.com/*']
+      })
+    ).toEqual({ permissions: [], origins: ['https://b.com/*'] })
+    // A different host is still refused.
+    expect(
+      requestablePermissions(manifestPermissionSets(manifest), {
+        permissions: [],
+        origins: ['https://z.com/']
+      }).ok
+    ).toBe(false)
   })
 })

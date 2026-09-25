@@ -3,6 +3,8 @@ import {
   Bridge,
   PORTED,
   PORT_REQUEST,
+  STORAGE_CLASS,
+  THUMBNAIL_CLASS,
   openBridgePort,
   type BridgePort,
   type NativeBridge,
@@ -274,20 +276,64 @@ describe('Bridge port', () => {
     await expect(after).resolves.toBe(true)
   })
 
-  it('the whole class goes through the port, a send of one included, in one order', async () => {
+  it('the whole storage class goes through the port, a send of one included, in one order', async () => {
     const { native: n, calls, hops } = native(true, true)
     const bridge = new Bridge(n)
     const page = port(hops)
     bridge.adoptPort(page.port)
-    for (const method of PORTED) void bridge.call(method, { name: 'a.json' })
+    for (const method of STORAGE_CLASS) void bridge.call(method, { name: 'a.json' })
     bridge.send('storage.writeAbort', { token: 3 })
     await microtasks()
-    expect(hops).toEqual([...PORTED, 'storage.writeAbort'].map((m) => `port ${m}`))
+    expect(hops).toEqual([...STORAGE_CLASS, 'storage.writeAbort'].map((m) => `port ${m}`))
     expect(calls).toEqual([])
     // A batch waiting leaves ahead of a ported call, as it leaves ahead of any other hop.
     bridge.batched('view.setBounds', { tabId: 't1', rect: {} })
     void bridge.call('storage.write', { name: 'b.json', text: '1' })
     expect(hops.slice(-2)).toEqual(['batch view.setBounds', 'port storage.write'])
+  })
+
+  it('the thumbnail read is a class of one: it takes the port too, the thumbnail commands keep the hop, and the classes are what PORTED holds', async () => {
+    expect(THUMBNAIL_CLASS).toEqual(['thumbnail.load'])
+    expect([...PORTED]).toEqual([...STORAGE_CLASS, ...THUMBNAIL_CLASS])
+    const { native: n, calls, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    // Before the port: the hop, as ever.
+    const before = bridge.call<{ data: string } | null>('thumbnail.load', {
+      tabId: 't1',
+      url: 'https://a/'
+    })
+    expect(hops).toEqual(['call thumbnail.load'])
+
+    const page = port(hops)
+    bridge.adoptPort(page.port)
+    const after = bridge.call<{ data: string } | null>('thumbnail.load', {
+      tabId: 't2',
+      url: 'https://b/'
+    })
+    bridge.send('thumbnail.drop', { tabId: 't1' })
+    bridge.send('thumbnail.sweep', { keep: ['t2'] })
+    bridge.send('thumbnail.configure', { width: 320 })
+    void bridge.call('storage.write', { name: 'state.json', text: '{}' })
+    await microtasks()
+    expect(hops).toEqual([
+      'call thumbnail.load',
+      'port thumbnail.load',
+      'call thumbnail.drop',
+      'call thumbnail.sweep',
+      'call thumbnail.configure',
+      'port storage.write'
+    ])
+    // The same envelope through the port as through the hop, and the same reply path.
+    expect(calls).toHaveLength(4)
+    expect(JSON.parse(page.messages[0] ?? '{}')).toEqual({
+      id: 2,
+      method: 'thumbnail.load',
+      args: { tabId: 't2', url: 'https://b/' }
+    })
+    bridge.resolve(1, 'null')
+    bridge.resolve(2, '{"data":"data:image/jpeg;base64,AA=="}')
+    await expect(before).resolves.toBeNull()
+    await expect(after).resolves.toEqual({ data: 'data:image/jpeg;base64,AA==' })
   })
 
   it('a second port is closed, not taken', () => {
@@ -330,7 +376,7 @@ describe('Bridge port', () => {
     warn.mockRestore()
   })
 
-  it('marks every hop by its channel and method when traced, and never otherwise', () => {
+  it('marks every hop by its channel and method as it leaves and as it returns when traced, and never otherwise', () => {
     const mark = vi.spyOn(performance, 'mark').mockImplementation(() => ({}) as PerformanceMark)
     const { native: n, hops } = native(true, true)
     const bridge = new Bridge(n)
@@ -344,15 +390,59 @@ describe('Bridge port', () => {
     try {
       void bridge.call('storage.write', { name: 'a.json' })
       void bridge.call('tab.activate', { tabId: 't1' })
+      void bridge.call('thumbnail.load', { tabId: 't1', url: 'https://a/' })
+      bridge.post('chrome.setBarHide', { enabled: false })
+      // A batch is marked as it leaves – here ahead of the sync call – by its commands' methods.
+      bridge.batched('view.setBounds', { tabId: 't1', rect: {} })
+      bridge.batched('view.setVisible', { tabId: 't1', visible: true })
+      bridge.callSync('view.navigationEntries', { tabId: 't1' })
+    } finally {
+      delete g.__zenBridgeTrace
+    }
+    // Each hop's pair: the mark as it leaves, the same name with `:ret` as the entry point returns.
+    const leaves = [
+      'bridge:port:storage.write',
+      'bridge:call:tab.activate',
+      'bridge:port:thumbnail.load',
+      'bridge:post:chrome.setBarHide',
+      'bridge:batch:view.setBounds+view.setVisible',
+      'bridge:sync:view.navigationEntries'
+    ]
+    expect(mark.mock.calls.map((c) => c[0])).toEqual(leaves.flatMap((m) => [m, `${m}:ret`]))
+    void bridge.call('storage.write', { name: 'a.json' })
+    bridge.post('chrome.setBarHide', { enabled: true })
+    bridge.batched('view.setBounds', { tabId: 't1', rect: {} })
+    bridge.callSync('view.navigationEntries', { tabId: 't1' })
+    expect(mark).toHaveBeenCalledTimes(12)
+    mark.mockRestore()
+  })
+
+  it('a port that fails under a traced call marks the port hop it tried and the call hop it took, each returned once', () => {
+    const mark = vi.spyOn(performance, 'mark').mockImplementation(() => ({}) as PerformanceMark)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { native: n, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    bridge.adoptPort({
+      postMessage: () => {
+        throw new Error('closed')
+      },
+      close: () => {}
+    })
+    const g = globalThis as { __zenBridgeTrace?: unknown }
+    g.__zenBridgeTrace = true
+    try {
+      void bridge.call('thumbnail.load', { tabId: 't1', url: 'https://a/' })
     } finally {
       delete g.__zenBridgeTrace
     }
     expect(mark.mock.calls.map((c) => c[0])).toEqual([
-      'bridge:port:storage.write',
-      'bridge:call:tab.activate'
+      'bridge:port:thumbnail.load',
+      'bridge:call:thumbnail.load',
+      'bridge:call:thumbnail.load:ret'
     ])
-    void bridge.call('storage.write', { name: 'a.json' })
-    expect(mark).toHaveBeenCalledTimes(2)
+    expect(hops).toEqual(['call thumbnail.load'])
+    expect(bridge.ported).toBe(false)
+    warn.mockRestore()
     mark.mockRestore()
   })
 

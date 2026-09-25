@@ -12,6 +12,8 @@ import {
   newestByRecord,
   readBookmarkData,
   readCredentialData,
+  readFolderAgentMark,
+  readSpaceAgentMark,
   stableStringify,
   winningRemote,
   type BookmarkData,
@@ -122,6 +124,61 @@ describe('collectLocal', () => {
       collapsed: false
     })
     expect(records.get(coloured.id)?.data).toMatchObject({ name: 'News', color: 'pink' })
+  })
+
+  it("carries the agents' mark on a space or folder only when set, so unmarked records keep their hashes", () => {
+    const src = sources()
+    const before = hashData(collectLocal(src, defaultScope()).get(src.ids.space.id)!.data)
+    const shared = createSpace('Agents', '', 'work')
+    shared.agent = { kind: 'shared' }
+    const own = createSpace('Research bot', '', 'work')
+    own.agent = { kind: 'own', name: 'Research bot', createdAt: 1_000 }
+    src.model.spaces.push(shared, own)
+    const group = createFolder(src.model, shared.id, 'A · 3f9a', '')
+    group.agent = { name: 'A', createdAt: 2_000 }
+    const plain = createFolder(src.model, src.ids.space.id, 'Docs', '')
+    const records = collectLocal(src, defaultScope())
+    expect(hashData(records.get(src.ids.space.id)!.data)).toBe(before)
+    expect(records.get(src.ids.space.id)?.data).not.toHaveProperty('agent')
+    expect(records.get(plain.id)?.data).not.toHaveProperty('agent')
+    expect(records.get(shared.id)?.data).toMatchObject({
+      name: 'Agents',
+      agent: { kind: 'shared' }
+    })
+    expect(records.get(own.id)?.data).toMatchObject({
+      agent: { kind: 'own', name: 'Research bot', createdAt: 1_000 }
+    })
+    expect(records.get(group.id)?.data).toEqual({
+      spaceId: shared.id,
+      name: 'A · 3f9a',
+      icon: '',
+      collapsed: false,
+      agent: { name: 'A', createdAt: 2_000 }
+    })
+    // The readers take a well-formed mark off a record and nothing else.
+    expect(readSpaceAgentMark(records.get(own.id)?.data)).toEqual(own.agent)
+    expect(readSpaceAgentMark({ agent: { kind: 'shared', stray: true } })).toEqual({
+      kind: 'shared'
+    })
+    expect(readSpaceAgentMark({ agent: { kind: 'own', name: 'A' } })).toBeUndefined()
+    expect(readSpaceAgentMark({ agent: { kind: 'theirs' } })).toBeUndefined()
+    expect(readSpaceAgentMark({ agent: 'shared' })).toBeUndefined()
+    expect(readSpaceAgentMark({ name: 'Agents' })).toBeUndefined()
+    expect(readSpaceAgentMark(null)).toBeUndefined()
+    expect(readFolderAgentMark(records.get(group.id)?.data)).toEqual({
+      name: 'A',
+      createdAt: 2_000
+    })
+    expect(readFolderAgentMark({ agent: { name: '', createdAt: 5 } })).toEqual({
+      name: '',
+      createdAt: 5
+    })
+    expect(readFolderAgentMark({ agent: { name: 'A', createdAt: 'yesterday' } })).toBeUndefined()
+    expect(readFolderAgentMark({ agent: { name: 7, createdAt: 5 } })).toBeUndefined()
+    expect(readFolderAgentMark({ agent: { name: 'A' } })).toBeUndefined()
+    expect(readFolderAgentMark({ agent: null })).toBeUndefined()
+    expect(readFolderAgentMark({})).toBeUndefined()
+    expect(readFolderAgentMark(undefined)).toBeUndefined()
   })
 
   it('does not leak onboardingDone through the settings record', () => {

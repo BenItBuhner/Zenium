@@ -11,11 +11,12 @@
 //                                 of the launch; on Linux the build's chrome-sandbox helper has
 //                                 to be setuid root where the kernel denies unprivileged user
 //                                 namespaces – ci.yml's step does that to the unpacked build.
-//                                 What the leg is for: Electron runs
-//                                 service-worker preload scripts in sandboxed renderers only, so
-//                                 a --no-sandbox leg cannot observe Zenium's chrome.* layer in an
-//                                 MV3 worker; the mv3-worker scenario expects it present here and
-//                                 absent under --no-sandbox)
+//                                 What the leg is for: Electron runs service-worker preload
+//                                 scripts in its sandboxed renderer client only, which the app
+//                                 asks for with --enable-sandbox whatever the OS sandbox does
+//                                 (src/main/platform/sandbox.ts); the mv3-worker scenario expects
+//                                 Zenium's chrome.* layer in the MV3 worker on both legs – here
+//                                 with the OS sandbox on, under --no-sandbox by the app's switch)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
@@ -81,12 +82,16 @@
 //                fixture extension under fixtures/mv3-worker through the management page's drop
 //                path (the install prompt accepted), whose worker logs the `chrome` surface it
 //                starts with; the line is read off the session's ServiceWorkers console events.
-//                Under --sandbox the layer must be there (`chrome.permissions`, `windows`,
-//                `contextMenus` defined); under --no-sandbox it must be absent – Electron evaluates
-//                service-worker preloads in sandboxed renderers only – which is what makes the
-//                sandboxed leg necessary. The run has to say which it is (--sandbox, or
-//                --no-sandbox among the extra args); a worker console error from an extension
-//                is a failure (Linux job: one leg each way)
+//                The layer must be there (`chrome.permissions`, `windows`, `contextMenus`
+//                defined) on both legs: Electron evaluates service-worker preloads in its
+//                sandboxed renderer client only, and the app asks for that client with its own
+//                --enable-sandbox whether or not the OS sandbox is on (in-house fix D, row 14;
+//                before it a --no-sandbox launch got the engine's bare chrome.*). Under --sandbox
+//                the proof is the layer where the OS sandbox is on; under --no-sandbox it is the
+//                app's own switch. The app's startup self-check ("the service-worker preload did
+//                not run") must stay silent on either leg. The run has to say which it is
+//                (--sandbox, or --no-sandbox among the extra args); a worker console error from
+//                an extension is a failure (Linux job: one leg each way)
 //   pip          picture-in-picture (pip-02): a profile past onboarding (sidebar at 320, where
 //                the media hub's toolbar button stands in the row) opens video-fixture.mjs's
 //                page, whose `<video>` plays its own canvas with a tone – the views' autoplay
@@ -256,9 +261,9 @@ if (SANDBOX && NO_SANDBOX_ARG) {
   process.exit(2)
 }
 if (scenarios.includes('mv3-worker') && !SANDBOX && !NO_SANDBOX_ARG) {
-  // The scenario's expectation follows the sandbox (present under it, absent without): a run
-  // that says neither could pass by accident on a machine whose kernel sandboxes the renderers.
-  console.error('mv3-worker needs --sandbox or --no-sandbox in --extra-args to know what to expect')
+  // The two legs prove two different things (the layer where the OS sandbox is on; the app's
+  // own --enable-sandbox where it is off): a run that says neither would record neither.
+  console.error('mv3-worker needs --sandbox or --no-sandbox in --extra-args to say which leg it is')
   process.exit(2)
 }
 const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
@@ -2157,8 +2162,8 @@ async function runScenario(name, userData, sessionOptions, body) {
           userData: app.getPath('userData'),
           electron: process.versions.electron,
           chrome: process.versions.chrome,
-          // Whether the renderers run without Chromium's sandbox (the mv3-worker scenario's
-          // expectation turns on it; a --sandbox leg must read false here).
+          // Whether the renderers run without Chromium's sandbox (the mv3-worker scenario
+          // records it; a --sandbox leg must read false here).
           noSandbox: app.commandLine.hasSwitch('no-sandbox')
         }))
         if (SANDBOX && facts.noSandbox) {
@@ -5220,19 +5225,24 @@ async function scenarioDark() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// mv3-worker: Zenium's chrome.* layer in an MV3 background worker – present under the sandbox,
-// absent without it (the sandboxed leg's reason to exist).
+// mv3-worker: Zenium's chrome.* layer in an MV3 background worker – present with the OS sandbox
+// on, and present under --no-sandbox too, by the app's own --enable-sandbox (in-house fix D).
 // ---------------------------------------------------------------------------------------------
 
 const MV3_FIXTURE_DIR = path.join(here, 'fixtures', 'mv3-worker')
 const MV3_FIXTURE_NAME = 'Smoke: MV3 worker probe'
 const WORKER_PROBE_PREFIX = 'ZENIUM_SMOKE_WORKER_PROBE '
-// What the fixture's worker finds under the sandbox – the preload's namespaces: `permissions`
-// and `windows` for every extension, `contextMenus` for the permission the manifest holds – and
-// must not find without it: Electron's engine defines none of the three in a worker (its own
-// set there, for this manifest, is dom, extension, i18n, management, runtime, storage, tabs –
-// Electron 44.4.5 under --no-sandbox; `alarms` and the rest of the sandboxed set are the layer's).
+// What the fixture's worker finds when its preload ran – the preload's namespaces: `permissions`
+// and `windows` for every extension, `contextMenus` for the permission the manifest holds –
+// and none of which Electron's engine defines in a worker on its own (its bare set there, for
+// this manifest, is dom, extension, i18n, management, runtime, storage, tabs – Electron 44.4.5
+// under --no-sandbox before the app's --enable-sandbox; `alarms` and the rest are the layer's).
 const WORKER_LAYER_NAMESPACES = ['permissions', 'windows', 'contextMenus']
+// The app's startup self-check, one main-process warning when a worker ran and its preload never
+// spoke (src/main/platform/extensionApi/workerHandshake.ts); it fires this long after the worker
+// runs, and must not on either leg.
+const WORKER_PRELOAD_WARNING = 'the service-worker preload did not run'
+const WORKER_PRELOAD_GRACE_MS = 5000
 
 /** The fixture's probe, once its worker has logged it: the parsed line and the event it came in. */
 async function workerProbe(s, timeoutMs) {
@@ -5304,42 +5314,60 @@ async function scenarioMv3Worker() {
     })
     await s.step('worker-probe', async () => {
       const { event, probe } = await workerProbe(s, 20000)
-      const defined = WORKER_LAYER_NAMESPACES.filter((ns) => probe[ns] === 'object')
       const missing = WORKER_LAYER_NAMESPACES.filter((ns) => probe[ns] !== 'object')
-      const running = await s.app.evaluate(
-        ({ session }, partition) =>
-          Object.values(session.fromPartition(partition).serviceWorkers.getAllRunning()).map(
-            (w) => ({ scriptUrl: w.scriptUrl, versionId: w.versionId })
-          ),
+      const { running, enableSandbox } = await s.app.evaluate(
+        ({ app, session }, partition) => ({
+          running: Object.values(
+            session.fromPartition(partition).serviceWorkers.getAllRunning()
+          ).map((w) => ({ scriptUrl: w.scriptUrl, versionId: w.versionId })),
+          // The app's own switch (src/main/index.ts, src/main/platform/sandbox.ts): what puts
+          // Electron's sandboxed renderer client – the one that runs service-worker preloads –
+          // on under --no-sandbox. Off for root on Linux alone, where Electron refuses it.
+          enableSandbox: app.commandLine.hasSwitch('enable-sandbox')
+        }),
         DEFAULT_CONTAINER_PARTITION
       )
       const detail = {
         sandboxed: SANDBOX,
+        enableSandbox,
         probe,
         source: event.sourceUrl,
         partition: event.partition,
         running
       }
-      if (SANDBOX) {
-        if (missing.length || probe.getAll !== 'function') {
-          throw Object.assign(
-            new Error(
-              `the worker preload's layer is missing from the sandboxed worker: ${missing.length ? missing.join(', ') : 'permissions.getAll'} undefined (chrome keys: ${probe.keys.join(', ')})`
-            ),
-            { detail }
-          )
-        }
-      } else if (defined.length) {
-        // The negative leg: were this to fail, Electron would be running service-worker
-        // preloads in unsandboxed renderers, and the sandboxed leg would have lost its reason.
+      if (!enableSandbox) {
         throw Object.assign(
           new Error(
-            `the worker preload's layer is present under --no-sandbox (${defined.join(', ')} defined): this Electron runs service-worker preloads without the sandbox`
+            'the app runs without --enable-sandbox: the switch was not appended before ready (src/main/index.ts), or the run is root on Linux'
+          ),
+          { detail }
+        )
+      }
+      if (missing.length || probe.getAll !== 'function') {
+        const where = SANDBOX
+          ? 'the sandboxed worker'
+          : 'the worker under --no-sandbox (the app asks for the sandboxed renderer client with --enable-sandbox; Electron runs service-worker preloads there alone)'
+        throw Object.assign(
+          new Error(
+            `the worker preload's layer is missing from ${where}: ${missing.length ? missing.join(', ') : 'permissions.getAll'} undefined (chrome keys: ${probe.keys.join(', ')})`
           ),
           { detail }
         )
       }
       return detail
+    })
+    await s.step('preload-self-check-silent', async () => {
+      // The app's one warning for a worker that ran without its preload comes a grace period
+      // after the worker runs; with the layer just seen in the worker it must not come at all.
+      await delay(WORKER_PRELOAD_GRACE_MS + 1500)
+      const warnings = s.stderr
+        .join('')
+        .split(/\r?\n/)
+        .filter((l) => l.includes(WORKER_PRELOAD_WARNING))
+      if (warnings.length) {
+        throw new Error(`the app warned that a worker preload did not run: ${warnings[0]}`)
+      }
+      return { warnings: warnings.length, waitedMs: WORKER_PRELOAD_GRACE_MS + 1500 }
     })
     await s.step('quit', async () => s.quitGracefully())
   })

@@ -22,6 +22,7 @@ import {
   tabChangeInfo,
   tabMatchesQuery
 } from '../../../core/extensions/api/tabs'
+import { cssOriginFor } from './cssOrigin'
 import type { ModelSnapshot, TabSnapshot } from './model'
 import {
   ApiError,
@@ -505,8 +506,9 @@ export class TabsApi {
     const css = this.cssOf(ctx, details)
     const wc = this.model.webContentsOf(tab)
     if (!wc) throw new ApiError('The tab has no page to insert CSS into.')
-    const origin = isRecord(details) && details.cssOrigin === 'user' ? 'user' : 'author'
-    const key = await wc.insertCSS(css, { cssOrigin: origin })
+    // A `user` sheet with `::highlight()` rules goes in as `author`: the only origin they paint from.
+    const requested = isRecord(details) && details.cssOrigin === 'user' ? 'user' : 'author'
+    const key = await wc.insertCSS(css, { cssOrigin: cssOriginFor(css, requested) })
     this.insertedCss.set(`${wc.id}\u0000${css}`, key)
   }
 

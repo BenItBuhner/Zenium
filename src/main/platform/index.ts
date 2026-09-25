@@ -519,6 +519,9 @@ export class ElectronPlatform implements Platform {
       onChanged: (listener) => void nativeTheme.on('updated', listener),
       setSource: (scheme) => {
         nativeTheme.themeSource = scheme
+        // The setting itself, for the `zen://` documents and the page views on a platform whose
+        // engine does not carry the source to pages (Linux: `emulatedColorScheme`).
+        this.views.applyColorScheme(scheme)
       }
     }
     this.languages = {
@@ -613,6 +616,9 @@ export class ElectronPlatform implements Platform {
     this.downloads.observeRequests(this.requestBlocking)
     // The task manager's network column counts on the same hook, only while the page samples.
     this.tasks.attachNetwork(this.requestBlocking.multiplexer)
+    // An MV3 worker alone in its process is placed by the pid its preload reported: the engine
+    // names the worker's process by a render-process-host id only, never the OS pid.
+    this.tasks.attachExtensionWorkers(() => extensionApi.workerProcesses())
     // Extensions' chrome.webRequest listeners run over the same hook, after the rule engine;
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
@@ -648,7 +654,8 @@ export class ElectronPlatform implements Platform {
         ses,
         (id) => browser.reader.pageHtml(id),
         () => this.newTabBackground.response(),
-        chromiumLicences
+        chromiumLicences,
+        () => this.views.colorScheme
       )
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.

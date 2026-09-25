@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
 import type { Tab } from '../../../shared/types'
 import { DebuggerApi, type PageDebugger } from '../extensionApi/debugger'
@@ -58,6 +58,10 @@ interface Page {
   tab: Tab
   wc: WebContents & EventEmitter
   dbg: FakePageDebugger
+  /** What the page's main frame answers the first-paint probe, one per probe (the last repeats). */
+  paintAnswers: string[]
+  /** Every paint probe run in the page's main frame. */
+  paintProbes: string[]
 }
 
 interface Dispatched {
@@ -107,19 +111,32 @@ function world(): World {
       const dbg = new FakePageDebugger()
       const wc = new EventEmitter() as WebContents & EventEmitter
       let destroyed = false
+      const paintAnswers = ['painted']
+      const paintProbes: string[] = []
       Object.assign(wc, {
         id: 100 + tabId,
         debugger: dbg,
         isDestroyed: () => destroyed,
+        getURL: () => url,
         destroy: () => {
           destroyed = true
           wc.emit('destroyed')
+        },
+        mainFrame: {
+          executeJavaScript: (code: string): Promise<unknown> => {
+            paintProbes.push(code)
+            return Promise.resolve(
+              paintAnswers.length > 1 ? paintAnswers.shift()! : paintAnswers[0]!
+            )
+          }
         }
       })
       const page: Page = {
         tab: { id: `tab-${tabId}`, url, title, favicon: null } as unknown as Tab,
         wc,
-        dbg
+        dbg,
+        paintAnswers,
+        paintProbes
       }
       pages.set(tabId, page)
       return page
@@ -329,5 +346,120 @@ describe('chrome.debugger', () => {
     // The extension's own session ended with it, not left dangling on the page.
     expect(b.dbg.isAttached()).toBe(false)
     expect(b.dbg.detaches).toBe(1)
+  })
+
+  /**
+   * Paint holding (in-house fix, row 3): before a new http(s) document's first paint the
+   * renderer drops presses, keys, wheels, touches and inserted text with a success ack, so an
+   * extension's `Input.*` waits for the paint, bounded; bare moves and every other command go
+   * through as they came.
+   */
+  describe('input before the first paint', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('holds Input.dispatchMouseEvent / KeyEvent / TouchEvent / insertText until the page has painted', async () => {
+      const w = world()
+      const page = w.page(7, 'https://a.example/')
+      page.paintAnswers.splice(0, 1, 'holding', 'holding', 'painted')
+      w.api.handlers.attach(w.ctx(EXT), { tabId: 7 }, '1.3')
+      const press = w.api.handlers.sendCommand(
+        w.ctx(EXT),
+        { tabId: 7 },
+        'Input.dispatchMouseEvent',
+        {
+          type: 'mousePressed',
+          x: 10,
+          y: 20,
+          button: 'left'
+        }
+      )
+      await new Promise((r) => setTimeout(r, 5))
+      // Asked, holding: the engine has not seen the press.
+      expect(page.paintProbes.length).toBeGreaterThanOrEqual(1)
+      expect(page.dbg.commands).toEqual([])
+      await expect(press).resolves.toEqual({ ok: true })
+      expect(page.paintProbes).toHaveLength(3)
+      expect(page.dbg.commands.map((c) => c.method)).toEqual(['Input.dispatchMouseEvent'])
+      // The document is known to have painted: the rest of the gesture costs no probe.
+      await w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 7 }, 'Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x: 10,
+        y: 20,
+        button: 'left'
+      })
+      await w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 7 }, 'Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'a'
+      })
+      await w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 7 }, 'Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: []
+      })
+      await w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 7 }, 'Input.insertText', { text: 'hi' })
+      expect(page.paintProbes).toHaveLength(3)
+      expect(page.dbg.commands.map((c) => c.method)).toEqual([
+        'Input.dispatchMouseEvent',
+        'Input.dispatchMouseEvent',
+        'Input.dispatchKeyEvent',
+        'Input.dispatchTouchEvent',
+        'Input.insertText'
+      ])
+    })
+
+    it('lets a bare mouse move and every other command through without asking', async () => {
+      const w = world()
+      const page = w.page(8, 'https://a.example/')
+      page.paintAnswers.splice(0, 1, 'holding')
+      w.api.handlers.attach(w.ctx(EXT), { tabId: 8 }, '1.3')
+      await w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 8 }, 'Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: 1,
+        y: 1
+      })
+      await w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 8 }, 'Page.navigate', {
+        url: 'https://b.example/'
+      })
+      await w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 8 }, 'Runtime.evaluate', {
+        expression: '1'
+      })
+      expect(page.paintProbes).toEqual([])
+      expect(page.dbg.commands.map((c) => c.method)).toEqual([
+        'Input.dispatchMouseEvent',
+        'Page.navigate',
+        'Runtime.evaluate'
+      ])
+    })
+
+    it('forwards the input anyway after the deadline, with a warning, when the page never paints', async () => {
+      vi.useFakeTimers()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      try {
+        const w = world()
+        const page = w.page(9, 'https://a.example/')
+        page.paintAnswers.splice(0, 1, 'holding')
+        w.api.handlers.attach(w.ctx(EXT), { tabId: 9 }, '1.3')
+        let result: unknown = null
+        void Promise.resolve(
+          w.api.handlers.sendCommand(w.ctx(EXT), { tabId: 9 }, 'Input.dispatchKeyEvent', {
+            type: 'keyDown',
+            key: 'Enter'
+          })
+        ).then((r) => {
+          result = r
+        })
+        await vi.advanceTimersByTimeAsync(9_900)
+        expect(page.dbg.commands).toEqual([])
+        expect(result).toBeNull()
+        await vi.advanceTimersByTimeAsync(200)
+        expect(page.dbg.commands.map((c) => c.method)).toEqual(['Input.dispatchKeyEvent'])
+        expect(result).toEqual({ ok: true })
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(warn.mock.calls[0]?.[0]).toContain('https://a.example/')
+      } finally {
+        warn.mockRestore()
+      }
+    })
   })
 })

@@ -994,7 +994,7 @@ const zenGroups: AgentTool = {
     const was = ctx.agents.adopt(s, group)
     const n = groupMembers(ctx, group).length
     return text(
-      `Adopted group ${group.id} ${JSON.stringify(group.name)}${was ? ` (was ${JSON.stringify(was.ownerName)}'s)` : ''} with ${n} tab${n === 1 ? '' : 's'}${s.homeGroupId === group.id ? '; it is your home group now' : ''}.\n\nYour groups:\n${listOwnTabs(ctx)}`
+      `Adopted group ${group.id} ${JSON.stringify(group.name)}${was ? ` (was ${JSON.stringify(was)}'s)` : ''} with ${n} tab${n === 1 ? '' : 's'}${s.homeGroupId === group.id ? '; it is your home group now' : ''}.\n\nYour groups:\n${listOwnTabs(ctx)}`
     )
   }
 }
