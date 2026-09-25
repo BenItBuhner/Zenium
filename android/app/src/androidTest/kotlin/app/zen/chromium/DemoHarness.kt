@@ -263,11 +263,16 @@ abstract class DemoHarness(
         )
     }
 
-    /** The services setting as it was before [holdEventsOpen] – when the run's own write is still the one in it. */
+    /**
+     * The two settings as they were before [holdEventsOpen] – when the services setting still
+     * reads what this run left in it (its own write, or the value it found when the service was
+     * listed already and only `accessibility_enabled` was written); a demo that wrote the setting
+     * itself (TalkBack on) keeps its state.
+     */
     private fun releaseEvents() {
-        val held = servicesHeld ?: return
-        if (secureSetting("enabled_accessibility_services") != held) return
-        putSecureSetting("enabled_accessibility_services", servicesBefore)
+        val held = servicesHeld
+        if (secureSetting("enabled_accessibility_services") != (held ?: servicesBefore)) return
+        if (held != null) putSecureSetting("enabled_accessibility_services", servicesBefore)
         putSecureSetting("accessibility_enabled", accessibilityEnabledBefore)
     }
 

@@ -79,6 +79,15 @@ write_record() {
   (cd "$dir" && sha256sum WebViewGoogle.apk > SHA256SUMS)
 }
 
+# The tools the fetch stands on, named before the 2.2 GB download rather than found missing after
+# it (`set -e` would end the script on the bare `command not found`): curl for the zip, unzip and
+# python3 for the carve, debugfs (e2fsprogs) for the ext4 dump, gunzip for the APK.
+require_tools() {
+  local tool missing=()
+  for tool in "$@"; do command -v "$tool" > /dev/null 2>&1 || missing+=("$tool"); done
+  [ ${#missing[@]} -eq 0 ] || { echo "::error::fetch needs ${missing[*]} on the PATH (ubuntu-24.04 has them; e2fsprogs for debugfs)"; return 1; }
+}
+
 fetch() {
   mkdir -p "$dir"
   if [ -f "$apk" ] && [ "$(sha256_of "$apk")" = "$APK_SHA256" ]; then
@@ -86,6 +95,8 @@ fetch() {
     [ -f "$dir/VERSION" ] || write_record
     return 0
   fi
+  require_tools unzip python3 debugfs gunzip sha1sum stat
+  [ -n "${WEBVIEW_GOOGLE_ZIP:-}" ] || require_tools curl
   local work zip
   work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/webview-google.XXXXXX")
   if [ -n "${WEBVIEW_GOOGLE_ZIP:-}" ]; then
