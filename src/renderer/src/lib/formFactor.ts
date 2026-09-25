@@ -3,19 +3,26 @@ import { classifyViewport, touchLayout, type ViewportMetrics } from '@shared/for
 import type { FormFactor, WindowChrome } from '@shared/types'
 import { run } from './api'
 import { browserStore } from './browserStore'
+import { livePointerHover, onLivePointerChange } from './livePointer'
 import { createStore } from './store'
 
 export type { FormFactor }
 
 /**
  * How the chrome should lay itself out. Derived from the window and its pointer, not from the
- * platform (see `classifyViewport`): a Samsung DeX session gets the desktop layout, a narrow
- * window on a laptop gets the phone one, and a phone stays a phone whichever way it is held.
+ * platform (see `classifyViewport`): a narrow window on a laptop gets the phone one, and a phone
+ * stays a phone whichever way it is held.
  *
  *  - `phone`   – bottom bar, sidebar in a drawer, sheets instead of popovers.
  *  - `tablet`  – a touch screen 600 px or more on its short side: the vertical sidebar as the tab
  *                surface, sized for a finger, under a toolbar row of its own (`TabletShell`).
  *  - `desktop` – everything else.
+ *
+ * The pointer is the media queries' primary pointer. Android's WebView names the touch screen
+ * whenever there is one, so a tablet with a mouse and a Samsung DeX desktop keep the tablet
+ * layout (OS-12: the row's own word), and the mouse's hover reaches the chrome another way –
+ * the root's `data-hover` follows the live pointer (`livePointer.ts`), which is what the
+ * stylesheets gate their hover fills on.
  *
  * Toolbar-only popup windows (`window.open` with a size) are the exception: a page-sized popup
  * on a laptop is not a phone, so they keep the desktop layout at any width.
@@ -123,7 +130,21 @@ function refresh(): void {
   const root = document.documentElement
   root.dataset.formFactor = next.formFactor
   root.dataset.pointer = next.coarse ? 'coarse' : 'fine'
-  root.dataset.hover = next.hover ? 'hover' : 'none'
+  root.dataset.hover = hoverAttribute(next.hover, livePointerHover())
+}
+
+/**
+ * The root's `data-hover`: the media query's `hover` stands (a desktop's mouse; the forced
+ * desktop of the preview host); where the primary pointer cannot hover, the pointer that last
+ * moved over the chrome decides – a mouse or a pen (`hover`), a finger (`none`) – and a touch
+ * screen no pointer has touched yet has none.
+ */
+export function hoverAttribute(
+  mediaHover: boolean,
+  live: 'hover' | 'none' | null
+): 'hover' | 'none' {
+  if (mediaHover) return 'hover'
+  return live === 'hover' ? 'hover' : 'none'
 }
 
 /**
@@ -144,6 +165,9 @@ if (!flags.__zenViewportWatched && hasViewport()) {
   for (const query of ['(pointer: coarse)', '(hover: hover)']) {
     window.matchMedia(query).addEventListener('change', refresh)
   }
+  // A mouse after fingers, or a finger after a mouse: only `data-hover` moves (the layout is
+  // the media queries'), and the store publishes nothing when the viewport is unchanged.
+  onLivePointerChange(refresh)
   // Subscribed at import, ahead of any React subscription: the first snapshot re-derives the
   // layout before the shell renders, so a popup window never flashes the phone chrome.
   browserStore.subscribe(refresh)
