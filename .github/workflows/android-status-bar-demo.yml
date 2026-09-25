@@ -10,11 +10,6 @@ name: Android status bar demo
 # runs the same driver first, notes only, for the comparison stills. Dispatch-only, like the
 # other demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
-  # TEMPORARY (PR #454): the startup branch's push trigger for the `[status-bar-run]` gate below
-  # (the status bar's P0 driver runs in that PR's emulator job); removed before the PR leaves draft.
-  push:
-    branches:
-      - cursor/android-startup-9615
   workflow_dispatch:
     inputs:
       assert:
