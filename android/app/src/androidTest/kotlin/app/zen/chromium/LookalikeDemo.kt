@@ -35,11 +35,17 @@ import java.util.concurrent.TimeUnit
  * `gogle.com` sees nothing while the question stands. Continue writes the `lookalike` allow to
  * `permissions.json` and loads the site; a second typed visit goes straight through; the phone's
  * Back (the page has no Back row of its own) from a fresh question returns to the page before
- * it – and from the link-path question, where a committed lookalike entry sits behind the
- * question, wherever it lands is recorded. The link / redirect path: a link on a loopback
- * page to `paypa1.com`, and a 302 to `amazom.com`, are navigations the core never saw ahead of the
- * request – the WebView commits them and the core replaces the committed page with the question
- * at `onNavigated`. That gap is measured here, from three instruments on the one device clock:
+ * it. The link / redirect path: a link on a loopback page to `paypa1.com`, and a 302 to
+ * `amazom.com`, are navigations the core never saw ahead of the request – the WebView commits
+ * them and the core replaces the committed page with the question at `onNavigated`. From that
+ * question the committed lookalike entry sits behind the question in the WebView's list, and
+ * the phone's Back steps over it (`TabWebView.loadHtml` marks the entry the question stands in
+ * for, as WebView's own error page is marked for a failed load): Back lands on the page before
+ * the link, with no second document request and no second question. Continue from the same
+ * question goes back onto the committed lookalike entry (`TabWebView.loadUrl`'s retry through
+ * history) rather than stacking a fourth entry behind the question; the allow lets the page
+ * through `onNavigated`. The gap between the commit and the question is measured here, from
+ * three instruments on the one device clock:
  * the chrome's view events as the core receives them (`__zenHost.viewEvent`, wrapped to
  * timestamp `navigated` / `startLoading` / `stopLoading`, and the bridge's `view.loadHtml` for
  * the question page, wrapped at `MessagePort.prototype.postMessage`); the page WebView's own
@@ -206,7 +212,7 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         beat()
 
         // (4) The link path and the redirect path: commit, then the question, and the gap between.
-        finding("\n(4) LINK / REDIRECT: the navigation commits and is replaced at onNavigated – the gap, measured")
+        finding("\n(4) LINK / REDIRECT: the navigation commits and is replaced at onNavigated – the gap, measured; from the link's question, Back steps over the committed entry and Continue reuses it")
         linkScene(f)
         redirectScene()
     }
@@ -238,48 +244,88 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         still("link-replaced")
         beat()
         if (tapPage(f, "Details", 8_000)) SystemClock.sleep(1_000)
-        // The phone's Back from a question that replaced a committed page: the committed
-        // lookalike entry sits behind the question in the WebView's list. Recorded, not claimed.
+
+        // The phone's Back from the question that replaced the committed lookalike: the committed
+        // entry sits behind the question in the WebView's list, and is the entry the question
+        // stands in for (TabWebView.loadHtml marks it; goBack steps over it) – Back lands on the
+        // page before the link, with no second document request and no second question.
+        finding("  the WebView's list before Back: ${historyList()}")
+        val requestsBeforeBack = server.hitsSinceMark(PAYPAL).count { it.path == "/" }
         watchChrome()
         pressPhoneBack()
-        val after = waitForSettled(25_000)
+        val after = waitForTitle("Demo site", 25_000)
         val afterUrl = after.getJSONObject("tabs").getJSONObject(TAB).optString("url")
-        val landed = when {
-            afterUrl == "http://$LOOPBACK:$PORT/link" -> "the page before the link (the committed lookalike entry was skipped)"
-            afterUrl.startsWith(ERROR_PREFIX) -> "the question again – Back landed on the committed lookalike entry, which onNavigated replaced once more (${server.hitsSinceMark(PAYPAL).count { it.path == "/" }} document request(s) for $PAYPAL since the mark)"
-            else -> "elsewhere"
+        val requestsAfterBack = server.hitsSinceMark(PAYPAL).count { it.path == "/" }
+        val reasked = chromeEvents().let { events ->
+            (0 until events.length()).any { i -> events.getJSONObject(i).let { e -> e.optString("name") == "core.loadHtml" || e.optString("url").startsWith(ERROR_PREFIX) } }
         }
-        finding("  the phone's Back from the link-path question: ${describeTab(after)} – $landed")
+        finding("  the phone's Back from the link-path question: ${describeTab(after)}")
         finding("  chrome events: ${chromeTimeline()}")
-        if (afterUrl.startsWith(ERROR_PREFIX)) {
-            // The family's `back` message (what a page button would post) steps over the committed
-            // entry through the core's leaveErrorPage: the way the buttons went before the row was dropped.
-            postInterstitial("back", "http://$PAYPAL/")
-            val viaMessage = waitForTitle("Demo site", 25_000)
-            finding("  the family's back message from the same question: ${describeTab(viaMessage)}")
+        finding("  the WebView's list after Back: ${historyList()}")
+        expect("Back landed on the page before the link, http://$LOOPBACK:$PORT/link (the committed lookalike entry was stepped over)", afterUrl == "http://$LOOPBACK:$PORT/link", "4a-back")
+        expect("no second question after Back: no view.loadHtml of a lookalike page, no zen://error navigation; document requests for $PAYPAL since the mark $requestsBeforeBack before Back, $requestsAfterBack after", !reasked && requestsAfterBack == requestsBeforeBack, "4a-no-reask")
+        still("link-back-to-previous")
+        beat()
+
+        // c. Continue from the link-path question: the load of the lookalike the question stands
+        // in for goes back onto its committed entry (TabWebView.loadUrl, retriesFailedEntry), the
+        // way Proceed past a certificate interstitial retries the failed entry, rather than
+        // stacking a fourth entry behind the question; the allow lets it through onNavigated.
+        finding("  c. CONTINUE from the link-path question goes back onto the committed lookalike entry")
+        server.mark()
+        if (!tapPage(f, PAYPAL, 8_000)) {
+            finding("  (no link node '$PAYPAL' in the page; clicking it from the document)")
+            lastInputAt = System.currentTimeMillis()
+            tabJs("document.getElementById('lk').click();'clicked'")
         }
+        val again = waitForUrl(ERROR_PREFIX, 25_000)
+        val againUrl = again.getJSONObject("tabs").getJSONObject(TAB).optString("url")
+        finding("  ${describeTab(again)}")
+        expect("the question stands again for the linked lookalike", againUrl.startsWith(ERROR_PREFIX) && param(againUrl, "url") == "http://$PAYPAL/", "4c-question")
+        val listBefore = historyEntries()
+        finding("  the WebView's list before Continue: ${historyList(listBefore)}")
+        watchChrome()
+        pressInterstitial(f, "Continue to $PAYPAL", "proceed", "http://$PAYPAL/")
+        val continued = waitForTitle(PAYPAL, 25_000)
+        finding("  ${describeTab(continued)}")
+        val h1 = tabJs("(document.querySelector('h1')||{}).textContent||''")
+        finding("  h1: \"$h1\"; server hits for $PAYPAL since the mark: ${server.hitsSinceMark(PAYPAL).map { it.path }}")
+        finding("  chrome events: ${chromeTimeline()}")
+        val listAfter = historyEntries()
+        finding("  the WebView's list after Continue: ${historyList(listAfter)}")
+        expect("the site loaded (h1 \"$PAYPAL\")", h1 == PAYPAL && continued.getJSONObject("tabs").getJSONObject(TAB).optString("url") == "http://$PAYPAL/", "4c-h1")
+        val permission = awaitPermission("https://$PAYPAL|lookalike", 8_000)
+        finding("  permissions.json: ${permission ?: "(no lookalike decision for https://$PAYPAL within 8 s)"}")
+        expect("permissions.json carries https://$PAYPAL|lookalike: allow", permission == "allow", "4c-permission")
+        val linkIndex = listAfter.entries.indexOfLast { it == "http://$LOOPBACK:$PORT/link" }
+        val current = listAfter.entries.getOrNull(listAfter.current)
+        val behind = listAfter.entries.getOrNull(listAfter.current - 1)
+        expect(
+            "the committed lookalike entry was reused: the current entry is http://$PAYPAL/ right after the link page's (index ${listAfter.current}, the link page at $linkIndex), " +
+                "with no zen://error entry behind it and the list no longer than before Continue (${listBefore.entries.size} → ${listAfter.entries.size})",
+            current == "http://$PAYPAL/" && behind == "http://$LOOPBACK:$PORT/link" && listAfter.current == linkIndex + 1 && listAfter.entries.size <= listBefore.entries.size,
+            "4c-entry"
+        )
+        still("link-continued-site-loads")
+        beat()
     }
 
-    /** The core's state once the tab has stopped loading and its URL has held for a moment, or the last seen. */
-    private fun waitForSettled(timeoutMs: Long): JSONObject {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        var s = coreState()
-        var held: String? = null
-        var heldSince = 0L
-        while (SystemClock.uptimeMillis() < deadline) {
-            val tab = s.getJSONObject("tabs").optJSONObject(TAB)
-            val url = tab?.optString("url") ?: ""
-            if (tab != null && !tab.optBoolean("loading") && url.isNotEmpty()) {
-                if (url != held) {
-                    held = url
-                    heldSince = SystemClock.uptimeMillis()
-                } else if (SystemClock.uptimeMillis() - heldSince >= 2_500) return s
-            } else held = null
-            SystemClock.sleep(400)
-            s = coreState()
+    private class HistoryEntries(val entries: List<String>, val current: Int, val backIndex: Int, val canGoBack: Boolean)
+
+    /** The tab WebView's back-forward list (the entries' URLs), read on the main thread, with where its own Back would land. */
+    private fun historyEntries(): HistoryEntries {
+        val tab = tabView() ?: return HistoryEntries(emptyList(), -1, -1, false)
+        var read = HistoryEntries(emptyList(), -1, -1, false)
+        instrumentation.runOnMainSync {
+            val list = tab.copyBackForwardList()
+            read = HistoryEntries((0 until list.size).map { list.getItemAtIndex(it)?.url ?: "" }, list.currentIndex, tab.backIndex(list), tab.canGoBack())
         }
-        return s
+        return read
     }
+
+    private fun historyList(read: HistoryEntries = historyEntries()): String =
+        read.entries.mapIndexed { i, url -> (if (i == read.current) "*" else "") + url.take(70) }.joinToString(" | ") +
+            " (current ${read.current}, back would land on ${read.backIndex}, canGoBack ${read.canGoBack})"
 
     private fun redirectScene() {
         finding("  b. a 302 from the loopback page to http://$AMAZON/")
