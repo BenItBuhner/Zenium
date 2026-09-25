@@ -25,6 +25,8 @@ interface PersistedApi {
   sidePanelOnActionClick?: Record<string, boolean>
   /** `chrome.privacy` values per extension, by `category.setting`, then scope. */
   privacy?: Record<string, Record<string, ScopedValues>>
+  /** `chrome.fontSettings` values per extension, by Chrome's pref key (a font id or a size). */
+  fontSettings?: Record<string, Record<string, string | number>>
   /** `chrome.proxy.settings` values per extension (canonical configs as JSON text), by scope. */
   proxy?: Record<string, ScopedValues>
   /** `chrome.contentSettings` rules per extension, by type name (regular scope only). */
@@ -48,6 +50,7 @@ function emptyPersisted(): PersistedApi {
     workerEvents: {},
     sidePanelOnActionClick: {},
     privacy: {},
+    fontSettings: {},
     proxy: {},
     contentSettings: {},
     contextMenus: {},
@@ -156,6 +159,17 @@ export class ApiStore {
     this.save()
   }
 
+  fontSettingsValues(extensionId: string): Record<string, string | number> {
+    return this.data.fontSettings?.[extensionId] ?? {}
+  }
+
+  setFontSettingsValues(extensionId: string, values: Record<string, string | number>): void {
+    const fontSettings = this.data.fontSettings ?? (this.data.fontSettings = {})
+    if (Object.keys(values).length === 0) delete fontSettings[extensionId]
+    else fontSettings[extensionId] = { ...values }
+    this.save()
+  }
+
   proxyValues(extensionId: string): ScopedValues {
     return this.data.proxy?.[extensionId] ?? {}
   }
@@ -211,6 +225,7 @@ export class ApiStore {
     delete this.data.workerEvents[extensionId]
     delete this.data.sidePanelOnActionClick?.[extensionId]
     delete this.data.privacy?.[extensionId]
+    delete this.data.fontSettings?.[extensionId]
     delete this.data.proxy?.[extensionId]
     delete this.data.contentSettings?.[extensionId]
     delete this.data.contextMenus?.[extensionId]

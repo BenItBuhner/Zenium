@@ -123,6 +123,16 @@ import { ElectronMpris } from './mpris'
 import { ElectronSpeechHost } from './speech'
 import { sharedSpeechEngine } from './extensionApi/ttsBridge'
 
+/**
+ * The distinct installed families through Local Font Access, for `chromeLocalFontFamilies`;
+ * null where the chrome document has no `queryLocalFonts` (the host then answers no list).
+ */
+const LOCAL_FONT_FAMILIES_SCRIPT = `(async () => {
+  if (typeof window.queryLocalFonts !== 'function') return null
+  const fonts = await window.queryLocalFonts()
+  return Array.from(new Set(fonts.map((font) => font.family)))
+})()`
+
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
   windowControlsOverlay: process.platform === 'win32',
@@ -638,6 +648,16 @@ export class ElectronPlatform implements Platform {
     // so do the request-side effects of chrome.privacy (pings, Referer, DNT).
     extensionApi.webRequest.attach(this.requestBlocking)
     extensionApi.privacy.attach(this.requestBlocking)
+    // Extensions' chrome.fontSettings layer over the user's fonts: the pages take it the way
+    // they take the setting; the font list is a chrome document's queryLocalFonts().
+    extensionApi.fontSettings.attach({
+      platform: process.platform,
+      locale: app.getLocale(),
+      userFonts: () => ElectronTabViewHost.currentFonts(),
+      onUserFontsChanged: (listener) => this.views.onUserFontsChanged(listener),
+      applyExtensionFonts: (layer) => this.views.applyExtensionFonts(layer),
+      installedFamilies: () => this.chromeLocalFontFamilies()
+    })
     // `chrome-extension://<id>/_favicon/` requests go to the served origin's route (Electron's
     // loader would leave them hanging), for extensions granted the `favicon` permission.
     this.requestBlocking.multiplexer.register(
@@ -740,6 +760,20 @@ export class ElectronPlatform implements Platform {
     ses.setPermissionCheckHandler((wc, permission) =>
       permission === 'local-fonts' ? chromeDocument(wc) : true
     )
+  }
+
+  /**
+   * The installed families for extensions' `chrome.fontSettings.getFontList()`: the same
+   * `queryLocalFonts()` the Customize fonts pickers use, run in a chrome document (the one
+   * place the desktop grants Local Font Access) with a user gesture, which the API needs. Null
+   * when no browser window is up to ask.
+   */
+  private async chromeLocalFontFamilies(): Promise<string[] | null> {
+    const wc = focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
+    if (!wc) return null
+    const families: unknown = await wc.executeJavaScript(LOCAL_FONT_FAMILIES_SCRIPT, true)
+    if (!Array.isArray(families)) return null
+    return families.filter((family): family is string => typeof family === 'string')
   }
 
   /**
