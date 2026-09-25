@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { WebPreferences } from 'electron'
 import type { Tab } from '../../../shared/types'
@@ -20,6 +20,8 @@ import {
   removeForeignDebuggerOwner,
   setDebuggerRecycler
 } from '../pageDebugger'
+import { HANG_MISSES, HANG_PING_MS, HANG_PROBE_TIMEOUT_MS } from '../hangMonitor'
+import { PAINT_STATE_SCRIPT } from '../firstPaint'
 import {
   ElectronTabViewHost,
   ENDED_BY_USER_MS,
@@ -51,8 +53,29 @@ const { keyboard, takeKeyboard } = vi.hoisted(() => {
 
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
+  /**
+   * The page's renderer main thread: gives everything sent to it its turn a tick later – or
+   * not at all while `hung` (a `for(;;){}`), until `answer()` ends the loop.
+   */
+  class FakeRenderer {
+    hung = false
+    private readonly waiting: Array<() => void> = []
+    /** One turn of the main thread. */
+    async turn(): Promise<void> {
+      if (this.hung) await new Promise<void>((r) => this.waiting.push(r))
+      await new Promise((r) => setTimeout(r, 1))
+    }
+    /** The loop ends: everything queued while it ran gets its turn. */
+    answer(): void {
+      this.hung = false
+      for (const next of this.waiting.splice(0)) next()
+    }
+  }
   /** A DevTools session as `webContents.debugger` offers it, recording what happened to it. */
   class FakeDebugger extends EventEmitter {
+    constructor(private readonly renderer: FakeRenderer) {
+      super()
+    }
     attached = false
     /** Another client (DevTools) holds the page: `attach` refuses. */
     taken = false
@@ -81,7 +104,7 @@ vi.mock('electron', async () => {
       if (!this.attached) throw new Error('Debugger is not attached')
       this.log.push(method)
       this.commands.push({ method, params })
-      await new Promise((r) => setTimeout(r, 1))
+      await this.renderer.turn()
       if (method === 'Page.setFontFamilies') {
         if (this.fontFamiliesSet) throw new Error('Font families can only be set once')
         this.fontFamiliesSet = true
@@ -115,7 +138,8 @@ vi.mock('electron', async () => {
     private static nextId = 1
     readonly id = FakeWebContents.nextId++
     private closed = false
-    readonly debugger = new FakeDebugger()
+    readonly renderer = new FakeRenderer()
+    readonly debugger = new FakeDebugger(this.renderer)
     /** Every `openDevTools` call's options, in order (`{ mode, activate }`). */
     readonly devtoolsOpened: Array<Record<string, unknown>> = []
     /** Every `inspectElement` call's point. */
@@ -161,6 +185,13 @@ vi.mock('electron', async () => {
     getTitle(): string {
       return ''
     }
+    /** The page's address (`getURL`); a test navigates by setting it. */
+    url = ''
+    getURL(): string {
+      return this.url
+    }
+    /** The page's session, for the tests that look something up by it. */
+    session: object = {}
     getZoomFactor(): number {
       return 1
     }
@@ -174,12 +205,23 @@ vi.mock('electron', async () => {
     paintAnswers: string[] = ['painted']
     /** Every paint probe run in the main frame. */
     readonly paintProbes: string[] = []
+    /**
+     * The main frame, for the scripts run in it alone (`WebFrameMain.executeJavaScript`): the
+     * first-paint probe is answered from `paintAnswers` at once and recorded in `paintProbes`;
+     * every other script (the hang monitor's literal) is recorded in `scripts` and answered
+     * after a renderer turn – a hung renderer answers neither.
+     */
     readonly mainFrame = {
+      scripts: [] as string[],
       executeJavaScript: (code: string): Promise<unknown> => {
-        this.paintProbes.push(code)
-        const answer =
-          this.paintAnswers.length > 1 ? this.paintAnswers.shift()! : this.paintAnswers[0]!
-        return Promise.resolve(answer)
+        if (code === PAINT_STATE_SCRIPT) {
+          this.paintProbes.push(code)
+          const answer =
+            this.paintAnswers.length > 1 ? this.paintAnswers.shift()! : this.paintAnswers[0]!
+          return Promise.resolve(answer)
+        }
+        this.mainFrame.scripts.push(code)
+        return this.renderer.turn().then(() => 1)
       }
     }
     /** Scripts run in the page's main world (`showErrorPage`'s in-place document). */
@@ -315,7 +357,14 @@ async function guestWebContents(): Promise<Electron.WebContents> {
   return view.webContents
 }
 
-const sessions = { get: () => ({}) } as unknown as SessionManager
+/** The session manager as the host uses it: one session for every container, hooks kept. */
+const sessionHooks: Array<(ses: object, containerId: string) => void> = []
+const sessions = {
+  get: () => ({}),
+  configure: (hook: (ses: object, containerId: string) => void) => {
+    sessionHooks.push(hook)
+  }
+} as unknown as SessionManager
 const detachedWindow = { win: { isDestroyed: () => true } } as unknown as WindowHost
 const noEvents = new Proxy({} as TabViewEvents, { get: () => () => undefined })
 
@@ -753,6 +802,316 @@ describe('a hidden tab page and the keyboard', () => {
       expect(focused()).toBe(1)
       expect(keyboard.current).toBe(pageOf(view))
     })
+  })
+})
+
+/**
+ * Chromium reports no hang for a page with a DevTools session on it (`hangMonitor.ts` says
+ * why), so the view runs Zenium's own monitor for such a page while it is on screen in the
+ * focused window, and its words and Chromium's reach the core through one relay (tabs-45).
+ */
+describe('Zenium’s hang monitor on a page with a session (tabs-45)', () => {
+  interface HangPage {
+    readonly id: number
+    readonly renderer: { hung: boolean; answer(): void }
+    readonly debugger: EventEmitter & {
+      attached: boolean
+      commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+    }
+    readonly mainFrame: { scripts: string[] }
+    openDevTools(options: Record<string, unknown>): void
+    closeDevTools(): void
+    emit(event: string, ...args: unknown[]): unknown
+  }
+  interface Made {
+    view: ElectronTabView
+    page: HangPage
+    window: ReturnType<typeof fakeWindow>
+    /** What the core heard, in order. */
+    words: string[]
+  }
+  /** When the second probe of a page that answers nothing runs out. */
+  const HUNG_AT = HANG_PING_MS + HANG_MISSES * HANG_PROBE_TIMEOUT_MS
+  const evaluations = (page: HangPage): Array<Record<string, unknown> | undefined> =>
+    page.debugger.commands.filter((c) => c.method === 'Runtime.evaluate').map((c) => c.params)
+  const setup = (): Made => {
+    keyboard.current = null
+    const host = new ElectronTabViewHost(sessions)
+    const window = fakeWindow()
+    const words: string[] = []
+    const events = new Proxy({} as TabViewEvents, {
+      get: (_t, name) => {
+        if (name === 'onUnresponsive') return () => words.push('hung')
+        if (name === 'onResponsive') return () => words.push('answering')
+        if (name === 'onCrashed') return () => words.push('gone')
+        return () => undefined
+      }
+    })
+    const view = host.createView(
+      { id: 'tab_hang', containerId: 'default' } as Tab,
+      events,
+      window
+    ) as ElectronTabView
+    return { view, page: view.webContents as unknown as HangPage, window, words }
+  }
+  /** The page in front of the focused window, a session (the dark theme's hold) on it, hung. */
+  const hungInFront = (): Made => {
+    const made = setup()
+    made.page.debugger.attached = true
+    made.view.setVisible(true)
+    made.page.renderer.hung = true
+    return made
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('reports the hang of a page in front that carries a session, probing over the session, and its answering again', async () => {
+    const { page, words } = hungInFront()
+    await vi.advanceTimersByTimeAsync(HUNG_AT - 1)
+    expect(words).toEqual([])
+    // Two probes so far, each the cheapest thing the main thread can answer, no domain enabled.
+    expect(evaluations(page)).toEqual([
+      { expression: '1', returnByValue: true },
+      { expression: '1', returnByValue: true }
+    ])
+    expect(page.debugger.commands.map((c) => c.method)).not.toContain('Runtime.enable')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(words).toEqual(['hung'])
+    // The page's loop ends: the probes queued behind it are answered, and the core hears it.
+    page.renderer.answer()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(words).toEqual(['hung', 'answering'])
+    // Answering, the page is asked at the idle pace and nothing more is said.
+    await vi.advanceTimersByTimeAsync(HUNG_AT * 2)
+    expect(words).toEqual(['hung', 'answering'])
+  })
+
+  it('probes through the main frame when the session on the page is an extension’s', async () => {
+    const { page, words } = hungInFront()
+    addForeignDebuggerOwner(page.id)
+    try {
+      await vi.advanceTimersByTimeAsync(HUNG_AT)
+      expect(evaluations(page)).toEqual([])
+      expect(page.mainFrame.scripts).toEqual(['1', '1', '1'])
+      expect(words).toEqual(['hung'])
+    } finally {
+      removeForeignDebuggerOwner(page.id)
+    }
+  })
+
+  it.each<[string, (made: Made) => void]>([
+    [
+      'no session on it (Chromium speaks for it)',
+      ({ page }) => {
+        page.debugger.attached = false
+      }
+    ],
+    [
+      'off screen',
+      ({ view }) => {
+        view.setVisible(false)
+      }
+    ],
+    [
+      'in a window that is not focused',
+      ({ window }) => {
+        window.win.focused = false
+        window.win.emit('blur')
+      }
+    ],
+    [
+      'the toolbox open on it',
+      ({ page }) => {
+        page.openDevTools({ mode: 'bottom', activate: false })
+      }
+    ],
+    [
+      'paused at a breakpoint by the session’s client',
+      ({ page }) => {
+        page.debugger.emit('message', {}, 'Debugger.paused', {})
+      }
+    ]
+  ])('asks nothing of a hung page with %s', async (_what, prepare) => {
+    const made = hungInFront()
+    prepare(made)
+    await vi.advanceTimersByTimeAsync(HUNG_AT * 3)
+    expect(evaluations(made.page)).toEqual([])
+    expect(made.page.mainFrame.scripts).toEqual([])
+    expect(made.words).toEqual([])
+  })
+
+  it('takes the watch up as the page comes in front of the focused window, and puts it down as it leaves – short of a hang reported', async () => {
+    const { view, page, window, words } = setup()
+    page.debugger.attached = true
+    page.renderer.hung = true
+    await vi.advanceTimersByTimeAsync(HUNG_AT)
+    expect(evaluations(page)).toEqual([])
+    // Shown: the count starts here.
+    view.setVisible(true)
+    await vi.advanceTimersByTimeAsync(HUNG_AT - 1)
+    expect(words).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(words).toEqual(['hung'])
+    // The window loses the focus with the hang standing: the page is asked on to its end.
+    window.win.focused = false
+    window.win.emit('blur')
+    const asked = evaluations(page).length
+    await vi.advanceTimersByTimeAsync(HANG_PROBE_TIMEOUT_MS + HANG_PING_MS)
+    expect(evaluations(page).length).toBeGreaterThan(asked)
+    page.renderer.answer()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(words).toEqual(['hung', 'answering'])
+    // Answering and out of the focused window: nothing more is asked.
+    const settled = evaluations(page).length
+    await vi.advanceTimersByTimeAsync(HUNG_AT * 2)
+    expect(evaluations(page).length).toBe(settled)
+    // Back in front: watched again.
+    window.win.focused = true
+    window.win.emit('focus')
+    await vi.advanceTimersByTimeAsync(HANG_PING_MS)
+    expect(evaluations(page).length).toBe(settled + 1)
+  })
+
+  it('counts the misses afresh once the session comes back on a page that lost it', async () => {
+    const { page, words } = hungInFront()
+    await vi.advanceTimersByTimeAsync(HANG_PING_MS + HANG_PROBE_TIMEOUT_MS)
+    // One miss in; the hold lets go of the session (the governor's detach).
+    page.debugger.attached = false
+    page.debugger.emit('detach', {}, 'target closed')
+    await vi.advanceTimersByTimeAsync(HANG_PROBE_TIMEOUT_MS)
+    expect(words).toEqual([])
+    page.debugger.attached = true
+    await vi.advanceTimersByTimeAsync(HUNG_AT - 1)
+    expect(words).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(words).toEqual(['hung'])
+  })
+
+  it('relays Chromium’s own words for a page without a session, and drops a `responsive` that answers no hang', () => {
+    const { page, words } = setup()
+    page.emit('responsive')
+    expect(words).toEqual([])
+    page.emit('unresponsive')
+    page.emit('unresponsive')
+    page.emit('responsive')
+    page.emit('responsive')
+    expect(words).toEqual(['hung', 'hung', 'answering'])
+  })
+
+  it('starts afresh for the renderer the page is reloaded into after a crash, saying nothing of the hang that went with the old one', async () => {
+    const { page, words } = hungInFront()
+    await vi.advanceTimersByTimeAsync(HUNG_AT)
+    expect(words).toEqual(['hung'])
+    page.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
+    expect(words).toEqual(['hung', 'gone'])
+    // Whatever the old renderer's probes come back with is nothing, and so is Chromium's word.
+    page.renderer.answer()
+    await vi.advanceTimersByTimeAsync(1)
+    page.emit('responsive')
+    expect(words).toEqual(['hung', 'gone'])
+    // The new renderer hangs too: reported on its own count.
+    page.renderer.hung = true
+    await vi.advanceTimersByTimeAsync(HUNG_AT - 2)
+    expect(words).toEqual(['hung', 'gone'])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(words).toEqual(['hung', 'gone', 'hung'])
+  })
+
+  it('says nothing more once the page is gone', async () => {
+    const { view, page, words } = hungInFront()
+    await vi.advanceTimersByTimeAsync(HANG_PING_MS)
+    expect(evaluations(page)).toHaveLength(1)
+    view.destroy()
+    await vi.advanceTimersByTimeAsync(HUNG_AT * 2)
+    expect(evaluations(page)).toHaveLength(1)
+    expect(words).toEqual([])
+  })
+})
+
+/**
+ * The site-information card's certificate comes from the session's own verification of the
+ * page's host (`siteCertificates.ts`), read by the page's URL – never from a DevTools session,
+ * which Electron's Security domain answers with nothing.
+ */
+describe('ElectronTabView.certificate', () => {
+  interface HttpsPage {
+    url: string
+    session: object
+    debugger: { log: string[] }
+    close(): void
+  }
+  /** A session as `setCertificateVerifyProc` sees it, with the handshake it is asked about. */
+  class FakeVerifyingSession {
+    proc: ((request: unknown, callback: (verdict: number) => void) => void) | null = null
+    readonly verdicts: number[] = []
+    setCertificateVerifyProc(
+      proc: (request: unknown, callback: (verdict: number) => void) => void
+    ): void {
+      this.proc = proc
+    }
+    verified(hostname: string, issuer: string): void {
+      const cert = {
+        data: '',
+        subjectName: hostname,
+        issuerName: 'R11',
+        subject: { commonName: hostname, organizations: [] },
+        issuer: { commonName: 'R11', organizations: [issuer] },
+        validStart: 1_700_000_000,
+        validExpiry: 1_707_000_000
+      }
+      this.proc?.({ hostname, certificate: cert, validatedCertificate: cert, errorCode: 0 }, (v) =>
+        this.verdicts.push(v)
+      )
+    }
+  }
+  const setup = (): { view: ElectronTabView; page: HttpsPage; handshake: FakeVerifyingSession } => {
+    sessionHooks.length = 0
+    const host = new ElectronTabViewHost(sessions)
+    // The host hooks every session as it is made; the manager runs the hook for this one.
+    const handshake = new FakeVerifyingSession()
+    for (const hook of sessionHooks) hook(handshake, 'default')
+    const view = host.createView(
+      { id: 'tab_https', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    const page = view.webContents as unknown as HttpsPage
+    page.session = handshake
+    return { view, page, handshake }
+  }
+
+  it('reads the certificate the session verified for the page’s host, leaving the verdict to Chromium and the page’s debugger alone', async () => {
+    const { view, page, handshake } = setup()
+    expect(handshake.proc).not.toBeNull()
+    handshake.verified('www.example.com', "Let's Encrypt")
+    expect(handshake.verdicts).toEqual([-3])
+    page.url = 'https://www.example.com/account'
+    await expect(view.certificate()).resolves.toEqual({
+      subject: 'www.example.com',
+      issuer: "Let's Encrypt",
+      validFrom: 1_700_000_000_000,
+      validTo: 1_707_000_000_000,
+      protocol: null
+    })
+    expect(page.debugger.log).toEqual([])
+  })
+
+  it('has nothing for an http page, a host no handshake named, or a page that is gone', async () => {
+    const { view, page, handshake } = setup()
+    handshake.verified('www.example.com', "Let's Encrypt")
+    page.url = 'http://www.example.com/'
+    await expect(view.certificate()).resolves.toBeNull()
+    page.url = 'https://other.example/'
+    await expect(view.certificate()).resolves.toBeNull()
+    page.url = 'https://www.example.com/'
+    page.close()
+    await expect(view.certificate()).resolves.toBeNull()
   })
 })
 
