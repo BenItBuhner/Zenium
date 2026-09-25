@@ -199,10 +199,14 @@ class StartupDemo : DemoHarness("startup-demo-state.json", "android-startup", "s
         const val TAB = "tab_startup"
         /** The runner's fixture server as the emulator reaches it (its host loopback is 10.0.2.2). */
         const val DEFAULT_FIXTURE = "http://10.0.2.2:18931/fixture"
-        /** The fixture web app's colours, the recording's classes (android-startup-frames.mjs): the manifest's `background_color`, the tile, the `theme_color`. */
+        /**
+         * The fixture web app's colours, the recording's classes (android-startup-frames.mjs): the
+         * manifest's `background_color`, the tile, the `theme_color` – the last far from the other
+         * two and from the page colours, since the reader knows the app's own window by its bar.
+         */
         const val WEBAPP_BACKGROUND = 0xFF7A1FA2.toInt()
         const val WEBAPP_TILE = 0xFF00B8D9.toInt()
-        const val WEBAPP_THEME = 0xFF4A148C.toInt()
+        const val WEBAPP_THEME = 0xFFE65100.toInt()
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
         }

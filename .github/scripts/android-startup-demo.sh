@@ -54,7 +54,7 @@
 #   STARTUP_HOLD_MS   how long the cold start's fixture answer is held, 7000 by default (under
 #                     RestoredPictures' 10 s release, past READY on this emulator by 3 s)
 #   WEBAPP_HOLD_MS    how long the web app's page answer is held, 4000 by default (the splash
-#                     dressed and standing well past the hand-over, under StartupSplash's 6 s
+#                     dressed and standing well past the hand-over, under StartupSplash's 10 s
 #                     watchdog from it)
 #   STARTUP_PORT      the fixture server's port, 18931 by default
 #   STARTUP_ASSERT    true to fail on a verdict that did not hold
@@ -232,6 +232,13 @@ frame_failures() {
   echo "$n"
 }
 
+# The reader's hand-over gap line (`gap: N frames (M ms): ...`) for the table, `-` without one.
+gap_reading() {
+  local line
+  line=$(sed -n 's/^gap: //p' "$1" 2> /dev/null | head -n 1 || true)
+  echo "${line:--}"
+}
+
 # --- the acts -----------------------------------------------------------------------------------
 
 rows=()
@@ -365,18 +372,22 @@ cold_start() {
   verdict "$([ "$frame_ms" != - ] && [ "$down_ms" != - ] && [ "$frame_ms" -lt "$down_ms" ] && echo true || echo false)" \
     "the page's own paint took the picture down after the chrome's first frame ($theme)" "frame +$frame_ms ms, painted +$down_ms ms"
 
-  # The recording and the stills, read for their sequence (ruling 2).
+  # The recording and the stills, read for their sequence (ruling 2); the hand-over gap – the
+  # frames of the splash's run that were not the splash – is the reader's `gap:` line.
+  local gap=-
   if [ -n "$slot" ] && command -v ffmpeg > /dev/null 2>&1; then
     local status=0
     node .github/scripts/android-startup-frames.mjs cold "$dir/startup-cold-$theme.mp4" "$slot" "${display%@*}" "$dir/cold-frames.txt" \
       --still splash="$dir/android-startup-design-splash-$theme.png" --still picture="$dir/android-startup-design-restored-picture-$theme.png" --still page="$dir/android-startup-page-painted-$theme.png" \
       --tile "$dir/android-startup-frames-cold-$theme.png" || status=$?
     grep -E '^(PASS|FAIL):' "$dir/cold-frames.txt" | sed "s/)$/; $theme recording)/" >> "$findings" || true
+    gap=$(gap_reading "$dir/cold-frames.txt")
+    echo "hand-over gap ($theme): $gap" >> "$findings"
     failures=$((failures + $(frame_failures "$dir/cold-frames.txt" "$status")))
   else
     verdict false "the cold start's recording was read ($theme)" "$([ -z "$slot" ] && echo 'no slot from the seed' || echo 'no ffmpeg')"
   fi
-  rows+=("| cold ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully_ms | $held | $splash_seen / $splash_after | +$up_ms | +$frame_ms | +$down_ms | $stats |")
+  rows+=("| cold ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully_ms | $held | $splash_seen / $splash_after | +$up_ms | +$frame_ms | +$down_ms | $gap | $stats |")
   echo "marks ($theme): $marks" >> "$findings"
 }
 
@@ -421,7 +432,7 @@ hot_start() {
     grep -E '^(PASS|FAIL):' "$dir/hot-frames.txt" | sed "s/)$/; $theme hot recording)/" >> "$findings" || true
     failures=$((failures + $(frame_failures "$dir/hot-frames.txt" "$status")))
   fi
-  rows+=("| hot ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | - | - | $splash_seen / - | - | - | - | - |")
+  rows+=("| hot ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | - | - | $splash_seen / - | - | - | - | - | - |")
 }
 
 # The activity re-created in the living process (`--activity-clear-task`, the relaunch demo's
@@ -450,7 +461,7 @@ warm_start() {
   startup_log > "$dir/warm-startup-log.txt" || true
   echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; Fully drawn $fully; splash held $held; splash windows one second in: $splash_seen"
   echo "warm start ($theme), the activity re-created: LaunchState ${state:-?}, TotalTime ${total:-?}, Fully drawn $fully, splash held $held, splash windows one second in $splash_seen (recorded, not judged)" >> "$findings"
-  rows+=("| warm, activity re-created ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully | $held | $splash_seen / - | - | - | - | - |")
+  rows+=("| warm, activity re-created ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully | $held | $splash_seen / - | - | - | - | - | - |")
 }
 
 # The web app's design still under $1: a screencap 0.5 s in, read by the frames script on its own
@@ -546,18 +557,22 @@ webapp_launch() {
   verdict "$(case "$held" in *"(ready)") echo true ;; *) echo false ;; esac)" "the page's first frame lifted the web app's splash, not the watchdog ($theme)" "splash held $held"
   verdict "$([ "$dressed_ms" != - ] && [ "$painted_ms" != - ] && [ "$dressed_ms" -lt "$painted_ms" ] && echo true || echo false)" \
     "the splash was dressed before the page's first frame ($theme)" "dressed +$dressed_ms ms, painted +$painted_ms ms"
+  local gap=-
   if command -v ffmpeg > /dev/null 2>&1; then
-    # The whole display is the slot: the edges read the app's ground, the centre its tile.
+    # The whole display is the slot: the edges read the app's ground, the centre its tile, the
+    # status bar the app's own window (its theme colour) before the splash view covers it.
     local status=0 size=${display%@*}
     node .github/scripts/android-startup-frames.mjs webapp "$dir/startup-webapp-$theme.mp4" "0 0 ${size%x*} ${size#*x}" "$size" "$dir/webapp-frames.txt" \
       --still splash="$dir/android-startup-design-webapp-splash-$theme.png" --still page="$dir/android-startup-webapp-page-$theme.png" \
       --tile "$dir/android-startup-frames-webapp-$theme.png" || status=$?
     grep -E '^(PASS|FAIL):' "$dir/webapp-frames.txt" | sed "s/)$/; $theme web app recording)/" >> "$findings" || true
+    gap=$(gap_reading "$dir/webapp-frames.txt")
+    echo "web app hand-over gap ($theme): $gap" >> "$findings"
     failures=$((failures + $(frame_failures "$dir/webapp-frames.txt" "$status")))
   else
     verdict false "the web app launch's recording was read ($theme)" "no ffmpeg"
   fi
-  webapp_rows+=("| web app cold launch ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully_ms | +$dressed_ms | +$painted_ms | $held |")
+  webapp_rows+=("| web app cold launch ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | $fully_ms | +$dressed_ms | +$painted_ms | $held | $gap |")
   adb shell am force-stop "$app_id" || true
   adb shell rm -f "/sdcard/startup-webapp-$theme.mp4" || true
 }
@@ -579,18 +594,18 @@ done
 adb shell cmd uimode night no > /dev/null || true
 
 {
-  echo "MainActivity's starts on the seeded session (one fixture tab, its picture on disk), \`am start -W\`; ms. TotalTime: the window's first frame (the plain window under the splash). Fully drawn: the chrome's first real frame (reportFullyDrawn at READY). The three moments are ms after the start request on logcat's clock: the restored picture up, the READY frame drawn, the page's own paint taking the picture down. Splash windows: in \`dumpsys window\` one second in / after READY."
+  echo "MainActivity's starts on the seeded session (one fixture tab, its picture on disk), \`am start -W\`; ms. TotalTime: the window's first frame (the boot theme's window under the splash). Fully drawn: the chrome's first real frame (reportFullyDrawn at READY). The three moments are ms after the start request on logcat's clock: the restored picture up, the READY frame drawn, the page's own paint taking the picture down. Splash windows: in \`dumpsys window\` one second in / after READY. Hand-over gap: the recording's frames of the splash's run that were not the splash – the app window's own first frame(s) between the platform's starting window and the transferred splash view – blank (a plain window) or ground (the boot theme's, the splash's colour)."
   echo
   echo "device: $(head -n 1 "$out/device.txt"); display $(sed -n 2p "$out/device.txt" | sed 's/.*: //') at $(sed -n 3p "$out/device.txt" | sed 's/.*: //') dpi; $(grep -m 1 'Current WebView' "$out/device.txt" || true)"
   echo
-  echo "| start | LaunchState | TotalTime | WaitTime | Fully drawn | splash held (by) | splash windows | picture up | READY frame | page painted | frame statistics since the process start |"
-  echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+  echo "| start | LaunchState | TotalTime | WaitTime | Fully drawn | splash held (by) | splash windows | picture up | READY frame | page painted | hand-over gap | frame statistics since the process start |"
+  echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
   for row in "${rows[@]}"; do echo "$row"; done
   echo
-  echo "The fixture web app's cold launch (PWA-06, WebAppActivity, the process gone, the page's answer held $webapp_hold_ms ms): TotalTime the platform's window (the fixed ground); the moments are ms after the start request on logcat's clock – the splash dressed in the app's colour and tile at the hand-over, the page's first frame (reportFullyDrawn, the splash lifting)."
+  echo "The fixture web app's cold launch (PWA-06, WebAppActivity, the process gone, the page's answer held $webapp_hold_ms ms): TotalTime the platform's window (the fixed ground); the moments are ms after the start request on logcat's clock – the splash dressed in the app's colour and tile at the hand-over, the page's first frame (reportFullyDrawn, the splash lifting). Hand-over gap: the recording's frames of the app's own window (its bar in the theme colour) before its splash view – ground (the page view's background standing in for the splash's) or bare (the page view white)."
   echo
-  echo "| launch | LaunchState | TotalTime | WaitTime | Fully drawn | splash dressed | page painted | splash held (by) |"
-  echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
+  echo "| launch | LaunchState | TotalTime | WaitTime | Fully drawn | splash dressed | page painted | splash held (by) | hand-over gap |"
+  echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
   for row in "${webapp_rows[@]}"; do echo "$row"; done
   echo
   echo "verdicts: $(grep -c '^PASS' "$findings" || true) held, $failures did not"
