@@ -1,6 +1,9 @@
 import { WebContentsView, type WebContents } from 'electron'
 import type { Rect } from '../../../shared/types'
+import type { Browser } from '../../../core/browser'
 import type { ZenWindow } from '../../../core/window'
+import { extensionPageOpenHandler } from '../extensionPopupOpen'
+import { ElectronTabViewHost } from '../views'
 import type { ApiModel } from './model'
 import type { LoadedExtension } from './types'
 
@@ -34,7 +37,7 @@ export interface PanelViewHost {
  * Electron's panel view: a `WebContentsView` in the extension's primary session, a child of the
  * window's content view like the toolbar popup, hidden until the chrome lays the strip out.
  */
-export function electronPanelViewHost(model: ApiModel): PanelViewHost {
+export function electronPanelViewHost(model: ApiModel, browser: Browser): PanelViewHost {
   return {
     create(win, ext, hooks) {
       const bw = model.browserWindowOf(win)
@@ -53,10 +56,28 @@ export function electronPanelViewHost(model: ApiModel): PanelViewHost {
       view.setVisible(false)
       bw.contentView.addChildView(view)
       const wc = view.webContents
-      wc.setWindowOpenHandler(({ url }) => {
-        if (/^(https?|chrome-extension):/.test(url)) hooks.openUrl(url)
-        return { action: 'deny' }
-      })
+      // Chrome gives the panel's `window.open` a real window: the page Chromium made for the
+      // call joins this window's tabs (or a toolbar-only window for a sized open) as an action
+      // popup's does; without that path a site or extension URL still opens as a tab.
+      const views = browser.platform.views
+      wc.setWindowOpenHandler(
+        extensionPageOpenHandler({
+          views: views instanceof ElectronTabViewHost ? views : undefined,
+          windowFor: () => win,
+          openerUrl: () => wc.getURL(),
+          browser: {
+            tabs: {
+              activeTabFor: (w) => browser.tabs.activeTabFor(w),
+              createTab: (options) => hooks.openUrl(options.url),
+              adoptView: (page, opts, target) => browser.tabs.adoptView(page, opts, target)
+            },
+            get state() {
+              return browser.state
+            },
+            createWindow: (opts) => browser.createWindow(opts)
+          }
+        })
+      )
       let closed = false
       const close = (): void => {
         if (closed) return

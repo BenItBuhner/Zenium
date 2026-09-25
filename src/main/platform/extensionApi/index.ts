@@ -287,7 +287,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.activeTab = new ActiveTabGrants(this)
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
-    this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model, this.browser))
     this.offscreen = new OffscreenApi(electronOffscreenDocumentHost())
     this.tabCapture = new TabCaptureApi(this, this.activeTab, electronStreamRegistrar())
     this.debugger = new DebuggerApi(this)
