@@ -210,6 +210,13 @@ class Extensions(private val host: Host) {
      * attach it was requested for is still the current one (see [AttachEpochs]).
      */
     private val attachEpochs = AttachEpochs()
+    /**
+     * A background document's own worker script is served to it once: the generated page's own
+     * `<script src>`; a `<script>` the worker script appends through the page's bare `document`
+     * with a src that resolves to the script's own path would run the bundle again (see
+     * [WorkerScriptGate]). WebView's IO threads, in the requests' order.
+     */
+    private val workerScriptGate = WorkerScriptGate()
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
     /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
@@ -736,6 +743,7 @@ class Extensions(private val host: Host) {
     /** A new core runtime starts from nothing: every extension of the previous one goes. */
     private fun reset() {
         attachEpochs.reset()
+        workerScriptGate.reset()
         closePopup()
         for (id in backgrounds.keys.toList()) stopBackground(id)
         for (id in units.keys.toList()) {
@@ -1462,7 +1470,10 @@ class Extensions(private val host: Host) {
      * file of their own extension, another extension's web-accessible resources only, and the
      * background view's document is the generated background page wherever the
      * core put it (`backgroundDocument`: an MV3 worker's page lives at the worker script's URL,
-     * so `self.location` reads as in Chrome). Null for everything else: a tab's request then
+     * so `self.location` reads as in Chrome), and that document's own script is served to it
+     * once – its own `<script src>` – and refused as a sub-resource after that ([WorkerScriptGate]:
+     * a `<script>` the worker script appends resolving to its own URL would run it again). Null
+     * for everything else: a tab's request then
      * goes to `Blocking.intercept`, where the extensions' declarativeNetRequest sets are among
      * the rule sets; an extension page's request goes out as it is (Chrome exempts an
      * extension's own requests from its rules).
@@ -1496,8 +1507,29 @@ class Extensions(private val host: Host) {
             // only, as Chrome serves them; the extension's own pages get any file.
             val foreign = if (extensionPage != null) extensionPage.id != id else !ownPage
             if (foreign && !ext.webAccessible.any { it.matches(path) }) return notFound()
-            if (backgroundDocument && request.isForMainFrame && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
-                return response("text/html", 200, "OK", ext.backgroundHtml.toByteArray())
+            if (backgroundDocument && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
+                if (request.isForMainFrame) {
+                    workerScriptGate.documentServed(id)
+                    return response("text/html", 200, "OK", ext.backgroundHtml.toByteArray())
+                }
+                // The background document's own path asked for as a sub-resource of itself: the
+                // generated page's own `<script src>` for the worker script once, and after it
+                // only a `<script>` the worker script appended through the page's bare `document`
+                // with a src that resolved to its own URL (tl;dv's Firebase Auth loader, compat
+                // round 18: `?onload=__iframefcb<N>`), which would run the whole bundle again as a
+                // classic script of the page – a chain that took WebView's one shared renderer
+                // down. Refused, the element gets its `error` event: the loader's own rejection
+                // path, where Chrome's worker (no `document`) leaves it with a ReferenceError.
+                if (extensionPage?.id == id) {
+                    when (workerScriptGate.scriptRequest(id)) {
+                        WorkerScriptGate.Verdict.SERVE -> {}
+                        WorkerScriptGate.Verdict.REFUSE -> {
+                            Log.w(TAG, "refused the ${id.take(8)} background document's own script as a sub-resource: ${url.encodedPath}${url.encodedQuery?.let { "?${it.take(120)}" } ?: ""} (a <script> the worker script appended through the page's document would run the worker again; the element gets its error event)")
+                            return notFound()
+                        }
+                        WorkerScriptGate.Verdict.REFUSED_AGAIN -> return notFound()
+                    }
+                }
             }
             // A module a content script imports on a WebView without isolated worlds evaluates on
             // the page's real global, where the `with` scope's `chrome` is not: the served text is
