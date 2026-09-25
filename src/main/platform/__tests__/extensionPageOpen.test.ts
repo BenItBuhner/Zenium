@@ -58,7 +58,6 @@ function world(opts: { views?: boolean; window?: boolean; activeView?: boolean }
   const host: ExtensionPageOpenHost = {
     views,
     windowFor: () => (opts.window === false ? undefined : win),
-    openerUrl: () => PANEL_URL,
     browser: {
       tabs: { activeTabFor: (w) => (w === win ? active : undefined), createTab, adoptView },
       state: { capabilities: { windows: true } },
