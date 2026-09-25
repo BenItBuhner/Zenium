@@ -1748,14 +1748,15 @@ export class Browser {
   }
 
   /**
-   * The macOS menu bar's "Warn Before Quitting (⌘Q)" (Chrome's checkbox): the one setting behind
-   * Zenium's quit warning – `requestQuit` asks "Quit Zenium?" while it is set, and a window with
-   * several tabs asks before it closes on the same setting. Set with no window needed: the menu
-   * bar stands with every window closed.
+   * The macOS menu bar's "Warn Before Quitting (⌘Q)" (Chrome's checkbox, session-08): while it
+   * is set the quit chord asks to be held – "Hold ⌘Q to Quit" – and quits once it was
+   * (`QuitHoldService`); off, the chord quits at once. Its own setting, apart from the tab-count
+   * warning `warnOnCloseWindow` governs (a window with several tabs closing; a quit from the menu
+   * or the Dock). Set with no window needed: the menu bar stands with every window closed.
    */
   setWarnBeforeQuitting(on: boolean): void {
-    if (this.state.settings.warnOnCloseWindow === on) return
-    this.state.settings.warnOnCloseWindow = on
+    if (this.state.settings.warnBeforeQuitting === on) return
+    this.state.settings.warnBeforeQuitting = on
     this.state.commit()
   }
 

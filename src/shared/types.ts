@@ -2671,6 +2671,14 @@ export interface Settings {
   /** Ask before a window with more than one tab closes (Firefox's warning; Edge has the setting). */
   warnOnCloseWindow: boolean
   /**
+   * Chrome's "Warn Before Quitting (⌘Q)" (session-08), the macOS menu bar's checkbox: the quit
+   * chord asks to be held for a moment – "Hold ⌘Q to Quit" over the front window – and quits
+   * only once it was (`QuitHoldService`); off, the chord quits at once. On by default, as
+   * Chrome's is. Read by the macOS host alone (the menu bar is its; other hosts' quit chords
+   * never hold); absent in profiles from before it existed (read as true).
+   */
+  warnBeforeQuitting: boolean
+  /**
    * Phone: the tab overview's "Close all tabs" asks first ("Close N tabs?"); its "Don't ask
    * again" turns this off. Absent in profiles from before it existed (read as true).
    */

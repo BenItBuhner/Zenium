@@ -139,7 +139,7 @@ export function applicationMenu(browser: Browser): Template {
 
   // Chrome's application menu (`main_menu_builder.mm`): About; Settings, Delete Browsing Data,
   // Import; Services; the hide trio; Warn Before Quitting; Quit.
-  const warnBeforeQuitting = state.settings.warnOnCloseWindow
+  const warnBeforeQuitting = state.settings.warnBeforeQuitting
   const zenium: MenuItemTemplate = {
     label: 'Zenium',
     submenu: [
@@ -159,17 +159,20 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Hide Others', role: 'hideOthers' },
       { label: 'Show All', role: 'unhide' },
       { type: 'separator' },
-      // Chrome's checkbox, arming the one quit warning Zenium has: `requestQuit` asks "Quit
-      // Zenium?" while it is set (the same setting warns before a window with several tabs
-      // closes). The chord in the label is Chrome's wording; the role below owns the key.
+      // Chrome's checkbox (session-08), arming the hold: while it is set the quit chord shows
+      // "Hold ⌘Q to Quit" over the front window and quits once the keys were held
+      // (`QuitHoldService`); off, the chord quits at once. The chord in the label is Chrome's
+      // wording. Its own setting – the tab-count warning stays `warnOnCloseWindow`'s.
       {
         label: 'Warn Before Quitting (⌘Q)',
         type: 'checkbox',
         checked: warnBeforeQuitting,
-        click: () => browser.setWarnBeforeQuitting(!browser.state.settings.warnOnCloseWindow)
+        click: () => browser.setWarnBeforeQuitting(!browser.state.settings.warnBeforeQuitting)
       },
       { type: 'separator' },
-      // The role's chord stays registered: it is what quits with every window closed.
+      // The role's chord stays registered: it is what quits with every window closed. With a
+      // window in front the key table takes ⌘Q first (the hold, or the plain quit) and the
+      // role never sees it; a pick of the row itself quits at once, as Chrome's does.
       { label: 'Quit Zenium', role: 'quit' }
     ]
   }
