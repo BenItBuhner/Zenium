@@ -1,16 +1,20 @@
 name: Android cold start pair
 
-# The P0 rule's record for a change near the boot path: MainActivity's cold start under a BASE
+# The P0 rule's GATE for a change near the boot path: MainActivity's cold start under a BASE
 # build and under the HEAD (this workflow's commit) on the same emulator boot, `am start -W` after
-# `am force-stop`, five runs each, the medians of TotalTime and WaitTime side by side
-# (android-cold-start-pair.sh; the table lands in the job summary and in the artifact as
-# cold-start-pair.txt with every am start answer). The base build is assembled here from the
-# base ref (the same web build and Gradle tasks as the head's, in a worktree; the head's
+# `am force-stop`, N = runs × starts paired starts by each way (the arms interleaved in blocks),
+# judged on the PAIRED MEDIAN of TotalTime and of Fully drawn against the thresholds in
+# android-cold-start-pair.sh (the root's ruling of 25 Sep: over +100 ms on either way fails, the
+# job goes red); the record beside it – the medians of TotalTime, Fully drawn and WaitTime side
+# by side – lands in the job summary and in the artifact as cold-start-pair.txt with every am
+# start answer. The defaults (runs, starts, the timeout) are the calibration's, from null pairs
+# (the same tree in both arms; the PR body of #482, H4 round 2). The base build is assembled here
+# from the base ref (the same web build and Gradle tasks as the head's, in a worktree; the head's
 # node_modules serve it, since the base and the head share a lockfile or the base's own install
 # is made). Dispatch-only: a worker whose change touches the boot path's neighbourhood fires it
-# on its branch and writes the numbers into its PR body; it says nothing about a change being
-# correct, only what the two builds' cold starts measured on the recipe's emulator. The build,
-# the emulator and the Gradle cache live in android-emulator-demo.yml.
+# on its branch and writes the numbers into its PR body; a PASS says nothing about a change being
+# correct, only that the two builds' cold starts measured within the gate on the recipe's
+# emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -26,6 +30,21 @@ on:
         options:
           - '34'
           - '35'
+      runs:
+        description: Blocks (each installs, settles and measures the base, then the head); N = runs × starts pairs
+        required: false
+        type: number
+        default: 15
+      starts:
+        description: Measured cold starts by each way per install
+        required: false
+        type: number
+        default: 2
+      timeout-minutes:
+        description: The job's timeout; a block of 2 starts takes about 4 minutes, the build and the boot about 10
+        required: false
+        type: number
+        default: 150
 
 permissions:
   contents: read
@@ -46,7 +65,8 @@ jobs:
       script-env: |
         P0_BASE_REF=${{ inputs.base-ref || 'main' }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
-        P0_RUNS=5
+        P0_RUNS=${{ inputs.runs || 15 }}
+        P0_STARTS=${{ inputs.starts || 2 }}
         DEMO_OUT=artifacts/android-cold-start-pair
       setup-script: |
         set -euo pipefail
@@ -74,4 +94,4 @@ jobs:
         } >> "$GITHUB_ENV"
       artifact-name: android-cold-start-pair
       artifact-path: artifacts/android-cold-start-pair/
-      timeout-minutes: 60
+      timeout-minutes: ${{ inputs.timeout-minutes || 150 }}

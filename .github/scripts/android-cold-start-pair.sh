@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# The P0 rule's record for a change near the boot path: MainActivity's cold start under a BASE
-# build and under the HEAD build on the same emulator boot – `am start -W` after `am force-stop`,
-# P0_RUNS times each (five by default), the medians of TotalTime (the system's time from the
-# start request to the activity's first frame) and WaitTime side by side, with the chrome's own
-# READY mark (`Fully drawn`), the splash's hold, the boot's marks and the boot's frame statistics
-# (`dumpsys gfxinfo`: ruling 5's main-thread long tasks, none new) where a build has them. Runs
-# on the workflow runner once the emulator has booted (android-emulator-demo.yml's `script`), like the demo
-# drivers; the device is prepared the way android-gesture-demo.sh prepares it (the same display,
-# three-button navigation, the bundled Google apps disabled) so the numbers are the recipe's own.
+# The P0 rule's GATE for a change near the boot path: MainActivity's cold start under a BASE
+# build and under the HEAD build on the same emulator boot – `am start -W` after `am force-stop`
+# – judged on the PAIRED delta, mechanically. The record beside the judgement: the medians of
+# TotalTime (the system's time from the start request to the activity's first frame) and
+# WaitTime side by side, the chrome's own READY mark (`Fully drawn`), the splash's hold, the
+# boot's marks and the boot's frame statistics (`dumpsys gfxinfo`: ruling 5's main-thread long
+# tasks, none new) where a build has them. Runs on the workflow runner once the emulator has
+# booted (android-emulator-demo.yml's `script`), like the demo drivers; the device is prepared
+# the way android-gesture-demo.sh prepares it (the same display, three-button navigation, the
+# bundled Google apps disabled) so the numbers are the recipe's own.
 #
 # Two ways in, each build (round 4): `direct` – the shell's `am start` at MainActivity, the pair
 # as it was, a start no user makes – and `alias` – the launcher's own intent (MAIN/LAUNCHER,
@@ -16,35 +17,80 @@
 # the splash theme from it) and forwards to MainActivity, one launch to the platform, so
 # TotalTime and Fully drawn span the tap to MainActivity's frames. The alias rows are the P0
 # rule's reading of the trampoline itself (alias − direct on the same build, and after − before
-# on the alias); the direct rows stay comparable with every pair before.
+# on the alias).
+#
+# THE GATE (the root's ruling of 25 Sep on the null pair 36154411153: "inside the spread" would
+# pass a 500 ms regression, so the verdict is the paired-median delta against a threshold). The
+# record's `VERDICT delta (paired …)` lines are followed by the judgement, `P0 VERDICT: PASS` or
+# `P0 VERDICT: FAIL — <measure> paired median +N ms on the <direct|alias> way, over the +T ms
+# threshold` (a `::error::` with it and EXIT 1: the workflow goes red). TotalTime's paired median
+# over +TOTAL_THRESHOLD_MS on EITHER way fails; Fully drawn – the chrome's READY, the boot.ts
+# side of the boot path a TotalTime gate cannot see – is judged the same against
+# FULLY_DRAWN_THRESHOLD_MS, its own number from the same null runs (see there); WaitTime is
+# reported, not judged. A pair with a dash on either side is left out; a judged row with FEWER
+# THAN half its pairs valid is INCONCLUSIVE, which fails too. The per-arm medians and the
+# `delta (… the medians)` lines stand as before, byte for byte; only the paired delta is judged.
+#
+# THE DESIGN, and why. A paired difference's median has a standard error near 1.25·σ/√N, and
+# at the raw spread of one pair per install (σ ≈ 210 ms direct, ≈ 320 ms alias with heavy
+# tails on the null pair 36154411153) a ±50 ms null band would want N in the hundreds – so the
+# variance goes down first, then N goes up. (a) THE ARMS' ART STATE is read after every install
+# (`dumpsys package`, the dexopt status of the code) and must agree from one install to the
+# next, or the run fails. The ruling asked for both arms compiled ahead of time (`cmd package
+# compile -m speed -f`), but ART Service compiles a DEBUGGABLE package at `verify` whatever
+# filter is asked, the shell's command included (Dexopter.java, adjustCompilerFilter: "we force
+# vmSafeMode on debuggable apps as well … applies to all compilations (even if they are done via
+# adb shell commands)" – android14-release and android15-release alike, the recipe's two images),
+# and the pair measures the debug APK, which is debuggable. So no AOT step exists for it – and
+# none is needed for the ruling's purpose: `verify` is the only state a debuggable package can
+# be in, so no dexopt can land mid-measurement on either arm, and the JIT is per process and the
+# same on both. The check makes that a recorded fact per install instead of an assumption; the
+# absolute numbers stay comparable with pairs 1–8 of #454 (the same `verify`). AOT arms would
+# take a non-debuggable build for the pair, which is not this tool's to make. (b) each install
+# is measured P0_STARTS times by each way, not once: the run is P0_RUNS BLOCKS A(k) B(k) A(k)
+# B(k) …, k = P0_STARTS, the i-th start of a block paired with the i-th start of the other arm's
+# block, N = P0_RUNS × P0_STARTS pairs – the install and the settle start are paid once per k
+# pairs (the k pairs of a block share an install, so N counts a little less than N independent
+# pairs would; the null runs measure the band as it is). (c) the median stays (robust to the
+# alias's tails; no trimming). N is CALIBRATED on null pairs (the same tree in both arms): the
+# TotalTime paired median inside ±50 ms on both ways on two consecutive null runs at one N is
+# the stopping rule; the numbers are in the PR body of #482 (H4, round 2) and in the workflow's
+# defaults.
 #
 #   P0_BASE_APK   – the base build's debug APK (the caller's setup-script built it from the base ref)
 #   P0_BASE_LABEL – how the base is named in the table (its commit), `base` by default
 #   P0_HEAD_LABEL – how the head is named, `head` by default
-#   P0_RUNS       – measured cold starts per build and way, 5 by default (one more, discarded,
-#                   pays for the install's dexopt and the profile's first run)
+#   P0_RUNS       – blocks, 15 by default: each installs the base, reads its ART state, settles it
+#                   (one discarded start) and measures it, then the head the same
+#   P0_STARTS     – measured cold starts by each way per install, 2 by default; N = P0_RUNS × P0_STARTS
+#   P0_TOTAL_THRESHOLD_MS, P0_FULLY_DRAWN_THRESHOLD_MS – the gate's thresholds, for a calibration
+#                   run only; the defaults below are the gate
 #   DEMO_OUT      – where the record goes (cold-start-pair.txt and the raw am start output)
 #
-# The arms are interleaved (seed 71): P0_RUNS pairs, each installing the base over the head
-# (`adb install -r -d`: the same applicationId, so the profile stays and both boot the same state;
-# -d since the base may carry the newer version code when main has moved past the branch), one
-# discarded start to settle, one measured cold start by each way, then the head the same – A B
-# A B … on the one boot, so the boot's drift (627 ms across one pair's twenty starts measured
-# arm after arm) falls on both arms of a pair alike. The medians per arm and way stand as
-# before; the verdict line is the median of the paired differences (after − before within each
-# pair). Every run keeps one clock for both builds (a build without the READY mark must not
-# read its frame statistics later, nor start its next run later, than one with it): the mark is
-# waited for up to READY_WAIT_S from the start request, the statistics are read STATS_AT_S after
-# it whatever the wait found, and the next start comes NEXT_AT_S after it, the device quiet and
-# the boot – the chrome and the core boot on after the first frame – long over on either. The
-# table is written to the job summary too.
+# The arms are interleaved (seed 71): `adb install -r -d` of one build over the other (the same
+# applicationId, so the profile stays and both boot the same state; -d since the base may carry
+# the newer version code when main has moved past the branch), A B A B … on the one boot, so
+# the boot's drift (627 ms across one pair's twenty starts measured arm after arm) falls on both
+# arms of a pair alike. Every run keeps one clock for both builds (a build without the READY
+# mark must not read its frame statistics later, nor start its next run later, than one with
+# it): the mark is waited for up to READY_WAIT_S from the start request, the statistics are read
+# STATS_AT_S after it whatever the wait found, and the next start comes NEXT_AT_S after it, the
+# device quiet and the boot – the chrome and the core boot on after the first frame – long over
+# on either. The table is written to the job summary too.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
 activity=app.zen.chromium.MainActivity
 alias=app.zen.chromium.icon.Indigo
 tap_flags=0x10200000
-runs=${P0_RUNS:-5}
+runs=${P0_RUNS:-15}
+starts=${P0_STARTS:-2}
+pairs=$((runs * starts))
+# The gate's thresholds (ms, on the paired median; over = FAIL). TotalTime's is the ruling's;
+# Fully drawn's is calibrated on the same null runs (twice its null half-width rounded up to
+# the next 50 ms when that band is wider than ±50 ms, else the same +100).
+TOTAL_THRESHOLD_MS=${P0_TOTAL_THRESHOLD_MS:-100}
+FULLY_DRAWN_THRESHOLD_MS=${P0_FULLY_DRAWN_THRESHOLD_MS:-100}
 READY_WAIT_S=12
 STATS_AT_S=15
 NEXT_AT_S=22
@@ -176,13 +222,29 @@ mark_values() {
   for line in "$@"; do printf '%s\n' "$line" | tr ' ' '\n' | sed -n "s/^$name=//p"; done
 }
 
-# Install one build over the other (the profile stays: the same applicationId), then one discarded
-# start by the direct way: it pays for the install's dexopt and the profile's first run, so the
-# measured starts of either build come after the same warm-up.
+# The installed build's ART state: the dexopt status `dumpsys package` reports for its code
+# (`verify` for a debuggable package whatever compilation was asked, see the header), the distinct
+# values joined; empty when the dump has none.
+dexopt_state() {
+  adb shell dumpsys package "$app_id" 2> /dev/null | tr -d '\r' | grep -o 'status=[a-z-]*' | sed 's/status=//' | sort -u | tr '\n' ' ' | sed 's/ $//' || true
+}
+dexopt_ref=
+# Install one build over the other (the profile stays: the same applicationId), read its ART state
+# (the first install's is the reference; a later one that differs fails the run, the arms not in
+# one state), then one discarded start by the direct way: it pays for the install's dexopt and the
+# profile's first run, so the measured starts of either build come after the same warm-up.
 install_build() {
-  local name=$1 apk=$2 label=$3
+  local name=$1 apk=$2 label=$3 state
   echo "== $name ($label): $apk"
   adb install -r -d -g "$apk"
+  state=$(dexopt_state)
+  echo "  dexopt: ${state:-?}"
+  if [ -z "$dexopt_ref" ]; then
+    dexopt_ref=${state:-?}
+  elif [ "${state:-?}" != "$dexopt_ref" ]; then
+    echo "::error::the arms are not in one ART state: $name ($label) installed at dexopt '${state:-?}', the first install read '$dexopt_ref'"
+    exit 1
+  fi
   to_launcher
   start_app direct > /dev/null
   sleep 8
@@ -259,26 +321,81 @@ paired_median() {
   # shellcheck disable=SC2086
   echo "$(median $diffs) ms (pairs $(join $diffs))"
 }
+# The arguments after the first joined by the first (`; `).
+join_with() {
+  local sep=$1 x joined=
+  shift
+  for x in "$@"; do joined+="${joined:+$sep}$x"; done
+  echo "$joined"
+}
+# A number with its sign: `+61.5`, `-17`, `0`.
+signed() {
+  awk -v x="$1" 'BEGIN { printf (x > 0 ? "+%s" : "%s"), x }'
+}
+# THE GATE on one measure and way: $1 the measure's name, $2 the way, $3 and $4 the before and
+# after arrays, $5 the threshold (ms). Appends the row's reading to `judged` and, when the row
+# fails, its reason to `failures`: the paired median over the threshold, or INCONCLUSIVE when
+# fewer than half the pairs are valid (a dash on either side leaves a pair out).
+judged=()
+failures=()
+judge() {
+  local measure=$1 way=$2 threshold=$5 diffs n med
+  diffs=$(paired "$3" "$4")
+  n=$(printf '%s\n' "$diffs" | grep -c . || true)
+  # shellcheck disable=SC2086
+  med=$(median $diffs)
+  if [ $((n * 2)) -lt "$pairs" ]; then
+    judged+=("$measure, $way: INCONCLUSIVE ($n of $pairs pairs valid)")
+    failures+=("INCONCLUSIVE: $measure on the $way way has $n of $pairs pairs valid")
+  elif awk -v m="$med" -v t="$threshold" 'BEGIN { exit !(m > t) }'; then
+    judged+=("$measure, $way: $(signed "$med") ms, OVER the +$threshold ms threshold ($n of $pairs pairs valid)")
+    failures+=("$measure paired median $(signed "$med") ms on the $way way, over the +$threshold ms threshold")
+  else
+    judged+=("$measure, $way: $(signed "$med") ms, threshold +$threshold ms ($n of $pairs pairs valid)")
+  fi
+}
 
 for name in before before_alias after after_alias; do
   : > "$out/${name//_/-}-am-start.txt"
   eval "${name}_totals=(); ${name}_waits=(); ${name}_states=(); ${name}_drawn=(); ${name}_helds=(); ${name}_marks=(); ${name}_fstats=()"
 done
 
-# The arms interleaved, A B A B … over $runs pairs on the one boot (seed 71: the boot drifts –
-# 627 ms across one pair's twenty starts – and two arms measured back to back read the drift as
-# a difference; a pair's two arms measured minutes apart at most do not). Each pair installs the
-# base, starts it once to settle, measures it once by each way, then the same for the head. The
-# medians per arm and way stand as before; the verdict is the median of the paired differences.
-for i in $(seq 1 "$runs"); do
-  echo "== pair $i of $runs"
+# The arms interleaved in blocks, A(k) B(k) A(k) B(k) … over $runs blocks on the one boot (seed
+# 71: the boot drifts – 627 ms across one pair's twenty starts – and two arms measured back to
+# back read the drift as a difference; a pair's two arms measured minutes apart at most do not).
+# Each block installs the base, reads its ART state, starts it once to settle, measures it k =
+# $starts times by each way (direct, alias, direct, alias …), then the same for the head; the
+# i-th start of a block by a way is pair (block − 1)·k + i, with the head's i-th – the arrays'
+# order, which paired() reads. The medians per arm and way stand as before; the verdict is the
+# median of the paired differences. Each block's wall clock is logged (the workflow's timeout).
+for b in $(seq 1 "$runs"); do
+  block_started=$(date +%s)
+  echo "== block $b of $runs (pairs $(( (b - 1) * starts + 1 ))–$((b * starts)) of $pairs)"
   install_build before "$base_apk" "${P0_BASE_LABEL:-base}"
-  measure_one before direct "$i"
-  measure_one before_alias alias "$i"
+  for s in $(seq 1 "$starts"); do
+    j=$(( (b - 1) * starts + s ))
+    measure_one before direct "$j"
+    measure_one before_alias alias "$j"
+  done
   install_build after "$head_apk" "${P0_HEAD_LABEL:-head}"
-  measure_one after direct "$i"
-  measure_one after_alias alias "$i"
+  for s in $(seq 1 "$starts"); do
+    j=$(( (b - 1) * starts + s ))
+    measure_one after direct "$j"
+    measure_one after_alias alias "$j"
+  done
+  echo "== block $b done in $(( $(date +%s) - block_started )) s"
 done
+
+# The gate, judged before the record is written (the exit status follows it).
+judge TotalTime direct before_totals after_totals "$TOTAL_THRESHOLD_MS"
+judge TotalTime alias before_alias_totals after_alias_totals "$TOTAL_THRESHOLD_MS"
+judge "Fully drawn" direct before_drawn after_drawn "$FULLY_DRAWN_THRESHOLD_MS"
+judge "Fully drawn" alias before_alias_drawn after_alias_drawn "$FULLY_DRAWN_THRESHOLD_MS"
+if [ ${#failures[@]} -eq 0 ]; then
+  verdict="P0 VERDICT: PASS"
+else
+  verdict="P0 VERDICT: FAIL — $(join_with '; ' "${failures[@]}")"
+fi
 
 before_total=$(median "${before_totals[@]}")
 after_total=$(median "${after_totals[@]}")
@@ -316,7 +433,7 @@ values_table() {
 }
 
 {
-  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $runs runs per build and way on one emulator boot, the arms interleaved (A B A B …: each pair installs the base, starts it once to settle, measures it once by each way, then the same for the head; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. The verdict is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter."
+  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $pairs starts per build and way on one emulator boot in $runs blocks of $starts, the arms interleaved (A B A B …: each block installs the base, reads its ART state (dexopt ${dexopt_ref:-?}: a debuggable package is compiled at \`verify\` whatever is asked, so both arms boot in the one state the install leaves), starts it once to settle, measures it $starts times by each way, then the same for the head; the i-th start of a block pairs with the head's i-th; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. THE GATE is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter: TotalTime's paired median over +$TOTAL_THRESHOLD_MS ms on either way fails, Fully drawn's over +$FULLY_DRAWN_THRESHOLD_MS ms fails, a row with fewer than half its pairs valid is INCONCLUSIVE and fails; WaitTime is reported, not judged. The per-arm medians and their deltas are the record beside it."
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
   echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - for a build without the mark. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
@@ -332,6 +449,8 @@ values_table() {
   echo "delta (after - before, the medians), alias: TotalTime $(delta "$after_alias_total" "$before_alias_total") ms, Fully drawn $(delta "$after_alias_fully" "$before_alias_fully") ms, WaitTime $(delta "$after_alias_wait" "$before_alias_wait") ms"
   echo "VERDICT delta (paired: the median of after - before within each pair), direct: TotalTime $(paired_median before_totals after_totals), Fully drawn $(paired_median before_drawn after_drawn), WaitTime $(paired_median before_waits after_waits)"
   echo "VERDICT delta (paired: the median of after - before within each pair), alias: TotalTime $(paired_median before_alias_totals after_alias_totals), Fully drawn $(paired_median before_alias_drawn after_alias_drawn), WaitTime $(paired_median before_alias_waits after_alias_waits)"
+  echo "P0 gate (the paired medians against the thresholds, $pairs pairs): $(join_with '; ' "${judged[@]}")"
+  echo "$verdict"
   echo "the trampoline's cost (alias - direct, the same build): before TotalTime $(delta "$before_alias_total" "$before_total") ms, Fully drawn $(delta "$before_alias_fully" "$before_fully") ms; after TotalTime $(delta "$after_alias_total" "$after_total") ms, Fully drawn $(delta "$after_alias_fully" "$after_fully") ms"
   # The boot's marks, where a build logs them: one row per name, the medians over the runs, each way.
   if [ -n "$(mark_names "${before_marks[@]}" "${after_marks[@]}" "${before_alias_marks[@]}" "${after_alias_marks[@]}")" ]; then
@@ -350,4 +469,9 @@ values_table() {
 } | tee "$out/cold-start-pair.txt"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   { echo "### MainActivity cold start, before / after"; echo; cat "$out/cold-start-pair.txt"; } >> "$GITHUB_STEP_SUMMARY"
+fi
+# The gate's exit: a FAIL is the workflow's red (the record above is written and uploaded first).
+if [ ${#failures[@]} -ne 0 ]; then
+  echo "::error::$verdict"
+  exit 1
 fi
