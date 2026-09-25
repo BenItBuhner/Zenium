@@ -1,12 +1,15 @@
 package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
 import android.graphics.Rect
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.lifecycle.LifecycleOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -38,7 +41,10 @@ import kotlin.math.abs
  *     the window down with its task, and the tab the user comes back to is the page, the chrome a
  *     reader's again after the close; 3d: the window's skip buttons follow the page's declared
  *     handlers alone – cleared they go, the session ended leaves Close alone, a page without them
- *     never shows them;
+ *     never shows them; 3e: an ending fired with the screen off is held (Chrome's
+ *     `mDismissPending`) and finished at the unlock – the window gone, not standing – the hold
+ *     consumed once by the host's own log, though `KeyguardManager` still calls the keyguard locked
+ *     as the activity starts (the platform's unlock order; the review's REQUIRED 1 at `2341ec967`);
  *  4. Home with no fullscreen video – a page without one, and the clip playing inline – does
  *     nothing new: no window (Chrome's auto-enter is the fullscreen video's alone).
  *
@@ -94,6 +100,7 @@ class PipDemo : MediaDemoBase("android-pip") {
         declaredSkipsOnly()
         theXPausesTheWindowsTabAlone()
         noFullscreenVideoNoWindow()
+        screenOffEndingFinishesAtTheUnlock()
         note("\nend: pip=${inPip()} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling} fullscreenTab=${host.fullscreenTab?.tabId}; ${describeTab(TAB)}")
     }
 
@@ -417,6 +424,97 @@ class PipDemo : MediaDemoBase("android-pip") {
         SystemClock.sleep(1_000)
     }
 
+    /**
+     * 3e. An ending fired while the screen is off is held (Chrome's `mDismissPending`) and finished
+     * at the unlock – the window GONE, not standing. A second clip tab in the window; the lock
+     * screen on (swipe, no credential – the emulator boots with it disabled, a phone has one) and
+     * the screen off; the window's tab closed from the core – the ending held, by the host's own
+     * line; the screen on (the lock screen up, the window hidden behind it, the hold still held:
+     * the pinned task's activity is not started under the keyguard); the keyguard dismissed – the
+     * platform starts the activity as the keyguard goes away, BEFORE SystemUI reports it gone, so
+     * `KeyguardManager.isKeyguardLocked` still answers true as `onStart` consumes the hold (the
+     * review's REQUIRED 1 at `2341ec967`: read there it re-held the ending, and the window stood).
+     * The host's log is the record: the hold's line(s) before the wake, ONE ending line after it and
+     * no new hold. Runs last: it turns the lock screen on and off again, and a keyguard left standing
+     * would take every later scene with it.
+     */
+    private fun screenOffEndingFinishesAtTheUnlock() {
+        note("\n3e. an ending fired with the screen off is held and finished at the unlock: the window gone, not standing (the onStart consumer; REQUIRED 1 at 2341ec967)")
+        frontApp()
+        val keyguard = app.getSystemService(KeyguardManager::class.java)
+        val power = app.getSystemService(PowerManager::class.java)
+        val clip = createTab("${server.origin}/video", active = true)
+        if (clip == null) {
+            check("a second clip tab opens for the screen-off ending", false)
+            return
+        }
+        waitTitle(clip, 20_000) { it.startsWith("MD|kind:video") }
+        poll(10_000) { pageJs("document.getElementById('media').videoWidth", clip) != "0" }
+        SystemClock.sleep(1_000)
+        val played = tapIn(clip, "play", "Play video", "the clip tab's clip plays") { field("state", clip) == "playing" }
+        val asked = if (played) coreInvoke("media.pictureInPicture", """{"tabId":"$clip"}""") else "not asked"
+        val entered = played && awaitPip(true, 10_000)
+        poll(5_000) { host.tabs.filling == clip }
+        SystemClock.sleep(SETTLE_MS)
+        note("  the clip tab $clip in the window: $entered (media.pictureInPicture -> $asked); pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling}; lifecycle ${lifecycleState()}")
+        if (!entered) {
+            check("the window stands for the screen-off ending", false)
+            coreInvoke("tab.close", """{"tabId":"$clip"}""")
+            coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
+            return
+        }
+        shot("17-window-before-sleep")
+        note("  lock screen enabled for the scene: ${shell("locksettings set-disabled false").trim()}")
+        try {
+            shell("svc power stayon false")
+            shell("input keyevent KEYCODE_SLEEP")
+            val dark = poll(6_000) { !power.isInteractive }
+            SystemClock.sleep(2_000)
+            note("  screen off: interactive=${power.isInteractive} (went dark: $dark) keyguard locked=${keyguard.isKeyguardLocked}; pip=${inPip()} pip tab=${host.media.pictureInPictureTab}; lifecycle ${lifecycleState()}")
+            check("the screen goes off with the window up, the task still pinned", dark && inPip() && host.media.pictureInPictureTab == clip)
+            // The ending with the screen off: the window's tab closed from the core.
+            coreInvoke("tab.close", """{"tabId":"$clip"}""")
+            val held = poll(8_000) { hostLog(clip).any { "held for onStart" in it } }
+            SystemClock.sleep(1_500)
+            val linesHeld = hostLog(clip)
+            note("  tab.close $clip with the screen off: held=$held; pip=${inPip()} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling}; tabs ${coreState().getJSONObject("tabs").length()}; lifecycle ${lifecycleState()}\n  the host's lines so far:\n${linesHeld.joinToString("\n") { "    $it" }}")
+            check("the ending fired with the screen off is held for onStart (the host's line), not carried out: the window's record kept", held && inPip() && host.media.pictureInPictureTab == clip && linesHeld.none { "ending picture-in-picture" in it })
+            shell("input keyevent KEYCODE_WAKEUP")
+            poll(6_000) { power.isInteractive }
+            SystemClock.sleep(2_500)
+            val lockedOnWake = keyguard.isKeyguardLocked
+            note("  awake: interactive=${power.isInteractive} keyguard locked=$lockedOnWake; pip=${inPip()} pip tab=${host.media.pictureInPictureTab}; in front: ${ui.rootInActiveWindow?.packageName}; lifecycle ${lifecycleState()}; new host lines: ${hostLog(clip).size - linesHeld.size}")
+            check("the lock screen stands on wake with the hold still held: the pinned task's activity is not started under the keyguard", lockedOnWake && inPip() && host.media.pictureInPictureTab == clip && hostLog(clip).size == linesHeld.size)
+            shot("18-lock-screen-hold-held")
+            beat()
+            shell("wm dismiss-keyguard")
+            val gone = awaitPip(false, 10_000)
+            val unlocked = poll(8_000) { !keyguard.isKeyguardLocked }
+            if (!unlocked) {
+                note("  the keyguard stood after wm dismiss-keyguard: a swipe")
+                unlock(keyguard)
+            }
+            SystemClock.sleep(2_000)
+            val lines = hostLog(clip)
+            val fresh = lines.drop(linesHeld.size)
+            val front = ui.rootInActiveWindow?.packageName?.toString()
+            note("  the keyguard dismissed: unlocked=$unlocked (locked now=${keyguard.isKeyguardLocked}); the window gone=$gone; pip=${inPip()} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling}; in front: $front; lifecycle ${lifecycleState()}\n  the host's lines since the wake:\n${fresh.joinToString("\n") { "    $it" }}")
+            check("the window is GONE at the unlock, not standing: the held ending finished from onStart whatever the keyguard read", gone && host.media.pictureInPictureTab == null)
+            check("the hold consumed once (the host's log): one ending line for the tab since the wake, no new hold", fresh.count { "ending picture-in-picture for $clip" in it } == 1 && fresh.none { "held for onStart" in it })
+            check("the ended window's task is behind the launcher (Chrome's dismissal), the unlock landing on the launcher", front != app.packageName)
+            shot("19-after-unlock-window-gone")
+        } finally {
+            shell("locksettings set-disabled true")
+            shell("svc power stayon true")
+        }
+        bringToFront()
+        frontApp()
+        coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
+        SystemClock.sleep(1_000)
+        note("  back: active=${activeCoreTab()?.optString("id")} pip=${inPip()} filling=${host.tabs.filling} keyguard locked=${keyguard.isKeyguardLocked}; ${describeTab(TAB)}")
+        check("the demo tab is the one the user comes back to, inline, the lock screen off again", !inPip() && host.tabs.filling == null && activeCoreTab()?.optString("id") == TAB && !keyguard.isKeyguardLocked)
+    }
+
     // --- 4. no fullscreen video, no window --------------------------------------------------------
 
     private fun noFullscreenVideoNoWindow() {
@@ -630,6 +728,24 @@ class PipDemo : MediaDemoBase("android-pip") {
         var ran = after.time - before.time
         if (ran < 0 && before.duration.isFinite() && before.duration > 0) ran += before.duration
         return ran >= 0 && ran >= expected - 3.5 && ran <= expected + 1.0
+    }
+
+    /**
+     * The host's lines about `tabId` in the logcat (`ZenMedia`, [MediaSessions]): an ending held
+     * ("held for onStart"), one carried out ("ending picture-in-picture for"), a record dropped, a
+     * `moveTaskToBack` refused. The buffer is read, never cleared (the run's own logcat stream is
+     * the job's artifact).
+     */
+    private fun hostLog(tabId: String): List<String> =
+        shell("logcat -d -s ZenMedia:I").lines()
+            .filter { tabId in it }
+            .map { it.substringAfter("ZenMedia").substringAfter(": ") }
+
+    /** The activity's lifecycle state (CREATED while stopped: the screen off, or under the keyguard; STARTED with the window up). */
+    private fun lifecycleState(): String {
+        var state = "?"
+        instrumentation.runOnMainSync { state = (activity as? LifecycleOwner)?.lifecycle?.currentState?.name ?: "no lifecycle owner" }
+        return state
     }
 
     /** Whether `view` is the size of `win` (within a few px: the window's own rounding). */
