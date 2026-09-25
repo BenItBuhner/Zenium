@@ -45,8 +45,8 @@ import {
   parseInternalPageUrl,
   sameInternalPage
 } from '../shared/internalPages'
-import { DEFAULT_CONTAINER_ID, type Tab } from '../shared/types'
-import { titleForUrl } from '../shared/url'
+import { DEFAULT_CONTAINER_ID, type OverlayKind, type Tab } from '../shared/types'
+import { BLANK_URL, titleForUrl } from '../shared/url'
 import { orderedTabsForSpace, tabVisibleIn } from './model'
 
 /** The section addresses a chrome page tab visited, and which one it shows. */
@@ -449,6 +449,94 @@ export class PageService {
   /** The tab is gone: forget its section history. */
   onTabRemoved(tabId: string): void {
     this.histories.delete(tabId)
+  }
+
+  /**
+   * The window's layout changed (`window.formFactor`): {@link opensAsTab} is kept, not only
+   * applied at the open. A chrome page tab whose page is not a tab in the layout the chrome now
+   * shows gives way to the page's surface there – a tablet tab holding `zen://history` when the
+   * window narrows into the phone class (a fold closing, a freeform or split-screen resize under
+   * 600 px, `classifyViewport`) would otherwise keep drawing the desktop page inside a chrome
+   * that can never open it; and the same at the chrome's first report after a restore, when a
+   * tablet profile's page tab comes up on a phone (`formFactor` starts as the desktop's,
+   * `ZenWindow`). Each such tab closes – with no Recently closed entry, since a restored one
+   * would put the tab back on the layout that cannot hold it, and a blank tab in its place when
+   * it was all its space had, as the root back rule leaves one – and the active tab's page opens
+   * as its overlay over what the close leaves in front (`reveal`: an opening the browser makes
+   * for something that happened, not a repeat request that toggles). A page with no overlay
+   * (the task manager) closes and nothing opens, as its ask is dropped. A layout that holds
+   * every page tab the window has – the tablet's, the desktop's, whose full window never leaves
+   * its class – changes nothing. The other way, a phone panel up when the window widens, is the
+   * chrome's (`useStageContinuity`): the panel is `uiStore`'s, not a tab.
+   */
+  reconcileLayout(win: ZenWindow): void {
+    if (!this.asTabs) return
+    const tabs = this.browser.tabs
+    const activeId = tabs.activeTabFor(win)?.id
+    const handed = this.tabsInWindow(win).filter((t) => {
+      const page = this.pageOf(t)
+      return page !== null && page.render === 'chrome' && !this.opensAsTab(page, win)
+    })
+    if (handed.length === 0) return
+    let overlay: { kind: OverlayKind; folderId?: string } | null = null
+    for (const tab of handed) {
+      const page = this.pageOf(tab)
+      if (tab.id === activeId && page?.overlay) {
+        // The overlay's contract, as `open` writes it: the manager's `folder` is its `folderId`.
+        overlay = { kind: page.overlay, folderId: this.parse(tab.url)?.query?.folder }
+      }
+      this.closeHandedOver(tab, win)
+    }
+    if (overlay) {
+      this.browser.emit(
+        'overlay.open',
+        { kind: overlay.kind, folderId: overlay.folderId, reveal: true },
+        win
+      )
+    }
+    this.browser.state.commit()
+  }
+
+  /**
+   * Close a page tab the layout no longer holds. The space keeps a tab: when this is the last
+   * one the window can show there, a blank tab takes its place first (same container, the
+   * new-tab page on the phone), so what the close leaves in front is a page and not the empty
+   * space. A pinned one is unpinned first: it goes as any other, not reset to its page as
+   * `pinnedCloseBehavior` would keep it. `archiveTab`: the close leaves no Recently closed entry
+   * (its entry comes back here and is dropped) – the tab was handed over, not closed, and
+   * nothing brings a page tab back onto a layout that cannot hold it.
+   */
+  private closeHandedOver(tab: Tab, win: ZenWindow): void {
+    const tabs = this.browser.tabs
+    const space = win.activeSpace()
+    const others = orderedTabsForSpace(
+      this.browser.state.model,
+      space,
+      this.browser.state.settings.containerSpecificEssentials,
+      win.id
+    ).filter((t) => t.id !== tab.id)
+    if (tab.spaceId === space.id && others.length === 0) {
+      tabs.createTab(
+        { url: BLANK_URL, active: true, afterTabId: tab.id, containerId: tab.containerId },
+        win
+      )
+    }
+    if (tab.pinned || tab.essential) tabs.togglePin(tab.id, win)
+    tabs.archiveTab(tab.id, win)
+  }
+
+  /**
+   * Every tab this window can show, in any of its spaces: a blank or private window's own
+   * tabs, a synced window's share of the model's (`tabVisibleIn`), essentials aside – a page
+   * tab is never one (v2 §10.1).
+   */
+  private tabsInWindow(win: ZenWindow): Tab[] {
+    const m = this.browser.state.model
+    if (win.localSpace) return this.tabsInSpace(win)
+    return Object.values(m.tabs).filter(
+      (t) =>
+        tabVisibleIn(t, win.id) && t.spaceId !== null && m.spaces.some((s) => s.id === t.spaceId)
+    )
   }
 
   /** The devices whose groups the History page keeps folded, in the order they were folded. */

@@ -1365,6 +1365,213 @@ describe('a closed page tab (Recently closed, Ctrl+Shift+T)', () => {
   })
 })
 
+describe('the page tabs follow the window’s class (the class-change seam, W6-S1)', () => {
+  function overlays(f: Fixture): unknown[] {
+    return f.sent.filter((s) => s.name === 'overlay.open').map((s) => s.payload)
+  }
+
+  /** The chrome reports its layout, as `useFormFactorReport` does at mount and on every change. */
+  function report(f: Fixture, formFactor: 'phone' | 'tablet' | 'desktop'): void {
+    f.browser.handleCommand(f.win, 'window.formFactor', { formFactor })
+  }
+
+  /** A tablet-class window holding a site and, over it, the page tab `id` (a `page.open` on the tablet). */
+  function tabletWith(id: string, query?: Record<string, string>): { f: Fixture; site: Tab; tabId: string } {
+    const f = fixture()
+    report(f, 'tablet')
+    const site = openSite(f, 'https://a.test/')
+    const tabId = f.browser.handleCommand(f.win, 'page.open', { id, query }) as string
+    expect(f.browser.tabs.tab(tabId)?.url).toBe(
+      query ? `zen://${id}?${new URLSearchParams(query)}` : `zen://${id}`
+    )
+    expect(activeTab(f)?.id).toBe(tabId)
+    return { f, site, tabId }
+  }
+
+  it('hands a tablet’s active zen://history tab to the phone’s History sheet when the window narrows into the phone class', () => {
+    const { f, site, tabId } = tabletWith('history')
+    const before = overlays(f).length
+    report(f, 'phone')
+    // The tab is gone – the phone can never open one – and the tab before it stands in front.
+    expect(f.browser.tabs.tab(tabId)).toBeUndefined()
+    expect(spaceUrls(f).some((u) => u.startsWith('zen://history'))).toBe(false)
+    expect(activeTab(f)?.id).toBe(site.id)
+    // Its page opens as the phone's sheet over it, as something that happened (reveal), not a toggle.
+    expect(overlays(f).slice(before)).toEqual([
+      { kind: 'history', folderId: undefined, reveal: true }
+    ])
+    // Handed over, not closed: nothing in Recently closed would put the tab back on the phone.
+    expect(f.browser.session.summaries()).toEqual([])
+    // On the phone the same ask stays the sheet; the model holds no page tab.
+    expect(f.browser.pages.opensPageAsTab('history', f.win)).toBe(false)
+  })
+
+  it('does the same for the bookmarks manager (its folder as the panel’s) and for Downloads', () => {
+    const bookmarks = tabletWith('bookmarks', { folder: 'f_work' })
+    report(bookmarks.f, 'phone')
+    expect(bookmarks.f.browser.tabs.tab(bookmarks.tabId)).toBeUndefined()
+    expect(overlays(bookmarks.f).pop()).toEqual({
+      kind: 'bookmarks',
+      folderId: 'f_work',
+      reveal: true
+    })
+    expect(activeTab(bookmarks.f)?.id).toBe(bookmarks.site.id)
+
+    const downloads = tabletWith('downloads')
+    report(downloads.f, 'phone')
+    expect(downloads.f.browser.tabs.tab(downloads.tabId)).toBeUndefined()
+    expect(overlays(downloads.f).pop()).toEqual({
+      kind: 'downloads',
+      folderId: undefined,
+      reveal: true
+    })
+    expect(activeTab(downloads.f)?.id).toBe(downloads.site.id)
+  })
+
+  it('closes a page tab in the background without opening its sheet; the active one alone opens', () => {
+    const { f, tabId: downloads } = tabletWith('downloads')
+    const history = f.browser.handleCommand(f.win, 'page.open', { id: 'history' }) as string
+    const site = openSite(f, 'https://b.test/')
+    // History and Downloads stand behind the site the user is on.
+    expect(activeTab(f)?.id).toBe(site.id)
+    const before = overlays(f).length
+    report(f, 'phone')
+    expect(f.browser.tabs.tab(downloads)).toBeUndefined()
+    expect(f.browser.tabs.tab(history)).toBeUndefined()
+    expect(activeTab(f)?.id).toBe(site.id)
+    expect(overlays(f).slice(before)).toEqual([])
+    expect(f.browser.session.summaries()).toEqual([])
+
+    // Two page tabs, the History one in front: both go, the front one's sheet opens.
+    const g = tabletWith('downloads')
+    const front = g.f.browser.handleCommand(g.f.win, 'page.open', { id: 'history' }) as string
+    expect(activeTab(g.f)?.id).toBe(front)
+    report(g.f, 'phone')
+    expect(g.f.browser.tabs.tab(g.tabId)).toBeUndefined()
+    expect(g.f.browser.tabs.tab(front)).toBeUndefined()
+    expect(overlays(g.f).filter((o) => (o as { reveal?: boolean }).reveal)).toEqual([
+      { kind: 'history', folderId: undefined, reveal: true }
+    ])
+  })
+
+  it('leaves a page with a phone layout – Settings, on its section – exactly as it was', () => {
+    const f = fixture()
+    report(f, 'tablet')
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'privacy') ?? ''
+    const tab = f.browser.tabs.tab(id)
+    const snapshot = { ...tab }
+    const urls = spaceUrls(f)
+    const before = overlays(f).length
+    report(f, 'phone')
+    expect(f.browser.tabs.tab(id)).toEqual(snapshot)
+    expect(spaceUrls(f)).toEqual(urls)
+    expect(activeTab(f)?.id).toBe(id)
+    expect(overlays(f).slice(before)).toEqual([])
+    // Its history is intact: back still lands on the landing page.
+    back(f, id)
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://settings')
+  })
+
+  it('changes nothing between the tablet and the desktop classes, or for a report of the class the window has', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'history' }) as string
+    const urls = spaceUrls(f)
+    const before = overlays(f).length
+    // The desktop's chrome reports the class the window started in.
+    report(f, 'desktop')
+    // A touch screen with a keyboard (DeX docking) is the tablet class; the desktop again after.
+    report(f, 'tablet')
+    report(f, 'desktop')
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://history')
+    expect(spaceUrls(f)).toEqual(urls)
+    expect(activeTab(f)?.id).toBe(id)
+    expect(overlays(f).slice(before)).toEqual([])
+    expect(f.browser.session.summaries()).toEqual([])
+  })
+
+  it('hands a restored tablet profile’s page tab over at the chrome’s first report on a phone (the restore seam)', () => {
+    const space = createSpace('Work', '')
+    const site = createTabRecord({ spaceId: space.id, containerId: 'default', url: 'https://a.test/' })
+    const history = createTabRecord({
+      spaceId: space.id,
+      containerId: 'default',
+      url: 'zen://history?q=zen'
+    })
+    space.tabIds = [site.id, history.id]
+    space.activeTabId = history.id
+    const f = fixture({
+      profile: {
+        version: 2,
+        spaces: [space],
+        tabs: [site, history],
+        essentialTabIds: [],
+        activeSpaceId: space.id,
+        settings: { onboardingDone: true }
+      }
+    })
+    // Restored as the tablet left it: the window's class is the desktop's until the chrome reports.
+    expect(f.browser.tabs.tab(history.id)?.url).toBe('zen://history?q=zen')
+    expect(activeTab(f)?.id).toBe(history.id)
+    report(f, 'phone')
+    expect(f.browser.tabs.tab(history.id)).toBeUndefined()
+    expect(activeTab(f)?.id).toBe(site.id)
+    expect(overlays(f).pop()).toEqual({ kind: 'history', folderId: undefined, reveal: true })
+    expect(f.browser.session.summaries()).toEqual([])
+    // The same profile on a tablet keeps its tab.
+    const g = fixture({
+      profile: {
+        version: 2,
+        spaces: [space],
+        tabs: [site, history],
+        essentialTabIds: [],
+        activeSpaceId: space.id,
+        settings: { onboardingDone: true }
+      }
+    })
+    report(g, 'tablet')
+    expect(g.browser.tabs.tab(history.id)?.url).toBe('zen://history?q=zen')
+    expect(overlays(g)).toEqual([])
+  })
+
+  it('leaves a blank tab in place of a page tab that was all its space had, the sheet over it', () => {
+    const f = fixture()
+    report(f, 'tablet')
+    const first = activeTab(f)
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'history' }) as string
+    if (first) f.browser.tabs.closeTab(first.id, true, f.win)
+    expect(spaceUrls(f)).toEqual(['zen://history'])
+    report(f, 'phone')
+    expect(f.browser.tabs.tab(id)).toBeUndefined()
+    expect(spaceUrls(f)).toEqual(['zen://blank'])
+    expect(activeTab(f)?.url).toBe('zen://blank')
+    expect(overlays(f).pop()).toEqual({ kind: 'history', folderId: undefined, reveal: true })
+  })
+
+  it('unpins a pinned page tab rather than resetting it to its page, and drops a page with no phone surface', () => {
+    const { f, site, tabId } = tabletWith('history')
+    f.browser.tabs.togglePin(tabId, f.win)
+    expect(f.browser.tabs.tab(tabId)?.pinned).toBe(true)
+    report(f, 'phone')
+    expect(f.browser.tabs.tab(tabId)).toBeUndefined()
+    expect(activeTab(f)?.id).toBe(site.id)
+    expect(overlays(f).pop()).toEqual({ kind: 'history', folderId: undefined, reveal: true })
+
+    // The task manager is the desktop's alone and has no overlay: a tab of it (a desktop-class
+    // window's) closes when the window becomes a tablet, and nothing opens in its place.
+    const g = fixture()
+    const home = openSite(g, 'https://a.test/')
+    const tasks = g.browser.tabs.createTab({ url: 'zen://tasks', active: true }, g.win)
+    expect(g.browser.pages.isChromePage(tasks)).toBe(true)
+    const before = overlays(g).length
+    report(g, 'tablet')
+    expect(g.browser.tabs.tab(tasks.id)).toBeUndefined()
+    expect(activeTab(g)?.id).toBe(home.id)
+    expect(overlays(g).slice(before)).toEqual([])
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Document pages: the same route with a page view (the new tab page, once the desktop
 // registers it). Tried here with a registry the desktop's entries would look like.
