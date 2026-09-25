@@ -17,6 +17,10 @@ name: Android menu edit demo
 # the theme matrix has no single emulator-died output to key a second boot on (as the widget demo).
 on:
   workflow_dispatch:
+  # TEMPORARY (W6-3, PR #483): the branch's own runs while the change menu is proved on the
+  # emulator; removed before the PR is ready.
+  push:
+    branches: [cursor/android-change-menu-ddbd]
 
 permissions:
   contents: read
