@@ -16,11 +16,14 @@ class ZenApplication : Application() {
         super.onCreate()
         // WebView's start-up, asynchronously (OS-27): the provider's loading – its APK's class
         // loader and native library, the part of Chromium's browser-process start that needs no
-        // UI thread – on a thread of its own, from here, while the launcher's trampoline and the
+        // UI thread – on a thread of its own, from here, while the icon's trampoline and the
         // activity's own creation go on; the UI-thread part follows as posted tasks. Before this
-        // the first static WebView call below did the whole of it, synchronously, here on the
-        // main thread. The result is WebView's own accounting of the UI thread's share, noted on
-        // the boot marks line (`webviewUi`, `webviewTask`: the total and the longest task, ms).
+        // the first static WebView call (now inside onResult) did the whole of it, synchronously,
+        // here on the main thread. Two paths lie behind the one call: the provider's own
+        // asynchronous start-up where the installed WebView has it, which accounts for the UI
+        // thread's share (`webviewUi`, `webviewTask` on the boot marks line: the total and the
+        // longest task, ms), and the library's fallback for a provider without it, which returns
+        // no accounting – the `webview start-up:` line names the path that ran.
         val config = WebViewStartUpConfig.Builder(Executors.newSingleThreadExecutor { r -> Thread(r, "zen-webview-startup") })
             .setShouldRunUiThreadStartUpTasks(true)
             .build()
@@ -30,8 +33,15 @@ class ZenApplication : Application() {
                 // chrome WebView shows the browser core's console, each tab WebView the page.
                 // The flag is global and takes effect on views already made.
                 WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
-                result.totalTimeInUiThreadMillis?.let { BootMarks.note("webviewUi", it) }
-                result.maxTimePerTaskInUiThreadMillis?.let { BootMarks.note("webviewTask", it) }
+                val ui = result.totalTimeInUiThreadMillis
+                val task = result.maxTimePerTaskInUiThreadMillis
+                ui?.let { BootMarks.note("webviewUi", it) }
+                task?.let { BootMarks.note("webviewTask", it) }
+                Log.i(
+                    StartupSplash.TAG,
+                    if (ui != null) "webview start-up: the provider's asynchronous start-up (ui $ui ms, longest task ${task ?: "-"} ms)"
+                    else "webview start-up: the library's fallback (the provider has no asynchronous start-up; no UI-thread accounting)"
+                )
                 val blocking = result.uiThreadBlockingStartUpLocations
                 if (!blocking.isNullOrEmpty()) {
                     // Something started WebView on the UI thread before this finished: where from.
