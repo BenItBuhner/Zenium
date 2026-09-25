@@ -502,9 +502,6 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
             layerShown && heroPagePhase == "hidden",
             "layer ${if (layerShown) "shown" else "unseen"}, hero page view '$heroPagePhase'"
         )
-        // The still is a capture of the screen: it wants the frame that carries the layer drawn,
-        // not the one before it (the software GPU's raster of the whole layer takes a while).
-        finding("mid-pull the layer's frame was drawn ${paintedFrames()} (the harness's wall clock; a reading)")
         val midPull = jsText(OVERVIEW_TRANSFORM)
         val midPhase = jsText(OVERVIEW_PHASE)
         // The direction's proof (§9.36 as amended, the design gate's redirect): the offset is
@@ -551,6 +548,13 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
             "1:1 at the first hold: the foot ${layerFoot.toInt()} px below the toolbar's edge against the finger's ${"%.1f".format(fingerTravel1)} px since the touch – " +
                 "${"%.1f".format(fingerTravel1 - layerFoot)} px short, the drag's slop; on the screen the foot at y ${footScreenY.roundToInt()} under the finger at y ${(fingerY0 + firstStretch).roundToInt()} (a reading, not a claim)"
         )
+        // The still is a capture of the screen: it wants the frame that carries the layer at the
+        // finger's progress, not the one before it (the software GPU's raster of the whole layer
+        // takes a while, and one still in four of #439's runs predated it under a two-frame wait
+        // in the document – seed 65). The grab is paint-observed: the host's own word that the
+        // layer's frame is drawn (`postVisualStateCallback`, then the two frames that carry it to
+        // the display), and only then the capture.
+        finding("mid-pull the layer's frame was on the display: ${awaitChromePaint()} (the harness's wall clock; a reading)")
         shot("13a-overview-mid-slide")
         // The rest of the pull is the jank record's gesture scene; the release and its spring come
         // after, as their own: the spring carries the layer the rest of the way (§11's gentle
@@ -1085,20 +1089,6 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
     private fun framesSettled() {
         awaitShots()
         SystemClock.sleep(1_200)
-    }
-
-    /**
-     * Two animation frames of the chrome document, then a beat for the display's composition: the
-     * frame carrying a change just written has been drawn (`lib/cover.ts` counts a cover painted
-     * by the same two frames), so a still taken after it shows the change and not the frame
-     * before. What it took, for the notes.
-     */
-    private fun paintedFrames(timeoutMs: Long = 4_000): String {
-        val started = SystemClock.uptimeMillis()
-        chromeJs("(function(){window.__zenDemoPainted=0;requestAnimationFrame(function(){requestAnimationFrame(function(){window.__zenDemoPainted=1})});return 1})()")
-        val drawn = awaitJs("window.__zenDemoPainted===1", true, timeoutMs)
-        SystemClock.sleep(250)
-        return if (drawn) "two frames after ${SystemClock.uptimeMillis() - started} ms" else "no second frame within $timeoutMs ms"
     }
 
     private fun finding(line: String) {

@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
+import android.view.Choreographer
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
@@ -22,6 +23,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.webkit.TracingConfig
 import android.webkit.TracingController
+import android.webkit.WebView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
@@ -2361,6 +2363,61 @@ abstract class DemoHarness(
         }
         latch.await(10, TimeUnit.SECONDS)
         return result
+    }
+
+    private var paintSerial = 0L
+
+    /**
+     * The chrome's next painted frame, observed from the host (seed 65). A still of a change just
+     * written to the chrome's DOM wants the frame that CARRIES it on the display; two animation
+     * frames of the document (`requestAnimationFrame` twice, the wait the mid-slide still kept
+     * until now) say only that the renderer began its second frame after the write – on the
+     * emulator's software GPU the raster of a whole layer, the compositor's activation and the
+     * host's draw all come after that, and one mid-slide still in four of #439's runs caught the
+     * frame before the layer. This waits the way the host waits for its own reports
+     * (`Host.reportDrawn`, `MainActivity.onChromeReady`): `postVisualStateCallback` on the chrome
+     * WebView – its callback comes once the DOM's state at the post is rastered and the view's
+     * next draw is bound to carry it – then two Choreographer frames (the draw that carries it,
+     * and the one after, by which the display has composed it), then a beat. What it took, for
+     * the notes; a callback that never comes is not waited on past `timeoutMs`, and the reading
+     * says so.
+     */
+    protected fun awaitChromePaint(timeoutMs: Long = 4_000): String {
+        val started = SystemClock.uptimeMillis()
+        val ready = CountDownLatch(1)
+        val drawn = CountDownLatch(1)
+        var readyAt = -1L
+        instrumentation.runOnMainSync {
+            val chrome = (activity as? MainActivity)?.host?.chrome
+            if (chrome == null) {
+                ready.countDown()
+                drawn.countDown()
+                return@runOnMainSync
+            }
+            chrome.postVisualStateCallback(++paintSerial, object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    readyAt = SystemClock.uptimeMillis()
+                    ready.countDown()
+                    val choreographer = Choreographer.getInstance()
+                    var left = 2
+                    choreographer.postFrameCallback(object : Choreographer.FrameCallback {
+                        override fun doFrame(frameTimeNanos: Long) {
+                            if (--left <= 0) drawn.countDown() else choreographer.postFrameCallback(this)
+                        }
+                    })
+                }
+            })
+        }
+        val deadline = started + timeoutMs
+        val stateReady = ready.await(max(0L, deadline - SystemClock.uptimeMillis()), TimeUnit.MILLISECONDS)
+        val frameDrawn = stateReady && drawn.await(max(0L, deadline - SystemClock.uptimeMillis()), TimeUnit.MILLISECONDS)
+        // The display composes the drawn frame a vsync or so after the draw; the beat covers it.
+        SystemClock.sleep(250)
+        return when {
+            frameDrawn -> "the visual state ready ${readyAt - started} ms after the post, the second frame after it drawn at ${SystemClock.uptimeMillis() - started - 250} ms"
+            stateReady -> "the visual state ready ${readyAt - started} ms after the post, but no second frame within $timeoutMs ms"
+            else -> "no visual state callback within $timeoutMs ms"
+        }
     }
 
     /**
