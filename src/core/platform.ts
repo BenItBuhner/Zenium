@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AgentSkillStatus,
   AppLinkState,
   AppWindowInfo,
   CertificateDetails,
@@ -157,6 +158,12 @@ export interface PageFlags {
   glanceTrigger: 'alt' | 'ctrl' | 'shift'
   /** How plain clicks on third-party links behave on pinned/essential tabs (null = normal tab). */
   thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
+  /**
+   * The page is the left pane of a side-by-side split with the link rule on (split-13): a plain
+   * click on a link is sent back as `split-link` for the pane to its right to load, instead of
+   * navigating here. False for every other page.
+   */
+  linksToSplitPane: boolean
 }
 
 /**
@@ -179,6 +186,8 @@ export interface PageMessage {
     | 'glance'
     | 'open-tab'
     | 'navigate'
+    /** A link clicked in the left pane of a split with the link rule on: the right pane loads `url`. */
+    | 'split-link'
     | 'media'
     | 'zap'
     | 'activation'
@@ -984,6 +993,13 @@ export interface NewTabBackgroundHost {
    */
   set?(dataUrl: string | null): Promise<void>
   clear(): Promise<void>
+  /**
+   * The colour the current image suggests for the space's accent (NTP-14), as `#rrggbb` fitted
+   * by `shared/imageColor.ts`: the host decodes the picture (it holds the bytes) and hands the
+   * pixels of a small resample to `imageAccentHex`. Null with no image, or one the host cannot
+   * decode. Hosts without a decoder leave it out; the core then offers no suggestion.
+   */
+  accent?(): Promise<string | null>
 }
 
 // ---------------------------------------------------------------------------
@@ -2012,6 +2028,23 @@ export interface AgentTransport {
 }
 
 /**
+ * The host that installs the `zenium-browser` Agent Skill into the coding harnesses' global
+ * skills directories (`capabilities.agentSkills`; the desktop's `main/agent/skills.ts`). Every
+ * call settles with the whole status; a failure is reported in it, never thrown.
+ */
+export interface AgentSkillsHost {
+  /**
+   * Detect the harnesses and read what is installed. `sync` also rewrites every installed copy
+   * whose recorded version is not this app's – the once-per-update refresh, run at start.
+   */
+  status(options?: { sync?: boolean }): Promise<AgentSkillStatus>
+  /** Install into the named targets, or into every detected one when none are named. */
+  install(targets?: readonly string[]): Promise<AgentSkillStatus>
+  /** Remove Zenium's copies from the named targets (every installed one when none are named). */
+  uninstall(targets?: readonly string[]): Promise<AgentSkillStatus>
+}
+
+/**
  * The host side of automatic updates. The core (`updates.ts`) finds the release, validates the
  * manifest and decides which package applies; the host knows how it was installed and does the
  * platform-specific fetch and install: electron-updater on desktop installs that can be swapped
@@ -2743,6 +2776,8 @@ export interface Platform {
   readonly connectivity?: ConnectivityHost
   /** The per-process list behind the task manager page (desktop); hosts without it list nothing. */
   readonly tasks?: TaskHost
+  /** The Agent Skill installer (`capabilities.agentSkills`); hosts without harnesses leave it out. */
+  readonly agentSkills?: AgentSkillsHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

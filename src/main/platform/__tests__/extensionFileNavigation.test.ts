@@ -33,6 +33,7 @@ function world(): World {
     chromeTabId: () => 7,
     chromeTab: (t: Tab) => ({ id: 7, url: t.url }),
     windowOfTab: () => win,
+    tabsInWindow: () => [tab],
     lastFocusedWindow: () => win,
     setOpener: () => undefined,
     browserWindowOf: () => undefined,

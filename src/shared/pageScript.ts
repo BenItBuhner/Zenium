@@ -36,6 +36,12 @@ export interface PageScriptFlags {
   glanceEnabled: boolean
   glanceTrigger: 'alt' | 'ctrl' | 'shift'
   thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
+  /**
+   * This page is the left pane of a side-by-side split whose link rule is on (split-13): a plain
+   * click on a link goes to the browser as `split-link` for the right pane to load. Off for every
+   * other page; the browser turns it as the split changes.
+   */
+  linksToSplitPane: boolean
 }
 
 export interface PageScriptMessage {
@@ -43,6 +49,7 @@ export interface PageScriptMessage {
     | 'glance'
     | 'open-tab'
     | 'navigate'
+    | 'split-link'
     | 'media'
     | 'zap'
     | 'activation'
@@ -208,7 +215,8 @@ export function isActivatingEvent(e: Event): boolean {
 export const DEFAULT_PAGE_FLAGS: PageScriptFlags = {
   glanceEnabled: true,
   glanceTrigger: 'alt',
-  thirdParty: null
+  thirdParty: null,
+  linksToSplitPane: false
 }
 
 export function installPageScript(transport: PageScriptTransport): void {
@@ -282,6 +290,25 @@ export function installPageScript(transport: PageScriptTransport): void {
       }
 
       const plain = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+      // The left pane's link rule (split-13) comes before the pinned tab's third-party rule: the
+      // user set the split up and turned the rule on for this reading. A link that would open
+      // here or in a new tab (`_blank` too – a new tab beside the split is what the rule is
+      // there to spare) goes to the right pane; one aimed at a named frame stays the page's.
+      if (plain && flags.linksToSplitPane) {
+        const target = anchor.target
+        if (
+          !target ||
+          target === '_self' ||
+          target === '_top' ||
+          target === '_parent' ||
+          target === '_blank'
+        ) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          transport.send({ type: 'split-link', url: href, x, y })
+          return
+        }
+      }
       if (plain && flags.thirdParty && flags.thirdParty !== 'same-tab') {
         const target = anchor.target
         if (target && target !== '_self' && target !== '_top' && target !== '_parent') return

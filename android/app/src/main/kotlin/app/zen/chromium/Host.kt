@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.print.PrintAttributes
@@ -205,6 +206,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
+    /**
+     * The thread the bridge's asynchronous channel is received on ([BridgePort]): started when the
+     * chrome first asks for a port, so a WebView without the ports (or a chrome that never asks)
+     * never pays for it. The messages only cross it – the storage calls go straight on to the
+     * storage thread from here, the way [JsBridge.Calls] routes them – so it never runs anything
+     * long; it exists so that no message is ever received on the main thread.
+     */
+    private var bridgePortThread: HandlerThread? = null
+    private fun bridgePortHandler(): Handler {
+        val thread = bridgePortThread ?: HandlerThread("zen-bridge-port").also { it.start(); bridgePortThread = it }
+        return Handler(thread.looper)
+    }
 
     /** Run `block` on the main thread after `delayMs`; what comes back cancels it ([FullscreenRotation], [FullscreenHintCue]). */
     private fun postDelayed(delayMs: Long, block: () -> Unit): () -> Unit {
@@ -955,6 +968,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
+            // The chrome asks for the bridge's asynchronous channel once its boot is answered
+            // (`openBridgePort` in src/android/bridge.ts): the port travels back to the document
+            // in a message carrying this token, and the answer says whether one is coming at all.
+            "bridge.port" -> reply(chrome.openBridgePort(args.str("token"), bridgePortHandler()))
             "chrome.setPullToRefresh" -> {
                 pullToRefresh = args.bool("enabled", true)
                 for (view in tabs.all()) view.applyPullToRefreshMode()
@@ -2331,6 +2348,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // itself if its renderer died.
         (chrome.parent as? ViewGroup)?.removeView(chrome)
         runCatching { chrome.destroy() }
+        // The port died with the chrome (`ChromeWebView.destroy`); its thread has nothing left to receive.
+        bridgePortThread?.quitSafely()
         // Whatever that core still asks to write is refused from here (`ZenStorage` logs it).
         storage.close()
         io.shutdownNow()
