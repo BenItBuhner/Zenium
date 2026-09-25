@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX, ReactNode } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
   Ellipsis,
@@ -758,14 +758,26 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // built beyond its guess, placeholders in view for a frame. The release touches only a window
   // still this grid's, whatever the order. The close keeps the overview mounted while the
   // landing is held (`PhoneStage`, `landOverview`), its hero at the page's frame: the window
-  // stands until the grid goes, and not before. The token lives in `OverviewWindowScope`, the
-  // component wrapping the cells inside the Space's slot: a SPACE SWITCH is a new grid in the
-  // same overview (MOT-05, `gridKey` above), and the slot's key remounts the scope with it – the
-  // scope that left releases the store as its cleanup, the new one claims it fresh (the old
-  // grid's idle fill cancelled, `all` reset: a grid that had built every card must not hand
-  // thirty built cards to the render of the next) before this component's effects run, and the
-  // new grid builds its guess in that render and its window in this commit, ahead of the
-  // slide's first frame.
+  // stands until the grid goes, and not before. A SPACE SWITCH is a new grid in the same
+  // overview (MOT-05, `gridKey` above): the token is minted afresh with the key, so the render
+  // that brings the next Space's cells reads the store under a token it does not own yet –
+  // placeholders but for the guess – and this effect's cleanup releases the grid that left (its
+  // idle fill cancelled, `all` reset: a grid that had built every card must not hand thirty
+  // built cards to the next) and its body claims for the one that came, in the one commit,
+  // before the fills below: the guess recorded, the window read and built, ahead of the slide's
+  // first frame. The claim, the guess and the read are THIS component's effects, in this order –
+  // a claim in a child of its own ran before them by React's child-first order, and ran again
+  // after them wherever a new mount's effects are replayed (StrictMode's development check), the
+  // window wiped with nothing left to rebuild it.
+  const token = useMemo(
+    () => newOverviewWindowToken(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a token per grid: minted afresh with the grid's key
+    [gridKey]
+  )
+  useLayoutEffect(() => {
+    claimOverviewWindow(token)
+    return () => releaseOverviewWindow(token)
+  }, [token])
   // The guess is the store's from the commit it is rendered in: `eager` builds a guessed card
   // whatever the store says, and a render that guesses differently with no read between – a
   // drag's stand-in moving through the grid re-orders the cards under the finger (`shown`,
@@ -2117,7 +2129,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                     placeholder until then. The group cards' members are the same cells, through
                     `card`.
                   */}
-                    <OverviewWindowScope>
+                    <OverviewWindowContext.Provider value={token}>
                       {pinned.map(card)}
                       {groupCards.map(({ folder, tabs, gone }) => (
                         <GroupCard
@@ -2137,7 +2149,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                         />
                       ))}
                       {loose.map(card)}
-                    </OverviewWindowScope>
+                    </OverviewWindowContext.Provider>
                     {!searching && <NewTabCard pane={pane} disabled={selecting} />}
                   </div>
                   {searching && !privatePane && (
@@ -2775,24 +2787,6 @@ function PrivateEmpty(): JSX.Element {
       </PhoneEmptyNote>
     </div>
   )
-}
-
-/**
- * The grid's WINDOW is one grid's (`lib/overviewWindow.ts`, W6-0): the token is minted at the
- * render that brings the cells, so they read the store under it from their first render; the
- * store is claimed under it in the first layout effect – ahead of the parent's, React running a
- * child's first – and released as that effect's cleanup. Mounted inside the Space's slot
- * (MOT-05): the slot's key remounts this with the grid, so a Space switch releases the grid that
- * left and claims afresh for the one that came, in the one commit, the release before the claim
- * (an unmount's cleanups go before the mounts' effects) – the shell swap's order too (TABLET-08).
- */
-function OverviewWindowScope({ children }: { children: ReactNode }): JSX.Element {
-  const [token] = useState(newOverviewWindowToken)
-  useLayoutEffect(() => {
-    claimOverviewWindow(token)
-    return () => releaseOverviewWindow(token)
-  }, [token])
-  return <OverviewWindowContext.Provider value={token}>{children}</OverviewWindowContext.Provider>
 }
 
 /** The indicator's `scaleX` this frame, for its ends to keep their radius under it (`main.css`). */

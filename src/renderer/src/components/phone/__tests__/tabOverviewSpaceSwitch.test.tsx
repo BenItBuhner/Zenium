@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, createElement } from 'react'
+import { StrictMode, act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Space, Tab, UIState } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
@@ -56,7 +56,8 @@ const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { resetOverviewUi } = await import('@renderer/lib/overviewUi')
-const { overviewWindowStore, resetOverviewWindow } = await import('@renderer/lib/overviewWindow')
+const { overviewWindowStore, pendingFill, resetOverviewWindow } =
+  await import('@renderer/lib/overviewWindow')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -214,22 +215,21 @@ let host: HTMLElement | null = null
 let sizes: Array<[string, PropertyDescriptor | undefined]> = []
 let reduced = false
 
-function render(state: UIState, overview: OverviewState = OPEN): HTMLElement {
+function render(state: UIState, overview: OverviewState = OPEN, strict = false): HTMLElement {
   if (!root) {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
   }
   act(() => browserStore.set({ state }))
-  act(() =>
-    root!.render(
-      createElement(
-        FrameDialogHost,
-        null,
-        createElement(TabOverview, { state, overview, area: AREA, edge: 'bottom' })
-      )
-    )
+  const tree = createElement(
+    FrameDialogHost,
+    null,
+    createElement(TabOverview, { state, overview, area: AREA, edge: 'bottom' })
   )
+  // Under StrictMode React replays a new mount's effects (cleanup, then the effect again) after
+  // the commit, the development check for effects that do not survive a replay.
+  act(() => root!.render(strict ? createElement(StrictMode, null, tree) : tree))
   return host!
 }
 
@@ -252,6 +252,18 @@ const indicator = (): HTMLElement =>
   host!.querySelector<HTMLElement>('[data-testid="overview-strip-indicator"]')!
 const newTabCell = (): HTMLElement => host!.querySelector<HTMLElement>('[data-cell="new-tab"]')!
 
+/** The idle callbacks asked for (the window suite's clock), run by hand until none is left. */
+const idle = new Map<number, (d: IdleDeadline) => void>()
+let idleSeq = 0
+function runIdleAll(): void {
+  let guard = 0
+  while (idle.size > 0 && guard++ < 100) {
+    const [id, cb] = [...idle.entries()][0]!
+    idle.delete(id)
+    act(() => cb({ didTimeout: false, timeRemaining: () => 50 }))
+  }
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   installLayout()
@@ -264,8 +276,14 @@ beforeEach(() => {
     addEventListener: () => undefined,
     removeEventListener: () => undefined
   }))
-  vi.stubGlobal('requestIdleCallback', () => 1)
-  vi.stubGlobal('cancelIdleCallback', () => undefined)
+  idle.clear()
+  vi.stubGlobal('requestIdleCallback', (cb: (d: IdleDeadline) => void) => {
+    idle.set(++idleSeq, cb)
+    return idleSeq
+  })
+  vi.stubGlobal('cancelIdleCallback', (id: number) => {
+    idle.delete(id)
+  })
   vi.stubGlobal('requestAnimationFrame', () => 0)
   vi.stubGlobal('cancelAnimationFrame', () => undefined)
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: AREA.width })
@@ -361,11 +379,14 @@ describe('a Space switch in the overview', () => {
     expect(grid().closest('.zen-overview-space')).toBe(slot())
     expect(cardIds()).toEqual(ids('h', 0, 7))
     expect(placeholderIds()).toEqual(ids('h', 8, 11))
-    // The window is the new grid's: another owner, none of Work's cards in it.
+    // The window is the new grid's: another owner, the guess recorded under it, none of Work's
+    // cards in it, and the rest of Home's cards queued for idle time.
     const store = overviewWindowStore.get()
     expect(store.owner).not.toBe(workOwner)
     expect(store.all).toBe(false)
+    expect([...store.filled].sort()).toEqual(expect.arrayContaining(ids('h', 0, 7)))
     expect([...store.filled].every((id) => id.startsWith('h'))).toBe(true)
+    expect(pendingFill()).toBe(4)
     // Its slide: from +120 px (Home stands after Work in the strip) to rest, 250 ms on the
     // standard curve, the opacity solid by the slide's first half.
     const [slide] = slides()
@@ -404,6 +425,48 @@ describe('a Space switch in the overview', () => {
     // The slot's own transform is the animation's: nothing inline is left on it after the
     // tracker's measurement.
     expect(slot().style.getPropertyValue('transform')).toBe('')
+  })
+
+  it('the next grid fills the rest of its cards in idle time after the switch, as a mounting grid does', () => {
+    render(stateOf(WORK))
+    runIdleAll()
+    expect(cardIds()).toEqual(ids('w', 0, 29))
+    expect(overviewWindowStore.get().filled.size).toBe(30)
+
+    render(stateOf(HOME))
+
+    // Work's thirty built cards do not carry over; Home's guess is in the store, the rest queued.
+    expect(cardIds()).toEqual(ids('h', 0, 7))
+    expect(placeholderIds()).toEqual(ids('h', 8, 11))
+    expect(overviewWindowStore.get().filled.size).toBe(8)
+    expect(pendingFill()).toBe(4)
+    runIdleAll()
+    expect(cardIds()).toEqual(ids('h', 0, 11))
+    expect(placeholderIds()).toEqual([])
+    expect(pendingFill()).toBe(0)
+  })
+
+  it("keeps the window through StrictMode's replayed effects: the claim, the guess and the read are one component's, in that order", () => {
+    // A claim in a child component of its own ran before the reads by React's child-first order
+    // and, replayed as a new mount's effect after the commit, wiped the window the reads had
+    // built – the incoming grid's placeholders never filled (the host screencast's finding).
+    render(stateOf(WORK), OPEN, true)
+    expect(cardIds()).toEqual(ids('w', 0, 7))
+    expect(overviewWindowStore.get().filled.size).toBe(8)
+    expect(pendingFill()).toBe(22)
+    runIdleAll()
+    expect(cardIds()).toEqual(ids('w', 0, 29))
+
+    render(stateOf(HOME), OPEN, true)
+
+    const store = overviewWindowStore.get()
+    expect(cardIds()).toEqual(ids('h', 0, 7))
+    expect([...store.filled].sort()).toEqual(ids('h', 0, 7).sort())
+    expect(store.all).toBe(false)
+    expect(pendingFill()).toBe(4)
+    runIdleAll()
+    expect(cardIds()).toEqual(ids('h', 0, 11))
+    expect(placeholderIds()).toEqual([])
   })
 
   it('slides in from the leading side going back in the strip order', () => {
