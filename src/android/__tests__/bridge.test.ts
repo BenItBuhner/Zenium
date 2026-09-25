@@ -235,9 +235,12 @@ describe('Bridge port', () => {
         postMessage: (message) => {
           messages.push(message)
           const parsed = JSON.parse(message) as
-            | { id?: number; method: string }
-            | Array<{ method: string }>
-          const kind: PortedKind = Array.isArray(parsed) ? 'batch' : 'id' in parsed ? 'call' : 'post'
+            { id?: number; method: string } | Array<{ method: string }>
+          const kind: PortedKind = Array.isArray(parsed)
+            ? 'batch'
+            : 'id' in parsed
+              ? 'call'
+              : 'post'
           const methods = Array.isArray(parsed)
             ? parsed.map((c) => c.method).join('+')
             : parsed.method

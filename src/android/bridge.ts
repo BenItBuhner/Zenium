@@ -369,7 +369,9 @@ export function openBridgePort(bridge: Bridge, target: PortTarget, token = portT
     if (!port) return
     stop()
     bridge.adoptPort(port)
-    console.debug('[zen] bridge: the port is the bridge from here (every call, post and batch); callSync hops')
+    console.debug(
+      '[zen] bridge: the port is the bridge from here (every call, post and batch); callSync hops'
+    )
   }
   target.addEventListener('message', onMessage)
   bridge.call<boolean>(PORT_REQUEST, { token }).then(
