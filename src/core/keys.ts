@@ -1,5 +1,5 @@
 import { isModifierKey, matchShortcut } from '../shared/shortcuts'
-import { PAGE_WINDOW_ACTIONS } from './actions'
+import { pageWindowAction } from './actions'
 import type { Browser } from './browser'
 import type { KeyEventInput } from './platform'
 import type { ZenWindow } from './window'
@@ -39,9 +39,10 @@ export class KeyboardHandler {
     if (shortcut) {
       // A page's utility window (the task manager) has no tabs, sidebar or toolbar for the table
       // to act on: only the chords that mean something there run – Shift+Esc (the window itself
-      // comes to the front), closing and minimising it, Find (the page's own field), Quit – and
-      // the rest are the page's, as they are in Chrome's task manager.
-      if (win.chrome === 'page' && !PAGE_WINDOW_ACTIONS.has(shortcut.action)) return false
+      // comes to the front), closing and minimising it (Close Tab closes it too), Find (the
+      // page's own field), Quit – and the rest are the page's, as they are in Chrome's task
+      // manager.
+      if (win.chrome === 'page' && !pageWindowAction(shortcut.action)) return false
       // ⌘ with an arrow is the caret's on macOS (line start and end, document start and end),
       // and Chrome keeps it the text field's by giving the page the key first – Back on ⌘← is
       // for a page without a field under the keyboard (history-14). The table is matched before

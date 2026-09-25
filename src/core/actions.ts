@@ -53,21 +53,40 @@ export const PAGE_WINDOW_ACTIONS: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * Actions a page window answers with one of its own: Close Tab (⌘W / Ctrl+W, the menu bar's
+ * File › Close Tab) closes the window – one page, no strip to close a tab from, as Chrome's task
+ * manager closes on ⌘W – and never a tab of the browser window behind it.
+ */
+const PAGE_WINDOW_STAND_INS: ReadonlyMap<string, AnyAction> = new Map([
+  ['tab.close', 'window.close']
+])
+
+/**
+ * What a page window runs for `action`: the action when it is the window's own, its stand-in
+ * when it has one, null when it is the browser's (to run behind the window, or not at all from
+ * its keyboard).
+ */
+export function pageWindowAction(action: AnyAction): AnyAction | null {
+  if (PAGE_WINDOW_ACTIONS.has(action)) return action
+  return PAGE_WINDOW_STAND_INS.get(action) ?? null
+}
+
+/**
  * Executes keyboard-shortcut / Command Bar actions. Anything that needs UI (URL bar, panels)
  * is delegated to the renderer through events.
  */
 export class Actions {
   constructor(private readonly browser: Browser) {}
 
-  run(action: AnyAction, ctx: ActionContext): void {
+  run(asked: AnyAction, ctx: ActionContext): void {
     const { tabs, state } = this.browser
     // With a page window in front (the task manager), an action that is not the window's own –
     // the menu bar's File › New Tab, say – is the browser's: it runs on the browser window
-    // behind the page window, brought to the front for it.
-    const win =
-      ctx.win.chrome === 'page' && !PAGE_WINDOW_ACTIONS.has(action)
-        ? this.browserWindowBehind(ctx.win)
-        : ctx.win
+    // behind the page window, brought to the front for it. Close Tab is the window's, as its
+    // Close Window (`pageWindowAction`).
+    const own = ctx.win.chrome === 'page' ? pageWindowAction(asked) : asked
+    const action: AnyAction = own ?? asked
+    const win = own ? ctx.win : this.browserWindowBehind(ctx.win)
     const active = tabs.activeTabFor(win)
     const glance = win.glance
     // Shortcuts pressed while a Glance page is focused act on the glance page for navigation.

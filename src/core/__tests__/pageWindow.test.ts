@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { sanitizePageWindows } from '../../shared/types'
+import { pageWindowAction } from '../actions'
 import { Browser } from '../browser'
+import { runFromMenuBar } from '../menuBar'
 import type {
   KeyEventInput,
   Platform,
@@ -51,6 +53,8 @@ interface FakeWindow {
   /** What the host window reports as its normal bounds and display (`onBoundsChanged` reads them). */
   bounds: { x: number; y: number; width: number; height: number } | null
   displayId: number
+  /** What the host window reports as holding the focus (the menu bar's `frontWindow` asks). */
+  isFocused: boolean
 }
 
 interface Fixture {
@@ -87,7 +91,8 @@ function fixture(
           closed: 0,
           titles: [],
           bounds: null,
-          displayId: 1
+          displayId: 1,
+          isFocused: false
         }
         hosts.push(entry)
         return stub<WindowHost>({
@@ -97,7 +102,7 @@ function fixture(
           displayId: () => entry.displayId,
           isFullScreen: () => false,
           isMaximized: () => false,
-          isFocused: () => false,
+          isFocused: () => entry.isFocused,
           isVisible: () => true,
           show: () => {
             entry.shown++
@@ -183,6 +188,7 @@ function key(k: string, mods: Partial<KeyEventInput> = {}): KeyEventInput {
 
 const SHIFT_ESC = key('Escape', { shift: true })
 const CTRL_T = key('t', { control: true })
+const CTRL_W = key('w', { control: true })
 const CTRL_SHIFT_W = key('w', { control: true, shift: true })
 
 /** Close a window the way the host reports it: the closing edge, then the closed one. */
@@ -446,6 +452,36 @@ describe('the task manager window (W5-18)', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(f.hostOf(tasks).closed).toBe(1)
     expect(f.hostOf(browserWin).closed).toBe(0)
+  })
+
+  it('closes on Close Tab – Ctrl+W / ⌘W from its keyboard and the menu bar’s File › Close Tab – and never a tab of the browser window behind it', async () => {
+    const f = fixture()
+    const browserWin = f.browserWindow()
+    const page = f.browser.tabs.createTab({ url: 'https://a.example/', active: true }, browserWin)
+    const browserTabs = f.browser.tabs.visibleTabIds(browserWin)
+    const tasks = f.browser.openTaskManager(browserWin)!
+    // The chord is the window's own (consumed, as Chrome's task manager takes ⌘W): the window
+    // closes, the browser window and its tabs stand as they were.
+    expect(f.browser.keys.handle(CTRL_W, null, tasks)).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(f.hostOf(tasks).closed).toBe(1)
+    expect(f.hostOf(browserWin).closed).toBe(0)
+    expect(f.browser.tabs.visibleTabIds(browserWin)).toEqual(browserTabs)
+    expect(f.browser.tabs.activeTabFor(browserWin)?.id).toBe(page.id)
+    // The menu bar's Close Tab with the task manager in front (`frontWindow` finds the focused
+    // window, the task manager's): the same – not the tab behind it.
+    closeWindow(tasks)
+    const again = f.browser.openTaskManager(browserWin)!
+    f.hostOf(again).isFocused = true
+    runFromMenuBar(f.browser, 'tab.close')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(f.hostOf(again).closed).toBe(1)
+    expect(f.hostOf(browserWin).closed).toBe(0)
+    expect(f.browser.tabs.visibleTabIds(browserWin)).toEqual(browserTabs)
+    // The stand-in is Close Tab's alone: the browser's other chords still stay the page's.
+    expect(pageWindowAction('tab.close')).toBe('window.close')
+    expect(pageWindowAction('window.close')).toBe('window.close')
+    expect(pageWindowAction('tab.new')).toBeNull()
   })
 
   it('closes with its page: the tab closed under it takes the window (no strip to open another from)', async () => {
