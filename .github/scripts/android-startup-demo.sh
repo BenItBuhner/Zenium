@@ -75,6 +75,16 @@
 # matching tone is a PASS that says the force agreed. The product's own verdict is the request:
 # `mAppearance` without LIGHT_NAVIGATION_BARS over the dressed web-app splash.
 #
+# Past SystemUI's decision stands the bar's DRAWER. On Android 15's phone images the launcher's
+# Taskbar window draws the three buttons (no NavigationBar0 window; run 36107136195 on API 35,
+# `mNavigationLight=false`, `mDarkIntensity=0.0` – SystemUI decided light – and the bar dark),
+# tinting them by the launcher's own theme once its in-app state lands, whatever SystemUI
+# decided: dark under the light system theme, light under the dark. So each scheme names the
+# drawer first (nav_drawer_check) and every tone verdict gets SystemUI's decided tone from the
+# scene's dump (`--nav-systemui`): the request landing in SystemUI's decision is the product's
+# part (a PASS says so); the drawer drawing against that decision is a `NOTE:` naming the drawer;
+# SystemUI deciding against the ground's ask, or its own bar drawing against its decision, fails.
+#
 # The recordings are read frame by frame (android-startup-frames.mjs: splash, restored picture,
 # page, blank, in that order and never a blank slot after the splash; the hot start with no
 # splash and no blank; the web app's launch: the tile on the ground, never a bare window before
@@ -220,6 +230,19 @@ wait_line() {
     line=$(startup_log | grep -E -m 1 "$1" || true)
     if [ -n "$line" ]; then printf '%s\n' "$line"; return; fi
     sleep 0.25
+    waited=$((waited + 1))
+  done
+}
+# The epoch seconds of the shell's first `SplashScreenView: Build` line since the log was cleared
+# – the WM shell building the starting window's view, the splash's frame the next – polled every
+# 100 ms for up to $1 seconds; nothing when none came. (The app's own `Build` at the hand-over
+# comes seconds later; the first line is the shell's.)
+wait_splash_view() {
+  local waited=0 line
+  while [ "$waited" -lt "$(( $1 * 10 ))" ]; do
+    line=$(adb logcat -d -v epoch -s SplashScreenView:D 2> /dev/null | tr -d '\r' | grep -m 1 'Build android.window.SplashScreenView' || true)
+    if [ -n "$line" ]; then echo "$line" | awk '{ print $1 }'; return; fi
+    sleep 0.1
     waited=$((waited + 1))
   done
 }
@@ -521,10 +544,11 @@ cold_start() {
     [ "$way" = direct ] && stills+=(--still "picture=$picture_still" --still "page=$page_still")
     local anchor=()
     [ "$frame_ms" != - ] && anchor=(--anchor "ready=$frame_ms")
-    local forced=()
-    [ -z "$nav_forced" ] || forced=(--nav-forced "$nav_forced")
+    # The tone options from the splash's dump (the still's moment; the force from either dump).
+    local nav=()
+    mapfile -t nav < <(nav_options "$dir/$tag-lightbar-splash.txt" "$nav_forced")
     node .github/scripts/android-startup-frames.mjs cold "$dir/startup-$tag-$theme.mp4" "$slot" "${display%@*}" "$dir/$tag-frames.txt" \
-      "${stills[@]}" "${anchor[@]}" "${forced[@]}" --tile "$dir/android-startup-frames-$tag-$theme.png" || status=$?
+      "${stills[@]}" "${anchor[@]}" "${nav[@]}" --tile "$dir/android-startup-frames-$tag-$theme.png" || status=$?
     grep -E '^(PASS|FAIL|NOTE):' "$dir/$tag-frames.txt" | sed "s/)$/; $theme$label recording)/" >> "$findings" || true
     gap=$(gap_reading "$dir/$tag-frames.txt")
     lead=$(lead_reading "$dir/$tag-frames.txt")
@@ -657,7 +681,14 @@ link_start() {
   sleep 1.5
   adb shell am start -W -a android.intent.action.VIEW -d "http://10.0.2.2:$port/fixture" -n "$app_id/$link_activity" > "$dir/am-start-link.txt" 2>&1 &
   local am_pid=$!
-  sleep 1
+  # The still at the splash: the link's lead varies on this emulator (547 ms in run 36099054999,
+  # 1164 ms in 36107136195 – the launcher's pause timing out twice – and a fixed second caught
+  # the launcher), so the still waits for the shell's word that it built the starting window's
+  # view (`SplashScreenView: Build`, its frame the next), up to 5 s, then a third of a second
+  # for that frame. The lead's measure stays the recording's `lead:` line; this is the picture.
+  local built_at
+  built_at=$(wait_splash_view 5)
+  sleep 0.3
   local splash_seen
   splash_seen=$(splash_windows)
   adb exec-out screencap -p > "$dir/android-startup-link-splash-$theme.png" || true
@@ -683,16 +714,19 @@ link_start() {
   frame_at=$(line_at "chrome ready: frame drawn")
   forward_ms=$(ms_between "$started" "$forward_at")
   frame_ms=$(ms_between "$started" "$frame_at")
+  local built_ms
+  built_ms=$(ms_between "$started" "$built_at")
   verdict "$([ "${state:-}" = COLD ] && echo true || echo false)" "the start through the link was cold ($theme)" "LaunchState ${state:-?}"
-  verdict "$([ "$splash_seen" -gt 0 ] && echo true || echo false)" "the splash window was up one second into the link's cold start ($theme)" "$splash_seen splash window(s)"
+  verdict "$([ "$splash_seen" -gt 0 ] && echo true || echo false)" "the splash window was up when the link's cold start's still was taken ($theme)" \
+    "$splash_seen splash window(s); the shell built the splash view $([ -n "$built_at" ] && echo "+$built_ms ms after the request" || echo "on no line within 5 s")"
   verdict "$([ -n "$ready_line" ] && echo true || echo false)" "the chrome's first real frame was reported on the link's cold start ($theme)" "${ready_line:-no chrome ready line}"
   if [ -n "$slot" ] && command -v ffmpeg > /dev/null 2>&1; then
     local anchor=()
     [ "$frame_ms" != - ] && anchor=(--anchor "ready=$frame_ms")
-    local forced=() status=0
-    [ -z "$nav_forced" ] || forced=(--nav-forced "$nav_forced")
+    local nav=() status=0
+    mapfile -t nav < <(nav_options "$dir/link-lightbar-splash.txt" "$nav_forced")
     node .github/scripts/android-startup-frames.mjs lead "$dir/startup-link-$theme.mp4" "$slot" "${display%@*}" "$dir/link-frames.txt" \
-      --still splash="$dir/android-startup-link-splash-$theme.png" "${anchor[@]}" "${forced[@]}" --tile "$dir/android-startup-frames-link-$theme.png" > /dev/null || status=$?
+      --still splash="$dir/android-startup-link-splash-$theme.png" "${anchor[@]}" "${nav[@]}" --tile "$dir/android-startup-frames-link-$theme.png" > /dev/null || status=$?
     # The lead kind judges its stills alone (the still shows the splash, its glyphs' tone); counted.
     grep -E '^(PASS|FAIL|NOTE):' "$dir/link-frames.txt" | sed "s/)$/; $theme link recording)/" >> "$findings" || true
     failures=$((failures + $(frame_failures "$dir/link-frames.txt" "$status")))
@@ -787,6 +821,55 @@ nav_forced_reason() {
   force=$(grep -oE '^ *mForce(Dark|Light)ForScrim=true' "$file" 2> /dev/null | sed 's/^ *//; s/=true//' | tr '\n' '+' | sed 's/+$//' || true)
   [ -n "$force" ] || return 0
   echo "SystemUI's LightBarController $force=true on this emulator – $(grep -o 'setScrimState() .*' "$file" 2> /dev/null | head -n 1)"
+}
+# The tone SystemUI decided for the navigation glyphs, from a dump ($1), as the reader's
+# `--nav-systemui` takes it: `light` or `dark` (`mNavigationLight=true` is a light bar, dark
+# glyphs), with the field and the NavigationBarTransitionsController's `mDarkIntensity=` (0.0
+# light, 1.0 dark – what SystemUI told the bar's drawer) in brackets; nothing without the field.
+nav_systemui_tone() {
+  local file=$1 light intensity tone=light
+  light=$(grep -oE '^ *mNavigationLight=(true|false)' "$file" 2> /dev/null | head -n 1 | sed 's/^ *//' || true)
+  [ -n "$light" ] || return 0
+  intensity=$(awk '/NavigationBarTransitionsController:/ { on = 1 } on && match($0, /mDarkIntensity=[0-9.]+/) { print substr($0, RSTART, RLENGTH); exit }' "$file" 2> /dev/null || true)
+  [ "$light" != mNavigationLight=true ] || tone=dark
+  echo "$tone ($light${intensity:+, $intensity})"
+}
+# The reader's options on the navigation glyphs' tone for a scene, one per line, from its
+# controller dump ($1) and the force already read from it ($2, may be empty): the force when one
+# is on (`--nav-forced`), else SystemUI's decided tone (`--nav-systemui`) and, when the bar is
+# not SystemUI's own, its drawer (`--nav-drawer`, nav_drawer_check's word for the scheme).
+nav_options() {
+  local file=$1 forced=${2:-} tone
+  if [ -n "$forced" ]; then printf '%s\n' --nav-forced "$forced"; return; fi
+  tone=$(nav_systemui_tone "$file")
+  [ -z "$tone" ] || printf '%s\n' --nav-systemui "$tone"
+  [ -z "$nav_drawer" ] || printf '%s\n' --nav-drawer "$nav_drawer"
+}
+# Who draws the navigation bar's glyphs on this image, once per scheme (before the acts): SystemUI's
+# own `NavigationBar0` window, or – none of it in `dumpsys window windows` and a `Taskbar` window
+# there – the launcher's taskbar (Android 15's unified bar on the phone images with the launcher's
+# taskbar; run 36107136195 on `sdk_gphone64_x86_64` API 35: no NavigationBar0, `Window{… u0 Taskbar}`).
+# The taskbar's three buttons take SystemUI's dark intensity on the home screen and the launcher
+# THEME's own colour once its in-app state lands (Launcher3 NavbarButtonsViewController
+# .updateNavButtonColor blending mTaskbarNavButtonDarkIntensity with mOnBackgroundIconColor by the
+# taskbar background's alpha; TaskbarLauncherStateController FLAG_IN_APP) – dark glyphs under the
+# light system theme whatever the app asked. Sets `nav_drawer` for nav_options and the findings.
+nav_drawer=""
+nav_drawer_check() {
+  local theme=$1 dir=$2 bars taskbar
+  local windows=$dir/windows-before-acts.txt
+  adb shell dumpsys window windows 2> /dev/null | tr -d '\r' > "$windows" || true
+  bars=$(grep -c 'NavigationBar0' "$windows" || true)
+  taskbar=$(grep -c ' u0 Taskbar}' "$windows" || true)
+  nav_drawer=""
+  if [ "${bars:-0}" -eq 0 ] && [ "${taskbar:-0}" -gt 0 ]; then
+    nav_drawer="the launcher's Taskbar window (no NavigationBar0 window on this image; the taskbar tints its buttons by the launcher theme once its in-app state lands, Launcher3 NavbarButtonsViewController.updateNavButtonColor)"
+  fi
+  local word="SystemUI's own NavigationBar0 window ($bars line(s); Taskbar $taskbar)"
+  [ "${bars:-0}" -gt 0 ] || word="neither a NavigationBar0 nor a Taskbar window in the dump – not named"
+  [ -z "$nav_drawer" ] || word=$nav_drawer
+  echo "  the navigation bar's drawer: $word"
+  echo "navigation bar drawer ($theme): $word" >> "$findings"
 }
 # The system bars' state while a splash stands, into $1 (<act>-bars-<moment>.txt; the raw window
 # dump beside it as <act>-bars-<moment>-windows.txt, SystemUI's controller as
@@ -969,10 +1052,12 @@ webapp_launch() {
     [ "$way" = direct ] && stills+=(--still "page=$page_still")
     local anchor=()
     [ "$painted_ms" != - ] && anchor=(--anchor "ready=$painted_ms")
-    local forced=()
-    [ -z "$nav_forced" ] || forced=(--nav-forced "$nav_forced")
+    # The tone options from the dressed moment's dump: the force, or SystemUI's decided tone
+    # and the bar's drawer – the reader's NOTE when the drawer, not SystemUI, went its own way.
+    local nav=()
+    mapfile -t nav < <(nav_options "$dir/$tag-lightbar-dressed.txt" "$nav_forced")
     node .github/scripts/android-startup-frames.mjs webapp "$dir/startup-$tag-$theme.mp4" "0 0 ${size%x*} ${size#*x}" "$size" "$dir/$tag-frames.txt" \
-      "${stills[@]}" "${anchor[@]}" "${forced[@]}" --tile "$dir/android-startup-frames-$tag-$theme.png" || status=$?
+      "${stills[@]}" "${anchor[@]}" "${nav[@]}" --tile "$dir/android-startup-frames-$tag-$theme.png" || status=$?
     grep -E '^(PASS|FAIL|NOTE):' "$dir/$tag-frames.txt" | sed "s/)$/; $theme$label web app recording)/" >> "$findings" || true
     gap=$(gap_reading "$dir/$tag-frames.txt")
     lead=$(lead_reading "$dir/$tag-frames.txt")
@@ -995,8 +1080,10 @@ for theme in $themes; do
   if [ "$theme" = dark ]; then adb shell cmd uimode night yes > /dev/null || true; else adb shell cmd uimode night no > /dev/null || true; fi
   sleep 2
   # The system theme has just changed with the scheme (ScrimController.onThemeChanged re-sends
-  # the scrim's state); the controller's forces before and after the shade, then the acts.
+  # the scrim's state); the controller's forces before and after the shade, the bar's drawer
+  # named, then the acts.
   shade_experiment "$theme" "$dir"
+  nav_drawer_check "$theme" "$dir"
   seed "$theme" "$dir"
   cold_start "$theme" "$dir"
   hot_start "$theme" "$dir"
@@ -1036,13 +1123,13 @@ adb shell cmd uimode night no > /dev/null || true
   echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
   for row in "${rows[@]}"; do echo "$row"; done
   echo
-  echo "The fixture web app's cold launch (PWA-06, WebAppActivity, the process gone, the page's answer held $webapp_hold_ms ms): the plain row fires the app's own launch intent (the harness's way); the tile's row fires the pinned tile's intent at WebAppLauncherActivity (NoDisplay, the tap on the home screen less the launcher), its forward the START of WebAppActivity ms after the request. TotalTime the platform's window (the fixed ground); Displayed / Fully drawn the platform's lines from the request; the moments are ms after the request on logcat's clock – the splash dressed in the app's colour and tile at the hand-over, the page's first frame (reportFullyDrawn, the splash lifting). Gap to the tile: the recording's frames from the first frame of the app's window (the platform's fixed ground) to the first frame of the dressed splash – plain (the fixed ground) and the hand-over's own (ground: the page view's background standing in for the splash's; bare: the page view white) – the whole of what stands before the tile. Lead: as above, the request to the first frame of the app's window (the page's first frame the anchor). App window bars, while the dressed splash stood: the request as SystemUI's LightBarController holds it (\`mAppearance=\`, the LIGHT_*_BARS bits; 0 = white glyphs asked on both bars over the fixture's dark ground), the app window's own \`apr=\` line in \`dumpsys window windows\` (none = appearance 0), and whether the controller's scrim force (\`mForceLightForScrim\` / \`mForceDarkForScrim\`) was deciding the glyphs' tone regardless – the findings carry the controller's fields and last calculations before and after the shade experiment and at every splash."
+  echo "The fixture web app's cold launch (PWA-06, WebAppActivity, the process gone, the page's answer held $webapp_hold_ms ms): the plain row fires the app's own launch intent (the harness's way); the tile's row fires the pinned tile's intent at WebAppLauncherActivity (NoDisplay, the tap on the home screen less the launcher), its forward the START of WebAppActivity ms after the request. TotalTime the platform's window (the fixed ground); Displayed / Fully drawn the platform's lines from the request; the moments are ms after the request on logcat's clock – the splash dressed in the app's colour and tile at the hand-over, the page's first frame (reportFullyDrawn, the splash lifting). Gap to the tile: the recording's frames from the first frame of the app's window (the platform's fixed ground) to the first frame of the dressed splash – plain (the fixed ground) and the hand-over's own (ground: the page view's background standing in for the splash's; bare: the page view white) – the whole of what stands before the tile. Lead: as above, the request to the first frame of the app's window (the page's first frame the anchor). App window bars, while the dressed splash stood: the request as SystemUI's LightBarController holds it (\`mAppearance=\`, the LIGHT_*_BARS bits; 0 = white glyphs asked on both bars over the fixture's dark ground), the app window's own \`apr=\` line in \`dumpsys window windows\` (none = appearance 0), and whether the controller's scrim force (\`mForceLightForScrim\` / \`mForceDarkForScrim\`) was deciding the glyphs' tone regardless – the findings carry the controller's fields and last calculations before and after the shade experiment and at every splash, its decided tone (\`mNavigationLight=\`, the bar's \`mDarkIntensity=\`) beside the recording's reading of the bar, and the bar's drawer on the image (SystemUI's NavigationBar0 window, or the launcher's Taskbar on Android 15's phone images – which tints its buttons by the launcher theme once its in-app state lands, whatever SystemUI decided: a NOTE, not the app's failure)."
   echo
   echo "| launch | LaunchState | TotalTime | WaitTime | Displayed | Fully drawn | forward | splash dressed | page painted | splash held (by) | gap to the tile | lead | app window bars |"
   echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
   for row in "${webapp_rows[@]}"; do echo "$row"; done
   echo
-  echo "verdicts: $(grep -c '^PASS' "$findings" || true) held, $failures did not, $(grep -c '^NOTE' "$findings" || true) not judged (SystemUI's scrim force on the navigation glyphs, named in the NOTE lines)"
+  echo "verdicts: $(grep -c '^PASS' "$findings" || true) held, $failures did not, $(grep -c '^NOTE' "$findings" || true) not judged (the navigation glyphs' tone decided past the app – SystemUI's scrim force, or the bar's drawer against SystemUI's decision – named in the NOTE lines)"
 } | tee "$table"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   { echo "### Startup scene"; echo; cat "$table"; echo; echo '```'; cat "$findings"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

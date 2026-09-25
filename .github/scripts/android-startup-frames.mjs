@@ -139,6 +139,17 @@ let tile = null
 let anchorMs = null
 /** SystemUI's force on the navigation glyphs' tone at the scene, as the scene's dump named it; null when none. */
 let navForced = null
+/**
+ * The tone SystemUI's LightBarController decided at the scene (`light` | `dark`, its dump's
+ * `mNavigationLight=` – true is dark glyphs), with the dump's detail; null when not read.
+ */
+let navSystemUi = null
+/**
+ * The window drawing the navigation bar's glyphs when it is not SystemUI's own (`NavigationBar0`):
+ * the launcher's Taskbar on Android 15 images, which tints the buttons by its own theme once its
+ * in-app state lands. Named, a bar against SystemUI's decision is a NOTE, not the app's failure.
+ */
+let navDrawer = null
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--still') {
     const [cls, path] = (args[++i] ?? '').split('=')
@@ -152,6 +163,12 @@ for (let i = 0; i < args.length; i++) {
     anchorMs = Number(ms)
   } else if (args[i] === '--nav-forced') {
     navForced = args[++i] || usage()
+  } else if (args[i] === '--nav-systemui') {
+    const m = /^(light|dark)(?:\s+\((.*)\))?$/.exec(args[++i] ?? '')
+    if (!m) usage()
+    navSystemUi = { tone: m[1], detail: m[2] ?? 'its dump' }
+  } else if (args[i] === '--nav-drawer') {
+    navDrawer = args[++i] || usage()
   } else positional.push(args[i])
 }
 const [kind, video, slotArg, displayArg, outPath] = positional
@@ -167,7 +184,7 @@ if (
 
 function usage() {
   console.error(
-    'usage: android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>]'
+    'usage: android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>] [--nav-systemui "<light|dark> (<detail>)"] [--nav-drawer <window>]'
   )
   process.exit(2)
 }
@@ -201,14 +218,38 @@ const verdict = (rule, holds, detail) => {
   if (!holds) failures.push(rule)
 }
 /**
- * A verdict on the navigation glyphs' tone: judged as any other unless SystemUI's force on the
- * tone was named (`--nav-forced`) – then a tone against the ground is a NOTE (the force's
- * reading, not the app's failure) and a matching one a PASS that says so.
+ * A verdict on the navigation glyphs' tone, `expected` the tone the ground asks for: judged as
+ * any other unless the scene's SystemUI reading came with it. SystemUI's force on the tone named
+ * (`--nav-forced`): a tone against the ground is a NOTE (the force's reading, not the app's
+ * failure), a matching one a PASS that says so. SystemUI's decided tone named (`--nav-systemui`):
+ * a decision against the ground's ask is a FAIL whatever the bar shows (the app's request did not
+ * land); a decision as asked with the bar agreeing is a PASS that says so; a decision as asked
+ * with the bar against it is a NOTE when the bar's drawer is not SystemUI's own (`--nav-drawer`:
+ * the drawer's tint, read and stated), a FAIL otherwise.
  */
-const navVerdict = (rule, holds, detail) => {
-  if (!navForced) return verdict(rule, holds, detail)
-  if (holds) return verdict(rule, true, `${detail}; SystemUI's force agreed with it: ${navForced}`)
-  say(`NOTE: ${rule} – not judged, SystemUI forces the glyphs' tone here: ${navForced} (${detail})`)
+const navVerdict = (rule, holds, detail, expected) => {
+  if (navForced) {
+    if (holds)
+      return verdict(rule, true, `${detail}; SystemUI's force agreed with it: ${navForced}`)
+    say(
+      `NOTE: ${rule} – not judged, SystemUI forces the glyphs' tone here: ${navForced} (${detail})`
+    )
+    return
+  }
+  if (!navSystemUi) return verdict(rule, holds, detail)
+  const decided = `SystemUI decided ${navSystemUi.tone} glyphs (${navSystemUi.detail})`
+  if (navSystemUi.tone !== expected)
+    return verdict(rule, false, `${detail}; ${decided}, against the ground's ask`)
+  if (holds) return verdict(rule, true, `${detail}; ${decided}, as asked`)
+  if (!navDrawer)
+    return verdict(
+      rule,
+      false,
+      `${detail}; ${decided}, as asked, yet SystemUI's own bar drew otherwise`
+    )
+  say(
+    `NOTE: ${rule} – not judged against the bar: ${decided}, as asked; the bar's drawer here is ${navDrawer}, and it drew otherwise (${detail})`
+  )
 }
 
 /** Mean colour of the 5 x 5 block around (x, y) of a frame at `offset` in rgb24 `buffer`. */
@@ -486,7 +527,8 @@ if (frames.length) {
       navVerdict(
         "the navigation bar's glyphs take the tone the dressed splash's ground asks for",
         tone === expected,
-        `${tone} glyphs on ${hex(ground)}, ${expected} asked for (${detail})`
+        `${tone} glyphs on ${hex(ground)}, ${expected} asked for (${detail})`,
+        expected
       )
   }
   if (kind === 'webapp') {
@@ -659,7 +701,8 @@ for (const still of stills) {
     navVerdict(
       `the ${still.cls} still's navigation glyphs take the tone its ground asks for`,
       frame.nav.tone === expected,
-      `${navReading(frame)}; the ground's luminance ${luminance(frame.nav.ground).toFixed(3)} asks for ${expected}`
+      `${navReading(frame)}; the ground's luminance ${luminance(frame.nav.ground).toFixed(3)} asks for ${expected}`,
+      expected
     )
   }
 }
