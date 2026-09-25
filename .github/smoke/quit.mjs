@@ -35,6 +35,25 @@ export function unlessTargetClosed(promise, fallback = undefined) {
   })
 }
 
+/** `Session.sendKeys`'s message when the app has no window left to take the keys. */
+export const NO_WINDOW_MESSAGE = 'no window to send keys to'
+
+/**
+ * `promise`, a key send made while the app may already be quitting (the quit chord's release
+ * after a hold that ran its time, session-08), except that finding no window resolves it to
+ * `fallback`: a quit that began at the hold's end tears its windows down before the process
+ * exits – on a slow runner well before – and the release meeting none is that quit under way,
+ * which the exit event then confirms. Any other rejection propagates.
+ */
+export function unlessNoWindow(promise, fallback = undefined) {
+  return promise.catch((e) => {
+    const message =
+      e !== null && typeof e === 'object' && 'message' in e ? String(e.message) : String(e ?? '')
+    if (message.includes(NO_WINDOW_MESSAGE)) return fallback
+    throw e
+  })
+}
+
 /**
  * The process exit `exitPromise` resolves with, or null once `budgetMs` have passed since
  * `since` without it. An exit that has already happened wins over a budget that has already run

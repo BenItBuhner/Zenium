@@ -263,7 +263,7 @@ import {
   rowsExpected,
   waitForTabWithRetry
 } from './navigation.mjs'
-import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
+import { exitWithin, mainProcessState, unlessNoWindow, unlessTargetClosed } from './quit.mjs'
 import { skipReason, skippedEntries } from './scenario-deps.mjs'
 import {
   SITE_DATA_FILE,
@@ -1439,7 +1439,15 @@ class Session {
       QUIT_HOLD_MS + QUIT_HOLD_MARGIN_MS,
       this.quitStartedAt
     )
-    if (!exit) await Promise.race([unlessTargetClosed(this.releaseKeys(QUIT_COMBO)), delay(3000)])
+    // The keys come up only if the app is still there to see them: a quit that began at the
+    // hold's end but has not exited within the margin (a slow teardown on a runner) has torn its
+    // windows down already, so the release finds none – the quit under way, not a fault; the
+    // exit budget that follows in `quitGracefully` judges it.
+    if (!exit)
+      await Promise.race([
+        unlessNoWindow(unlessTargetClosed(this.releaseKeys(QUIT_COMBO))),
+        delay(3000)
+      ])
     return { panel, shot, exitedDuringHold: Boolean(exit) }
   }
 
