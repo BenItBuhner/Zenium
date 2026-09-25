@@ -654,14 +654,28 @@ if (frames.length) {
     say(
       `compare: ${count('splash')} splash frames${count('splash') ? ` from ${at(firstSplash)} to ${at(lastSplash)}` : ''}; the page from ${at(firstPage)}; ${back} splash frames after the page's first${backRuns.length ? ` (${backRuns.map((r) => `${at(r.from)}–${at(r.to)}`).join(', ')})` : ''}`
     )
-    if (!compare.apart) {
+    // A reading of the platform's own path, not a claim of the app's: COMPARISON lines, never failures.
+    const comparison = (rule, holds, detail) =>
+      say(`COMPARISON: ${rule} – ${holds ? 'yes' : 'NO'} (${detail})`)
+    if (!compare.splashSig) {
       say(
-        `NOTE: the comparison cannot tell this splash from this page – not judged: their signatures agree at every point read (splash ${compare.splashSig ? sig(compare.splashSig) : 'none'}; page ${sig(compare.pageSig)})`
+        `NOTE: the comparison saw no change from the launcher in ${frames.length} frames – not judged (launcher ${sig(compare.launcher)})`
+      )
+    } else if (!compare.apart) {
+      // The first frame after the launcher already carries the page's signature: nothing stood
+      // between them. A relaunch that creates no activity (the launcher alias naming the running
+      // activity itself, as Chrome's does) earns no starting window.
+      comparison(
+        "the platform drew a splash for the other browser's relaunch",
+        false,
+        `the first frame after the launcher, at ${at(compare.firstChange)}, already carries the page's signature (${sig(compare.pageSig)}) and ${count('page')} page frames follow to the end – nothing stood between the launcher and the page`
+      )
+      comparison(
+        "no splash frame after the other browser's page's first: the platform's own splash did not come back over the page",
+        firstPage >= 0 && back === 0,
+        `no splash frame at all; the page from ${at(firstPage)}; ${count('other')} frames of anything else after the launcher`
       )
     } else {
-      // A reading of the platform's own path, not a claim of the app's: COMPARISON lines, never failures.
-      const comparison = (rule, holds, detail) =>
-        say(`COMPARISON: ${rule} – ${holds ? 'yes' : 'NO'} (${detail})`)
       comparison(
         "the platform drew a splash for the other browser's relaunch",
         count('splash') > 0,

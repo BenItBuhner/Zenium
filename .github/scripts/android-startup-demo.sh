@@ -284,6 +284,13 @@ window_transitions() {
   adb shell settings put global transition_animation_scale "$1" || true
   adb shell settings put global window_animation_scale "$1" || true
 }
+# A clock mark in logcat (`ZenStartupDemo`), so a recording's frame maps to a log line by the
+# device's clock. adb joins its arguments and runs them through the device's `sh -c`, so the
+# message is quoted for THAT shell ($1 must not contain a single quote): run 36135718562's marks
+# – `(light)` bare – died there as a syntax error and never reached the buffer.
+demo_mark() {
+  adb shell "log -p i -t ZenStartupDemo '$1'" || true
+}
 # The `am start -W` answer's field $1 (TotalTime, WaitTime, LaunchState) from the text in $2.
 field() {
   printf '%s\n' "$2" | sed -n "s/^$1: *//p" | head -n 1
@@ -655,11 +662,11 @@ alias_open() {
   adb logcat -c || true
   # The mark: logcat's clock as the recording is requested (the recording's own clock starts at
   # its first captured frame, within screenrecord's start-up of this line).
-  adb shell log -p i -t ZenStartupDemo "alias_open: screenrecord requested ($theme)" || true
+  demo_mark "alias_open: screenrecord requested ($theme)"
   adb shell screenrecord --bit-rate 6000000 --time-limit 30 "/sdcard/startup-alias-open-$theme.mp4" &
   local recorder_pid=$!
   sleep 1.5
-  adb shell log -p i -t ZenStartupDemo "alias_open: am start requested ($theme)" || true
+  demo_mark "alias_open: am start requested ($theme)"
   local answer
   answer=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$alias" 2>&1 | tr -d '\r' || true)
   local splash_seen
@@ -671,7 +678,7 @@ alias_open() {
   local late_line
   late_line=$(wait_line "ZenStartup.*a hand-over after the lift" 4 || true)
   sleep 1.5
-  adb shell log -p i -t ZenStartupDemo "alias_open: screenrecord stop requested ($theme)" || true
+  demo_mark "alias_open: screenrecord stop requested ($theme)"
   adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
   wait "$recorder_pid" || true
   window_transitions 1
@@ -742,9 +749,17 @@ compare_chrome() {
     echo "NOTE: the comparison against Chrome did not run – $pkg is not on this image, and no other browser with a splash is" | tee -a "$findings"
     return
   fi
+  # The Google APIs images carry Chrome DISABLED (run 36135718562: the APK under /data/app, no
+  # launcher activity resolved): enable it for the act. Its MAIN/LAUNCHER alias names the tabbed
+  # activity itself (chrome-manifest.xml: com.google.android.apps.chrome.Main → ChromeTabbedActivity),
+  # the fallback when the resolver still answers nothing.
+  adb shell pm enable "$pkg" > /dev/null 2>&1 || true
   component=$(adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER "$pkg" 2> /dev/null | tr -d '\r' | grep -m 1 "^$pkg/" || true)
+  if [ -z "$component" ] && adb shell dumpsys package "$pkg" 2> /dev/null | tr -d '\r' | grep -q "$pkg/com.google.android.apps.chrome.Main"; then
+    component="$pkg/com.google.android.apps.chrome.Main"
+  fi
   if [ -z "$component" ]; then
-    echo "NOTE: the comparison against Chrome did not run – no launcher activity resolved for $pkg" | tee -a "$findings"
+    echo "NOTE: the comparison against Chrome did not run – no launcher activity resolved for $pkg (enabled state: $(adb shell pm list packages -d 2> /dev/null | tr -d '\r' | grep -q "package:$pkg$" && echo disabled || echo 'not disabled'))" | tee -a "$findings"
     return
   fi
   echo "== the comparison: Chrome's relaunch with NEW_TASK alone ($theme; $component)"
@@ -758,18 +773,18 @@ compare_chrome() {
   adb shell input keyevent KEYCODE_HOME || true
   sleep 3
   adb logcat -c || true
-  adb shell log -p i -t ZenStartupDemo "compare: screenrecord requested ($theme)" || true
+  demo_mark "compare: screenrecord requested ($theme)"
   adb shell screenrecord --bit-rate 6000000 --time-limit 30 "/sdcard/startup-compare-chrome-$theme.mp4" &
   local recorder_pid=$!
   sleep 1.5
-  adb shell log -p i -t ZenStartupDemo "compare: am start requested ($theme)" || true
+  demo_mark "compare: am start requested ($theme)"
   local answer
   answer=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$component" 2>&1 | tr -d '\r' || true)
   local splash_seen
   splash_seen=$(adb shell dumpsys window windows 2> /dev/null | tr -d '\r' | grep -c "Splash Screen $pkg" || true)
   # The same tail as the alias act's: the platform's exit, a would-be transfer's timeout, the page standing.
   sleep 5.5
-  adb shell log -p i -t ZenStartupDemo "compare: screenrecord stop requested ($theme)" || true
+  demo_mark "compare: screenrecord stop requested ($theme)"
   adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
   wait "$recorder_pid" || true
   window_transitions 1
