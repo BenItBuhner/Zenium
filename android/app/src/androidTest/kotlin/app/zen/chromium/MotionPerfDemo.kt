@@ -491,9 +491,20 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         Finger().tap(chip.exactCenterX(), chip.exactCenterY())
     }
 
-    /** The on-screen box of the Space `spaceId`'s chip in the overview's strip, null when there is none. */
-    private fun chipRect(spaceId: String): android.graphics.Rect? =
-        domRect(".zen-overview .zen-overview-strip [data-space-id=${JSONObject.quote(spaceId)}]")
+    /**
+     * The on-screen box of the Space `spaceId`'s chip in the overview's strip, null when there is
+     * none. The chip is found by its `data-space-id`; a strip without the attribute (a build before
+     * the Space switch's motion, the baseline of its ruling-5 comparison) has its chips as the
+     * strip's buttons in the Spaces' order, so the Space's position in the core's `spaces` finds
+     * it there – the same scene reads either head.
+     */
+    private fun chipRect(spaceId: String): android.graphics.Rect? {
+        val byId = domRect(".zen-overview .zen-overview-strip [data-space-id=${JSONObject.quote(spaceId)}]")
+        if (byId != null) return byId
+        val spaces = coreState().optJSONArray("spaces") ?: return null
+        val position = (0 until spaces.length()).firstOrNull { spaces.optJSONObject(it)?.optString("id") == spaceId } ?: return null
+        return domRect(".zen-overview .zen-overview-strip > button:nth-of-type(${position + 1})")
+    }
 
     private fun activeSpaceId(): String = coreState().optString("activeSpaceId")
 
