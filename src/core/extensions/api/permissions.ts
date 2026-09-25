@@ -91,6 +91,29 @@ export function hostPermissionContains(granted: string, wanted: string): boolean
   return patternContains(hostPermissionPattern(granted), hostPermissionPattern(wanted))
 }
 
+/** Whether a host pattern is of the file scheme (`file:///*` and the other `file:` forms). */
+export function isFileSchemePattern(pattern: string): boolean {
+  return pattern.startsWith('file:')
+}
+
+/**
+ * The active set Chrome answers `getAll` and `contains` from: the granted set less its
+ * file-scheme host patterns while the user has not allowed the extension file access
+ * (`extension.isAllowedFileSchemeAccess` false). Chrome withholds `file://` patterns from an
+ * extension's active permissions until then (the pattern stays required and granted; `remove`
+ * of it is refused as required), so an extension that trims its grants by what `getAll` lists –
+ * Markdown Viewer's start-up workaround removes every origin not in its stored state – never
+ * asks to remove its required `file:///*`. `<all_urls>` stays listed whole, as Chrome lists it;
+ * whether a file page is reachable under it is the page-access gate's matter, not this list's.
+ */
+export function activePermissionSet(granted: PermissionSet, fileAccess: boolean): PermissionSet {
+  if (fileAccess) return granted
+  return {
+    permissions: granted.permissions,
+    origins: granted.origins.filter((origin) => !isFileSchemePattern(origin))
+  }
+}
+
 /** Whether `granted` covers every permission and origin in `wanted`. */
 export function permissionSetContains(granted: PermissionSet, wanted: PermissionSet): boolean {
   for (const permission of wanted.permissions) {

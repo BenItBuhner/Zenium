@@ -2583,6 +2583,78 @@ describe('AndroidExtensionRuntime: chrome.permissions', () => {
     expect(bad.ok).toBe(false)
     expect(bad.error).toContain('Invalid value for origin pattern example.com')
   })
+
+  it('withholds the required file pattern from getAll and contains until file access is allowed, so a start-up trim of the listed origins never removes it (Markdown Viewer, compat round 16 §7.1)', async () => {
+    // Markdown Viewer 5.3: `host_permissions: ["file:///*"]`; its background's `md.storage.bug`
+    // runs `getAll` and removes every listed origin its stored state does not name – on a fresh
+    // install every one of them. Chrome lists no `file://` pattern until the user allowed file
+    // access (`extension.isAllowedFileSchemeAccess` false), so the required pattern is never in
+    // that remove; the runtime listed it and answered "You cannot remove required permissions."
+    // (compat round 16's run on both WebViews).
+    const h = harness()
+    const m = manifest({
+      permissions: ['storage', 'scripting'],
+      host_permissions: ['file:///*'],
+      optional_permissions: ['webRequest'],
+      optional_host_permissions: ['*://*/']
+    })
+    const rec = record(h, { allowFileAccess: false }, m)
+    await h.runtime.attach(rec)
+    backgroundUp(h, 'bg1', ['permissions.onRemoved'])
+    expect((await call(h, 'bg1', 'permissions', 'getAll', [])).result).toEqual({
+      permissions: ['storage', 'scripting'],
+      origins: []
+    })
+    expect(
+      (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['file:///*'] }])).result
+    ).toBe(false)
+    expect(
+      (await call(h, 'bg1', 'extension', 'isAllowedFileSchemeAccess', [])).result
+    ).toBe(false)
+    // The start-up trim on a fresh install: every listed origin, none of them the file pattern.
+    const listed = (await call(h, 'bg1', 'permissions', 'getAll', [])).result as {
+      origins: string[]
+    }
+    const stateKeys: string[] = []
+    const trim = await call(h, 'bg1', 'permissions', 'remove', [
+      { origins: listed.origins.filter((origin) => !stateKeys.includes(origin.slice(0, -2))) }
+    ])
+    expect(trim.ok).toBe(true)
+    expect(trim.result).toBe(true)
+    expect(events(h, 'bg1', 'permissions.onRemoved')).toHaveLength(0)
+    // The pattern is still required and granted: asking for it again grants nothing new, and
+    // removing it by name is still refused as required.
+    expect(
+      (await call(h, 'bg1', 'permissions', 'request', [{ origins: ['file:///*'] }])).result
+    ).toBe(true)
+    const required = await call(h, 'bg1', 'permissions', 'remove', [{ origins: ['file:///*'] }])
+    expect(required.ok).toBe(false)
+    expect(required.error).toBe('You cannot remove required permissions.')
+    // "Allow All" from the options page: the optional `*://*/` is granted as `*://*/*` and listed;
+    // the trim on a later start with that state keeps it (`*://*` is a key of the state).
+    expect(
+      (await call(h, 'bg1', 'permissions', 'request', [{ origins: ['*://*/*'] }])).result
+    ).toBe(true)
+    expect((await call(h, 'bg1', 'permissions', 'getAll', [])).result).toEqual({
+      permissions: ['storage', 'scripting'],
+      origins: ['*://*/*']
+    })
+    expect(
+      (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['*://*/*'] }])).result
+    ).toBe(true)
+    // File access allowed: the required pattern is listed and contained, as Chrome lists it then.
+    await h.runtime.reconfigure({ ...rec, allowFileAccess: true })
+    expect((await call(h, 'bg1', 'permissions', 'getAll', [])).result).toEqual({
+      permissions: ['storage', 'scripting'],
+      origins: ['file:///*', '*://*/*']
+    })
+    expect(
+      (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['file:///*'] }])).result
+    ).toBe(true)
+    expect(
+      (await call(h, 'bg1', 'extension', 'isAllowedFileSchemeAccess', [])).result
+    ).toBe(true)
+  })
 })
 
 describe('AndroidExtensionRuntime: chrome.action badge colours', () => {
