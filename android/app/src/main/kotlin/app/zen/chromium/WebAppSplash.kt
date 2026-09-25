@@ -35,7 +35,10 @@ import kotlin.math.roundToInt
  * colour the ground already is), the app's tile at the platform's icon size in its centre, the
  * bars' icons in the tone the ground wants. THE LIMIT: from the tap to the window's first frame
  * the splash is the fixed ground with no icon; the app's colour and icon are on screen from then
- * to the page's first frame (the longer part of a launch that has a network on it).
+ * to the page's first frame (the longer part of a launch that has a network on it). The exit into
+ * the page is the browser's departure ([SplashExit], v2 §11.10): the tile – the [SplashSkin]'s
+ * mark – at `scale(1 − .1·t)` while the dressed view fades as one object, 180 ms on the standard
+ * curve; §11.3's 120 ms fade under reduced motion.
  *
  * The tile is the install's adaptive layer ([WebAppStore.tileFile], `Shortcuts.drawTile`),
  * drawn as the launcher draws it: an [AdaptiveIconDrawable] of the layer under the device's mask,

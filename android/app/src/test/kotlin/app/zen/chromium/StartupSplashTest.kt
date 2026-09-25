@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.view.View
 import androidx.core.splashscreen.SplashScreenViewProvider
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -243,12 +244,46 @@ class StartupSplashTest {
     }
 
     @Test
-    fun theExitIsTheSystemsRevealSequenceUntilRuled() {
-        // WM Shell's SplashScreenExitAnimation: the icon first, then the splash over the app.
-        assertEquals(133L, SplashExit.ICON_FADE_MS)
-        assertEquals(83L, SplashExit.REVEAL_DELAY_MS)
-        assertEquals(266L, SplashExit.REVEAL_MS)
-        assertTrue("the icon is gone before the splash starts to go", SplashExit.ICON_FADE_MS <= SplashExit.REVEAL_DELAY_MS + SplashExit.REVEAL_MS)
+    fun theExitIsTheChromesDepartureOneObjectLeaving() {
+        // v2 §11.10 (the design gate on #454): 180 ms on the standard curve, the mark at
+        // scale(1 − .1·t) with its opacity, the ground's opacity with it, no delay between them.
+        assertEquals("the pop's duration", 180L, SplashExit.DURATION_MS)
+        assertEquals(1f, SplashExit.scale(0f), 1e-6f)
+        assertEquals(0.95f, SplashExit.scale(0.5f), 1e-6f)
+        assertEquals("the mark settles at .9, §11.4's departure", 0.9f, SplashExit.scale(1f), 1e-6f)
+        for (t in listOf(0f, 0.25f, 0.5f, 0.75f, 1f)) {
+            assertEquals("the ground's opacity is 1 − t", 1f - t, SplashExit.groundAlpha(t), 1e-6f)
+            assertEquals("the mark's opacity is the ground's, in step at t=$t", SplashExit.groundAlpha(t), SplashExit.markAlpha(t), 1e-6f)
+        }
+        // The standard curve: --zen-ease, cubic-bezier(0.2, 0.8, 0.2, 1) (v1 §7), not the shell's ease.
+        assertArrayEquals(floatArrayOf(0.2f, 0.8f, 0.2f, 1f), SplashExit.CURVE, 1e-6f)
+        // §11.3's fade keeps its own duration: one number under reduced motion on both hosts.
+        assertEquals(120L, SplashExit.REDUCED_FADE_MS)
+        assertTrue("the departure is the pop, the reduced fade the state change", SplashExit.REDUCED_FADE_MS < SplashExit.DURATION_MS)
+    }
+
+    @Test
+    fun thePlatformsViewTakesTheDepartureOnOneAnimatorTheMarkAndTheGroundTogether() {
+        // The surface is the platform's view under a real animator, so its shape is pinned from
+        // the source: one ValueAnimator on the departure's clock and curve, no start delay, the
+        // mark's scale and the view's opacity from the same progress, the mark's opacity the
+        // view's (one object; nothing set on the mark's alpha, so nothing compounds), the view
+        // removed and the end told as the motion ends; the reduced fade on the same curve.
+        val source = read("src/main/kotlin/app/zen/chromium/StartupSplash.kt", "app/src/main/kotlin/app/zen/chromium/StartupSplash.kt")
+        val exit = Regex("""override fun exit\(icon: View\?, onEnd: \(\) -> Unit\) \{(.*?)\n    }\n""", RegexOption.DOT_MATCHES_ALL).find(source)
+        assertTrue("PlatformSplashSurface.exit is there", exit != null)
+        val body = exit!!.value
+        assertTrue("one animator on the departure's clock", body.contains("ValueAnimator.ofFloat(0f, 1f)") && body.contains("duration = SplashExit.DURATION_MS"))
+        assertTrue("on the standard curve", body.contains("interpolator = SplashExit.curve"))
+        assertFalse("no delay between the mark and the ground", body.contains("startDelay") || body.contains("setStartDelay"))
+        assertTrue("the mark scales from the progress", body.contains("val s = SplashExit.scale(t)") && body.contains("it.scaleX = s") && body.contains("it.scaleY = s"))
+        assertTrue("the view's opacity is the ground's, the mark inside it", body.contains("view.alpha = SplashExit.groundAlpha(t)"))
+        assertFalse("nothing compounds on the mark", Regex("""\.alpha = SplashExit\.markAlpha""").containsMatchIn(body))
+        assertEquals("one animator started, not one per part", 1, Regex("""\bstart\(\)""").findAll(body).count())
+        assertTrue("the view goes and the end is told as the motion ends", body.contains("override fun onAnimationEnd") && body.contains("provider.remove()") && body.contains("onEnd()"))
+        val fade = Regex("""override fun fadeInPlace\(onEnd: \(\) -> Unit\) \{(.*?)\n    }\n""", RegexOption.DOT_MATCHES_ALL).find(source)
+        assertTrue("PlatformSplashSurface.fadeInPlace is there", fade != null)
+        assertTrue("§11.3's fade steps the ground's opacity on the same curve over its own duration", fade!!.value.contains("SplashExit.groundAlpha(SplashExit.curve.getInterpolation(t))") && fade.value.contains("SplashExit.REDUCED_FADE_MS"))
     }
 
     @Test

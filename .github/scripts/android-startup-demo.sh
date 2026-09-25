@@ -316,8 +316,8 @@ cold_start() {
   total=$(field TotalTime "$answer")
   wait_=$(field WaitTime "$answer")
   state=$(field LaunchState "$answer")
-  # READY: the chrome's first real frame drawn, the splash lifting. Then the exit's 350 ms, and
-  # the picture stands under the chrome while the runner still holds the page.
+  # READY: the chrome's first real frame drawn, the splash lifting. Then the departure's 180 ms,
+  # and the picture stands under the chrome while the runner still holds the page.
   local ready_line
   ready_line=$(wait_line "chrome ready: frame drawn" 25)
   sleep 0.7

@@ -1,5 +1,7 @@
 package app.zen.chromium
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.os.Handler
 import android.os.Looper
@@ -7,7 +9,6 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.Window
-import android.view.animation.LinearInterpolator
 import android.view.animation.PathInterpolator
 import androidx.core.splashscreen.SplashScreen
 import androidx.core.splashscreen.SplashScreenViewProvider
@@ -54,29 +55,44 @@ class SplashHold {
 }
 
 /**
- * The exit motion's numbers, in one place for the lead's ruling (the PR's open question: §11's
- * GENTLE against the system's own). Until ruled, the system default: the platform's app-reveal
- * sequence (WM Shell's SplashScreenExitAnimation) – the icon fades first, then the splash over the
- * app, the app's frame under it the whole way – with its durations
- * (`starting_window_app_reveal_icon_fade_out_duration`, `…_anim_delay`, `…_anim_duration`).
- * Under reduced motion the departure is v2 §11.3's: a 120 ms opacity fade in place, the icon
- * with the view (the chrome's `REDUCED_FADE_MS`), not a cut.
+ * The exit motion's numbers (v2 §11.10, the design gate on #454): the chrome's DEPARTURE, one
+ * object leaving – 180 ms on the standard curve (`--zen-ease`, v1 §7's pop), the mark at
+ * `scale(1 − .1·t)` with its opacity, the ground's opacity with it (§11.4's card departure), no
+ * delay between the two, the system bars' tone flipping at the end. Not the platform's app reveal
+ * (its icon fade, then its view fade, on a radial reveal's timings) and not a spring on an
+ * opacity. Under reduced motion the departure is §11.3's: a 120 ms opacity fade in place on the
+ * same curve, the mark with the ground (the chrome's `REDUCED_FADE_MS`), not a cut.
+ *
+ * `t` is the curve's progress: 0 at the lift, 1 as the view is gone. The mark's opacity is the
+ * ground's – the platform's view fades as one object, its mark inside it, the way a card and its
+ * content take one `opacity` – so the two are in step by construction and nothing compounds;
+ * [markAlpha] and [groundAlpha] name the two for the reader and the test.
  */
 object SplashExit {
-    const val ICON_FADE_MS = 133L
-    const val REVEAL_DELAY_MS = 83L
-    const val REVEAL_MS = 266L
+    /** The departure's clock: the pop's 180 ms (v1 §7). */
+    const val DURATION_MS = 180L
+    /** §11.3's one duration under reduced motion. */
     const val REDUCED_FADE_MS = 120L
-    /** Lazily: the interpolators are the platform's classes, and the JVM test reads the numbers alone. */
-    val iconCurve by lazy { LinearInterpolator() }
-    /** The shell's app reveal is a standard ease (fast out, slow in); the reduced-motion fade takes it too. */
-    val revealCurve by lazy { PathInterpolator(0.4f, 0f, 0.2f, 1f) }
+    /** The mark's scale runs from 1 to 1 − this: §11.4's `scale(1 − .1·t)`. */
+    const val SCALE_DEPTH = 0.1f
+    /** The standard curve's control points: `--zen-ease`, `cubic-bezier(0.2, 0.8, 0.2, 1)`. */
+    val CURVE = floatArrayOf(0.2f, 0.8f, 0.2f, 1f)
+    /** Lazily: the interpolator is the platform's class, and the JVM test reads the numbers alone. */
+    val curve by lazy { PathInterpolator(CURVE[0], CURVE[1], CURVE[2], CURVE[3]) }
+
+    /** The mark's scale at progress [t]. */
+    fun scale(t: Float): Float = 1f - SCALE_DEPTH * t
+    /** The mark's opacity at [t]: the ground's, in step. */
+    fun markAlpha(t: Float): Float = 1f - t
+    /** The ground's opacity at [t]. */
+    fun groundAlpha(t: Float): Float = 1f - t
 }
 
 /**
  * What a window's own skin put on the platform's splash view at the hand-over (PWA-06,
- * [WebAppSplash]): the icon view the exit motion fades first (null: the platform's own), and the
- * tone the system bars' icons keep while the splash is held (light for a light ground).
+ * [WebAppSplash]): the mark the departure scales and fades with the ground (null: the platform's
+ * own icon view), and the tone the system bars' icons keep while the splash is held (light for a
+ * light ground).
  */
 class SplashSkin(val iconView: View?, val lightBars: Boolean)
 
@@ -89,11 +105,12 @@ interface SplashSurface {
     /** The skin's dress of the platform's view (PWA-06); null where there is no view to dress. */
     fun dress(skin: (SplashScreenViewProvider) -> SplashSkin): SplashSkin?
     /**
-     * The exit motion ([SplashExit]): the icon – `icon` when the skin put one on, else the
-     * platform's – fades first, then the whole view over the app; `onEnd` as the view is gone.
+     * The departure ([SplashExit]): the mark – `icon` when the skin put one on, else the
+     * platform's – at `scale(1 − .1·t)` while the view, mark and all, fades over the app as one
+     * object, 180 ms on the standard curve; `onEnd` as the view is gone.
      */
     fun exit(icon: View?, onEnd: () -> Unit)
-    /** The reduced-motion departure: the view, icon and all, fades in place over [SplashExit.REDUCED_FADE_MS]; `onEnd` as it is gone. */
+    /** The reduced-motion departure: the view, mark and all, fades in place over [SplashExit.REDUCED_FADE_MS]; `onEnd` as it is gone. */
     fun fadeInPlace(onEnd: () -> Unit)
     /** Gone at once, no motion (the activity's end). */
     fun remove()
@@ -138,8 +155,8 @@ interface SplashClock {
  *
  * The system bars' icon tone during the hold is the splash theme's (light icons over the indigo);
  * what the chrome asks for meanwhile (Host.applyTheme → [systemBarsLight]) is kept and applied
- * at the exit's END – the splash's colour is on screen until the last frame of the motion, and
- * dark icons over the indigo for its 350 ms would be the flip the hold exists to avoid.
+ * at the exit's END – the splash's colour is on screen until the last frame of the departure, and
+ * dark icons over the indigo for its 180 ms would be the flip the hold exists to avoid.
  *
  * Reduced motion (the animator duration scale at zero – Settings' "Remove animations" sets it;
  * nothing else is read) lifts the splash on §11.3's 120 ms opacity fade in place.
@@ -255,35 +272,51 @@ class StartupSplash internal constructor(
     }
 }
 
-/** The library's provider as a [SplashSurface]: the exit motion and the reduced-motion fade on the platform's view. */
+/** The library's provider as a [SplashSurface]: the departure and the reduced-motion fade on the platform's view. */
 class PlatformSplashSurface(private val provider: SplashScreenViewProvider) : SplashSurface {
     override fun dress(skin: (SplashScreenViewProvider) -> SplashSkin): SplashSkin = skin(provider)
 
     override fun exit(icon: View?, onEnd: () -> Unit) {
-        val fading = icon ?: runCatching { provider.iconView }.getOrNull()
-        fading?.animate()?.alpha(0f)?.setDuration(SplashExit.ICON_FADE_MS)?.setInterpolator(SplashExit.iconCurve)?.start()
-        provider.view.animate()
-            .alpha(0f)
-            .setStartDelay(SplashExit.REVEAL_DELAY_MS)
-            .setDuration(SplashExit.REVEAL_MS)
-            .setInterpolator(SplashExit.revealCurve)
-            .withEndAction {
-                provider.remove()
-                onEnd()
+        val mark = icon ?: runCatching { provider.iconView }.getOrNull()
+        val view = provider.view
+        // A skin's dress still blending the mark in (a page whose first frame beat the 150 ms)
+        // yields to the departure; the ground's blend ends on its own inside the departure's time.
+        mark?.animate()?.cancel()
+        // One animator, one clock: the mark's scale and the view's opacity from the same progress
+        // on the standard curve. The mark's opacity is the view's – the view fades as one object
+        // with its mark inside it – so nothing is set on the mark's alpha and nothing compounds.
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = SplashExit.DURATION_MS
+            interpolator = SplashExit.curve
+            addUpdateListener { animator ->
+                val t = animator.animatedValue as Float
+                mark?.let {
+                    val s = SplashExit.scale(t)
+                    it.scaleX = s
+                    it.scaleY = s
+                }
+                view.alpha = SplashExit.groundAlpha(t)
             }
-            .start()
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    provider.remove()
+                    onEnd()
+                }
+            })
+            start()
+        }
     }
 
     override fun fadeInPlace(onEnd: () -> Unit) {
         // Not an animator: the setting that brings the lift here scales every animator's duration
-        // to zero (a ViewPropertyAnimator would end on its first frame – the cut §11.3 rules out),
-        // so the fade is stepped on the frame clock from the uptime itself.
+        // to zero (a ValueAnimator would end on its first frame – the cut §11.3 rules out), so the
+        // fade is stepped on the frame clock from the uptime itself, on the departure's curve.
         val view = provider.view
         val started = SystemClock.uptimeMillis()
         view.postOnAnimation(object : Runnable {
             override fun run() {
                 val t = ((SystemClock.uptimeMillis() - started).toFloat() / SplashExit.REDUCED_FADE_MS).coerceIn(0f, 1f)
-                view.alpha = 1f - SplashExit.revealCurve.getInterpolation(t)
+                view.alpha = SplashExit.groundAlpha(SplashExit.curve.getInterpolation(t))
                 if (t < 1f) {
                     view.postOnAnimation(this)
                 } else {
