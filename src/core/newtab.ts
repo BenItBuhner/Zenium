@@ -1022,6 +1022,9 @@ export class NewTabService {
     for (const win of this.browser.allWindows()) {
       alive.add(win.id)
       if (!this.ready.has(win.id) || win.isClosing) continue
+      // A page's utility window (the task manager) opens no new tabs: nothing to preload for it
+      // – and a page preloaded for it would stand in its own process list.
+      if (win.chrome === 'page') continue
       const current = this.preloads.get(win.id)
       const containerId = this.containerFor(win)
       if (current && !current.view.isDestroyed() && current.containerId === containerId) continue

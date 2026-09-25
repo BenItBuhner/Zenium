@@ -1602,7 +1602,7 @@ describe('the app menu', () => {
     expect(tablet.sent).not.toContain('overlay.open')
   })
 
-  it('seats Task Manager in More Tools before Developer Tools on the desktop alone, opening the zen://tasks page tab (shortcuts-menus-121)', () => {
+  it('seats Task Manager in More Tools before Developer Tools on the desktop alone, opening the zen://tasks page in its own window (shortcuts-menus-121, W5-18)', () => {
     const desktop = pageHarness({ ...DESKTOP, pageTabs: true })
     const menu = appMenu(desktop)
     const tools = menu.filter((l) => l.startsWith('More Tools > ') && l !== 'More Tools > -')
@@ -1616,14 +1616,28 @@ describe('the app menu', () => {
     // The row's action is the shortcut's (Shift+Esc), so the menu shows its keys.
     expect(row.action).toBe('tasks.open')
     expect(row.enabled).not.toBe(false)
+    const windowsBefore = desktop.browser.allWindows().length
     row.click?.()
-    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe('zen://tasks')
-    // A second press goes back to the one task manager (a singleton page), opening no other.
-    const before = Object.keys(desktop.browser.state.model.tabs).length
+    // As in Chrome and Edge, the task manager is a window of its own – a page window holding
+    // the zen://tasks page and nothing else – and the browser window keeps its page in front.
+    const tasksWin = desktop.browser.allWindows().find((w) => w.chrome === 'page')
+    expect(tasksWin).toBeDefined()
+    if (!tasksWin) return
+    expect(desktop.browser.allWindows()).toHaveLength(windowsBefore + 1)
+    expect(desktop.browser.tabs.activeTabFor(tasksWin)?.url).toBe('zen://tasks')
+    expect(desktop.browser.tabs.visibleTabIds(tasksWin)).toHaveLength(1)
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
+    expect(desktop.focused.at(-1)).toBe(tasksWin.id)
+    // A second press brings the one task manager to the front (one per profile), opening no
+    // other window and no tab.
+    const tabsBefore = Object.keys(desktop.browser.state.model.tabs).length
+    desktop.focused.length = 0
     appMenu(desktop)
     deepItem(desktop.shown(), 'Task Manager').click?.()
-    expect(Object.keys(desktop.browser.state.model.tabs).length).toBe(before)
-    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe('zen://tasks')
+    expect(desktop.browser.allWindows()).toHaveLength(windowsBefore + 1)
+    expect(Object.keys(desktop.browser.state.model.tabs).length).toBe(tabsBefore)
+    expect(desktop.focused).toEqual([tasksWin.id])
+    expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
 
     // Not a tablet's row: the page is the desktop layout's (`internalPages.ts` layouts).
     expect(appMenu(harness(DESKTOP, 'tablet'))).not.toContain('More Tools > Task Manager')
