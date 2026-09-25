@@ -1,7 +1,8 @@
 import type { JSX } from 'react'
 import { useRef } from 'react'
-import { Columns2, Grid2x2, Minus, Rows2 } from 'lucide-react'
+import { Columns2, Grid2x2, Minus, MoreHorizontal, Rows2 } from 'lucide-react'
 import type { Rect, SplitGroup, SplitLayout, UIState } from '@shared/types'
+import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { gutterRects, splitPaneRects, SPLIT_GAP, SPLIT_GAP_TOUCH } from '@renderer/lib/layout'
@@ -38,6 +39,15 @@ const NEXT_LAYOUT: Record<SplitLayout, SplitLayout> = {
  * the rows, no chip in the pill. The page is a native view the chrome cannot paint over, so
  * the outline is drawn on the pane's frame in the band every view keeps inside it
  * (`SPLIT_OUTLINE`, lib/layout.ts).
+ *
+ * Each header names its pane (split-18: Chrome's inactive view shows its hostname, Edge's pane
+ * header its site): the favicon, the title in full ink and the site (`displayHost`) at 69% after
+ * the row's 6 px gap; the site does not shrink (a badge's rule, §9.19) so the title truncates
+ * first, and a site past 45% of the header truncates itself. A site that reads as the title
+ * (a page without a title shows its host as the title) is not said twice. The inks are the same
+ * on both panes – the outline is the active pane's whole indicator (§9.35), so the inactive
+ * header is not dimmed to say it again. The ⋯ opens the pane's menu (Swap Panes, the link rule,
+ * Un-split Tab; `split.paneMenu`) under the button.
  */
 export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Element | null {
   const { coarse } = useViewport()
@@ -51,6 +61,8 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
         const tab = state.tabs[pane.tabId]
         if (!tab) return null
         const active = pane.tabId === activeTabId
+        const host = displayHost(tab.url)
+        const title = tabTitle(tab)
         // The header stands in the gap between the views and goes with the page when the page is
         // hidden (ContentArea mounts this chrome only while the content shows): its controls'
         // tooltips never put the page under its picture (`data-tooltip-no-cover`, lib/tooltip.ts
@@ -60,21 +72,27 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
         return (
           <div
             key={pane.tabId}
-            className={cn(
-              'absolute flex items-center gap-1.5 px-2 text-[11.5px]',
-              active ? 'text-[var(--zen-fg)]' : 'text-[var(--zen-muted)]'
-            )}
+            className="absolute flex items-center gap-1.5 px-2 text-[11.5px] text-[var(--zen-fg)]"
             style={{
               left: pane.header.x,
               top: pane.header.y,
               width: pane.header.width,
               height: pane.header.height
             }}
+            data-split-pane-header={pane.tabId}
             data-tooltip-no-cover
             onMouseDown={() => !active && run('tab.activate', { tabId: pane.tabId })}
           >
             <Favicon tab={tab} size={12} />
-            <span className="min-w-0 flex-1 truncate">{tabTitle(tab)}</span>
+            <span className="min-w-0 truncate" data-split-pane-title>
+              {title}
+            </span>
+            {host && host !== title && (
+              <span className="max-w-[45%] shrink-0 truncate opacity-[.69]" data-split-pane-host>
+                {host}
+              </span>
+            )}
+            <span className="min-w-0 flex-1" />
             {active && (
               <button
                 type="button"
@@ -88,6 +106,24 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
                 <Icon className="h-3 w-3" />
               </button>
             )}
+            <button
+              type="button"
+              className="zen-toolbar-button h-5 w-5"
+              aria-label="Pane options"
+              aria-haspopup="menu"
+              data-tooltip="Pane options"
+              onClick={(e) => {
+                const box = e.currentTarget.getBoundingClientRect()
+                run('split.paneMenu', {
+                  tabId: pane.tabId,
+                  x: Math.round(box.left),
+                  y: Math.round(box.bottom),
+                  keyboard: e.detail === 0
+                })
+              }}
+            >
+              <MoreHorizontal className="h-3 w-3" />
+            </button>
             <button
               type="button"
               className="zen-toolbar-button h-5 w-5"

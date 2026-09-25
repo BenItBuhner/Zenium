@@ -1,0 +1,14 @@
+diff --git a/node_modules/happy-dom/lib/query-selector/QuerySelector.js b/node_modules/happy-dom/lib/query-selector/QuerySelector.js
+index a4204c5..2020a34 100644
+--- a/node_modules/happy-dom/lib/query-selector/QuerySelector.js
++++ b/node_modules/happy-dom/lib/query-selector/QuerySelector.js
+@@ -339,6 +339,9 @@ export default class QuerySelector {
+             previousSelectorItem?.combinator === SelectorCombinatorEnum.descendant) {
+             const parentElement = element.parentNode;
+             if (parentElement && parentElement !== element[PropertySymbol.ownerDocument]) {
++                // The ancestor visited on the way up decides the match as much as the first
++                // one does: an attribute change on it has to drop this cached result too.
++                this.affectsCache(parentElement, cachedItem);
+                 return this.matchSelector({
+                     scope,
+                     element: parentElement,

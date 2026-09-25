@@ -32,6 +32,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { SplitChrome } = await import('../SplitChrome')
+const { run } = vi.mocked(await import('@renderer/lib/api'))
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
 
@@ -150,8 +151,8 @@ describe('the active pane’s outline (§9.35)', () => {
       expect(header.innerHTML).not.toMatch(/bg-\[var\(--zen-accent\)\]/)
       expect(header.querySelector('.absolute.inset-x-0.bottom-0')).toBeNull()
     }
-    // The headers stay: each with its pane's title and the un-split control.
-    expect(headers.map((h) => h.textContent)).toEqual(['AA', 'BB'])
+    // The headers stay: each with its pane's title, its site and the un-split control.
+    expect(headers.map((h) => h.textContent)).toEqual(['AAa.example', 'BBb.example'])
   })
 
   it('moves with the active pane and leaves with the active tab', () => {
@@ -173,5 +174,66 @@ describe('the active pane’s outline (§9.35)', () => {
     expect(outline).toContain('outline-offset: -2px')
     expect(outline).not.toContain('--v2-accent')
     expect(SPLIT_OUTLINE).toBe(2)
+  })
+})
+
+describe('the pane header names its site (split-18) and opens the pane’s menu (split-07)', () => {
+  const header = (tabId: string): HTMLElement =>
+    container.querySelector<HTMLElement>(`[data-split-pane-header="${tabId}"]`)!
+
+  beforeEach(() => run.mockClear())
+
+  it('shows the title in full ink and the host at 69% after it, on the active and the inactive pane alike', () => {
+    render('a')
+    for (const id of ['a', 'b']) {
+      const h = header(id)
+      const title = h.querySelector<HTMLElement>('[data-split-pane-title]')!
+      const host = h.querySelector<HTMLElement>('[data-split-pane-host]')!
+      expect(title.textContent).toBe(id.toUpperCase())
+      expect(host.textContent).toBe(`${id}.example`)
+      // Both panes' headers carry the same inks: the outline is the whole active indicator.
+      expect(h.className).toContain('text-[var(--zen-fg)]')
+      expect(h.className).not.toContain('--zen-muted')
+      expect(host.className).toContain('opacity-[.69]')
+      // The title truncates first: the host does not shrink, and stops at 45% of the header.
+      expect(title.className).toContain('truncate')
+      expect(host.className).toContain('shrink-0')
+      expect(host.className).toContain('max-w-[45%]')
+      expect(host.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+    }
+  })
+
+  it('leaves the site out when it would repeat the title, and for a page with no site', () => {
+    const untitled = { ...tab('a'), title: 'a.example' }
+    const blank = { ...tab('b'), url: 'zen://blank', title: 'New Tab' }
+    const s = {
+      tabs: { a: untitled, b: blank },
+      splitGroups: { g: group }
+    } as unknown as UIState
+    act(() => root.render(<SplitChrome state={s} group={group} area={area} activeTabId="a" />))
+    expect(header('a').querySelector('[data-split-pane-host]')).toBeNull()
+    expect(header('a').querySelector('[data-split-pane-title]')?.textContent).toBe('a.example')
+    expect(header('b').querySelector('[data-split-pane-host]')).toBeNull()
+  })
+
+  it('the ⋯ opens the pane’s menu under the button, on the pane’s tab, marked as a menu button', () => {
+    render('a')
+    const more = header('b').querySelector<HTMLButtonElement>('[aria-label="Pane options"]')!
+    expect(more.getAttribute('aria-haspopup')).toBe('menu')
+    expect(more.dataset.tooltip).toBe('Pane options')
+    more.getBoundingClientRect = () =>
+      ({ left: 700.4, right: 720, top: 4, bottom: 20.6 }) as DOMRect
+    act(() => more.click())
+    expect(run).toHaveBeenCalledWith('split.paneMenu', {
+      tabId: 'b',
+      x: 700,
+      y: 21,
+      keyboard: true
+    })
+    // The un-split control keeps its place after it.
+    const buttons = [...header('b').querySelectorAll('button')].map((b) =>
+      b.getAttribute('aria-label')
+    )
+    expect(buttons).toEqual(['Pane options', 'Un-split this tab (Shift: keep focus in the split)'])
   })
 })

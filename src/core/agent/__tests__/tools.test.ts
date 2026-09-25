@@ -3,7 +3,6 @@ import type { AgentInputEvent, TabView } from '../../platform'
 import type { Tab } from '../../../shared/types'
 import { createTabRecord } from '../../model'
 import { TabFrames } from '../frames'
-import { RpcError } from '../jsonrpc'
 import type { ToolResult } from '../protocol'
 import { withUnknownArgsNote } from '../service'
 import { signInPage, type FakePage } from './fakePage'
@@ -13,19 +12,16 @@ import {
   ON_SCREEN_WAIT_MS,
   acceptedArgs,
   agentInstructions,
-  listTabs,
   looksLikeStatements,
   normalizeKey,
-  orderedTabs,
-  resolveTabRef,
   setOnScreenWaitMsForTests,
   wrapScript,
   type ToolContext
 } from '../tools'
 
-// ---------------------------------------------------------------------------
-// A minimal browser: two spaces, one essential, one folder, no live pages.
-// ---------------------------------------------------------------------------
+// Sessions, ownership, the queue, notices, the lease and the tab / group tools run against the
+// real `AgentService` in `multiAgent.test.ts`; this file covers the definitions, the argument
+// handling and the page tools over fake frames.
 
 function tab(id: string, url: string, spaceId: string | null, extra: Partial<Tab> = {}): Tab {
   const t = createTabRecord({
@@ -37,49 +33,6 @@ function tab(id: string, url: string, spaceId: string | null, extra: Partial<Tab
     discarded: false
   })
   return Object.assign(t, extra)
-}
-
-function fakeContext(): ToolContext {
-  const tabs: Record<string, Tab> = {}
-  for (const t of [
-    tab('tab_ess', 'https://mail.example', null, { essential: true }),
-    tab('tab_a1', 'https://a1.example', 'space_a'),
-    tab('tab_a2', 'https://a2.example', 'space_a', { folderId: 'folder_r' }),
-    tab('tab_b1', 'https://b1.example', 'space_b'),
-    tab('tab_private', 'https://private.example', 'space_a')
-  ])
-    tabs[t.id] = t
-  const model = {
-    tabs,
-    essentialTabIds: ['tab_ess'],
-    spaces: [
-      { id: 'space_a', name: 'Work', icon: '💼', tabIds: ['tab_a1', 'tab_a2'] },
-      { id: 'space_b', name: 'Play', icon: '🎮', tabIds: ['tab_b1'] }
-    ],
-    folders: { folder_r: { id: 'folder_r', spaceId: 'space_a', name: 'Research', icon: '📁' } }
-  }
-  const session = {
-    id: 'agent1',
-    name: 'Tester',
-    color: '#000',
-    mode: 'foreground' as const,
-    currentTabId: 'tab_a1',
-    tabIds: new Set(['tab_a1'])
-  }
-  const ctx = {
-    browser: {
-      state: { model },
-      tabs: { tab: (id: string) => tabs[id] }
-    },
-    agents: {
-      visibleTabs: () => Object.values(tabs).filter((t) => t.id !== 'tab_private'),
-      driver: (id: string) =>
-        id === 'tab_a1' ? session : id === 'tab_b1' ? { id: 'x', name: 'Other' } : undefined,
-      agentWindow: () => ({ activeSpaceId: 'space_a' })
-    },
-    session
-  }
-  return ctx as unknown as ToolContext
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +64,47 @@ describe('tool definitions', () => {
       'browser_click'
     ])
       expect(names).toContain(n)
+  })
+
+  it('add the session and group tools of the multi-agent contract', () => {
+    const names = AGENT_TOOLS.map((t) => t.definition.name)
+    expect(names).toEqual(expect.arrayContaining(['zen_status', 'zen_session', 'zen_groups']))
+    const session = AGENT_TOOLS.find((t) => t.definition.name === 'zen_session')!.definition
+    expect((session.inputSchema.properties.action as { enum: string[] }).enum).toEqual([
+      'status',
+      'end',
+      'rename'
+    ])
+    expect(session.inputSchema.properties).toHaveProperty('closeTabs')
+    const groups = AGENT_TOOLS.find((t) => t.definition.name === 'zen_groups')!.definition
+    expect((groups.inputSchema.properties.action as { enum: string[] }).enum).toEqual([
+      'list',
+      'create',
+      'rename',
+      'close',
+      'adopt'
+    ])
+    expect(groups.inputSchema.properties).toHaveProperty('groupId')
+  })
+
+  it('every page tool takes an explicit tabId and allowForeign, and says what changed', () => {
+    const pageTools = AGENT_TOOLS.filter(
+      (t) =>
+        t.definition.name.startsWith('browser_') &&
+        !['browser_tabs', 'browser_navigate'].includes(t.definition.name)
+    )
+    expect(pageTools.length).toBeGreaterThan(10)
+    for (const { definition } of pageTools) {
+      expect(definition.inputSchema.properties, definition.name).toHaveProperty('tabId')
+      expect(definition.inputSchema.properties, definition.name).toHaveProperty('allowForeign')
+      expect(definition.inputSchema.required ?? [], definition.name).not.toContain('tabId')
+      expect(definition.description, definition.name).toContain('Changed:')
+    }
+    for (const name of ['browser_tabs', 'browser_navigate', 'zen_status', 'zen_mode', 'zen_spaces'])
+      expect(
+        AGENT_TOOLS.find((t) => t.definition.name === name)!.definition.description,
+        name
+      ).toContain('Changed:')
   })
 
   it('let hover and click take coordinates instead of a target', () => {
@@ -151,6 +145,17 @@ describe('argument aliases', () => {
     expect(ARG_ALIASES.tabId).toEqual(expect.arrayContaining(['index', 'tab']))
   })
 
+  it('accept folder vocabulary for groupId and plain words for allowForeign', () => {
+    expect(ARG_ALIASES.groupId).toEqual(
+      expect.arrayContaining(['group', 'group_id', 'folder', 'folderId'])
+    )
+    expect(ARG_ALIASES.allowForeign).toEqual(
+      expect.arrayContaining(['foreign', 'allow_foreign', 'outside'])
+    )
+    // "folder" is a group now, not a name: zen_groups create {folder: "x"} must not rename.
+    expect(ARG_ALIASES.name ?? []).not.toContain('folder')
+  })
+
   it('acceptedArgs covers declared properties and their aliases', () => {
     const def = AGENT_TOOLS.find((t) => t.definition.name === 'browser_click')!.definition
     const args = acceptedArgs(def)
@@ -188,97 +193,6 @@ describe('normalizeKey', () => {
     expect(normalizeKey('space')).toBe(' ')
     expect(normalizeKey('a')).toBe('a')
     expect(normalizeKey('F5')).toBe('F5')
-  })
-})
-
-describe('tab references', () => {
-  it('orders tabs like the sidebar: Essentials, then each space in order', () => {
-    expect(orderedTabs(fakeContext()).map((t) => t.id)).toEqual([
-      'tab_ess',
-      'tab_a1',
-      'tab_a2',
-      'tab_b1'
-    ])
-  })
-
-  it('resolve by id, by unique prefix and by 1-based position', () => {
-    const ctx = fakeContext()
-    expect(resolveTabRef(ctx, 'tab_a2')).toBe('tab_a2')
-    expect(resolveTabRef(ctx, 'tab_b')).toBe('tab_b1')
-    expect(resolveTabRef(ctx, 3)).toBe('tab_a2')
-    expect(resolveTabRef(ctx, '1')).toBe('tab_ess')
-  })
-
-  it('explain what went wrong and list the open tabs', () => {
-    const ctx = fakeContext()
-    expect(() => resolveTabRef(ctx, 9)).toThrow(/no tab at position 9.*1\. tab_ess/)
-    expect(() => resolveTabRef(ctx, 'tab_a')).toThrow(/matches 2 tabs/)
-    expect(() => resolveTabRef(ctx, 'tab_nope')).toThrow(
-      /Unknown tab "tab_nope".*may have been closed/
-    )
-    expect(() => resolveTabRef(ctx, 'tab_private')).toThrow(/not available to agents/)
-    try {
-      resolveTabRef(ctx, 'tab_nope')
-    } catch (e) {
-      expect(e).toBeInstanceOf(RpcError)
-    }
-  })
-
-  it('lists tabs with positions, spaces, folders and drivers', () => {
-    const text = listTabs(fakeContext())
-    expect(text).toContain('Essentials:')
-    expect(text).toMatch(/1\. tab_ess .*\[essential\]/)
-    expect(text).toContain('Space "Work" (space_a) [shown to the user]:')
-    expect(text).toMatch(/2\. tab_a1 .*\[yours, current\]/)
-    expect(text).toMatch(/3\. tab_a2 .*folder: "Research"/)
-    expect(text).toContain('Space "Play" (space_b):')
-    expect(text).toMatch(/4\. tab_b1 .*driven by Other/)
-    expect(text).not.toContain('tab_private')
-  })
-})
-
-describe('browser_tabs', () => {
-  const tool = AGENT_TOOLS.find((t) => t.definition.name === 'browser_tabs')!
-
-  it('lists when no action is given', async () => {
-    const result = await tool.run(fakeContext(), {})
-    expect((result.content[0] as { text: string }).text).toContain('1. tab_ess')
-  })
-
-  it('names the valid actions for an unknown one', async () => {
-    await expect(tool.run(fakeContext(), { action: 'explode' })).rejects.toThrow(
-      /Unknown action "explode" – use one of "list", "new", "select", "close", "move", "group", "ungroup"/
-    )
-  })
-
-  it('tells the agent which arguments select / move / group need', async () => {
-    await expect(tool.run(fakeContext(), { action: 'switch' })).rejects.toThrow(
-      /select needs tabId/
-    )
-    await expect(tool.run(fakeContext(), { action: 'reorder' })).rejects.toThrow(
-      /move needs tabId and index/
-    )
-    await expect(tool.run(fakeContext(), { action: 'folder' })).rejects.toThrow(
-      /group needs tabIds/
-    )
-  })
-})
-
-describe('zen_mode', () => {
-  const tool = AGENT_TOOLS.find((t) => t.definition.name === 'zen_mode')!
-
-  it('accepts short forms and reports the new mode', async () => {
-    const ctx = fakeContext()
-    ctx.session.currentTabId = null
-    const result = await tool.run(ctx, { mode: 'bg' })
-    expect(ctx.session.mode).toBe('background')
-    expect((result.content[0] as { text: string }).text).toContain('background')
-  })
-
-  it('rejects other values with the accepted ones', async () => {
-    await expect(tool.run(fakeContext(), { mode: 'sideways' })).rejects.toThrow(
-      /"foreground" or "background"/
-    )
   })
 })
 
@@ -417,8 +331,9 @@ function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
     name: 'Tester',
     color: '#000',
     mode: opts.mode ?? ('foreground' as const),
-    currentTabId: t.id,
-    tabIds: new Set([t.id])
+    groupIds: new Set(['folder_home']),
+    homeGroupId: 'folder_home',
+    notices: []
   }
   const frames = new Map<string, TabFrames>()
   const ctx = {
@@ -432,7 +347,10 @@ function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
     },
     agents: {
       settings: { showCursor: true },
+      ownedTabs: () => [t],
       resolveTab: () => t,
+      describeOwner: () => 'yours',
+      degraded: () => false,
       prepare: async () => view,
       evalPage: (v: TabView, code: string) => v.executeJavaScript(code),
       frameState: (_s: unknown, tabId: string) => {
@@ -451,7 +369,6 @@ function liveContext(page: FakePage, opts: LiveOptions = {}): Live {
         cursor.push({ x, y, action })
       },
       waitForLoad: async () => true,
-      driver: () => session,
       visibleTabs: () => [t],
       agentWindow: () => ({ activeSpaceId: 'space_a' })
     },
@@ -762,18 +679,21 @@ describe('real input waits for the page to be on screen, and never degrades sile
   })
 })
 
-describe('browser_tabs close', () => {
-  const tool = AGENT_TOOLS.find((t) => t.definition.name === 'browser_tabs')!
-
-  it("refuses to close the user's Essential or pinned tabs", async () => {
-    await expect(tool.run(fakeContext(), { action: 'close', tabId: 'tab_ess' })).rejects.toThrow(
-      /an Essential of the user's/
-    )
+describe('page results name the tab they acted on', () => {
+  it('carry the tab id, its owner and the mode the action ran in', async () => {
+    const { ctx } = liveContext(signInPage())
+    const out = textOf(await run('browser_click', ctx, { x: 200, y: 230 }))
+    expect(out).toContain('- Tab: tab_live (yours; foreground mode)')
   })
 
-  it('refuses to close a tab another agent drives', async () => {
-    await expect(tool.run(fakeContext(), { action: 'close', tabId: 'tab_b1' })).rejects.toThrow(
-      /driven by agent "Other"/
+  it('say when the call was degraded to the background by the lease', async () => {
+    const live = liveContext(signInPage())
+    ;(live.ctx.agents as unknown as { degraded: () => boolean }).degraded = () => true
+    const out = textOf(await run('browser_click', live.ctx, { x: 200, y: 230 }))
+    expect(out).toContain(
+      '- Tab: tab_live (yours; foreground mode, acted in background – another agent holds the screen)'
     )
+    expect(out).toContain('input: synthetic – another agent holds the screen')
+    expect(live.input).toEqual([])
   })
 })

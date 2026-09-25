@@ -65,6 +65,7 @@ function running(capabilities: Partial<HostCapabilities> = {}): {
       windows: false,
       updates: false,
       agents: false,
+      agentSkills: false,
       passwords: false,
       extensions: false,
       privateTabs: true,

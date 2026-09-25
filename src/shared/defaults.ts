@@ -1,5 +1,6 @@
 import type {
   AgentServerStatus,
+  AgentSkillStatus,
   AgentSettings,
   AutofillSettings,
   AutofillUIState,
@@ -46,6 +47,11 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
 
 export function emptyAgentServerStatus(): AgentServerStatus {
   return { running: false, url: null, lanUrls: [], token: '', error: null }
+}
+
+/** No harness looked for yet (and a host without an installer, for good). */
+export function emptyAgentSkillStatus(version = ''): AgentSkillStatus {
+  return { version, targets: [], error: null }
 }
 
 /**

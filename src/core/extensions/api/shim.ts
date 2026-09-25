@@ -102,10 +102,13 @@ export interface ShimOptions {
    */
   granted?: string[]
   /**
-   * The `this` an API callback or event listener is called with: undefined by default, as
-   * Chrome calls a frame's (`ScriptContext::SafeCallFunction` hands Blink an undefined
-   * receiver); a service worker's global for a worker, where Chrome calls with the context's
-   * global and a strict-mode listener reading `this` finds it (`EngineOptions.receiver`).
+   * The `this` an API callback or event listener is called with. Absent, it follows the host's
+   * kind as Chrome's `ScriptContext::SafeCallFunction` does: a frame's callbacks get an
+   * undefined receiver, a service worker's get the worker's global, where a strict-mode
+   * listener reading `this` finds it (an unbound method such as ZeroOmega's
+   * `_proxyChangeListener`, handed to `proxy.settings.get` and reading its own fields). Set, it
+   * replaces both: a host whose worker runs under a private global names that global here
+   * (`EngineOptions.receiver`).
    */
   receiver?: object
 }
@@ -152,8 +155,14 @@ export function installExtensionApi(
   const g: Any = options?.root ?? globalThis
   /** The real global: the document's `location`, and the `window` other views get. */
   const real: Any = globalThis
-  /** What callbacks and listeners are called with as `this` ([ShimOptions.receiver]). */
-  const receiver: object | undefined = options?.receiver
+  /**
+   * What callbacks and listeners are called with as `this` ([ShimOptions.receiver]): a worker's
+   * own global unless the host names another, nothing in a frame. Resolved here rather than by
+   * the host because the desktop's options cross `executeInMainWorld` serialization and an
+   * object cannot.
+   */
+  const receiver: object | undefined =
+    options?.receiver ?? (host.kind === 'worker' ? (real as object) : undefined)
   /** How long an event pushed before any listener exists waits for one (worker start-up). */
   const PENDING_TTL = 10_000
   const MARK = '__zeniumExtensionApi'
@@ -629,6 +638,8 @@ export function installExtensionApi(
     /** Filter set id → its `UrlFilter`s, for deliveries the host could not match (`EventDelivery.url`). */
     filters: Map<number, Record<string, unknown>[]>
     pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery; after?: After }>
+    /** Delivers `pending` to the listeners in a task of its own (once per batch). */
+    drain: () => void
     nativeDelivers: boolean
     /** With `nativeDelivers`: which host deliveries the engine already made (dropped here). */
     nativeHandles: (args: unknown[]) => boolean
@@ -780,6 +791,7 @@ export function installExtensionApi(
       listeners,
       filters: new Map(),
       pending: [],
+      drain: () => scheduleDrain(),
       nativeDelivers: options.nativeDelivers && Boolean(native),
       nativeHandles: options.nativeHandles ?? (() => true)
     }
@@ -798,6 +810,32 @@ export function installExtensionApi(
       nativeProxies.set(fn, proxy)
       return proxy
     }
+    // Events that arrived before any listener existed reach the listeners in a task of their
+    // own, once the script that registers them has run: Chrome dispatches a worker's wake-up
+    // event after the worker's evaluation, so every listener the script adds at its top level
+    // sees it, and none is called from inside its own `addListener`, before the module state its
+    // body reads exists (Rabby's alarm listeners read a store its async boot fills later).
+    let drainScheduled = false
+    const scheduleDrain = (): void => {
+      if (drainScheduled || record.pending.length === 0) return
+      drainScheduled = true
+      setTimeout(() => {
+        drainScheduled = false
+        if (listeners.size === 0) return
+        const now = Date.now()
+        const queued = record.pending.splice(0)
+        for (const item of queued) {
+          if (now - item.at > PENDING_TTL) continue
+          const results: unknown[] = []
+          for (const [fn, filterId] of [...listeners]) {
+            // A filtered listener registered after the host matched receives what the host
+            // addressed to everyone, and what it sent with the URL when it could not match.
+            if (wants(record, filterId, item.delivery)) callListener(fn, item.args, results)
+          }
+          item.after?.(results)
+        }
+      }, 0)
+    }
     const object: EventObject = {
       addListener(fn: unknown, ...rest: unknown[]): void {
         if (!isFunction(fn) || listeners.has(fn)) return
@@ -813,20 +851,7 @@ export function installExtensionApi(
           listeners.set(fn, null)
           if (first) host.notify('listen', { event: fullName })
         }
-        if (record.pending.length > 0) {
-          const now = Date.now()
-          const queued = record.pending.splice(0)
-          const filterId = listeners.get(fn) ?? null
-          for (const item of queued) {
-            if (now - item.at > PENDING_TTL) continue
-            // A filtered listener registered after the host matched receives what the host
-            // addressed to everyone, and what it sent with the URL when it could not match.
-            if (!wants(record, filterId, item.delivery)) continue
-            const results: unknown[] = []
-            callListener(fn, item.args, results)
-            item.after?.(results)
-          }
-        }
+        scheduleDrain()
       },
       removeListener(fn: unknown): void {
         if (!isFunction(fn)) return
@@ -884,7 +909,7 @@ export function installExtensionApi(
     if (!record) return
     // The engine already fired this one at our listeners; a second delivery would duplicate it.
     if (record.nativeDelivers && record.nativeHandles(args)) return
-    if (record.listeners.size > 0) {
+    if (record.listeners.size > 0 && record.pending.length === 0) {
       const results: unknown[] = []
       for (const [fn, filterId] of [...record.listeners]) {
         if (wants(record, filterId, delivery)) callListener(fn, args, results)
@@ -892,6 +917,7 @@ export function installExtensionApi(
       after?.(results)
       return
     }
+    // No listener yet, or earlier deliveries still wait for their task: queue behind them.
     const now = Date.now()
     record.pending = record.pending.filter((p) => now - p.at <= PENDING_TTL)
     if (record.pending.length < 50) {
@@ -900,6 +926,7 @@ export function installExtensionApi(
       if (after) item.after = after
       record.pending.push(item)
     }
+    if (record.listeners.size > 0) record.drain()
   }
 
   /**
@@ -1741,6 +1768,73 @@ export function installExtensionApi(
     return sent
   }
 
+  /**
+   * Chrome's schema for `contexts` (`ContextType[]`, at least one) and `type` (`ItemType`) is
+   * checked in the binding, before anything reaches the browser: a value outside the enum is a
+   * synchronous `TypeError` with Chrome's text, not a `runtime.lastError`. SingleFile probes
+   * Firefox's `tab` context with `try { create({contexts: ["tab"], …}) } catch { tabMenuEnabled =
+   * false }` and builds its whole menu on the answer; an asynchronous refusal never reached the
+   * `catch`, so every `tab` item was refused and every later `update` of one rejected. The
+   * host's own validation (`contextMenus.ts`) stays as the second guard.
+   */
+  const menuEnums = ((): { contexts: string[]; type: string[] } => {
+    const constants = spec.contextMenus?.constants ?? {}
+    const values = (name: string): string[] => {
+      const table = constants[name]
+      return isObject(table)
+        ? Object.values(table).filter((v): v is string => typeof v === 'string')
+        : []
+    }
+    return { contexts: values('ContextType'), type: values('ItemType') }
+  })()
+  const typeNameOf = (value: unknown): string =>
+    value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+
+  function checkMenuProperties(
+    qualified: string,
+    parameter: string,
+    props: Record<string, unknown>
+  ): void {
+    const fail = (detail: string): TypeError =>
+      new TypeError(
+        `Error in invocation of ${qualified}: Error at parameter '${parameter}': ${detail}`
+      )
+    const { contexts, type } = props
+    // An optional property given as `null` reads as absent, as in Chrome's bindings.
+    if (contexts !== undefined && contexts !== null) {
+      if (!Array.isArray(contexts)) {
+        throw fail(
+          `Error at property 'contexts': Invalid type: expected array, found ${typeNameOf(contexts)}.`
+        )
+      }
+      if (contexts.length === 0) {
+        throw fail("Error at property 'contexts': Array must have at least 1 items; found 0.")
+      }
+      contexts.forEach((value: unknown, index: number) => {
+        if (typeof value !== 'string') {
+          throw fail(
+            `Error at property 'contexts': Error at index ${index}: Invalid type: expected string, found ${typeNameOf(value)}.`
+          )
+        }
+        if (!menuEnums.contexts.includes(value)) {
+          throw fail(
+            `Error at property 'contexts': Error at index ${index}: Value must be one of ${menuEnums.contexts.join(', ')}.`
+          )
+        }
+      })
+    }
+    if (type !== undefined && type !== null) {
+      if (typeof type !== 'string') {
+        throw fail(
+          `Error at property 'type': Invalid type: expected string, found ${typeNameOf(type)}.`
+        )
+      }
+      if (!menuEnums.type.includes(type)) {
+        throw fail(`Error at property 'type': Value must be one of ${menuEnums.type.join(', ')}.`)
+      }
+    }
+  }
+
   if (spec.contextMenus) {
     for (const root of roots) {
       const menus = namespaceOn(root, 'contextMenus')
@@ -1748,6 +1842,7 @@ export function installExtensionApi(
         const callback = takeCallback(raw)
         const props = raw[0]
         if (!isObject(props)) throw signatureError(menuQualified)
+        checkMenuProperties(menuQualified, 'createProperties', props)
         let id: string | number
         if (isMenuId(props.id)) {
           id = props.id
@@ -1775,6 +1870,7 @@ export function installExtensionApi(
           { name: 'id', type: ['integer', 'string'] },
           { name: 'updateProperties', type: 'object' }
         ])
+        if (isObject(props)) checkMenuProperties(qualified, 'updateProperties', props)
         const sent = isObject(props) && isMenuId(id) ? menuProperties(props, id) : props
         return settle(qualified, invoke('contextMenus', 'update', [id, sent]), callback)
       })
@@ -2318,6 +2414,33 @@ export function installExtensionApi(
     }
   }
 
+  /**
+   * What the store keeps of a value the extension writes: its JSON form, which is what Chrome's
+   * `storage` serialises to (a function or `undefined` member dropped, `null` for one in an array,
+   * a class instance reduced to its own fields). A value with no JSON form (a bare function, a
+   * BigInt, a cycle) is not stored. The change events carry this form, and only this form can
+   * cross to the host: `ipcRenderer` clones structurally and refuses a function (Rabby's persist
+   * store writes objects that carry methods, and Chrome resolves those writes).
+   */
+  function storedForm(value: unknown): { stored: true; value: unknown } | { stored: false } {
+    try {
+      const text = JSON.stringify(value)
+      return text === undefined ? { stored: false } : { stored: true, value: JSON.parse(text) }
+    } catch {
+      return { stored: false }
+    }
+  }
+
+  /** `storedForm` over each item of a `set`, the unstorable ones left out, as Chrome leaves them. */
+  function storedItems(items: StorageItems): StorageItems {
+    const out: StorageItems = {}
+    for (const key of Object.keys(items)) {
+      const form = storedForm(items[key])
+      if (form.stored) out[key] = form.value
+    }
+    return out
+  }
+
   function hostArea(storage: object, areaName: string): Record<string, unknown> {
     const area: Record<string, unknown> = {}
     const qualifiedFor = (name: string): string => `storage.${areaName}.${name}`
@@ -2325,6 +2448,8 @@ export function installExtensionApi(
       define(area, name, function (...raw: unknown[]): unknown {
         const callback = takeCallback(raw)
         const args = normalizeArgs(qualifiedFor(name), raw, params)
+        // The host keeps these areas: it gets what Chrome would store, which is what can cross.
+        if (name === 'set' && isObject(args[0])) args[0] = storedItems(args[0])
         return settle(qualifiedFor(name), invoke('storage', name, [areaName, ...args]), callback)
       })
     }
@@ -2465,11 +2590,13 @@ export function installExtensionApi(
         await callNativeArea(area, nativeSet, [allowed])
         const changes: StorageChanges = {}
         for (const key of keys) {
-          const newValue = allowed[key]
-          if (newValue === undefined) continue
+          const form = storedForm(allowed[key])
+          if (!form.stored) continue
           const had = Object.prototype.hasOwnProperty.call(before, key)
-          if (had && sameJson(before[key], newValue)) continue
-          changes[key] = had ? { oldValue: before[key], newValue } : { newValue }
+          if (had && sameJson(before[key], form.value)) continue
+          changes[key] = had
+            ? { oldValue: before[key], newValue: form.value }
+            : { newValue: form.value }
         }
         notify(changes)
       })()

@@ -71,13 +71,33 @@ export function normalizePermissionSet(input: unknown): PermissionSet | null {
   return dedupe(set)
 }
 
+// A host permission's pattern at the granularity Chrome grants it: the origin. Chrome's
+// permissions parser rewrites every host permission's path to "/*" (permissions_parser.cc) and
+// `permissions.request` does the same to the origins it is handed, so a manifest's optional host
+// permission "*://*/" (any scheme, any host, the root path) covers a request for "*://*/*" –
+// Markdown Viewer's "Allow All" is exactly that pair. `<all_urls>` and strings that are not a
+// pattern pass through.
+export function hostPermissionPattern(pattern: string): string {
+  if (pattern === '<all_urls>') return pattern
+  const separator = pattern.indexOf('://')
+  if (separator <= 0) return pattern
+  const slash = pattern.indexOf('/', separator + 3)
+  if (slash < 0) return pattern
+  return `${pattern.slice(0, slash)}/*`
+}
+
+/** Whether the host permission `granted` covers `wanted`, both read at origin granularity. */
+export function hostPermissionContains(granted: string, wanted: string): boolean {
+  return patternContains(hostPermissionPattern(granted), hostPermissionPattern(wanted))
+}
+
 /** Whether `granted` covers every permission and origin in `wanted`. */
 export function permissionSetContains(granted: PermissionSet, wanted: PermissionSet): boolean {
   for (const permission of wanted.permissions) {
     if (!granted.permissions.includes(permission)) return false
   }
   for (const origin of wanted.origins) {
-    if (!granted.origins.some((g) => patternContains(g, origin))) return false
+    if (!granted.origins.some((g) => hostPermissionContains(g, origin))) return false
   }
   return true
 }
@@ -101,7 +121,9 @@ export function removePermissionSet(granted: PermissionSet, removed: PermissionS
 export function missingPermissions(granted: PermissionSet, wanted: PermissionSet): PermissionSet {
   return {
     permissions: wanted.permissions.filter((p) => !granted.permissions.includes(p)),
-    origins: wanted.origins.filter((o) => !granted.origins.some((g) => patternContains(g, o)))
+    origins: wanted.origins.filter(
+      (o) => !granted.origins.some((g) => hostPermissionContains(g, o))
+    )
   }
 }
 
@@ -129,7 +151,7 @@ export function requestablePermissions(
       }
     }
     const allowed = [...manifest.optional.origins, ...manifest.required.origins].some((g) =>
-      patternContains(g, origin)
+      hostPermissionContains(g, origin)
     )
     if (!allowed) {
       return {

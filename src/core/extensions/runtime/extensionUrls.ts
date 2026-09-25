@@ -59,6 +59,31 @@ export function presentExtensionUrl(url: string): string {
   return `chrome-extension://${match[1].toLowerCase()}${rooted(match[2])}`
 }
 
+/**
+ * The path segment under a web page's own origin where the host serves an extension's
+ * web-accessible files a second time: `https://<page origin>/.zenium-ext/<id>/<path>`. A page's
+ * `script-src` that refuses the served origin (`https://<id>.ext.zenium.invalid`, an https
+ * origin like any other to it, where Chrome exempts `chrome-extension:`) admits its own origin
+ * under `'self'` or its host, so a module graph a content script `import()`ed and the policy
+ * refused is asked for again from there (`src/android/extensionScriptRecovery.ts`); the host
+ * answers the alias in `shouldInterceptRequest` for a subresource of a tab's page only, the
+ * web-accessible resources only, and never lets it navigate (`ext/Extensions.intercept`). The
+ * Kotlin twin is `ext/ExtensionUrls.pageAlias`; the two must agree.
+ */
+export const PAGE_ALIAS_SEGMENT = '.zenium-ext'
+
+/**
+ * The page-origin alias of an extension file's served URL: `https://<id>.ext.zenium.invalid/p?q`
+ * under `pageOrigin` as `<pageOrigin>/.zenium-ext/<id>/p?q`; null for any other URL, or for a
+ * page origin that is not a web page's http(s) one (an opaque origin, an extension page's own,
+ * whose policy is the extension's and where the host answers no alias).
+ */
+export function pageAliasUrl(pageOrigin: string, servedUrl: string): string | null {
+  const match = SERVED.exec(servedUrl)
+  if (!match || !/^https?:\/\/[^/?#]+$/i.test(pageOrigin) || SERVED.test(pageOrigin)) return null
+  return `${pageOrigin}/${PAGE_ALIAS_SEGMENT}/${match[1].toLowerCase()}${rooted(match[2])}`
+}
+
 /** The extension id of either spelling of an extension page's URL, or null for any other URL. */
 export function extensionIdOfUrl(url: string): string | null {
   const match = CHROME_EXTENSION.exec(url) ?? SERVED.exec(url)
