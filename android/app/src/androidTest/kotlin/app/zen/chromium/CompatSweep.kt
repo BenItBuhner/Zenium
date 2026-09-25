@@ -801,8 +801,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             )
             return
         }
-        val tabsBefore = tabUrls().keys
+        val urlsBefore = tabUrls()
+        val tabsBefore = urlsBefore.keys
         val activeBefore = activeCoreTab(coreSnapshot())?.optString("id")
+        // A tab the popup sent to a page of the extension's own (`tabs.update` of the active tab:
+        // iGraal's popup.html sends the tab it opened over to its language.html and closes itself
+        // – round 16 §7.8 read the stage as a race between the sheet and the popup's own close,
+        // the tab not counted because its id was there before the click).
+        fun sentToOwnPage(id: String, url: String): Boolean =
+            id in tabsBefore && !extensionPage(urlsBefore[id] ?: "", row.id) && extensionPage(url, row.id)
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         // The sheet the click brought up: the popup, or the side panel an action without a popup
         // opens from `onClicked` (Image Downloader's `sidePanel.open`), the extension's answer as
@@ -811,7 +818,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // tab lands on Google's sign-in or, on 156, on workspace.google.com – the click's answer
         // is the URL it asked for): once a tab is up and no sheet follows it within
         // [POPUP_AFTER_TAB_MS], the popup document opened it and closed itself, or the action
-        // fired `onClicked`, and no sheet is coming.
+        // fired `onClicked`, and no sheet is coming. A tab of the row's own the popup sent
+        // elsewhere counts the same way.
         var openedFirst: Pair<String, String>? = null
         var openedAt = 0L
         var view: ExtensionWebView? = null
@@ -823,7 +831,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 break
             }
             if (openedFirst == null) {
-                tabUrls().entries.firstOrNull { it.key !in tabsBefore }?.let {
+                tabUrls().entries.firstOrNull { it.key !in tabsBefore || sentToOwnPage(it.key, it.value) }?.let {
                     openedFirst = it.key to it.value
                     openedAt = SystemClock.uptimeMillis()
                 }
@@ -863,8 +871,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 )
             }
             else -> {
-                val opened = tabUrls().filterKeys { it !in tabsBefore }.values.toList()
+                val tabsNow = tabUrls()
+                val opened = tabsNow.filterKeys { it !in tabsBefore }.values.toList()
                 detail.put("openedTabs", JSONArray(opened))
+                // The tabs the popup sent to a page of its own (`tabs.update`), the sending read
+                // as an opening: the tab is the popup's answer as Chrome shows it.
+                val sent = tabsNow.filter { (id, url) -> sentToOwnPage(id, url) }
+                if (sent.isNotEmpty()) detail.put("sentTabs", JSONArray(sent.values.toList()))
                 // A page of the extension's own that was open already and that the click brought
                 // to the front (1Password activates its welcome tab while it onboards, as Chrome
                 // shows it) is the extension's answer as much as a new tab is.
@@ -908,6 +921,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     val page = answered.first { extensionPage(it, row.id) }
                     entry.put("popupOpened", JSONArray(answered))
                     stage(entry, "popup", "P", "the popup opened ${page.take(160)} in a tab and closed itself (no sheet left within ${POPUP_TIMEOUT_MS / 1000} s)", detail)
+                } else if (sent.isNotEmpty()) {
+                    // The popup sent the tab under it to a page of its own and closed itself
+                    // (iGraal's popup.html: `tabs.update(activeTab, {url: "./language.html"})`
+                    // then `window.close()` when no language is chosen yet): the page is the
+                    // popup's answer, as Chrome shows it. The fixture tab it took goes back to the
+                    // fixture so the stages after read the page they expect.
+                    val page = sent.values.first()
+                    entry.put("popupOpened", JSONArray(sent.values.toList()))
+                    if (row.account) openedPage(row, page)?.let { entry.put("popupOpenedPage", it) }
+                    stage(entry, "popup", "P", "the popup sent the tab under it to ${extensionPath(page).take(160)} (tabs.update) and closed itself (no sheet left within ${POPUP_AFTER_TAB_MS / 1000} s of the page)", detail)
+                    if (fixtureTab in sent.keys) {
+                        coreCall("tab.navigate", JSONObject().put("tabId", fixtureTab).put("input", "$BASE/page-a.html").toString())
+                        SystemClock.sleep(1_200)
+                    }
                 } else if (opened.isNotEmpty()) {
                     // The popup opened a page elsewhere in a tab and closed itself (Boomerang's
                     // popup.html sends the click to Gmail's compose URL): the tab is the popup's
@@ -6846,7 +6873,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("jmekfmbnaedfebfnmakmokmlfpblbfdm", "Tag Assistant Companion", "tag-assistant-2", core = ::tagAssistant),
         Row("lppmekppnliemjclknbagdhoocikieoi", "7TV", "7tv", core = liveMarker("7TV", "https://www.twitch.tv/", SEVENTV_MOUNTED, settleMs = 45_000, mirrors = listOf("https://www.twitch.tv/directory", "https://kick.com/"))),
         Row("mfpiaehgjbbfednooihadalhehabhcjo", "Scrolling screenshot tool & screen capture", "scrolling-screenshot", core = visibleCapture("Scrolling screenshot tool", "page-a.html?scrolling")),
-        Row("mjjgmlmpeaikcaajghilhnioimmaibon", "Boxel 3D", "boxel-3d", core = popupMarker("Boxel 3D", CANVAS_SHOWN, settleMs = 30_000)),
+        Row("mjjgmlmpeaikcaajghilhnioimmaibon", "Boxel 3D", "boxel-3d", core = ::boxel3d),
         Row("pbanhockgagggenencehbnadejlgchfc", "Simplify Copilot", "simplify-copilot", core = accountGate("Simplify Copilot", Regex("simplify\\.jobs", RegexOption.IGNORE_CASE), injects = "[id*='simplify'], [class*='simplify']", gate = "a Simplify account and a job board's application form (its click autofills there)")),
         Row("lnbmbgocenenhhhdojdielgnmeflbnfb", "SellerSprite", "sellersprite", core = accountGate("SellerSprite", Regex("sellersprite\\.com|amazon\\.", RegexOption.IGNORE_CASE), gate = "a SellerSprite account and an Amazon listing page")),
         Row("kgobeoibakoahbfnlficpmibdbkdchap", "GPTZero", "gptzero", core = accountGate("GPTZero", Regex("gptzero\\.me", RegexOption.IGNORE_CASE), injects = "[id^='g0-'], [class*='g0-'], [id*='gptzero'], [class*='gptzero']", gate = "a GPTZero account (its popup signs in; its scans run on its service)")),
@@ -7083,6 +7110,91 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
     }
 
+    // --- the driver items of compat round 17 (round 16 §7.2-7.4, 7.7, 7.8) ----------------------
+
+    /**
+     * A control labelled `words` in the popup, tapped where it is on the sheet and clicked by
+     * script where it lies past the sheet's edge (a popup document wider than the phone's sheet
+     * – Boxel 3D's menu lays out at 640 css px in a 409 px sheet, round 16 §7.4 – puts its
+     * right-hand controls where no tap lands): how it was reached goes on `steps`.
+     */
+    private fun reachLabel(words: String, factor: Double, steps: JSONArray, name: String): Boolean {
+        val live = popupView()?.takeIf { it.context == "popup" }
+        if (live == null) {
+            steps.put("$name: no popup up")
+            return false
+        }
+        val hit = json(tabEval(live, FIND_LABEL.replace("__RE__", words)))
+        if (!hit.optBoolean("clicked")) {
+            steps.put("$name $words: ${hit.toString().take(140)}")
+            return false
+        }
+        val innerWidth = tabEval(live, "String(window.innerWidth)").toDoubleOrNull() ?: 0.0
+        val innerHeight = tabEval(live, "String(window.innerHeight)").toDoubleOrNull() ?: 0.0
+        val onSheet = hit.optDouble("x") in 0.0..innerWidth && hit.optDouble("y") in 0.0..innerHeight
+        if (onSheet) {
+            steps.put("$name $words: tapped ${hit.toString().take(120)}")
+            tapSettled(live, hit, factor)?.let { steps.put("$name: $it") }
+        } else {
+            val clicked = json(tabEval(live, CLICK_LABEL.replace("__RE__", words)))
+            steps.put("$name $words: past the sheet's edge (x ${hit.optDouble("x").toInt()} of $innerWidth), clicked by script ${clicked.toString().take(100)}")
+        }
+        SystemClock.sleep(scaled(1_500, factor))
+        return true
+    }
+
+    /**
+     * Boxel 3D (mjjgm…): its popup IS the game (`index.html`, a Vue app over three.js). The home
+     * menu is HTML ("Skins Level Editor Multi-player Play … Audio Controls Graphics") and the
+     * canvas has no box until a level plays, so round 16's read of [CANVAS_SHOWN] on the menu was
+     * the menu, not the game (§7.4). Here the home's Play (`setPage('level-picker')`) and the
+     * level picker's Play are pressed, and the canvas read after them; the menu's fixed width
+     * against the sheet is recorded, not failed on (the popup sheet's width is the program's phone
+     * shape, a settled line).
+     */
+    private fun boxel3d(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?boxel", factor, 1_500)
+        val popup = openPopup(row, factor)
+        val steps = JSONArray()
+        var found = JSONObject()
+        var reached = 0
+        if (popup != null) {
+            // The game loads its assets first ("Loading: 99%"); the menu is up when the line goes.
+            val loaded = poll(scaled(45_000, factor), 1_000) {
+                val live = popupView()?.takeIf { it.context == "popup" } ?: return@poll null
+                val text = json(tabEval(live, DEEP_TEXT)).optString("text")
+                if (text.isNotBlank() && !text.contains("Loading", ignoreCase = true)) text else null
+            }
+            extra.put("menu", loaded?.take(240) ?: "")
+            popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                extra.put("layout", json(tabEval(live, DOM_REPORT)).let { d -> JSONObject().put("scrollWidth", d.optInt("scrollWidth")).put("innerWidth", d.optInt("innerWidth")) })
+            }
+            if (reachLabel("/^play$/i", factor, steps, "home Play")) {
+                reached++
+                if (awaitLabel("/^play$/i", factor) && reachLabel("/^play$/i", factor, steps, "level Play")) reached++
+            }
+            popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                found = pollExpr(live, CANVAS_SHOWN, scaled(30_000, factor))
+                found.put("console", JSONArray(consoleOf(live).takeLast(10)))
+                extra.put("popupAfter", json(tabEval(live, DEEP_TEXT)).optString("text").take(200))
+            }
+        }
+        extra.put("steps", steps).put("reached", reached).put("canvas", found)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-play-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val overflow = extra.optJSONObject("layout")?.let { it.optInt("scrollWidth") > it.optInt("innerWidth") + 2 } == true
+        val width = if (overflow) "; the menu overflows the sheet horizontally (scrollWidth ${extra.optJSONObject("layout")?.optInt("scrollWidth")} > ${extra.optJSONObject("layout")?.optInt("innerWidth")}), recorded" else ""
+        return when {
+            found.optBoolean("pass") -> Grade("P", "Boxel 3D: the game canvas draws after Play (${reached} Play control(s) reached): ${found.toString().take(160)}$width", extra)
+            popup == null -> Grade("F", "Boxel 3D: popup did not render in the core check", extra)
+            reached == 0 -> Grade("F", "Boxel 3D: no Play control reached in its menu (${steps.toString().take(160)}); menu \"${extra.optString("menu").take(80)}\"$width", extra)
+            else -> Grade("F", "Boxel 3D: $reached Play control(s) pressed and no sized canvas within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(160)}$width", extra)
+        }
+    }
+
     // --- the core checks of compat round 16 (ranks 361-390 by installs) --------------------------
 
     /**
@@ -7217,10 +7329,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * Auto Refresh Page (lkhdi…): its popup's interval radios (`#5_sec`, the shortest) and
-     * Start/Stop button, then the fixture's `performance.timeOrigin` changes on the reload its
-     * worker fires (`tabs.reload` with the cache bypassed): Easy Auto Refresh's reading of round
-     * 10, with the button clicked by script when no label tap reached it.
+     * Auto Refresh Page (lkhdi…): its popup's interval radios (`#5_sec`, the shortest: 8000 ms,
+     * the countdown 5 s) and its Save button, then the fixture's `performance.timeOrigin` changes
+     * on the reload its content script fires when the countdown ends (`location.reload()`;
+     * `tabs.reload` with the cache bypassed on its hard-refresh option). Round 16 §7.2 read the
+     * popup wrong: the Start of its first tab is `#btnSave` ("Save"; the handler validates the
+     * checked preset – 8 s and up – and sends `refresh_doc` for the active tab to the worker, which
+     * sends `refresh_initial` to the tab's content script); `#button-start-stop` is an empty div on
+     * that tab whose `#btnStart` checkbox is drawn on the "Active Tab" tab only and starts the
+     * SAVED entries (none on a fresh install), so its click did nothing. The popup's message line
+     * (`#msg`: "Auto refresh started" or a validation warning) and its console are kept.
      */
     private fun autoRefreshPage(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -7235,14 +7353,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val live = popupView()?.takeIf { it.context == "popup" }
             if (live != null) {
                 extra.put("popupText", json(tabEval(live, DEEP_TEXT)).optString("text").take(240))
-                steps.put("interval: " + tabEval(live, "(function(){var r=document.getElementById('5_sec')||document.querySelector('input[type=radio]');if(!r)return 'no radio';r.click();r.checked=true;r.dispatchEvent(new Event('change',{bubbles:true}));return 'picked '+(r.id||r.value)})()").take(80))
-                started = tapLabel("/^(start|start refresh)$/i", factor, steps, "start")
+                steps.put("interval: " + tabEval(live, "(function(){var r=document.getElementById('5_sec')||document.querySelector('input[name=reload_opt]');if(!r)return 'no radio';r.click();r.checked=true;r.dispatchEvent(new Event('change',{bubbles:true}));var c=document.querySelector('input[name=reload_opt]:checked');return 'picked '+(r.id||r.value)+' checked='+(c?c.id+'='+c.value:'none')})()").take(120))
+                started = tapLabel("/^(save|start|start refresh)$/i", factor, steps, "save")
                 if (!started) {
-                    val byScript = popupView()?.takeIf { it.context == "popup" }?.let { tabEval(it, "(function(){var b=document.getElementById('button-start-stop')||document.querySelector('.start_button, button');if(!b)return 'no button';b.click();return 'clicked '+(b.id||b.textContent.trim().slice(0,20))})()") } ?: "no popup"
-                    steps.put("start (script): ${byScript.take(80)}")
+                    val byScript = popupView()?.takeIf { it.context == "popup" }?.let { tabEval(it, "(function(){var b=document.getElementById('btnSave')||document.querySelector('.save-button, button');if(!b)return 'no button';b.click();return 'clicked '+(b.id||b.textContent.trim().slice(0,20))})()") } ?: "no popup"
+                    steps.put("save (script): ${byScript.take(80)}")
                     started = byScript.contains("clicked")
                 }
-                popupView()?.takeIf { it.context == "popup" }?.let { extra.put("popupAfterStart", json(tabEval(it, DEEP_TEXT)).optString("text").take(200)) }
+                // The handler's own word: its message line fills on the click (a success line
+                // for 3 s, or a validation warning that stays).
+                val message = poll(scaled(4_000, factor), 300) {
+                    popupView()?.takeIf { it.context == "popup" }?.let { tabEval(it, "(function(){var m=document.getElementById('msg');return m?m.textContent.trim():''})()").trim('"') }?.takeIf { it.isNotEmpty() }
+                }
+                extra.put("popupMessage", message ?: "")
+                popupView()?.takeIf { it.context == "popup" }?.let {
+                    extra.put("popupAfterSave", json(tabEval(it, DEEP_TEXT)).optString("text").take(200))
+                    extra.put("popupConsole", JSONArray(consoleOf(it).takeLast(10)))
+                }
             }
         }
         extra.put("steps", steps)
@@ -7253,13 +7380,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         runCatching { coreCall("extension.closePopup", "null") }
         extra.put("timeOrigin", JSONObject().put("before", origin).put("after", reloaded ?: tabEval(view, "String(performance.timeOrigin)"))).put("tabUrl", tabUrls()[tab] ?: "")
+        runCatching { extra.put("timerShown", tabEval(view, "String(!!document.getElementById('show_visual_timer') || !!document.getElementById('timer_iframe_arte'))")) }
+        extra.put("pageConsole", JSONArray(consoleOf(view).takeLast(8)))
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
-        val note = "steps ${steps.toString().take(220)}"
+        val note = "steps ${steps.toString().take(220)}; message \"${extra.optString("popupMessage").take(80)}\""
         return when {
-            reloaded != null -> Grade("P", "Auto Refresh Page: the fixture reloaded on the shortest interval after Start (time origin $origin -> $reloaded): $note", extra)
+            reloaded != null -> Grade("P", "Auto Refresh Page: the fixture reloaded on the shortest preset after Save (time origin $origin -> $reloaded): $note", extra)
             popup == null -> Grade("F", "Auto Refresh Page: popup did not render in the core check: $note", extra)
-            !started -> Grade("F", "Auto Refresh Page: no Start control reached in the popup: $note", extra)
-            else -> Grade("F", "Auto Refresh Page: Start pressed and the fixture did not reload within ${scaled(30_000, factor) / 1000} s: $note", extra)
+            !started -> Grade("F", "Auto Refresh Page: no Save control reached in the popup: $note", extra)
+            else -> Grade("F", "Auto Refresh Page: Save pressed and the fixture did not reload within ${scaled(30_000, factor) / 1000} s: $note", extra)
         }
     }
 
