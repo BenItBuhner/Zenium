@@ -286,7 +286,14 @@ export class FakeKotlin implements RuntimeBridge {
         return undefined
       case 'blocking.stats':
         if (this.blockingBuilds === null) throw new Error(`no such bridge method ${method}`)
-        return { sets: 1, filters: 0, rules: 1, builds: this.blockingBuilds, lastBuildMs: 1, indexChars: 100 }
+        return {
+          sets: 1,
+          filters: 0,
+          rules: 1,
+          builds: this.blockingBuilds,
+          lastBuildMs: 1,
+          indexChars: 100
+        }
       default:
         throw new Error(`no such bridge method ${method}`)
     }

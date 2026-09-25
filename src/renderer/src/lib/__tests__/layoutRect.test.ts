@@ -126,7 +126,12 @@ describe('layoutRectThrough: the painted box run back through the frame’s tran
     const painted = (r: Rect): Rect => {
       const ox = tall.x + about.x
       const oy = tall.y + about.y
-      return { x: ox + (r.x - ox) * s, y: oy + (r.y - oy) * s, width: r.width * s, height: r.height * s }
+      return {
+        x: ox + (r.x - ox) * s,
+        y: oy + (r.y - oy) * s,
+        width: r.width * s,
+        height: r.height * s
+      }
     }
     const float32 = (r: Rect): Rect => ({
       x: Math.fround(r.x),
