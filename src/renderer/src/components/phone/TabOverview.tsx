@@ -437,6 +437,33 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   const heroRef = useRef<HTMLDivElement>(null)
   const heroHeaderRef = useRef<HTMLDivElement>(null)
   const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  /**
+   * The grid's ref: the scroller, and its edge fades. One function for the grid's life – a ref
+   * callback made anew each render is called again each render (the last one's cleanup first),
+   * and with it `attachFadeEdges` measured the scroller again: a forced layout on every render
+   * of the overview, at every commit of a Space switch, a page's load or an idle fill's step
+   * (PERF-5, ruling 5: `useFadeEdges.ts`'s `update` was the switch scenes' largest self time).
+   * The fades attach once the commit is over: `attachFadeEdges` measures the scroller as it
+   * attaches, and in the commit that swaps the grids at a Space switch that read was a forced
+   * layout in the middle of the commit, with the commit's other writes still to come. After the
+   * commit the same read is done once, before anything is drawn – no edge is seen unfaded.
+   */
+  const gridRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollRef.current = el
+      if (!el) return
+      let detach: (() => void) | undefined
+      let gone = false
+      queueMicrotask(() => {
+        if (!gone) detach = fadeGrid(el) ?? undefined
+      })
+      return () => {
+        gone = true
+        detach?.()
+      }
+    },
+    [fadeGrid]
+  )
   // Where the hero's own card sits (measured below): a ref, not state – the morph's writer reads
   // it as it writes, and a measurement is not a render of the grid (each phase change, each
   // scroll of the grid re-measures; as state each one rendered every card again, PERF-5).
@@ -2065,25 +2092,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                 className="zen-overview-space relative flex min-h-0 flex-1 flex-col"
               >
                 <div
-                  ref={(el) => {
-                    scrollRef.current = el
-                    if (!el) return
-                    // The edge fades attach once the commit is over: `attachFadeEdges` measures
-                    // the scroller as it attaches, and in the commit that swaps the grids at a
-                    // Space switch that read was a forced layout in the middle of the commit,
-                    // with the commit's other writes still to come (ruling 5). After the commit
-                    // the same read is the frame's own layout, done once, before anything is
-                    // drawn – no edge is seen unfaded.
-                    let detach: (() => void) | undefined
-                    let gone = false
-                    queueMicrotask(() => {
-                      if (!gone) detach = fadeGrid(el) ?? undefined
-                    })
-                    return () => {
-                      gone = true
-                      detach?.()
-                    }
-                  }}
+                  ref={gridRef}
                   className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
                   data-pane={pane}
                   // The Private pane under the lock cover (INC-05): its grid is out of reach – no
@@ -2915,12 +2924,18 @@ function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string })
     },
     []
   )
+  // One ref for the strip's life: made anew each render it would be called again each render,
+  // the fades measuring the strip again each time (a forced layout; see `gridRef`).
+  const stripFade = useCallback(
+    (el: HTMLDivElement | null) => {
+      stripRef.current = el
+      return fade(el)
+    },
+    [fade]
+  )
   return (
     <div
-      ref={(el) => {
-        stripRef.current = el
-        return fade(el)
-      }}
+      ref={stripFade}
       className="zen-overview-strip relative flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2 pt-0.5"
     >
       <div

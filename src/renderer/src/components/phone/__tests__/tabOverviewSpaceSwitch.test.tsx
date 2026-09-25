@@ -533,6 +533,40 @@ describe('a Space switch in the overview', () => {
     expect(grid().style.getPropertyValue('--zen-fade-end')).toBe('0px')
   })
 
+  it('the grid and the strip attach their edge fades once for their life, not again on each render of the overview; a switch attaches the new grid alone', async () => {
+    // Every measurement `attachFadeEdges` makes writes `--zen-fade-end` (nothing else does): one
+    // at each attach – a read of the scroller's size and scroll, a forced layout – and one per
+    // frame after a scroll or a mutation (no frame runs here: the frame is stubbed).
+    const original = CSSStyleDeclaration.prototype.setProperty
+    let measured = 0
+    vi.spyOn(CSSStyleDeclaration.prototype, 'setProperty').mockImplementation(function (
+      this: CSSStyleDeclaration,
+      name: string,
+      value: string | null,
+      priority?: string
+    ) {
+      if (name === '--zen-fade-end') measured++
+      return original.call(this, name, value, priority)
+    })
+    render(stateOf(WORK))
+    await Promise.resolve()
+    // The strip's and the grid's: once each.
+    expect(measured).toBe(2)
+    // The overview rendered again with the same Space – the state set anew, its props the same
+    // values: nothing measured again.
+    render(stateOf(WORK))
+    render(stateOf(WORK))
+    await Promise.resolve()
+    expect(measured).toBe(2)
+    // A switch: the next Space's grid is a new element and measures once; the strip stays as it is.
+    render(stateOf(HOME))
+    await Promise.resolve()
+    expect(measured).toBe(3)
+    render(stateOf(HOME))
+    await Promise.resolve()
+    expect(measured).toBe(3)
+  })
+
   it('the next grid fills the rest of its cards in idle time after the switch, as a mounting grid does', () => {
     render(stateOf(WORK))
     runIdleAll()
