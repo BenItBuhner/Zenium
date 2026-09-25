@@ -349,7 +349,7 @@ function remoteTabRow(device: SyncDeviceTabs, tab: SyncRemoteTab, held: boolean)
     id: `sync-remote-tab:${device.deviceId}:${tab.tabId}`,
     label: tab.title.trim() || displayUrl(tab.url),
     description: host ? `${host} · ${when}` : when,
-    leading: <FaviconGlyph src={tab.favicon} />,
+    leading: <FaviconGlyph src={tab.favicon} page={tab.url} />,
     // The title is the page's, any length: one line, truncating from the end, as the History
     // rows (§6; the #314 ruling) – the host under it says which page a cut title is.
     truncate: true,

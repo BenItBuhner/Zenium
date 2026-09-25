@@ -7,6 +7,7 @@ import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { displayUrl } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { stageStore } from '@renderer/lib/gestures/stage'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 import { openPage } from '@renderer/lib/pages'
@@ -196,20 +197,23 @@ export function BackHistoryMenu({
  */
 function EntryFavicon({ entry }: { entry: NavigationHistoryEntry }): JSX.Element {
   const [broken, setBroken] = useState<string | null>(null)
+  // The cached copy where the core holds one (HB-47); an entry's live icon only while its site
+  // is open in a tab – the menu is drawn on a tap and asks no closed page's site for an icon.
+  const src = useFaviconSrc(entry.favicon, entry.url)
   const glyph = internalPageOf(entry.url)?.glyph
   if (glyph) {
     const Glyph = PAGE_GLYPHS[glyph]
     return <Glyph className="zen-histmenu-favicon" strokeWidth={2} aria-hidden />
   }
-  if (entry.favicon && broken !== entry.favicon) {
+  if (src && broken !== src) {
     return (
       <img
-        src={entry.favicon}
+        src={src}
         alt=""
         className="zen-histmenu-favicon rounded-sm"
         referrerPolicy="no-referrer"
         draggable={false}
-        onError={() => setBroken(entry.favicon)}
+        onError={() => setBroken(src)}
       />
     )
   }

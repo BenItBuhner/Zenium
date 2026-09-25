@@ -4,6 +4,7 @@ import { Globe } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { installChromeDrops, registerChromeCaret } from '@renderer/lib/dnd'
 import { dropStore, registerCaret, registerGhost } from '@renderer/lib/drag'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { tabTitle } from '@renderer/lib/selectors'
 import type { DragState } from '@renderer/lib/ui'
 import { Favicon } from './sidebar/Favicon'
@@ -33,10 +34,13 @@ export function DragLayer({ state, drag }: { state: UIState; drag: DragState }):
   const ghost = dropStore.use((s) => s.ghost)
   const tab = state.tabs[drag.tabId]
   const title = tab ? tabTitle(tab) : drag.title
+  // A tab dragged in from another window: its favicon from the core's cache where it holds a
+  // copy (HB-47), else live – the tab is open there.
+  const dragFavicon = useFaviconSrc(drag.favicon)
   const icon = tab ? (
     <Favicon tab={tab} />
-  ) : drag.favicon ? (
-    <img src={drag.favicon} width={16} height={16} alt="" className="shrink-0 rounded-[4px]" />
+  ) : dragFavicon ? (
+    <img src={dragFavicon} width={16} height={16} alt="" className="shrink-0 rounded-[4px]" />
   ) : (
     <Globe className="h-4 w-4 shrink-0 opacity-60" />
   )

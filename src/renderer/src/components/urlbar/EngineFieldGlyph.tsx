@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Search } from 'lucide-react'
 import type { SearchEngine } from '@shared/types'
 import { engineFieldFavicon } from '@shared/search'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
 
@@ -39,7 +40,9 @@ export function EngineFieldGlyph({
   /** Extra classes on the slot (the new tab field's placeholder ink for its magnifier). */
   className?: string
 }): JSX.Element {
-  const favicon = engineFieldFavicon(engine)
+  // The core's cached copy where it holds one (HB-47); the engine's mark is no page's row, so
+  // the live address stands where the cache has nothing, as it always did.
+  const favicon = useFaviconSrc(engineFieldFavicon(engine))
   const [arrived, setArrived] = useState<string | null>(null)
   const [broken, setBroken] = useState<string | null>(null)
   const image = favicon !== null && broken !== favicon
