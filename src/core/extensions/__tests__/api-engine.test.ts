@@ -158,6 +158,51 @@ describe('createEmulatedEngine', () => {
     expect((h.chrome.extension.getURL as Fn)('a.png')).toBe(`${ORIGIN}/a.png`)
   })
 
+  it("runtime.getURL answers the script recovery's alias for a script file when the world hands one in, the served URL otherwise", () => {
+    // A content world under a page policy that refused a module graph of the extension: the
+    // recovery spells script files as the page-origin alias from then on (Buyhatke's Vite
+    // preload helper asking for its chunks, compat round 16 7.8); everything else is served.
+    const asked: string[] = []
+    let refused = false
+    const h = harness(
+      { context: 'content' },
+      {
+        scriptAlias: (url) => {
+          asked.push(url)
+          return refused && /\.js$/.test(url)
+            ? url.replace(ORIGIN, `https://www.flipkart.com/.zenium-ext/${EXT}`)
+            : null
+        }
+      }
+    )
+    const getURL = h.chrome.runtime.getURL as Fn
+    expect(getURL('assets/chunk-A.js')).toBe(`${ORIGIN}/assets/chunk-A.js`)
+    refused = true
+    expect(getURL('assets/chunk-A.js')).toBe(
+      `https://www.flipkart.com/.zenium-ext/${EXT}/assets/chunk-A.js`
+    )
+    expect(getURL('/assets/chunk-A.js')).toBe(
+      `https://www.flipkart.com/.zenium-ext/${EXT}/assets/chunk-A.js`
+    )
+    expect(getURL('popup.html')).toBe(`${ORIGIN}/popup.html`)
+    expect(getURL('a.png')).toBe(`${ORIGIN}/a.png`)
+    // The hook sees the served URL the engine built, never the path (the first ask is the
+    // shim's own `getURL('')` for the origin at install: the served origin, a script file not).
+    expect(asked[0]).toBe(`${ORIGIN}/`)
+    expect(asked.slice(1)).toEqual([
+      `${ORIGIN}/assets/chunk-A.js`,
+      `${ORIGIN}/assets/chunk-A.js`,
+      `${ORIGIN}/assets/chunk-A.js`,
+      `${ORIGIN}/popup.html`,
+      `${ORIGIN}/a.png`
+    ])
+    // Without the option (a page, a worker, a user-script world), the served URL always.
+    const plain = harness({ context: 'content' })
+    expect((plain.chrome.runtime.getURL as Fn)('assets/chunk-A.js')).toBe(
+      `${ORIGIN}/assets/chunk-A.js`
+    )
+  })
+
   it('hides storage without the permission and browserAction/pageAction outside MV2', () => {
     const h = harness({ permissions: [] })
     expect(h.chrome.storage).toBeUndefined()

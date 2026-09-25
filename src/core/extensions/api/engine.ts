@@ -165,6 +165,14 @@ export interface EngineOptions {
    * hands in what its script reads as `self`.
    */
   receiver?: object
+  /**
+   * What `runtime.getURL` answers in place of the served URL it built, or null for the served
+   * one. A content world hands in the script recovery's `aliasFor`: once the page's policy
+   * refused a module of the extension and the page-origin alias carried it, a script file's
+   * URL is spelled as the alias, where the graph's own chunk imports load
+   * (`extensionScriptRecovery.ts`). Absent: the served URL always.
+   */
+  scriptAlias?: (url: string) => string | null
 }
 
 /**
@@ -847,8 +855,11 @@ export function createEmulatedEngine(
 
   // --- runtime -----------------------------------------------------------------------------------
 
-  const getURL = (path: unknown): string =>
-    `${config.origin}/${String(path ?? '').replace(/^\/+/, '')}`
+  const scriptAlias = options.scriptAlias
+  const getURL = (path: unknown): string => {
+    const url = `${config.origin}/${String(path ?? '').replace(/^\/+/, '')}`
+    return scriptAlias ? (scriptAlias(url) ?? url) : url
+  }
 
   // What every context has, a `USER_SCRIPT` world with `messaging` on included: Chrome gives
   // user-script worlds the identity bits and messaging both ways – `sendMessage` / `connect` to

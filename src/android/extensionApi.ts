@@ -18,6 +18,7 @@ import type { ProxyConfig } from '@core/extensions/api/proxy'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import {
+  activePermissionSet,
   addPermissionSets,
   type ManifestPermissionSets,
   missingPermissions,
@@ -2050,6 +2051,13 @@ export class ExtensionApi {
         permissions: [...grantedApis],
         origins: [...grantedHosts]
       })
+    // What `getAll` lists and `contains` answers from: the granted set without its file-scheme
+    // patterns until the user allowed file access, as Chrome withholds them (`activePermissionSet`;
+    // Markdown Viewer's start-up `getAll` -> `remove` of every origin not in its state hit the
+    // required `file:///*` here and threw, compat round 16 §7.1). A `request` still measures
+    // what is missing against the whole granted set: a required pattern asked for again is
+    // granted already, withheld or not.
+    const active = (): PermissionSet => activePermissionSet(granted(), ext.record.allowFileAccess === true)
     // Kotlin's CORS proxy hears the host patterns only when they moved; the grants and the
     // contexts' shims hear every change.
     const commit = (hostsMoved: boolean): void => {
@@ -2066,9 +2074,9 @@ export class ExtensionApi {
     }
     switch (method) {
       case 'contains':
-        return permissionSetContains(granted(), wanted)
+        return permissionSetContains(active(), wanted)
       case 'getAll':
-        return granted()
+        return active()
       case 'request': {
         const requestable = requestablePermissions(sets, wanted)
         if (!requestable.ok) throw new Error(requestable.error)

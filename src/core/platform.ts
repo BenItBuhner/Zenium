@@ -42,6 +42,7 @@ import type {
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
+  SavePageFormat,
   ScreenCaptureSource,
   ScreenshotSaved,
   SharePanelAction,
@@ -867,8 +868,14 @@ export interface TabView {
    * Hosts without it have no print preview (`capabilities.printPreview` off).
    */
   printToPDF?(options: PdfRenderOptions): Promise<Uint8Array>
-  /** Save the page (host decides where / whether to ask); resolves with the saved path or null. */
-  savePage(suggestedName: string): Promise<string | null>
+  /**
+   * Save the page in `format` (host decides where / whether to ask); resolves with the saved
+   * path or null. A host with `capabilities.savePageFormats` honours the format (Electron's
+   * `webContents.savePage`); one without writes its one archive whatever was asked – Android's
+   * `saveWebArchive`, an MHTML file into the public Downloads – and answers with that file's
+   * path, which the core reads the type from (`shared/savePage.ts` `savePageMimeType`).
+   */
+  savePage(suggestedName: string, format: SavePageFormat): Promise<string | null>
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
   snapshot(): Promise<string | null>
   /**

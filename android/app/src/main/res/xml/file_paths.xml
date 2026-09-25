@@ -10,4 +10,6 @@
     <!-- Downloads on Android 8–9 land in the public directory (Android 10+ uses MediaStore). -->
     <external-path name="public-downloads" path="Download/" />
     <files-path name="pages" path="pages/" />
+    <!-- A saved page's archive when there is no external storage at all (Host.savePage's last resort). -->
+    <files-path name="download-fallback" path="Download/" />
 </paths>

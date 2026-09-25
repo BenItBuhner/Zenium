@@ -389,6 +389,23 @@ object DownloadLogic {
         return out.toByteArray()
     }
 
+    // --- where a bound transfer goes ------------------------------------------------------------
+
+    /** How `Downloads.bind` places a transfer: the save dialog, the chosen folder, or the default location. */
+    enum class Placement { ASK, FOLDER, DEFAULT }
+
+    /**
+     * The core's destination (`mode`: `ask` / `folder` / anything else the default) decides, except
+     * for a transfer the menu started with Save Link As… / Save Image As… (`saveAs`, HB-40): that
+     * one asks – Chrome's per-file dialog – whatever the ask-where-to-save setting says. A retry
+     * or a resume of a record never carries the flag; its file is placed already.
+     */
+    fun placement(mode: String, saveAs: Boolean): Placement = when {
+        saveAs || mode == "ask" -> Placement.ASK
+        mode == "folder" -> Placement.FOLDER
+        else -> Placement.DEFAULT
+    }
+
     // --- the file behind a savePath --------------------------------------------------------------
 
     /** Which store a persisted `savePath` names; `DownloadSink.reopen` builds the matching sink. */

@@ -521,6 +521,77 @@ describe('extension-origin stylesheets the page CSP refused', () => {
     expect(imported).toHaveLength(2)
   })
 
+  it("spells a script file's URL as the page-origin alias for runtime.getURL once an isolated world's refused graph was asked for from the alias, so a two-hop graph's own chunk imports load (Buyhatke's Vite preload helper on flipkart.com, compat round 16 7.8)", async () => {
+    const { host, errors } = harness([EXT, 'zyxwvutsrqponmlkzyxwvutsrqponmlk'])
+    const imported: Array<{ url: string; resolve: () => void; reject: (e: unknown) => void }> =
+      []
+    host.document = new FakeDocument(null)
+    host.pageModules = false
+    host.pageOrigin = 'https://www.flipkart.com'
+    host.importModule = (url) =>
+      new Promise<void>((resolve, reject) => void imported.push({ url, resolve, reject }))
+    const recovery = createScriptRecovery(host)
+    const chunk = `${ORIGIN}/assets/addToCart.js-7VOB0Zfo.js`
+    // Nothing refused yet: the served URL stands for every file.
+    expect(recovery.aliasFor(chunk)).toBeNull()
+    // The content script's own import refused and asked for from the alias: from here the
+    // graph's `chrome.runtime.getURL`-built chunk specifiers are alias URLs – the first module
+    // builds them while it evaluates, before the alias import settles.
+    const entry = `${ORIGIN}/assets/preload-helper-DwIMeJeZ.js`
+    recovery.onViolation(violation(entry))
+    expect(imported.map((i) => i.url)).toEqual([
+      `https://www.flipkart.com/.zenium-ext/${EXT}/assets/preload-helper-DwIMeJeZ.js`
+    ])
+    expect(recovery.aliasFor(chunk)).toBe(
+      `https://www.flipkart.com/.zenium-ext/${EXT}/assets/addToCart.js-7VOB0Zfo.js`
+    )
+    expect(recovery.aliasFor(`${ORIGIN}/assets/worker.mjs?v=3`)).toBe(
+      `https://www.flipkart.com/.zenium-ext/${EXT}/assets/worker.mjs?v=3`
+    )
+    // Script files only: a page, an image, a fetch and a stylesheet keep the served origin (the
+    // stylesheet has the `<link>` recovery, a page is never served from the alias).
+    for (const other of [
+      `${ORIGIN}/popup.html`,
+      `${ORIGIN}/assets/icon.png`,
+      `${ORIGIN}/assets/config.json`,
+      `${ORIGIN}/assets/style-Cx1.css`,
+      `${ORIGIN}/assets/js/`
+    ])
+      expect(recovery.aliasFor(other)).toBeNull()
+    // Another attached extension's files, and a URL of no extension's, stand as served.
+    expect(
+      recovery.aliasFor('https://zyxwvutsrqponmlkzyxwvutsrqponmlk.ext.zenium.invalid/a.js')
+    ).toBeNull()
+    expect(recovery.aliasFor('https://www.flipkart.com/own.js')).toBeNull()
+    imported[0]!.resolve()
+    await tick()
+    expect(recovery.pending()).toBe(0)
+    expect(errors).toEqual([])
+    // The alias stays the answer after the import settled (the helper asks at run time).
+    expect(recovery.aliasFor(chunk)).not.toBeNull()
+
+    // The one-realm WebView (the nonced or aliased module script of the page's, bracketed by
+    // the host) keeps the served spelling: the whole graph loads under the page's nonce there.
+    const realm = harness()
+    realm.host.document = new FakeDocument('n0nce')
+    realm.host.pageModules = true
+    realm.host.pageOrigin = 'https://www.flipkart.com'
+    const oneRealm = createScriptRecovery(realm.host)
+    oneRealm.onViolation(violation(entry))
+    expect(oneRealm.aliasFor(chunk)).toBeNull()
+    // An isolated world that could not ask for the alias (no page origin to root it under)
+    // recorded the refusal and answers the served URL still.
+    const bare = harness()
+    bare.host.document = new FakeDocument(null)
+    bare.host.pageModules = false
+    bare.host.pageOrigin = 'null'
+    bare.host.importModule = host.importModule
+    bare.host.warn = () => undefined
+    const noAlias = createScriptRecovery(bare.host)
+    noAlias.onViolation(violation(entry))
+    expect(noAlias.aliasFor(chunk)).toBeNull()
+  })
+
   it("puts the page-origin alias in the module script's src where the page lends no nonce (a host-only policy on the one-realm WebView), the nonce first where there is one", () => {
     const { host, errors } = harness()
     const doc = new FakeDocument(null)
@@ -569,6 +640,66 @@ describe('extension-origin stylesheets the page CSP refused', () => {
     createScriptRecovery(opaque.host).onViolation(violation(entry))
     expect((opaque.host.document as FakeDocument).created).toEqual([])
     expect(String(opaque.errors[0]?.[0])).toContain('lends no nonce')
+  })
+
+  it("asks once more from the page-origin alias, the nonce kept, when the nonced module at the served origin is refused on the one-realm WebView (NoteGPT's loader under YouTube's host-only script-src, compat round 17)", () => {
+    const { host, errors, requests } = harness()
+    const doc = new FakeDocument()
+    host.document = doc
+    host.pageModules = true
+    host.pageOrigin = 'https://www.youtube.com'
+    const recovery = createScriptRecovery(host)
+    const entry = `${ORIGIN}/assets/index.ts-BoXfnJnu.js`
+    recovery.onViolation(violation(entry))
+    expect(doc.created).toHaveLength(1)
+    const nonced = doc.created[0]!
+    expect(nonced).toMatchObject({ nonce: 'nonce-of-the-page', src: entry, connected: true })
+    // The page's nonced scripts serve another directive; `script-src 'self' https://…` refuses
+    // the served origin. The violation names the element's own src: not retried a second time
+    // from there, the element's `error` is where it goes on.
+    recovery.onViolation(violation(entry))
+    expect(doc.created).toHaveLength(1)
+    nonced.dispatchEvent(new Event('error'))
+    expect(nonced.connected).toBe(false)
+    expect(doc.created).toHaveLength(2)
+    const aliased = doc.created[1]!
+    expect(aliased).toMatchObject({
+      type: 'module',
+      nonce: 'nonce-of-the-page',
+      src: `https://www.youtube.com/.zenium-ext/${EXT}/assets/index.ts-BoXfnJnu.js`,
+      connected: true
+    })
+    // One retry in flight, nothing reported, nothing for the host to run.
+    expect(recovery.pending()).toBe(1)
+    expect(errors).toEqual([])
+    expect(requests).toEqual([])
+    // The alias's own violation is not an extension URL's: nothing more is inserted for it.
+    recovery.onViolation(violation(aliased.src))
+    expect(doc.created).toHaveLength(2)
+    aliased.dispatchEvent(new Event('load'))
+    expect(aliased.connected).toBe(false)
+    expect(recovery.pending()).toBe(0)
+    expect(errors).toEqual([])
+    // The alias refused as well: recorded once, with the alias named, and that is the end of it.
+    const other = `${ORIGIN}/assets/other.js`
+    recovery.onViolation(violation(other))
+    doc.created[2]!.dispatchEvent(new Event('error'))
+    doc.created[3]!.dispatchEvent(new Event('error'))
+    expect(doc.created).toHaveLength(4)
+    expect(recovery.pending()).toBe(0)
+    expect(errors).toHaveLength(1)
+    expect(String(errors[0]?.[0])).toContain('page-origin alias')
+    expect(String(errors[0]?.[0])).toContain(`/.zenium-ext/${EXT}/assets/other.js`)
+    // A page whose origin roots no alias still gets the refusal recorded under the nonce.
+    const opaque = harness()
+    const opaqueDoc = new FakeDocument()
+    opaque.host.document = opaqueDoc
+    opaque.host.pageModules = true
+    opaque.host.pageOrigin = 'null'
+    createScriptRecovery(opaque.host).onViolation(violation(entry))
+    opaqueDoc.created[0]!.dispatchEvent(new Event('error'))
+    expect(opaqueDoc.created).toHaveLength(1)
+    expect(String(opaque.errors[0]?.[0])).toContain('with its nonce')
   })
 
   it('rebaseCssUrls leaves absolute, fragment, protocol-relative and data references alone', () => {

@@ -55,6 +55,7 @@ import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/de
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
+import { SAVE_PAGE_FORMATS, SAVE_PAGE_FORMAT_SPECS } from '../shared/savePage'
 import { languageName, sortedByName } from '../shared/languageNames'
 import { orderMediaEntries } from '../shared/mediaHub'
 import { toolbarPinned } from '../shared/toolbarPins'
@@ -1262,6 +1263,47 @@ export class Menus {
     return items
   }
 
+  /**
+   * The one Save Page As… row: what Ctrl+S does (`page.savePage`), a save in the last-used
+   * format. The page's context menu keeps it as Chrome's context menu keeps its one Save as…;
+   * the app menu shows it on a host without the formats (`savePageItem`).
+   */
+  private savePageRow(tab: Tab | undefined, win: ZenWindow): MenuItemTemplate {
+    return {
+      label: 'Save Page As…',
+      action: 'page.savePage',
+      enabled: Boolean(tab),
+      click: () => tab && this.browser.actions.run('page.savePage', { sourceTabId: tab.id, win })
+    }
+  }
+
+  /**
+   * The app menu's Save Page As (CT-27). On a host that saves in Chrome's three formats
+   * (`capabilities.savePageFormats`) a submenu of them in Chrome's dialog's words – Webpage,
+   * Complete… / Webpage, HTML Only… / Webpage, Single File… – each opening the OS dialog on its
+   * one filter; the format Ctrl+S saves in (the last one used, as Edge's dialog remembers it) is
+   * the marked row and carries the chord, so the menu says what the key does. Elsewhere the one
+   * row of before, which saves the host's archive (Android's MHTML) in the last-used format's
+   * name. No tab (the app menu on a window without one) leaves the rows disabled.
+   */
+  private savePageItem(tab: Tab | undefined, win: ZenWindow): MenuItemTemplate {
+    if (!this.browser.state.capabilities.savePageFormats) return this.savePageRow(tab, win)
+    const enabled = Boolean(tab)
+    const last = resolveDownloadSettings(this.browser.state.settings).savePageFormat
+    return {
+      label: 'Save Page As',
+      enabled,
+      submenu: SAVE_PAGE_FORMATS.map((format) => ({
+        label: SAVE_PAGE_FORMAT_SPECS[format].label,
+        type: 'radio' as const,
+        checked: format === last,
+        ...(format === last ? { action: 'page.savePage' as const } : {}),
+        enabled,
+        click: () => tab && this.browser.actions.savePageAs(tab.id, win, format)
+      }))
+    }
+  }
+
   /** The page's own actions: bookmark, save, print, capture, Reader View, Translate Page. */
   private pageGroup(tab: Tab, win: ZenWindow): Template {
     const { state, reader, translate } = this.browser
@@ -1301,7 +1343,7 @@ export class Menus {
         action: 'bookmark.add',
         click: () => this.browser.toggleBookmark(tab.id, win)
       },
-      { label: 'Save Page As…', action: 'page.savePage', click: () => run('page.savePage') },
+      this.savePageRow(tab, win),
       ...(state.capabilities.print
         ? [
             {
@@ -3537,14 +3579,9 @@ export class Menus {
         active && this.browser.actions.run('page.printPreview', { sourceTabId: active.id, win })
     })
     // The phone's save is the icon row's Download Page (TB-08, `phoneIconRow`), the one entry
-    // Chrome's menu has for it; the sidebar layouts keep the text item.
-    const savePageAs: MenuItemTemplate = {
-      label: 'Save Page As…',
-      action: 'page.savePage',
-      enabled: Boolean(active),
-      click: () =>
-        active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
-    }
+    // Chrome's menu has for it; the sidebar layouts keep the text item – the formats submenu on
+    // a host that has them (`savePageItem`).
+    const savePageAs = this.savePageItem(active, win)
     const screenshot: MenuItemTemplate = {
       label: 'Take Screenshot',
       action: 'page.screenshot',

@@ -24,7 +24,9 @@ import {
 } from '../api/storage'
 import { msUntilNext, rescheduleAlarm, scheduleAlarm, splitDue } from '../api/alarms'
 import {
+  activePermissionSet,
   availablePermissions,
+  isFileSchemePattern,
   manifestPermissionSets,
   missingPermissions,
   normalizePermissionSet,
@@ -420,5 +422,41 @@ describe('permission grants', () => {
         origins: ['https://z.com/']
       }).ok
     ).toBe(false)
+  })
+
+  it('withholds file-scheme patterns from the active set until file access is allowed', () => {
+    expect(isFileSchemePattern('file:///*')).toBe(true)
+    expect(isFileSchemePattern('file://*/*')).toBe(true)
+    expect(isFileSchemePattern('*://*/*')).toBe(false)
+    expect(isFileSchemePattern('<all_urls>')).toBe(false)
+    // Markdown Viewer 5.3 (compat round 16 §7.1): its required host pattern is `file:///*`; its
+    // background's `md.storage.bug` removes every origin `getAll` lists whose `slice(0, -2)` form
+    // its stored state does not name – on a fresh install the state is empty, so every listed
+    // origin is asked to be removed. Chrome lists the file pattern only once the user allowed
+    // file access, so the required pattern is never in that list (removing it is refused as
+    // required). `<all_urls>` stays listed whole; the API permissions are untouched.
+    const granted = {
+      permissions: ['storage', 'scripting'],
+      origins: ['file:///*', '*://*/*']
+    }
+    const active = activePermissionSet(granted, false)
+    expect(active).toEqual({ permissions: ['storage', 'scripting'], origins: ['*://*/*'] })
+    expect(activePermissionSet(granted, true)).toBe(granted)
+    expect(permissionSetContains(active, { permissions: [], origins: ['file:///*'] })).toBe(false)
+    expect(
+      permissionSetContains(activePermissionSet(granted, true), {
+        permissions: [],
+        origins: ['file:///*']
+      })
+    ).toBe(true)
+    expect(
+      activePermissionSet({ permissions: [], origins: ['<all_urls>', 'file://*/*'] }, false).origins
+    ).toEqual(['<all_urls>'])
+    // The remove Markdown Viewer issues from the active list never names the required pattern:
+    // a fresh install (no state) asks for every listed origin; a state naming `*://*` keeps it.
+    const stale = (stateKeys: string[]): string[] =>
+      active.origins.filter((origin) => stateKeys.indexOf(origin.slice(0, -2)) === -1)
+    expect(stale([])).toEqual(['*://*/*'])
+    expect(stale(['file://', '*://*'])).toEqual([])
   })
 })

@@ -106,6 +106,7 @@ const ANDROID: HostCapabilities = {
   sync: false,
   print: true,
   printPreview: false,
+  savePageFormats: false,
   pdfViewer: true,
   agents: true,
   agentSkills: false,
