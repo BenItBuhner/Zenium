@@ -1355,6 +1355,11 @@
     {
       "workflow": "android-ext-compat-sweep.yml",
       "reason": "the extension program's compatibility sweep (CompatSweep, not a demo driver): two 210-minute jobs over the extension corpus, hours long; that program dispatches it"
+    },
+    {
+      "class": "ReadAloudSelectionDemo",
+      "workflow": "android-read-aloud-selection-demo.yml",
+      "reason": "EDGE-12's driver (W6-8, #492; about 5 min on the Google APIs image, where the speech engine is): every phone shard sits at its 68-minute budget (66 to 68 min), so the harness owner (H4, #482) places it – api33 (63 min free) or api35 (11 min free) fit – once its shard fields land; until then its own workflow runs it"
     }
   ]
 }
