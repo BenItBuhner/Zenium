@@ -85,8 +85,9 @@ class StartupSplashTest {
         val surface = FakeSurface()
         val bars = FakeBars(postThemeLightBars)
         val clock = FakeClock()
+        val notes = mutableListOf<String>()
         val warnings = mutableListOf<String>()
-        val splash = StartupSplash(clock, bars, { animators }, null) { message, _ -> warnings.add(message) }
+        val splash = StartupSplash(clock, bars, { animators }, null, { notes.add(it) }) { message, _ -> warnings.add(message) }
     }
 
     @Test
@@ -190,6 +191,117 @@ class StartupSplashTest {
     }
 
     @Test
+    fun aHandOverAfterTheLiftDepartsAtOnceAndHoldsNothing() {
+        // The warm launch through the icon alias with NEW_TASK alone: the trampoline's starting
+        // window is transferred over the running browser and the exit listener fires a second
+        // time, after READY lifted the first view (runs 7 and 8 of #454: that copy stayed on
+        // screen for good). It goes at once on the exit motion; the hold, the watchdog and the
+        // lift's numbers are untouched.
+        val rig = Rig(postThemeLightBars = true)
+        rig.splash.handOver(rig.surface)
+        rig.splash.systemBarsLight(true)
+        rig.clock.now += 1_200
+        rig.splash.ready()
+        rig.surface.end()
+        assertEquals(listOf("exit", "gone"), rig.surface.events)
+        assertEquals(listOf(false, true), rig.bars.writes)
+        assertEquals(1_200L, rig.splash.heldForMs)
+        assertTrue(rig.clock.pending.isEmpty())
+        // The library wrote the theme's tone as it handed the second view over; the chrome asked for dark icons.
+        rig.clock.now += 4_000
+        val late = FakeSurface()
+        rig.splash.handOver(late)
+        assertEquals("the late view departs at once, nothing is held", listOf("exit"), late.events)
+        assertFalse("not held", rig.splash.held)
+        assertEquals("no watchdog armed for it", emptyList<Long>(), rig.clock.pending.map { it.second })
+        assertEquals("the lift's numbers stand", 1_200L, rig.splash.heldForMs)
+        assertEquals("ready", rig.splash.hold.liftedBy)
+        assertEquals("the splash's tone while its colour is on screen", listOf(false, true, false), rig.bars.writes)
+        // A word from the chrome during the departure waits for its end, as during the lift's.
+        rig.splash.systemBarsLight(true)
+        assertEquals(listOf(false, true, false), rig.bars.writes)
+        late.end()
+        assertEquals("the chrome's tone back with the departure's end", listOf(false, true, false, true), rig.bars.writes)
+        assertEquals("said once in the log, for the harness", 1, rig.notes.size)
+        assertTrue(rig.notes[0], rig.notes[0].contains("a hand-over after the lift") && rig.notes[0].contains("departing at once"))
+        assertTrue("no warning: this is the trampoline's copy, not a fault", rig.warnings.isEmpty())
+        // The first view was never touched again.
+        assertEquals(listOf("exit", "gone"), rig.surface.events)
+        // And a third copy goes the same way.
+        val third = FakeSurface()
+        rig.splash.handOver(third)
+        assertEquals(listOf("exit"), third.events)
+        assertEquals(2, rig.notes.size)
+    }
+
+    @Test
+    fun aHandOverAfterTheWatchdogsLiftDepartsAtOnceToo() {
+        val rig = Rig()
+        rig.splash.handOver(rig.surface)
+        rig.clock.now += StartupSplash.WATCHDOG_MS
+        rig.clock.fire()
+        assertEquals("watchdog", rig.splash.hold.liftedBy)
+        rig.surface.end()
+        val late = FakeSurface()
+        rig.splash.handOver(late)
+        assertEquals(listOf("exit"), late.events)
+        assertEquals("watchdog", rig.splash.hold.liftedBy)
+        assertTrue("no second watchdog", rig.clock.pending.isEmpty())
+        assertEquals(1, rig.warnings.size)
+        assertEquals(1, rig.notes.size)
+    }
+
+    @Test
+    fun aLateHandOverUnderReducedMotionDepartsOnTheFade() {
+        val rig = Rig(animators = false)
+        rig.splash.handOver(rig.surface)
+        rig.splash.systemBarsLight(true)
+        rig.splash.ready()
+        rig.surface.end()
+        val late = FakeSurface()
+        rig.splash.handOver(late)
+        assertEquals("§11.3's fade for the late copy as for the lift", listOf("fade"), late.events)
+        assertEquals(listOf(false, true, false), rig.bars.writes)
+        late.end()
+        assertEquals(listOf(false, true, false, true), rig.bars.writes)
+    }
+
+    @Test
+    fun aSecondViewWhileTheFirstIsHeldIsRemovedAndTheFirstIsTheOneLifted() {
+        val rig = Rig()
+        rig.splash.handOver(rig.surface)
+        val surplus = FakeSurface()
+        rig.splash.handOver(surplus)
+        assertEquals("the surplus view goes at once, no motion", listOf("remove"), surplus.events)
+        assertTrue("the first is still held", rig.splash.held)
+        assertEquals("one watchdog, the first's", 1, rig.clock.pending.size)
+        assertEquals(1, rig.notes.size)
+        assertTrue(rig.notes[0], rig.notes[0].contains("second hand-over while the first is held"))
+        rig.splash.ready()
+        assertEquals("READY lifts the first", listOf("exit"), rig.surface.events)
+        assertEquals(listOf("remove"), surplus.events)
+        assertTrue(rig.clock.pending.isEmpty())
+    }
+
+    @Test
+    fun twoViewsDepartingTogetherFlipTheBarsOnceAsTheLastIsGone() {
+        // A late copy arriving inside the lift's 180 ms: the bars take the chrome's tone when the
+        // last of the two is gone, not as the first ends over the second's colour.
+        val rig = Rig(postThemeLightBars = true)
+        rig.splash.handOver(rig.surface)
+        rig.splash.systemBarsLight(true)
+        rig.splash.ready()
+        val late = FakeSurface()
+        rig.splash.handOver(late)
+        assertEquals(listOf("exit"), late.events)
+        assertEquals(listOf(false, false), rig.bars.writes)
+        rig.surface.end()
+        assertEquals("the second is still on screen", listOf(false, false), rig.bars.writes)
+        late.end()
+        assertEquals(listOf(false, false, true), rig.bars.writes)
+    }
+
+    @Test
     fun theWatchdogIsDerivedFromTheLongestHoldTheEmulatorHasShown() {
         // The status bar driver's first boot on the API 35 image held the splash 4205 ms; the
         // margin is twice that, rounded up – a slower runner's boot still lifts by READY.
@@ -201,7 +313,7 @@ class StartupSplashTest {
     @Test
     fun theSplashLiftsOnReadyAfterTheHandOver() {
         val hold = SplashHold()
-        assertFalse(hold.handOver())
+        assertEquals(SplashHold.HandOver.HOLD, hold.handOver())
         assertTrue(hold.handedOver)
         assertFalse(hold.lifted)
         assertTrue("READY after the hand-over lifts", hold.ready())
@@ -216,10 +328,30 @@ class StartupSplashTest {
         val hold = SplashHold()
         assertFalse("nothing handed over yet: nothing lifts", hold.ready())
         assertTrue(hold.chromeReady)
-        assertTrue("the hand-over finds READY waiting and lifts at once", hold.handOver())
+        assertEquals("the hand-over finds READY waiting and lifts at once", SplashHold.HandOver.LIFT, hold.handOver())
         hold.lift("ready")
         assertEquals("ready", hold.liftedBy)
-        assertFalse("a second hand-over is nothing", hold.handOver())
+        assertEquals("a hand-over after the lift is late: nothing to hold, the view departs", SplashHold.HandOver.LATE, hold.handOver())
+    }
+
+    @Test
+    fun theHoldAnswersEveryHandOverAndTakesTheFirstViewOnly() {
+        val hold = SplashHold()
+        assertEquals(SplashHold.HandOver.HOLD, hold.handOver())
+        assertEquals("a second view while the first is held is surplus", SplashHold.HandOver.SURPLUS, hold.handOver())
+        assertTrue("the surplus changed nothing", hold.handedOver && !hold.chromeReady && !hold.lifted)
+        assertTrue(hold.ready())
+        hold.lift("ready")
+        assertEquals(SplashHold.HandOver.LATE, hold.handOver())
+        assertEquals("and again", SplashHold.HandOver.LATE, hold.handOver())
+        assertEquals("ready", hold.liftedBy)
+        assertFalse("the late view never arms the watchdog", hold.watchdog())
+        // Lifted by the watchdog: the same.
+        val slow = SplashHold()
+        slow.handOver()
+        assertTrue(slow.watchdog())
+        slow.lift("watchdog")
+        assertEquals(SplashHold.HandOver.LATE, slow.handOver())
     }
 
     @Test
@@ -287,28 +419,25 @@ class StartupSplashTest {
     }
 
     @Test
-    fun theBarsInkIsWrittenThroughThePlatformsControllerSoItHolds() {
-        // The still of round 3 (the light web-app splash): status glyphs white as asked, navigation
-        // glyphs dark on the app's purple – the compat's legacy flag outvoted by another visible
-        // view's at the next relayout (ViewRootImpl.adjustLayoutParamsForCompatibility recomputes
-        // every uncontrolled bit from the OR of the tree's flags). Pinned from the source: every
-        // writer of the tone in the splash's reach goes through SystemBarInk, which takes control
-        // of both bits on API 30+ (setSystemBarsAppearance with both in the mask) and keeps the
-        // legacy flags in step for API 26–29.
+    fun theBarsToneIsWrittenForBothBarsThroughTheCompatController() {
+        // androidx core 1.15.0's WindowInsetsControllerCompat.Impl30.setAppearanceLight* writes
+        // the decor's legacy flag AND the platform controller's setSystemBarsAppearance (javap on
+        // the library, round 5 of #454; Impl35 inherits the setters), so the bit is controlled and
+        // holds through relayouts and the theme's seeding. Round 4's SystemBarInk doubled that
+        // write on a premise the bytecode refutes; it is gone, and every writer of the tone in the
+        // splash's reach is the compat, both bars in one tone.
         val source = read("src/main/kotlin/app/zen/chromium/StartupSplash.kt", "app/src/main/kotlin/app/zen/chromium/StartupSplash.kt")
-        val ink = Regex("""object SystemBarInk \{(.*?)\n}\n""", RegexOption.DOT_MATCHES_ALL).find(source)
-        assertTrue("SystemBarInk is there", ink != null)
-        val body = ink!!.value
-        assertTrue("the platform's controller on API 30+", body.contains("Build.VERSION.SDK_INT >= Build.VERSION_CODES.R") && body.contains("windowInsetsController?.setSystemBarsAppearance("))
-        assertTrue("both bits in the mask, so both are controlled", body.contains("statusBit or navigationBit"))
-        assertTrue("the legacy flags in step", body.contains("compat.isAppearanceLightStatusBars = lightStatus") && body.contains("compat.isAppearanceLightNavigationBars = lightNavigation"))
+        assertFalse("no SystemBarInk left", source.contains("object SystemBarInk"))
         val bars = Regex("""class WindowSplashBars\(.*?\n}\n""", RegexOption.DOT_MATCHES_ALL).find(source)
-        assertTrue("the splash's bars write through it", bars != null && bars.value.contains("SystemBarInk.write(window, lightStatus = value, lightNavigation = value)"))
+        assertTrue("WindowSplashBars is there", bars != null)
+        val body = bars!!.value
+        assertTrue("the status bar's tone read through the compat", body.contains("WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars"))
+        assertTrue("both bars written in one tone", body.contains("controller.isAppearanceLightStatusBars = value") && body.contains("controller.isAppearanceLightNavigationBars = value"))
         val webApp = read("src/main/kotlin/app/zen/chromium/WebAppActivity.kt", "app/src/main/kotlin/app/zen/chromium/WebAppActivity.kt")
+        assertFalse("nor in the web app's window", webApp.contains("SystemBarInk"))
         val scheme = Regex("""private fun applyScheme\(\) \{(.*?)\n    }\n""", RegexOption.DOT_MATCHES_ALL).find(webApp)
         assertTrue("WebAppActivity.applyScheme is there", scheme != null)
-        assertTrue("the web app's scheme writes through it", scheme!!.value.contains("SystemBarInk.write(window, lightStatus = !scheme.lightToolbarForeground, lightNavigation = !scheme.lightNavigationForeground)"))
-        assertFalse("no legacy-only writer left in the web app's scheme", scheme.value.contains("isAppearanceLightNavigationBars ="))
+        assertTrue("the web app's scheme writes both bars through the compat", scheme!!.value.contains("WindowInsetsControllerCompat(window, shell)") && scheme.value.contains("controller.isAppearanceLightStatusBars = !scheme.lightToolbarForeground") && scheme.value.contains("controller.isAppearanceLightNavigationBars = !scheme.lightNavigationForeground"))
     }
 
     @Test

@@ -43,9 +43,16 @@ package app.zen.chromium
  * launch through the alias with `FLAG_ACTIVITY_NEW_TASK` alone – `adb shell am start`, callers of
  * `PackageManager.getLaunchIntentForPackage` such as Settings' Open – adds this activity on top
  * of the running browser (`:2385-2390`), and the platform, seeing a task switch to an activity
- * not yet created, draws its splash until the forward's `performClearTop` finishes it: a splash
- * flash of the forward's length, measured by android-startup-demo.sh's `alias_open` act and
- * accepted for the tap's splash. The launcher's own path never shows it.
+ * not yet created, draws its splash for it; the forward's `performClearTop` finishes this
+ * activity and the starting window is TRANSFERRED to the browser's window, whose exit listener is
+ * handed the copy a second time – after the lift, the chrome READY long since. The platform does
+ * not end that copy (`TRANSFER_SPLASH_SCREEN_TIMEOUT`, 2000 ms, removes the SHELL's window when
+ * the copy is not attached in time; the attached copy is the app's to end), so the app must:
+ * [StartupSplash] sends a hand-over after the lift away at once on the exit motion
+ * (`SplashHold.HandOver.LATE`), so the warm launch shows the splash for the forward's length plus
+ * the departure's 180 ms. Before round 5 of #454 nothing lifted it and the copy stayed over the
+ * page (runs 7 and 8's `alias_open` recordings); android-startup-demo.sh's `alias_open` act judges
+ * the flash's end on every scheme. The launcher's own path never shows it.
  *
  * The other trampolines keep `Theme.NoDisplay`. [LinkDispatchActivity] runs in the CALLER's task,
  * where a splash would be one window in the mail app's task and then a second in the browser's

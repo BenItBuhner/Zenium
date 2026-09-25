@@ -43,9 +43,10 @@
 #   hot, alias        the same intent with the browser alive behind the launcher: the task
 #                     forward, nothing added, no splash (the launcher's hot tap)
 #   warm, alias open  the alias with NEW_TASK alone (what `getLaunchIntentForPackage` callers
-#                     and a bare `am start` send) on the running browser: the trampoline added
-#                     on top, its splash for the forward's length – the documented flash,
-#                     recorded, not judged
+#                     and a bare `am start` send) on the running browser, every scheme: the
+#                     trampoline added on top, its splash transferred to the browser's window
+#                     and its copy handed to the app after the lift – the flash, judged to its
+#                     end (the copy sent away at once, the page standing after it)
 #   cold, trampoline  the launcher's intent at the shortcuts' NoDisplay trampoline
 #                     (LauncherIconActivity, as root: not exported) – the icon's path as it was
 #                     before round 4, the BEFORE on the same build
@@ -61,7 +62,8 @@
 # verdicts were the harness's own). `am force-stop` keeps the picture; HOME does not.
 #
 # The navigation bar's glyphs (round 4): the app asks white over its dark splash grounds
-# (SystemBarInk, both bars); the window manager forwards the request to SystemUI, whose
+# (WindowInsetsControllerCompat, both bars – the compat writes the legacy flag and the
+# controller's bit); the window manager forwards the request to SystemUI, whose
 # LightBarController decides the glyphs last – and it FORCES the tone while it counts the
 # shade's behind-scrim as standing (`mForceLightForScrim` under a light system theme: dark
 # glyphs for every app; `mForceDarkForScrim` under a dark one: white). So each scheme begins
@@ -622,8 +624,15 @@ hot_start() {
 
 # The alias with NEW_TASK alone on the running browser behind the launcher – what a bare
 # `am start` and callers of `getLaunchIntentForPackage` (Settings' Open) send: the platform adds
-# the trampoline on top of the browser and draws its splash until the forward's clear-top
-# finishes it (IconTapActivity's documented edge). Recorded for its length, not judged.
+# the trampoline on top of the browser, draws its splash for the task switch and, at the
+# forward's clear-top, transfers the starting window to the browser's window – whose exit
+# listener is handed the copy AFTER the lift, the chrome READY long since (IconTapActivity's
+# documented edge). Nothing of the platform's ends that copy; until round 5 nothing of the app's
+# did either (runs 36099054999 and 36107136195: the splash to the recording's end, or back over
+# the page), and StartupSplash now sends a hand-over after the lift away at once. JUDGED, on every
+# scheme: the log carries that hand-over's line once and no watchdog line; the recording, run to
+# the flash's end, shows the flash ending on the page within the exit's motion, no splash frame
+# after the page's first, the page standing to the end.
 alias_open() {
   local theme=$1 dir=$2
   local slot
@@ -640,27 +649,49 @@ alias_open() {
   answer=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$alias" 2>&1 | tr -d '\r' || true)
   local splash_seen
   splash_seen=$(splash_windows)
-  sleep 2
+  # The copy's hand-over is the flash's end: wait for its line (the platform's own transfer
+  # timeout is 2 s; a copy that never came leaves the wait at its limit), then record the page
+  # standing for two seconds and a half more.
+  local late_line
+  late_line=$(wait_line "ZenStartup.*a hand-over after the lift" 8 || true)
+  sleep 2.5
   adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
   wait "$recorder_pid" || true
   window_transitions 1
   adb pull "/sdcard/startup-alias-open-$theme.mp4" "$dir/startup-alias-open-$theme.mp4" > /dev/null || true
   startup_log > "$dir/alias-open-startup-log.txt" || true
   printf '%s\n' "$answer" > "$dir/am-start-alias-open.txt"
-  local total wait_ state forwards splash_frames=-
+  local total wait_ state forwards late_lines watchdog_lines request_at forward_at late_at forward_ms=- late_ms=- splash_frames=- flash_line=-
   total=$(field TotalTime "$answer")
   wait_=$(field WaitTime "$answer")
   state=$(field LaunchState "$answer")
   forwards=$(grep -c "START u0 .*cmp=$app_id/$activity" "$dir/alias-open-startup-log.txt" || true)
+  late_lines=$(grep -c "a hand-over after the lift" "$dir/alias-open-startup-log.txt" || true)
+  watchdog_lines=$(grep -c "did not report ready" "$dir/alias-open-startup-log.txt" || true)
+  # On logcat's clock, from the request (the trampoline's START): the forward's START of
+  # MainActivity, and the app's line at the copy's hand-over.
+  request_at=$(grep -E -m 1 "START u0 .*cmp=$app_id/" "$dir/alias-open-startup-log.txt" | awk '{ print $1 }' || true)
+  forward_at=$(grep -E -m 1 "START u0 .*cmp=$app_id/$activity" "$dir/alias-open-startup-log.txt" | awk '{ print $1 }' || true)
+  late_at=$(grep -E -m 1 "a hand-over after the lift" "$dir/alias-open-startup-log.txt" | awk '{ print $1 }' || true)
+  if [ -n "$request_at" ] && [ -n "$forward_at" ]; then forward_ms=$(awk -v a="$request_at" -v b="$forward_at" 'BEGIN { printf "%d", (b - a) * 1000 }'); fi
+  if [ -n "$request_at" ] && [ -n "$late_at" ]; then late_ms=$(awk -v a="$request_at" -v b="$late_at" 'BEGIN { printf "%d", (b - a) * 1000 }'); fi
+  verdict "$([ "$forwards" -eq 1 ] && echo true || echo false)" "the warm launch through the alias ran the trampoline's forward once ($theme)" "$forwards START line(s) naming MainActivity; LaunchState ${state:-?}, TotalTime ${total:-?}"
+  verdict "$([ "$late_lines" -eq 1 ] && echo true || echo false)" "the trampoline's starting window was handed to the running browser once, after the lift, and sent away at once ($theme)" "$late_lines late hand-over line(s); ${late_line:-none within 8 s}; hand-over +$late_ms ms after the request"
+  verdict "$([ "$watchdog_lines" -eq 0 ] && echo true || echo false)" "no watchdog lifted anything on the warm launch ($theme)" "$watchdog_lines watchdog line(s)"
   if [ -n "$slot" ] && command -v ffmpeg > /dev/null 2>&1; then
-    node .github/scripts/android-startup-frames.mjs lead "$dir/startup-alias-open-$theme.mp4" "$slot" "${display%@*}" "$dir/alias-open-frames.txt" \
-      --tile "$dir/android-startup-frames-alias-open-$theme.png" > /dev/null || true
+    local status=0
+    node .github/scripts/android-startup-frames.mjs flash "$dir/startup-alias-open-$theme.mp4" "$slot" "${display%@*}" "$dir/alias-open-frames.txt" \
+      --tile "$dir/android-startup-frames-alias-open-$theme.png" > /dev/null || status=$?
+    grep -E '^(PASS|FAIL|NOTE):' "$dir/alias-open-frames.txt" | sed "s/)$/; $theme alias open recording)/" >> "$findings" || true
+    failures=$((failures + $(frame_failures "$dir/alias-open-frames.txt" "$status")))
     splash_frames=$(sed -n 's/^splash frames: //p' "$dir/alias-open-frames.txt" | head -n 1 || true)
     splash_frames=${splash_frames:--}
+    flash_line=$(sed -n 's/^flash: //p' "$dir/alias-open-frames.txt" | head -n 1 || true)
+    flash_line=${flash_line:--}
   fi
-  echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; splash windows right after: $splash_seen; forwards to MainActivity: $forwards; $splash_frames"
-  echo "warm launch through the alias with NEW_TASK alone ($theme): LaunchState ${state:-?}, TotalTime ${total:-?}, splash windows right after $splash_seen, forwards to MainActivity $forwards; recording: $splash_frames (recorded, not judged: the trampoline's splash on a launch the launcher never sends)" >> "$findings"
-  rows+=("| warm, the alias with NEW_TASK alone ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | - | - | - | $splash_seen / - | - | - | - | - | - | ${splash_frames%%;*} | - |")
+  echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; splash windows right after: $splash_seen; forwards to MainActivity: $forwards (+$forward_ms ms); the copy's hand-over after the lift +$late_ms ms; $splash_frames"
+  echo "warm launch through the alias with NEW_TASK alone ($theme): LaunchState ${state:-?}, TotalTime ${total:-?}, splash windows right after $splash_seen, forwards to MainActivity $forwards (+$forward_ms ms), the copy's hand-over +$late_ms ms after the request; recording: $flash_line" >> "$findings"
+  rows+=("| warm, the alias with NEW_TASK alone ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | - | - | the copy at +$late_ms, sent away at once | $splash_seen / - | $forward_ms | - | - | - | - | ${splash_frames%%;*} | - |")
 }
 
 # A link's cold start: the process gone, a VIEW of the fixture URL at LinkDispatchActivity (the
@@ -877,8 +908,8 @@ nav_drawer_check() {
 # side), the window manager's policy (`mLastAppearance` / `mLastBehavior` are printed only when
 # not 0 – absent is 0, white glyphs asked on both bars; the window it colours the navigation bar
 # for; the focused window), and each window's requested appearance (`apr=` from its own
-# LayoutParams line; no line is appearance 0) – the read-back of SystemBarInk's write on every
-# side that holds it.
+# LayoutParams line; no line is appearance 0) – the read-back of the app's write (the compat
+# controller's, WindowSplashBars) on every side that holds it.
 bars_dump() {
   local file=$1 windows=${1%.txt}-windows.txt lightbar=${1/-bars-/-lightbar-}
   [ "$lightbar" != "$file" ] || lightbar=${file%.txt}-lightbar.txt
@@ -1038,8 +1069,8 @@ webapp_launch() {
   verdict "$([ "$dressed_ms" != - ] && [ "$painted_ms" != - ] && [ "$dressed_ms" -lt "$painted_ms" ] && echo true || echo false)" \
     "the splash was dressed before the page's first frame ($theme$label)" "dressed +$dressed_ms ms, painted +$painted_ms ms"
   # The written tone as the deciding side received it: SystemUI's copy of the focused window's
-  # appearance (both LIGHT bits controlled by SystemBarInk, neither set over the fixture's dark
-  # ground – white glyphs asked on both bars). What SystemUI then draws is the reader's reading,
+  # appearance (both LIGHT bits controlled through the compat controller, neither set over the
+  # fixture's dark ground – white glyphs asked on both bars). What SystemUI then draws is the reader's reading,
   # judged unless its scrim force is on (then a NOTE, the force named).
   verdict "$(case "$app_appearance" in "") echo false ;; *LIGHT_NAVIGATION_BARS*) echo false ;; *) echo true ;; esac)" \
     "the app window's requested navigation glyphs are light over the dressed splash (SystemUI's LightBarController mAppearance) ($theme$label)" "$app_bars"
@@ -1087,6 +1118,10 @@ for theme in $themes; do
   seed "$theme" "$dir"
   cold_start "$theme" "$dir"
   hot_start "$theme" "$dir"
+  # The warm launch's flash on every scheme (round 5's judged act): the browser is alive behind
+  # the launcher after the hot start; the act sends it HOME again and fires the alias with
+  # NEW_TASK alone.
+  alias_open "$theme" "$dir"
   if [ "$theme" = light ]; then warm_start "$theme" "$dir"; fi
   # The reach: the same session through the trampolines' paths, on this build and boot. The
   # link's start comes last of the browser's acts – it opens the fixture in a tab of its own and
@@ -1098,7 +1133,6 @@ for theme in $themes; do
       seed "$theme" "$dir" alias
       cold_start "$theme" "$dir" alias
       hot_start "$theme" "$dir" alias
-      alias_open "$theme" "$dir"
       seed "$theme" "$dir" trampoline
       cold_start "$theme" "$dir" trampoline
       link_start "$theme" "$dir"
@@ -1115,7 +1149,7 @@ done
 adb shell cmd uimode night no > /dev/null || true
 
 {
-  echo "The browser's starts on the seeded session (one fixture tab, its picture on disk), \`am start -W\`; ms. The plain rows start MainActivity directly (the harness's way, no user's); the rows that name a way start it as the user does – the launcher's intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the icon alias (IconTapActivity's path) or at the shortcuts' NoDisplay trampoline (the icon's path before round 4, on the same build), a VIEW of the fixture URL at LinkDispatchActivity (the link's path). TotalTime: the platform's, the start request to the first frame of the activity it waited for (on a trampoline's path, the trampoline's start to MainActivity's first frame). Displayed / Fully drawn: the platform's lines – the window's first frame, the chrome's first real frame (reportFullyDrawn at READY), both from the request (a trampoline's sequence is one launch to the platform). Forward: the trampoline's START of MainActivity, ms after the request (0 on a direct start). Then the three moments, ms after the request on logcat's clock: the restored picture up, the READY frame drawn, the page's own paint taking the picture down. Splash windows: in \`dumpsys window\` one second in / after READY. Hand-over gap: the recording's frames of the splash's run that were not the splash – the app window's own first frame(s) between the platform's starting window and the transferred splash view – blank (a plain window) or ground (the boot theme's, the splash's colour). Lead: the recording's ms from the start request to the first splash frame (the request placed by READY's distance from it on the log's clock; short by up to two frames, 100 ms) – what the user sees between the tap and the splash, and for how long (the reader's \`lead:\` line in the findings names it: the launcher standing, black, a plain window)."
+  echo "The browser's starts on the seeded session (one fixture tab, its picture on disk), \`am start -W\`; ms. The plain rows start MainActivity directly (the harness's way, no user's); the rows that name a way start it as the user does – the launcher's intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the icon alias (IconTapActivity's path) or at the shortcuts' NoDisplay trampoline (the icon's path before round 4, on the same build), a VIEW of the fixture URL at LinkDispatchActivity (the link's path). TotalTime: the platform's, the start request to the first frame of the activity it waited for (on a trampoline's path, the trampoline's start to MainActivity's first frame). Displayed / Fully drawn: the platform's lines – the window's first frame, the chrome's first real frame (reportFullyDrawn at READY), both from the request (a trampoline's sequence is one launch to the platform). Forward: the trampoline's START of MainActivity, ms after the request (0 on a direct start). Then the three moments, ms after the request on logcat's clock: the restored picture up, the READY frame drawn, the page's own paint taking the picture down. Splash windows: in \`dumpsys window\` one second in / after READY. Hand-over gap: the recording's frames of the splash's run that were not the splash – the app window's own first frame(s) between the platform's starting window and the transferred splash view – blank (a plain window) or ground (the boot theme's, the splash's colour). Lead: the recording's ms from the start request to the first splash frame (the request placed by READY's distance from it on the log's clock) – what the user sees between the tap and the splash, and for how long (the reader's \`lead:\` line in the findings names it: the launcher standing, black, a plain window). It is the shell's build of the starting window plus this emulator's latency to that window's first frame, and the latency alone moves 0–700 ms between runs of one act (runs 36099054999 / 36107136195), so the ways are compared within this run, never one run's number against another's. The alias-open row is the warm launch's flash: the trampoline's splash transferred over the running browser, its copy handed to the app after the lift (the \`splash held\` column names the hand-over's ms after the request) and sent away at once; its verdicts are in the findings."
   echo
   echo "device: $(head -n 1 "$out/device.txt"); display $(sed -n 2p "$out/device.txt" | sed 's/.*: //') at $(sed -n 3p "$out/device.txt" | sed 's/.*: //') dpi; $(grep -m 1 'Current WebView' "$out/device.txt" || true)"
   echo

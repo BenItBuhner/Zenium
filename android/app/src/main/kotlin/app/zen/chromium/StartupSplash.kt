@@ -3,14 +3,12 @@ package app.zen.chromium
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.Window
-import android.view.WindowInsetsController
 import android.view.animation.PathInterpolator
 import androidx.core.splashscreen.SplashScreen
 import androidx.core.splashscreen.SplashScreenViewProvider
@@ -19,8 +17,11 @@ import androidx.core.view.WindowInsetsControllerCompat
 /**
  * The hold's bookkeeping, pure so the JVM test can run it (StartupSplashTest): the splash lifts
  * once, on the first of the chrome's READY after the hand-over and the watchdog. READY before
- * the hand-over (the chrome faster than the platform's first frame) waits for it; a second READY,
- * a second hand-over or a watchdog after the lift do nothing.
+ * the hand-over (the chrome faster than the platform's first frame) waits for it; a second READY
+ * or a watchdog after the lift do nothing. A hand-over is answered every time ([HandOver]): the
+ * hold takes the first view only – a second one while it is held is surplus, and one after the
+ * lift is LATE, a view nothing would ever lift (READY has been heard, the watchdog needs the
+ * hold), so [StartupSplash] sends it away at once instead of keeping it.
  */
 class SplashHold {
     var handedOver = false
@@ -33,11 +34,26 @@ class SplashHold {
     var liftedBy: String? = null
         private set
 
-    /** The platform handed the splash view over: true when it should lift right away (READY came first). */
-    fun handOver(): Boolean {
-        if (handedOver) return false
-        handedOver = true
-        return chromeReady && !lifted
+    /** The hold's answer to a hand-over. */
+    enum class HandOver {
+        /** The first view, READY not heard yet: hold it, arm the watchdog. */
+        HOLD,
+        /** The first view, READY already heard: lift it now. */
+        LIFT,
+        /** A second view while the first is held: it goes, the first stays the one lifted. */
+        SURPLUS,
+        /** A view after the lift – the icon trampoline's starting window transferred over the running chrome: it departs at once, the hold untouched. */
+        LATE
+    }
+
+    /** The platform handed a splash view over. */
+    fun handOver(): HandOver = when {
+        lifted -> HandOver.LATE
+        handedOver -> HandOver.SURPLUS
+        else -> {
+            handedOver = true
+            if (chromeReady) HandOver.LIFT else HandOver.HOLD
+        }
     }
 
     /** The chrome's first real frame is on screen: true when the splash should lift now. */
@@ -155,6 +171,16 @@ interface SplashClock {
  * the splash [WATCHDOG_MS] after the hand-over so the window is never a splash for good, and says
  * so in the log. It is a safety net, not the exit condition.
  *
+ * The listener fires once per starting window the platform gives this window, and a running
+ * browser can be given a second one: a launch through the icon alias with `FLAG_ACTIVITY_NEW_TASK`
+ * alone (Settings' Open, `adb shell am start`, `getLaunchIntentForPackage`) puts [IconTapActivity]
+ * on top of the live task, the platform draws its splash for the task switch, transfers it to this
+ * window at the forward's clear-top and hands the copy here – after the lift, with the chrome
+ * READY long since. Nothing would lift that copy (the hold is spent, the watchdog needs it), so it
+ * departs at once on the exit motion ([SplashHold.HandOver.LATE]); until round 5 of #454 it stayed
+ * on screen for good – runs 7 and 8's `alias_open` recordings. A second view while the first is
+ * held (SURPLUS) is removed; the first stays the one lifted.
+ *
  * The system bars' icon tone during the hold is the splash theme's (light icons over the indigo);
  * what the chrome asks for meanwhile (Host.applyTheme → [systemBarsLight]) is kept and applied
  * at the exit's END – the splash's colour is on screen until the last frame of the departure, and
@@ -169,6 +195,8 @@ class StartupSplash internal constructor(
     private val animatorsEnabled: () -> Boolean,
     /** A window's own dress for the platform's splash view, applied once at the hand-over (PWA-06); null for the browser's. */
     private val skin: ((SplashScreenViewProvider) -> SplashSkin)?,
+    /** A line for the log at an event the harness reads (the late hand-over): `Log.i` in the app. */
+    private val note: (String) -> Unit,
     private val warn: (String, Throwable?) -> Unit
 ) {
     /** The app's: the window's bars, the main thread's Handler and clock, the platform's animator switch, logcat. */
@@ -177,6 +205,7 @@ class StartupSplash internal constructor(
         WindowSplashBars(window),
         { ValueAnimator.areAnimatorsEnabled() },
         skin,
+        { message -> Log.i(TAG, message) },
         { message, error -> Log.w(TAG, message, error) }
     )
 
@@ -185,8 +214,9 @@ class StartupSplash internal constructor(
     private var skinned: SplashSkin? = null
     private var barsLight: Boolean? = null
     private var handedOverAt = 0L
-    /** The exit motion is running: the splash's colour is still on screen, the bars keep its tone. */
-    private var exiting = false
+    /** Views on the exit motion: while one is, the splash's colour is still on screen and the bars keep its tone. */
+    private var departing = 0
+    private val exiting: Boolean get() = departing > 0
     private val watchdog = Runnable {
         if (!hold.watchdog()) return@Runnable
         warn("splash: the chrome did not report ready within $WATCHDOG_MS ms of the hand-over; lifting", null)
@@ -198,8 +228,21 @@ class StartupSplash internal constructor(
         splashScreen.setOnExitAnimationListener { view -> handOver(PlatformSplashSurface(view)) }
     }
 
-    /** The platform handed its splash view over (the exit listener, at the window's first frame). */
+    /** The platform handed a splash view over (the exit listener: at the window's first frame, and again for a starting window transferred here later). */
     internal fun handOver(view: SplashSurface) {
+        val answer = hold.handOver()
+        when (answer) {
+            SplashHold.HandOver.LATE -> {
+                departLate(view)
+                return
+            }
+            SplashHold.HandOver.SURPLUS -> {
+                note("splash: a second hand-over while the first is held; the surplus view removed")
+                view.remove()
+                return
+            }
+            SplashHold.HandOver.HOLD, SplashHold.HandOver.LIFT -> Unit
+        }
         surface = view
         handedOverAt = clock.uptimeMillis()
         // The library applied the post theme's bar tone as it handed the view over; the splash is
@@ -208,11 +251,30 @@ class StartupSplash internal constructor(
         if (barsLight == null) barsLight = bars.light
         skinned = skin?.let { dress -> runCatching { view.dress(dress) }.onFailure { warn("splash: the skin failed; the platform's view stays", it) }.getOrNull() }
         bars.light = skinned?.lightBars ?: false
-        if (hold.handOver()) {
+        if (answer == SplashHold.HandOver.LIFT) {
             lift("ready")
             return
         }
         clock.postDelayed(watchdog, WATCHDOG_MS)
+    }
+
+    /**
+     * A view handed over after the lift ([SplashHold.HandOver.LATE]): the icon trampoline's
+     * starting window, transferred to this window over the running chrome. Nothing is booting
+     * under it, so it departs now on the same motion as the lift's – the splash's tone on the bars
+     * for its 180 ms (the library wrote the theme's as it handed the view over), the chrome's
+     * ask restored at the end – and the hold, the watchdog and the lift's numbers stay as they are.
+     */
+    private fun departLate(view: SplashSurface) {
+        note("splash: a hand-over after the lift (the icon trampoline's starting window transferred over the running chrome); departing at once")
+        // The view is the platform's as drawn, not dressed: with no skin it is the browser's splash
+        // theme, light icons over the indigo until it is gone. A skinned window keeps the tone the
+        // theme gave its undressed view.
+        if (skin == null) {
+            if (barsLight == null) barsLight = bars.light
+            bars.light = false
+        }
+        depart(view, icon = null)
     }
 
     /** The chrome's first real frame is on screen: lift the splash if the platform has handed it over, else as soon as it does. */
@@ -242,12 +304,21 @@ class StartupSplash internal constructor(
         clock.removeCallbacks(watchdog)
         hold.lift(by)
         heldForMs = clock.uptimeMillis() - handedOverAt
-        exiting = true
+        depart(view, skinned?.iconView)
+    }
+
+    /** The view leaves on the exit motion – or the reduced-motion fade – and the bars take the chrome's tone as the last one is gone. */
+    private fun depart(view: SplashSurface, icon: View?) {
+        departing++
+        var done = false
         val gone: () -> Unit = {
-            exiting = false
-            barsLight?.let { bars.light = it }
+            if (!done) {
+                done = true
+                if (departing > 0) departing--
+                if (departing == 0) barsLight?.let { bars.light = it }
+            }
         }
-        if (animatorsEnabled()) view.exit(skinned?.iconView, gone) else view.fadeInPlace(gone)
+        if (animatorsEnabled()) view.exit(icon, gone) else view.fadeInPlace(gone)
     }
 
     /** The activity is going: nothing left to lift, no watchdog to fire into a dead window. */
@@ -255,7 +326,7 @@ class StartupSplash internal constructor(
         clock.removeCallbacks(watchdog)
         surface?.remove()
         surface = null
-        exiting = false
+        departing = 0
     }
 
     companion object {
@@ -332,65 +403,23 @@ class PlatformSplashSurface(private val provider: SplashScreenViewProvider) : Sp
     override fun remove() = provider.remove()
 }
 
-/** The window's bars through [SystemBarInk]: the status bar's tone read, both bars' written in one tone. */
+/**
+ * The window's bars through androidx core's `WindowInsetsControllerCompat`: the status bar's tone
+ * read, both bars' written in one tone. On API 30+ the compat's `Impl30.setAppearanceLight*`
+ * writes the decor's legacy flag AND the platform controller's `setSystemBarsAppearance` – the bit
+ * becomes controlled, and neither the theme's seeding nor another view's legacy flag moves it
+ * afterwards (core 1.15.0, read with `javap`; `Impl35` inherits the setters). Round 4 of #454
+ * doubled the write on a premise the bytecode refutes (a `SystemBarInk` object, dropped in round 5);
+ * the round-3 still's dark navigation glyphs were the launcher's taskbar, not this window's ask.
+ */
 class WindowSplashBars(private val window: Window) : SplashBars {
     override var light: Boolean
-        get() = SystemBarInk.lightStatus(window)
-        set(value) = SystemBarInk.write(window, lightStatus = value, lightNavigation = value)
-}
-
-/**
- * The bars' ink – the status and navigation glyphs light or dark – written so that it holds.
- *
- * The platform keeps the tone twice (android15-release). `PhoneWindow.generateLayout`
- * (`:2665-2680`) seeds the theme's `windowLightStatusBar` / `windowLightNavigationBar` as the
- * decor's legacy `systemUiVisibility` flags AND as `setSystemBarsAppearanceFromResource` – bits
- * the app has not taken control of (`InsetsController.java:2081-2087`) – and
- * `ViewRootImpl.adjustLayoutParamsForCompatibility` (`:3055-3080`) recomputes every uncontrolled
- * bit at each relayout from the OR of EVERY visible view's legacy flags (`collectViewAttributes`).
- * androidx core's `WindowInsetsControllerCompat`, built with a `Window`, writes the decor's
- * legacy flag alone (`Impl30.setAppearanceLight`), so its request holds only while no other
- * visible view in the window carries the flag: the light web-app splash's still (#454, round 3)
- * had the status glyphs white as asked and the navigation glyphs dark on the app's purple.
- *
- * Written through the platform's `WindowInsetsController` the two bits become CONTROLLED
- * (`InsetsController.setSystemBarsAppearance`, `:2075-2078`: `mAppearanceControlled |= mask`),
- * after which neither the legacy OR nor the theme's seeding moves them. The legacy flags are
- * written too: they are the only mechanism on API 26–29 and what legacy readers see.
- *
- * The starting window itself, before the hand-over, is the shell's: its bars follow the splash
- * GROUND's luminance (`SplashscreenWindowCreator.java:209-221`, `ContrastColorUtil.isColorLight`
- * → both light bits), which is why the web-app splash theme's fixed light ground shows dark
- * glyphs until the dress re-grounds the view and this writes the app's tone.
- */
-object SystemBarInk {
-    /** Both bars' glyph tone: `true` for dark glyphs over a light ground. */
-    fun write(window: Window, lightStatus: Boolean, lightNavigation: Boolean) {
-        val decor = window.decorView
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val statusBit = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-            val navigationBit = WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            // The decor's controller: the platform's once attached, its pending stand-in before
-            // (replayed at the attach), never null once the decor exists.
-            decor.windowInsetsController?.setSystemBarsAppearance(
-                (if (lightStatus) statusBit else 0) or (if (lightNavigation) navigationBit else 0),
-                statusBit or navigationBit
-            )
+        get() = WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars
+        set(value) {
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.isAppearanceLightStatusBars = value
+            controller.isAppearanceLightNavigationBars = value
         }
-        val compat = WindowInsetsControllerCompat(window, decor)
-        compat.isAppearanceLightStatusBars = lightStatus
-        compat.isAppearanceLightNavigationBars = lightNavigation
-    }
-
-    /** The status glyphs' requested tone: the controlled bit on API 30+ (the theme's until one is written), the decor's legacy flag below. */
-    fun lightStatus(window: Window): Boolean {
-        val decor = window.decorView
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val controller = decor.windowInsetsController
-            if (controller != null) return controller.systemBarsAppearance and WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS != 0
-        }
-        return WindowInsetsControllerCompat(window, decor).isAppearanceLightStatusBars
-    }
 }
 
 class HandlerSplashClock(private val handler: Handler) : SplashClock {

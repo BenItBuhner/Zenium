@@ -83,19 +83,32 @@
 // – or, for the web app, any window of the app's – first showed, and what showed until then.
 // The recording carries no clock of the request's, so it is anchored on the splash's lift: the
 // READY line's distance from the request on logcat's clock (`<ms>`) is laid back from the
-// frame after the last splash frame, which the lift draws within a frame or two. The lead
-// therefore reads short by up to two frames (100 ms), the same for every way of starting, and
-// the ways are compared, not the absolute. The `lead` kind is that reading alone (the link
-// path, the warm launch's flash): the timeline, the splash frames counted, no rule but that the
-// recording was read.
+// frame after the last splash frame, which the lift draws within a frame or two. What the lead
+// measures is the shell's build of the starting window PLUS this emulator's latency to that
+// window's first frame, and the latency is the larger and the less steady part: the same act
+// read 0–700 ms apart between two runs of the recipe (the alias's cold start −187 / 458 ms, the
+// dark direct start 15 / 698 ms in runs 36099054999 and 36107136195). So the ways are compared
+// within one run – the same boot, the same latency – never one run's absolute against another's;
+// the line says so. The `lead` kind is that reading alone (the link path): the timeline, the
+// splash frames counted, no rule but that the recording was read.
 //
-//   node android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
+// The flash (`flash`): the warm launch through the icon alias with `NEW_TASK` alone (Settings'
+// Open, a bare `am start`) on the running browser. The platform draws the trampoline's splash
+// for the task switch, transfers the starting window to the browser's window at the forward and
+// hands the copy to the app AFTER the lift; the app sends that copy away at once (StartupSplash,
+// a hand-over after the lift). The rules: a splash frame was seen (the flash happened – the
+// logcat side of the act judges the hand-over itself); the flash ended on the page within the
+// exit's motion of its last frame; no splash frame after the page's first (the splash never
+// came back over the page – run 36107136195's shape before the rule); the page stood to the
+// recording's end, at least FLASH_TAIL_FRAMES of it after the last splash frame.
+//
+//   node android-startup-frames.mjs <cold|hot|webapp|lead|flash> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
 //        [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>]
 //
 // The findings carry the timeline (runs of frames), the verdicts (and the NOTE lines) and each
 // still's reading; the exit code is 1 when a rule failed, 2 for a usage error. `--tile` writes a
 // contact sheet of the recording (three rows of six frames from the start to a second past the
-// page's paint).
+// page's paint; for the flash, to a second past the last splash frame).
 import { spawnSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 
@@ -129,8 +142,12 @@ const NAV_SKIP_ROWS = 2
 /** A band pixel this far (max channel) from the band's ground is ink; fewer ink pixels than this is no glyph at all. */
 const NAV_INK_DISTANCE = 60
 const NAV_INK_MIN = 20
-/** The lift draws the frame after the last splash frame within this many frames: the lead's error, stated with it. */
+/** The lift draws the frame after the last splash frame within this many frames: the anchor's own slack, stated with the lead. */
 const LEAD_ERROR_FRAMES = 2
+/** The emulator's latency to the starting window's first frame, as read between runs of one act (ms): the lead's real spread, stated with it. */
+const LEAD_LATENCY_SPREAD_MS = [0, 700]
+/** The flash's recording must hold the page this many frames past the last splash frame (1.5 s): "stood to the end" has a floor. */
+const FLASH_TAIL_FRAMES = 30
 
 const args = process.argv.slice(2)
 const positional = []
@@ -178,13 +195,13 @@ if (
   !slotArg ||
   !displayArg ||
   !outPath ||
-  !['cold', 'hot', 'webapp', 'lead'].includes(kind)
+  !['cold', 'hot', 'webapp', 'lead', 'flash'].includes(kind)
 )
   usage()
 
 function usage() {
   console.error(
-    'usage: android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>] [--nav-systemui "<light|dark> (<detail>)"] [--nav-drawer <window>]'
+    'usage: android-startup-frames.mjs <cold|hot|webapp|lead|flash> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>] [--nav-systemui "<light|dark> (<detail>)"] [--nav-drawer <window>]'
   )
   process.exit(2)
 }
@@ -489,7 +506,7 @@ if (frames.length) {
   const shown =
     kind === 'webapp' ? ['plain', 'dress', 'splash', 'window', 'ground', 'bare'] : ['splash']
   const firstShown = classes.findIndex((c) => shown.includes(c))
-  if (kind !== 'hot') {
+  if (kind !== 'hot' && kind !== 'flash') {
     if (anchorMs === null) say('lead: unread (no --anchor ready=<ms>)')
     else if (lastSplash < 0) say('lead: unread (no splash frame to anchor the lift on)')
     else if (firstShown < 0) say('lead: unread (nothing of the app was shown)')
@@ -506,7 +523,7 @@ if (frames.length) {
         ? between.map((r) => `${r.cls} x${r.n} (${readings(r.sample)})`).join(', ')
         : 'nothing: the first frame after the request already showed it'
       say(
-        `lead: ${Math.round((leadFrames * 1000) / FPS)} ms (${leadFrames.toFixed(1)} frames) from the start request to the first ${kind === 'webapp' ? "frame of the app's window" : 'splash frame'} at ${at(firstShown)}; the request laid back ${anchorMs} ms from the lift at ${at(lastSplash + 1)}, so up to ${LEAD_ERROR_FRAMES} frames (${Math.round((LEAD_ERROR_FRAMES * 1000) / FPS)} ms) short; between: ${what}`
+        `lead: ${Math.round((leadFrames * 1000) / FPS)} ms (${leadFrames.toFixed(1)} frames) from the start request to the first ${kind === 'webapp' ? "frame of the app's window" : 'splash frame'} at ${at(firstShown)}; the request laid back ${anchorMs} ms from the lift at ${at(lastSplash + 1)} (the lift's frame follows READY within ${LEAD_ERROR_FRAMES} frames); this is the shell's build plus the emulator's latency to the starting window's first frame, which alone moves ${LEAD_LATENCY_SPREAD_MS[0]}–${LEAD_LATENCY_SPREAD_MS[1]} ms between runs of one act – compare the ways within this run, not this number across runs; between: ${what}`
       )
     }
   }
@@ -545,6 +562,42 @@ if (frames.length) {
   if (kind === 'lead') {
     say(
       `splash frames: ${count('splash')}${count('splash') ? ` from ${at(firstSplash)} to ${at(lastSplash)}` : ''}; black frames: ${count('black')}`
+    )
+  } else if (kind === 'flash') {
+    // The warm launch's flash: the trampoline's splash, transferred over the running browser and
+    // sent away by the app as the copy is handed over. It happened, it ended on the page within
+    // the exit's motion, it never came back over the page, and the page stood to the end.
+    const isChrome = (c) => ['page', 'picture'].includes(c)
+    const pageAfter = classes.findIndex((c, i) => i > lastSplash && isChrome(c))
+    const firstPage = classes.findIndex((c, i) => i > firstSplash && isChrome(c))
+    const back = classes.filter((c, i) => firstPage >= 0 && i > firstPage && c === 'splash').length
+    const tail = lastSplash >= 0 ? frames.length - 1 - lastSplash : 0
+    const offPage = classes.filter((c, i) => pageAfter >= 0 && i > pageAfter && !isChrome(c)).length
+    say(
+      `splash frames: ${count('splash')}${count('splash') ? ` from ${at(firstSplash)} to ${at(lastSplash)}` : ''}; black frames: ${count('black')}`
+    )
+    say(
+      `flash: ${count('splash') ? `${count('splash')} splash frames over ${ms(lastSplash - firstSplash + 1)} from ${at(firstSplash)} to ${at(lastSplash)}` : 'no splash frame'}; the page after it from ${at(pageAfter)}; ${ms(tail)} recorded after the last splash frame`
+    )
+    verdict(
+      "the trampoline's splash was on screen",
+      count('splash') > 0,
+      `${count('splash')} splash frames, the first at ${at(firstSplash)}, the last at ${at(lastSplash)}`
+    )
+    verdict(
+      "the flash ended on the page within the exit's motion of its last frame",
+      lastSplash >= 0 && pageAfter > lastSplash && pageAfter - lastSplash <= EXIT_FRAMES,
+      `last splash frame at ${at(lastSplash)}, the page from ${at(pageAfter)}${pageAfter > lastSplash ? `, ${ms(pageAfter - lastSplash - 1)} of fade between` : ''}`
+    )
+    verdict(
+      "no splash frame after the page's first: the splash never came back over the page",
+      firstSplash >= 0 && firstPage >= 0 && back === 0,
+      `${back} splash frames after the page's first at ${at(firstPage)}`
+    )
+    verdict(
+      "the page stood to the recording's end",
+      pageAfter > lastSplash && lastSplash >= 0 && tail >= FLASH_TAIL_FRAMES && offPage === 0,
+      `${ms(tail)} recorded after the last splash frame (the floor ${ms(FLASH_TAIL_FRAMES)}), ${offPage} frames of anything but the page once it was up`
     )
   } else if (kind === 'webapp') {
     verdict(
@@ -653,8 +706,10 @@ if (frames.length) {
     )
   }
   if (tile) {
-    // Three rows of six frames from the start to a second past the page's paint (or the end).
-    const untilS = Math.min(frames.length / FPS, (Math.max(firstOf('page'), 0) + FPS) / FPS)
+    // Three rows of six frames from the start to a second past the page's paint (or the end);
+    // for the flash, to a second past the last splash frame, so its end is on the sheet.
+    const anchorFrame = kind === 'flash' ? Math.max(lastSplash, 0) : Math.max(firstOf('page'), 0)
+    const untilS = Math.min(frames.length / FPS, (anchorFrame + FPS) / FPS)
     const fps = 18 / Math.max(untilS, 1)
     const result = spawnSync('ffmpeg', [
       '-nostdin',
