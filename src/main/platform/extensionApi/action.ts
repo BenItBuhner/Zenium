@@ -5,6 +5,7 @@ import type { ExtensionAction } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
 import type { ExtensionManifest } from '../../../core/extensions/manifest'
 import { parseCssColor } from '../../../core/extensions/api/cssColor'
+import { ownResourcePath } from '../../../core/extensions/ownResource'
 import {
   ApiError,
   extensionUrl,
@@ -178,11 +179,17 @@ export class ActionApi {
       throw new ApiError('Invalid value for popup.')
     }
     const tabId = this.tabIdOf(details)
-    // Chrome treats an absolute extension URL and a relative path alike.
+    // Chrome treats the extension's static URL and a relative path alike, and refuses every
+    // other absolute URL – the dynamic one `runtime.getURL` answers for a `use_dynamic_url`
+    // resource included (Chrome 148 control, desktop sweep round 10).
     const own = `chrome-extension://${ctx.extensionId}/`
-    const popup = details.popup.startsWith(own)
-      ? details.popup.slice(own.length)
-      : details.popup.replace(/^\/+/, '')
+    let popup: string
+    if (details.popup.startsWith(own)) popup = details.popup.slice(own.length)
+    else if (/^[a-z][a-z0-9+.-]*:/i.test(details.popup)) {
+      throw new ApiError(
+        'The specified popup path is invalid. Ensure it is a path to a file in this extension.'
+      )
+    } else popup = details.popup.replace(/^\/+/, '')
     this.write(ctx.extension, tabId, 'popup', popup)
   }
 
@@ -334,19 +341,12 @@ export function pickIconSize<T>(candidates: Record<string, T>): T | null {
 function iconFromPaths(extension: LoadedExtension, raw: unknown): string | null {
   const path = typeof raw === 'string' ? raw : isRecord(raw) ? pickIconSize(raw) : null
   if (typeof path !== 'string') return null
-  let relative = path
-  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) {
-    try {
-      const url = new URL(path)
-      if (url.protocol !== 'chrome-extension:' || url.hostname !== extension.id) return null
-      relative = decodeURIComponent(url.pathname)
-    } catch {
-      return null
-    }
-  }
+  // A package path, the static URL or the dynamic one `runtime.getURL` answers (Simplify Copilot).
+  const relative = ownResourcePath(extension.id, path)
+  if (relative === null || relative === '') return null
   try {
     const root = resolve(extension.path)
-    const file = resolve(root, relative.replace(/^\/+/, ''))
+    const file = resolve(root, relative)
     if (file !== root && !file.startsWith(root + sep)) return null
     const mime = IMAGE_MIME[extname(file).toLowerCase()] ?? 'image/png'
     return `data:${mime};base64,${readFileSync(file).toString('base64')}`

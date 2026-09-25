@@ -258,6 +258,26 @@ describe('alarm scheduling', () => {
     )
   })
 
+  it("reads null for an optional property as left out, like Chrome's bindings", () => {
+    expect(
+      scheduleAlarm('a', { periodInMinutes: null, delayInMinutes: 1 }, { now, unpacked: true })
+    ).toEqual({ alarm: { name: 'a', scheduledTime: now + 60_000 }, error: null })
+    expect(
+      scheduleAlarm('a', { periodInMinutes: 1, delayInMinutes: null }, { now, unpacked: true })
+        .alarm
+    ).toEqual({ name: 'a', scheduledTime: now + 60_000, periodInMinutes: 1 })
+    expect(
+      scheduleAlarm('a', { when: null, delayInMinutes: 2 }, { now, unpacked: true }).alarm
+    ).toEqual({ name: 'a', scheduledTime: now + 120_000 })
+    expect(
+      scheduleAlarm(
+        'a',
+        { when: null, delayInMinutes: null, periodInMinutes: null },
+        { now, unpacked: true }
+      ).error
+    ).toMatch(/needs/)
+  })
+
   it('reschedules periodic alarms and collapses missed periods', () => {
     const alarm = { name: 'p', scheduledTime: now, periodInMinutes: 1 }
     expect(rescheduleAlarm(alarm, now)).toEqual({ ...alarm, scheduledTime: now + 60_000 })

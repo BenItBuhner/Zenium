@@ -3070,6 +3070,87 @@ export function installExtensionApi(
   }
 
   // ---------------------------------------------------------------------------
+  // scripting.insertCSS / removeCSS: the cascade origin ::highlight() rules paint from
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Whether a sheet holds a `::highlight(` selector outside its comments, in any case – the
+   * reading the host's `cssOrigin.ts` makes for `tabs.insertCSS`, repeated here because this
+   * function is stringified into the context and can import nothing.
+   */
+  function hasHighlightRule(css: string): boolean {
+    return /::highlight\(/i.test(css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, ''))
+  }
+
+  /** The text of the extension's own files, or `undefined` when one of them does not load. */
+  function readOwnFiles(files: string[]): Promise<string[] | undefined> {
+    const fetchFn: unknown = safely(() => real.fetch)
+    if (!isFunction(fetchFn) || !extensionUrl) return Promise.resolve(undefined)
+    return Promise.all(
+      files.map((file) =>
+        Promise.resolve(fetchFn.call(real, extensionUrl + file.replace(/^\/+/, ''))).then(
+          (response: unknown) => {
+            if (!isObject(response) || response.ok !== true || !isFunction(response.text)) {
+              throw new Error('not loaded')
+            }
+            return response.text()
+          }
+        )
+      )
+    ).then(
+      (texts) => texts.map(String),
+      () => undefined
+    )
+  }
+
+  /**
+   * Blink drops the `::highlight(name)` rules of a user-origin sheet – they paint from author
+   * sheets only (measured on Electron 44 / Chromium 152; the host's `cssOrigin.ts` promotes a
+   * `tabs.insertCSS` sheet the same way) – and the engine's `scripting.insertCSS` files an
+   * `origin: 'USER'` request as asked, so such an extension's highlights never show. A USER
+   * request whose sheet styles a highlight goes in as AUTHOR, the one origin its rules paint
+   * from; `removeCSS` reads the sheet the same way, so the removal names the origin the sheet
+   * was filed under. An inline `css` is read here; `files` are fetched from the extension's own
+   * origin first, and one that does not load leaves the call to the engine as it was, whose
+   * `Could not load file` is the error the extension expects.
+   */
+  function wrapScriptingCssOrigin(scripting: Record<string, unknown>): void {
+    for (const name of ['insertCSS', 'removeCSS']) {
+      const native = safely(() => scripting[name])
+      if (!isFunction(native)) continue
+      const qualified = `scripting.${name}(object injection, optional function callback)`
+      define(scripting, name, function (...raw: unknown[]): unknown {
+        const injection = raw[0]
+        if (!isObject(injection) || injection.origin !== 'USER') {
+          return native.apply(scripting, raw)
+        }
+        const promoted = (): Record<string, unknown> => ({ ...injection, origin: 'AUTHOR' })
+        if (typeof injection.css === 'string') {
+          if (hasHighlightRule(injection.css)) raw[0] = promoted()
+          return native.apply(scripting, raw)
+        }
+        const files = Array.isArray(injection.files)
+          ? injection.files.filter((file): file is string => typeof file === 'string')
+          : []
+        if (files.length === 0) return native.apply(scripting, raw)
+        const callback = takeCallback(raw)
+        const work = readOwnFiles(files).then((texts) =>
+          callNativeMethod(scripting, native, [
+            texts !== undefined && texts.some(hasHighlightRule) ? promoted() : injection,
+            ...raw.slice(1)
+          ])
+        )
+        return settle(qualified, work, callback)
+      })
+    }
+  }
+
+  for (const root of roots) {
+    const scripting: unknown = safely(() => root.scripting)
+    if (isObject(scripting)) wrapScriptingCssOrigin(scripting)
+  }
+
+  // ---------------------------------------------------------------------------
   // extension (legacy): aliases onto runtime plus the view registry
   // ---------------------------------------------------------------------------
 

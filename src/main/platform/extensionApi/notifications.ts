@@ -9,6 +9,7 @@ import {
   toNativeNotification,
   type NotificationOptions
 } from '../../../core/extensions/api/notifications'
+import { ownResourcePath } from '../../../core/extensions/ownResource'
 import {
   ApiError,
   type ApiContext,
@@ -181,10 +182,11 @@ function resolveIcon(ext: LoadedExtension, iconUrl: string): NativeImage | undef
       const image = nativeImage.createFromDataURL(iconUrl)
       return image.isEmpty() ? undefined : image
     }
-    const own = `chrome-extension://${ext.id}/`
-    const relative = iconUrl.startsWith(own) ? iconUrl.slice(own.length) : iconUrl
-    if (/^[a-z][a-z0-9+.-]*:/i.test(relative)) return undefined
-    const image = nativeImage.createFromPath(join(ext.path, relative.replace(/^\/+/, '')))
+    // A package path, the static URL or the dynamic one `runtime.getURL` answers for a
+    // `use_dynamic_url` resource (Chrome loads all three; a Chrome 148 control confirmed it).
+    const relative = ownResourcePath(ext.id, iconUrl)
+    if (relative === null || relative === '') return undefined
+    const image = nativeImage.createFromPath(join(ext.path, relative))
     return image.isEmpty() ? undefined : image
   } catch {
     return undefined
