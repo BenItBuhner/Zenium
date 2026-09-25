@@ -30,7 +30,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * THE THREADS: the WebView receives a port message on the UI thread (Chromium's
  * `AppWebMessagePort.onMessage`, one task of a memcpy's size per message) and hands it to the
  * handler's thread, where [Receiver.onMessage] runs; nothing of the message is parsed on the main
- * thread. THE PORT IS THE BRIDGE (services perf pass 4; the storage class came through it in
+ * thread. That delivery task waits its turn in the main thread's queue like any other, so a
+ * string off the port is queued on the main thread TWICE (its delivery, then its dispatch) where
+ * a hop's was once – the price services perf pass 4 measured ([BridgeLatency]: the page's leave
+ * to the receiver's arrival, 0.2–2.4 ms for a hop's JNI entry, up to a frame of a busy main
+ * thread for the port's), paid in the host's proportion against the JS thread's wait inside
+ * every hop it removes. THE PORT IS THE BRIDGE (services perf pass 4; the storage class came through it in
  * #458, the thumbnail read in #469): once the page holds it, every `call`, `post` and `batch`
  * comes through it and none through the hops – `callSync` alone stays a hop, synchronous by
  * nature – so the host decides nothing about what the channel carries: it routes whatever

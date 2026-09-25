@@ -47,6 +47,13 @@
  * host's: the host closes its end only with the document (replaced, rebuilt, destroyed), so the
  * strings that can be lost are a dying document's, sent between the host's close and the
  * document's end, and the host tolerates a view it never heard of (`TabHost`: a silent no-op).
+ *
+ * THE PRICE (pass 4's finding): the WebView delivers a port message as a task on its UI thread –
+ * the host's main thread – before it reaches the host's reading thread, so a string off the port
+ * is queued on the main thread twice (its delivery, then its dispatch) where a hop's was once;
+ * what the JS thread no longer waits for inside the hop, the host's main thread queues once more,
+ * in its own proportion (up to a frame of it when that thread is busy). Measured, not designed
+ * around: the host's `BridgeLatency` reads it per kind beside these marks.
  */
 export interface NativeBridge {
   call(json: string): void
