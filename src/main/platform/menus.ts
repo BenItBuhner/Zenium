@@ -23,6 +23,9 @@ export class ElectronMenus implements MenuHost {
   /** The renderer-drawn menus: the app menu (`source: 'app'`), the browser window's and a web app window's alike. */
   private readonly inChrome = new RendererMenuHost()
 
+  /** Which `setApplicationMenu` is the latest: an older one's favicons, landing late, set nothing. */
+  private applicationMenuGeneration = 0
+
   /**
    * The menu bar. Only macOS has one worth the name (Windows and Linux windows are frameless
    * and the "⋯" menu stands in), so the method exists there alone and the core skips the work
@@ -32,9 +35,29 @@ export class ElectronMenus implements MenuHost {
 
   constructor() {
     if (process.platform === 'darwin') {
-      this.setApplicationMenu = (menus) =>
-        Menu.setApplicationMenu(Menu.buildFromTemplate(menus.map((item) => this.toElectron(item))))
+      this.setApplicationMenu = (menus) => this.applyApplicationMenu(menus)
     }
+  }
+
+  /**
+   * The bar is set at once, so a state change never shows late in it; the favicons its rows
+   * carry that the cache lacks – History › Recently Visited's, which history keeps as http(s)
+   * addresses (shortcuts-menus-157) – are fetched behind it, bounded as `popup()`'s are, and
+   * the bar set again once they are in: Chrome's picture, every row with its favicon, rather
+   * than the scatter a cache filled only by the context menus' popups would give. A bar set
+   * meanwhile supersedes this one, and a fetch that brought nothing sets nothing again.
+   */
+  private applyApplicationMenu(menus: MenuItemTemplate[]): void {
+    const generation = ++this.applicationMenuGeneration
+    const set = (): void =>
+      Menu.setApplicationMenu(Menu.buildFromTemplate(menus.map((item) => this.toElectron(item))))
+    set()
+    const pending = [...remoteIcons(menus)].filter((url) => !this.icons.has(url))
+    if (pending.length === 0) return
+    void Promise.all(pending.map((url) => this.fetchIcon(url))).then(() => {
+      if (generation !== this.applicationMenuGeneration) return
+      if (pending.some((url) => this.icons.get(url))) set()
+    })
   }
 
   /**
