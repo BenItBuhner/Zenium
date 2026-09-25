@@ -87,6 +87,87 @@ describe("the share panel's chips (the Android 14 action row's, less Send to you
   })
 })
 
+/**
+ * A page's `navigator.share` as the host brings it to the panel below Android 14 (`Share.kt`:
+ * text present → a `text` share, else a `link`; `source: 'page'`; the favicon the sharing tab's).
+ */
+const page = (over: Partial<SharePanelRequest> = {}): SharePanelRequest =>
+  request({ id: 'share-panel-5', source: 'page', ...over })
+
+describe("a page's navigator.share payload (SH-03's follow-up: the panel route below Android 14)", () => {
+  it('gives a link alone Copy link and QR code – the payload is a link, not the page, so no Long screenshot and no Print', () => {
+    expect(labels(page())).toEqual(['Copy link', 'QR code'])
+    expect(labels(page({ title: null }))).toEqual(['Copy link', 'QR code'])
+    // The tab behind it changes nothing: those two chips picture and print the page, which is not what the page handed over.
+    expect(kinds(page({ tabId: null }))).toEqual(['copy', 'qr'])
+  })
+
+  it("gives text alone Copy text and nothing else: no link to draw, and the page's Long screenshot is withheld for a payload (the gate's (b))", () => {
+    const text = page({ kind: 'text', text: 'a message', url: null, title: null })
+    expect(labels(text)).toEqual(['Copy text'])
+    expect(labels({ ...text, title: 'A title' })).toEqual(['Copy text'])
+  })
+
+  it("gives text with a link Copy – the two together, as the share goes out – and QR code for the link (Chrome's LINK_AND_TEXT)", () => {
+    const pair = page({ kind: 'text', text: 'a message', title: 'A title' })
+    expect(labels(pair)).toEqual(['Copy', 'QR code'])
+    expect(labels({ ...pair, title: null })).toEqual(['Copy', 'QR code'])
+  })
+
+  it('previews a link as its title over its link – the link once, when the payload had no title', () => {
+    expect(sharePanelPreview(page())).toEqual({
+      title: 'Example Domain',
+      detail: 'https://example.com/'
+    })
+    expect(sharePanelPreview(page({ title: null }))).toEqual({
+      title: 'https://example.com/',
+      detail: ''
+    })
+  })
+
+  it("previews text first, the link beneath, the payload's title unshown (Chrome's TEXT and LINK_AND_TEXT previews); text alone on its own", () => {
+    expect(sharePanelPreview(page({ kind: 'text', text: 'a message', title: 'A title' }))).toEqual({
+      title: 'a message',
+      detail: 'https://example.com/'
+    })
+    expect(
+      sharePanelPreview(page({ kind: 'text', text: 'a message', title: 'A title', url: null }))
+    ).toEqual({ title: 'a message', detail: '' })
+  })
+
+  it('copies what Copy says: the link, the text, or the text and the link on its own line, said as Copied', () => {
+    expect(sharePanelCopy(page())).toEqual({
+      text: 'https://example.com/',
+      confirmation: 'Link copied'
+    })
+    expect(sharePanelCopy(page({ kind: 'text', text: 'a message', url: null }))).toEqual({
+      text: 'a message',
+      confirmation: 'Text copied'
+    })
+    expect(sharePanelCopy(page({ kind: 'text', text: 'a message' }))).toEqual({
+      text: 'a message\nhttps://example.com/',
+      confirmation: 'Copied'
+    })
+  })
+
+  it("draws a private tab's page share the same, QR code included", () => {
+    expect(labels(page({ private: true }))).toEqual(labels(page()))
+    expect(labels(page({ kind: 'text', text: 'a message', private: true }))).toEqual([
+      'Copy',
+      'QR code'
+    ])
+  })
+
+  it("leaves the menu's own shares as they were: a page's four chips, a selection's two, an image's one", () => {
+    expect(kinds(request())).toEqual(['copy', 'qr', 'screenshot', 'print'])
+    expect(kinds(request({ kind: 'text', text: 'a passage' }))).toEqual(['copy', 'screenshot'])
+    expect(sharePanelCopy(request({ kind: 'text', text: 'a passage' }))).toEqual({
+      text: 'a passage',
+      confirmation: 'Text copied'
+    })
+  })
+})
+
 describe("the share panel's preview", () => {
   it('puts the title over the link', () => {
     expect(sharePanelPreview(request())).toEqual({
