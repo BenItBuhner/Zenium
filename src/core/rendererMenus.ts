@@ -20,6 +20,8 @@ export function serialiseMenu(
       if (item.click) handlers.set(itemId, item.click)
       return {
         id: itemId,
+        // The phone app menu's items keep a name across openings for the saved order.
+        ...(item.key ? { key: item.key } : {}),
         type: item.type ?? 'normal',
         label: item.label ?? '',
         enabled: item.enabled ?? true,
@@ -61,7 +63,8 @@ export class RendererMenuHost implements MenuHost {
       x: options.x ?? null,
       y: options.y ?? null,
       ...(options.keyboard !== undefined ? { keyboard: options.keyboard } : {}),
-      ...(options.header ? { header: options.header } : {})
+      ...(options.header ? { header: options.header } : {}),
+      ...(options.defaultOrder ? { defaultOrder: options.defaultOrder } : {})
     }
     this.open = { id, win: options.win, handlers }
     options.win.send('menu.show', descriptor)

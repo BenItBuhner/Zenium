@@ -1177,6 +1177,13 @@ export interface MenuItemTemplate {
   checked?: boolean
   role?: MenuRole
   /**
+   * A name the item keeps from one opening to the next (`icon.forward`, `row.settings`, the
+   * phone app menu's items alone carry one): what a saved order names (`settings.menuOrder`,
+   * `shared/menuOrder.ts`) and what the sheet's edit mode moves. Serialised ids are numbered per
+   * opening and stand for the click, not the item; native menu hosts ignore the key.
+   */
+  key?: string
+  /**
    * A favicon or extension icon (`data:` URL) shown before the label where the host's menus can
    * (recently closed entries, `chrome.contextMenus` items).
    */
@@ -1281,6 +1288,11 @@ export interface MenuPopupOptions {
    * it to the sheet; hosts with native menus have no header to draw and leave it be.
    */
   header?: MenuHeader
+  /**
+   * The phone app menu's keys in the build's default order, for the sheet's edit mode (TB-22;
+   * `MenuDescriptor.defaultOrder`). Native hosts have no edit mode and leave it be.
+   */
+  defaultOrder?: string[]
 }
 
 export interface MenuHost {
