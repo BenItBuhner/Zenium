@@ -6535,7 +6535,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ohlencieiipommannpdfcmfdpjjmeolj", "PrintFriendly: Print, PDF Editor & Full Page Screenshot", "printfriendly", core = popupFlow("PrintFriendly", "page-a.html?pf", listOf("/printfriendly view/i"), injectedAny("(^|\\s)pf-|printfriendly"), opens = Regex("printfriendly\\.com", RegexOption.IGNORE_CASE))),
         // Read on the desktop site (its scraper's selectors are the desktop page's; flipkart served
         // the phone its mobile page, rounds 11-12) and on amazon.in when flipkart refuses the runner.
-        Row("ojplmecpdpgccookcobabopnaifgidhf", "Buyhatke: Price History & Tracker, Spend Lens", "buyhatke", core = liveMarker("Buyhatke", "https://www.flipkart.com/apple-iphone-15-black-128-gb/p/itm6ac6485515ae4", injectedAny("bh-crx-root|buyhatke"), settleMs = 60_000, desktop = true, mirrors = listOf("https://www.amazon.in/dp/B0CHX1W1XY"))),
+        // Round 18: the emulator's host renderer goes under the flipkart.com product page's start
+        // on the API 34 Google image with -gpu swangle, two of two boots of the round's AFTER run
+        // (36140794674, §8 there): the guest fell silent at the document's start – the row's
+        // content scripts' loader refusals relayed and retried, no bh-crx-root yet, the app's
+        // memory flat, no render process gone, no fatal signal, no lmkd line – the emulator's own
+        // gfxstream GL errors the same second the first time and qemu's own watchdog ("hanging
+        // thread 'QEMU2 main loop'") the second, then qemu-system-x86_64-headless dead of SIGSEGV
+        // with its core stored (13:33:07 and 13:42:39 UTC). The same page on the same image went
+        // whole in round 17's 113 lane and in this round's BEFORE (main's runtime), and what draws
+        // differently at the document's start on this runtime is the planner's per-rule-set units
+        // (three bootstrap copies in the page's main world where main ran one) – a correct fix,
+        // kept; the fault is the emulator's (round 16 §7.0's outcome 1, AdGuard VPN's class below).
+        // Not run on the Google image; read on the AOSP lane (156), where the row's Flipkart leg
+        // is round 18's own seed item.
+        Row(
+            "ojplmecpdpgccookcobabopnaifgidhf", "Buyhatke: Price History & Tracker, Spend Lens", "buyhatke",
+            notOnGoogleImage = "the emulator's host side (gfxstream over swangle on the API 34 Google image) dies under this row's Flipkart page scene at the document's start with WebView 113 – two of two boots of round 18's AFTER run 36140794674 (qemu-system-x86_64-headless SIGSEGV at 13:33:07 and 13:42:39 UTC, the guest silent at the flipkart.com document's start with the app's memory flat and no guest death signature; the first with gfxstream GL errors the same second, the second with qemu's own hanging-thread watchdog first) against zero of one on round 17's 113 lane and zero of one on round 18's BEFORE with main's runtime; the row is read on the AOSP lane (156)",
+            core = liveMarker("Buyhatke", "https://www.flipkart.com/apple-iphone-15-black-128-gb/p/itm6ac6485515ae4", injectedAny("bh-crx-root|buyhatke"), settleMs = 60_000, desktop = true, mirrors = listOf("https://www.amazon.in/dp/B0CHX1W1XY"))
+        ),
         Row("ckejmhbmlajgoklhgbapkiccekfoccmk", "Mobile simulator - responsive testing tool", "mobile-simulator", core = ::mobileSimulator),
         Row("edlifbnjlicfpckhgjhflgkeeibhhcii", "Screenshot Tool - Screen Capture & Editor", "screenshot-tool", core = popupCapture("Screenshot Tool", "/capture visible area|visible area/i")),
         Row("khncfooichmfjbepaaaebmommgaepoid", "Unhook - Remove YouTube Recommended & Shorts", "unhook", core = { row, entry -> youtube(row, entry, "(function(){var h=document.documentElement;var attrs=[];for(var i=0;i<h.attributes.length;i++){var n=h.attributes[i].name;if(/^hide_|unhook/i.test(n))attrs.push(n)}var related=document.querySelectorAll('ytd-compact-video-renderer, ytm-compact-video-renderer, ytm-video-with-context-renderer');var shown=0;for(var j=0;j<related.length;j++){var r=related[j].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}return JSON.stringify({pass:attrs.length>0,attrs:attrs.slice(0,8),n:attrs.length,related:related.length,relatedShown:shown})})()", "Unhook's hide attributes on a watch page") }),
