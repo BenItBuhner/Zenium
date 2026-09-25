@@ -16,6 +16,12 @@ name: Android cold start pair
 # correct, only that the two builds' cold starts measured within the gate on the recipe's
 # emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  # TEMPORARY (H4 round 2, the gate's calibration): a push to the branch runs the NULL PAIR – the
+  # base is this commit's own tree – twice in parallel, at the candidate N. Removed before the
+  # round closes.
+  push:
+    branches:
+      - cursor/android-harness-h4-2ae5
   workflow_dispatch:
     inputs:
       base-ref:
@@ -55,7 +61,13 @@ concurrency:
 
 jobs:
   pair:
-    name: Cold start pair (before ${{ inputs.base-ref || 'main' }} / after this commit)
+    # TEMPORARY (H4 round 2): two null runs at once, the base this commit itself; the artifact
+    # name carries the run's number (the recipe's concurrency group is keyed on it).
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2]
+    name: Null pair ${{ matrix.run }} (before this commit / after this commit)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-cold-start-pair.sh
@@ -63,7 +75,7 @@ jobs:
       # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
       # head's own step ran it. The labels are the two commits, for the table.
       script-env: |
-        P0_BASE_REF=${{ inputs.base-ref || 'main' }}
+        P0_BASE_REF=${{ inputs.base-ref || github.sha }}
         P0_BASE_APK=artifacts/cold-start-base/app-base.apk
         P0_RUNS=${{ inputs.runs || 15 }}
         P0_STARTS=${{ inputs.starts || 2 }}
@@ -92,6 +104,6 @@ jobs:
           echo "P0_BASE_LABEL=${base_sha:0:9}"
           echo "P0_HEAD_LABEL=${GITHUB_SHA:0:9}"
         } >> "$GITHUB_ENV"
-      artifact-name: android-cold-start-pair
+      artifact-name: android-cold-start-pair-${{ matrix.run }}
       artifact-path: artifacts/android-cold-start-pair/
       timeout-minutes: ${{ inputs.timeout-minutes || 150 }}
