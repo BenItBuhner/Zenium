@@ -6872,9 +6872,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // A second store listing of Google's companion (jmekf…, 500,000) beside the listed kejbd… row: the same flow read.
         Row("jmekfmbnaedfebfnmakmokmlfpblbfdm", "Tag Assistant Companion", "tag-assistant-2", core = ::tagAssistant),
         Row("lppmekppnliemjclknbagdhoocikieoi", "7TV", "7tv", core = liveMarker("7TV", "https://www.twitch.tv/", SEVENTV_MOUNTED, settleMs = 45_000, mirrors = listOf("https://www.twitch.tv/directory", "https://kick.com/"))),
-        Row("mfpiaehgjbbfednooihadalhehabhcjo", "Scrolling screenshot tool & screen capture", "scrolling-screenshot", core = visibleCapture("Scrolling screenshot tool", "page-a.html?scrolling")),
+        Row("mfpiaehgjbbfednooihadalhehabhcjo", "Scrolling screenshot tool & screen capture", "scrolling-screenshot", core = ::scrollingScreenshot),
         Row("mjjgmlmpeaikcaajghilhnioimmaibon", "Boxel 3D", "boxel-3d", core = ::boxel3d),
-        Row("pbanhockgagggenencehbnadejlgchfc", "Simplify Copilot", "simplify-copilot", core = accountGate("Simplify Copilot", Regex("simplify\\.jobs", RegexOption.IGNORE_CASE), injects = "[id*='simplify'], [class*='simplify']", gate = "a Simplify account and a job board's application form (its click autofills there)")),
+        Row("pbanhockgagggenencehbnadejlgchfc", "Simplify Copilot", "simplify-copilot", core = ::simplifyCopilot),
         Row("lnbmbgocenenhhhdojdielgnmeflbnfb", "SellerSprite", "sellersprite", core = accountGate("SellerSprite", Regex("sellersprite\\.com|amazon\\.", RegexOption.IGNORE_CASE), gate = "a SellerSprite account and an Amazon listing page")),
         Row("kgobeoibakoahbfnlficpmibdbkdchap", "GPTZero", "gptzero", core = accountGate("GPTZero", Regex("gptzero\\.me", RegexOption.IGNORE_CASE), injects = "[id^='g0-'], [class*='g0-'], [id*='gptzero'], [class*='gptzero']", gate = "a GPTZero account (its popup signs in; its scans run on its service)")),
         Row("kjacjjdnoddnpbbcjilcajfhhbdhkpgk", "Forest: stay focused, be present", "forest", core = ::forest),
@@ -7192,6 +7192,183 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             popup == null -> Grade("F", "Boxel 3D: popup did not render in the core check", extra)
             reached == 0 -> Grade("F", "Boxel 3D: no Play control reached in its menu (${steps.toString().take(160)}); menu \"${extra.optString("menu").take(80)}\"$width", extra)
             else -> Grade("F", "Boxel 3D: $reached Play control(s) pressed and no sized canvas within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(160)}$width", extra)
+        }
+    }
+
+    /**
+     * Simplify Copilot (pbanh…, round 16 §7.5): the row on the fixture's `localhost` spelling.
+     * Its content script (`content-scripts/content.js`) imports the 2.07 MB `contentScriptMain.js`
+     * from the extension's origin as soon as the page's URL matches one of its own patterns –
+     * `/^https?:\/\/localhost(?::|\/|$)/` among them – and the module's tail runs its
+     * `initContentScript` there (`Ku("content-script"), wh(), Sh() && Ch()`): `wh()` posts
+     * `{source: "VillageExtension", type: "MESSAGE", message: {text: "Initializing..."}}` to the
+     * page's window and `Ch()`, on a `localhost` host, `{source: "VillageBridge", type:
+     * "announce"}`. Round 16's fixture (`page-b.html?gate` on `10.0.2.2`) matched none of the
+     * patterns, so the module mounted nothing there and the row had no observable of its
+     * evaluation. Here the page keeps every message of the two sources (`window.postMessage` to
+     * the page's own window crosses worlds), the page's `error` / `unhandledrejection` lines with
+     * file, line and stack (on 113 the content world is the page's realm), and, on an
+     * isolated-worlds WebView, the extension's world keeps its own error lines (an `ErrorEvent`
+     * reaches the listeners of the world it was thrown in) and answers the shape of
+     * `chrome.storage`'s four areas (`null` / `object` per area, `.get` on each asked as the
+     * module asks it, `browser` against `chrome` and its prototype – webextension-polyfill takes
+     * `globalThis.browser` as is when its prototype is `Object.prototype`), since the module
+     * wraps `storage.sync` and `storage.local` at evaluation and round 16's 156 line (`Cannot
+     * read properties of null (reading 'get')`) is a `.get` on a null area. The action click
+     * follows (its `run` message reaches the content script's listener and the module's), and
+     * the row's bridge since the page opened goes to `bridge-<slug>.txt`.
+     */
+    private fun simplifyCopilot(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val since = StepEvidence(row)
+        val tab = createTab("$LOCALHOST_BASE/page-b.html?simplify")
+        val view = waitForView(tab)
+        // The watchers as early as the document is this one: the module's fetch and evaluation
+        // take seconds on the emulator, and a watcher installed after them reads nothing.
+        poll(scaled(15_000, factor), 200) { if (tabEval(view, "String(location.href.indexOf('page-b.html') >= 0 && document.readyState !== 'loading')") == "true") true else null }
+        extra.put("pageWatch", tabEval(view, SIMPLIFY_PAGE_WATCH))
+        if (worlds) {
+            val trapped = poll(scaled(10_000, factor), 250) { worldEval(view, row.id, SIMPLIFY_WORLD_TRAP, 3) }
+            extra.put("worldTrap", trapped ?: "no world endpoint within ${scaled(10_000, factor) / 1000} s")
+        }
+        poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        // The module's own witness: its site bridge's messages to the page.
+        var report = pollExpr(view, SIMPLIFY_PAGE_REPORT, scaled(45_000, factor))
+        val firstAt = report.optJSONArray("messages")?.optJSONObject(0)?.optInt("at")
+        extra.put("beforeClick", report)
+        if (worlds) worldEval(view, row.id, SIMPLIFY_WORLD_PROBE)?.let { extra.put("worldBeforeClick", json(it)) }
+        // The action click: `action.onClicked` -> `run` to the tab (the content script's listener
+        // imports when it has not yet; the module's starts its autofill where a form is).
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        SystemClock.sleep(scaled(8_000, factor))
+        runCatching { coreCall("extension.closePopup", "null") }
+        report = json(tabEval(view, SIMPLIFY_PAGE_REPORT))
+        extra.put("afterClick", report)
+        if (worlds) {
+            // The four areas asked as the module asks them (`get` on each); the answers a moment later.
+            worldEval(view, row.id, SIMPLIFY_STORAGE_GET)
+            SystemClock.sleep(scaled(1_500, factor))
+            worldEval(view, row.id, SIMPLIFY_WORLD_PROBE)?.let { extra.put("worldAfterClick", json(it)) }
+        }
+        val pageConsole = consoleOf(view)
+        extra.put("pageConsole", JSONArray(pageConsole.takeLast(15)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        val trace = since.trace()
+        File(out, "bridge-${entry.optString("slug")}.txt").writeText(trace.joinToString("\n"))
+        val runDelivered = trace.count { it.contains(" deliver ") && it.contains("type=run") }
+        extra.put("bridgeFile", "bridge-${entry.optString("slug")}.txt").put("bridgeLines", trace.size).put("runDelivered", runDelivered)
+        extra.put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
+        snap("${entry.optString("slug")}-localhost")
+        val worldAfter = extra.optJSONObject("worldAfterClick")
+        val errorLines = (report.optJSONArray("errors")?.length() ?: 0) + (worldAfter?.optJSONArray("errors")?.length() ?: 0)
+        val getLine = pageConsole.any { it.contains("reading 'get'") }
+        val shape = worldAfter?.optJSONObject("areas")?.toString()?.take(160)?.let { "; world storage areas $it" } ?: ""
+        val gets = worldAfter?.optJSONObject("gets")?.toString()?.take(160)?.let { "; get() per area $it" } ?: ""
+        val errors = "$errorLines error line(s) kept${if (getLine) " (the `reading 'get'` line among the page's console lines)" else ""}"
+        val messages = report.optJSONArray("messages")
+        return when {
+            report.optBoolean("pass") -> Grade(
+                "P",
+                "Simplify Copilot: its content module evaluated on the localhost fixture and mounted its site bridge (${messages?.length() ?: 0} message(s) to the page, the first \"${messages?.optJSONObject(0)?.optString("source")}/${messages?.optJSONObject(0)?.optString("type")}\" at ${firstAt ?: "?"} ms of the page's clock); `run` delivered $runDelivered time(s) on the click; $errors$shape$gets",
+                extra
+            )
+            else -> Grade(
+                "F",
+                "Simplify Copilot: no message of its site bridge reached the localhost fixture within ${scaled(45_000, factor) / 1000} s (the module not evaluated, or its init failed): $errors ${report.optJSONArray("errors")?.toString()?.take(200) ?: ""}; page console ${pageConsole.takeLast(3).toString().take(240)}$shape$gets",
+                extra
+            )
+        }
+    }
+
+    /**
+     * Scrolling screenshot tool (mfpia…, round 16 §7.3): the leg after the capture, read whole.
+     * The popup's "Capture visible part" (`{action: "visible"}` to the worker) has the worker
+     * take `tabs.captureVisibleTab` and send the PNG to the tab's content script
+     * (`tabs.sendMessage {action: "dataURL", dataURL, cw, ch, …}`), whose handler draws it into
+     * a canvas, mounts its toolbar in an open shadow root (`as-select-wrapper#as_select_wrapper`
+     * → `#screenshot_annotate`, its Save `#awesome_screenshot_capture`) and the annotation frame
+     * in the page (`iframe#screenshot_iframe` on `annotate-react.html?…`, an extension page,
+     * web-accessible), which asks the content script for the picture (`initIframe` → `init` over
+     * `postMessage`) and draws it; `edit-react.html` opens in a tab only from that Save (`{type:
+     * "save"}` into the frame → `saveImage` to the worker → `tabs.create`). Round 16's row waited
+     * for the editor tab alone and kept no bridge, so the `dataURL` leg was unread. Here the
+     * bridge since the popup opened goes to `bridge-<slug>.txt` (a message over 8 KB carries its
+     * size as `chars=`: the flow-size line of a full-screen PNG through the bridge), the frame and
+     * the toolbar are read in the page, the tree over the frame is recorded (its document is the
+     * extension's origin, out of a page script's reach), and the toolbar's Save is pressed – a
+     * tap where its box is on screen, a click through the shadow root otherwise – for the editor
+     * page with the picture.
+     */
+    private fun scrollingScreenshot(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?scrolling", factor)
+        backgroundView(row.id)?.let { extra.put("capture", captureShape(it, factor)) }
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(4_000, factor))
+            // The popup opens on its Record tab; the screenshot actions live under the Screenshot tab,
+            // whose header is an icon named by `data-tab="screenshot"` (4.4.x), a text "Screenshot" before.
+            extra.put("screenshotTab", tabEval(popup, "(function(){var el=document.querySelector('.tab-header-item[data-tab=\"screenshot\"]')||Array.prototype.slice.call(document.querySelectorAll('.tab-header-item')).find(function(n){return /^screenshot$/i.test(n.textContent.trim())});if(el)el.click();return String(!!el)})()"))
+            SystemClock.sleep(scaled(1_500, factor))
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, AWESOME_VISIBLE_CLICK)).takeIf { it.optBoolean("clicked") } } ?: json(tabEval(popup, AWESOME_VISIBLE_CLICK))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200)).put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        val frame = pollExpr(view, SCREENSHOT_FRAME, scaled(40_000, factor))
+        extra.put("frame", frame)
+        var image = JSONObject()
+        var editor: Map.Entry<String, String>? = null
+        val saves = JSONArray()
+        if (frame.optBoolean("pass")) {
+            // The picture's `init` round trip into the frame, the sheet away, the tree over the frame.
+            SystemClock.sleep(scaled(3_000, factor))
+            runCatching { coreCall("extension.closePopup", "null") }
+            SystemClock.sleep(scaled(800, factor))
+            extra.put("seenWithFrame", seenInView(view))
+            snap("${entry.optString("slug")}-annotate-frame")
+            for (attempt in 1..2) {
+                val save = json(tabEval(view, SCREENSHOT_SAVE))
+                saves.put(save)
+                if (!save.optBoolean("found")) break
+                if (save.optBoolean("onScreen")) tapSettled(view, save, factor)?.let { saves.put("tap: $it") }
+                else saves.put("click by script: ${tabEval(view, SCREENSHOT_SAVE_CLICK)}")
+                editor = poll(scaled(if (attempt == 1) 25_000 else 15_000, factor), 700) { tabUrls().entries.firstOrNull { it.key !in before && it.value.contains("edit-react.html") } }
+                if (editor != null) break
+            }
+        }
+        extra.put("saves", saves)
+        if (editor != null) {
+            val resultView = waitForView(editor.key)
+            image = pollExpr(resultView, ANNOTATOR_IMAGE, scaled(30_000, factor))
+            extra.put("editor", image).put("editorConsole", JSONArray(consoleOf(resultView).takeLast(10)))
+            showTab(editor.key)
+            SystemClock.sleep(800)
+            snap("${entry.optString("slug")}-annotator")
+        }
+        runCatching { coreCall("extension.closePopup", "null") }
+        extra.put("pageConsole", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        val trace = since.trace()
+        File(out, "bridge-${entry.optString("slug")}.txt").writeText(trace.joinToString("\n"))
+        val biggest = trace.mapNotNull { line -> Regex("chars=(\\d+)").find(line)?.groupValues?.get(1)?.toIntOrNull()?.let { it to line } }.maxByOrNull { it.first }
+        val dataUrlSent = trace.count { it.contains("type=dataURL") }
+        extra.put("bridgeFile", "bridge-${entry.optString("slug")}.txt").put("bridgeLines", trace.size).put("dataUrlSent", dataUrlSent)
+            .put("biggestMessage", biggest?.let { JSONObject().put("chars", it.first).put("line", it.second.take(160)) } ?: JSONObject.NULL)
+        val captureLine = "worker capture APIs ${extra.opt("capture")?.toString()?.take(120) ?: "unread"}"
+        val flow = "dataURL message(s) on the bridge: $dataUrlSent${biggest?.let { ", the biggest message ${it.first} chars" } ?: ""}"
+        val frameLine = frame.optJSONObject("frame")?.toString()?.take(120) ?: "none"
+        return when {
+            image.optBoolean("pass") -> Grade("P", "Scrolling screenshot tool: the visible capture reached the page's annotation frame ($frameLine) and its Save opened the editor page with the picture: ${image.toString().take(120)}; $flow", extra)
+            frame.optBoolean("pass") -> Grade("F", "Scrolling screenshot tool: the annotation frame mounted in the page ($frameLine) and its Save ${if (saves.length() == 0 || !saves.optJSONObject(0).optBoolean("found")) "was not found in the toolbar" else "did not open the editor page within the wait"} (${saves.toString().take(200)}); $flow; $captureLine", extra)
+            popup == null -> Grade("F", "Scrolling screenshot tool: popup did not render in the core check; $captureLine", extra)
+            !click.optBoolean("clicked") -> Grade("F", "Scrolling screenshot tool: no \"Capture visible part\" control found in the popup (${click.toString().take(120)}); $captureLine", extra)
+            else -> Grade("F", "Scrolling screenshot tool: \"Capture visible part\" pressed and no annotation frame in the page within ${scaled(40_000, factor) / 1000} s (${frame.toString().take(200)}); $flow; $captureLine", extra)
         }
     }
 
@@ -10105,5 +10282,52 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val SEVENTV_MOUNTED =
             "(function(){var el=document.querySelector('seventv-extension, #seventv-extension, seventv-stylesheet, #seventv-stylesheet, [id*=\"seventv\"], [class*=\"seventv\"]');var scripts=Array.prototype.slice.call(document.scripts).filter(function(s){return /seventv|7tv|lppmekppnliemjclknbagdhoocikieoi/i.test(s.src||'')}).length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!el||scripts>0,mounted:!!el,tag:el?el.tagName.toLowerCase()+(el.id?'#'+el.id:''):null,scripts:scripts,title:document.title.slice(0,60),text:t.slice(0,100)})})()"
+
+        /**
+         * Simplify Copilot's witnesses in the page world (round 16 §7.5): every message its module posts
+         * to the page's own window from the two sources of its site bridge (`VillageExtension`,
+         * `VillageBridge`), and the page's uncaught errors and rejections with file, line and stack.
+         */
+        private const val SIMPLIFY_PAGE_WATCH =
+            "(function(){if(window.__zenVillage)return 'kept';var w=window.__zenVillage={msgs:[],errors:[]};window.addEventListener('message',function(e){var d=e.data;if(d&&(d.source==='VillageBridge'||d.source==='VillageExtension')&&w.msgs.length<20)w.msgs.push({source:d.source,type:String(d.type),text:d.message&&d.message.text?String(d.message.text).slice(0,80):undefined,at:Math.round(performance.now())})});" +
+                "window.addEventListener('error',function(e){if(w.errors.length<10)w.errors.push({message:String(e.message).slice(0,200),filename:String(e.filename||'').slice(0,120),lineno:e.lineno,stack:e.error&&e.error.stack?String(e.error.stack).slice(0,600):''})});" +
+                "window.addEventListener('unhandledrejection',function(e){var r=e.reason;if(w.errors.length<10)w.errors.push({rejection:true,message:String(r&&r.message||r).slice(0,200),stack:r&&r.stack?String(r.stack).slice(0,600):''})});return 'installed'})()"
+        /** What [SIMPLIFY_PAGE_WATCH] kept, with the page's own signs of the module (its page script tag, `simplify` ids or classes). */
+        private const val SIMPLIFY_PAGE_REPORT =
+            "(function(){var w=window.__zenVillage||{msgs:[],errors:[]};return JSON.stringify({pass:w.msgs.length>0,messages:w.msgs.slice(0,8),errors:w.errors.slice(0,6),pageScript:!!document.getElementById('simplify-jobs-page-script')," +
+                "simplifyNodes:document.querySelectorAll(\"[id*='simplify'], [class*='simplify']\").length,bodyEls:document.body?document.body.getElementsByTagName('*').length:0,href:location.href.slice(0,100)})})()"
+        /** The extension's isolated world keeping its own uncaught errors and rejections (an `ErrorEvent` reaches the listeners of the world it was thrown in). */
+        private const val SIMPLIFY_WORLD_TRAP =
+            "(function(){if(window.__zenErr)return 'kept';var list=window.__zenErr=[];window.addEventListener('error',function(e){if(list.length<10)list.push({message:String(e.message).slice(0,200),filename:String(e.filename||'').slice(0,120),lineno:e.lineno,stack:e.error&&e.error.stack?String(e.error.stack).slice(0,600):''})});" +
+                "window.addEventListener('unhandledrejection',function(e){var r=e.reason;if(list.length<10)list.push({rejection:true,message:String(r&&r.message||r).slice(0,200),stack:r&&r.stack?String(r.stack).slice(0,600):''})});return 'trapped'})()"
+        /**
+         * The shape of `chrome.storage` in the extension's world: each of the four areas as `null`, `undefined`
+         * or an object with or without `get`; `browser` against `chrome` and its prototype (webextension-polyfill
+         * takes `globalThis.browser` as is when its prototype is `Object.prototype`); the errors the trap kept;
+         * the answers of [SIMPLIFY_STORAGE_GET].
+         */
+        private const val SIMPLIFY_WORLD_PROBE =
+            "(function(){var c=(typeof chrome==='object'&&chrome)?chrome:null;var s=c?c.storage:undefined;var areas={};['local','sync','session','managed'].forEach(function(a){var v=s?s[a]:undefined;areas[a]=v===null?'null':(v===undefined?'undefined':typeof v+(v&&typeof v.get==='function'?' with get':' without get'))});" +
+                "var b=typeof browser;return JSON.stringify({storage:s===null?'null':typeof s,areas:areas,browser:b,browserIsChrome:b==='object'&&browser===c,browserProto:b==='object'&&browser?(Object.getPrototypeOf(browser)===Object.prototype?'Object.prototype':'other'):null,runtimeId:c&&c.runtime?typeof c.runtime.id:'no runtime',errors:window.__zenErr||null,gets:window.__zenStorageGet||null})})()"
+        /** `get(null)` on each storage area as the module's wrappers ask it (the promise form, the callback form when no promise comes back); the outcomes on `window.__zenStorageGet`. */
+        private const val SIMPLIFY_STORAGE_GET =
+            "(function(){var out=window.__zenStorageGet={};['local','sync','session','managed'].forEach(function(a){try{var area=chrome.storage[a];if(!area){out[a]=area===null?'null':'undefined';return}var done=function(v){out[a]='ok '+Object.keys(v||{}).length+' key(s)'};var failed=function(e){out[a]='rejected: '+String(e&&e.message||e).slice(0,120)};" +
+                "var p=area.get(null);if(p&&typeof p.then==='function')p.then(done,failed);else area.get(null,function(v){if(chrome.runtime.lastError)out[a]='error: '+chrome.runtime.lastError.message;else done(v)})}catch(e){out[a]='threw: '+String(e&&e.message||e).slice(0,120)}});return 'asked'})()"
+
+        /**
+         * Scrolling screenshot tool's leg after the capture, in the page (round 16 §7.3): the annotation frame
+         * (`iframe#screenshot_iframe` on `annotate-react.html`) with a box, and the content script's toolbar in
+         * its open shadow root (`#as_select_wrapper` → `#screenshot_annotate`) with its Save.
+         */
+        private const val SCREENSHOT_FRAME =
+            "(function(){var f=document.getElementById('screenshot_iframe');var w=document.getElementById('as_select_wrapper');var sr=w&&w.shadowRoot;var tb=sr?sr.querySelector('#screenshot_annotate'):null;var r=f?f.getBoundingClientRect():null;var tr=tb?tb.getBoundingClientRect():null;" +
+                "return JSON.stringify({pass:!!(f&&r&&r.width>200&&r.height>200),frame:f?{src:(f.src||'').slice(0,140),w:Math.round(r.width),h:Math.round(r.height)}:null,wrapper:!!w,toolbar:!!tb,toolbarShown:!!(tr&&tr.width>0&&tr.height>0),save:!!(sr&&sr.querySelector('#awesome_screenshot_capture')),frames:document.querySelectorAll('iframe').length})})()"
+        /** The toolbar's Save (`#awesome_screenshot_capture`, aria-label "Save") through the shadow root: its centre in css px and whether its box is on screen. */
+        private const val SCREENSHOT_SAVE =
+            "(function(){var w=document.getElementById('as_select_wrapper');var sr=w&&w.shadowRoot;var el=sr?sr.querySelector('#awesome_screenshot_capture'):null;if(!el)return JSON.stringify({found:false,wrapper:!!w});var r=el.getBoundingClientRect();" +
+                "var on=r.width>4&&r.height>4&&r.left>=0&&r.top>=0&&r.right<=window.innerWidth&&r.bottom<=window.innerHeight;return JSON.stringify({found:true,onScreen:on,x:r.left+r.width/2,y:r.top+r.height/2,w:Math.round(r.width),h:Math.round(r.height),label:el.getAttribute('aria-label')||el.textContent.trim().slice(0,20)})})()"
+        /** The Save clicked by script through the shadow root (a way to the state when its box is off screen). */
+        private const val SCREENSHOT_SAVE_CLICK =
+            "(function(){var w=document.getElementById('as_select_wrapper');var sr=w&&w.shadowRoot;var el=sr?sr.querySelector('#awesome_screenshot_capture'):null;if(!el)return 'absent';el.click();return 'clicked'})()"
     }
 }
