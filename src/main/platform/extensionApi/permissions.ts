@@ -42,8 +42,21 @@ export class PermissionsApi {
   private readonly granted = new Map<string, PermissionSet>()
   private readonly manifests = new Map<string, ManifestPermissionSets>()
   private readonly originListeners = new Set<HostOriginsListener>()
+  private readonly manifestHostGrants = new Map<string, readonly string[]>()
 
   constructor(private readonly host: ApiHost) {}
+
+  /**
+   * The host patterns the platform folded into the engine's manifest to carry a runtime grant
+   * (`extensionStore.grantedHostPermissions`): host permissions the manifest declared as optional,
+   * not required. The engine reports them among `host_permissions` all the same, so `load` would
+   * take them for required (unremovable) unless it is told; the service notes them before the
+   * load. Set before an extension loads, cleared on unload.
+   */
+  noteManifestHostGrants(extensionId: string, folded: readonly string[]): void {
+    if (folded.length === 0) this.manifestHostGrants.delete(extensionId)
+    else this.manifestHostGrants.set(extensionId, [...folded])
+  }
 
   /**
    * Called after a `request` or a `remove` moved an extension's host patterns, with the granted
@@ -73,7 +86,10 @@ export class PermissionsApi {
    * host withheld from the engine's copy is required or optional here as the extension wrote it.
    */
   load(ext: LoadedExtension): void {
-    const sets = manifestPermissionSets(restoreWithheldPermissions(ext.manifest, ext.withheld))
+    const sets = reclassifyHostGrants(
+      manifestPermissionSets(restoreWithheldPermissions(ext.manifest, ext.withheld)),
+      this.manifestHostGrants.get(ext.id) ?? []
+    )
     this.manifests.set(ext.id, sets)
     const stored = this.host.store.grants(ext.id)
     const merged = stored ? addPermissionSets(stored, sets.required) : { ...sets.required }
@@ -94,6 +110,7 @@ export class PermissionsApi {
   unload(extensionId: string): void {
     this.granted.delete(extensionId)
     this.manifests.delete(extensionId)
+    this.manifestHostGrants.delete(extensionId)
   }
 
   grants(extensionId: string): PermissionSet {
@@ -199,6 +216,34 @@ export class PermissionsApi {
 }
 
 export type HostOriginsListener = (extensionId: string, origins: readonly string[]) => void
+
+/**
+ * The manifest sets with the platform's runtime host grants (`folded`) counted as optional, not
+ * required: the origins the platform folded into the engine's `host_permissions` to carry a
+ * `chrome.permissions` grant Chromium has no runtime API for. The engine reports them among the
+ * required host permissions; here they are what they were declared as — optional and granted —
+ * so `remove` lets the user take them back (a required permission cannot be removed) and
+ * `request` still accepts them. Untouched when nothing was folded, or for an origin that was not
+ * among the required set (a declared optional pattern needs no move).
+ */
+export function reclassifyHostGrants(
+  sets: ManifestPermissionSets,
+  folded: readonly string[]
+): ManifestPermissionSets {
+  if (folded.length === 0) return sets
+  const move = sets.required.origins.filter((origin) => folded.includes(origin))
+  if (move.length === 0) return sets
+  return {
+    required: {
+      permissions: sets.required.permissions,
+      origins: sets.required.origins.filter((origin) => !move.includes(origin))
+    },
+    optional: {
+      permissions: sets.optional.permissions,
+      origins: [...sets.optional.origins, ...move.filter((o) => !sets.optional.origins.includes(o))]
+    }
+  }
+}
 
 /**
  * Chrome's prompt lines for what a request adds: the install-style warnings of the manifest with

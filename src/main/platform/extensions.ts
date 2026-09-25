@@ -202,7 +202,7 @@ const NO_UPDATE_INFO: UpdateInfo = {
  */
 export type AttachedApi = ExtensionApiHooks & {
   readonly store: Pick<ApiStore, 'grants'>
-  readonly permissions: Pick<PermissionsApi, 'onOriginsChanged'>
+  readonly permissions: Pick<PermissionsApi, 'onOriginsChanged' | 'noteManifestHostGrants'>
 }
 
 /**
@@ -406,6 +406,10 @@ export class ExtensionService implements ExtensionHost {
     const path = await this.loadPathFor(record, withheld, granted)
     if (!path) return
     this.folded.set(record.id, folded)
+    // Before the engine loads the manifest: the API layer would read the folded origins (in the
+    // engine's `host_permissions`) as required and refuse to remove them; tell it they are runtime
+    // grants (declared optional), so a revoke can take them back.
+    this.api?.permissions.noteManifestHostGrants(record.id, folded)
     for (const [, ses] of this.sessions.persistent()) {
       try {
         const loaded =
