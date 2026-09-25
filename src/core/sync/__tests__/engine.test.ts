@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { FOLDER_LOST_MESSAGE } from '../engine'
+import { SETTINGS_RECORD_ID, hashData, type MetaMap } from '../records'
 import { README_NAME, SYNC_DIR_NAME, isDeviceFileName, parseDeviceFile } from '../transport'
 import {
   type Device,
   device,
   folderFiles,
+  memoryIo,
   published,
   setup,
   teardown,
@@ -336,5 +338,71 @@ describe('two engines on one folder', () => {
     expect(left[0]).toContain(a.engine.status().deviceId)
     expect(b.engine.status()).toMatchObject({ enabled: false, folder: null, folderName: null })
     expect(SYNC_DIR_NAME).toBe('zenium-sync')
+  }, 30_000)
+})
+
+describe('a build that adds a settings key', () => {
+  /**
+   * The settings record is one record, merged whole, last writer wins: `diffLocal` stamps it
+   * `modified = now` whenever its hash changed since the last sync, and a peer's copy older than
+   * that loses. A build that put a new key into EVERY device's record – a default written in
+   * `collectLocal`, say – would change every record's hash at once, so each device's first sync
+   * after the upgrade would publish a whole-record settings edit no one made, reverting any
+   * peer's settings change (on any key) that the device had not yet pulled. The record must
+   * carry the settings as they are: an untouched device's record is the previous build's record.
+   */
+  it("a device's first sync after upgrading does not overwrite a peer's settings change it had not pulled", async () => {
+    // The desktop and the phone in sync on the build before the Change Menu; neither has
+    // touched the phone menu, so neither's settings hold `menuOrder`.
+    const a = device('Desk (Linux)')
+    const b = device('Pixel 9')
+    await setup(a)
+    await setup(b)
+    await b.engine.confirmMerge(true)
+    await a.engine.syncNow()
+    expect(a.browser.state.settings.colorScheme).toBe('system')
+    expect(b.browser.state.settings.colorScheme).toBe('system')
+    expect('menuOrder' in a.browser.state.settings).toBe(false)
+
+    // The desktop is closed. Its profile and sync state are as that build left them: its
+    // settings record was the settings as they stood – no `menuOrder` key, whatever this build
+    // sends – and the sync metadata names that record's hash.
+    a.browser.flushSync()
+    const closed = { ...a.io.files }
+    const record = (await published(a)).find((r) => r.id === SETTINGS_RECORD_ID)!
+    const { menuOrder: _added, ...asThePreviousBuildWrote } = record.data as Record<string, unknown>
+    void _added
+    const persisted = JSON.parse(closed['sync.json']!) as { meta: MetaMap }
+    const before = persisted.meta[SETTINGS_RECORD_ID]!
+    persisted.meta[SETTINGS_RECORD_ID] = { ...before, hash: hashData(asThePreviousBuildWrote) }
+    closed['sync.json'] = JSON.stringify(persisted)
+    a.engine.disconnect(false)
+
+    // An evening's change on the phone while the desktop is closed: a setting on another key.
+    await new Promise((r) => setTimeout(r, 5))
+    b.browser.state.settings.colorScheme = 'dark'
+    await b.engine.syncNow()
+    const theirs = (await published(b)).find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(theirs.data).toMatchObject({ colorScheme: 'dark' })
+
+    // The desktop launches into the upgrade and syncs for the first time on this build. The
+    // phone's change is what it had not pulled; it must land, not be beaten by a manufactured
+    // edit of the desktop's own record.
+    const io = memoryIo()
+    Object.assign(io.files, closed)
+    const upgraded = device('Desk (Linux)', { io })
+    expect(upgraded.engine.status().deviceId).toBe(a.engine.status().deviceId)
+    await upgraded.engine.syncNow()
+    expect(upgraded.engine.status().lastError).toBeNull()
+    expect(upgraded.browser.state.settings.colorScheme).toBe('dark')
+    // What the desktop publishes is the phone's record with the phone's timestamp – its own
+    // record was not an edit – and the phone's next sync keeps its change.
+    const mine = (await published(upgraded)).find((r) => r.id === SETTINGS_RECORD_ID)!
+    expect(mine.modified).toBe(theirs.modified)
+    expect(hashData(mine.data)).toBe(hashData(theirs.data))
+    await b.engine.syncNow()
+    expect(b.browser.state.settings.colorScheme).toBe('dark')
+    // The reason, stated: this build's record for an untouched device IS the previous build's.
+    expect(hashData(record.data)).toBe(hashData(asThePreviousBuildWrote))
   }, 30_000)
 })

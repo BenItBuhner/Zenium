@@ -545,7 +545,7 @@ describe('without the gesture (A11Y-10)', () => {
     ])
   })
 
-  it('Reset puts the default back into the draft and Done saves it as the setting’s absence; a menu shown in a saved order starts with Reset live', async () => {
+  it('Reset puts the default back into the draft and Done saves it as the empty list (the core keeps it, the peers read the reset); a menu shown in a saved order starts with Reset live', async () => {
     await openEditor(
       appMenu([
         'icon.reload',

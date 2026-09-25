@@ -30,9 +30,12 @@ export const MENU_ORDER_MAX = 96
 export const MENU_KEY_MAX = 64
 
 /**
- * A persisted or synced `menuOrder` read like a profile's own: unique non-empty strings no
- * longer than a key of ours, capped in number. Nothing valid – or an empty list, the Reset row's
- * write – reads as the default (`undefined`), so the setting is absent rather than empty.
+ * A persisted or synced `menuOrder` read like a profile's own: a list sanitises to a list –
+ * unique non-empty strings no longer than a key of ours, capped in number, the empty list when
+ * nothing in it is valid – and anything but a list to `undefined` (no setting). The empty list
+ * is a value, not an absence: the Reset row writes it, the profile keeps it and a peer receives
+ * it as an edit of the key – the default order, stated – where a key the record lacks says
+ * nothing (`core/sync/apply.ts`). The reading takes both as the default order.
  */
 export function sanitizeMenuOrder(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined
@@ -46,7 +49,7 @@ export function sanitizeMenuOrder(raw: unknown): string[] | undefined {
     seen.add(key)
     order.push(key)
   }
-  return order.length > 0 ? order : undefined
+  return order
 }
 
 /**

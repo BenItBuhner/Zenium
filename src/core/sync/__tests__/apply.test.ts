@@ -241,6 +241,48 @@ describe('applyRemote: the settings record and the new tab page', () => {
     ).get(SITE_DATA_RECORD_ID)
     expect(published?.data).toEqual(b.siteData.policy())
   })
+
+  it("a peer's phone menu order: a list is kept – the empty list of a Reset stored and re-sent, not deleted – a record without the key says nothing, a value that is no list deletes it", () => {
+    const b = browser()
+    const sent = (): Record<string, unknown> =>
+      collectLocal(
+        {
+          model: b.state.model,
+          settings: b.state.settings,
+          shortcutOverrides: {},
+          bookmarks: [],
+          boosts: []
+        },
+        defaultScope()
+      ).get(SETTINGS_RECORD_ID)?.data as Record<string, unknown>
+    expect('menuOrder' in b.state.settings).toBe(false)
+    expect(sent()).not.toHaveProperty('menuOrder')
+
+    // The peer's order lands sanitised (its build's keys read against this one's later).
+    applyRemote(b, [
+      settingsRecord({ ...b.state.settings, menuOrder: ['row.settings', 3, 'row.newTab', ''] })
+    ])
+    expect(b.state.settings.menuOrder).toEqual(['row.settings', 'row.newTab'])
+    expect(sent().menuOrder).toEqual(['row.settings', 'row.newTab'])
+
+    // A peer that never touched the menu carries no key: its record leaves the order alone.
+    const { menuOrder: _absent, ...untouched } = b.state.settings
+    void _absent
+    applyRemote(b, [settingsRecord({ ...untouched, colorScheme: 'dark' })])
+    expect(b.state.settings.colorScheme).toBe('dark')
+    expect(b.state.settings.menuOrder).toEqual(['row.settings', 'row.newTab'])
+
+    // The peer's Reset: the empty list is stored as the value and carried in this device's own
+    // records from now on, so a third device holding the old order offline takes the reset too.
+    applyRemote(b, [settingsRecord({ ...b.state.settings, menuOrder: [] })])
+    expect(b.state.settings.menuOrder).toEqual([])
+    expect(sent().menuOrder).toEqual([])
+
+    // Only something that is no list at all deletes the key.
+    applyRemote(b, [settingsRecord({ ...b.state.settings, menuOrder: 'row.settings' })])
+    expect('menuOrder' in b.state.settings).toBe(false)
+    expect(sent()).not.toHaveProperty('menuOrder')
+  })
 })
 
 describe("applyRemote: the agents' mark on space and folder records", () => {

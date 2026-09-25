@@ -2611,8 +2611,11 @@ export interface Settings {
    * Phone layout: the app menu's items in the user's order (Edge's Change menu, TB-22) – the
    * items' stable keys (`MenuItemDescriptor.key`; `shared/menuOrder.ts` reads it against the
    * build's default: named items first in this order, the rest after them in the default order,
-   * a key the build has no item for dropped). Absent – the default order – until the user
-   * reorders; the Reset row clears it. The desktop's menus never read it.
+   * a key the build has no item for dropped). Absent until the user reorders; the Reset row
+   * writes the EMPTY list, which is kept and synced as a value – both read as the default order,
+   * but the empty list says so to the other devices where an absent key says nothing
+   * (`core/sync/records.ts` sends the settings' keys as they are and never one they lack). The
+   * desktop's menus never read it.
    */
   menuOrder?: string[]
   /**

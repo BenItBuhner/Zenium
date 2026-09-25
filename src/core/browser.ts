@@ -3820,16 +3820,14 @@ export class Browser {
       } else if (key === 'phoneBar') {
         s.phoneBar = sanitizePhoneBar(value)
       } else if (key === 'menuOrder') {
-        // The sheet's Done sends the keys in the user's order; its Reset sends an empty list,
-        // which reads as the default and leaves the setting absent rather than empty. A list
-        // is read sanitised; anything else, or a list with no key in it, is no order at all and
-        // changes nothing – a malformed patch must not read as the Reset and throw a saved
-        // order away.
-        if (Array.isArray(value)) {
-          const order = sanitizeMenuOrder(value)
-          if (order) s.menuOrder = order
-          else if (value.length === 0) delete s.menuOrder
-        }
+        // The sheet's Done sends the keys in the user's order; its Reset sends the empty list,
+        // STORED as the setting's value (the default order, stated) rather than deleting the
+        // key: so the reset persists and reaches the peers as an edit of a key their records
+        // read, where a record without the key says nothing (`core/sync/records.ts`). A list is
+        // kept sanitised, empty when nothing in it is valid; anything but a list changes
+        // nothing – a malformed patch must not read as the Reset and throw a saved order away.
+        const order = sanitizeMenuOrder(value)
+        if (order !== undefined) s.menuOrder = order
       } else if (key === 'homepage' && value && typeof value === 'object') {
         // A one-key patch (the picker's `mode`) keeps the address; the address is normalised.
         s.homepage = sanitizeHomepage({

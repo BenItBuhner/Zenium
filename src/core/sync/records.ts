@@ -560,13 +560,16 @@ export function collectLocal(
   if (scope.settings) {
     const { onboardingDone: _o, ...rest } = src.settings
     void _o
+    // The record carries the settings as they are and never a key they lack: a key invented here
+    // would change every device's record – its hash, so `diffLocal` stamps it `now` at the first
+    // sync after the upgrade, a whole-record edit no one made that beats and reverts a peer's
+    // settings change the device had not yet pulled. The phone menu's order (`menuOrder`) rides
+    // along only once the settings hold it: the empty list after a Reset (`shared/menuOrder.ts`),
+    // so the reset reaches the peers as an edit of the key, where a key the record lacks says
+    // nothing to `apply`.
     const data: SettingsData = {
       ...rest,
-      compactMode: { ...rest.compactMode, sidebarPersistent: false },
-      // The phone menu's order is absent when it is the default (the Reset row's write): sent as
-      // the empty list, which `apply` reads as the default too – else a reset would send nothing
-      // and every peer keep the order it had, one later record from a peer undoing the reset.
-      menuOrder: rest.menuOrder ?? []
+      compactMode: { ...rest.compactMode, sidebarPersistent: false }
     }
     out.set(SETTINGS_RECORD_ID, { type: 'settings', data })
     if (src.siteData) out.set(SITE_DATA_RECORD_ID, { type: 'site-data', data: src.siteData })

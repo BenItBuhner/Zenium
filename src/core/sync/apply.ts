@@ -241,10 +241,14 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
         // Another device's build may know bar items this one does not (or the other way round).
         if ('phoneBar' in rest) state.settings.phoneBar = sanitizePhoneBar(rest.phoneBar)
-        // A peer's menu order names its build's items; the reading drops what this one lacks.
+        // A peer's menu order names its build's items; the reading drops what this one lacks. A
+        // list is kept as a list, the empty one included – a peer's Reset, carried forward in
+        // this device's own records from now on, so a peer that held the old order offline
+        // takes the reset when it returns; only a value that is no list deletes the key. A
+        // record without the key (a peer that never touched the menu) says nothing about it.
         if ('menuOrder' in rest) {
           const menuOrder = sanitizeMenuOrder(rest.menuOrder)
-          if (menuOrder) state.settings.menuOrder = menuOrder
+          if (menuOrder !== undefined) state.settings.menuOrder = menuOrder
           else delete state.settings.menuOrder
         }
         // A peer's homepage is read like a profile's own: a known mode, a web address or none.

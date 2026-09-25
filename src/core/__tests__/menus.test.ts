@@ -1876,24 +1876,32 @@ describe('the app menu', () => {
       expect(menu.filter((l) => l !== '-').sort()).toEqual(plain.filter((l) => l !== '-').sort())
     })
 
-    it('saves the order through `settings.update` – sanitised – and an empty list is the Reset: the setting absent, the default order back', () => {
+    it('saves the order through `settings.update` – sanitised – and the empty list is the Reset: STORED as the setting’s value, the default order back', () => {
       const h = harness(ANDROID, 'phone')
       const before = appMenu(h)
+      expect('menuOrder' in h.browser.state.settings).toBe(false)
       h.browser.handleCommand(h.win, 'settings.update', {
         menuOrder: ['row.about', 3, 'row.about', '', 'row.newTab']
       })
       expect(h.browser.state.settings.menuOrder).toEqual(['row.about', 'row.newTab'])
       expect(appMenu(h).slice(7, 9)).toEqual(['About Zenium 1.2.3', 'New Tab'])
+      // The Reset keeps the key with the empty list – a value the profile persists and the sync
+      // record carries, so the reset reaches the other devices – and the menu is the default.
       h.browser.handleCommand(h.win, 'settings.update', { menuOrder: [] })
-      expect('menuOrder' in h.browser.state.settings).toBe(false)
+      expect(h.browser.state.settings.menuOrder).toEqual([])
+      expect(appMenu(h)).toEqual(before)
+      // A list with nothing valid in it is the empty list as well.
+      h.browser.handleCommand(h.win, 'settings.update', { menuOrder: ['row.about', 'row.newTab'] })
+      h.browser.handleCommand(h.win, 'settings.update', { menuOrder: [3, null, ''] })
+      expect(h.browser.state.settings.menuOrder).toEqual([])
       expect(appMenu(h)).toEqual(before)
     })
 
-    it('ignores a malformed `menuOrder` patch – not a list, or a list with no key in it – rather than reading it as the Reset', () => {
+    it('ignores a malformed `menuOrder` patch – anything but a list – rather than reading it as the Reset', () => {
       const h = harness(ANDROID, 'phone')
       h.browser.handleCommand(h.win, 'settings.update', { menuOrder: ['row.about', 'row.newTab'] })
       const saved = appMenu(h)
-      for (const bad of ['row.about', 42, null, true, { 0: 'row.about' }, [3, null, '']]) {
+      for (const bad of ['row.about', 42, null, true, { 0: 'row.about' }]) {
         h.browser.handleCommand(h.win, 'settings.update', { menuOrder: bad })
         expect(h.browser.state.settings.menuOrder).toEqual(['row.about', 'row.newTab'])
       }

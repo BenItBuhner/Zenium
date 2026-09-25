@@ -118,8 +118,11 @@ interface MenuNav {
  * the user's order, a Reset row – under the title "Change Menu" and a Done control. The order
  * edited is a draft here (`MenuDraft`); the pose ending saves it – Done, the back gesture or
  * Escape, and the sheet's own dismissal alike, so no way out loses a reorder – as
- * `settings.menuOrder` (the default's keys save as the setting's absence), and the normal pose
- * shows the draft's order from then on, ahead of the core's next composition.
+ * `settings.menuOrder` (the default order saves as the empty list, which the core keeps as the
+ * setting's value and the peers read as the reset), and the normal pose shows the draft's order
+ * from then on, ahead of the core's next composition. A pose that ends on the order last saved
+ * writes nothing (`sameMenuOrder`), so the empty list and an absent setting never trade places
+ * over an opening that changed nothing.
  */
 function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })

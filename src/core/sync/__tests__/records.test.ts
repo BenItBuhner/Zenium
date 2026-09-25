@@ -188,16 +188,25 @@ describe('collectLocal', () => {
     expect(data).toHaveProperty('searchEngineId')
   })
 
-  it('sends the phone menu’s order as the empty list while it is the default, so a Reset reaches the peers', () => {
+  it('sends the phone menu’s order as the settings hold it – no key while none is saved, the empty list after a Reset – never a key the settings lack', () => {
     const src = sources()
-    const settings = (): Record<string, unknown> =>
-      collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
+    const record = (): { type: string; data: unknown } =>
+      collectLocal(src, defaultScope()).get('settings')!
+    const settings = (): Record<string, unknown> => record().data as Record<string, unknown>
+    // A device that never touched the menu sends the record the build before this one sent: the
+    // same keys, the same hash, so its first sync after the upgrade manufactures no edit.
     expect('menuOrder' in src.settings).toBe(false)
-    expect(settings().menuOrder).toEqual([])
+    expect(settings()).not.toHaveProperty('menuOrder')
+    const untouched = hashData(settings())
     src.settings.menuOrder = ['row.settings', 'row.newTab']
     expect(settings().menuOrder).toEqual(['row.settings', 'row.newTab'])
-    delete src.settings.menuOrder
+    // A Reset stores the empty list: a value the record carries and a peer reads as the reset.
+    src.settings.menuOrder = []
     expect(settings().menuOrder).toEqual([])
+    expect(hashData(settings())).not.toBe(untouched)
+    delete src.settings.menuOrder
+    expect(settings()).not.toHaveProperty('menuOrder')
+    expect(hashData(settings())).toBe(untouched)
   })
 })
 

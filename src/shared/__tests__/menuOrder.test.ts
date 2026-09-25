@@ -156,13 +156,14 @@ describe('applyMenuOrder', () => {
 })
 
 describe('sanitizeMenuOrder', () => {
-  it('reads anything but a list, and an empty list, as absent (the default; the Reset write)', () => {
+  it('reads anything but a list as no setting, and a list as a list – the empty one (the Reset write) kept as a value', () => {
     expect(sanitizeMenuOrder(undefined)).toBeUndefined()
     expect(sanitizeMenuOrder(null)).toBeUndefined()
     expect(sanitizeMenuOrder('row.settings')).toBeUndefined()
     expect(sanitizeMenuOrder({ 0: 'row.settings' })).toBeUndefined()
-    expect(sanitizeMenuOrder([])).toBeUndefined()
-    expect(sanitizeMenuOrder([1, null, ''])).toBeUndefined()
+    expect(sanitizeMenuOrder([])).toEqual([])
+    // A list with nothing valid in it is the empty list too – never `undefined` for a list.
+    expect(sanitizeMenuOrder([1, null, ''])).toEqual([])
   })
 
   it('keeps unique non-empty strings in their order and nothing else', () => {
@@ -180,7 +181,7 @@ describe('sanitizeMenuOrder', () => {
     const runaway = `row.${'x'.repeat(MENU_KEY_MAX)}`
     expect(sanitizeMenuOrder([runaway, 'row.settings'])).toEqual(['row.settings'])
     expect(sanitizeMenuOrder(['a'.repeat(MENU_KEY_MAX)])).toHaveLength(1)
-    expect(sanitizeMenuOrder([runaway])).toBeUndefined()
+    expect(sanitizeMenuOrder([runaway])).toEqual([])
   })
 })
 

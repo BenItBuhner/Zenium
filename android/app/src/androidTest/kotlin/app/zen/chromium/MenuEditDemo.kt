@@ -369,8 +369,9 @@ class MenuEditDemo : DemoHarness(
         }
     }
 
-    // 5. Reset to Default puts the build's order back into the draft; Done saves it as the
-    // setting's absence, and the normal pose is the default again.
+    // 5. Reset to Default puts the build's order back into the draft; Done saves it as the empty
+    // list – kept by the core as the setting's value, so the reset persists and reaches the other
+    // devices – and the normal pose is the default again.
     private fun reset() {
         finding("\n5. Reset to Default")
         record("the menu opened", openMenu())
@@ -395,7 +396,7 @@ class MenuEditDemo : DemoHarness(
         still("after-reset")
         record("Done returns the normal pose", touchTapLabelExpecting(LABEL_DONE, "the normal pose is back", 6_000) { !editUp() && menuOpen() })
         SystemClock.sleep(800)
-        record("the setting is absent again (menuOrder ${menuOrderSetting()})", awaitTrue(4_000) { menuOrderSetting() == null })
+        record("the setting is the empty list, kept (menuOrder ${menuOrderSetting()})", awaitTrue(4_000) { menuOrderSetting()?.length() == 0 })
         record("the normal pose is the default order: ${iconRowLabels().joinToString(" | ")}", iconRowLabels() == defaultRow && listLabels() == defaultList)
         still("after-reset-done")
         closeMenu()
@@ -479,7 +480,7 @@ class MenuEditDemo : DemoHarness(
 
     private fun menuOpen(): Boolean = chromeJs("!!document.querySelector('.zen-menu-icon-row, .zen-menu-icon-list')") == "true"
 
-    /** `settings.menuOrder` as the core holds it: the keys, or null while absent (the default). */
+    /** `settings.menuOrder` as the core holds it: the keys, the empty list after a Reset, or null while never written (both the default). */
     private fun menuOrderSetting(): JSONArray? = coreState().optJSONObject("settings")?.optJSONArray("menuOrder")
 
     private fun indexIn(order: JSONArray, key: String): Int = (0 until order.length()).firstOrNull { order.optString(it) == key } ?: -1

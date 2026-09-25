@@ -242,8 +242,10 @@ export const DEFAULT_SETTINGS: Settings = {
   urlbarBehavior: 'float-typing',
   phoneBarPosition: 'bottom',
   phoneBar: defaultPhoneBar(),
-  // `menuOrder` (the phone app menu's user order, TB-22) has no default entry: absent IS the
-  // default order (`shared/menuOrder.ts`), and the Reset row returns to absent.
+  // `menuOrder` (the phone app menu's user order, TB-22) has no default entry: absent reads as
+  // the default order (`shared/menuOrder.ts`), as does the empty list the Reset row writes – a
+  // value, kept and synced, where a default entry here would put a key into every device's
+  // settings record and change every record's hash at the upgrade (`core/sync/records.ts`).
   // Chrome's default: a homepage that is the new tab page, so a profile's optional Home button
   // (#52) keeps working when the setting arrives; "Off" is a choice.
   homepage: { mode: 'newtab', url: '' },
