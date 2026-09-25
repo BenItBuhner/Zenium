@@ -28,11 +28,15 @@ import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.DecisionObserver
 import app.zen.chromium.blocking.Domains
 import app.zen.chromium.blocking.HeaderStage
+import app.zen.chromium.blocking.ListenerOptions
 import app.zen.chromium.blocking.ProfileCookieStore
 import app.zen.chromium.blocking.RedirectExecutor
 import app.zen.chromium.blocking.RelayedResponse
 import app.zen.chromium.blocking.Request
 import app.zen.chromium.blocking.ResourceType
+import app.zen.chromium.blocking.WebRequestDetails
+import app.zen.chromium.blocking.WebRequestEvent
+import app.zen.chromium.blocking.WebRequestListener
 import app.zen.chromium.bool
 import app.zen.chromium.json
 import app.zen.chromium.obj
@@ -76,18 +80,21 @@ import java.util.concurrent.atomic.AtomicLong
  *    the core's translator writing `ext:` rule sets into the persisted index the engine
  *    compiles, scoped to the partitions the extension runs in; this class hears the engine's
  *    decisions ([DecisionObserver]) and reports the ones an extension's rule took – and, while
- *    an extension listens for `webRequest`, every one – as `ext.request`, the response stage of
- *    the media requests the engine relays for it while an extension listens for that
- *    (`ext.observeResponses`) as `ext.response`, and substitutes the response of a redirected
- *    subresource ([RedirectExecutor], see [redirect]).
+ *    an extension listens for `webRequest`, every one – as `ext.request`, the headers WebView
+ *    sends with a request that goes out while an extension listens for the request-header
+ *    stage (`ext.observeRequestHeaders`, one observing listener of ours on the engine's
+ *    `onSendHeaders` seam) as `ext.requestHeaders`, the response stage of the media requests
+ *    the engine relays for it while an extension listens for that (`ext.observeResponses`) as
+ *    `ext.response`, and substitutes the response of a redirected subresource
+ *    ([RedirectExecutor], see [redirect]).
  *
  * Protocol (the core → here), keyed by extension id where it applies: `ext.env`, `ext.open`,
  * `ext.configure`, `ext.detach`, `ext.background.start` / `stop`, `ext.popup.open` / `close`,
  * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.observeRequests`,
- * `ext.observeResponses`, `ext.proxy.set` / `clear` (`chrome.proxy.settings` over the WebView's
- * proxy override, [ExtensionProxy]).
+ * `ext.observeRequestHeaders`, `ext.observeResponses`, `ext.proxy.set` / `clear`
+ * (`chrome.proxy.settings` over the WebView's proxy override, [ExtensionProxy]).
  * Here → the core (host events): `ext.message`, `ext.gone`, `ext.popupClosed`, `ext.request`,
- * `ext.response`.
+ * `ext.requestHeaders`, `ext.response`.
  */
 class Extensions(private val host: Host) {
     /** Every bridge message carries this; pages never see it (it lives in closures only). */
@@ -192,6 +199,23 @@ class Extensions(private val host: Host) {
      * decision of the engine is reported, not only those an extension's rule took.
      */
     @Volatile private var observeRequests = false
+    /**
+     * The request-header stage (`ext.observeRequestHeaders`): while an extension listens for
+     * `webRequest.onBeforeSendHeaders` / `onSendHeaders`, one observing listener of ours on the
+     * engine's `onSendHeaders` seam ([WebRequestEvent.ON_SEND_HEADERS]) reports the headers
+     * WebView is about to send ([onSendHeaders]); none otherwise, since the seam costs every
+     * request a record while anyone listens. Its remover while registered; main thread.
+     */
+    private var requestHeadersListener: (() -> Unit)? = null
+    /**
+     * The `ext.request` payload [onDecision] built last on this intercept thread, for
+     * [onSendHeaders] to pair the header stage with. The engine decides a request and then runs
+     * the listeners of the same request on one thread, one after the other
+     * (`Blocking.evaluate`), so the pairing rides on the thread; the URL is checked besides
+     * ([RequestHeadersReport.build]) – a request the engine never decided (an extension page's
+     * own, off the web) would find the thread's last one, stale.
+     */
+    private val lastDecision = ThreadLocal<JSONObject?>()
     /** `ext.request` ids: one sequence per process, like Chrome's request ids. */
     private val requestIds = AtomicLong(1)
     /** The `identity.launchWebAuthFlow` sheets open right now, by the runtime's view id (`ext.auth.*`). */
@@ -440,6 +464,7 @@ class Extensions(private val host: Host) {
                 reply(null)
             }
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
+            "ext.observeRequestHeaders" -> { setObserveRequestHeaders(args.bool("on")); reply(null) }
             // The engine's switch (contract 7.1): the process's engine relays media requests for
             // their response stage while it is on; this runtime hears them through [observer].
             // The pages' observer of their own fetch / XHR responses (7.10) follows the same
@@ -769,6 +794,7 @@ class Extensions(private val host: Host) {
         worldSlots.clear()
         configureStats.clear()
         observeRequests = false
+        setObserveRequestHeaders(false)
         // The engine's switch is the runtime's that set it: off with the runtime that goes, when
         // this one still owns the seams (a newer window's may have taken them over).
         if (host.blocking.observer === observer) setObserveResponses(false)
@@ -787,6 +813,27 @@ class Extensions(private val host: Host) {
         host.blocking.observeResponses = on
         if (!changed) return
         for (view in host.tabs.all()) view.setExtObserve(on)
+    }
+
+    /**
+     * The request-header switch (`ext.observeRequestHeaders`): the runtime turns it on while an
+     * extension holds an `onBeforeSendHeaders` / `onSendHeaders` listener (Speak Subtitles for
+     * YouTube reads the player's `/api/timedtext` URL off one) and off with the last of them.
+     * On, one observing listener of ours joins the engine's `onSendHeaders` seam under the
+     * registrant [REQUEST_HEADERS_REGISTRANT]; off, it leaves. Main thread.
+     */
+    private fun setObserveRequestHeaders(on: Boolean) {
+        if (on == (requestHeadersListener != null)) return
+        if (on) {
+            requestHeadersListener = host.blocking.addListener(
+                WebRequestEvent.ON_SEND_HEADERS,
+                WebRequestListener { details -> onSendHeaders(details); null },
+                ListenerOptions(registrant = REQUEST_HEADERS_REGISTRANT)
+            )
+        } else {
+            requestHeadersListener?.invoke()
+            requestHeadersListener = null
+        }
     }
 
     /**
@@ -1655,6 +1702,8 @@ class Extensions(private val host: Host) {
      * new page's first decisions.
      */
     private fun onDecision(tab: BlockingTab, request: Request, decision: Decision, elapsedNanos: Long, cpuNanos: Long) {
+        // A decision not reported leaves nothing for the header stage to pair with.
+        lastDecision.remove()
         val micros = elapsedNanos / 1_000
         val cpuMicros = if (cpuNanos < 0) null else cpuNanos / 1_000
         val action = when (decision.action) {
@@ -1692,7 +1741,25 @@ class Extensions(private val host: Host) {
             "micros" to micros,
             "cpuMicros" to cpuMicros
         )
+        lastDecision.set(payload)
         main.post { chromeEvent("ext.request", payload) }
+    }
+
+    /**
+     * The engine's `onSendHeaders` seam ([requestHeadersListener], on the intercept thread right
+     * after [onDecision] for a request that goes out): the headers WebView is about to send,
+     * reported as `ext.requestHeaders` under the `ext.request` id the same request's decision
+     * carried ([lastDecision]) – the material of the runtime's `onBeforeSendHeaders` and
+     * `onSendHeaders`, which Chrome fires with the same headers for an observer (WebView's
+     * headers are read-only, so no blocking variant is offered). A request whose decision was
+     * not reported (the requests switch off; an extension page's own request, which the engine
+     * never decides) reports nothing.
+     */
+    private fun onSendHeaders(details: WebRequestDetails) {
+        val decided = lastDecision.get()
+        lastDecision.remove()
+        val payload = RequestHeadersReport.build(decided, details.url, details.requestHeaders) ?: return
+        main.post { chromeEvent("ext.requestHeaders", payload) }
     }
 
     /**
@@ -2096,7 +2163,8 @@ class Extensions(private val host: Host) {
         notifications.destroy()
         io.shutdownNow()
         // The engine outlives the window; a runtime that is gone must not be called (a newer
-        // window's runtime may already have taken the seams over). Its switch goes with it.
+        // window's runtime may already have taken the seams over). Its switches go with it.
+        setObserveRequestHeaders(false)
         if (host.blocking.observer === observer) {
             host.blocking.observeResponses = false
             host.blocking.observer = null
@@ -2117,6 +2185,8 @@ class Extensions(private val host: Host) {
         const val WORLD_SLOTS = 16
         /** Bridge trace lines kept for instrumentation (one line per message, all extensions together). */
         const val TRACE_LINES = 2400
+        /** The registrant of this runtime's own `onSendHeaders` listener on the engine's registry (no extension's id). */
+        const val REQUEST_HEADERS_REGISTRANT = "zenium:webRequest"
         /** Reply errors Chrome raises in normal operation: a message to a tab without a listener, a listener that never answered. */
         val UNANSWERED = setOf(
             "Could not establish connection. Receiving end does not exist.",

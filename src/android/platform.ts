@@ -105,6 +105,7 @@ import {
   AndroidExtensionRuntime,
   type ExtMessageEvent,
   type ExtRequestEvent,
+  type ExtRequestHeadersEvent,
   type ExtResponseEvent
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
@@ -712,6 +713,8 @@ export interface HostEventPayloads {
   'ext.wake': { id: string }
   /** One intercepted request, while an extension listens for `webRequest` events. */
   'ext.request': ExtRequestEvent
+  /** The headers of one request that goes out, while an `onBeforeSendHeaders` / `onSendHeaders` listener exists. */
+  'ext.requestHeaders': ExtRequestHeadersEvent
   /** The response stage of a media request the engine relayed for it, while a response-stage listener exists. */
   'ext.response': ExtResponseEvent
   /**
@@ -2082,6 +2085,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'ext.request':
         this.extensionRuntime?.onRequest(payload as HostEventPayloads['ext.request'])
+        return
+      case 'ext.requestHeaders':
+        this.extensionRuntime?.onRequestHeaders(payload as HostEventPayloads['ext.requestHeaders'])
         return
       case 'ext.response':
         this.extensionRuntime?.onResponse(payload as HostEventPayloads['ext.response'])

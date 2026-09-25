@@ -145,13 +145,15 @@ import type { ViewEventPayloads } from './views'
  *  ext.send { ep, message }, ext.exec {…}, ext.readFile { id, path }, ext.cookies.read / write
  *  ext.i18n.detectLanguage { text }         → { isReliable, languages: [{ language, percentage }] } (the platform's classifier)
  *  ext.observeRequests { on }               every engine decision is reported, not just the rules' matches
+ *  ext.observeRequestHeaders { on }         the headers of every request that goes out are reported (onBeforeSendHeaders / onSendHeaders)
  *  ext.observeResponses { on }              media-element requests are relayed for their response stage (blocking-rule-interface.md §7)
  *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
  *  ext.proxy.set { rules, bypass, bypassSimpleHostnames, removeImplicitRules } / clear   chrome.proxy.settings over ProxyController
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
- * ext.response, ext.authView { viewId, event, url? }, ext.notification, ext.wake { id }.
+ * ext.requestHeaders, ext.response, ext.authView { viewId, event, url? }, ext.notification,
+ * ext.wake { id }.
  */
 
 /** The bridge calls the runtime makes (`Bridge` satisfies it; tests pass a fake). */
@@ -287,9 +289,35 @@ export interface ExtResponseEvent {
 }
 
 /**
+ * The request-header stage of a request that goes out, as Kotlin's `onSendHeaders` listener
+ * reports it (`ext.requestHeaders`) while `ext.observeRequestHeaders` is on: the headers WebView
+ * is about to send – the page's own and the ones WebView adds ahead of the network stack's (no
+ * `Cookie`, no `Content-Length`) – under the `ext.request` id the same request's decision
+ * carried, so the two pair. The material of `onBeforeSendHeaders` and `onSendHeaders`, which
+ * Chrome fires with the same headers for an observer (the blocking variant, which rewrites them,
+ * WebView cannot honour and the runtime does not offer).
+ */
+export interface ExtRequestHeadersEvent {
+  tabId: string | null
+  /** The `ExtRequestEvent.requestId` of the same request. */
+  requestId: string
+  url: string
+  /** `chrome.declarativeNetRequest.ResourceType` name. */
+  type: string
+  method: string
+  initiator: string | null
+  mainFrame: boolean
+  document: number
+  /** Every header line as WebView holds it (a listener's `extraInfoSpec` decides what it sees). */
+  requestHeaders: Array<{ name: string; value: string }>
+}
+
+/**
  * One `webRequest` listener of one endpoint: the event, its compiled `RequestFilter` and its
- * `extraInfoSpec` – which decides what of a response it sees (`responseHeaders` for the headers,
- * `extraHeaders` besides for the `set-cookie` lines, Chrome's rule since 72).
+ * `extraInfoSpec` – which decides what of a request or response it sees (`requestHeaders` /
+ * `responseHeaders` for the headers, `extraHeaders` besides for the lines Chrome withholds
+ * without it – the `set-cookie` lines of a response, since 72; `cookie`, `referer`,
+ * `accept-language` and `accept-encoding` of a request, since 72 as well).
  */
 interface RequestListener {
   event: WebRequestEventName
@@ -309,7 +337,17 @@ const RESPONSE_STAGE_EVENTS: ReadonlySet<WebRequestEventName> = new Set<WebReque
   'onBeforeRedirect'
 ])
 
-/** One response header line as Chrome's `HttpHeader` carries it here (always with a value). */
+/**
+ * The `webRequest` events of the request-header stage: while any endpoint (or a stopped
+ * background, persisted) holds a listener for one, the Kotlin runtime observes the engine's
+ * `onSendHeaders` seam and reports every outgoing request's headers (`ext.observeRequestHeaders`).
+ */
+const REQUEST_HEADER_EVENTS: ReadonlySet<WebRequestEventName> = new Set<WebRequestEventName>([
+  'onBeforeSendHeaders',
+  'onSendHeaders'
+])
+
+/** One header line as Chrome's `HttpHeader` carries it here (always with a value). */
 interface ResponseHeaderLine {
   name: string
   value: string
@@ -317,9 +355,10 @@ interface ResponseHeaderLine {
 
 /**
  * The `details` a `webRequest` event carries here (the observational subset of Chrome's): the
- * request's fields on every event, the status and headers on the response stage's, the redirect
- * target on `onBeforeRedirect`, the error on `onErrorOccurred`. `responseHeaders` is the full
- * list as received; what each listener sees of it is cut per its spec at delivery
+ * request's fields on every event, the request headers on the request-header stage's, the
+ * status and headers on the response stage's, the redirect target on `onBeforeRedirect`, the
+ * error on `onErrorOccurred`. `requestHeaders` / `responseHeaders` are the full lists as WebView
+ * holds / received them; what each listener sees of them is cut per its spec at delivery
  * (`detailsFor`). `fromCache` is false on the phone (the relay and the page read the origin);
  * `ip` is never known.
  */
@@ -337,27 +376,44 @@ interface RequestDetails {
   fromCache?: boolean
   statusCode?: number
   statusLine?: string
+  requestHeaders?: ResponseHeaderLine[]
   responseHeaders?: ResponseHeaderLine[]
   redirectUrl?: string
 }
 
+/** The request headers Chrome withholds from a listener without `extraHeaders` (since 72). */
+const REQUEST_HEADERS_BEHIND_EXTRA: ReadonlySet<string> = new Set([
+  'cookie',
+  'referer',
+  'accept-language',
+  'accept-encoding'
+])
+
 /**
  * The details as one listener sees them (the desktop's `chromeRequestDetails`, Chrome's rule):
- * `responseHeaders` only when its spec asked for them, and the `set-cookie` lines among them
- * only with `extraHeaders` besides.
+ * `requestHeaders` / `responseHeaders` only when its spec asked for them, and the lines Chrome
+ * keeps behind `extraHeaders` – a response's `set-cookie`, a request's `cookie`, `referer`,
+ * `accept-language` and `accept-encoding` – only with `extraHeaders` besides.
  */
 function detailsFor(details: RequestDetails, spec: readonly ExtraInfoSpec[]): RequestDetails {
-  if (!details.responseHeaders) return details
-  if (!spec.includes('responseHeaders')) {
-    const bare = { ...details }
-    delete bare.responseHeaders
-    return bare
+  if (!details.responseHeaders && !details.requestHeaders) return details
+  const seen = { ...details }
+  const extra = spec.includes('extraHeaders')
+  if (details.responseHeaders) {
+    if (!spec.includes('responseHeaders')) delete seen.responseHeaders
+    else if (!extra)
+      seen.responseHeaders = details.responseHeaders.filter(
+        (h) => h.name.toLowerCase() !== 'set-cookie'
+      )
   }
-  if (spec.includes('extraHeaders')) return details
-  return {
-    ...details,
-    responseHeaders: details.responseHeaders.filter((h) => h.name.toLowerCase() !== 'set-cookie')
+  if (details.requestHeaders) {
+    if (!spec.includes('requestHeaders')) delete seen.requestHeaders
+    else if (!extra)
+      seen.requestHeaders = details.requestHeaders.filter(
+        (h) => !REQUEST_HEADERS_BEHIND_EXTRA.has(h.name.toLowerCase())
+      )
   }
+  return seen
 }
 
 /** The `chrome.declarativeNetRequest.ResourceType` name Kotlin reported, as the `webRequest` type; `other` for one it does not know. */
@@ -727,6 +783,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     }
   >()
   private observing = false
+  /** `ext.observeRequestHeaders` as last sent: an `onBeforeSendHeaders` / `onSendHeaders` listener exists somewhere. */
+  private observingRequestHeaders = false
   /** `ext.observeResponses` as last sent: a response-stage `webRequest` listener exists somewhere. */
   private observingResponses = false
   /**
@@ -2378,6 +2436,36 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   }
 
   /**
+   * The request-header stage of a request that goes out (`ext.requestHeaders`), while an
+   * `onBeforeSendHeaders` / `onSendHeaders` listener exists (`ext.observeRequestHeaders`):
+   * `onBeforeSendHeaders` then `onSendHeaders`, with the same headers – Chrome fires the two in
+   * that order for an observer, and the WebView's headers are read-only, so nothing between them
+   * could change (Speak Subtitles for YouTube's worker reads the player's `/api/timedtext` URL
+   * and its `x-*` headers off the first). The id is the one the request's `onBeforeRequest`
+   * ran under (a redirect target continues under the hop's, as the response stage does); the
+   * headers are cut per listener at delivery (`detailsFor`). Nothing while the switch is off (a
+   * report that landed after the last listener went).
+   */
+  onRequestHeaders(event: ExtRequestHeadersEvent): void {
+    if (!this.observingRequestHeaders) return
+    const tab = event.tabId ?? null
+    const details: RequestDetails = {
+      requestId: this.ledger.chainIdOf(event.requestId),
+      url: event.url,
+      method: event.method,
+      frameId: 0,
+      parentFrameId: -1,
+      tabId: event.tabId ? this.api.tabs.chromeIdFor(event.tabId) : UNKNOWN_TAB_ID,
+      type: resourceTypeNamed(event.type),
+      timeStamp: this.now(),
+      requestHeaders: event.requestHeaders.map((h) => ({ name: h.name, value: h.value }))
+    }
+    if (event.initiator) details.initiator = event.initiator
+    this.emitRequest(tab, 'onBeforeSendHeaders', details)
+    this.emitRequest(tab, 'onSendHeaders', details)
+  }
+
+  /**
    * The response stage of a media-element request the Kotlin engine relayed for it
    * (`ext.response`, `blocking-rule-interface.md` §7.5), while a response-stage `webRequest`
    * listener exists (`ext.observeResponses`). `requestId` is the `ext.request` id the same
@@ -2785,30 +2873,37 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * Kotlin reports every decision (`ext.observeRequests`) while a `webRequest` listener exists in
    * any endpoint – or a stopped worker persisted one: its listener is what wakes it (Chrome's
    * observational events start an MV3 worker), and without the decisions nothing would. By the
-   * same rule it relays media-element requests for their response stage
-   * (`ext.observeResponses`) while one of those listeners is a response-stage one
-   * (`RESPONSE_STAGE_EVENTS`); each switch is sent only when its answer changes, the requests'
-   * first (a relayed request has had its `ext.request`).
+   * same rule it reports the headers of every request that goes out
+   * (`ext.observeRequestHeaders`) while one of those listeners is a request-header one
+   * (`REQUEST_HEADER_EVENTS`), and relays media-element requests for their response stage
+   * (`ext.observeResponses`) while one is a response-stage one (`RESPONSE_STAGE_EVENTS`); each
+   * switch is sent only when its answer changes, the requests' first (a header report and a
+   * relayed request have had their `ext.request`).
    */
   private updateObserving(): void {
     let wanted = false
+    let headers = false
     let responses = false
-    for (const own of this.requestListeners.values()) {
-      if (own.size > 0) wanted = true
-      for (const listener of own.values())
-        if (RESPONSE_STAGE_EVENTS.has(listener.event)) responses = true
+    const count = (event: WebRequestEventName): void => {
+      wanted = true
+      if (REQUEST_HEADER_EVENTS.has(event)) headers = true
+      if (RESPONSE_STAGE_EVENTS.has(event)) responses = true
     }
+    for (const own of this.requestListeners.values())
+      for (const listener of own.values()) count(listener.event)
     for (const id of this.extensions.keys()) {
       for (const key of this.background.persistedListeners(id)) {
         if (!key.startsWith('webRequest.')) continue
-        wanted = true
-        if (RESPONSE_STAGE_EVENTS.has(key.slice('webRequest.'.length) as WebRequestEventName))
-          responses = true
+        count(key.slice('webRequest.'.length) as WebRequestEventName)
       }
     }
     if (wanted !== this.observing) {
       this.observing = wanted
       this.bridge.send('ext.observeRequests', { on: wanted })
+    }
+    if (headers !== this.observingRequestHeaders) {
+      this.observingRequestHeaders = headers
+      this.bridge.send('ext.observeRequestHeaders', { on: headers })
     }
     if (responses !== this.observingResponses) {
       this.observingResponses = responses
