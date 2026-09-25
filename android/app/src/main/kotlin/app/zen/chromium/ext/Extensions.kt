@@ -219,6 +219,13 @@ class Extensions(private val host: Host) {
     private val workerScriptGate = WorkerScriptGate()
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
+    /**
+     * How many times each extension's background has been started here since the process came
+     * up (instrumentation): a worker with no view and a start on record has idled out – an MV3
+     * worker stops half a minute after its last traffic, as Chrome's does – where one with no
+     * start never ran.
+     */
+    private val backgroundStarts = HashMap<String, Int>()
     /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
     private val offscreens = HashMap<String, ExtensionWebView>()
     private var popup: ExtensionPopup? = null
@@ -1881,6 +1888,9 @@ class Extensions(private val host: Host) {
     /** The hidden background WebView of an attached extension (instrumentation reads its console). */
     fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
 
+    /** How many times the extension's background has been started here (instrumentation; see [backgroundStarts]). */
+    fun backgroundStarts(id: String): Int = backgroundStarts[id] ?: 0
+
     /**
      * Ask the runtime to run an extension's stopped background (an MV3 worker idles out half a
      * minute after its last traffic), as Chrome's management page starts an inactive worker when
@@ -1935,6 +1945,7 @@ class Extensions(private val host: Host) {
         stopBackground(id)
         val view = ExtensionWebView(host, this, ext, "background")
         backgrounds[id] = view
+        backgroundStarts[id] = backgroundStarts(id) + 1
         host.attachHidden(view)
         view.loadUrl(url)
     }

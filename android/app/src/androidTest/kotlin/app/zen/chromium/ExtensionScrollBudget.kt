@@ -370,7 +370,8 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
      * Turn the six on or off so that exactly `wanted` (of what was pushed) is attached, and wait
      * for the runtime to have configured every one turned on (its units compiled: `configureStats`)
      * and dropped every one turned off, then for their backgrounds to be up (an MV3 worker
-     * starts on attach). Returns the milliseconds it took.
+     * starts on attach) or to have run (one that idled out since, its view gone, is accepted and
+     * listed as `backgroundsIdle`). Returns the milliseconds it took.
      */
     private fun attach(wanted: Set<String>, entry: JSONObject): Long {
         val started = SystemClock.uptimeMillis()
@@ -391,15 +392,25 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         }
         entry.put("configured", configured == true)
         if (configured != true) finding("the runtime had not configured exactly ${on.joinToString()} after $CONFIGURE_MS ms")
+        // A background counts as up with its view present, or with a start on record and no
+        // view: an MV3 worker that ran and idled out (half a minute after its last traffic, as
+        // Chrome's does; compat round 18's 156 six scene waited 30 s each on uBO Lite's and
+        // Vimium's, idle since scene 3). Only a worker that never started is a finding.
+        val idle = JSONArray()
         for (id in on) {
-            val up = waitFor(BACKGROUND_MS) { if (backgroundView(id)) true else null }
-            if (up != true) finding("${NAMES[id] ?: id}: no background view after $BACKGROUND_MS ms (an MV3 worker may have idled out already, or never started)")
+            val up = waitFor(BACKGROUND_MS) { if (backgroundView(id) || backgroundStarts(id) > 0) true else null }
+            when {
+                up != true -> finding("${NAMES[id] ?: id}: no background view after $BACKGROUND_MS ms and no start of it on record (the worker never started)")
+                !backgroundView(id) -> idle.put(id)
+            }
         }
         // Their first start acts on install (`onInstalled`: onboarding tabs, storage); let it land.
         SystemClock.sleep(if (changes.length() > 0) 4_000 else 500)
         val ms = SystemClock.uptimeMillis() - started
         entry.put("attachMs", ms)
         entry.put("backgroundsUp", JSONArray(backgroundsUp()))
+        entry.put("backgroundsIdle", idle)
+        if (idle.length() > 0) finding("idle workers (started, no view now): ${(0 until idle.length()).joinToString { NAMES[idle.getString(it)] ?: idle.getString(it) }}")
         return ms
     }
 
@@ -407,6 +418,13 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         var up = false
         instrumentation.runOnMainSync { up = host.extensions.backgroundView(id) != null }
         return up
+    }
+
+    /** How many times the runtime has started the extension's background in this process (0: never). */
+    private fun backgroundStarts(id: String): Int {
+        var starts = 0
+        instrumentation.runOnMainSync { starts = host.extensions.backgroundStarts(id) }
+        return starts
     }
 
     private fun backgroundsUp(): List<String> = installed.keys.filter { backgroundView(it) }
