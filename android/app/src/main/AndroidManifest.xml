@@ -155,15 +155,17 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:theme="@style/Theme.Zen.Splash"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|fontWeightAdjustment|colorMode">
             <!-- The launcher entry is one of the icon aliases below (Settings → Look and Feel → App
-                 icon), which reach this activity through LauncherIconActivity; everything that
-                 targets the activity itself keeps working whichever alias is on. Web links arrive
-                 through LinkDispatchActivity below, which owns the VIEW http/https filter. -->
+                 icon), which reach this activity through IconTapActivity in this activity's own
+                 task; everything that targets the activity itself keeps working whichever alias
+                 is on. Web links arrive through LinkDispatchActivity below, which owns the VIEW
+                 http/https filter. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.APP_BROWSER" />
@@ -203,8 +205,21 @@
             </intent-filter>
         </activity>
 
-        <!-- The aliases' target: hands over to MainActivity in its own task and finishes unseen, so
-             disabling an alias never removes the browser's task (see LauncherIconActivity). -->
+        <!-- The icon aliases' target (IconTapActivity.kt): the splash theme, so the platform draws
+             the starting window at the tap; the package's affinity, so MainActivity joins THIS task
+             and the platform transfers that window to it; the identity relinquished to
+             MainActivity the moment it joins, so disabling an alias never removes the browser's
+             task. Not exported: the aliases are. -->
+        <activity
+            android:name=".IconTapActivity"
+            android:exported="false"
+            android:noHistory="true"
+            android:relinquishTaskIdentity="true"
+            android:theme="@style/Theme.Zen.Splash" />
+
+        <!-- The shortcuts' target: hands over to MainActivity from a task of its own and finishes
+             unseen, so the CLEAR_TASK the system stamps on a shortcut clears only this task (see
+             LauncherIconActivity). -->
         <activity
             android:name=".LauncherIconActivity"
             android:exported="false"
@@ -283,7 +298,8 @@
              intoExisting) and handed a repeat launch (singleTop), out of the browser's task (its own,
              empty affinity), listed in Recents under the app's name and icon; not kept across a
              reboot, as Chrome's WebappActivity is not. Not exported: only the trampoline above
-             starts it. -->
+             starts it. Its theme is the launch's splash (PWA-06, WebAppSplash.kt), which leaves
+             the window in Theme.Zen.WebApp. -->
         <activity
             android:name=".WebAppActivity"
             android:exported="false"
@@ -293,7 +309,7 @@
             android:taskAffinity=""
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.Zen.WebApp"
+            android:theme="@style/Theme.Zen.WebApp.Splash"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" />
 
         <!-- The Custom Tabs provider service other apps bind before they open a custom tab
@@ -314,7 +330,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_indigo"
             android:label="@string/app_name"
-            android:targetActivity=".LauncherIconActivity">
+            android:targetActivity=".IconTapActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -327,7 +343,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_purple"
             android:label="@string/app_name"
-            android:targetActivity=".LauncherIconActivity">
+            android:targetActivity=".IconTapActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -340,7 +356,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_ocean"
             android:label="@string/app_name"
-            android:targetActivity=".LauncherIconActivity">
+            android:targetActivity=".IconTapActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -353,7 +369,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_forest"
             android:label="@string/app_name"
-            android:targetActivity=".LauncherIconActivity">
+            android:targetActivity=".IconTapActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -366,7 +382,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_sunset"
             android:label="@string/app_name"
-            android:targetActivity=".LauncherIconActivity">
+            android:targetActivity=".IconTapActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -379,7 +395,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_rose"
             android:label="@string/app_name"
-            android:targetActivity=".LauncherIconActivity">
+            android:targetActivity=".IconTapActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -392,7 +408,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_slate"
             android:label="@string/app_name"
-            android:targetActivity=".LauncherIconActivity">
+            android:targetActivity=".IconTapActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -405,7 +421,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_graphite"
             android:label="@string/app_name"
-            android:targetActivity=".LauncherIconActivity">
+            android:targetActivity=".IconTapActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

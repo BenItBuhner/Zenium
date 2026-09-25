@@ -11,6 +11,43 @@
         <item name="colorSecondary">#6264DC</item>
     </style>
 
+    <!-- The cold start's splash (OS-26, MainActivity): the launcher's mark on the brand colour –
+         the default icon's background (ic_launcher_colors.xml, generated with the icons) – held
+         over the window until the chrome's first real frame (StartupSplash), the boot theme below
+         it (Theme.Zen.Boot: the browser theme in the splash's colour until the chrome's first
+         theme). The bars are transparent with light icons over the indigo; the tone the chrome
+         asks for meanwhile is applied as the splash's exit ends. API 33+ draws the icon for a
+         plain start too (an `am start` without the show-icon flag: the harness's and the pair
+         tool's), where the default would be the solid colour alone. -->
+    <style name="Theme.Zen.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_bg_indigo</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Zen.Boot</item>
+        <item name="android:windowSplashScreenBehavior" tools:targetApi="tiramisu">icon_preferred</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
+    </style>
+
+    <!-- The theme the splash leaves MainActivity's window in: the browser theme with the window's
+         background in the splash's colour and the bars' icons in its tone. The platform draws the
+         app window's first frame before the SplashScreenView it hands over is attached to it (the
+         hand-over frame), and on the recipe's emulator that frame stood for 250–400 ms: in
+         Theme.Zen's zen_background it is the plain window the row removes, seen between two runs
+         of the splash; in the brand colour it is the splash without its mark. The chrome's first
+         theme replaces both (Host.applyTheme paints the root and the decor in the chrome's colour
+         and asks for its bar tone, at the chrome's boot, before READY), so nothing after the boot
+         wears this; the chrome WebView is transparent until the chrome paints, which is why the
+         window's colour shows through it. Theme.Zen's child by name: the night Theme.Zen is its
+         parent at night, and there is no night copy of this style. -->
+    <style name="Theme.Zen.Boot">
+        <item name="android:windowBackground">@color/ic_launcher_bg_indigo</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o">false</item>
+    </style>
+
     <!-- A custom tab: the browser theme, arriving from the bottom and leaving the same way
          (Chrome's default; a caller's own start and exit animations take precedence). -->
     <style name="Theme.Zen.CustomTab">
@@ -24,9 +61,29 @@
     </style>
 
     <!-- An installed web app's window (WebAppActivity, PWA-07): the browser theme under the
-         system's own app-launch animation, as an app of its own. Its own name so the splash
-         (PWA-06) has a theme to hang its window attributes on. -->
+         system's own app-launch animation, as an app of its own; the theme the splash below
+         leaves the window in. -->
     <style name="Theme.Zen.WebApp" />
+
+    <!-- The web app's cold launch splash (PWA-06, WebAppActivity's manifest theme). The platform
+         draws the starting window from these attributes before any code of the app runs, so the
+         app's own colour and tile cannot be here (WebAppSplash puts them on the view at the
+         hand-over): a fixed ground – the web app window's page colour, light or night – and a
+         transparent icon, so no Zenium mark stands in for the app's. The bars' icons are dark
+         over the light ground (the night ground and its light icons: values-night/themes.xml,
+         the style whole, as a night qualifier replaces a style); the tone the app wants is
+         applied as the splash lifts. -->
+    <style name="Theme.Zen.WebApp.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/v2_page_light</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="postSplashScreenTheme">@style/Theme.Zen.WebApp</item>
+        <item name="android:windowSplashScreenBehavior" tools:targetApi="tiramisu">icon_preferred</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
+    </style>
 
     <!-- A phone sheet drawn natively per the v2 draft (§6): neutral panel, top radius 12, edge to
          edge under the navigation bar, scrim black .4 light / .55 dark. The 1 dp hairline is drawn

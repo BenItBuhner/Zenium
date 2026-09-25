@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "tabIds": [
+        "tab_startup"
+      ],
+      "activeTabId": "tab_startup",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_startup",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://10.0.2.2:18931/fixture",
+      "title": "Zenium startup fixture",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "gestureHintDone": true,
+    "fullscreenHintDone": true,
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_startup"
+      },
+      "compact": false
+    }
+  ]
+}

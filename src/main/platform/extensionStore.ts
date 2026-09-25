@@ -24,6 +24,12 @@ import {
   DECLARED_MANIFEST_FILE,
   withoutWithheldPermissions
 } from '../../core/extensions/withheldPermissions'
+import {
+  hostPermissionContains,
+  manifestPermissionSets
+} from '../../core/extensions/api/permissions'
+import { compileMatchPattern } from '../../core/extensions/api/matchPattern'
+import type { ExtensionManifest } from '../../core/extensions/manifest'
 import type { StoreFetch } from '../../core/extensions/store'
 
 /**
@@ -97,15 +103,98 @@ export function idForUnpackedPath(path: string): string {
 /**
  * The manifest the engine loads, from the manifest as declared: the content-script storage
  * prelude first in each `content_scripts[].js` list (`core/extensions/contentScriptPrelude.ts`),
- * and the permissions the engine must not see taken out (`core/extensions/withheldPermissions.ts`).
+ * the permissions the engine must not see taken out (`core/extensions/withheldPermissions.ts`),
+ * and the host patterns the user granted at run time folded in (`withGrantedHosts`). `granted`
+ * is the extension's persisted grant set's origins (the API layer's `chrome.permissions` store).
  */
-function engineManifest(declared: Record<string, unknown>): {
+export function engineManifest(
+  declared: Record<string, unknown>,
+  granted: readonly string[] = []
+): {
   manifest: Record<string, unknown>
   changed: boolean
 } {
   const prelude = withContentScriptPrelude(declared)
   const withheld = withoutWithheldPermissions(prelude.manifest)
-  return { manifest: withheld.manifest, changed: prelude.changed || withheld.changed }
+  const hosts = withGrantedHosts(withheld.manifest, granted)
+  return {
+    manifest: hosts.manifest,
+    changed: prelude.changed || withheld.changed || hosts.changed
+  }
+}
+
+/**
+ * The host patterns a runtime grant adds to the engine's manifest. Electron exposes no runtime
+ * mutation of an extension's permission set, so an origin the user granted through
+ * `chrome.permissions.request` reaches Chromium's `//extensions` permission set — the native
+ * `scripting.executeScript`, the content-script matcher — only through the manifest the engine
+ * loads. Of the origins granted (the persisted set), those the manifest lists as optional
+ * (`optional_host_permissions`; MV2's host patterns among `optional_permissions`) and no required
+ * pattern already covers, each once, in the order granted. Never an optional pattern the user did
+ * not grant — the grant decides what the engine may reach — never an origin the manifest cannot
+ * request (a grant kept from an earlier version), never a malformed pattern. `<all_urls>` and
+ * file-scheme patterns pass as they are; Chromium honours a file pattern only with file access,
+ * as it does a declared one.
+ */
+export function grantedHostPermissions(
+  manifest: Record<string, unknown>,
+  granted: readonly string[]
+): string[] {
+  const sets = manifestPermissionSets(manifest as unknown as ExtensionManifest)
+  const out: string[] = []
+  for (const origin of granted) {
+    if (out.includes(origin) || compileMatchPattern(origin) === null) continue
+    if (sets.required.origins.some((required) => hostPermissionContains(required, origin))) continue
+    if (!sets.optional.origins.some((optional) => hostPermissionContains(optional, origin)))
+      continue
+    out.push(origin)
+  }
+  return out
+}
+
+/**
+ * The manifest with the runtime-granted host patterns (`grantedHostPermissions`) in the list
+ * Chromium reads host permissions from: `host_permissions` for MV3, `permissions` for MV2
+ * (Chromium ignores `host_permissions` in an MV2 manifest). Unchanged when nothing is to add.
+ */
+export function withGrantedHosts(
+  manifest: Record<string, unknown>,
+  granted: readonly string[]
+): { manifest: Record<string, unknown>; changed: boolean } {
+  const add = grantedHostPermissions(manifest, granted)
+  if (add.length === 0) return { manifest, changed: false }
+  const key = hostListKey(manifest)
+  const current = manifest[key]
+  const list: unknown[] = Array.isArray(current) ? current : []
+  return {
+    manifest: { ...manifest, [key]: [...list, ...add.filter((origin) => !list.includes(origin))] },
+    changed: true
+  }
+}
+
+/**
+ * The inverse of `withGrantedHosts` on the engine's manifest: the folded patterns out of the
+ * list they were folded into, so the manifest reads as declared where the manifest stands for
+ * what the extension asked for – the `chrome.permissions` layer's required set (a folded origin
+ * must stay removable; a required one is not), the chrome's permission lines. A folded pattern
+ * is never one the declaration lists (`grantedHostPermissions` leaves a covered origin out), so
+ * taking the exact strings out restores the declared list. Unchanged when nothing was folded.
+ */
+export function withoutGrantedHosts(
+  manifest: Record<string, unknown>,
+  folded: readonly string[]
+): Record<string, unknown> {
+  if (folded.length === 0) return manifest
+  const key = hostListKey(manifest)
+  const current = manifest[key]
+  if (!Array.isArray(current)) return manifest
+  const list = current.filter((entry) => typeof entry !== 'string' || !folded.includes(entry))
+  return list.length === current.length ? manifest : { ...manifest, [key]: list }
+}
+
+/** The manifest list Chromium reads host permissions from (MV2 mixes them into `permissions`). */
+function hostListKey(manifest: Record<string, unknown>): 'permissions' | 'host_permissions' {
+  return manifest.manifest_version === 2 ? 'permissions' : 'host_permissions'
 }
 
 /**
@@ -113,7 +202,8 @@ function engineManifest(declared: Record<string, unknown>): {
  * directory. Unsigned zips get a synthetic `manifest.key` so Electron derives the same id the
  * package carries (Chromium accepts any base64 bytes there and hashes them). Every install
  * directory also carries the content-script storage prelude, and its `manifest.json` is the
- * engine's copy (`engineManifest`); the manifest as declared is kept beside it under
+ * engine's copy (`engineManifest`; the extension's runtime host grants join it at its first
+ * load, `prepareInstallDir`); the manifest as declared is kept beside it under
  * `DECLARED_MANIFEST_FILE`, which `declaredManifestPath` prefers.
  */
 export async function writePackage(root: string, pkg: ExtensionPackage): Promise<string> {
@@ -158,16 +248,20 @@ export async function writePackage(root: string, pkg: ExtensionPackage): Promise
 }
 
 /**
- * An install directory written by an earlier Zenium is brought to the current layout at load:
- * the prelude file is (re)written when its header differs, the manifest as declared is copied to
+ * An install directory is brought to the current layout at every load: the prelude file is
+ * (re)written when its header differs, the manifest as declared is copied to
  * `DECLARED_MANIFEST_FILE` when that copy is missing (before anything else touches the manifest,
- * so a declaration is never lost), and `manifest.json` becomes the engine's copy
- * (`engineManifest`) when it is not one yet. Idempotent; a directory whose manifest cannot be
- * read is left to the engine's loader. Returns whether the directory is in shape; the caller
- * decides what a failure means (an extension declaring a withheld permission must not load
- * from a manifest still carrying it).
+ * so a declaration is never lost), and `manifest.json` becomes the engine's copy for the
+ * extension's current grants (`engineManifest` over the declaration, never over the previous
+ * engine copy, so an origin the user revoked leaves the manifest as it entered it). Idempotent
+ * while nothing changed; a directory whose manifest cannot be read is left to the engine's
+ * loader. Returns whether the directory is in shape; the caller decides what a failure means (an
+ * extension declaring a withheld permission must not load from a manifest still carrying it).
  */
-export async function prepareInstallDir(dir: string): Promise<boolean> {
+export async function prepareInstallDir(
+  dir: string,
+  granted: readonly string[] = []
+): Promise<boolean> {
   const prelude = contentScriptPreludeFile()
   const preludePath = join(dir, prelude.path)
   try {
@@ -175,16 +269,18 @@ export async function prepareInstallDir(dir: string): Promise<boolean> {
     if (!current || !sameBytes(current, prelude.bytes))
       await fs.writeFile(preludePath, prelude.bytes)
     const manifestPath = join(dir, 'manifest.json')
-    const bytes = await fs.readFile(manifestPath)
     const declaredPath = join(dir, DECLARED_MANIFEST_FILE)
-    if (!(await nodeLayoutFs.exists(declaredPath))) await fs.writeFile(declaredPath, bytes)
-    let changed = false
-    const next = transformManifestBytes(bytes, (manifest) => {
-      const rewrite = engineManifest(manifest)
-      changed = rewrite.changed
-      return rewrite.manifest
-    })
-    if (changed) await fs.writeFile(manifestPath, next)
+    const engine = await fs.readFile(manifestPath)
+    let declared = await fs.readFile(declaredPath).catch(() => null)
+    if (!declared) {
+      await fs.writeFile(declaredPath, engine)
+      declared = engine
+    }
+    const next = transformManifestBytes(
+      declared,
+      (manifest) => engineManifest(manifest, granted).manifest
+    )
+    if (!sameBytes(next, engine)) await fs.writeFile(manifestPath, next)
     return true
   } catch (error) {
     console.warn(
@@ -222,9 +318,10 @@ export const SHADOW_DIR = '.shadow'
  * The developer's folder is never written to. What the engine loads instead is a shadow under
  * `<root>/.shadow/<id>/`: every top-level entry of the folder copied in, the prelude beside
  * them, and the engine's manifest (`engineManifest`: the prelude first in its content-script
- * lists, the withheld permissions out) with a synthetic `key` that hashes to the id Chrome
- * gives the folder (`idForUnpackedPath`), so the id survives the move. Rebuilt on every load,
- * so a reload picks up the folder's changes as Chrome's reload of an unpacked extension does.
+ * lists, the withheld permissions out, the runtime host grants in) with a synthetic `key` that
+ * hashes to the id Chrome gives the folder (`idForUnpackedPath`), so the id survives the move.
+ * Rebuilt on every load, so a reload picks up the folder's changes as Chrome's reload of an
+ * unpacked extension does.
  *
  * Copies, not links: Chromium reads a content script through `ExtensionResource::GetFilePath`
  * with `SYMLINKS_MUST_RESOLVE_WITHIN_ROOT` whatever the extension's own symlink policy
@@ -233,7 +330,12 @@ export const SHADOW_DIR = '.shadow'
  * extension's pages ran and its content scripts never did. Symlinks inside the folder are
  * followed while copying, as Chrome follows them for an unpacked extension.
  */
-export async function shadowUnpacked(root: string, id: string, path: string): Promise<string> {
+export async function shadowUnpacked(
+  root: string,
+  id: string,
+  path: string,
+  granted: readonly string[] = []
+): Promise<string> {
   const dir = join(root, SHADOW_DIR, id)
   const staging = `${dir}.${process.pid.toString(36)}-${Date.now().toString(36)}`
   await fs.rm(staging, { recursive: true, force: true })
@@ -253,7 +355,7 @@ export async function shadowUnpacked(root: string, id: string, path: string): Pr
   }
   const raw = await fs.readFile(join(path, 'manifest.json'))
   const manifest = transformManifestBytes(raw, (parsed) => ({
-    ...engineManifest(parsed).manifest,
+    ...engineManifest(parsed, granted).manifest,
     key: unpackedKeyFor(path)
   }))
   await fs.writeFile(join(staging, 'manifest.json'), manifest)

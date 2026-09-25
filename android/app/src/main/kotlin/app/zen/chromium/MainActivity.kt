@@ -9,13 +9,16 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebView
 import android.widget.FrameLayout
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsAnimationCompat
@@ -37,6 +40,10 @@ class MainActivity : BrowserActivity() {
         private set
     /** The foldable's pose for the chrome (`Posture.kt`): reported at boot and on each change. */
     private lateinit var posture: Posture
+    /** The cold start's splash, held over the chrome until its first real frame (OS-26). */
+    private lateinit var startupSplash: StartupSplash
+    /** `chrome.ready` heard this boot: the chrome says it once, and a second is nothing. */
+    private var chromeReadyHeard = false
     /**
      * The insets as last told to the chrome (CSS px), zeros until the window's first dispatch:
      * the boot payload carries them ([currentInsets]), and a chrome booting ahead of that
@@ -108,8 +115,15 @@ class MainActivity : BrowserActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The splash first (OS-26), before super.onCreate as the library requires: the window's
+        // theme becomes Theme.Zen (Theme.Zen.Splash's postSplashScreenTheme) and the platform's
+        // splash view comes to StartupSplash at the first frame, held until onChromeReady.
+        BootMarks.mark("activity")
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        startupSplash = StartupSplash(window)
+        startupSplash.attach(splashScreen, StartupSplash.platformRelease(this))
 
         root = FrameLayout(this)
         fullscreenLayer = FrameLayout(this).apply {
@@ -117,6 +131,7 @@ class MainActivity : BrowserActivity() {
             visibility = View.GONE
         }
         host = Host(this, root, fullscreenLayer)
+        BootMarks.mark("host")
         posture = Posture(this) { report -> host.chrome.hostEvent("posture", report) }
         root.addView(host.chrome, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val shell = FrameLayout(this)
@@ -127,6 +142,7 @@ class MainActivity : BrowserActivity() {
         shell.addView(host.historyNavBubbleLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         shell.addView(fullscreenLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(shell)
+        BootMarks.mark("content")
 
         ViewCompat.setOnApplyWindowInsetsListener(shell) { _, windowInsets ->
             latestInsets = windowInsets
@@ -159,8 +175,10 @@ class MainActivity : BrowserActivity() {
 
         // Back is the host's PredictiveBack: it registers itself only while there is something to
         // pop, so an empty stack leaves the system's own back-to-home animation alone.
+        BootMarks.mark("load")
         host.chrome.load()
         handleIntent(intent)
+        BootMarks.mark("created")
     }
 
     fun currentInsets(): JSONObject = insets
@@ -369,9 +387,58 @@ class MainActivity : BrowserActivity() {
     override fun onDestroy() {
         // Also on configuration-driven recreation (density change): the new activity builds a new
         // host and the core restores the session from disk.
+        startupSplash.cancel()
         host.destroy()
         super.onDestroy()
     }
+
+    // --- the cold start's marks (OS-26, OS-27) ---------------------------------------------------
+
+    /**
+     * The chrome's first real frame: `chrome.ready` from boot.ts – the core started with the
+     * session restored, the chrome rendered under the host's insets and its theme, the page slot
+     * placed – and here confirmed drawn by the WebView's visual-state callback, which fires once a
+     * frame carrying the DOM as it stood at the post has been drawn. Then the splash lifts
+     * (StartupSplash) and the launch's mark is set: `reportFullyDrawn()`, the `Fully drawn` line
+     * in logcat (ActivityTaskManager) that the pair tool reads beside `am start -W`'s TotalTime.
+     * The callback needs the WebView visible, which it is under the splash view (a sibling over
+     * it, not a cover of it); with no splash held (a warm start's recreated activity, a boot that
+     * outlasted the watchdog) the mark is still set.
+     */
+    fun onChromeReady() {
+        if (chromeReadyHeard) return
+        chromeReadyHeard = true
+        BootMarks.mark("ready")
+        val posted = SystemClock.uptimeMillis()
+        host.chrome.postVisualStateCallback(CHROME_READY_FRAME, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                if (isDestroyed || isFinishing) return
+                BootMarks.mark("frame")
+                reportFullyDrawn()
+                startupSplash.ready()
+                Log.i(
+                    StartupSplash.TAG,
+                    "chrome ready: frame drawn ${SystemClock.uptimeMillis() - posted} ms after the chrome's word; " +
+                        "splash held ${startupSplash.heldForMs ?: -1} ms, lifted by ${startupSplash.hold.liftedBy ?: "nothing yet"}"
+                )
+                // The process's first boot's marks, once: a re-created activity's READY has no marks of its own to add.
+                BootMarks.lineOnce()?.let { Log.i(StartupSplash.TAG, "boot marks: $it") }
+            }
+        })
+    }
+
+    /**
+     * The tone of the system bars' icons the chrome asks for with its theme (Host.applyTheme):
+     * kept while the splash is up, whose own tone the bars wear until it lifts.
+     */
+    fun setSystemBarsLight(light: Boolean) = startupSplash.systemBarsLight(light)
+
+    /**
+     * Whether the boot's restore is still in flight: a `view.load` before the chrome's READY is
+     * the session coming back, and its page gets its last picture (RestoredPictures); one after
+     * it is the user's.
+     */
+    val restoringAtBoot: Boolean get() = !chromeReadyHeard
 
     // --- picture-in-picture (MediaSessions.kt) ---------------------------------------------------
 
@@ -405,7 +472,11 @@ class MainActivity : BrowserActivity() {
         // dropping (see HostLifecycle for why UI_HIDDEN is not pressure).
         if (HostLifecycle.trimDropsSnapshots(level)) host.snapshots.clear()
         // Short of memory: the core puts hidden pages to sleep ahead of their timeout (CT-22).
-        HostLifecycle.memoryPressure(level)?.let { host.chrome.hostEvent("memoryPressure", json("level" to it)) }
+        HostLifecycle.memoryPressure(level)?.let {
+            host.chrome.hostEvent("memoryPressure", json("level" to it))
+            // A restored tab's picture still up is a bitmap the page beneath will replace anyway.
+            host.restoredPictures.releaseAll("memory pressure")
+        }
     }
 
     // --- keyboard --------------------------------------------------------------------------------
@@ -515,6 +586,11 @@ class MainActivity : BrowserActivity() {
             defaultBrowserCallback = null
             reply(null)
         }
+    }
+
+    private companion object {
+        /** The one visual-state request of a boot (`onChromeReady`); the id is the callback's, nothing reads it. */
+        const val CHROME_READY_FRAME = 1L
     }
 }
 

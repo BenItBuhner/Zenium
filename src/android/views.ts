@@ -159,7 +159,9 @@ export class AndroidTabView implements TabView {
       pdf: () => null
     },
     private readonly navigation: NavigationBridge = new NavigationBridge(bridge),
-    private readonly placement: PlacementListener = noPlacementListener
+    private readonly placement: PlacementListener = noPlacementListener,
+    /** Told of every `setBounds`: the boot's READY counts the first placement (`startup.ts`). */
+    private readonly placed: () => void = () => {}
   ) {}
 
   /** Route a Kotlin event to the core. */
@@ -603,6 +605,7 @@ export class AndroidTabView implements TabView {
 
   setBounds(rect: Rect): void {
     this.bridge.batched('view.setBounds', { tabId: this.tabId, rect })
+    this.placed()
   }
 
   setBorderRadius(radius: number): void {
@@ -885,6 +888,12 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
    * platform sets it to the chrome's `view.shown` event; until then they are heard by no one.
    */
   shown: (tabId: string, shown: boolean) => void = () => {}
+  /**
+   * Hears every view's `setBounds` (the layout report placing the page slot): the boot's READY
+   * takes the first one under the applied insets (`startup.ts`); null once nothing listens.
+   */
+  onPlaced: (() => void) | null = null
+  private readonly placed = (): void => this.onPlaced?.()
 
   constructor(private readonly bridge: Bridge) {
     this.navigation = new NavigationBridge(bridge)
@@ -895,7 +904,14 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
   }
 
   createView(tab: Tab, events: TabViewEvents): TabView {
-    const view = new AndroidTabView(tab.id, this.bridge, this.pages, this.navigation, this)
+    const view = new AndroidTabView(
+      tab.id,
+      this.bridge,
+      this.pages,
+      this.navigation,
+      this,
+      this.placed
+    )
     view.events = events
     this.views.set(tab.id, view)
     this.bridge.send('view.create', { tabId: tab.id, containerId: tab.containerId })
@@ -904,7 +920,14 @@ export class AndroidTabViewHost implements TabViewHost, PlacementListener {
 
   /** Register a view Kotlin created itself (a `window.open` popup adopted as a tab). */
   registerAdopted(tabId: string): AndroidTabView {
-    const view = new AndroidTabView(tabId, this.bridge, this.pages, this.navigation, this)
+    const view = new AndroidTabView(
+      tabId,
+      this.bridge,
+      this.pages,
+      this.navigation,
+      this,
+      this.placed
+    )
     this.views.set(tabId, view)
     return view
   }

@@ -10,4 +10,18 @@
         <item name="colorPrimary">#8284F0</item>
         <item name="colorSecondary">#8284F0</item>
     </style>
+
+    <!-- The web app's cold launch splash at night (PWA-06; the day style and its reasons in
+         values/themes.xml): the night page colour for the fixed ground, light icons over it. -->
+    <style name="Theme.Zen.WebApp.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/v2_page_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="postSplashScreenTheme">@style/Theme.Zen.WebApp</item>
+        <item name="android:windowSplashScreenBehavior" tools:targetApi="tiramisu">icon_preferred</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
+    </style>
 </resources>

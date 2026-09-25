@@ -1068,6 +1068,21 @@
       "note": "Its own script (gestural navigation for its scenes; the runner puts three-button navigation back); one take (no before APK)."
     },
     {
+      "id": "startup",
+      "class": "StartupDemo",
+      "shard": "api35",
+      "mirrors": "android-startup-demo.yml",
+      "script": ".github/scripts/android-startup-demo.sh",
+      "env": {
+        "STARTUP_ASSERT": "true",
+        "STARTUP_THEMES": "light"
+      },
+      "setup": ["ffmpeg"],
+      "timeout": 900,
+      "estimate": 4,
+      "note": "Its own script: the instrumentation seeds the session and walks out so the fixture tab's picture is on disk, the script performs the starts (cold with the fixture's paint held back, hot, the activity re-created) against a loopback fixture server on the runner, reads am start -W, the Fully drawn line and dumpsys window, and reads each recording frame by frame (android-startup-frames.mjs, ffmpeg). Light only here (the dispatch records both schemes); beside the status bar's boot-path driver, and the phone shards have no room for it."
+    },
+    {
       "id": "motion-perf",
       "class": "MotionPerfDemo",
       "shard": "api35",

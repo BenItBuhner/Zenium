@@ -17,6 +17,7 @@ import {
   type BackEventPayload,
   type BackPhase
 } from '@renderer/lib/back'
+import { THEME_PAINTED_EVENT } from '@renderer/hooks/useTheme'
 import { applyAccessibilityState } from '@renderer/lib/accessibilityState'
 import { applyPrivateLock, setPrivateLockHost } from '@renderer/lib/privateLock'
 import { privateSurfaceNow, subscribePrivateSurface } from '@renderer/lib/privateSurface'
@@ -42,7 +43,7 @@ import {
   type PullEventPhase
 } from '@renderer/lib/pull'
 import { applyTextScale } from '@renderer/lib/textScale'
-import { pushToast } from '@renderer/lib/ui'
+import { pushToast, uiStore } from '@renderer/lib/ui'
 import { Bridge, getNativeBridge, openBridgePort } from './bridge'
 import { captureUpdates, type CapturesHeld } from './captureRelay'
 import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
@@ -50,8 +51,9 @@ import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
 import { landFromIntent } from './landing'
 import { syncNativeTheme } from './nativeTheme'
-import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
+import { AndroidPlatform, windowInsetsOf, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
+import { ChromeReady } from './startup'
 import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
@@ -143,7 +145,8 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   const bridge = new Bridge(native ?? createPreviewBridge())
   // The host global must exist before the first (synchronous) bridge call answers.
   const platformRef: { current: AndroidPlatform | null } = { current: null }
-  const hostGlobal = installHostGlobal(bridge, platformRef)
+  const readyRef: { current: ChromeReady | null } = { current: null }
+  const hostGlobal = installHostGlobal(bridge, platformRef, readyRef)
 
   const boot = bridge.callSync<BootInfo>('boot', {})
   // The host's asynchronous channel (`bridge.ts`: the port is the bridge for every call, post
@@ -165,6 +168,16 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   const browser = new Browser(platform)
   platform.bind(browser)
   platformRef.current = platform
+  // The chrome's READY for the host's splash and startup mark (OS-26, OS-27): armed below once
+  // the core has started; listening for the theme's first paint from here, before React renders.
+  const ready = new ChromeReady(bridge, {
+    insets: windowInsetsOf(boot.insets),
+    store: uiStore,
+    paintTarget: window,
+    paintEvent: THEME_PAINTED_EVENT
+  })
+  readyRef.current = ready
+  platform.views.onPlaced = () => ready.placed()
   syncNativeTheme({
     bridge,
     onState: (listener) => platform.events.on('state', listener),
@@ -198,6 +211,11 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   if (typeof boot.landing === 'string')
     landFromIntent(boot.landing, platform.browser, platform.window)
   hostGlobal.flush()
+  // Started, restored, flushed: READY once the chrome has painted its theme under the insets and
+  // placed the page slot – when there is a page to place (the active tab restored as a page;
+  // a chrome page, the new tab page, has no view and nothing to wait for).
+  const active = browser.tabs.activeTabFor(platform.window)
+  ready.arm(active !== undefined && !browser.pages.isChromePage(active))
 
   // Shortcuts typed into the chrome itself go through the same table as page keys.
   window.addEventListener(
@@ -361,7 +379,8 @@ function syncHistoryNavBubble(bridge: Bridge): void {
  */
 function installHostGlobal(
   bridge: Bridge,
-  platformRef: { current: AndroidPlatform | null }
+  platformRef: { current: AndroidPlatform | null },
+  readyRef: { current: ChromeReady | null } = { current: null }
 ): { flush(): void } {
   const parse = <T>(json: string | null | undefined): T =>
     (json === null || json === undefined || json === '' ? undefined : JSON.parse(json)) as T
@@ -419,6 +438,8 @@ function installHostGlobal(
         // A configuration change: the host has re-zoomed the chrome's text already, and the
         // line boxes follow the factor it reports (`lib/textScale.ts`).
         if (name === 'environment') applyTextScale(payload as HostEventPayloads['environment'])
+        // The boot's READY waits for the chrome to have applied the host's latest insets (`startup.ts`).
+        if (name === 'insets') readyRef.current?.hostInsets(windowInsetsOf(payload))
       }, name)
     },
     onKey: (tabId, json) =>

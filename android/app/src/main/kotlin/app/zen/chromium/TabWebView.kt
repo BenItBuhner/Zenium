@@ -190,6 +190,21 @@ class TabWebView(
      * is taken of this document alone ([captureThumbnail], [snapshot]).
      */
     private var paintedDocument: String? = null
+    /** Whether the view has drawn any document at all (see [paintedDocument]). */
+    val hasPaintedDocument: Boolean get() = paintedDocument != null
+    /**
+     * Told once, as the first document after it was set paints ([paintedDocument] is written):
+     * the restored tab's picture comes down on it (`RestoredPictures`). Nulled as it is told.
+     */
+    var onDocumentPainted: (() -> Unit)? = null
+
+    private fun documentPainted(url: String) {
+        paintedDocument = url
+        onDocumentPainted?.let { told ->
+            onDocumentPainted = null
+            told()
+        }
+    }
     /**
      * The main-frame URL whose load failed last. WebView has already committed its own error page
      * under that URL (or is about to, and reports the commit through `doUpdateVisitedHistory` and
@@ -2395,7 +2410,7 @@ class TabWebView(
             if (isUnloadCheckDocument(url)) return
             // WebView's word that nothing of the page before is drawn any more: from here the
             // pixels are this document's, and so may its card picture be.
-            paintedDocument = url
+            documentPainted(url)
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.COMMIT_VISIBLE)
         }
 
@@ -2403,7 +2418,7 @@ class TabWebView(
             if (isUnloadCheckDocument(url)) return
             loading = false
             // A document that finished has drawn (the word for one whose commit-visible never came).
-            paintedDocument = url
+            documentPainted(url)
             if (pendingFlags && host.pageScript.isNotEmpty()) {
                 evaluateJavascript(startScriptSource(), null)
             }
