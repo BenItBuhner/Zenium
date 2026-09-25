@@ -758,6 +758,19 @@
       "estimate": 3.5
     },
     {
+      "id": "menu-edit",
+      "class": "MenuEditDemo",
+      "shard": "phone-e",
+      "mirrors": "android-menu-edit-demo.yml",
+      "dir": "menu-edit-demo",
+      "env": {
+        "DEMO_THEME": "light",
+        "DEMO_ARGS": "-e holdBackgroundWork true"
+      },
+      "estimate": 2,
+      "note": "The workflow runs light and dark; the nightly runs light. The startup sweeps held, as the workflow passes, so the list drag's trace reads the reorder alone (RULING 5)."
+    },
+    {
       "id": "focus-ring",
       "class": "FocusRingDemo",
       "shard": "phone-d",
