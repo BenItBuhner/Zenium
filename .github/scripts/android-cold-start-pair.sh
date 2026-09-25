@@ -25,15 +25,19 @@
 #                   pays for the install's dexopt and the profile's first run)
 #   DEMO_OUT      – where the record goes (cold-start-pair.txt and the raw am start output)
 #
-# Each build is installed over the other (`adb install -r -d`: the same applicationId, so the
-# profile stays and both boot the same state; -d since the base may carry the newer version code
-# when main has moved past the branch), then for each way started once to settle, force-stopped
-# and started P0_RUNS times. Every run keeps one clock for both builds (a build without the
-# READY mark must not read its frame statistics later, nor start its next run later, than one
-# with it): the mark is waited for up to READY_WAIT_S from the start request, the statistics are
-# read STATS_AT_S after it whatever the wait found, and the next start comes NEXT_AT_S after it,
-# the device quiet and the boot – the chrome and the core boot on after the first frame – long
-# over on either. The table is written to the job summary too.
+# The arms are interleaved (seed 71): P0_RUNS pairs, each installing the base over the head
+# (`adb install -r -d`: the same applicationId, so the profile stays and both boot the same state;
+# -d since the base may carry the newer version code when main has moved past the branch), one
+# discarded start to settle, one measured cold start by each way, then the head the same – A B
+# A B … on the one boot, so the boot's drift (627 ms across one pair's twenty starts measured
+# arm after arm) falls on both arms of a pair alike. The medians per arm and way stand as
+# before; the verdict line is the median of the paired differences (after − before within each
+# pair). Every run keeps one clock for both builds (a build without the READY mark must not
+# read its frame statistics later, nor start its next run later, than one with it): the mark is
+# waited for up to READY_WAIT_S from the start request, the statistics are read STATS_AT_S after
+# it whatever the wait found, and the next start comes NEXT_AT_S after it, the device quiet and
+# the boot – the chrome and the core boot on after the first frame – long over on either. The
+# table is written to the job summary too.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
@@ -172,67 +176,62 @@ mark_values() {
   for line in "$@"; do printf '%s\n' "$line" | tr ' ' '\n' | sed -n "s/^$name=//p"; done
 }
 
-# Install one build over the other (the profile stays: the same applicationId).
+# Install one build over the other (the profile stays: the same applicationId), then one discarded
+# start by the direct way: it pays for the install's dexopt and the profile's first run, so the
+# measured starts of either build come after the same warm-up.
 install_build() {
   local name=$1 apk=$2 label=$3
   echo "== $name ($label): $apk"
   adb install -r -d -g "$apk"
-}
-# Measure the installed build by way $2 (direct | alias) under name $1: settle on one discarded
-# start, then $runs measured cold starts. Writes `<name>-am-start.txt` (every am start answer)
-# and fills the totals, waits, states, drawn, helds, marks and fstats arrays.
-measure() {
-  local name=$1 way=$2
-  echo "== $name: $runs cold starts, $way"
-  : > "$out/$name-am-start.txt"
   to_launcher
-  start_app "$way" > /dev/null
+  start_app direct > /dev/null
   sleep 8
   adb shell am force-stop "$app_id"
-  totals=()
-  waits=()
-  states=()
-  drawn=()
-  helds=()
-  marks=()
-  fstats=()
-  for i in $(seq 1 "$runs"); do
-    to_launcher
-    adb logcat -c > /dev/null 2>&1 || true
-    seen=$(fully_drawn_count)
-    started=$(date +%s)
-    answer=$(start_app "$way")
-    # One clock for both builds: the READY mark waited for (the boot's length where a build has
-    # it), the log's lines and the frame statistics read STATS_AT_S after the start request
-    # whether the wait found the mark or not, the next start NEXT_AT_S after it.
-    fully=$(fully_drawn_wait "$READY_WAIT_S" "$seen")
-    sleep_until $((started + STATS_AT_S))
-    held=$(splash_held)
-    marks_=$(boot_marks)
-    stats_=$(frame_stats)
-    printf 'run %s\n%s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\nFrameStats: %s\n\n' "$i" "$answer" "$fully" "$held" "$marks_" "$stats_" >> "$out/$name-am-start.txt"
-    total=$(printf '%s\n' "$answer" | sed -n 's/^TotalTime: *//p' | head -n 1)
-    wait_=$(printf '%s\n' "$answer" | sed -n 's/^WaitTime: *//p' | head -n 1)
-    state=$(printf '%s\n' "$answer" | sed -n 's/^LaunchState: *//p' | head -n 1)
-    echo "  run $i: TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held${marks_:+; marks $marks_}${stats_:+; frames $stats_}"
-    # A start the platform answered without a time (a build without the alias: `Error: Activity
-    # class does not exist`) reads `-`, and the median leaves it out.
-    totals+=("${total:--}")
-    waits+=("${wait_:--}")
-    states+=("${state:-?}")
-    drawn+=("$fully")
-    helds+=("$held")
-    marks+=("$marks_")
-    fstats+=("$stats_")
-    sleep_until $((started + NEXT_AT_S))
-  done
+}
+# One measured cold start of the installed build by way $2 (direct | alias) as run $3 under name
+# $1, appended to the name's arrays (`<name>_totals` and the rest, `-` for a dash in the table)
+# and to `<name>-am-start.txt` (the am start answer, the mark, the hold, the boot's marks, the
+# frame statistics).
+measure_one() {
+  local name=$1 way=$2 i=$3
+  local -n m_totals=${name}_totals m_waits=${name}_waits m_states=${name}_states m_drawn=${name}_drawn
+  local -n m_helds=${name}_helds m_marks=${name}_marks m_fstats=${name}_fstats
+  local seen started answer fully held marks_ stats_ total wait_ state
+  to_launcher
+  adb logcat -c > /dev/null 2>&1 || true
+  seen=$(fully_drawn_count)
+  started=$(date +%s)
+  answer=$(start_app "$way")
+  # One clock for both builds: the READY mark waited for (the boot's length where a build has
+  # it), the log's lines and the frame statistics read STATS_AT_S after the start request
+  # whether the wait found the mark or not, the next start NEXT_AT_S after it.
+  fully=$(fully_drawn_wait "$READY_WAIT_S" "$seen")
+  sleep_until $((started + STATS_AT_S))
+  held=$(splash_held)
+  marks_=$(boot_marks)
+  stats_=$(frame_stats)
+  printf 'run %s\n%s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\nFrameStats: %s\n\n' "$i" "$answer" "$fully" "$held" "$marks_" "$stats_" >> "$out/${name//_/-}-am-start.txt"
+  total=$(printf '%s\n' "$answer" | sed -n 's/^TotalTime: *//p' | head -n 1)
+  wait_=$(printf '%s\n' "$answer" | sed -n 's/^WaitTime: *//p' | head -n 1)
+  state=$(printf '%s\n' "$answer" | sed -n 's/^LaunchState: *//p' | head -n 1)
+  echo "  $name run $i ($way): TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held${marks_:+; marks $marks_}${stats_:+; frames $stats_}"
+  # A start the platform answered without a time (a build without the alias: `Error: Activity
+  # class does not exist`) reads `-`, and the median leaves it out.
+  m_totals+=("${total:--}")
+  m_waits+=("${wait_:--}")
+  m_states+=("${state:-?}")
+  m_drawn+=("$fully")
+  m_helds+=("$held")
+  m_marks+=("$marks_")
+  m_fstats+=("$stats_")
+  sleep_until $((started + NEXT_AT_S))
   adb shell am force-stop "$app_id"
 }
 
 # The median of the numbers among the arguments; `-` when none is a number (a build without the mark).
 median() {
   local nums
-  nums=$(printf '%s\n' "$@" | grep -E '^[0-9]+(\.[0-9]+)?$' || true)
+  nums=$(printf '%s\n' "$@" | grep -E '^-?[0-9]+(\.[0-9]+)?$' || true)
   [ -n "$nums" ] || { echo "-"; return; }
   printf '%s\n' "$nums" | sort -n | awk '{ a[NR] = $1 } END { if (NR % 2) print a[(NR + 1) / 2]; else print (a[NR / 2] + a[NR / 2 + 1]) / 2 }'
 }
@@ -244,23 +243,42 @@ delta() {
 
 join() { local IFS=' '; echo "$*"; }
 
-# Keep the last measurement's arrays under prefix $1 (`<prefix>_totals` and the rest).
-keep() {
-  local p=$1
-  eval "${p}_totals=(\"\${totals[@]}\"); ${p}_waits=(\"\${waits[@]}\"); ${p}_states=(\"\${states[@]}\"); ${p}_drawn=(\"\${drawn[@]}\"); ${p}_helds=(\"\${helds[@]}\"); ${p}_marks=(\"\${marks[@]}\"); ${p}_fstats=(\"\${fstats[@]}\")"
+# The paired differences after_i - before_i of two arrays of the same length, one per line, in the
+# pairs' order; a pair with a dash on either side gives none (the median leaves it out).
+paired() {
+  local -n pd_before=$1 pd_after=$2
+  local i
+  for i in "${!pd_before[@]}"; do
+    case "${pd_before[$i]}${pd_after[$i]:--}" in *-*) ;; *) awk -v a="${pd_after[$i]}" -v b="${pd_before[$i]}" 'BEGIN { print a - b }' ;; esac
+  done
+}
+# The verdict: the median of the paired differences, then the differences themselves in brackets.
+paired_median() {
+  local diffs
+  diffs=$(paired "$1" "$2")
+  # shellcheck disable=SC2086
+  echo "$(median $diffs) ms (pairs $(join $diffs))"
 }
 
-# One build, both ways: the direct start first (the pair as it was), then the launcher's.
-install_build before "$base_apk" "${P0_BASE_LABEL:-base}"
-measure before direct
-keep before
-measure before-alias alias
-keep before_alias
-install_build after "$head_apk" "${P0_HEAD_LABEL:-head}"
-measure after direct
-keep after
-measure after-alias alias
-keep after_alias
+for name in before before_alias after after_alias; do
+  : > "$out/${name//_/-}-am-start.txt"
+  eval "${name}_totals=(); ${name}_waits=(); ${name}_states=(); ${name}_drawn=(); ${name}_helds=(); ${name}_marks=(); ${name}_fstats=()"
+done
+
+# The arms interleaved, A B A B … over $runs pairs on the one boot (seed 71: the boot drifts –
+# 627 ms across one pair's twenty starts – and two arms measured back to back read the drift as
+# a difference; a pair's two arms measured minutes apart at most do not). Each pair installs the
+# base, starts it once to settle, measures it once by each way, then the same for the head. The
+# medians per arm and way stand as before; the verdict is the median of the paired differences.
+for i in $(seq 1 "$runs"); do
+  echo "== pair $i of $runs"
+  install_build before "$base_apk" "${P0_BASE_LABEL:-base}"
+  measure_one before direct "$i"
+  measure_one before_alias alias "$i"
+  install_build after "$head_apk" "${P0_HEAD_LABEL:-head}"
+  measure_one after direct "$i"
+  measure_one after_alias alias "$i"
+done
 
 before_total=$(median "${before_totals[@]}")
 after_total=$(median "${after_totals[@]}")
@@ -298,7 +316,7 @@ values_table() {
 }
 
 {
-  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $runs runs per build and way on one emulator boot (medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap."
+  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $runs runs per build and way on one emulator boot, the arms interleaved (A B A B …: each pair installs the base, starts it once to settle, measures it once by each way, then the same for the head; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. The verdict is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter."
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
   echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - for a build without the mark. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
@@ -310,8 +328,10 @@ values_table() {
   echo "| before (${P0_BASE_LABEL:-base}), alias | $before_alias_total | $before_alias_fully | $before_alias_wait | $(join "${before_alias_totals[@]}") | $(join "${before_alias_drawn[@]}") | $(join "${before_alias_states[@]}") | $(join "${before_alias_helds[@]}") |"
   echo "| after (${P0_HEAD_LABEL:-head}), alias | $after_alias_total | $after_alias_fully | $after_alias_wait | $(join "${after_alias_totals[@]}") | $(join "${after_alias_drawn[@]}") | $(join "${after_alias_states[@]}") | $(join "${after_alias_helds[@]}") |"
   echo
-  echo "delta (after - before), direct: TotalTime $(delta "$after_total" "$before_total") ms, Fully drawn $(delta "$after_fully" "$before_fully") ms, WaitTime $(delta "$after_wait" "$before_wait") ms"
-  echo "delta (after - before), alias: TotalTime $(delta "$after_alias_total" "$before_alias_total") ms, Fully drawn $(delta "$after_alias_fully" "$before_alias_fully") ms, WaitTime $(delta "$after_alias_wait" "$before_alias_wait") ms"
+  echo "delta (after - before, the medians), direct: TotalTime $(delta "$after_total" "$before_total") ms, Fully drawn $(delta "$after_fully" "$before_fully") ms, WaitTime $(delta "$after_wait" "$before_wait") ms"
+  echo "delta (after - before, the medians), alias: TotalTime $(delta "$after_alias_total" "$before_alias_total") ms, Fully drawn $(delta "$after_alias_fully" "$before_alias_fully") ms, WaitTime $(delta "$after_alias_wait" "$before_alias_wait") ms"
+  echo "VERDICT delta (paired: the median of after - before within each pair), direct: TotalTime $(paired_median before_totals after_totals), Fully drawn $(paired_median before_drawn after_drawn), WaitTime $(paired_median before_waits after_waits)"
+  echo "VERDICT delta (paired: the median of after - before within each pair), alias: TotalTime $(paired_median before_alias_totals after_alias_totals), Fully drawn $(paired_median before_alias_drawn after_alias_drawn), WaitTime $(paired_median before_alias_waits after_alias_waits)"
   echo "the trampoline's cost (alias - direct, the same build): before TotalTime $(delta "$before_alias_total" "$before_total") ms, Fully drawn $(delta "$before_alias_fully" "$before_fully") ms; after TotalTime $(delta "$after_alias_total" "$after_total") ms, Fully drawn $(delta "$after_alias_fully" "$after_fully") ms"
   # The boot's marks, where a build logs them: one row per name, the medians over the runs, each way.
   if [ -n "$(mark_names "${before_marks[@]}" "${after_marks[@]}" "${before_alias_marks[@]}" "${after_alias_marks[@]}")" ]; then
