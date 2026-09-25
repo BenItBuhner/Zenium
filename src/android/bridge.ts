@@ -125,9 +125,15 @@ const traced = (): boolean =>
 
 const noMark = (): void => {}
 
-/** Mark a hop as it leaves and hand back the mark of its return (`<name>:ret`); nothing when untraced. */
-const markHop = (name: string): (() => void) => {
+/**
+ * Mark a hop as it leaves (`bridge:<entry>:<method>`) and hand back the mark of its return
+ * (`…:ret`); nothing when untraced – not even the name is built then, so a hop in production pays
+ * one flag read and no string. A batch's name is its commands' methods joined, so it is passed as
+ * a thunk and joined only under the flag.
+ */
+const markHop = (entry: string, method: string | (() => string)): (() => void) => {
   if (!traced()) return noMark
+  const name = `bridge:${entry}:${typeof method === 'function' ? method() : method}`
   performance.mark(name)
   return () => {
     performance.mark(`${name}:ret`)
@@ -181,7 +187,7 @@ export class Bridge {
   private hop(method: string, json: string): void {
     const port = this.port
     if (port !== null && PORTED.has(method)) {
-      const returned = markHop(`bridge:port:${method}`)
+      const returned = markHop('port', method)
       try {
         port.postMessage(json)
         returned()
@@ -193,7 +199,7 @@ export class Bridge {
         console.warn('[zen] the bridge port failed; back to call', error)
       }
     }
-    const returned = markHop(`bridge:call:${method}`)
+    const returned = markHop('call', method)
     this.native.call(json)
     returned()
   }
@@ -218,7 +224,7 @@ export class Bridge {
       return
     }
     this.flush()
-    const returned = markHop(`bridge:post:${method}`)
+    const returned = markHop('post', method)
     try {
       this.native.post(JSON.stringify({ method, args } satisfies NativeCommand))
       returned()
@@ -253,7 +259,7 @@ export class Bridge {
     if (this.queue.length === 0 || typeof this.native.batch !== 'function') return
     const commands = this.queue
     this.queue = []
-    const returned = markHop(`bridge:batch:${commands.map((c) => c.method).join('+')}`)
+    const returned = markHop('batch', () => commands.map((c) => c.method).join('+'))
     try {
       this.native.batch(JSON.stringify(commands))
       returned()
@@ -267,7 +273,7 @@ export class Bridge {
 
   callSync<T>(method: string, args: unknown = {}): T {
     this.flush()
-    const returned = markHop(`bridge:sync:${method}`)
+    const returned = markHop('sync', method)
     const raw = this.native.callSync(JSON.stringify({ id: 0, method, args } satisfies NativeCall))
     returned()
     return (raw === '' ? undefined : JSON.parse(raw)) as T
