@@ -1170,7 +1170,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
 
   /** Bounds changes never commit state; follow the windows themselves for `onBoundsChanged`. */
   private watchWindows(): void {
-    for (const win of this.browser.allWindows()) {
+    for (const win of this.model.windows()) {
       const bw = this.model.browserWindowOf(win)
       if (!bw || this.watchedWindows.has(bw)) continue
       this.watchedWindows.add(bw)

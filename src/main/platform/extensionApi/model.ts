@@ -25,6 +25,16 @@ import { WINDOW_ID_NONE, type Sender } from './types'
 const SYNTHETIC_TAB_ID_BASE = 0x40000000
 
 /**
+ * Whether a Zenium window is one Chrome's model has: every browser window is, whatever chrome
+ * it draws. A `page` window – the native-framed utility window a Zenium page opens in (the task
+ * manager) – is not: Chrome never lists its own task manager, so `windows` / `tabs` never see
+ * the window, the tab it holds, or its focus (`WINDOW_ID_NONE` while it is the focused one).
+ */
+export function visibleToExtensions(win: ZenWindow): boolean {
+  return win.chrome !== 'page'
+}
+
+/**
  * An extension-created `windows.create({ type: 'popup' })` window: one bare `BrowserWindow`
  * showing one page, outside the Zenium tab model.
  */
@@ -75,13 +85,25 @@ export class ApiModel {
     return this.browserWindowOf(win)?.id ?? -1
   }
 
-  zenWindow(windowId: number): ZenWindow | undefined {
-    return this.browser.allWindows().find((w) => this.windowIdOf(w) === windowId)
+  /**
+   * The Zenium windows extensions can see (`visibleToExtensions`): the one enumeration every
+   * window lookup, `windows.getAll` and the event differ's snapshot go through, so a page window
+   * is never asked for its Chrome type, listed, focused or reported.
+   */
+  windows(): ZenWindow[] {
+    return this.browser.allWindows().filter(visibleToExtensions)
   }
 
-  /** Most recently focused window, the one the user is looking at when nothing has focus. */
+  zenWindow(windowId: number): ZenWindow | undefined {
+    return this.windows().find((w) => this.windowIdOf(w) === windowId)
+  }
+
+  /**
+   * Most recently focused window extensions can see, the one the user is looking at when
+   * nothing has focus – or the last browser window they looked at while a page window has it.
+   */
   lastFocusedWindow(): ZenWindow | undefined {
-    const alive = this.browser.allWindows()
+    const alive = this.windows()
     const focused = alive.find((w) => w.host.isFocused())
     if (focused) return focused
     return [...alive].sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
@@ -103,8 +125,7 @@ export class ApiModel {
 
   /** Chrome window ids of everything `windows.getAll` lists, Zenium windows and popups alike. */
   windowIds(): number[] {
-    const ids = this.browser
-      .allWindows()
+    const ids = this.windows()
       .map((w) => this.windowIdOf(w))
       .filter((id) => id >= 0)
     for (const [id, popup] of this.popups) if (!popup.bw.isDestroyed()) ids.push(id)
@@ -146,7 +167,7 @@ export class ApiModel {
     }
     const owner = ElectronBrowserWindow.fromWebContents(wc)
     if (owner) {
-      const win = this.browser.allWindows().find((w) => this.browserWindowOf(w) === owner)
+      const win = this.windows().find((w) => this.browserWindowOf(w) === owner)
       if (win) return win
     }
     return undefined
@@ -249,13 +270,33 @@ export class ApiModel {
   // Tabs
   // ---------------------------------------------------------------------------
 
-  /** Every tab of the model, in no particular order (Glance pages included – they are real pages). */
+  /**
+   * Every tab extensions can see, in no particular order: Glance pages included (they are real
+   * pages), a page window's tab left out.
+   */
   allTabs(): Tab[] {
-    return Object.values(this.browser.state.model.tabs)
+    return Object.values(this.browser.state.model.tabs).filter((tab) => !this.inPageWindow(tab))
   }
 
+  /** A tab by Zenium id; undefined for an unknown id and for a page window's tab (`inPageWindow`). */
   tab(zenId: string): Tab | undefined {
-    return this.browser.state.model.tabs[zenId]
+    const tab = this.browser.state.model.tabs[zenId]
+    return tab && !this.inPageWindow(tab) ? tab : undefined
+  }
+
+  /**
+   * Whether a tab is a page window's – `zen://tasks` in the task manager's window. The window is
+   * invisible to extensions (`visibleToExtensions`) and so is its tab: `tabs.query` never lists
+   * it and `tabs.get` / `update` / `remove` refuse its id, however it was guessed. A page window
+   * is unsynced, so its tab names the window (`windowId`) and the window's host holds the page.
+   */
+  private inPageWindow(tab: Tab): boolean {
+    if (tab.windowId) {
+      const own = this.browser.allWindows().find((w) => w.id === tab.windowId)
+      if (own) return !visibleToExtensions(own)
+    }
+    const owner = this.browser.tabs.ownerOf(tab.id)
+    return owner ? !visibleToExtensions(owner) : false
   }
 
   webContentsOf(tab: Tab): WebContents | undefined {
@@ -332,10 +373,12 @@ export class ApiModel {
 
   /**
    * The one window a tab belongs to: its own window for local tabs, else the window holding its
-   * page, else the window it was last assigned to, else the last focused synced window.
+   * page, else the window it was last assigned to, else the last focused synced window. A page
+   * window's tab has none (`inPageWindow`): it is never assigned to a window extensions see.
    */
   windowOfTab(tab: Tab): ZenWindow | undefined {
-    const windows = this.browser.allWindows()
+    if (this.inPageWindow(tab)) return undefined
+    const windows = this.windows()
     if (tab.windowId) {
       const own = windows.find((w) => w.id === tab.windowId)
       if (own) return this.remember(tab, own)
@@ -457,9 +500,12 @@ export class ApiModel {
     return win ? this.browserWindowOf(win) : null
   }
 
-  /** Id of the focused window, `-1` when Zenium is in the background. */
+  /**
+   * Id of the focused window, `-1` (`WINDOW_ID_NONE`) when Zenium is in the background – and
+   * while a page window has focus, as Chrome reports none of its windows focused then.
+   */
   focusedWindowId(): number {
-    for (const win of this.browser.allWindows()) {
+    for (const win of this.windows()) {
       const bw = this.browserWindowOf(win)
       if (bw?.isFocused()) return bw.id
     }
@@ -473,7 +519,7 @@ export class ApiModel {
   snapshot(): ModelSnapshot {
     const placements = new Map<string, { win: ZenWindow | undefined; index: number }>()
     const windows = new Map<number, WindowSnapshot>()
-    for (const win of this.browser.allWindows()) {
+    for (const win of this.windows()) {
       const windowId = this.windowIdOf(win)
       if (windowId < 0) continue
       const tabs = this.tabsInWindow(win)

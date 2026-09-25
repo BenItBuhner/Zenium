@@ -88,7 +88,7 @@ export class TabGroupsApi {
   /** Window (Chrome id) and index of the first tab of every folder that has one, live. */
   private liveOrders(): Array<[number, string[]]> {
     const orders: Array<[number, string[]]> = []
-    for (const win of this.host.browser.allWindows()) {
+    for (const win of this.model.windows()) {
       const windowId = this.model.windowIdOf(win)
       if (windowId < 0) continue
       orders.push([windowId, this.model.tabsInWindow(win).map((tab) => tab.id)])
@@ -129,7 +129,7 @@ export class TabGroupsApi {
   }
 
   private fallbackWindowId(folder: Folder): number {
-    const windows = this.host.browser.allWindows().filter((w) => this.model.windowIdOf(w) >= 0)
+    const windows = this.model.windows().filter((w) => this.model.windowIdOf(w) >= 0)
     const showing = windows.find((w) => w.activeSpace().id === folder.spaceId)
     const win = showing ?? this.model.lastFocusedWindow()
     return win ? this.model.windowIdOf(win) : -1
@@ -147,7 +147,7 @@ export class TabGroupsApi {
     const inGroup = (tab: Tab): boolean => this.model.groupIdOfTab(tab) === id
     if (win) return this.model.tabsInWindow(win).filter(inGroup)
     const out: Tab[] = []
-    for (const w of this.host.browser.allWindows()) {
+    for (const w of this.model.windows()) {
       for (const tab of this.model.tabsInWindow(w)) if (inGroup(tab)) out.push(tab)
     }
     return out
