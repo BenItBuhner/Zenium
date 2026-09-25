@@ -85,14 +85,31 @@ describe('the moved engine on a fixed record set', () => {
     boosts: goldenFixture.boosts
   }
 
+  type Local = ReturnType<typeof collectLocal>
+
+  /**
+   * The one key the record set has gained since the fixtures were written: the settings record
+   * carries the phone menu's order, the empty list while the order is the default (a Reset must
+   * reach the peers, and a key the record lacks says nothing to `apply`). A folder set up by the
+   * old build re-pushes its settings record once after the upgrade, that record otherwise byte
+   * for byte what the old engine wrote – pinned below with the key taken off again.
+   */
+  const asTheOldEngineWrote = (local: Local): Local => {
+    const settings = local.get('settings')
+    expect(settings?.data).toMatchObject({ menuOrder: [] })
+    const { menuOrder: _m, ...data } = settings!.data as { menuOrder: string[] }
+    void _m
+    return new Map([...local].map(([id, r]) => [id, id === 'settings' ? { ...r, data } : r]))
+  }
+
   it('writes byte-identical payload JSON for the pre-move scope', () => {
-    const local = collectLocal(sources, goldenFixture.scope)
+    const local = asTheOldEngineWrote(collectLocal(sources, goldenFixture.scope))
     const diff = diffLocal({}, local, goldenFixture.now)
     expect(JSON.stringify({ v: 1, records: diff.records })).toBe(goldenFixture.plaintext)
   })
 
   it('hashes every record as the old engine did (sha1 of the key-sorted JSON)', () => {
-    const local = collectLocal(sources, goldenFixture.scope)
+    const local = asTheOldEngineWrote(collectLocal(sources, goldenFixture.scope))
     const hashes: Record<string, string> = {}
     for (const [id, { data }] of local) hashes[id] = hashData(data)
     expect(hashes).toEqual(goldenFixture.hashes)
