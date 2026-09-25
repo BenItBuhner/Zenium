@@ -118,9 +118,16 @@ export function quitChordOf(shortcuts: readonly Shortcut[]): KeyBinding | null {
   return shortcuts.find((shortcut) => shortcut.action === 'app.quit')?.binding ?? null
 }
 
-/** A toolbox's frontend as the relay needs it – its console and a script run in it (Electron's `WebContents`). */
+/**
+ * A toolbox's frontend as the relay needs it – its console, the frame of its own document and a
+ * script run in it (Electron's `WebContents`; `mainFrame` and a line's `frame` its `WebFrameMain`).
+ */
 export interface DevtoolsFrontendLike {
-  on(event: 'console-message', listener: (event: { message: string }) => void): unknown
+  readonly mainFrame: unknown
+  on(
+    event: 'console-message',
+    listener: (event: { message: string; frame?: unknown }) => void
+  ): unknown
   executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>
 }
 
@@ -130,6 +137,14 @@ const relayed = new WeakSet<object>()
  * The relay on one toolbox: its console watched for the keys the script says, the script run
  * with the chord as bound at this moment. Once per frontend; `onKey` gets each key in the key
  * table's shape, for the window the toolbox belongs to.
+ *
+ * Only the frontend document's own frame is heard (the first line's R1 on #486): the console
+ * event carries every frame's lines, and an extension's `devtools_page` – Zenium loads extensions
+ * through the session (`ses.extensions.loadExtension`), under which Electron mounts that page as
+ * an iframe of the frontend – could otherwise say a key line of its own and drive the key table
+ * with it (a quit with the box off, a held quit with no key up on it, a chord that closes tabs
+ * or windows). The script above runs in the main frame alone, so its lines are the main frame's;
+ * a line from any other frame, or one without a frame, is not a key.
  */
 export function relayDevtoolsQuitChord(
   frontend: DevtoolsFrontendLike,
@@ -139,6 +154,7 @@ export function relayDevtoolsQuitChord(
   if (relayed.has(frontend)) return
   relayed.add(frontend)
   frontend.on('console-message', (event) => {
+    if (event.frame === undefined || event.frame !== frontend.mainFrame) return
     const key = devtoolsKeyFromMessage(event.message)
     if (key) onKey(key)
   })

@@ -265,25 +265,36 @@ describe('the relayed chord through the inspected page’s key table', () => {
 })
 
 describe('the relay on a toolbox', () => {
-  /** A frontend as the relay sees it: its console listeners and the scripts run in it. */
+  /**
+   * A frontend as the relay sees it: its console listeners, the scripts run in it, its main
+   * frame – the frame a line is said from is the main frame unless the test names another.
+   */
   function fakeFrontend(): DevtoolsFrontendLike & {
-    listeners: ((event: { message: string }) => void)[]
+    listeners: ((event: { message: string; frame?: unknown }) => void)[]
     scripts: string[]
-    say(message: string): void
+    say(message: string, frame?: unknown): void
+    sayFrameless(message: string): void
   } {
-    const listeners: ((event: { message: string }) => void)[] = []
+    const listeners: ((event: { message: string; frame?: unknown }) => void)[] = []
     const scripts: string[] = []
+    const mainFrame = { name: 'devtools://devtools/bundled/devtools_app.html' }
     return {
       listeners,
       scripts,
+      mainFrame,
       on: (_event, listener) => listeners.push(listener),
       executeJavaScript: (code) => {
         scripts.push(code)
         return Promise.resolve('hooked')
       },
-      say: (message) => listeners.forEach((listener) => listener({ message }))
+      say: (message, frame = mainFrame) =>
+        listeners.forEach((listener) => listener({ message, frame })),
+      sayFrameless: (message) => listeners.forEach((listener) => listener({ message }))
     }
   }
+
+  const KEY_DOWN_LINE = `${DEVTOOLS_KEY_MESSAGE_PREFIX}{"type":"keyDown","key":"q","control":false,"alt":false,"shift":false,"meta":true,"isAutoRepeat":false}`
+  const KEY_UP_LINE = `${DEVTOOLS_KEY_MESSAGE_PREFIX}{"type":"keyUp","key":"Meta","control":false,"alt":false,"shift":false,"meta":false,"isAutoRepeat":false}`
 
   it('watches the console for the keys the script says, runs the script with the chord as bound now, and once per frontend', () => {
     const frontend = fakeFrontend()
@@ -298,12 +309,8 @@ describe('the relay on a toolbox', () => {
     expect(frontend.scripts).toHaveLength(1)
     expect(frontend.scripts[0]).toContain(JSON.stringify(MAC_QUIT))
     frontend.say('zenium-devtools-dock:bottom')
-    frontend.say(
-      `${DEVTOOLS_KEY_MESSAGE_PREFIX}{"type":"keyDown","key":"q","control":false,"alt":false,"shift":false,"meta":true,"isAutoRepeat":false}`
-    )
-    frontend.say(
-      `${DEVTOOLS_KEY_MESSAGE_PREFIX}{"type":"keyUp","key":"Meta","control":false,"alt":false,"shift":false,"meta":false,"isAutoRepeat":false}`
-    )
+    frontend.say(KEY_DOWN_LINE)
+    frontend.say(KEY_UP_LINE)
     expect(keys.map((k) => `${k.type}:${k.key}`)).toEqual(['keyDown:q', 'keyUp:Meta'])
     // The same frontend again (a second `devtools-opened` for one toolbox): nothing doubled.
     chord = LINUX_QUIT
@@ -322,6 +329,28 @@ describe('the relay on a toolbox', () => {
       () => undefined
     )
     expect(next.scripts[0]).toContain(JSON.stringify(LINUX_QUIT))
+  })
+
+  it('hears the frontend document’s own frame alone: a key line from a sub-frame – an extension’s devtools_page mounted as an iframe of the frontend – or from no frame is not a key (R1)', () => {
+    const frontend = fakeFrontend()
+    const keys: KeyEventInput[] = []
+    relayDevtoolsQuitChord(
+      frontend,
+      () => MAC_QUIT,
+      (key) => keys.push(key)
+    )
+    const devtoolsPage = { name: 'chrome-extension://abcdefgh/devtools.html' }
+    // The forged hold: a key down with no key up after it would be a quit at 1.5 s.
+    frontend.say(KEY_DOWN_LINE, devtoolsPage)
+    expect(keys).toEqual([])
+    frontend.say(KEY_UP_LINE, devtoolsPage)
+    frontend.sayFrameless(KEY_DOWN_LINE)
+    frontend.say(KEY_DOWN_LINE, null)
+    expect(keys).toEqual([])
+    // The main frame's own lines go on as before.
+    frontend.say(KEY_DOWN_LINE)
+    frontend.say(KEY_UP_LINE)
+    expect(keys.map((k) => `${k.type}:${k.key}`)).toEqual(['keyDown:q', 'keyUp:Meta'])
   })
 
   it('reads the chord bound to app.quit from the key table’s shortcuts, null while unbound', () => {
