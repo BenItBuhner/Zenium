@@ -8,17 +8,18 @@ import {
   quitHoldRing,
   quitHoldTitle
 } from '@shared/quitHoldPanel'
-import { reducedMotion } from '@renderer/lib/motion/spring'
 
 /**
  * The chrome's own "Hold ⌘Q to quit" (session-08): the §9.23 title block the page script paints
  * over a live page (`shared/quitHoldPanel`, the same numbers), drawn here by the chrome in the
  * content frame's box where no live page is in it – a chrome page (Settings, History), the
- * empty frame, or a page under the URL bar's palette, a menu or a chrome overlay, which hold
- * the keyboard then. Centred, no scrim, no pointer, no focus (`role="status"`): the hold is a
- * key held, not a question. Pops in on §11's 180 ms, fades out in 120 ms as the hold ends
+ * empty frame, a page under the URL bar's palette, a menu or a chrome overlay, which hold the
+ * keyboard then, or a page whose renderer is gone or hung and cannot paint (`ContentArea`'s
+ * `pageLive`). Centred, no scrim, no pointer, no focus (`role="status"`): the hold is a key
+ * held, not a question. Pops in on §11's 180 ms, fades out in 120 ms as the hold ends
  * (`data-leaving` keeps the panel for its fade), the 120 ms fade both ways under reduced motion
- * (§11.3); the ring is stepped per frame from the hold's clock, in thirds under reduced motion.
+ * (§11.3); the ring is stepped per frame from the hold's clock under either motion setting – a
+ * readout of the key held, not an animation.
  */
 export function QuitHoldNotice({
   hold,
@@ -51,10 +52,9 @@ export function QuitHoldNotice({
   // as the page-drawn one has it); a panel on its way out keeps its last sweep.
   useEffect(() => {
     if (!active) return
-    const reduced = reducedMotion()
     let frame = 0
     const tick = (): void => {
-      const p = quitHoldProgress(active, Date.now(), reduced)
+      const p = quitHoldProgress(active, Date.now())
       sweep.current?.setAttribute('stroke-dashoffset', `${circumference * (1 - p)}`)
       root.current?.setAttribute('data-progress', p.toFixed(3))
       if (p < 1) frame = requestAnimationFrame(tick)

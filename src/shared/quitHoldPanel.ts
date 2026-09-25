@@ -10,7 +10,10 @@ import type { QuitHoldState } from './types'
  * radius, the panel shadow, `--v2-text`), centred over the page, taking no pointer and no
  * focus (`role="status"`). It pops in on §11's 180 ms (opacity and a scale from .96, `--zen-ease`)
  * and fades out in 120 ms when a key comes up; under reduced motion both ways are the 120 ms
- * opacity fade in place (§11.3) and the ring fills in three steps instead of sweeping.
+ * opacity fade in place (§11.3). The ring sweeps the same under either setting: it reads a key
+ * the user is holding – input, not animation – and §11.3 removes springs and eases, not readouts
+ * (the design lead's ruling on #486; a ring stepped at thirds told a user who asked for less
+ * motion less truth about their own hold).
  *
  * Why the page draws it: on desktop the page's view lies over the chrome, and the chrome could
  * show a panel over the page only by hiding the view – which drops the page's key events, and
@@ -42,7 +45,13 @@ export const QUIT_HOLD_PANEL = {
   glyphPx: 16,
   glyphGapPx: 8,
   ringStrokePx: 2,
-  /** The title (§4: `--v2-font-heading`, `--v2-line-heading`, `--v2-weight-heading`). */
+  /**
+   * The title (§4: `--v2-font-heading`, `--v2-line-heading`, `--v2-weight-heading`). The weight is
+   * the heading token's base, which the chrome's twin reads as the token – `--v2-weight-heading`
+   * adds the bold-text setting's adjustment (A11Y-05, `lib/textScale.ts`), a setting of the
+   * Android host, whose page views draw no panel; on the desktop, where this panel is drawn, the
+   * adjustment is 0 and both routes set the same 600. Pinned to the stylesheet by `v2Tokens.test.ts`.
+   */
   titlePx: 17,
   titleLinePx: 22,
   titleWeight: 600,
@@ -58,11 +67,17 @@ export const QUIT_HOLD_PANEL = {
   popMs: 180,
   fadeMs: REDUCED_FADE_MS,
   ease: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
-  /** Under reduced motion the ring fills in this many steps instead of sweeping (§11.3). */
-  steps: 3,
   /** The panel's least distance from the frame's edges. */
   marginPx: 24
 } as const
+
+/**
+ * The chrome's type family by value (`--font-sans`, `main.css`; pinned by `v2Tokens.test.ts`):
+ * the page cannot read the chrome's stylesheet, and the twin the chrome draws sets the same
+ * stack through the token, so the two routes shape their glyphs alike.
+ */
+export const QUIT_HOLD_FONT =
+  "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif"
 
 /** The title's words around the key cap (§9.1: sentence case; Chrome's are "Hold ⌘Q to Quit"). */
 export const QUIT_HOLD_TITLE = { before: 'Hold ', after: ' to quit' } as const
@@ -78,18 +93,15 @@ export function quitHoldAccent(accent: string, dark: boolean): string {
 }
 
 /**
- * How far the hold has come at `now`, 0..1: linear over its duration, or stepped in
- * `QUIT_HOLD_PANEL.steps` under reduced motion (the ring shows the steps done).
+ * How far the hold has come at `now`, 0..1: linear over its duration, under either motion
+ * setting – the ring is a readout of the key being held, not an animation (§11.3).
  */
-export function quitHoldProgress(hold: QuitHoldState, now: number, reduced: boolean): number {
+export function quitHoldProgress(hold: QuitHoldState, now: number): number {
   const raw = hold.durationMs > 0 ? (now - hold.startedAt) / hold.durationMs : 1
-  const p = Math.min(1, Math.max(0, raw))
-  if (!reduced) return p
-  return Math.floor(p * QUIT_HOLD_PANEL.steps) / QUIT_HOLD_PANEL.steps
+  return Math.min(1, Math.max(0, raw))
 }
 
 const HOST_TAG = 'zenium-quit-hold'
-const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif'
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
 /** The ring's radius and circumference at the glyph size and stroke. */
@@ -170,7 +182,7 @@ export function renderQuitHoldPanel(hold: QuitHoldPanel): RenderedQuitHoldPanel 
     background: palette.panel,
     color: palette.text,
     boxShadow: g.shadow,
-    font: `${g.titleWeight} ${g.titlePx}px/${g.titleLinePx}px ${FONT}`
+    font: `${g.titleWeight} ${g.titlePx}px/${g.titleLinePx}px ${QUIT_HOLD_FONT}`
   })
 
   // The ring in the glyph slot: the track in the hairline ink, the sweep in the accent, from
@@ -205,7 +217,8 @@ export function renderQuitHoldPanel(hold: QuitHoldPanel): RenderedQuitHoldPanel 
   svg.append(track, sweep)
 
   // The title: the words and the chord's key cap in one flex row the line tall – an inline key
-  // cap would add baseline slack under it and grow the block past §9.23's 54.
+  // cap would add baseline slack under it and grow the block past §9.23's 54. (No `text-wrap:
+  // balance`: it acts on a block's line boxes, and these are flex items – a no-op here.)
   const title = document.createElement('div')
   title.setAttribute('part', 'title')
   Object.assign(title.style, {
@@ -215,7 +228,6 @@ export function renderQuitHoldPanel(hold: QuitHoldPanel): RenderedQuitHoldPanel 
     justifyContent: 'center',
     gap: '4px',
     minHeight: `${g.titleLinePx}px`,
-    textWrap: 'balance',
     whiteSpace: 'pre'
   })
   const before = document.createElement('span')
@@ -231,7 +243,7 @@ export function renderQuitHoldPanel(hold: QuitHoldPanel): RenderedQuitHoldPanel 
     borderRadius: `${g.keycapRadiusPx}px`,
     border: `1px solid ${palette.border}`,
     background: palette.fill,
-    font: `${g.titleWeight} ${g.keycapFontPx}px/1 ${FONT}`,
+    font: `${g.titleWeight} ${g.keycapFontPx}px/1 ${QUIT_HOLD_FONT}`,
     color: palette.text,
     whiteSpace: 'nowrap'
   })
@@ -322,7 +334,7 @@ export function installQuitHoldPanel(
     } catch {
       // A page that already has a popover open in a conflicting state: the fixed host still shows.
     }
-    rendered.setProgress(quitHoldProgress(hold, now(), reduced))
+    rendered.setProgress(quitHoldProgress(hold, now()))
     // The pop in: the start pose is painted first, then the transition carries it to rest.
     const { host } = rendered
     if (!reduced) host.style.transform = 'scale(0.96)'
@@ -334,7 +346,7 @@ export function installQuitHoldPanel(
     if (!reduced) host.style.transform = 'scale(1)'
     const tick = (): void => {
       if (current?.host !== rendered.host) return
-      const p = quitHoldProgress(hold, now(), reduced)
+      const p = quitHoldProgress(hold, now())
       rendered.setProgress(p)
       frame = p < 1 ? requestAnimationFrame(tick) : null
     }

@@ -42,15 +42,26 @@ let frames: Frames
 let root: Root
 let container: HTMLDivElement
 
+function reduceMotion(on: boolean): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string) => ({
+      matches: on && query.includes('prefers-reduced-motion'),
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined
+    })
+  })
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(50_000)
   frames = new Frames()
   frames.install()
-  Object.defineProperty(window, 'matchMedia', {
-    configurable: true,
-    value: (query: string) => ({ matches: false, media: query })
-  })
+  reduceMotion(false)
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -108,6 +119,21 @@ describe('the chrome’s Hold ⌘Q to quit', () => {
     act(() => frames.tick())
     expect(el.getAttribute('data-progress')).toBe('1.000')
     expect(frames.pending).toBe(0)
+  })
+
+  it('under reduced motion the ring still reads the live fraction: a readout of the key held, not an animation (§11.3)', () => {
+    reduceMotion(true)
+    render({ hold: hold(), show: true })
+    const el = notice()!
+    const sweep = el.querySelector('[data-sweep]')!
+    const circumference = Number(sweep.getAttribute('stroke-dasharray'))
+    vi.setSystemTime(50_000 + 750)
+    act(() => frames.tick())
+    expect(el.getAttribute('data-progress')).toBe('0.500')
+    expect(Number(sweep.getAttribute('stroke-dashoffset'))).toBeCloseTo(circumference / 2, 6)
+    vi.setSystemTime(50_000 + 1200)
+    act(() => frames.tick())
+    expect(el.getAttribute('data-progress')).toBe('0.800')
   })
 
   it('stays 120 ms for its fade when the hold ends, then goes', () => {

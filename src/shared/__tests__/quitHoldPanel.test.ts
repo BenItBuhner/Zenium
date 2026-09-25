@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HINT_PALETTE } from '../fullscreenHint'
 import {
   installQuitHoldPanel,
+  QUIT_HOLD_FONT,
   QUIT_HOLD_PANEL,
   QUIT_HOLD_TITLE,
   quitHoldAccent,
@@ -78,6 +79,25 @@ const hold = (startedAt = clock.now, dark = false): QuitHoldPanel => ({
   accent: '#3366cc'
 })
 
+/**
+ * Render with the root open, to read the panel's own styles – closed in production, where a
+ * page's scripts must not reach it.
+ */
+function renderOpen(p: QuitHoldPanel): { host: HTMLElement; panel: HTMLElement } {
+  const original = Element.prototype.attachShadow
+  Element.prototype.attachShadow = function (init: ShadowRootInit) {
+    return original.call(this, { ...init, mode: 'open' })
+  }
+  try {
+    const { host } = renderQuitHoldPanel(p)
+    const panel = host.shadowRoot?.querySelector<HTMLElement>('[part="panel"]')
+    if (!panel) throw new Error('no panel in the root')
+    return { host, panel }
+  } finally {
+    Element.prototype.attachShadow = original
+  }
+}
+
 /** Stand the panel up through the installer and hand back the listener and the host. */
 function stand(panel: QuitHoldPanel): {
   post: (p: QuitHoldPanel | null) => void
@@ -128,20 +148,50 @@ describe('the panel’s words and numbers', () => {
     expect(circumference).toBeCloseTo(2 * Math.PI * 7, 6)
   })
 
-  it('reads the hold’s progress from its clock, clamped, and in thirds under reduced motion', () => {
+  it('reads the hold’s progress from its clock, clamped – the live fraction under either motion setting', () => {
     const h = hold(1000)
-    expect(quitHoldProgress(h, 1000, false)).toBe(0)
-    expect(quitHoldProgress(h, 1750, false)).toBe(0.5)
-    expect(quitHoldProgress(h, 2500, false)).toBe(1)
-    expect(quitHoldProgress(h, 9000, false)).toBe(1)
-    expect(quitHoldProgress(h, 500, false)).toBe(0)
-    // Stepped: the steps done so far, never part of one.
-    expect(quitHoldProgress(h, 1000, true)).toBe(0)
-    expect(quitHoldProgress(h, 1499, true)).toBe(0)
-    expect(quitHoldProgress(h, 1500, true)).toBeCloseTo(1 / 3, 9)
-    expect(quitHoldProgress(h, 2400, true)).toBeCloseTo(2 / 3, 9)
-    expect(quitHoldProgress(h, 2500, true)).toBe(1)
-    expect(quitHoldProgress({ ...h, durationMs: 0 }, 1000, false)).toBe(1)
+    expect(quitHoldProgress(h, 1000)).toBe(0)
+    expect(quitHoldProgress(h, 1750)).toBe(0.5)
+    expect(quitHoldProgress(h, 2500)).toBe(1)
+    expect(quitHoldProgress(h, 9000)).toBe(1)
+    expect(quitHoldProgress(h, 500)).toBe(0)
+    expect(quitHoldProgress({ ...h, durationMs: 0 }, 1000)).toBe(1)
+    // No stepping anywhere: the ring reads the key held (input, not animation – §11.3 removes
+    // springs and eases, not readouts), so there is no motion setting to read.
+    expect(quitHoldProgress.length).toBe(2)
+    expect(QUIT_HOLD_PANEL).not.toHaveProperty('steps')
+  })
+
+  it('shapes its glyphs as the chrome does: the `--font-sans` stack and the heading weight by value, one source for the page panel and the twin', () => {
+    expect(QUIT_HOLD_FONT).toBe(
+      "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif"
+    )
+    const { panel } = renderOpen(hold())
+    const key = panel.querySelector<HTMLElement>('kbd')!
+    // The shorthand as the engine stores it: the family unbroken, the weight and size the block's.
+    const type = (el: HTMLElement): { family: string; weight: string; size: string } => ({
+      family: el.style.fontFamily.replace(/"/g, "'"),
+      weight: el.style.fontWeight,
+      size: el.style.fontSize
+    })
+    expect(type(panel)).toEqual({
+      family: QUIT_HOLD_FONT,
+      weight: `${QUIT_HOLD_PANEL.titleWeight}`,
+      size: `${QUIT_HOLD_PANEL.titlePx}px`
+    })
+    expect(panel.style.lineHeight).toBe(`${QUIT_HOLD_PANEL.titleLinePx}px`)
+    expect(type(key)).toEqual({
+      family: QUIT_HOLD_FONT,
+      weight: `${QUIT_HOLD_PANEL.titleWeight}`,
+      size: `${QUIT_HOLD_PANEL.keycapFontPx}px`
+    })
+  })
+
+  it('sets no `text-wrap: balance` on the title: a flex row of the words and the key cap has no line boxes for it to balance', () => {
+    const { panel } = renderOpen(hold())
+    const title = panel.querySelector<HTMLElement>('[part="title"]')!
+    expect(title.style.display).toBe('flex')
+    expect(title.style.getPropertyValue('text-wrap')).toBe('')
   })
 
   it('inks the ring as the chrome’s `--v2-accent` does: the space accent at 40 % into the scheme’s pole', () => {
@@ -290,7 +340,7 @@ describe('the panel over the page', () => {
     expect(document.documentElement.querySelector('zenium-quit-hold')).toBeNull()
   })
 
-  it('under reduced motion fades in place both ways and fills its ring in thirds (§11.3)', () => {
+  it('under reduced motion fades in place both ways (§11.3) while the ring still reads the live fraction – the hold is input, not animation', () => {
     reduceMotion(true)
     const { post, host } = stand(hold())
     expect(host.style.transform).toBe('')
@@ -298,11 +348,11 @@ describe('the panel over the page', () => {
     expect(host.style.opacity).toBe('1')
     clock.now += 499
     frames.tick()
-    expect(host.getAttribute('data-progress')).toBe('0.000')
-    clock.now += 1
-    frames.tick()
     expect(host.getAttribute('data-progress')).toBe('0.333')
-    clock.now += 1000
+    clock.now += 251
+    frames.tick()
+    expect(host.getAttribute('data-progress')).toBe('0.500')
+    clock.now += 750
     frames.tick()
     expect(host.getAttribute('data-progress')).toBe('1.000')
     post(null)
