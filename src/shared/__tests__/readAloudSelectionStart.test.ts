@@ -1,7 +1,14 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest'
-import { extract } from '../readAloudScript'
-import { segmentSentences, type ReadAloudBlock, type ReadAloudExtractRequest } from '../readAloud'
+import { extract, paintHighlight } from '../readAloudScript'
+import {
+  READ_ALOUD_SENTENCE_HIGHLIGHT,
+  READ_ALOUD_WORD_HIGHLIGHT,
+  segmentSentences,
+  type ReadAloudBlock,
+  type ReadAloudExtractRequest,
+  type ReadAloudHighlightMessage
+} from '../readAloud'
 
 /**
  * EDGE-12: read aloud from the selection toolbar starts playback AT the selected text. The
@@ -43,9 +50,40 @@ function speechBlocks(request: ReadAloudExtractRequest): ReadAloudBlock[] {
   return extract(document, request).blocks.map((b) => ({ id: b.id, kind: b.kind, text: b.text }))
 }
 
+/** The CSS Custom Highlight API as the page script sees it: named highlights, each its ranges. */
+class FakeHighlight {
+  ranges: Range[]
+  constructor(...ranges: Range[]) {
+    this.ranges = ranges
+  }
+  add(range: Range): void {
+    this.ranges.push(range)
+  }
+  clear(): void {
+    this.ranges = []
+  }
+}
+
+const registry = new Map<string, FakeHighlight>()
+
+function installHighlightApi(): void {
+  ;(window as unknown as { Highlight?: unknown }).Highlight = FakeHighlight
+  // happy-dom's `CSS` object takes no new members: stand in for it with the registry attached.
+  Object.defineProperty(window, 'CSS', {
+    value: { highlights: registry },
+    configurable: true,
+    writable: true
+  })
+}
+
+/** The texts a named highlight paints, one per range; [] when none is registered. */
+const painted = (name: string): string[] =>
+  (registry.get(name)?.ranges ?? []).map((range) => range.toString())
+
 afterEach(() => {
   document.getSelection()?.removeAllRanges()
   document.body.innerHTML = ''
+  registry.clear()
 })
 
 describe('EDGE-12: the selection toolbar’s Listen starts at the selected text', () => {
@@ -88,6 +126,82 @@ describe('EDGE-12: the selection toolbar’s Listen starts at the selected text'
       'And a third sentence closes it.',
       'The third paragraph ends the page.'
     ])
+  })
+
+  it('the highlight is ONE sentence range at every position after a selection start: the selected word’s range does not outlive its turn', () => {
+    // The design record's act (ReadAloudSelectionDemo.kt): a long press on the word "finger",
+    // Listen, the reading moving on through the paragraph. Each `highlight` the core's player
+    // posts (`core/readAloud.ts` `paint`: the sentence's block, its position, the sentence's
+    // offsets, the word) is painted here as the page paints it, and after every one the sentence
+    // highlight holds exactly the sentence being read – the word-first segment's range is
+    // replaced by the next segment's, not joined by it, the same as every other transition.
+    document.body.innerHTML = FIXTURE
+    installHighlightApi()
+    const two = document.getElementById('two')!.firstChild!
+    const start = two.textContent!.indexOf('finger')
+    select(two, start, two, start + 'finger'.length)
+
+    const extraction = extract(document, fromSelectionOn)
+    const positions = new Map(extraction.blocks.map((b) => [b.id, b.at]))
+    const blocks: ReadAloudBlock[] = extraction.blocks.map((b) => ({
+      id: b.id,
+      kind: b.kind,
+      text: b.text
+    }))
+    const sentences = segmentSentences(blocks, 'en')
+    expect(sentences.map((s) => s.text)).toEqual([
+      'finger',
+      'lands.',
+      'Its tail follows the selection.',
+      'And a third sentence closes it.',
+      'The third paragraph ends the page.'
+    ])
+
+    for (const sentence of sentences) {
+      const word = /\S+/.exec(sentence.text)!
+      const message: ReadAloudHighlightMessage = {
+        type: 'readAloud',
+        action: 'highlight',
+        tabId: 't1',
+        blockId: sentence.blockId,
+        at: positions.get(sentence.blockId) ?? null,
+        sentence: { start: sentence.start, end: sentence.end },
+        word: { start: word.index, end: word.index + word[0].length },
+        mode: 'both'
+      }
+      paintHighlight(document, message)
+      // One range, the sentence being read; at every position after the first, the selection's
+      // own word ("finger", spoken first) is in no sentence range any more.
+      expect(painted(READ_ALOUD_SENTENCE_HIGHLIGHT), `sentence ${sentence.index}`).toEqual([
+        sentence.text
+      ])
+      expect(painted(READ_ALOUD_WORD_HIGHLIGHT), `word of sentence ${sentence.index}`).toEqual([
+        word[0]
+      ])
+      if (sentence.index > 0) {
+        expect(painted(READ_ALOUD_SENTENCE_HIGHLIGHT).some((text) => text.includes('finger'))).toBe(
+          false
+        )
+      }
+      // The script registers its two names and nothing else.
+      expect([...registry.keys()].sort()).toEqual(
+        [READ_ALOUD_SENTENCE_HIGHLIGHT, READ_ALOUD_WORD_HIGHLIGHT].sort()
+      )
+    }
+
+    // The walk's end (`clearHighlight`: `mode: 'off'`) leaves no range under either name.
+    paintHighlight(document, {
+      type: 'readAloud',
+      action: 'highlight',
+      tabId: 't1',
+      blockId: '',
+      at: null,
+      sentence: { start: 0, end: 0 },
+      word: null,
+      mode: 'off'
+    })
+    expect(painted(READ_ALOUD_SENTENCE_HIGHLIGHT)).toEqual([])
+    expect(painted(READ_ALOUD_WORD_HIGHLIGHT)).toEqual([])
   })
 
   it('a selection across two paragraphs starts at the first selected word and reads on past the second', () => {
