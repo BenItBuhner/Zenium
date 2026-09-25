@@ -44,15 +44,16 @@ package app.zen.chromium
  * `PackageManager.getLaunchIntentForPackage` such as Settings' Open – adds this activity on top
  * of the running browser (`:2385-2390`), and the platform, seeing a task switch to an activity
  * not yet created, draws its splash for it; the forward's `performClearTop` finishes this
- * activity and the starting window is TRANSFERRED to the browser's window, whose exit listener is
- * handed the copy a second time – after the lift, the chrome READY long since. The platform does
- * not end that copy (`TRANSFER_SPLASH_SCREEN_TIMEOUT`, 2000 ms, removes the SHELL's window when
- * the copy is not attached in time; the attached copy is the app's to end), so the app must:
- * [StartupSplash] sends a hand-over after the lift away at once on the exit motion
- * (`SplashHold.HandOver.LATE`), so the warm launch shows the splash for the forward's length plus
- * the departure's 180 ms. Before round 5 of #454 nothing lifted it and the copy stayed over the
- * page (runs 7 and 8's `alias_open` recordings); android-startup-demo.sh's `alias_open` act judges
- * the flash's end on every scheme. The launcher's own path never shows it.
+ * activity and the starting window is TRANSFERRED to the browser's window. Whether the platform
+ * then COPIES it to the browser's window is decided by the browser's last resume: a registered
+ * exit listener means a copy, attached to the decor for the app to end, with the shell's window
+ * hidden through a leash and reparented back as the attach completes – the flash runs 7–9 of
+ * #454 recorded (run 7's copy never ended; runs 8–9's returned over the page). So the browser
+ * RELEASES its listener at the lift ([StartupSplash.platformRelease], API 33+): the relaunch's
+ * resume reports none, no copy is made, and the transferred window is the platform's own splash,
+ * run and removed by the shell's exit. Below API 33 the listener cannot be cleared; the copy
+ * still comes and departs at once (`SplashHold.HandOver.LATE`). android-startup-demo.sh's
+ * `alias_open` act judges the splash's end on every scheme. The launcher's own path never shows it.
  *
  * The other trampolines keep `Theme.NoDisplay`. [LinkDispatchActivity] runs in the CALLER's task,
  * where a splash would be one window in the mail app's task and then a second in the browser's

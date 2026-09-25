@@ -235,6 +235,88 @@ class StartupSplashTest {
     }
 
     @Test
+    fun theLiftReleasesThePlatformsListenerOnceBeforeTheExitMotion() {
+        // API 33+: the platform's exit listener is cleared at the lift, so the activity's next
+        // resume reports no listener and a starting window transferred here later – the icon
+        // trampoline's, on a NEW_TASK-alone relaunch over the running chrome – is the platform's
+        // to end: never copied to this window, no hand-over, no reparent (runs 7–9 of #454).
+        val rig = Rig()
+        val releases = mutableListOf<String>()
+        rig.splash.release = { releases.add("released with the view " + rig.surface.events.joinToString("+").ifEmpty { "untouched" }) }
+        assertFalse(rig.splash.released)
+        rig.splash.handOver(rig.surface)
+        assertEquals("not at the hand-over: the splash is held", emptyList<String>(), releases)
+        rig.clock.now += 900
+        rig.splash.ready()
+        assertEquals("once, at the lift, before the exit motion starts", listOf("released with the view untouched"), releases)
+        assertTrue(rig.splash.released)
+        assertEquals(listOf("exit"), rig.surface.events)
+        assertEquals(900L, rig.splash.heldForMs)
+        assertEquals("said once in the log, for the harness", 1, rig.notes.size)
+        assertTrue(rig.notes[0], rig.notes[0].contains("exit listener released at the lift"))
+        rig.surface.end()
+        // A copy that comes anyway (API 31–32, where nothing clears the listener) departs at once; the release does not run again.
+        val late = FakeSurface()
+        rig.splash.handOver(late)
+        assertEquals(listOf("exit"), late.events)
+        assertEquals("the release ran once", 1, releases.size)
+        assertEquals(2, rig.notes.size)
+        assertTrue(rig.warnings.isEmpty())
+    }
+
+    @Test
+    fun theWatchdogsLiftReleasesTheListenerToo() {
+        val rig = Rig()
+        var releases = 0
+        rig.splash.release = { releases++ }
+        rig.splash.handOver(rig.surface)
+        rig.clock.now += StartupSplash.WATCHDOG_MS
+        rig.clock.fire()
+        assertEquals("watchdog", rig.splash.hold.liftedBy)
+        assertEquals(1, releases)
+        assertTrue(rig.splash.released)
+        assertEquals(listOf("exit"), rig.surface.events)
+    }
+
+    @Test
+    fun aFailedReleaseIsLoggedAndTheLiftIsUnhurt() {
+        val rig = Rig()
+        rig.splash.release = { throw IllegalStateException("no window") }
+        rig.splash.handOver(rig.surface)
+        rig.splash.ready()
+        assertEquals("the view still departs", listOf("exit"), rig.surface.events)
+        assertFalse(rig.splash.released)
+        assertEquals(1, rig.warnings.size)
+        assertTrue(rig.warnings[0], rig.warnings[0].contains("could not be released"))
+        assertTrue("no release note", rig.notes.isEmpty())
+        assertEquals("ready", rig.splash.hold.liftedBy)
+    }
+
+    @Test
+    fun noReleaseHookMeansNoReleaseAndNoNote() {
+        // The test rig's default and the pre-33 shape: the lift is as before.
+        val rig = Rig()
+        rig.splash.handOver(rig.surface)
+        rig.splash.ready()
+        assertFalse(rig.splash.released)
+        assertTrue(rig.notes.isEmpty())
+        assertEquals(listOf("exit"), rig.surface.events)
+    }
+
+    @Test
+    fun bothWindowsAttachWithThePlatformReleaseAndItClearsTheListenerFromApi33() {
+        val splash = read("src/main/kotlin/app/zen/chromium/StartupSplash.kt", "app/src/main/kotlin/app/zen/chromium/StartupSplash.kt")
+        val release = Regex("""fun platformRelease\(activity: Activity\): \(\) -> Unit = \{(.*?)\n        }""", RegexOption.DOT_MATCHES_ALL).find(splash)
+        assertTrue("StartupSplash.platformRelease is there", release != null)
+        assertTrue("API 33+ clears the platform's listener; below, nothing", release!!.value.contains("Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU") && release.value.contains("activity.splashScreen.clearOnExitAnimationListener()"))
+        for (path in listOf("MainActivity", "WebAppActivity")) {
+            val source = read("src/main/kotlin/app/zen/chromium/$path.kt", "app/src/main/kotlin/app/zen/chromium/$path.kt")
+            assertTrue("$path attaches with the platform release", source.contains("startupSplash.attach(splashScreen, StartupSplash.platformRelease(this))"))
+            assertFalse("$path has no attach without it", Regex("""startupSplash\.attach\(splashScreen\)""").containsMatchIn(source))
+        }
+    }
+
+    @Test
     fun aHandOverAfterTheWatchdogsLiftDepartsAtOnceToo() {
         val rig = Rig()
         rig.splash.handOver(rig.surface)

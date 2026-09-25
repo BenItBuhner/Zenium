@@ -173,15 +173,19 @@ interface SplashClock {
  * the splash [WATCHDOG_MS] after the hand-over so the window is never a splash for good, and says
  * so in the log. It is a safety net, not the exit condition.
  *
- * The listener fires once per starting window the platform gives this window, and a running
- * browser can be given a second one: a launch through the icon alias with `FLAG_ACTIVITY_NEW_TASK`
- * alone (Settings' Open, `adb shell am start`, `getLaunchIntentForPackage`) puts [IconTapActivity]
- * on top of the live task, the platform draws its splash for the task switch, transfers it to this
- * window at the forward's clear-top and hands the copy here – after the lift, with the chrome
- * READY long since. Nothing would lift that copy (the hold is spent, the watchdog needs it), so it
- * departs at once on the exit motion ([SplashHold.HandOver.LATE]); until round 5 of #454 it stayed
- * on screen for good – runs 7 and 8's `alias_open` recordings. A second view while the first is
- * held (SURPLUS) is removed; the first stays the one lifted.
+ * The listener is for the cold start's splash alone. At the lift it is RELEASED ([attach]'s
+ * `release`, [platformRelease]: API 33+ clears the platform's listener), so a starting window the
+ * platform gives this window later is never copied here: a launch through the icon alias with
+ * `FLAG_ACTIVITY_NEW_TASK` alone (Settings' Open, `adb shell am start`,
+ * `getLaunchIntentForPackage`) puts [IconTapActivity] on top of the live task, the platform draws
+ * its splash for the task switch and transfers it to this window at the forward's clear-top – and
+ * with no listener registered at this window's resume, the platform runs its own exit and
+ * removes it. Below API 33 the listener stays and the copy still comes, after the lift with the
+ * chrome READY long since; nothing would lift it (the hold is spent, the watchdog needs it), so it
+ * departs at once on the exit motion ([SplashHold.HandOver.LATE]). Until round 5 of #454 the copy
+ * was taken over and stayed (run 7) or came back over the page (runs 8–9) – the `alias_open`
+ * recordings. A second view while the first is held (SURPLUS) is removed; the first stays the one
+ * lifted.
  *
  * The system bars' icon tone during the hold is the splash theme's (light icons over the indigo);
  * what the chrome asks for meanwhile (Host.applyTheme → [systemBarsLight]) is kept and applied
