@@ -127,7 +127,8 @@ import {
 import { WebNavigationApi } from './webNavigation'
 import { WebRequestApi } from './webRequest'
 import { WindowsApi } from './windows'
-import { acquireOnIncomingIpc, WiredWorkers } from './workers'
+import { WORKER_PRELOAD_GRACE_MS, WorkerHandshakes, type WorkerProcess } from './workerHandshake'
+import { acquireOnIncomingIpc, WiredWorkers, workerKey } from './workers'
 
 /** IPC channels between the context-side shim (through its preload) and this router. */
 export const CHANNELS = {
@@ -250,6 +251,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   private readonly wiredWorkers = new WiredWorkers((worker, ses) =>
     this.installWorkerIpc(worker, ses)
   )
+  /**
+   * What each worker's preload says as the worker starts – that it ran, and its renderer's pid
+   * – and the one warning for a process whose workers start without it (`WorkerHandshakes`).
+   */
+  private readonly handshakes = new WorkerHandshakes({
+    onPreloadMissing: (extensionId) => this.warnPreloadMissing(extensionId)
+  })
   private readonly watchedWindows = new WeakSet<BrowserWindow>()
   private snapshot: ModelSnapshot | null = null
   private tickTimer: ReturnType<typeof setTimeout> | null = null
@@ -509,6 +517,16 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     ses.serviceWorkers.on('running-status-changed', ({ versionId, runningStatus }) => {
       if (runningStatus === 'stopped') this.wiredWorkers.release(versionId, ses)
       else this.acquireWorker(versionId, ses)
+      // The preload self-check and the worker's renderer follow the extension workers' runs
+      // (a wired wrapper is held for those alone; a site's worker is nobody's here).
+      const key = workerKey(versionId, ses)
+      if (runningStatus === 'stopping' || runningStatus === 'stopped') {
+        this.handshakes.release(key)
+      } else {
+        const worker = this.wiredWorkers.current(versionId, ses)
+        const extensionId = worker ? extensionIdFromUrl(worker.scope) : null
+        if (extensionId) this.handshakes.status(key, extensionId, runningStatus)
+      }
       this.registry.workerStatus(versionId, ses, runningStatus)
     })
     // A line from a worker whose wrapper was replaced meanwhile (the error console asks the
@@ -553,6 +571,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       // `event.serviceWorker` is the engine's wrapper of the moment (the one this handler is on,
       // normally); wiring it is a no-op then and keeps the version's key current after a release.
       this.wiredWorkers.wire(from.worker, from.session)
+      // Any message is the preload's word that it ran (the self-check's question).
+      this.handshakes.heardFrom(workerKey(from.worker.versionId, from.session))
       return from
     }
     worker.ipc.handle(CHANNELS.call, (event, namespace, method, args) =>
@@ -561,9 +581,37 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     worker.ipc.on(CHANNELS.notify, (event, kind, payload) =>
       this.notify(sender(event), kind, payload)
     )
-    worker.ipc.on(USER_SCRIPTS_CHANNELS.toggles, (event) => {
-      event.returnValue = this.shimOptionsFor(sender(event))
+    // The preload's first message, before the worker's script: the shim options request, with
+    // the worker renderer's pid along (the task manager's only way to place the process).
+    worker.ipc.on(USER_SCRIPTS_CHANNELS.toggles, (event, payload) => {
+      const from = sender(event)
+      const extensionId = extensionIdFromUrl(from.worker.scope)
+      if (extensionId) {
+        this.handshakes.hello(workerKey(from.worker.versionId, from.session), extensionId, payload)
+      }
+      event.returnValue = this.shimOptionsFor(from)
     })
+  }
+
+  /** The renderers of the running MV3 workers, as their preloads reported them (`Platform.tasks`). */
+  workerProcesses(): WorkerProcess[] {
+    return this.handshakes.processes()
+  }
+
+  /**
+   * A worker ran its script and its preload never spoke – once per process, since the cause is
+   * the process's: Electron evaluates service-worker preloads in its sandboxed renderer client
+   * only, which `--no-sandbox` without `--enable-sandbox` rules out (`platform/sandbox.ts`).
+   */
+  private warnPreloadMissing(extensionId: string): void {
+    const name = this.extensions.get(extensionId)?.manifest.name ?? extensionId
+    console.warn(
+      `[zen] extensions: the service-worker preload did not run in the background worker of ${name} (${extensionId}): ` +
+        `no word from Zenium's worker layer within ${WORKER_PRELOAD_GRACE_MS / 1000} s of the worker running, so MV3 ` +
+        "extension workers in this process get only the engine's chrome.*. Electron runs service-worker preloads in its " +
+        'sandboxed renderer client only: a launch with --no-sandbox needs --enable-sandbox as well, which Zenium appends ' +
+        'at startup unless it runs as root on Linux, where Electron refuses it.'
+    )
   }
 
   /**
@@ -668,6 +716,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     }
     this.extensions.delete(ext.id)
     this.preluded.delete(ext.id)
+    this.handshakes.forget(ext.id)
     this.alarms.unload(ext.id)
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
