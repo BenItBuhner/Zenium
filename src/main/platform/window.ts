@@ -43,12 +43,18 @@ const POPUP_MIN_HEIGHT = 200
 const APP_DEFAULT_WIDTH = 1024
 const APP_DEFAULT_HEIGHT = 720
 /**
- * A page's utility window (the task manager, `WindowChrome` `page`): Chrome's task manager
- * opens at about this and comes back where it was left; a table of processes needs about the
- * minimum to keep its columns.
+ * A page's utility window (the task manager, `WindowChrome` `page`): CONTENT sizes – the OS
+ * frame comes on top of them (`planFramedWindow`, `useContentSize`) – summed from the page's
+ * parts so the table shows whole rows and a 32 / 32 column, on every OS (W5-18 C3 / C4). The
+ * width: the 664 text column + 32 either side (the page's 16 plus the rows' 16) + the §9.20
+ * scrollbar's 8 gutter = 736. The height: the field's 16 top inset + the 32 field + 12 under it
+ * (60) + the sticky column header's 34 (32 + its 2) + seven whole 52 rows (364: the browser, its
+ * window, the GPU, the network service and three tabs, the common set) + the footer's 12 + 32 +
+ * 16 (60) = 518 – no sliver of an eighth row. The window comes back where it was left; the
+ * minimum keeps the table's columns.
  */
-const PAGE_DEFAULT_WIDTH = 760
-const PAGE_DEFAULT_HEIGHT = 520
+const PAGE_DEFAULT_WIDTH = 736
+const PAGE_DEFAULT_HEIGHT = 518
 const PAGE_MIN_WIDTH = 480
 const PAGE_MIN_HEIGHT = 320
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */

@@ -17,6 +17,7 @@ import type { Tab, TaskInfo, TaskList, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useFaviconSrc } from '@renderer/lib/favicons'
+import { cn } from '@renderer/lib/utils'
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog'
 import { PageColumn, PageEmpty, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { usePageSearch } from '../usePageSearch'
@@ -82,8 +83,17 @@ function rememberSort(sort: TaskSort): void {
  * which filters by task name and rides on `?q=` like the other list pages. The list refreshes
  * every `TASKS_REFRESH_MS` while the page is on screen – the page is mounted for the active tab
  * alone, and the timer stops while the document is hidden – and never otherwise.
+ *
+ * Two forms. The TAB form (the phone; a typed `zen://tasks`) is the page above. The WINDOW form
+ * (W5-18: the task manager in its own window, `WindowChrome` `page`) has the frame's bar for its
+ * title, so it drops the title block – the search field leads the window's content at the
+ * page's 16, the table is named for what the bar says – the column header stays put under the
+ * field, the table takes the window's width (the figures at the trailing 32, the Task column
+ * the slack), and Escape is the prompt's, then the field's text, then the window's: a selection
+ * or an empty field never swallows it (Chrome's one press).
  */
-export function TasksPage({ tab }: { state: UIState; tab: Tab }): JSX.Element {
+export function TasksPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
+  const windowForm = state.window?.chrome === 'page'
   const urlQuery = parseInternalPageUrl(tab.url)?.query?.q ?? ''
   const field = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
@@ -212,7 +222,9 @@ export function TasksPage({ tab }: { state: UIState; tab: Tab }): JSX.Element {
         }
         return
       case 'Escape':
-        if (selected) {
+        // The tab form's Escape clears the selection. In the window form a selection never
+        // swallows the key: it is the window's, which closes on it.
+        if (selected && !windowForm) {
           e.preventDefault()
           e.stopPropagation()
           setSelectedPid(null)
@@ -238,20 +250,23 @@ export function TasksPage({ tab }: { state: UIState; tab: Tab }): JSX.Element {
   return (
     <PageColumn
       testId="tasks-page"
-      className="zen-tasks-page"
+      className={cn('zen-tasks-page', windowForm && 'zen-tasks-window')}
       onKeyDown={onKeyDown}
       header={
         <>
-          <PageTitleBlock
-            title="Task Manager"
-            description="Every process Zenium is running, with the memory, CPU and network it uses. Select one to end it."
-          />
+          {!windowForm && (
+            <PageTitleBlock
+              title="Task Manager"
+              description="Every process Zenium is running, with the memory, CPU and network it uses. Select one to end it."
+            />
+          )}
           <PageSearchField
             field={field}
             value={query}
             onChange={setQuery}
             placeholder="Find a task"
             testId="tasks-search"
+            passEmptyEscape={windowForm}
           />
         </>
       }
@@ -273,7 +288,8 @@ export function TasksPage({ tab }: { state: UIState; tab: Tab }): JSX.Element {
         ref={list}
         className="zen-page-list zen-tasks-table"
         role="grid"
-        aria-label="Processes"
+        aria-label={windowForm ? 'Task Manager' : 'Processes'}
+        data-form={windowForm ? 'window' : 'tab'}
         data-testid="tasks-table"
         data-sort={sort ? `${sort.column}:${sort.direction}` : undefined}
       >

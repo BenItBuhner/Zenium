@@ -91,8 +91,9 @@ export function App(): JSX.Element {
  * and the caption buttons; the chrome draws the one chrome page the window holds edge to edge –
  * no sidebar, toolbar or pill, no gutter and no frame radius: the page's own padding is the
  * window's. The page's dialogs (End process's confirmation) mount in the frame host over it, as
- * they do in a tab. Escape closes the window once nothing in the page has taken the key (a
- * dialog up, a selected row – the page clears its selection first, as it does in a tab).
+ * they do in a tab. Escape is the prompt's first (a dialog up cancels), then the search field's
+ * text (cleared), then the window's: a selected row or an empty field never swallows it, so one
+ * press with nothing else to take it closes the window (Chrome's task manager).
  */
 function PageWindowShell({ state, theme }: { state: UIState; theme: ResolvedTheme }): JSX.Element {
   const tab = activeTab(state)
