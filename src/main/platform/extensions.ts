@@ -1394,21 +1394,10 @@ export class ExtensionService implements ExtensionHost {
       // The renderer shows the view once its frame has popped in (extension.resizePopup).
       view.setVisible(false)
     } else {
-      // Legacy placement (no renderer frame): under the anchor, sized by the document height.
+      // No renderer frame (`action.openPopup()`, the `_execute_action` shortcut, the phone
+      // sheet): under the anchor, sized by the document once it reports (`framelessPopupBounds`).
       view.setBorderRadius(12)
-      const x = Math.max(
-        8,
-        Math.min(
-          anchor.x + anchor.width - POPUP_INITIAL.width,
-          contentBounds.width - POPUP_INITIAL.width - 8
-        )
-      )
-      view.setBounds({
-        x: Math.round(x),
-        y: Math.round(anchor.y + anchor.height + 6),
-        width: POPUP_INITIAL.width,
-        height: POPUP_INITIAL.height
-      })
+      view.setBounds(framelessPopupBounds(anchor, POPUP_INITIAL, contentBounds))
     }
     bw.contentView.addChildView(view)
     const wc = view.webContents
@@ -1420,14 +1409,7 @@ export class ExtensionService implements ExtensionHost {
         height: Math.round(Math.max(POPUP_MIN.height, Math.min(POPUP_MAX.height, height)))
       }
       if (frame) this.browser.emit('extension.popupSize', { id: record.id, ...size }, win)
-      else {
-        const b = view.getBounds()
-        view.setBounds({
-          ...b,
-          width: POPUP_INITIAL.width,
-          height: Math.min(size.height, contentBounds.height - b.y - 8)
-        })
-      }
+      else view.setBounds(framelessPopupBounds(anchor, size, contentBounds))
     }
     // Chromium's preferred size is what Chrome sizes its popups by (the document's minimum width
     // and its height); a document that never reports one is measured once instead, a moment
@@ -1617,6 +1599,48 @@ function roundRect(r: Rect): Rect {
     width: Math.round(r.width),
     height: Math.round(r.height)
   }
+}
+
+/** The window's content area keeps this much clear around a frameless popup. */
+const POPUP_MARGIN = 8
+/** How far below its anchor a frameless popup hangs. */
+const POPUP_ANCHOR_GAP = 6
+
+/**
+ * Where a frameless action popup (no renderer frame: `chrome.action.openPopup()`, the
+ * `_execute_action` shortcut, the phone sheet) sits and how large, from the size its document
+ * asked for: the width and the height both follow the document, as Chrome sizes a popup to its
+ * page, between Chrome's limits (`POPUP_MIN` / `POPUP_MAX`) and inside the window's content
+ * area with `POPUP_MARGIN` clear. It hangs `POPUP_ANCHOR_GAP` below the anchor with its right
+ * edge on the anchor's, as Chrome hangs a popup off its toolbar button, and moves left as it
+ * widens so it stays on screen, never past the left margin. The height is cut at the content
+ * area's bottom, as before.
+ */
+export function framelessPopupBounds(
+  anchor: Rect,
+  size: { width: number; height: number },
+  content: { width: number; height: number }
+): Rect {
+  const width = Math.round(
+    Math.max(
+      POPUP_MIN.width,
+      Math.min(size.width, POPUP_MAX.width, content.width - 2 * POPUP_MARGIN)
+    )
+  )
+  const y = Math.round(anchor.y + anchor.height + POPUP_ANCHOR_GAP)
+  const height = Math.round(
+    Math.max(
+      POPUP_MIN.height,
+      Math.min(size.height, POPUP_MAX.height, content.height - y - POPUP_MARGIN)
+    )
+  )
+  const x = Math.round(
+    Math.max(
+      POPUP_MARGIN,
+      Math.min(anchor.x + anchor.width - width, content.width - width - POPUP_MARGIN)
+    )
+  )
+  return { x, y, width, height }
 }
 
 export function warningPlatform(): WarningPlatform {
