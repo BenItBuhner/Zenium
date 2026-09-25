@@ -1,0 +1,58 @@
+name: Android link menu demo
+
+# Records the phone's link menu on a tab in NO group (parity row PUI-17, Chrome for Android 152's
+# link context menu): the tab-group drivers' seeded profile, a real hold on a loose tab's link, the
+# sheet's rows read by name off the chrome's DOM and each of Chrome 152's rows looked up (Read
+# later a stated limit: no reading list), then a real touch on "Open Link in New Tab in Group" –
+# Chrome's first row, kept on a loose tab – making the group: a new folder around the opener with
+# the link's tab behind it, the two a group of two, the seeded group untouched; light on Home,
+# dark on Gamma, the two design stills `link-menu-design-rows-{light,dark}.png`. The driver writes
+# `link-menu-findings.txt` with an OK or FAIL per claim and fails when any did. Dispatch-only, like
+# the other demos: it takes about four minutes. The build, the emulator and the Gradle cache live
+# in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W6-8): a push trigger scoped to the PR's branch – worker tokens cannot dispatch
+  # workflows. Removed before the PR is marked ready.
+  push:
+    branches:
+      - cursor/android-read-aloud-link-menu-d9be
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-link-menu-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Link menu demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.LinkMenuDemo
+        DEMO_DIR=link-menu-demo
+        DEMO_OUT=artifacts/android-link-menu-demo
+        DEMO_VIDEO=android-link-menu-demo.mp4
+      artifact-name: android-link-menu-demo
+      artifact-path: artifacts/android-link-menu-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Link menu demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.LinkMenuDemo
+        DEMO_DIR=link-menu-demo
+        DEMO_OUT=artifacts/android-link-menu-demo
+        DEMO_VIDEO=android-link-menu-demo.mp4
+      artifact-name: android-link-menu-demo-second-boot
+      artifact-path: artifacts/android-link-menu-demo/
