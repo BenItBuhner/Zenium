@@ -1,9 +1,10 @@
-import type { CSSProperties, JSX } from 'react'
-import { useRef } from 'react'
+import type { CSSProperties, JSX, RefObject } from 'react'
+import { useContext, useRef } from 'react'
 import { Moon, Plus, VenetianMask, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
 import { closeTabLabel, tabCardLabel } from '@renderer/lib/overviewLabels'
+import { NO_GRID, OverviewWindowContext, useCardFilled } from '@renderer/lib/overviewWindow'
 import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
@@ -57,6 +58,13 @@ interface Props {
    * the card and the accent-filled box, nothing else: the ring is the active card's mark.
    */
   selection?: { selected: boolean; onToggle: (tab: Tab) => void }
+  /**
+   * The card is built from the first frame whatever the grid's window says (`lib/overviewWindow`):
+   * the hero's own card, which the page morphs into (the phone) or which stands in the layer
+   * that comes down whole (the tablet, §9.36), and the cards the mount's guess puts in view. An
+   * eager cell is not re-rendered by a fill.
+   */
+  eager?: boolean
 }
 
 /**
@@ -67,12 +75,53 @@ interface Props {
  * A card holds its tab's picture only while its cell is on screen or a row from it: the grid
  * is not virtualised, its pictures are.
  *
+ * The CELL is always built – the frame at the card's aspect, keyed, sized, in the grid's flow
+ * – and under the grid's window (`OverviewWindowContext`, `lib/overviewWindow.ts`: the cells in
+ * view and a row's margin, the hero's, then the rest on scroll and in idle time) the card in it
+ * is either the card itself (`CardFace`) or a PLACEHOLDER: the card's frame in the surface tone
+ * at the card's elevation, no title row, favicon or picture, nothing for the accessibility tree
+ * (`aria-hidden`, no role, no name: TalkBack's "tab 2 of 30" is the cards', whose count is the
+ * pane's tabs whatever the window holds). The cell's own element never changes, so the FLIP
+ * tracker's set, the hero's measure and the exits' rects hold through the fill. The context is
+ * the grid's token: the store's word counts under the grid that owns the window, so a cell of a
+ * grid mounting while the last grid's window is still the store's (the shell swap) reads nothing
+ * of it. A card rendered outside a windowed grid (a test's, a preview's) is a card, as it always
+ * was.
+ *
  * In the select-tabs mode the card is the checkbox for assistive technology (`role="checkbox"`,
  * `aria-checked`), the box a presentational span inside it drawn by the shared
  * `.zen-v2-checkbox` in its span form (§9.34, as the panels' rows do it) – TalkBack reads
  * "checked" or "not checked" with the card's name; no input, no second copy of the state.
  */
-export function OverviewCard({
+export function OverviewCard(props: Props): JSX.Element {
+  const { tab, eager = false } = props
+  const cellRef = useRef<HTMLDivElement>(null)
+  const grid = useContext(OverviewWindowContext)
+  const filled = useCardFilled(tab.id, eager || grid === NO_GRID, grid)
+  return (
+    <div
+      ref={cellRef}
+      className="relative"
+      style={{ aspectRatio: CARD_ASPECT }}
+      data-tab-id={tab.id}
+      data-cell={tab.id}
+    >
+      {filled ? (
+        <CardFace {...props} cellRef={cellRef} />
+      ) : (
+        <div className="zen-overview-card-placeholder absolute inset-0" aria-hidden />
+      )}
+    </div>
+  )
+}
+
+/**
+ * The card in its cell: the button (or checkbox) with the title row and the picture, and the
+ * close laid beside it. Its hooks – the lift, the stand-in and the drop target, the departure,
+ * the picture's on-screen word, the private mask – are the card's alone: a placeholder cell
+ * runs none of them, which is what the window saves at the mount.
+ */
+function CardFace({
   tab,
   active,
   position,
@@ -82,13 +131,13 @@ export function OverviewCard({
   onClose,
   onSwipeClose,
   lift,
-  selection
-}: Props): JSX.Element {
+  selection,
+  cellRef
+}: Props & { cellRef: RefObject<HTMLDivElement | null> }): JSX.Element {
   const handlers = useCardLift({ tab, ...lift, onSwipeClose: (t) => onSwipeClose?.(t) })
   const held = liftStore.use((s) => (s.tabId === tab.id ? s.phase : 'idle'))
   const targeted = liftStore.use((s) => s.phase === 'dragging' && s.target === `card:${tab.id}`)
   const departing = departStore.use((s) => s.hidden.has(tab.id))
-  const cellRef = useRef<HTMLDivElement>(null)
   const visible = useOnScreen(cellRef, CARD_LOOKAHEAD)
   // A locked private tab's card is named the placeholder, as its title row reads (§9.19).
   const masked = useTabMasked(tab)
@@ -99,13 +148,7 @@ export function OverviewCard({
   const selecting = selection !== undefined
   const act = (): void => (selection ? selection.onToggle(tab) : onPick(tab))
   return (
-    <div
-      ref={cellRef}
-      className="relative"
-      style={{ aspectRatio: CARD_ASPECT }}
-      data-tab-id={tab.id}
-      data-cell={tab.id}
-    >
+    <>
       <div
         role={selecting ? 'checkbox' : 'button'}
         aria-checked={selecting ? selection.selected : undefined}
@@ -166,7 +209,7 @@ export function OverviewCard({
           <X className="h-4 w-4" />
         </button>
       )}
-    </div>
+    </>
   )
 }
 

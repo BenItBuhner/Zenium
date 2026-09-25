@@ -3546,6 +3546,17 @@
   .zen-overview-card:active {
     transform: scale(0.975);
   }
+  /*
+   * A cell the grid's window has not built yet (`lib/overviewWindow.ts`, W6-0): the card's
+   * frame – its radius, its surface, its elevation – and nothing on it; the card takes its
+   * place on scroll or in idle time. Never a tone of its own: the cell reads as the card it is
+   * about to be, so nothing is drawn differently as it fills (v2 §9.34, §11).
+   */
+  .zen-overview-card-placeholder {
+    border-radius: var(--zen-card-radius);
+    background: var(--zen-bg-solid);
+    box-shadow: var(--zen-shadow-1);
+  }
   /* The title row (§9.21): 44 at the default text size, growing from its line box (A11Y-05). */
   .zen-overview-card-header {
     height: var(--zen-overview-card-header);

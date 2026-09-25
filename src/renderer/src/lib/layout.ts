@@ -208,8 +208,8 @@ export function overviewColumns(width: number): number {
 }
 
 /** The overview grid's gutter each side and the gap between its cells (`px-3`, `gap-3`), in px. */
-const OVERVIEW_GRID_GUTTER = 12
-const OVERVIEW_GRID_GAP = 12
+export const OVERVIEW_GRID_GUTTER = 12
+export const OVERVIEW_GRID_GAP = 12
 
 /**
  * The tablet overview card's aspect (v2 §9.36: "a card's picture takes the frame's aspect –
