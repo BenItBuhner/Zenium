@@ -1041,6 +1041,10 @@ describe('the AI Agents › Agent skill group', () => {
           {
             ...target('claude', 'Claude Code', true, false),
             note: 'A copy Zenium did not install is there; installing replaces it'
+          },
+          {
+            ...target('cursor', 'Cursor', true, true),
+            note: 'Left in place: SKILL.md – it was edited since Zenium installed it'
           }
         ]
       })
@@ -1054,14 +1058,20 @@ describe('the AI Agents › Agent skill group', () => {
     expect(status.leading).toBeUndefined()
     if (!isValidElement<{ className?: string }>(status.trailing)) throw new Error('no glyph')
     expect(status.trailing.props.className).toBe('zen-settings-trailing-glyph')
+    // The installer's cautions warn and do not fail: the warn ink, on both of its sentences.
     const claude = findRow([group], 'skill:claude')!
     expect(claude.kind === 'switch' && claude.description).toBe(
       'A copy Zenium did not install is there; installing replaces it'
     )
     expect(claude.tone).toBe('warn')
+    const cursor = findRow([group], 'skill:cursor')!
+    expect(cursor.description).toBe(
+      'Left in place: SKILL.md – it was edited since Zenium installed it'
+    )
+    expect(cursor.tone).toBe('warn')
   })
 
-  it('leads with one agent’s failure on the status line while the others stay in, checked', () => {
+  it('keeps the count on the status line, in the danger tone, when one agent’s install failed and the others are in: only that row says why, in the danger ink', () => {
     const sentence =
       'Could not install: something else is in the way at ~/.codex/skills/zenium-browser'
     const group = skill(
@@ -1077,15 +1087,20 @@ describe('the AI Agents › Agent skill group', () => {
     )!
     const status = group.rows[0]
     if (status.kind !== 'info') throw new Error('not an info row')
-    // The same sentence twice: the danger line with its glyph leads, the row it is about
-    // carries it in the warn tone in place of the path.
-    expect(status.description).toBe(sentence)
+    // The sentence once, on the row it is about (the lead's tidy from the #460 r3 read): the
+    // status line keeps its count and reports the failure through the danger tone and the
+    // §10.4 glyph alone.
+    expect(status.description).toBe('Installed for 2 of 3 agents found · version 0.3.77-test')
     expect(status.tone).toBe('danger')
-    expect(isValidElement(status.trailing)).toBe(true)
+    if (!isValidElement<{ className?: string }>(status.trailing)) throw new Error('no glyph')
+    expect(status.trailing.props.className).toBe('zen-settings-trailing-glyph')
+    // One failure, one ink (the lead's #468 delta read): the row's sentence is a failure, so it
+    // wears the danger ink the status row wears for it (a switch row has no glyph slot; the
+    // glyph is the status row's).
     const codex = findRow([group], 'skill:codex')!
     expect(codex.kind === 'switch' && codex.checked).toBe(false)
     expect(codex.description).toBe(sentence)
-    expect(codex.tone).toBe('warn')
+    expect(codex.tone).toBe('danger')
     for (const id of ['skill:claude', 'skill:cursor']) {
       const row = findRow([group], id)!
       expect(row.kind === 'switch' && row.checked).toBe(true)
@@ -1096,6 +1111,46 @@ describe('the AI Agents › Agent skill group', () => {
     expect(findRow([group], 'skill-all')?.label).toBe('Install for every agent found')
     for (const text of [status.description, codex.description])
       for (const leak of ['.tmp', '/home/', '/tmp/', 'EACCES:']) expect(text).not.toContain(leak)
+
+    // With no agent in, the count would say "Not installed" and hide the failure: the status
+    // line carries the row's sentence then, glyph and tone as before.
+    const none = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        error: sentence,
+        targets: [
+          target('claude', 'Claude Code', true, false),
+          { ...target('codex', 'Codex', true, false), note: sentence }
+        ]
+      })
+    )!
+    const noneStatus = none.rows[0]
+    if (noneStatus.kind !== 'info') throw new Error('not an info row')
+    expect(noneStatus.description).toBe(sentence)
+    expect(noneStatus.tone).toBe('danger')
+    expect(isValidElement(noneStatus.trailing)).toBe(true)
+    expect(findRow([none], 'skill:codex')?.description).toBe(sentence)
+    expect(findRow([none], 'skill:codex')?.tone).toBe('danger')
+
+    // A failure of the operation as a whole (the record could not be saved) is no row's: the
+    // status line says it, whatever is installed.
+    const whole =
+      'Could not install: Zenium could not save its record in its profile folder (no permission to write); the copies were removed again.'
+    const recorded = skill(
+      build({
+        ...emptyAgentSkillStatus('0.3.77-test'),
+        error: whole,
+        targets: [
+          target('claude', 'Claude Code', true, true),
+          target('codex', 'Codex', true, false)
+        ]
+      })
+    )!
+    const recordedStatus = recorded.rows[0]
+    if (recordedStatus.kind !== 'info') throw new Error('not an info row')
+    expect(recordedStatus.description).toBe(whole)
+    expect(recordedStatus.tone).toBe('danger')
+    expect(isValidElement(recordedStatus.trailing)).toBe(true)
   })
 
   it('names no harness in what it shows', () => {
