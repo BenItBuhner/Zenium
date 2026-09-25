@@ -1,5 +1,6 @@
 import { BrowserWindow, type Rectangle } from 'electron'
-import { PRIVATE_CONTAINER_ID } from '../../../shared/types'
+import { PRIVATE_CONTAINER_ID, type Tab } from '../../../shared/types'
+import type { ZenWindow } from '../../../core/window'
 import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '../../../core/extensions/api/tabs'
 import {
   type ChromeWindow,
@@ -125,21 +126,62 @@ export class WindowsApi {
     const incognito = d.incognito === true
     const type = typeof d.type === 'string' ? d.type : 'normal'
     const bounds = boundsFrom(d)
-    if (type === 'popup' || type === 'panel' || type === 'detached_panel') {
+    const moving = d.tabId === undefined ? null : this.tabToMove(d.tabId, incognito)
+    // Chrome moves the tab into the created window when it is a tabbed one or opened on no
+    // URL (`WindowsCreateFunction::Run`); Zenium's popup windows hold a page, not a tab, so a
+    // popup asked to carry a tab is the tab's own window at the popup's bounds.
+    if (!moving && (type === 'popup' || type === 'panel' || type === 'detached_panel')) {
       return this.createPopup(ctx, urls, incognito, bounds, d.focused !== false)
     }
-    const win = this.host.browser.createWindow({
-      kind: incognito ? 'private' : 'synced',
-      from: ctx.window
-    })
+    const win = moving
+      ? this.windowCarrying(moving.tab, moving.win)
+      : this.host.browser.createWindow({
+          kind: incognito ? 'private' : 'synced',
+          from: ctx.window
+        })
     const bw = this.model.browserWindowOf(win)
     if (bw && bounds) bw.setBounds({ ...bw.getBounds(), ...bounds })
     if (bw && typeof d.state === 'string') applyState(bw, d.state)
     if (bw && d.focused === false) bw.once('show', () => bw.blur())
     urls.forEach((url, i) => {
-      this.host.browser.tabs.createTab({ url, active: i === 0 }, win)
+      this.host.browser.tabs.createTab({ url, active: i === 0 && !moving }, win)
     })
+    // Chrome gives a window created on neither a URL nor a tab a new tab of its own
+    // (`WindowsCreateFunction::Run`: "Create a new tab if the created window is still empty"),
+    // so the caller's `window.tabs[0]` exists: Tab Resize reads its id to file the layout's
+    // remaining cells. A synced window owns none of the shared strip until it gets one; a
+    // private window already holds its starter tab.
+    if (this.model.tabsInWindow(win).length === 0) {
+      this.host.browser.tabs.createTab({ active: true }, win)
+    }
     return this.model.chromeWindow(win, true, this.urlsFor(ctx.extension))
+  }
+
+  /**
+   * The tab `windows.create({ tabId })` carries into the new window, with Chrome's checks
+   * (`WindowsCreateFunction::ValidateTab`): it must exist and stay in its profile.
+   */
+  private tabToMove(tabId: unknown, incognito: boolean): { tab: Tab; win: ZenWindow } {
+    if (!isInteger(tabId)) throw new ApiError('Invalid tab id')
+    const tab = this.model.zenTab(tabId)
+    if (!tab) throw new ApiError(`No tab with id: ${tabId}.`)
+    const win = this.model.windowOfTab(tab)
+    if (!win) throw new ApiError(`No tab with id: ${tabId}.`)
+    if (win.isPrivate !== incognito)
+      throw new ApiError('Tabs can only be moved between windows in the same profile.')
+    return { tab, win }
+  }
+
+  /**
+   * A new window holding `tab` alone: the browser's tab tear-off (`moveTabToNewWindow`, the
+   * drag-out and "Move to New Window"), which picks the one window kind that can own the tab by
+   * itself (a synced window's tabs are shared, so it gets a blank window of its own space) and
+   * leaves the window it came from showing its neighbour.
+   */
+  private windowCarrying(tab: Tab, from: ZenWindow): ZenWindow {
+    const win = this.host.browser.tabs.moveTabToNewWindow(tab.id, null, from)
+    if (!win) throw new ApiError('Multiple windows are not available on this device.')
+    return win
   }
 
   private createPopup(

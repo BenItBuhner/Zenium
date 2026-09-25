@@ -13,6 +13,7 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
+  emptyAgentSkillStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
@@ -59,6 +60,7 @@ const DESKTOP: HostCapabilities = {
   sync: true,
   print: true,
   agents: true,
+  agentSkills: true,
   updates: true,
   share: false,
   clipboardChip: false,
@@ -221,6 +223,7 @@ function state(
     webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
+    agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
     passwords: emptyPasswordsStatus(),
     autofill: emptyAutofillUIState(),
@@ -256,7 +259,7 @@ function state(
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     siteData: emptySiteDataStatus(),
     newTabShortcuts: [],
-    newTabBackground: { image: false, canPick: false },
+    newTabBackground: { image: false, canPick: false, accent: null },
     translate: TRANSLATE,
     spellcheck: UNAVAILABLE_SPELLCHECK
   } as unknown as UIState
@@ -490,6 +493,42 @@ describe('switching categories', () => {
     expect(invoke).toHaveBeenCalledWith('settings.update', {
       borderless: !DEFAULT_SETTINGS.borderless
     })
+  })
+
+  it('a checkbox row carries its tone, so a note under it takes the status ink', () => {
+    // The Agent skill group's rows are the checkbox rows that carry one: an agent whose folder
+    // could not be written keeps the failure sentence under its label in the warn ink, and the
+    // rows with nothing to say carry no tone at all.
+    const s = state(DESKTOP, 'linux', {}, 'zen://settings/agents')
+    const sentence =
+      'Could not install: something else is in the way at ~/.codex/skills/zenium-browser'
+    const target = (
+      id: string,
+      label: string,
+      installed: boolean,
+      note: string | null
+    ): UIState['agentSkills']['targets'][number] => ({
+      id,
+      label,
+      dir: `~/.${id}/skills/zenium-browser`,
+      detected: true,
+      installed,
+      installedVersion: installed ? s.version : null,
+      note
+    })
+    s.agentSkills = {
+      version: s.version,
+      error: sentence,
+      targets: [
+        target('claude', 'Claude Code', true, null),
+        target('codex', 'Codex', false, sentence)
+      ]
+    }
+    const markup = render(s)
+    expect(markup).toMatch(/<label data-row="skill:codex" data-tone="warn"/)
+    expect(markup).toMatch(/<label data-row="skill:claude" class=/)
+    expect(markup).not.toMatch(/<label data-row="skill:claude" data-tone/)
+    expect(markup).toMatch(/data-row="skill-status"[^>]*data-tone="danger"/)
   })
 })
 
