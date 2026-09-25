@@ -1840,14 +1840,15 @@ describe('AndroidExtensionRuntime: chrome.userScripts', () => {
 })
 
 describe('AndroidExtensionRuntime: chrome.offscreen', () => {
-  it('createDocument puts up one hidden page and resolves on its hello; closeDocument takes it down', async () => {
+  it('createDocument puts up one hidden page and resolves on its ready, not its hello; closeDocument takes it down', async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['offscreen'] })))
     backgroundUp(h, 'bg1')
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
     const closedEarly = await call(h, 'bg1', 'offscreen', 'closeDocument', [])
     expect(closedEarly.error).toBe('No current offscreen document.')
-    // Tampermonkey's call, its URL a path: the page is up when its bootstrap says hello.
+    // Tampermonkey's call, its URL a path: the page is up when its bootstrap says hello, and
+    // the call settles when the page reports ready (its load, its listeners registered).
     const id = nextCallId()
     message(h, 'bg1', {
       t: 'call',
@@ -1892,9 +1893,22 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     ).result as Array<Record<string, unknown>>
     expect(loadingByServed.map((c) => c.contextType)).toEqual(['OFFSCREEN_DOCUMENT'])
     hello(h, 'off1', 'offscreen', { url: servedUrl })
+    // The hello alone does not settle the call (Chrome's promise "resolves when the offscreen
+    // document is created and has completed its initial page load"; SingleFile sends its
+    // `offscreen.getBlobURL` chunks the moment it settles, and a page whose scripts had not
+    // run yet answered "Receiving end does not exist.", round 17). The page's ready does.
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    // A ready from a frame inside the page is not the page's.
+    hello(h, 'off1sub', 'offscreen', { url: `${servedUrl}#frame`, top: false })
+    h.runtime.onMessage({ ep: 'off1sub', tabId: null, top: false, origin: '', message: { t: 'ready' } })
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    message(h, 'off1', { t: 'ready' })
     await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
+    h.runtime.onGone(['off1sub'])
     // Up, it is listed once, as the page's endpoint.
     const up = (
       await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: ['OFFSCREEN_DOCUMENT'] }])
@@ -1993,6 +2007,54 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     expect(h.kt.offscreens.has(ID)).toBe(false)
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
   })
+
+  it('a page that said hello gets a fresh load window, and one whose load never reports is resolved as up, not torn down', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['offscreen'] })))
+    backgroundUp(h, 'bg1')
+    const servedUrl = `https://${ID}.ext.zenium.invalid/offscreen.html`
+    const id = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'offscreen',
+      method: 'createDocument',
+      args: [{ url: 'offscreen.html', reasons: ['BLOBS'], justification: 'blob URLs' }]
+    })
+    await until(() => h.kt.offscreens.has(ID))
+    // A cold WebView spends most of the first window before its bootstrap speaks: the hello at
+    // 19 s re-arms the wait, so the load window does not run out a second later.
+    h.tick(19_000)
+    hello(h, 'off1', 'offscreen', { url: servedUrl })
+    h.tick(2_000)
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    expect(h.kt.offscreens.has(ID)).toBe(true)
+    // The ready settles it within the fresh window.
+    message(h, 'off1', { t: 'ready' })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
+    await call(h, 'bg1', 'offscreen', 'closeDocument', [])
+    h.runtime.onGone(['off1'])
+
+    // A page up (hello) whose load never reports (a subresource hanging past the window): the
+    // document exists and answers messages, so the call resolves rather than the view going.
+    const again = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id: again,
+      ns: 'offscreen',
+      method: 'createDocument',
+      args: [{ url: 'offscreen.html', reasons: ['BLOBS'], justification: 'blob URLs' }]
+    })
+    await until(() => h.kt.offscreens.has(ID))
+    hello(h, 'off2', 'offscreen', { url: servedUrl })
+    h.tick(20_000)
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === again))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === again)?.error).toBeUndefined()
+    expect(h.kt.offscreens.has(ID)).toBe(true)
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
+  })
 })
 
 describe('tabUrlFrom: the URL a tabs.create / tabs.update / windows.create names', () => {
@@ -2046,6 +2108,48 @@ describe('AndroidExtensionRuntime: a file:// navigation from the API', () => {
     const allowed = await call(h, 'bg1', 'tabs', 'create', [{ url: 'file:///sdcard/page.html' }])
     expect(allowed.ok).toBe(true)
     expect(h.created).toHaveLength(2)
+  })
+})
+
+describe('AndroidExtensionRuntime: windows.create', () => {
+  it("answers with the window carrying the tabs the call opened alone, as Chrome (2048's worker takes win.tabs[0].id for its app tab)", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}))
+    backgroundUp(h, 'bg1')
+    const ids = h.runtime.api.tabs
+    // A popup window over one page: the one tab it opened, not the fixture tab beside it.
+    const one = await call(h, 'bg1', 'windows', 'create', [
+      { url: 'popup.html', type: 'popup', width: 500, height: 600 }
+    ])
+    expect(one.ok).toBe(true)
+    expect(h.created).toEqual([{ id: 't2', active: true }])
+    const win = one.result as { id: number; tabs: Array<Record<string, unknown>> }
+    expect(win.id).toBe(1)
+    expect(win.tabs).toHaveLength(1)
+    expect(win.tabs[0]).toMatchObject({
+      id: ids.chromeIdFor('t2'),
+      url: `chrome-extension://${ID}/popup.html`,
+      active: true
+    })
+    // Several URLs: a tab each, the first one shown.
+    const two = await call(h, 'bg1', 'windows', 'create', [{ url: ['a.html', 'b.html'] }])
+    const twoWin = two.result as { tabs: Array<Record<string, unknown>> }
+    expect(twoWin.tabs.map((t) => t.id)).toEqual([ids.chromeIdFor('t3'), ids.chromeIdFor('t4')])
+    expect(twoWin.tabs.map((t) => t.active)).toEqual([true, false])
+    // No URL: the New Tab page, one tab.
+    const blank = await call(h, 'bg1', 'windows', 'create', [{}])
+    expect((blank.result as { tabs: unknown[] }).tabs).toHaveLength(1)
+    expect(h.created[3]).toEqual({ id: 't5', active: true })
+    // An unfocused window's tab opens in the background.
+    await call(h, 'bg1', 'windows', 'create', [{ url: 'quiet.html', focused: false }])
+    expect(h.created[4]).toEqual({ id: 't6', active: false })
+    // A tab moved into the window is the window's tab; nothing is created for it.
+    const moved = await call(h, 'bg1', 'windows', 'create', [{ tabId: ids.chromeIdFor('t1') }])
+    const movedWin = moved.result as { tabs: Array<Record<string, unknown>> }
+    expect(movedWin.tabs.map((t) => t.id)).toEqual([ids.chromeIdFor('t1')])
+    expect(h.created).toHaveLength(5)
+    const missing = await call(h, 'bg1', 'windows', 'create', [{ tabId: 999 }])
+    expect(missing.error).toBe('No tab with id: 999.')
   })
 })
 

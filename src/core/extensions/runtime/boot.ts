@@ -1,4 +1,5 @@
 import type { FlowStats } from '../api/engine'
+import { parseMatchPattern } from '../api/matchPattern'
 import type { LocaleMessages, RunAt, RuntimeManifest, ScriptWorld } from './manifest'
 import { planInjection, resolveDotSegments, type RegisteredContentScript } from './plan'
 
@@ -73,6 +74,14 @@ export interface ExtensionBoot {
   messages: LocaleMessages | null
   groups: BootGroup[]
   isolation: IsolationMode
+  /**
+   * `externally_connectable.matches`, the valid patterns: the web pages whose own scripts may
+   * `chrome.runtime.sendMessage(<this id>, …)` / `connect(<this id>, …)` the extension, landing
+   * on its `runtime.onMessageExternal` / `onConnectExternal` with a page sender. The main-world
+   * bootstrap installs that page API where a pattern covers the frame. Absent or empty, no page
+   * can connect (Chrome's default without the key).
+   */
+  externallyConnectable?: string[]
 }
 
 export interface ContentBootConfig {
@@ -166,6 +175,12 @@ export interface BootStats {
    * order their copies ran (the sweep's proof that the frame filter met a given frame).
    */
   untouchedFrames?: string[]
+  /**
+   * The extensions whose `externally_connectable.matches` cover this document and got the
+   * page's `chrome.runtime` (`sendMessage` / `connect` taking their id) installed by this
+   * copy, in the order their main-world units attached.
+   */
+  pageApi?: string[]
 }
 
 export interface BootErrorStat {
@@ -212,6 +227,7 @@ export function buildExtensionBoot(
 ): ExtensionBoot {
   const plan = planInjection(id, manifest, registered)
   const granted = manifest.optionalPermissions.filter((p) => grantedOptional.includes(p))
+  const connectable = externallyConnectablePages(manifest)
   return {
     id,
     name: manifest.name,
@@ -236,8 +252,31 @@ export function buildExtensionBoot(
       js: group.js,
       css: group.css
     })),
-    isolation
+    isolation,
+    ...(connectable.length > 0 ? { externallyConnectable: connectable } : {})
   }
+}
+
+/**
+ * The web pages `externally_connectable.matches` lets speak to the extension: the key's valid
+ * match patterns, in the manifest's order. Chrome refuses the key's `<all_urls>`, a pattern over
+ * every host and a subdomain wildcard over a bare top-level domain (`*://*.com/*`; without the
+ * public suffix list a wildcard over a host of one label stands for it here) – its manifest
+ * fails to load – so such a pattern is dropped rather than handing every page a
+ * `chrome.runtime`; an invalid pattern goes the same way (the manifest's validation has named
+ * it already).
+ */
+export function externallyConnectablePages(manifest: RuntimeManifest): string[] {
+  const key = manifest.raw.externally_connectable
+  if (typeof key !== 'object' || key === null) return []
+  const matches = (key as { matches?: unknown }).matches
+  if (!Array.isArray(matches)) return []
+  return matches.filter((pattern): pattern is string => {
+    if (typeof pattern !== 'string') return false
+    const parsed = parseMatchPattern(pattern)
+    if (!parsed || parsed.matchesAllUrls || parsed.host === '' || parsed.host === '*') return false
+    return !parsed.host.startsWith('*.') || parsed.host.slice(2).includes('.')
+  })
 }
 
 /**

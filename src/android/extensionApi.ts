@@ -1402,14 +1402,31 @@ export class ExtensionApi {
       case 'getAll':
         return [this.tabs.chromeWindow(ext)]
       case 'create': {
+        // Chrome answers with the new window carrying the tabs it opened alone: one per `url`,
+        // the New Tab page without one, or the `tabId` moved into it. 2048's worker reads
+        // `win.tabs[0].id` as its app tab and closes any other tab that announces itself as
+        // the app, so a window listing every tab cost it its own page. A phone has one window:
+        // the window is this one, its `tabs` the tabs this call made; an unfocused window's
+        // tabs open in the background.
         const props = asRecord(args[0])
-        const url = Array.isArray(props.url) ? props.url[0] : props.url
-        if (typeof url === 'string')
-          this.host.browser.tabs.createTab(
-            { url: this.navigationUrl(ext, url), active: true },
-            this.host.window()
-          )
-        return this.tabs.chromeWindow(ext)
+        const urls = asStringArray(Array.isArray(props.url) ? props.url : [props.url])
+        const shown = props.focused !== false
+        const opened: Tab[] = []
+        if (props.tabId !== undefined) opened.push(this.tabs.tabFor(ext, props.tabId))
+        else if (urls.length === 0)
+          opened.push(this.host.browser.tabs.createTab({ active: shown }, this.host.window()))
+        else
+          for (const [index, url] of urls.entries())
+            opened.push(
+              this.host.browser.tabs.createTab(
+                { url: this.navigationUrl(ext, url), active: shown && index === 0 },
+                this.host.window()
+              )
+            )
+        return {
+          ...this.tabs.chromeWindow(ext),
+          tabs: opened.map((tab) => this.tabs.chromeTab(tab))
+        }
       }
       case 'update':
         return this.tabs.chromeWindow(ext)

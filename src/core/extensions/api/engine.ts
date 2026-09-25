@@ -10,9 +10,9 @@
  * Wire format (context → host), every message carries `token` and `ep` (endpoint id):
  *  hello          { ctx, ext, url, top, world? }                  register this endpoint
  *  call           { id, ns, method, args }                        → reply
- *  msg            { id, target, data, userScript? }               runtime/tabs.sendMessage → reply
+ *  msg            { id, target, data, userScript?, external? }    runtime/tabs.sendMessage → reply
  *  msgReply       { id, handled, willRespond?, response?, listeners? }
- *  connect        { portId, name, target, userScript? }           runtime/tabs.connect
+ *  connect        { portId, name, target, userScript?, external? } runtime/tabs.connect
  *  portAccept     { portId, accept }                              answer to portConnect
  *  portMsg        { portId, data }
  *  portDisconnect { portId }
@@ -22,9 +22,11 @@
  *  closePopup     {}
  *  proxyBody      { ticket, body }                                body (base64) of a ticketed CORS-proxied fetch (Android)
  *
- * Host → context: reply { id, ok, result | error }, deliver { id, data, sender, userScript? },
- * event { ns, name, args, delivery? } (`delivery` addresses filtered listeners), portConnect { portId, name, sender, userScript? }, portAccept
+ * Host → context: reply { id, ok, result | error }, deliver { id, data, sender, userScript?, external? },
+ * event { ns, name, args, delivery? } (`delivery` addresses filtered listeners), portConnect { portId, name, sender, userScript?, external? }, portAccept
  * { portId, accept, error? }, portMsg { portId, data }, portDisconnect { portId, error? }.
+ * `external` marks a web page's message or port (`externally_connectable`): it lands on
+ * `runtime.onMessageExternal` / `onConnectExternal`, its sender has no `id`.
  */
 import { ENGINE_NOOPS, ENGINE_STUB_RESULTS, engineApiSpec, namespaceGranted } from './engineSpec'
 import { getMessage, normalizeSubstitutions, predefinedMessages, type LocaleMessages } from './i18n'
@@ -75,6 +77,13 @@ export interface EngineConfig {
    * injection). The host then routes `scripting.executeScript` through the world's own endpoint.
    */
   world?: boolean
+  /**
+   * The endpoint is a web page's connection to the extension (`externally_connectable`): its
+   * `runtime.sendMessage` / `connect` go out marked `external`, for the extension's
+   * `onMessageExternal` / `onConnectExternal` with a page sender. The bootstrap keeps this
+   * engine's `chrome` to itself and hands the page the two functions.
+   */
+  externalSender?: boolean
   /**
    * Chars a message envelope (`runtime.sendMessage`'s, `port.postMessage`'s, serialized) may
    * have; a longer one is refused in the sender's realm with Chrome's error for a message over
@@ -221,7 +230,8 @@ export interface EngineEvent {
 }
 
 export interface MessageSender {
-  id: string
+  /** The sending extension's id; absent for a web page's message (`externally_connectable`), as in Chrome. */
+  id?: string
   url?: string
   origin?: string
   tab?: Record<string, unknown>
@@ -279,6 +289,7 @@ interface HostMessage {
   portId?: string
   accept?: boolean
   userScript?: boolean
+  external?: boolean
   delivery?: unknown
 }
 
@@ -350,6 +361,8 @@ export function createEmulatedEngine(
   const pending = new Map<number, PendingCall>()
   const ports = new Map<string, { port: Port; connected: boolean }>()
   const userScript = config.context === 'userScript'
+  /** A web page's engine: its messages and ports go out marked for the external events. */
+  const external = config.externalSender === true
 
   const rethrow = (error: unknown): void => {
     primordials.setTimeout(() => {
@@ -735,7 +748,8 @@ export function createEmulatedEngine(
           target,
           data: data === undefined ? null : data,
           ...(callback ? { callback: true } : {}),
-          ...(userScript ? { userScript: true } : {})
+          ...(userScript ? { userScript: true } : {}),
+          ...(external ? { external: true } : {})
         },
         () => new TypeError(MESSAGE_TOO_LONG)
       )
@@ -815,7 +829,8 @@ export function createEmulatedEngine(
       portId,
       name: port.name,
       target,
-      ...(userScript ? { userScript: true } : {})
+      ...(userScript ? { userScript: true } : {}),
+      ...(external ? { external: true } : {})
     })
     return port
   }
@@ -1101,9 +1116,18 @@ export function createEmulatedEngine(
     id: number,
     data: unknown,
     sender: MessageSender,
-    viaUserScript: boolean
+    viaUserScript: boolean,
+    viaWebPage: boolean
   ): void => {
-    const event = events.get(viaUserScript ? 'runtime.onUserScriptMessage' : 'runtime.onMessage')
+    // A web page's message (`externally_connectable`) lands on `onMessageExternal` alone, a
+    // user script's on `onUserScriptMessage`, as in Chrome; the plain event hears neither.
+    const event = events.get(
+      viaWebPage
+        ? 'runtime.onMessageExternal'
+        : viaUserScript
+          ? 'runtime.onUserScriptMessage'
+          : 'runtime.onMessage'
+    )
     if (!event || !event.hasListeners()) {
       post({ t: 'msgReply', id, handled: false, listeners: false })
       return
@@ -1162,7 +1186,8 @@ export function createEmulatedEngine(
           Number(message.id),
           message.data,
           message.sender ?? { id: config.id },
-          message.userScript === true
+          message.userScript === true,
+          message.external === true
         )
         return
       case 'event': {
@@ -1182,7 +1207,11 @@ export function createEmulatedEngine(
       case 'portConnect': {
         const portId = String(message.portId)
         const event = events.get(
-          message.userScript ? 'runtime.onUserScriptConnect' : 'runtime.onConnect'
+          message.external
+            ? 'runtime.onConnectExternal'
+            : message.userScript
+              ? 'runtime.onUserScriptConnect'
+              : 'runtime.onConnect'
         )
         if (!event || !event.hasListeners()) {
           post({ t: 'portAccept', portId, accept: false })

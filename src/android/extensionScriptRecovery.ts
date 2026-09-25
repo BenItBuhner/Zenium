@@ -23,12 +23,19 @@ import { pageAliasUrl, presentExtensionUrl } from '@core/extensions/runtime/exte
  *   governs, the way Chrome's extension sheets are beyond it).
  *
  * While the host takes the load over, the element's `src` / `href` attribute is re-spelled as
- * Chrome spells it, `chrome-extension://<id>/x.js`: the element has already started, so the
+ * Chrome spells it, `chrome-extension://<id>/x.js`: a script has already started, so its
  * attribute changes nothing about loading, and a script that looks itself up by it (Language
  * Reactor's `script[data-lr-nonce][src*="extension://"]`) finds what it finds in Chrome. The
  * element then gets the `load` it expected, or, when the recovery could not (not web-accessible,
  * a subframe, no such file), the attribute back and the `error` it was already firing. The
- * refusal never reaches the extension's own handlers.
+ * refusal never reaches the extension's own handlers. A stylesheet `<link>` fetches again each
+ * time its href changes, and those loads fail as the first did (the page's policy refuses
+ * `chrome-extension:` too, and the WebView has no such scheme): their `error`s are the
+ * recovery's to swallow, so that the element's own listeners get the verdict alone – Vite's
+ * preload helper rejects a whole module graph on the first `error` of a CSS dependency's
+ * `<link>` (Buyhatke's content app on flipkart.com, whose `style-src` refuses the served origin:
+ * the respelled href's refusal reached the helper 3 ms after the first, ahead of the sheet read
+ * through the relay, and the app never mounted; compat round 18).
  *
  * A module graph a content script `import()`s has no element: the page's `script-src` refuses
  * the fetch itself (Buyhatke's CRXJS loaders on flipkart.com, `script-src 'nonce-…'`, compat
@@ -177,6 +184,19 @@ interface AdoptingDocument {
 }
 
 const RECOVERED = new WeakSet<object>()
+
+/** The element whose verdict (`load` or `error`) the recovery is dispatching itself: that one passes `onError`. */
+let dispatching: object | null = null
+
+/** The recovery's verdict on an element it took over, dispatched as the event the element was waiting for. */
+function verdict(element: ScriptLike, name: 'load' | 'error'): void {
+  dispatching = element
+  try {
+    element.dispatchEvent(new Event(name))
+  } finally {
+    dispatching = null
+  }
+}
 
 export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
   const waiting = new Map<string, { script: ScriptLike; url: string }>()
@@ -375,7 +395,7 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
   const recoverStyle = (link: ScriptLike, href: string, extId: string): void => {
     const read = host.readText
     if (!read) {
-      link.dispatchEvent(new Event('error'))
+      verdict(link, 'error')
       return
     }
     styles += 1
@@ -384,14 +404,14 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
       .then((text) => {
         if (!adoptSheet(link, rebaseCssUrls(text, href)))
           throw new Error('the document takes no constructed stylesheet')
-        link.dispatchEvent(new Event('load'))
+        verdict(link, 'load')
       })
       .catch((reason: unknown) => {
         host.error(
           `[Zenium] ${href} could not be applied past the page's policy: ${String(reason)}`
         )
         respell(link, 'href', href)
-        link.dispatchEvent(new Event('error'))
+        verdict(link, 'error')
       })
       .finally(() => {
         styles -= 1
@@ -405,8 +425,14 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
         return
       const tag = String(target.tagName).toUpperCase()
       if (tag !== 'SCRIPT' && tag !== 'LINK') return
-      // Our own `error`, re-dispatched after the recovery gave up: let it through this time.
-      if (RECOVERED.has(target)) return
+      if (RECOVERED.has(target)) {
+        // Our own `error`, dispatched after the recovery gave up, goes through. A `<link>` fires
+        // another of its own at each respelling of its href (the load the new spelling started,
+        // refused as the first was): that one stops here, the element's listeners get the
+        // verdict alone.
+        if (tag === 'LINK' && dispatching !== target) event.stopImmediatePropagation()
+        return
+      }
       if (tag === 'LINK') {
         const rel = typeof target.rel === 'string' ? target.rel : ''
         if (!/\bstylesheet\b/i.test(rel)) return
@@ -447,12 +473,12 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
       if (!entry) return
       waiting.delete(id)
       if (error === null) {
-        entry.script.dispatchEvent(new Event('load'))
+        verdict(entry.script, 'load')
         return
       }
       host.error(`[Zenium] ${entry.url} could not run in the main world: ${error}`)
       respell(entry.script, 'src', entry.url)
-      entry.script.dispatchEvent(new Event('error'))
+      verdict(entry.script, 'error')
     },
     pending: () => waiting.size + styles + modules,
     aliasFor(url) {

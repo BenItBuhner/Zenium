@@ -111,6 +111,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val screenRestored = JSONArray()
     /** Each row boundary a native sheet was still up at, with the sheet's texts and what a back left ([dismissSheets]). */
     private val sheetsDismissed = JSONArray()
+    /** Each chrome document found without the sweep's hooks – its renderer gone and the chrome rebuilt by the host ([chromeHooksLost]). */
+    private val chromeRebuilds = JSONArray()
+    /** When the hooks were last found gone (uptime), so a `zen()` call that saw it answers the prompt the old document took with it. */
+    private var hooksLostAt = 0L
 
     private class Grade(val verdict: String, val note: String, val extra: JSONObject? = null)
 
@@ -188,6 +192,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
             results.put("screenRestored", screenRestored)
             results.put("sheetsDismissed", sheetsDismissed)
+            results.put("chromeRebuilds", chromeRebuilds)
             write()
         }
     }
@@ -208,23 +213,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         results.put("webView", WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" } ?: JSONObject.NULL)
         results.put("only", only?.let { JSONArray(it.toList()) } ?: JSONObject.NULL)
         results.put("startedAt", System.currentTimeMillis())
-        // The core's toasts carry what an install refused to do (the store host toasts instead of rejecting).
-        chromeJs("window.__toasts=[];window.zen.on('toast',function(p){window.__toasts.push(String(p&&p.message||p))});'ok'")
-        // The prompts the chrome raises (install, permissions), by request id, so one its sheet
-        // did not put a reachable button on screen can still be answered through the command.
-        // The renderer answers a prompt through the same `window.zen.invoke` (a tap on its
-        // button, a dismissed sheet): that answer takes the prompt off the list, so a tap that
-        // did answer is never taken for one that did not and answered again through the command.
-        chromeJs(
-            "window.__prompts=[];window.__promptAnswers=[];" +
-                "window.zen.on('extensionInstallRequest',function(p){window.__prompts.push({kind:'install',id:p.requestId,ok:p.okLabel||''})});" +
-                "window.zen.on('extensionPermissionRequest',function(p){window.__prompts.push({kind:'permission',id:p.requestId,ok:p.okLabel||''})});" +
-                "(function(){var z=window.zen,invoke=z.invoke;z.invoke=function(name,args){" +
-                "if((name==='extension.confirmInstall'||name==='extension.respondPermissionRequest')&&args&&args.requestId){" +
-                "window.__prompts=window.__prompts.filter(function(p){return p.id!==args.requestId});" +
-                "window.__promptAnswers.push({id:args.requestId,accept:!!args.accept})}" +
-                "return invoke.apply(z,arguments)}})();'ok'"
-        )
+        armChromeHooks()
         fixtureTab = tabIdByUrl("$BASE/page-a.html") ?: createTab("$BASE/page-a.html")
         showTab(fixtureTab)
         SystemClock.sleep(1_500)
@@ -1656,8 +1645,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         else Grade("F", "popup did not render: ${entry.optJSONObject("popup")?.optString("note")?.take(160)}")
     }
 
-    /** Momentum: with the override opted in, the browser's new tab is the extension's page. */
+    /**
+     * Momentum: with the override opted in, the browser's new tab is the extension's page. The
+     * page is read for its app's mounted root (round 17's D16: Infinity New Tab has no text at
+     * all and its wallpaper's arrival flips with the boot – its app removes the body's
+     * `hide-opacity` once loaded and fills `.site-items` with its icon grid, `.search-box` with
+     * its search; a filled root or the body shown with children counts), or for text or imagery
+     * (Momentum's greeting and photograph, daily.dev's feed), within the row's budget.
+     */
     private fun momentum(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
         coreCall("extension.setNewTabOverride", JSONObject().put("id", row.id).put("enabled", true).toString())
         SystemClock.sleep(1_000)
         val before = tabUrls().keys
@@ -1675,9 +1672,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return Grade("F", "new tab override: tab.new opened ${if (newTabs.isEmpty()) "no tab" else newTabs.joinToString().take(120)}, not the extension's page (record newTabOverride=${record?.opt("newTabOverride")}, newTabPage=${record?.opt("newTabPage")})", extra)
         }
         val view = waitForView(opened.key)
-        val found = pollExpr(view, "JSON.stringify({pass: (document.body ? document.body.innerText.trim().length > 20 : false) || document.querySelectorAll('img, canvas, .background, [class*=\"background\"]').length > 0, text: document.body ? document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120) : '', url: location.href})", 25_000)
+        val started = SystemClock.uptimeMillis()
+        val found = pollExpr(view, NEW_TAB_RENDERED, scaled(25_000, factor))
+        found.put("ms", SystemClock.uptimeMillis() - started).put("budgetMs", scaled(25_000, factor))
         extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
-        return Grade(if (found.optBoolean("pass")) "P" else "F", "new tab override: ${found.toString().take(260)}", extra)
+        val by = when {
+            found.optInt("textLength") > 20 -> "text"
+            found.optInt("imagery") > 0 -> "imagery"
+            found.optInt("mounted") > 0 -> "its app's mounted root (${found.optInt("mounted")} elements)"
+            else -> "nothing"
+        }
+        return Grade(if (found.optBoolean("pass")) "P" else "F", "new tab override: the page read by $by after ${found.optLong("ms")} ms: ${found.toString().take(240)}", extra)
     }
 
     /** Stylus: a `.user.css` opens its install page, the style installs, the page it targets turns red. */
@@ -2955,7 +2960,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             }
             val found = pollExpr(view, expr, scaled(settleMs, factor))
             page = json(tabEval(view, DOM_REPORT))
-            attempt.put("page", found).put("document", page).put("complete", complete).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            // The runtime's own lines kept whatever the page logs after them (round 17's Buyhatke
+            // attempts lost the `[Zenium]` chunk-refusal and alias-retry lines under Flipkart's noise).
+            attempt.put("page", found).put("document", page).put("complete", complete).put("console", JSONArray(consoleKeepingRuntime(view, 10)))
             if (desktop) attempt.put("userAgent", tabEval(view, "navigator.userAgent").trim('"').take(160))
             if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { attempt.put("world", json(it)) }
             SystemClock.sleep(600)
@@ -3736,9 +3743,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /**
      * An effect drawn in the row's popup over a settled fixture tab (The QR Code Generator's SVG
      * of the tab's address, Boxel Rebound's game canvas): the popup opens, `expr` (a
-     * `JSON.stringify` of `{pass, ...}`) is polled in it.
+     * `JSON.stringify` of `{pass, ...}`) is polled in it. A popup whose text matches
+     * `platformLimit` is the platform's refusal, `n/a` with `limitNote` (Distill's "The OPFS is
+     * not available": its store wants SharedArrayBuffer).
      */
-    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service", fixtureSettleMs: Long = 1_500, platformLimit: Regex? = null, limitNote: String = ""): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, fixtureSettleMs)
@@ -3756,9 +3765,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // The popup up but its answer the service's refusal (`notMeasurable` on what it shows,
         // Scribbr's "something went wrong" from its citation API): the gate, not the runtime.
         val refused = popup != null && !found.optBoolean("pass") && notMeasurable != null && notMeasurable.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
+        val limited = popup != null && !found.optBoolean("pass") && platformLimit != null && platformLimit.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
         when {
             found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
             refused -> Grade("n/m", "$label: popup renders and answers with $gate's refusal (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
+            limited -> Grade("n/a", "$label: popup renders and reports the platform's refusal (\"${extra.optString("popupText").take(100)}\"; probe ${JSONObject(found.toString()).apply { remove("console"); remove("text") }.toString().take(160)}): $limitNote", extra)
             else -> Grade("F", "$label: popup ${if (popup == null) "did not render in the core check" else found.toString().take(240)}", extra)
         }
     }
@@ -4324,7 +4335,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * "Pick color from web page" and the picker it injects, Shimeji's ON and its mascot, Web
      * Developer's CSS > Disable All Styles and the fixture's stylesheet off, User-Agent
      * Switcher's pick and the header echo the fixture shows after its reload, SEOquake's
-     * consent and the fixture's title read in the popup.
+     * consent and the fixture's title read in the popup. `probe` is a pair of scripts for the
+     * popup: the first run once it renders, before the taps (a listener armed on
+     * `window`), the second at the end, its JSON on `extra.probe` (Zoom Video's storage
+     * writes).
      */
     private fun popupFlow(
         label: String,
@@ -4334,7 +4348,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         onPage: Boolean = true,
         settleMs: Long = 25_000,
         opens: Regex? = null,
-        prepare: ((WebView) -> Unit)? = null
+        prepare: ((WebView) -> Unit)? = null,
+        probe: Pair<String, String>? = null
     ): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
@@ -4347,6 +4362,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var landed = 0
         if (popup != null) {
             SystemClock.sleep(scaled(2_500, factor))
+            probe?.let { extra.put("probeArmed", tabEval(popup, it.first).take(80)) }
             extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(240))
             for ((i, words) in clicks.withIndex()) {
                 val optional = words.startsWith("?")
@@ -4391,6 +4407,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         extra.put("page", found).put("tabUrl", tabUrls()[tab] ?: "")
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        probe?.let { p ->
+            popupView()?.takeIf { it.context == "popup" }?.let { live -> extra.put("probe", runCatching { json(tabEval(live, p.second)) }.getOrElse { JSONObject().put("error", it.message ?: "eval failed") }) }
+                ?: extra.put("probe", JSONObject().put("error", "popup gone before the read"))
+        }
         since.record(extra, "atEnd")
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-core")
@@ -6515,7 +6535,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ohlencieiipommannpdfcmfdpjjmeolj", "PrintFriendly: Print, PDF Editor & Full Page Screenshot", "printfriendly", core = popupFlow("PrintFriendly", "page-a.html?pf", listOf("/printfriendly view/i"), injectedAny("(^|\\s)pf-|printfriendly"), opens = Regex("printfriendly\\.com", RegexOption.IGNORE_CASE))),
         // Read on the desktop site (its scraper's selectors are the desktop page's; flipkart served
         // the phone its mobile page, rounds 11-12) and on amazon.in when flipkart refuses the runner.
-        Row("ojplmecpdpgccookcobabopnaifgidhf", "Buyhatke: Price History & Tracker, Spend Lens", "buyhatke", core = liveMarker("Buyhatke", "https://www.flipkart.com/apple-iphone-15-black-128-gb/p/itm6ac6485515ae4", injectedAny("bh-crx-root|buyhatke"), settleMs = 60_000, desktop = true, mirrors = listOf("https://www.amazon.in/dp/B0CHX1W1XY"))),
+        // Round 18: the emulator's host renderer goes under the flipkart.com product page's start
+        // on the API 34 Google image with -gpu swangle, two of two boots of the round's AFTER run
+        // (36140794674, §8 there): the guest fell silent at the document's start – the row's
+        // content scripts' loader refusals relayed and retried, no bh-crx-root yet, the app's
+        // memory flat, no render process gone, no fatal signal, no lmkd line – the emulator's own
+        // gfxstream GL errors the same second the first time and qemu's own watchdog ("hanging
+        // thread 'QEMU2 main loop'") the second, then qemu-system-x86_64-headless dead of SIGSEGV
+        // with its core stored (13:33:07 and 13:42:39 UTC). The same page on the same image went
+        // whole in round 17's 113 lane and in this round's BEFORE (main's runtime), and what draws
+        // differently at the document's start on this runtime is the planner's per-rule-set units
+        // (three bootstrap copies in the page's main world where main ran one) – a correct fix,
+        // kept; the fault is the emulator's (round 16 §7.0's outcome 1, AdGuard VPN's class below).
+        // Not run on the Google image; read on the AOSP lane (156), where the row's Flipkart leg
+        // is round 18's own seed item.
+        Row(
+            "ojplmecpdpgccookcobabopnaifgidhf", "Buyhatke: Price History & Tracker, Spend Lens", "buyhatke",
+            notOnGoogleImage = "the emulator's host side (gfxstream over swangle on the API 34 Google image) dies under this row's Flipkart page scene at the document's start with WebView 113 – two of two boots of round 18's AFTER run 36140794674 (qemu-system-x86_64-headless SIGSEGV at 13:33:07 and 13:42:39 UTC, the guest silent at the flipkart.com document's start with the app's memory flat and no guest death signature; the first with gfxstream GL errors the same second, the second with qemu's own hanging-thread watchdog first) against zero of one on round 17's 113 lane and zero of one on round 18's BEFORE with main's runtime; the row is read on the AOSP lane (156)",
+            core = liveMarker("Buyhatke", "https://www.flipkart.com/apple-iphone-15-black-128-gb/p/itm6ac6485515ae4", injectedAny("bh-crx-root|buyhatke"), settleMs = 60_000, desktop = true, mirrors = listOf("https://www.amazon.in/dp/B0CHX1W1XY"))
+        ),
         Row("ckejmhbmlajgoklhgbapkiccekfoccmk", "Mobile simulator - responsive testing tool", "mobile-simulator", core = ::mobileSimulator),
         Row("edlifbnjlicfpckhgjhflgkeeibhhcii", "Screenshot Tool - Screen Capture & Editor", "screenshot-tool", core = popupCapture("Screenshot Tool", "/capture visible area|visible area/i")),
         Row("khncfooichmfjbepaaaebmommgaepoid", "Unhook - Remove YouTube Recommended & Shorts", "unhook", core = { row, entry -> youtube(row, entry, "(function(){var h=document.documentElement;var attrs=[];for(var i=0;i<h.attributes.length;i++){var n=h.attributes[i].name;if(/^hide_|unhook/i.test(n))attrs.push(n)}var related=document.querySelectorAll('ytd-compact-video-renderer, ytm-compact-video-renderer, ytm-video-with-context-renderer');var shown=0;for(var j=0;j<related.length;j++){var r=related[j].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}return JSON.stringify({pass:attrs.length>0,attrs:attrs.slice(0,8),n:attrs.length,related:related.length,relatedShown:shown})})()", "Unhook's hide attributes on a watch page") }),
@@ -6936,6 +6974,67 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("eanggfilgoajaocelnaflolkadkeghjp", "HARPA AI", "harpa-ai", core = ::harpaAi),
         Row("ahmapmilbkfamljbpgphfndeemhnajme", "Helperbird: Dyslexia & Accessibility Tools", "helperbird", core = popupSwitch("Helperbird", "page-a.html?helperbird", "[role=switch], input[type=checkbox], .toggle", HELPERBIRD_APPLIED, settleMs = 30_000)),
         Row("jeoacafpbcihiomhlakheieifhpjdfeo", "Disconnect - Tracker Protection", "disconnect", core = ::adBlocker),
+        // Compat round 18: ranks 421-450 by installs (`.github/scripts/ext-compat/next30-round15.json`,
+        // compiled by round 10's method for a future desktop release round to reuse), graded with
+        // the phone's feasibility classes as rounds 4-17 graded theirs. An account or a vendor's
+        // service is `n/m` with its gate surface rendered (Google Meet Attendance List and tl;dv
+        // in a Meet call behind a Google account, Lusha's and Salesforce's side panels behind
+        // their sign-ins, Toggl Track's, SignalHire's, Ahrefs' and MarketApp's popups behind
+        // theirs, Save.to's clipper behind Notion's); a WebView limit is `n/a` (Screen Recorder's
+        // capture page with no getDisplayMedia to offer it, Advanced Font Settings' options page
+        // with no per-script font preferences for `fontSettings` to set). The rest read an
+        // effect: a page changed from the popup (Zoom Video's scale on the clip, Enable right
+        // click's unblock mode on the right-click fixture), the action's own effect on the page
+        // (Web Paint's canvas, WhatRuns' panel frame, Fake Filler's dummy values in the login
+        // form, Search by Image's image-pick mode and the engine tab a tap opens), the action's
+        // own page opened (2048's board, Live Stream Downloader's job page listing the clip,
+        // Screen Recorder's recorder page), a popup's reading (Video Downloader's HLS listing off
+        // `hls.html`, Distill's monitor menu, Ice Dodo's game canvas, Screenshot & Screen Video
+        // Recorder's visible-area capture landing in its editor), a content script's effect on a
+        // live site (Scratch Addons' styles on scratch.mit.edu, Youtube-shorts block's redirect
+        // of a short to its watch page, Voice Control's record button on chatgpt.com), a video
+        // controller on the clip (Video Speed Controller - video manager), a new-tab override
+        // rendered (Muzli), a side panel rendered as a tab (SelectorsHub's selector tooling), and
+        // a sidebar mounted on every page (Smart Sidebar). The five largest bundles run last
+        // (Voice Control for ChatGPT, Video Speed Controller - video manager, Screenshot & Screen
+        // Video Recorder, Smart Sidebar, Ice Dodo), as rounds 14-17 ordered theirs.
+        Row("fbeffbjdlemaoicjdapfpikkikjoneco", "Scratch Addons", "scratch-addons", core = liveMarker("Scratch Addons", "https://scratch.mit.edu/", injectedAny("scratch-addons|\\bsa-"), settleMs = 60_000)),
+        Row("ochhcgamjcnhpaekcckimgofnedofplf", "Zoom Video - UltraWide Fill", "zoom-video", core = ::zoomVideo),
+        Row("lfdconleibeikjpklmlahaihpnkpmlch", "Video Downloader - Download M3U8, MP4, HLS", "video-downloader-m3u8", core = mediaPopup("Video Downloader (M3U8)", "hls.html?vdm3u8", "/m3u8|stream|clip|\\bn\\/a\\b/i", probe = true, listener = "onHeadersReceived with responseHeaders and extraHeaders over <all_urls> (a .m3u8 address or an HLS content type; the playlist then fetched and parsed in the worker)")),
+        Row("appcnhiefcidclcdjeahgklghghihfok", "Google Meet Attendance List", "meet-attendance-list", core = accountGate("Google Meet Attendance List", Regex("meet\\.google\\.com|accounts\\.google\\.com|meetlist\\.io", RegexOption.IGNORE_CASE), gate = "a Google account in a Meet call (its list reads the call's participants; its scripts match meet.google.com's meeting pages alone)")),
+        Row("ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg", "2048", "2048", core = actionPage("2048", Regex("/popup\\.html"), GRID_2048, listOf("page-a.html?2048"))),
+        Row("mcebeofpilippmndlpcghpmghcljajna", "Lusha", "lusha", core = accountGate("Lusha", Regex("lusha\\.com|linkedin\\.com", RegexOption.IGNORE_CASE), gate = "a Lusha account (its side panel signs in at lusha.com) and a LinkedIn, Salesforce or HubSpot page for its scripts")),
+        Row("jjghhkepijgakdammjldcbnjehfkfmha", "Salesforce", "salesforce", core = accountGate("Salesforce", Regex("salesforce\\.com|force\\.com", RegexOption.IGNORE_CASE), gate = "a Salesforce login (its side panel signs in to an org; its scripts run in Gmail and Google Calendar)")),
+        Row("mnopmeepcnldaopgndiielmfoblaennk", "Web Paint", "web-paint", core = actionMarker("Web Paint", "page-a.html?webpaint", WEB_PAINT_PANEL)),
+        Row(
+            "inlikjemeeknofckkjolnjbpehgadgge", "Distill Web Monitor", "distill",
+            core = popupMarker(
+                "Distill Web Monitor", DISTILL_POPUP, page = "page-a.html?distill", settleMs = 30_000,
+                platformLimit = Regex("OPFS is not available", RegexOption.IGNORE_CASE),
+                limitNote = "its sqlite-wasm store opens an OPFS VFS that needs SharedArrayBuffer (`lib/jswasm/sqlite-worker-wasm.js`, the `OpfsDb` path); a served https page in the WebView has SharedArrayBuffer only under cross-origin isolation (COOP and COEP headers the served origin does not send), and Chrome grants the extension scheme SharedArrayBuffer without them on desktop alone (`extensions/renderer/dispatcher.cc`, not on Android): WebView/platform limit"
+            )
+        ),
+        Row("ndgimibanhlabgdgjcpbbndiehljcpfh", "SelectorsHub", "selectorshub", core = ownPage("SelectorsHub", "side-panel/side-shub-panel.html", SELECTORSHUB_PANEL)),
+        Row("oejgccbfbmkkpaidnkphaiaecficdnfn", "Toggl Track", "toggl-track", core = accountGate("Toggl Track", Regex("toggl\\.com", RegexOption.IGNORE_CASE), gate = "a Toggl account (its popup signs in at toggl.com; its timer posts to its service)")),
+        Row("caclkomlalccbpcdllchkeecicepbmbm", "Advanced Font Settings", "advanced-font-settings", core = ::fontSettingsPage),
+        Row("ldmmifpegigmeammaeckplhnjbbpccmm", "Save.to", "save-to", core = accountGate("Save.to", Regex("notion\\.so|save\\.to", RegexOption.IGNORE_CASE), injects = "iframe[src*='popup/index.html'], iframe[src*='restricted_popup'], iframe[src*='ldmmifpegigmeammaeckplhnjbbpccmm']", gate = "a Notion login (its clipper frame reads notion.so's session)")),
+        Row("jdopnakmnlnccgpfpmjmdjjohmcdgabp", "Screen Recorder", "screen-recorder-3", core = recorderPage("Screen Recorder", Regex("/pages/popup/popup\\.html"), "/capture|record|screen|camera|microphone|stop capturing/i")),
+        Row("jiaopdjbehhjgokpphdfgmapkobbnmjp", "Youtube-shorts block", "youtube-shorts-block", core = shortsRedirect("Youtube-shorts block", "https://www.youtube.com/shorts/zV4uBH9S1KI")),
+        Row("pbeheebcldakpkohnellphloljkaanfa", "MarketApp P2P", "marketapp-p2p", core = accountGate("MarketApp P2P", Regex("market\\.csgo\\.com|steamcommunity\\.com|steampowered\\.com", RegexOption.IGNORE_CASE), gate = "a Steam login and a Market.CSGO account (its popup signs in; its scripts run on Steam's trade pages)")),
+        Row("cmkdbmfndkfgebldhnkbfhlneefdaaip", "WhatRuns", "whatruns", core = actionMarker("WhatRuns", "tech.html?whatruns", WHATRUNS_PANEL, settleMs = 30_000)),
+        Row("glcipcfhmopcgidicgdociohdoicpdfc", "Muzli", "muzli", core = newTabOverride("Muzli")),
+        Row("bnjjngeaknajbdcgpfkgnonkmififhfo", "Fake Filler", "fake-filler", core = actionMarker("Fake Filler", "login.html?fakefiller", FAKE_FILLER_FILLED)),
+        Row("lknmjhcajhfbbglglccadlfdjbaiifig", "Record, Transcribe & ChatGPT/Claude for Google Meet", "tldv", core = attachedGate("tl;dv", "https://meet.google.com/", "a Google account in a Meet call (its recorder mounts in the call's page and posts to tldv.io)")),
+        Row("looepbdllpjgdmkpdcdffhdbmpbcfekj", "Live Stream Downloader", "live-stream-downloader", core = actionPage("Live Stream Downloader", Regex("/data/job/index\\.html"), LSD_ENTRIES, listOf("hls.html?lsd", "media.html?lsd"), settleMs = 40_000)),
+        Row("aeidadjdhppdffggfgjpanbafaedankd", "SignalHire", "signalhire", core = accountGate("SignalHire", Regex("signalhire\\.com|linkedin\\.com", RegexOption.IGNORE_CASE), gate = "a SignalHire account (its popup signs in) and a LinkedIn profile for its scripts")),
+        Row("hgmoccdbjhknikckedaaebbpdeebhiei", "Ahrefs SEO Toolbar", "ahrefs-seo-toolbar", core = accountGate("Ahrefs SEO Toolbar", Regex("ahrefs\\.com", RegexOption.IGNORE_CASE), gate = "an Ahrefs account (its popup signs in at ahrefs.com; the toolbar's metrics come from its service)")),
+        Row("cnojnbdhbhnkbcieeekonklommdnndci", "Search by Image", "search-by-image", core = ::searchByImage),
+        Row("mlloloooolpffjkjaclpfpeednngpjon", "Enable right click - allow copy & select", "enable-right-click-2", core = popupSwitch("Enable right click", "right-click.html?unblock", ".abs-mode", RIGHT_CLICK_ALLOWED)),
+        Row("eollffkcakegifhacjnlnegohfdlidhn", "Voice Control for ChatGPT", "voice-control-chatgpt", core = siteGate("Voice Control for ChatGPT", "https://chatgpt.com/", "#vc-record-button, #vc-terms-accept, .vc-modal, [id^='vc-'], [class*='vc-rich-text']", Regex("^https://(chatgpt\\.com|chat\\.openai\\.com)/", RegexOption.IGNORE_CASE), "ChatGPT's composer served to the runner (its record button mounts beside the prompt box; OpenAI serves a robot check or its sign-in to a fresh browser)")),
+        Row("nkkhljadiejecbgelalchmjncoilpnlk", "Video Speed Controller - video manager", "video-speed-controller-2", core = ::videoSpeed),
+        Row("lhannfkhjdhmibllojbbdjdbpegidojj", "Screenshot & Screen Video Recorder", "screenshot-screen-video-recorder", core = popupCapture("Screenshot & Screen Video Recorder", "/^visible area$|visible area/i")),
+        Row("fnmihdojmnkclgjpcoonokmkhjpjechg", "Smart Sidebar", "smart-sidebar", core = domMarker("Smart Sidebar", "page-a.html?smartsidebar", injectedAny("aifnmjmchg"), settleMs = 30_000)),
+        Row("jhidcpailhmpjpbdbhceiaeeggkalgmd", "Ice Dodo", "ice-dodo", core = ::iceDodo),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -6943,6 +7042,220 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // row's cleanup disables the blocker as it does any row's extension).
         Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
     )
+
+    // --- the core checks of compat round 18 (ranks 421-450 by installs) --------------------------
+
+    /**
+     * Youtube-shorts block: one content script over youtube.com (`main.js`, `document_start`)
+     * that reads the address, and on a `/shorts/<id>` path replaces the location with the
+     * short's `/watch?v=<id>` page (its popup holds the switch, on by default). The row opens a
+     * genuine short ([shortsUrl], one that stays on `/shorts/` in a plain browser) and waits for
+     * the tab's address to become its watch page: that is the pass, with the script's own
+     * activation line from the page's console beside it when it logged one. YouTube's consent
+     * interstitial or a tab that never reached youtube.com is `n/m` (the network, not the
+     * runtime); the tab still on the short after the wait is `F`, naming whether the script ran.
+     */
+    private fun shortsRedirect(label: String, shortsUrl: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val id = Regex("shorts/([A-Za-z0-9_-]{11})").find(shortsUrl)?.groupValues?.get(1) ?: ""
+        val tab = createTab(shortsUrl)
+        val view = waitForView(tab)
+        val started = SystemClock.uptimeMillis()
+        poll(scaled(45_000, factor), 700) { tabUrls()[tab]?.takeIf { it.contains("watch?v=$id") || it.contains("consent.") } }
+        val url = tabUrls()[tab] ?: ""
+        val console = runCatching { consoleOf(view) }.getOrDefault(emptyList())
+        val activated = console.any { it.contains("[Youtube-shorts block]") || it.contains("Youtube-shorts block", ignoreCase = true) }
+        extra.put("url", url.take(160)).put("waitedMs", SystemClock.uptimeMillis() - started).put("activated", activated).put("console", JSONArray(console.takeLast(10)))
+        if (worlds) runCatching { worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) } }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        val host = runCatching { android.net.Uri.parse(url).host ?: "" }.getOrDefault("")
+        when {
+            url.contains("watch?v=$id") -> Grade("P", "$label: the short $shortsUrl was sent to its watch page (${url.take(80)}) by the content script${if (activated) ", which logged its activation" else ""}", extra)
+            host.contains("consent") || url.contains("consent.youtube") -> Grade("n/m", "$label: YouTube served its consent interstitial instead of the short (${url.take(80)})", extra)
+            !(host == "youtube.com" || host.endsWith(".youtube.com")) -> Grade("n/m", "$label: the tab landed on ${host.ifEmpty { "nowhere" }}, not the short (network)", extra)
+            else -> Grade("F", "$label: the tab stayed on ${url.take(80)} for ${(SystemClock.uptimeMillis() - started) / 1000} s (content script ${if (activated) "ran and logged its activation" else "left no log in the page"})", extra)
+        }
+    }
+
+    /**
+     * Advanced Font Settings: an `options_page` alone (no popup, no scripts) that lists the
+     * writing scripts and, per script, the standard, serif, sans-serif and fixed fonts and their
+     * sizes, all read from and written to `chrome.fontSettings`. The page rendering its script
+     * list and its font selects is the runtime's part (the API present, its `getFontList` and
+     * `getFont` answered); the WebView has no per-script font preferences to set, so the
+     * runtime answers its reads empty and `not_controllable`, and the row is `n/a` on the page
+     * rendered (WebView limit, named). A page without its controls within the wait is `F` with
+     * the blank-page evidence.
+     */
+    private fun fontSettingsPage(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val tab = createTab("chrome-extension://${row.id}/options.html")
+        val view = waitForView(tab)
+        val found = pollExpr(view, FONT_SETTINGS_PAGE, scaled(30_000, factor))
+        found.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        extra.put("page", found).put("url", (tabUrls()[tab] ?: "").take(160))
+        if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-font-settings")
+        return if (found.optBoolean("pass")) {
+            Grade("n/a", "Advanced Font Settings: its options page renders its script list and font selects (${found.optInt("selects")} selects, ${found.optInt("scriptOptions")} scripts listed, `chrome.fontSettings` with ${found.optInt("apiKeys")} members), but the WebView has no per-script font preferences for `chrome.fontSettings` to set (the runtime answers its reads empty and not_controllable): WebView limit", extra)
+        } else {
+            Grade("F", "Advanced Font Settings: its options page shows no script list or font selects within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Search by Image: its action opens its popup – the engine list ("All search engines",
+     * "Google", "Bing", …, `vn-list-item`s titled by engine) under the search-mode picker – and
+     * an engine's tap (`onEngineClick` → `actionPopupSubmit` to the worker) sends the source
+     * tab into the image-pick mode of the default `searchModeAction`, `select` (the worker's
+     * `scripting.executeScript` of `src/select/script.js` and the `pointer.css` style over the
+     * page: every picture gets a pointer cursor and a tap on one searches it with the engine,
+     * opening as a tab of the engine's upload or lens address); round 18's BEFORE invoked the
+     * action alone and waited on a pick mode the popup was waiting for a tap to start. The
+     * gallery fixture settles, the popup opens, "Google" is tapped, the pick mode is polled for
+     * (the injected `pointer.css` link is its mark); then the first picture is tapped at its
+     * centre and a new tab on an engine's address (or an own page of the extension: its results
+     * or its upload-in-progress page) is awaited. Pass is the mode entered and the tab
+     * following; `PARTIAL` is the mode entered with no tab within the wait; `F` is no pick mode
+     * within the wait, with the worker's console.
+     */
+    private fun searchByImage(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("gallery.html?sbi", factor, 2_500)
+        val since = StepEvidence(row)
+        val before = tabUrls().keys
+        val steps = JSONArray()
+        val popup = openPopup(row, factor)
+        var engine = false
+        if (popup != null) {
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            // The engine list mounts after the popup's storage reads.
+            awaitLabel("/^google$/i", factor)
+            engine = tapLabel("/^google$/i", factor, steps, "engine")
+        } else {
+            steps.put("engine: no popup rendered")
+        }
+        extra.put("steps", steps)
+        val mode = pollExpr(view, SEARCH_BY_IMAGE_SELECT, scaled(25_000, factor))
+        extra.put("mode", mode)
+        var opened: Map.Entry<String, String>? = null
+        var tapped = false
+        if (mode.optBoolean("pass")) {
+            val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", ".grid img")))
+            val point = screenPoint(view, centre)
+            extra.put("image", centre)
+            if (point != null && onScreen("Search by Image: the picture")) {
+                tap(point.first, point.second)
+                tapped = true
+                opened = poll(scaled(30_000, factor), 500) {
+                    tabUrls().entries.firstOrNull { it.key !in before && (SEARCH_BY_IMAGE_ENGINES.containsMatchIn(it.value) || extensionPage(it.value, row.id)) }
+                }
+            }
+        }
+        extra.put("tapped", tapped).put("opened", opened?.value?.take(160) ?: JSONObject.NULL)
+        extra.put("tabsAfter", JSONArray(tabUrls().values.map { it.take(120) }))
+        extra.put("console", JSONArray(consoleOf(view).takeLast(10)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(12))) }
+        popupView()?.takeIf { it.context == "popup" }?.let { live ->
+            extra.put("popupInstead", json(tabEval(live, DEEP_TEXT)).optString("text").take(200))
+        }
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            opened != null -> Grade("P", "Search by Image: the popup's Google tap put the gallery into its image-pick mode and the tap on the first picture opened ${opened.value.take(90)}", extra)
+            mode.optBoolean("pass") && tapped -> Grade("PARTIAL", "Search by Image: the popup's Google tap put the gallery into its image-pick mode (${mode.toString().take(120)}) but the tap on the first picture opened no engine tab within ${scaled(30_000, factor) / 1000} s", extra)
+            mode.optBoolean("pass") -> Grade("PARTIAL", "Search by Image: the popup's Google tap put the gallery into its image-pick mode but its first picture could not be tapped (${extra.optJSONObject("image")?.toString()?.take(100)})", extra)
+            popup == null -> Grade("F", "Search by Image: popup did not render in the core check", extra)
+            !engine -> Grade("F", "Search by Image: no Google entry to tap in its popup (${steps.toString().take(160)}); popup \"${extra.optString("popupText").take(100)}\"", extra)
+            else -> Grade("F", "Search by Image: the popup's Google tap put the gallery into no image-pick mode within ${scaled(25_000, factor) / 1000} s: ${mode.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Ice Dodo (jhidc…): its popup IS the game (`index.html`, 105 MB of assets; "Bringing user
+     * data …" while they load), and what it shows first is the map menu – "Easy Maps … Welcome
+     * Map Coaster Lanterns Hello World Neo Slow Walk EZ Map" – over two canvases, the first
+     * unsized; the game canvas draws once a map is picked (round 18's BEFORE read [CANVAS_SHOWN]
+     * on the menu: the first canvas, 0x0). The menu is waited for, its first map ("Welcome
+     * Map") tapped, then the largest canvas read ([CANVAS_LARGEST]); a "Play" or "Start" the
+     * pick reveals is tapped too when the canvas stays unsized.
+     */
+    private fun iceDodo(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?icedodo", factor, 1_500)
+        val popup = openPopup(row, factor)
+        val steps = JSONArray()
+        var found = JSONObject()
+        var picked = false
+        if (popup != null) {
+            val menu = poll(scaled(60_000, factor), 1_000) {
+                val live = popupView()?.takeIf { it.context == "popup" } ?: return@poll null
+                json(tabEval(live, FIND_LABEL.replace("__RE__", "/^welcome map$/i"))).takeIf { it.optBoolean("clicked") }
+            }
+            steps.put("menu: ${menu?.toString()?.take(120) ?: "no Welcome Map entry within ${scaled(60_000, factor) / 1000} s"}")
+            extra.put("menu", popupView()?.takeIf { it.context == "popup" }?.let { json(tabEval(it, DEEP_TEXT)).optString("text").take(240) } ?: "")
+            if (menu != null) picked = tapLabel("/^welcome map$/i", factor, steps, "map")
+            if (picked) {
+                popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                    found = pollExpr(live, CANVAS_LARGEST, scaled(20_000, factor))
+                    if (!found.optBoolean("pass") && tapLabel("/^(play|start|go)$/i", factor, steps, "play")) {
+                        found = pollExpr(live, CANVAS_LARGEST, scaled(25_000, factor))
+                    }
+                    found.put("console", JSONArray(consoleOf(live).takeLast(10)))
+                    extra.put("popupAfter", json(tabEval(live, DEEP_TEXT)).optString("text").take(200))
+                }
+            }
+        }
+        extra.put("steps", steps).put("canvas", found)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-play-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            found.optBoolean("pass") -> Grade("P", "Ice Dodo: the game canvas draws after the map pick: ${found.toString().take(200)}", extra)
+            popup == null -> Grade("F", "Ice Dodo: popup did not render in the core check", extra)
+            !picked -> Grade("F", "Ice Dodo: no map entry reached in its menu (${steps.toString().take(200)}); menu \"${extra.optString("menu").take(100)}\"", extra)
+            else -> Grade("F", "Ice Dodo: the map picked (${steps.toString().take(160)}) and no sized canvas within the wait: ${found.toString().take(160)}", extra)
+        }
+    }
+
+    /**
+     * Zoom Video - UltraWide Fill's popup flow with its storage watched: the popup's ratio
+     * button writes `scale` into `zoom_<tab>` by a get→merge→set, and the content script on the
+     * clip writes the same key every second by another (`{screenWidth, screenHeight,
+     * videoWidth, videoHeight}` merged over its own read). On this runtime each storage call
+     * takes 100-400 ms (round 18 §7), so the script's pair spans most of every second and the
+     * popup's `scale` lands inside it to be written back by the script's stale read – a lost
+     * update Chrome's 1-5 ms calls leave no room for. [ZOOM_STORAGE_ARM] listens to
+     * `storage.onChanged` in the popup (no bridge traffic of its own) and [ZOOM_STORAGE_READ]
+     * gives the writes in order; a scale above 1 written and then written back to 1 names the
+     * lost update in the note.
+     */
+    private fun zoomVideo(row: Row, entry: JSONObject): Grade {
+        val grade = popupFlow("Zoom Video - UltraWide Fill", "video.html?zoomvideo", clicks = listOf("/^21:9$/"), expr = ZOOM_VIDEO_SCALED, settleMs = 25_000, probe = ZOOM_STORAGE_ARM to ZOOM_STORAGE_READ)(row, entry)
+        val changes = grade.extra?.optJSONObject("probe")?.optJSONArray("changes") ?: return grade
+        var landed: JSONObject? = null
+        var reverted: JSONObject? = null
+        for (i in 0 until changes.length()) {
+            val c = changes.optJSONObject(i) ?: continue
+            val scale = c.optDouble("scale", 1.0)
+            if (landed == null && scale > 1.01) landed = c
+            else if (landed != null && reverted == null && scale <= 1.01) reverted = c
+        }
+        return when {
+            grade.verdict == "P" || landed == null -> grade
+            reverted != null -> Grade(grade.verdict, "${grade.note}; storage: the popup's scale ${landed.opt("scale")} landed on ${landed.optString("key")} at +${landed.opt("t")} ms and was written back to ${reverted.opt("scale")} at +${reverted.opt("t")} ms by the content script's get→set (its every-second write of the same key, read before the popup's set landed): a lost update the storage latency opens", grade.extra)
+            else -> Grade(grade.verdict, "${grade.note}; storage: the popup's scale ${landed.opt("scale")} landed on ${landed.optString("key")} at +${landed.opt("t")} ms and stayed (${changes.length()} writes seen)", grade.extra)
+        }
+    }
 
     // --- the core checks of compat round 17 (ranks 391-420 by installs) --------------------------
 
@@ -7170,9 +7483,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * canvas has no box until a level plays, so round 16's read of [CANVAS_SHOWN] on the menu was
      * the menu, not the game (§7.4). Here the home's Play (`setPage('level-picker')`) is pressed,
      * then the level picker's first entry (round 17's BEFORE pressed the home Play and waited on a
-     * picker "Play" that is the page's heading, not a control: the picker lists its levels in
-     * `.list` as elements with a `title` attribute – "Slip & Slide 1-1" first – whose click is
-     * `app.playLevel`), and the canvas read after it; the menu's fixed width against the sheet is
+     * picker "Play" that is the page's heading, not a control; its AFTER looked for `[title]`
+     * entries the picker does not have: the picker is a Vue carousel of `.item` rows – "Slip &
+     * Slide 1-1" first – whose first click selects and second click plays, [BOXEL_LEVEL_ENTRY]),
+     * and the canvas read after it; the menu's fixed width against the sheet is
      * recorded, not failed on (the popup sheet's width is the program's phone shape, a settled
      * line).
      */
@@ -7421,26 +7735,38 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * feed – the badge is the unread count of an account's feeds, off by default – so the rows of
      * rounds 15 and 16 waited on an observable the bundle does not produce; and the Android
      * runtime's `setIcon` keeps the manifest's icon (per-tab variants are not drawn yet,
-     * `extensionApi.ts`), so the icon cannot be read either. What can: the content script's own
-     * log when the page's URL carries `feeder_rss_logging=1` (a `textarea` it appends to the body
-     * with "findFeedLinks: eval found: <href> <title>"), the `contentScript:feedsFound` message on
-     * the bridge, and the popup's "Add feed" control, which takes the class `feeds-available` (and
-     * a solid plus) once the worker's `/-extension-api/feeds-in-tab` has answered the active
-     * tab's feeds; tapped, it lists them under "Available feeds" with the fixture's title. Round
-     * 15's account prompt, when it shows, is taken past on its no-account control and the popup
-     * opened again (the choice closes it and opens the web app as a tab).
+     * `extensionApi.ts`), so the icon cannot be read either. What can: the `contentScript:feedsFound`
+     * message on the bridge (its trace line names the page it reports on, `url=`), and the popup's
+     * "Add feed" control, which takes the class `feeds-available` (and a solid plus) once the
+     * worker's `/-extension-api/feeds-in-tab` has answered the active tab's feeds; tapped, it lists
+     * them under "Available feeds" with the fixture's title. Round 17 read the content script's own
+     * log under its `feeder_rss_logging=1` flag and the flag broke the discovery it was to show:
+     * the logger writes each line into a `textarea` on the body, the document mutates between the
+     * XPath iterator's steps and Blink invalidates it (`InvalidStateError` in `useFeedChecker`,
+     * before `feedsFound` is sent – Chrome does the same under the flag). So the fixture loads
+     * without the flag and the discovery is the bridge's `feedsFound` line about the fixture's
+     * page (D6, round 18). Round 15's account prompt, when it shows, is taken past on its
+     * no-account control and the popup opened again (the choice closes it and opens the web app
+     * as a tab).
      */
     private fun rssFeedReader(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val title = "Zenium fixture feed"
-        val page = "feed.html?rss&feeder_rss_logging=1"
+        val page = "feed.html?rss"
         val since = StepEvidence(row)
         val (_, view) = fixture(page, factor, 2_000)
-        val log = pollExpr(view, FEEDER_LOG, scaled(15_000, factor))
-        extra.put("contentLog", log)
+        // The content script's report of the fixture's feed on the bridge: the `feedsFound` line
+        // naming the fixture's page (feeder.co's own pages, opened after the account choice, send
+        // the same message about themselves and are told apart by the address).
+        val discoveryLine = poll(scaled(15_000, factor), 500) {
+            since.trace().firstOrNull { it.contains("type=contentScript:feedsFound") && (it.contains("url=") && it.contains("feed.html") || !it.contains("url=")) }
+        }
+        val log = JSONObject().put("pass", discoveryLine != null).put("present", discoveryLine != null).put("found", discoveryLine?.substringAfter("url=", "")?.take(120) ?: "").put("line", discoveryLine?.take(200) ?: JSONObject.NULL)
+        extra.put("discovery", log).put("pageConsole", JSONArray(consoleOf(view).takeLast(8)))
         fun bridgeCounts(trace: List<String>) = JSONObject()
             .put("feedsFound", trace.count { it.contains("type=contentScript:feedsFound") })
+            .put("feedsFoundAboutFixture", trace.count { it.contains("type=contentScript:feedsFound") && it.contains("feed.html") })
             .put("setIcon", trace.count { it.contains("action.setIcon") })
             .put("lines", trace.size)
         extra.put("bridgeAfterLoad", bridgeCounts(since.trace()))
@@ -7480,8 +7806,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runCatching { coreCall("extension.closePopup", "null") }
         val discovered = log.optBoolean("pass")
         val offered = addFeed.optBoolean("pass")
-        val logLine = if (log.optBoolean("present")) "the content script's log \"${log.optString("found").take(100)}\"" else "no content-script log in the page (its logging flag unread, or its check never ran)"
-        val bridgeLine = "${bridge.optInt("feedsFound")} feedsFound message(s) and ${bridge.optInt("setIcon")} setIcon call(s) on the bridge"
+        val logLine = if (discovered) "the content script's feedsFound message about ${log.optString("found").ifEmpty { "the page" }.take(100)} on the bridge" else "no feedsFound message about the fixture's page on the bridge within ${scaled(15_000, factor) / 1000} s of its load (the content script's discovery never reached the worker)"
+        val bridgeLine = "${bridge.optInt("feedsFound")} feedsFound message(s) in all (${bridge.optInt("feedsFoundAboutFixture")} about the fixture) and ${bridge.optInt("setIcon")} setIcon call(s) on the bridge"
         return when {
             listed.optBoolean("pass") -> Grade("P", "RSS Feed Reader: the page's one feed discovered ($logLine; $bridgeLine) and offered in the popup – \"Add feed\" marked feeds-available=$offered, its list names the feed: \"${listed.optString("text").take(120)}\"", extra)
             offered -> Grade("PARTIAL", "RSS Feed Reader: the page's one feed discovered ($logLine; $bridgeLine) and the popup's \"Add feed\" marked feeds-available; its list did not name the feed within the wait: \"${listed.optString("text").take(120)}\" (${steps.toString().take(140)})", extra)
@@ -8036,26 +8362,47 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * RSS Feed Reader: its content script reads the page's `<link rel="alternate">` feeds and
-     * the worker counts them on the action's badge; the popup over the page offers the feed by
-     * its title. Over `feed.html` (one RSS link to `feed.xml`, "Zenium fixture feed"): a badge
-     * count of one or more, or the popup naming the feed, is the pass. A popup that opens on
-     * its account prompt first (RSS Feed Reader's "Create an account / Log in / Continue without
-     * account", round 15) is taken past it on its own no-account control, and read again. The
-     * choice closes the popup with it (RSS Feed Reader 8.1.0 sets its sync type in the worker a
-     * second after the tap and opens its web app as a tab; the badge was read before the choice,
-     * while the worker's state was `undecided`), so the read-again is over a fresh feed page and
-     * a fresh popup once the worker settled: the badge polled again, the popup opened again.
+     * A feed detector (RSS Subscription Extension, Google's): its content script reads the
+     * page's `<link rel="alternate">` feeds and reports them to the worker, which keeps them in
+     * `storage.local` under the reporting tab's id and sets the action's title and its per-tab
+     * icon for that tab – never a badge (round 17 §7: the wait on one was the driver's). Over
+     * `feed.html` (one RSS link to `feed.xml`, "Zenium fixture feed") the popup's `main()` finds
+     * the one feed and takes its single-feed path: `preview(feeds[0].href)` opens
+     * `subscribe.html?<feed url>` as a tab and closes the popup (`popup.js`, the bundle's own
+     * code; Chrome's popup does the same). So the pass is either that tab following the popup's
+     * opening, or the popup naming the feed (the several-feeds path, where it lists them). A
+     * badge count, when a detector sets one, still passes. A popup that opens on an account
+     * prompt first (RSS Feed Reader's "Create an account / Log in / Continue without account",
+     * round 15) is taken past it on its own no-account control, and read again over a fresh
+     * feed page and a fresh popup once the worker settled.
      */
     private fun feedDetector(label: String, page: String, feedTitle: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, 3_000)
-        var badge = poll(scaled(15_000, factor), 500) { extensionAction(row.id)?.optString("badgeText")?.takeIf { Regex("[1-9]").containsMatchIn(it) } }
-        extra.put("action", extensionAction(row.id)).put("badge", badge ?: JSONObject.NULL)
+        // The action as the worker left it once the content script reported (a title naming the
+        // feed, a badge where a detector sets one); read within a short wait, not waited out.
+        val action = poll(scaled(8_000, factor), 500) {
+            extensionAction(row.id)?.takeIf { a -> Regex("[1-9]").containsMatchIn(a.optString("badgeText")) || Regex("feed|subscribe|rss", RegexOption.IGNORE_CASE).containsMatchIn(a.optString("title")) }
+        } ?: extensionAction(row.id)
+        var badge = action?.optString("badgeText")?.takeIf { Regex("[1-9]").containsMatchIn(it) }
+        extra.put("action", action ?: JSONObject.NULL).put("badge", badge ?: JSONObject.NULL)
+        val before = tabUrls().keys
         val popup = openPopup(row, factor)
+        // The single-feed path: the popup gone to its `subscribe.html?<feed>` tab.
+        val subscribe = poll(scaled(15_000, factor), 500) {
+            tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) && it.value.contains("subscribe.html") }
+        }
         var found = JSONObject()
-        if (popup != null) {
+        if (subscribe != null) {
+            extra.put("subscribeTab", subscribe.value.take(200))
+            runCatching {
+                val view = waitForView(subscribe.key)
+                val preview = pollExpr(view, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:${JSONObject.quote(feedTitle)}.split(' ').every(function(w){return text.toLowerCase().indexOf(w.toLowerCase())>=0})||/feed\\.xml/.test(text),frames:document.querySelectorAll('iframe').length,text:"), scaled(15_000, factor))
+                preview.put("console", JSONArray(consoleOf(view).takeLast(10)))
+                extra.put("subscribePage", preview)
+            }.onFailure { extra.put("subscribePage", JSONObject().put("error", it.toString().take(160))) }
+        } else if (popup != null) {
             val names = DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:${JSONObject.quote(feedTitle)}.split(' ').every(function(w){return text.toLowerCase().indexOf(w.toLowerCase())>=0})||/feed\\.xml|1 feed|feeds? (found|detected|on this page)/i.test(text),text:")
             found = pollExpr(popup, names, scaled(20_000, factor))
             if (!found.optBoolean("pass") && Regex("without (an )?account|skip|continue", RegexOption.IGNORE_CASE).containsMatchIn(found.optString("text"))) {
@@ -8087,15 +8434,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
             }
         }
-        extra.put("popup", found)
+        extra.put("popup", found).put("tabsAfter", JSONArray(tabUrls().values.map { it.take(120) }))
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-feed")
         runCatching { coreCall("extension.closePopup", "null") }
+        val titleLine = action?.optString("title")?.takeIf { it.isNotEmpty() }?.let { "action title \"${it.take(60)}\"" } ?: "no action title"
         when {
-            badge != null || found.optBoolean("pass") -> Grade("P", "$label: over a page announcing one feed, badge \"${badge ?: ""}\"; popup ${found.toString().take(200)}", extra)
-            popup == null -> Grade("F", "$label: no badge count on the feed page and the popup did not render", extra)
-            else -> Grade("F", "$label: no badge count on the feed page and the popup does not name the feed: ${found.toString().take(200)}", extra)
+            subscribe != null -> Grade("P", "$label: over a page announcing one feed, the popup took its single-feed path to ${extensionPath(subscribe.value).take(90)} as a tab ($titleLine; the subscribe page ${extra.optJSONObject("subscribePage")?.toString()?.take(140)})", extra)
+            badge != null || found.optBoolean("pass") -> Grade("P", "$label: over a page announcing one feed, badge \"${badge ?: ""}\", $titleLine; popup ${found.toString().take(200)}", extra)
+            popup == null -> Grade("F", "$label: over the feed page no subscribe tab followed the popup's opening within ${scaled(15_000, factor) / 1000} s ($titleLine) and the popup did not render", extra)
+            else -> Grade("F", "$label: over the feed page no subscribe tab followed the popup's opening ($titleLine) and the popup does not name the feed: ${found.toString().take(200)}", extra)
         }
     }
 
@@ -8302,18 +8651,36 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * answered late is not charged to the wait; the wait ends at two minutes whatever came. The
      * stall a read measured goes on the row (`coreStall`: reads that stalled, the longest poll, the
      * last command) so a grade made under one says so.
+     *
+     * A command that failed or ran out against a chrome document without the sweep's hooks was
+     * posted into a document a rebuild replaced ([chromeHooksLost]; the core reboots with the
+     * chrome, and an invoke posted into the dying document, or before `window.zen` is back, is
+     * lost). The loss is named on the row and the hooks armed again; the one read the row
+     * boundary leans on (`app.getState`) is asked once more of the rebuilt core, every other
+     * command's error names the replacement and stands (whether the core ran it before it died is
+     * not known, and an install or a tab command run twice is a different row).
      */
     private fun coreCall(name: String, args: String = "null"): String =
-        coreInvokeUnderStall(name, args, onStall = { longest ->
-            val entry = rowEntry
-            if (entry != null) {
-                val stall = entry.optJSONObject("coreStall") ?: JSONObject().also { entry.put("coreStall", it) }
-                stall.put("reads", stall.optInt("reads") + 1)
-                    .put("longestPollMs", maxOf(stall.optLong("longestPollMs"), longest))
-                    .put("last", name)
-                Log.w(TAG, "CORE STALL ${entry.optString("name")}: $name answered after a poll of $longest ms")
-            }
-        })
+        try {
+            coreInvokeUnderStall(name, args, onStall = coreStallOnRow(name))
+        } catch (e: IllegalStateException) {
+            if (!chromeHooksGone()) throw e
+            chromeHooksLost(name)
+            if (name == "app.getState") coreInvokeUnderStall(name, args, onStall = coreStallOnRow(name))
+            else throw IllegalStateException("${e.message}; the chrome's document was replaced meanwhile (its renderer gone, the chrome rebuilt)", e)
+        }
+
+    /** The stall evidence a [coreCall] of `name` leaves on the row under way. */
+    private fun coreStallOnRow(name: String): (Long) -> Unit = { longest ->
+        val entry = rowEntry
+        if (entry != null) {
+            val stall = entry.optJSONObject("coreStall") ?: JSONObject().also { entry.put("coreStall", it) }
+            stall.put("reads", stall.optInt("reads") + 1)
+                .put("longestPollMs", maxOf(stall.optLong("longestPollMs"), longest))
+                .put("last", name)
+            Log.w(TAG, "CORE STALL ${entry.optString("name")}: $name answered after a poll of $longest ms")
+        }
+    }
 
     /** The core's UI state (`app.getState`) through [coreCall]. */
     private fun coreSnapshot(): JSONObject = JSONObject(coreCall("app.getState"))
@@ -8498,6 +8865,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return list
     }
 
+    /**
+     * The view's last `tail` console lines, with every line of the runtime's own (`[Zenium]`,
+     * the chunk refusals, alias retries and policy notes of `extensionRuntime.ts`) kept ahead of
+     * them in order, however much the page logged after – so a live page's noise does not push
+     * the runtime's account of the row out of the record (round 17 §7, Buyhatke's attempts).
+     */
+    private fun consoleKeepingRuntime(view: WebView, tail: Int): List<String> {
+        val all = consoleOf(view)
+        val last = all.takeLast(tail)
+        val runtime = all.dropLast(last.size).filter { it.contains("[Zenium]") }.takeLast(20)
+        return runtime + last
+    }
+
     /** `evaluateJavascript` on the main thread; JSON strings are decoded to their text. */
     private fun tabEval(view: WebView, script: String, timeoutSeconds: Long = 10): String {
         val latch = CountDownLatch(1)
@@ -8605,15 +8985,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var lastRect: Rect? = null
         // Polls the chrome did not answer within chromeJs's 10 s: a JS thread that is busy or gone.
         var silent = 0
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        val started = SystemClock.uptimeMillis()
+        val deadline = started + timeoutMs
         var promptSeenAt = 0L
         while (SystemClock.uptimeMillis() < deadline) {
-            val result = chromeJs("(window.__sweep && window.__sweep[$token] !== undefined) ? window.__sweep[$token] : null")
+            val result = chromeJs("window.__sweep === undefined ? 'gone' : (window.__sweep[$token] !== undefined ? window.__sweep[$token] : null)")
             if (result.isEmpty()) {
                 silent++
                 if (silent == 1 || silent % 10 == 0) Log.w(TAG, "$command: the chrome did not answer a poll ($silent so far)")
                 // A page's dialog blocks the renderer the chrome shares: press it away and poll again.
                 dismissDialog()?.let { Log.w(TAG, "$command: a dialog pressed away: $it") }
+            }
+            if (result == "\"gone\"") {
+                // The slots' owner is not in the document: the one the call was posted into was
+                // replaced (its renderer gone, the chrome rebuilt), and with it the call's promise
+                // and any prompt it raised. Named on the row, the hooks armed again, and the call
+                // failed now rather than at its deadline.
+                chromeHooksLost(command)
+                error("$command was lost with the chrome's document (its renderer gone, the chrome rebuilt) after ${SystemClock.uptimeMillis() - started} ms")
             }
             if (result.isNotEmpty() && result != "null") {
                 chromeJs("delete window.__sweep[$token];'ok'")
@@ -8625,7 +9014,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     else -> JSONObject().put("value", value)
                 }
             }
-            val pending = if (answered) JSONArray() else pendingPrompts()
+            var pending = if (answered) JSONArray() else pendingPrompts()
+            // A prompt raised into the document a rebuild replaced is on no list: while this call
+            // has seen the hooks lost, the sheet's own button on screen stands for it – one of
+            // unknown id, tapped as any other and DOM-clicked when a finger does not answer it.
+            if (pending.length() == 0 && !answered && hooksLostAt >= started && promptButton()?.rect != null)
+                pending = JSONArray().put(JSONObject().put("kind", "unknown").put("id", ""))
             if (pending.length() == 0) {
                 // Nothing is asked: a sheet still on its way out (its button drawn below the
                 // viewport while it slides down) is not a prompt to answer, and the next prompt
@@ -8719,9 +9113,81 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
     }
 
-    /** The prompts the chrome raised since the last answer through the command: `[{kind, id, ok}]`. */
-    private fun pendingPrompts(): JSONArray =
-        runCatching { JSONArray(JSONTokener(chromeJs("JSON.stringify(window.__prompts||[])")).nextValue() as String) }.getOrDefault(JSONArray())
+    /**
+     * The prompts the chrome has raised and not answered (`[{kind, id, ok}]`), by the hooks in its
+     * document; a document without the hooks is a rebuilt chrome ([chromeHooksLost]), answered
+     * empty for this poll with the hooks armed again for the next.
+     */
+    private fun pendingPrompts(): JSONArray {
+        val raw = chromeJs("window.__prompts===undefined?'unarmed':JSON.stringify(window.__prompts)")
+        val text = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: return JSONArray()
+        if (text == "unarmed") {
+            chromeHooksLost("a prompt poll")
+            return JSONArray()
+        }
+        return runCatching { JSONArray(text) }.getOrDefault(JSONArray())
+    }
+
+    /**
+     * The sweep's hooks in the chrome's document. The core's toasts carry what an install refused
+     * to do (the store host toasts instead of rejecting). The prompts the chrome raises (install,
+     * permissions) are listed by request id, so one its sheet did not put a reachable button on
+     * screen can still be answered through the command; the renderer answers a prompt through the
+     * same `window.zen.invoke` (a tap on its button, a dismissed sheet), and that answer takes the
+     * prompt off the list, so a tap that did answer is never taken for one that did not and
+     * answered again through the command. Armed once at the start, and again whenever the chrome's
+     * document is found without them. The document has `window.zen` only once its core has booted
+     * (`main.tsx` sets it after `bootAndroid`), and a rebuilt chrome's core is a second or so
+     * behind the document: the script arms nothing before then (a marker left standing without its
+     * listeners would list no prompt and look armed), and is asked again at the lane's speed until
+     * it does. Whether the hooks are armed.
+     */
+    private fun armChromeHooks(): Boolean {
+        val script =
+            "if(!window.zen){'nozen'}else{" +
+                "window.__toasts=[];window.zen.on('toast',function(p){window.__toasts.push(String(p&&p.message||p))});" +
+                "window.__prompts=[];window.__promptAnswers=[];" +
+                "window.zen.on('extensionInstallRequest',function(p){window.__prompts.push({kind:'install',id:p.requestId,ok:p.okLabel||''})});" +
+                "window.zen.on('extensionPermissionRequest',function(p){window.__prompts.push({kind:'permission',id:p.requestId,ok:p.okLabel||''})});" +
+                "(function(){var z=window.zen,invoke=z.invoke;z.invoke=function(name,args){" +
+                "if((name==='extension.confirmInstall'||name==='extension.respondPermissionRequest')&&args&&args.requestId){" +
+                "window.__prompts=window.__prompts.filter(function(p){return p.id!==args.requestId});" +
+                "window.__promptAnswers.push({id:args.requestId,accept:!!args.accept})}" +
+                "return invoke.apply(z,arguments)}})();'ok'}"
+        return poll((HOOKS_ARM_TIMEOUT_MS * laneFactor).toLong(), 250) { if (chromeJs(script) == "\"ok\"") true else null } ?: false
+    }
+
+    /** Whether the chrome's document has lost the sweep's hooks (a poll the chrome did not answer is not a loss). */
+    private fun chromeHooksGone(): Boolean = chromeJs("typeof window.__prompts") == "\"undefined\""
+
+    /**
+     * The chrome's document no longer has the hooks: its renderer died and the host rebuilt the
+     * chrome (`ChromeWebView.onRenderProcessGone`; the core reboots from its persisted state), or
+     * the document was replaced. On compat round 18's BEFORE 156 lane (run 36122292349) the
+     * guest's low-memory killer took the WebView's one sandboxed renderer at 11:16:24 under
+     * tl;dv's 20.7 M-char unit on the Meet fixture page (2.3 GB RSS), and with it every tab's
+     * document, the extension's background view and the chrome; the host had the chrome back in
+     * three seconds, but the sweep's hooks went with the old document, and the eleven rows after
+     * it stood on install prompts drawn and reachable ("Add extension") that no poll listed, each
+     * to its four-minute timeout. Counted on the run (`chromeRebuilds`: when, at which row and
+     * step), named on the row (`chromeRebuilt`), the hooks armed again, and the prompt the old
+     * document took with it answered from its button (`zen`).
+     */
+    private fun chromeHooksLost(where: String) {
+        hooksLostAt = SystemClock.uptimeMillis()
+        val entry = rowEntry
+        val armed = armChromeHooks()
+        chromeRebuilds.put(
+            JSONObject().put("at", System.currentTimeMillis()).put("row", entry?.optString("slug") ?: "").put("where", where).put("rearmed", armed)
+        )
+        entry?.put("chromeRebuilt", where)
+        Log.w(
+            TAG,
+            "the chrome's document was replaced (its renderer gone, the chrome rebuilt) at " +
+                "${entry?.optString("name") ?: "no row"} / $where: the sweep's hooks " +
+                (if (armed) "armed again" else "NOT armed again (no window.zen within the wait)") + " (${chromeRebuilds.length()} so far)"
+        )
+    }
 
     /**
      * Accept the prompt on screen without a finger: a click on the sheet's own accepting button
@@ -9440,6 +9906,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * ([laneFactor]), for its sheet before the command answers it.
          */
         private const val PROMPT_DRAW_TIMEOUT_MS = 15_000L
+        /** How long a rebuilt chrome is given to boot its core (`window.zen`) before the sweep's hooks are given up ([armChromeHooks]). */
+        private const val HOOKS_ARM_TIMEOUT_MS = 15_000L
         /** Taps on the prompt's own button before the command answers it, and the wait between them. */
         private const val PROMPT_TAPS = 2
         private const val PROMPT_RETAP_MS = 3_000L
@@ -10420,14 +10888,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var c=document.querySelector('#gameCanvas, canvas');var r=c?c.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!c&&c.width>100&&c.height>100&&r.width>60,w:c?c.width:0,h:c?c.height:0,shown:Math.round(r.width)+'x'+Math.round(r.height),canvases:document.querySelectorAll('canvas').length,text:t.slice(0,80)})})()"
         /**
-         * Boxel 3D's level picker ([boxel3d]): the first level entry in its `.list` (an element with
-         * a `title` attribute – the level's name – whose click is `app.playLevel`), clicked; nothing
-         * clicked while the list is not drawn.
+         * The largest canvas on the page by its drawn box (Ice Dodo's popup holds an unsized
+         * first canvas beside the game's): a sized one on screen is the pass.
+         */
+        private const val CANVAS_LARGEST =
+            "(function(){var all=Array.prototype.slice.call(document.querySelectorAll('canvas'));var best=null,br={width:0,height:0};all.forEach(function(x){var r=x.getBoundingClientRect();if(r.width*r.height>br.width*br.height){best=x;br=r}});var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!best&&best.width>100&&best.height>100&&br.width>60,w:best?best.width:0,h:best?best.height:0,shown:Math.round(br.width)+'x'+Math.round(br.height),canvases:all.length,text:t.slice(0,80)})})()"
+        /**
+         * Boxel 3D's level picker ([boxel3d]): its rows are a Vue carousel – `div.item` under
+         * `.carousel`, each with a `div.title` child (the level's name), a `.label` and the
+         * `more_horiz` tag, no `title` attribute (round 17's hook looked for one and matched
+         * nothing, §7 there). Its click handler selects the row first and a second click on the
+         * selected row plays (`app.playLevel`), so the first sized row is clicked twice, the second
+         * click half a second after the first; nothing clicked while the carousel is not drawn.
          */
         private const val BOXEL_LEVEL_ENTRY =
-            "(function(){var list=document.querySelector('.level-picker .list, .levels .list, .list');var entries=list?Array.prototype.slice.call(list.querySelectorAll('[title]')).filter(function(n){var r=n.getBoundingClientRect();return r.width>20&&r.height>20&&!/exit|home|search|setting/i.test(n.getAttribute('title')||'')}):[];" +
-                "var hit=entries[0];if(!hit)return JSON.stringify({clicked:false,list:!!list,entries:entries.length,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)});var r=hit.getBoundingClientRect();hit.click();" +
-                "return JSON.stringify({clicked:true,title:String(hit.getAttribute('title')).slice(0,60),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2,entries:entries.length})})()"
+            "(function(){var list=document.querySelector('.carousel');var entries=list?Array.prototype.slice.call(list.querySelectorAll('.item')).filter(function(n){var r=n.getBoundingClientRect();return r.width>20&&r.height>20}):[];" +
+                "var hit=entries[0];if(!hit)return JSON.stringify({clicked:false,list:!!list,entries:entries.length,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)});var r=hit.getBoundingClientRect();var t=hit.querySelector('.title');hit.click();setTimeout(function(){hit.click()},500);" +
+                "return JSON.stringify({clicked:true,title:String(t?t.textContent:hit.textContent).replace(/\\s+/g,' ').trim().slice(0,60),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2,entries:entries.length,twice:true})})()"
 
         // --- compat round 17 ---
 
@@ -10540,17 +11018,126 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val SCREENSHOT_SAVE_CLICK =
             "(function(){var w=document.getElementById('as_select_wrapper');var sr=w&&w.shadowRoot;var el=sr?sr.querySelector('#awesome_screenshot_capture'):null;if(!el)return 'absent';el.click();return 'clicked'})()"
 
-        /**
-         * RSS Feed Reader's content script's own log in the page (its `feeder_rss_logging=1` flag: a `textarea`
-         * at z-index 100000000 appended to the body): the "findFeedLinks: eval found: <href> <title>" line is the
-         * discovery; the page's announced feed links are counted beside it.
-         */
-        private const val FEEDER_LOG =
-            "(function(){var ta=Array.prototype.slice.call(document.querySelectorAll('textarea')).find(function(t){return t.style&&t.style.zIndex==='100000000'});var v=ta?ta.value:'';var m=/findFeedLinks: eval found: (\\S+) ([^\\n]*)/.exec(v);" +
-                "var links=document.querySelectorAll('link[rel~=\"alternate\"][type*=\"rss\"], link[rel~=\"alternate\"][type*=\"atom\"]').length;return JSON.stringify({pass:!!m,present:!!ta,found:m?m[1]+' '+m[2]:'',lines:v?v.split('\\n').filter(Boolean).length:0,log:v.slice(0,600),links:links})})()"
         /** RSS Feed Reader's popup: its "Add feed" control (`.add-feed-button`, aria-label "Add feed") marked `feeds-available` once the worker answered the tab's feeds. */
         private const val FEEDER_ADD_FEED =
             "(function(){var el=document.querySelector('.add-feed-button, [aria-label=\"Add feed\"], [feeder-title=\"Add feed\"]');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!(el&&el.classList.contains('feeds-available')),present:!!el,classes:el?el.className.replace(/\\s+/g,' ').trim().slice(0,80):null,text:t.slice(0,200)})})()"
+
+        // --- compat round 18 (ranks 421-450) ---
+
+        /**
+         * Zoom Video - UltraWide Fill's effect on the clip: its content script gives every video
+         * the class `scale_zoom-video-<the id's first five letters>` and writes a `<style>` rule for
+         * it (`scale: <factor> !important`) on the worker's storage change; the popup's 21:9 button
+         * asks for a scale above 1 on the 16:9 clip. Pass is a video with the class whose computed
+         * `scale` is neither `none` nor 1.
+         */
+        private const val ZOOM_VIDEO_SCALED =
+            "(function(){var vs=Array.prototype.slice.call(document.querySelectorAll('video'));var v=vs.find(function(x){return /scale_zoom-video-/.test(x.className)})||vs[0]||null;var cs=v?getComputedStyle(v):null;var sc=cs?String(cs.scale||'none'):'none';" +
+                "var rule='';Array.prototype.slice.call(document.querySelectorAll('style')).forEach(function(s){var m=/\\.scale_zoom-video-[^{]*\\{[^}]*\\}/.exec(s.textContent||'');if(m)rule=m[0]});var scaled=sc!=='none'&&sc!=='1'&&!/^1(\\s+1)?$/.test(sc);" +
+                "return JSON.stringify({pass:!!v&&/scale_zoom-video-/.test(v.className)&&scaled,videos:vs.length,classed:!!v&&/scale_zoom-video-/.test(v.className),scale:sc,rule:rule.replace(/\\s+/g,' ').slice(0,120),mounted:!!document.querySelector('[id^=\"zoom-video-\"], [class*=\"zoom-video-\"]')})})()"
+        /**
+         * Zoom Video's storage watched from its popup ([zoomVideo]): every `zoom_<tab>` write
+         * `storage.onChanged` reports, with its `scale` before and after and the video size it
+         * carried, on `window.__zenZoom` (armed once; no storage call of its own).
+         */
+        private const val ZOOM_STORAGE_ARM =
+            "(function(){if(window.__zenZoom)return 'armed';var z={t0:Date.now(),changes:[],err:null};window.__zenZoom=z;try{chrome.storage.onChanged.addListener(function(ch,area){for(var k in ch){if(!/^zoom_/.test(k))continue;var nv=ch[k].newValue||{},ov=ch[k].oldValue||{};" +
+                "z.changes.push({t:Date.now()-z.t0,key:k,area:area,scale:nv.scale,was:ov.scale,video:(nv.videoWidth||0)+'x'+(nv.videoHeight||0)})}})}catch(e){z.err=String(e)}return 'armed'})()"
+        /** The writes [ZOOM_STORAGE_ARM] saw (the last 14), their count, and the scale the popup shows. */
+        private const val ZOOM_STORAGE_READ =
+            "(function(){var z=window.__zenZoom||{};var c=z.changes||[];var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ');var m=/(\\d+\\.\\d\\d)\\s*x/.exec(t);" +
+                "return JSON.stringify({changes:c.slice(-14),n:c.length,err:z.err||null,shown:m?m[1]:null})})()"
+
+        /**
+         * 2048's popup page as a tab (its action opens `popup.html` in a new window through
+         * `windows.create`): the game's grid (`.grid-container` with its 16 `.grid-cell`s) laid out
+         * with a width, and its tiles counted.
+         */
+        private const val GRID_2048 =
+            "(function(){var g=document.querySelector('.grid-container');var cells=document.querySelectorAll('.grid-cell').length;var r=g?g.getBoundingClientRect():{width:0,height:0};var tiles=document.querySelectorAll('.tile').length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!g&&cells>=16&&r.width>100,grid:!!g,cells:cells,width:Math.round(r.width),height:Math.round(r.height),tiles:tiles,text:t.slice(0,120)})})()"
+
+        /**
+         * Web Paint's panel on the page after its action: its content script builds the drawing
+         * canvas (`#NOTEPAD`) over the page and its tool bar (`#NOTEPAD_controls`), both sized.
+         */
+        private const val WEB_PAINT_PANEL =
+            "(function(){var c=document.getElementById('NOTEPAD');var k=document.getElementById('NOTEPAD_controls');var rc=c?c.getBoundingClientRect():{width:0,height:0};var rk=k?k.getBoundingClientRect():{width:0,height:0};" +
+                "return JSON.stringify({pass:!!c&&!!k&&rc.width>100&&rk.width>40,canvas:!!c,controls:!!k,canvasSize:Math.round(rc.width)+'x'+Math.round(rc.height),controlsSize:Math.round(rk.width)+'x'+Math.round(rk.height),tag:c?c.tagName:null,tools:k?k.querySelectorAll('button, [class*=\"tool\"], img').length:0})})()"
+
+        /**
+         * Distill Web Monitor's popup on a fresh install: its Backbone app renders the monitor
+         * menu (Monitor full page, Monitor parts of page, Watchlist) with no account needed.
+         * Beside it the platform probe its store depends on: `SharedArrayBuffer` present,
+         * `crossOriginIsolated`, and `navigator.storage.getDirectory` (OPFS) there.
+         */
+        private const val DISTILL_POPUP =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var controls=document.querySelectorAll('button, a, [role=\"button\"], [role=\"menuitem\"], li').length;" +
+                "return JSON.stringify({pass:/monitor (full|parts of) page|watchlist/i.test(t)&&controls>0,controls:controls,sab:typeof SharedArrayBuffer!=='undefined',coi:!!self.crossOriginIsolated,opfs:!!(navigator.storage&&navigator.storage.getDirectory),text:t.slice(0,200)})})()"
+
+        /**
+         * SelectorsHub's side panel page as a tab: its selector tooling (the `.selector-button`
+         * row, `#standardBtn`, its inputs) rendered with readable text.
+         */
+        private const val SELECTORSHUB_PANEL =
+            "(function(){var b=document.querySelector('.selector-button');var s=document.getElementById('standardBtn');var inputs=document.querySelectorAll('input, textarea').length;var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!(b||s)&&t.length>50,selectorButton:!!b,standardBtn:!!s,inputs:inputs,text:t.slice(0,200)})})()"
+
+        /**
+         * WhatRuns' panel on the page after its action: its content script mounts
+         * `#whatruns-iframe-container-701` with `#whatruns-iframe-701` pointing at its own
+         * `popup.html`, the container laid out with a width.
+         */
+        private const val WHATRUNS_PANEL =
+            "(function(){var c=document.getElementById('whatruns-iframe-container-701');var f=document.getElementById('whatruns-iframe-701');var r=c?c.getBoundingClientRect():{width:0,height:0};var src=f?String(f.getAttribute('src')||f.src||''):'';" +
+                "return JSON.stringify({pass:!!c&&!!f&&r.width>0&&/chrome-extension:|ext\\.zenium\\.invalid/.test(src),container:!!c,frame:!!f,size:Math.round(r.width)+'x'+Math.round(r.height),src:src.slice(0,100),display:c?getComputedStyle(c).display:null})})()"
+
+        /** Fake Filler's fill of the login fixture: `#email` holds an address and `#password` a value. */
+        private const val FAKE_FILLER_FILLED =
+            "(function(){var e=document.getElementById('email');var p=document.getElementById('password');var ev=e?e.value:'';var pv=p?p.value:'';var filled=Array.prototype.slice.call(document.querySelectorAll('input')).filter(function(i){return i.value}).length;" +
+                "return JSON.stringify({pass:/@/.test(ev)&&pv.length>0,email:ev.slice(0,40),password:pv.length,filled:filled,inputs:document.querySelectorAll('input').length})})()"
+
+        /**
+         * Live Stream Downloader's job page (`data/job/index.html`, opened by its action on a tab
+         * whose media its `webRequest` listener saw): the entries (`#hrefs .entry`) listed with their
+         * names, the page's mode and whether its intro still shows.
+         */
+        private const val LSD_ENTRIES =
+            "(function(){var es=Array.prototype.slice.call(document.querySelectorAll('#hrefs .entry'));var names=es.map(function(e){var n=e.querySelector('[data-id=\"name\"]');var x=e.querySelector('[data-id=\"ext\"]');return ((n?n.textContent:'')+' '+(x?x.textContent:'')).trim().slice(0,60)});var intro=document.getElementById('intro');" +
+                "return JSON.stringify({pass:es.length>0,entries:es.length,names:names.slice(0,5),mode:document.body?document.body.getAttribute('data-mode'):null,intro:!!intro&&getComputedStyle(intro).display!=='none',text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
+
+        /**
+         * Advanced Font Settings' options page: its script list (`#scriptList`) and the four font
+         * selects (`#standardFontList` and the serif, sans-serif, fixed lists) rendered, the
+         * `chrome.fontSettings` namespace's members counted from the page.
+         */
+        private const val FONT_SETTINGS_PAGE =
+            "(function(){var s=document.getElementById('scriptList');var std=document.getElementById('standardFontList');var selects=document.querySelectorAll('select').length;var api=(typeof chrome!=='undefined'&&chrome.fontSettings)?Object.keys(chrome.fontSettings).length:0;" +
+                "return JSON.stringify({pass:!!s&&!!std&&selects>=3,scriptList:!!s,standardFontList:!!std,selects:selects,scriptOptions:s?s.options.length:0,fontOptions:std?std.options.length:0,apiKeys:api,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,160)})})()"
+
+        /**
+         * Search by Image's image-pick mode on the page: its `src/select/script.js` (run through
+         * `scripting.executeScript` by the worker) appends a `<link>` to its `pointer.css` when the
+         * mode is on, and mounts its own frames for the selection UI where it needs them.
+         */
+        private const val SEARCH_BY_IMAGE_SELECT =
+            "(function(){var link=document.querySelector('link[href*=\"pointer.css\"]');var frames=document.querySelectorAll('iframe').length;var own=Array.prototype.slice.call(document.querySelectorAll('iframe')).filter(function(f){return /ext\\.zenium\\.invalid|chrome-extension:/.test(f.src||'')}).length;" +
+                "return JSON.stringify({pass:!!link,pointer:!!link,href:link?String(link.href).slice(0,100):null,frames:frames,ownFrames:own,cursor:(function(i){return i?getComputedStyle(i).cursor:null})(document.querySelector('.grid img'))})})()"
+
+        /** The engines Search by Image opens its results at, by address. */
+        private val SEARCH_BY_IMAGE_ENGINES = Regex("google\\.com|lens\\.google|bing\\.com|yandex\\.|baidu\\.com|tineye\\.com", RegexOption.IGNORE_CASE)
+
+        /**
+         * A new-tab override's page rendered ([momentum]): text of more than twenty characters,
+         * imagery (an image, a canvas, a background element), or the app's mounted root filled –
+         * Infinity New Tab's icon grid in `.site-items` or its search in `.search-box`, a framework
+         * root (`#app`, `#root`, `main`) with children – with the body shown (Infinity keeps
+         * `hide-opacity` on the body until its app has loaded).
+         */
+        private const val NEW_TAB_RENDERED =
+            "(function(){var b=document.body;var text=b?b.innerText.replace(/\\s+/g,' ').trim():'';var imagery=document.querySelectorAll('img, canvas, .background, [class*=\"background\"]').length;" +
+                "var mounted=document.querySelectorAll('.site-items .items-card, .site-items a, .search-box input, .search-box form, #app > *, #root > *, main > *').length;var shown=!!b&&!b.classList.contains('hide-opacity');" +
+                "return JSON.stringify({pass:text.length>20||imagery>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,mounted:mounted,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
     }
 }

@@ -205,6 +205,11 @@ class Extensions(private val host: Host) {
      * fixed at construction). Empty pool without world injection.
      */
     private val worldSlots = WorldSlots(if (isolatedWorlds) WORLD_SLOTS else 0)
+    /**
+     * Which attach each extension is on: a configure's off-thread compile lands only while the
+     * attach it was requested for is still the current one (see [AttachEpochs]).
+     */
+    private val attachEpochs = AttachEpochs()
     private val endpoints = HashMap<String, Endpoint>()
     private val backgrounds = HashMap<String, ExtensionWebView>()
     /** `chrome.offscreen`'s hidden page per extension: a background-like view on the URL the extension named. */
@@ -553,7 +558,9 @@ class Extensions(private val host: Host) {
      * compiled off the main thread and installed on it, on every tab, in place of this
      * extension's earlier units only. A unit the heap cannot hold ([UnitCompiler.Refused]) is
      * not installed anywhere and is named once on the extension's error console; the rest of
-     * the extension goes on.
+     * the extension goes on. A configure whose extension was detached (or whose runtime was
+     * reset) while its units compiled installs nothing and answers its stats with
+     * `dropped: "detached"` (see [AttachEpochs]).
      */
     private fun configure(args: JSONObject, reply: (Any?) -> Unit) {
         val id = args.str("id")
@@ -563,6 +570,7 @@ class Extensions(private val host: Host) {
         }
         val name = args.str("name").ifEmpty { id }
         val debug = args.bool("debug", true)
+        val epoch = attachEpochs.current(id)
         io.execute {
             val started = System.nanoTime()
             val dir = recordDir(args.str("path"))
@@ -600,6 +608,13 @@ class Extensions(private val host: Host) {
                 "ms" to ms
             )
             main.post {
+                // Detached (or reset) while the units compiled: the core has dropped this attach,
+                // and units installed for it now would stay on every tab until the next one.
+                if (!attachEpochs.isCurrent(id, epoch)) {
+                    Log.i(TAG, "configure of ${id.take(8)} ${servedNow.version} dropped: detached while its ${unitsNow.size} unit(s) compiled ($ms ms)")
+                    reply(stats.put("dropped", "detached"))
+                    return@post
+                }
                 // The extension's worlds take slots of the fixed pool first; the core keeps within
                 // the budget `ext.env` told it, so a refusal here is a bug on one side or the other.
                 val wantedWorlds = unitsNow.mapNotNull { it.world }.toSet()
@@ -690,8 +705,12 @@ class Extensions(private val host: Host) {
 
     // --- detach ----------------------------------------------------------------------------------
 
-    /** `ext.detach { id }`: the extension's units leave every tab; its pages and cache go. */
+    /**
+     * `ext.detach { id }`: the extension's units leave every tab; its pages and cache go. A
+     * configure of it still compiling lands on nothing ([AttachEpochs]).
+     */
     private fun detachExtension(id: String) {
+        attachEpochs.detached(id)
         units.remove(id)
         served = served - id
         for (held in heldPages.dropped(id)) failHeld(held)
@@ -716,6 +735,7 @@ class Extensions(private val host: Host) {
 
     /** A new core runtime starts from nothing: every extension of the previous one goes. */
     private fun reset() {
+        attachEpochs.reset()
         closePopup()
         for (id in backgrounds.keys.toList()) stopBackground(id)
         for (id in units.keys.toList()) {
@@ -816,11 +836,20 @@ class Extensions(private val host: Host) {
                 val kind = (data as? JSONObject)?.let { d ->
                     listOf("type", "t", "handler", "action", "method", "kind", "cmd").firstNotNullOfOrNull { k -> d.optString(k, "").ifEmpty { null } }
                 } ?: ""
+                // The page a message speaks of, when it names one (a content script's report of
+                // what it found on its page carries the page's address: the sweep reads the
+                // discovery off this line), at the top or one level down in a `data`, `payload`,
+                // `message` or `params` object (RSS Feed Reader's `{type, data: {feeds, url}}`).
+                val about = (data as? JSONObject)?.let { d ->
+                    (listOf(d) + listOf("data", "payload", "message", "params").mapNotNull { d.optJSONObject(it) })
+                        .firstNotNullOfOrNull { o -> o.optString("url", "").ifEmpty { null } }
+                }
                 listOfNotNull(
                     target?.opt("tabId")?.let { "tab=$it" },
                     target?.opt("frameId")?.let { "frame=$it" },
                     kind.takeIf { it.isNotEmpty() }?.let { "type=$it" },
-                    (message.optJSONObject("sender")?.has("tab"))?.let { "senderTab=$it" }
+                    (message.optJSONObject("sender")?.has("tab"))?.let { "senderTab=$it" },
+                    about?.let { "url=${it.take(80)}" }
                 ).joinToString(" ")
             }
             "msgReply" -> "handled=${message.opt("handled")} willRespond=${message.opt("willRespond")} listeners=${message.opt("listeners")}"

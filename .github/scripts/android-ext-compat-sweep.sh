@@ -25,8 +25,10 @@
 #                      ended so the rows before keep their reading; unset: never (the sweeps). The
 #                      same host capture then joins dump_hang, and once the process is gone its
 #                      core (systemd-coredump's journal entry and dump, apport's report, or a core
-#                      file) is read: `coredumpctl info` into host-emulator-core-info.txt, gdb
-#                      over the dump into host-emulator-core-bt.txt. A single-row lane sets it.
+#                      file) is read: `coredumpctl info` into host-emulator-core-info.txt (that
+#                      one on every lane, GUEST_SILENCE_S or not: the crashing thread's stack
+#                      costs a second), gdb over the dump into host-emulator-core-bt.txt. A
+#                      single-row lane sets it.
 #   GUEST_PROBE_S    – seconds the `adb shell echo alive` probe of that check may take before the
 #                      guest counts as not answering (default 20; a frozen guest answers nothing,
 #                      so a lane racing a short-lived qemu sets it low)
@@ -275,22 +277,30 @@ note_emulator_death() {
         sudo -n coredumpctl list --no-pager 2>&1 | tail -n 5 | cut -c1-240 || true
         echo "-- journal, systemd-coredump"
         sudo -n journalctl -t systemd-coredump --no-pager -o short-iso 2>&1 | tail -n 60 | cut -c1-300 || true
-        if [ "${GUEST_SILENCE_S:-0}" -gt 0 ] && sudo -n coredumpctl list --no-pager --no-legend 2> /dev/null | grep -q qemu; then
-          # The dump's own account first (fast, no gdb): the signal, the storage, systemd's stack of
-          # the crashing thread. The match is the pid the freeze capture recorded, else the comm.
+        if sudo -n coredumpctl list --no-pager --no-legend 2> /dev/null | grep -q qemu; then
+          # The dump's own account (fast, no gdb; every lane): the signal, the storage, systemd's
+          # stack of the crashing thread – the FIRST trace of the journal entry, which the tail
+          # above cuts for a qemu of dozens of threads (compat round 18's AFTER 113 death left six
+          # idle render threads' traces in this file and not the faulting one's, with the core
+          # stored). The module lines between the message and the traces are dropped from the
+          # excerpt; the file keeps them. The match is the pid the freeze capture recorded, else
+          # the comm.
           core_match=$(sed -n 's/^== \([0-9][0-9]*\): .*/\1/p' "$out"/host-emulator-frozen-1.txt 2> /dev/null | head -n 1 || true)
           [ -n "$core_match" ] || core_match=qemu-system-x86
           echo "-- coredumpctl info $core_match into host-emulator-core-info.txt"
           sudo -n coredumpctl -1 info "$core_match" --no-pager > "$out/host-emulator-core-info.txt" 2>&1 || true
-          sed -n '/Message:/,$p' "$out/host-emulator-core-info.txt" 2> /dev/null | head -n 50 | cut -c1-300 || true
           grep -E '^ *(PID|Signal|Timestamp|Executable|Storage|Size on Disk):' "$out/host-emulator-core-info.txt" 2> /dev/null | cut -c1-300 || true
-          df -h /tmp 2> /dev/null | tail -n 1 || true
-          rm -f /tmp/qemu.core
-          if timeout 600 sudo -n coredumpctl -1 dump "$core_match" -o /tmp/qemu.core > /dev/null 2>&1 && [ -s /tmp/qemu.core ]; then
-            sudo -n chown "$(id -u)" /tmp/qemu.core 2> /dev/null || true
-            core_file=/tmp/qemu.core
-          else
-            echo "-- coredumpctl dump gave no core (not stored, truncated, or the disk short)"
+          sed -n '/Message:/,$p' "$out/host-emulator-core-info.txt" 2> /dev/null | grep -vE '^ *(Found module|Module) ' | head -n 60 | cut -c1-300 || true
+          if [ "${GUEST_SILENCE_S:-0}" -gt 0 ]; then
+            # The dump itself, for gdb below (minutes): the single-row lanes alone.
+            df -h /tmp 2> /dev/null | tail -n 1 || true
+            rm -f /tmp/qemu.core
+            if timeout 600 sudo -n coredumpctl -1 dump "$core_match" -o /tmp/qemu.core > /dev/null 2>&1 && [ -s /tmp/qemu.core ]; then
+              sudo -n chown "$(id -u)" /tmp/qemu.core 2> /dev/null || true
+              core_file=/tmp/qemu.core
+            else
+              echo "-- coredumpctl dump gave no core (not stored, truncated, or the disk short)"
+            fi
           fi
         fi
       else

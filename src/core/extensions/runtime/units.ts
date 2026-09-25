@@ -141,6 +141,23 @@ export function planUnits(
   for (const group of boot.groups) {
     add(worldOf(group), sortedOrigins(originRulesFor(group.matches)), [group])
   }
+  // The pages `externally_connectable.matches` lets speak to the extension need a main-world
+  // copy of the bootstrap: it installs the page API (`chrome.runtime.sendMessage` / `connect`
+  // taking the extension's id) on the page's own `chrome` where a pattern covers the frame, and
+  // an engine behind it for the extension's `onMessageExternal` / `onConnectExternal`. Every
+  // main-world unit carries the patterns, so origins a `world: "MAIN"` declaration's unit
+  // already covers need no second copy (Speak Subtitles' MAIN scripts and its connectable pages
+  // are both www.youtube.com); the rest get one unit without sources.
+  if (boot.externallyConnectable && boot.externallyConnectable.length > 0) {
+    const covered = new Set<string>()
+    for (const draft of drafts.values())
+      if (draft.world === 'main') for (const origin of draft.origins) covered.add(origin)
+    if (!covered.has('*')) {
+      const wanted = sortedOrigins(originRulesFor(boot.externallyConnectable))
+      const missing = wanted.filter((origin) => !covered.has(origin))
+      if (missing.length > 0) add('main', missing, [])
+    }
+  }
   if (env.isolatedWorlds && injectsProgrammatically(manifest)) {
     const wanted = sortedOrigins(originRulesFor(manifest.hostPermissions))
     const covered = new Set<string>()
@@ -151,13 +168,22 @@ export function planUnits(
       if (missing.length > 0) add('isolated', missing, [])
     }
   }
-  // A unit over every origin runs everywhere anyway: fold that world's other units into it, so a
-  // page receives one copy of the bootstrap per world rather than one per origin rule set.
+  // A unit over every origin runs everywhere anyway: that world's units WITHOUT sources of their
+  // own (the transport over the host permissions, the connectable pages' copy) fold into it, so
+  // a page receives one copy of the bootstrap per world rather than one per origin rule set. A
+  // unit with sources keeps its own rules, as Chrome hands a frame the scripts whose patterns it
+  // matches alone: folded, its files ride into every frame of every origin – tl;dv's
+  // meet.google.com and calendar.google.com scripts (8.1 and 6.7 MB) beside its `<all_urls>`
+  // one (8.1 MB) made one 20.7 M-char unit for every frame, and the WebView's one renderer grew
+  // to 2.3 GB on a Meet page until the guest's low-memory killer took it, and the chrome and
+  // every tab with it (compat round 18). A frame matching several rule sets pays one more copy
+  // of the bootstrap (162 KB) per set instead.
   for (const world of ['isolated', 'main', 'user'] as const) {
     const everywhere = drafts.get(unitKey(world, ['*']))
     if (!everywhere) continue
     for (const [key, draft] of [...drafts]) {
       if (draft.world !== world || draft === everywhere) continue
+      if (draft.groups.some((group) => group.js.length > 0 || group.css.length > 0)) continue
       everywhere.groups.push(...draft.groups)
       drafts.delete(key)
     }
