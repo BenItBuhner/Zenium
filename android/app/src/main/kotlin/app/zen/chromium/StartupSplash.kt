@@ -134,6 +134,8 @@ interface SplashSurface {
     fun fadeInPlace(onEnd: () -> Unit)
     /** Gone at once, no motion (the activity's end). */
     fun remove()
+    /** The view's state for the log at a late hand-over: attached, shown, alpha, size, parent. */
+    fun describe(): String = "a view"
 }
 
 /** The system bars' icon tone: read at the hand-over, written at the lift. The window's controller in the app, a fake in the test. */
@@ -295,7 +297,7 @@ class StartupSplash internal constructor(
      * ask restored at the end – and the hold, the watchdog and the lift's numbers stay as they are.
      */
     private fun departLate(view: SplashSurface) {
-        note("splash: a hand-over after the lift (the icon trampoline's starting window transferred over the running chrome); departing at once")
+        note("splash: a hand-over after the lift (the icon trampoline's starting window transferred over the running chrome); departing at once; the view: ${view.describe()}")
         // The view is the platform's as drawn, not dressed: with no skin it is the browser's splash
         // theme, light icons over the indigo until it is gone. A skinned window keeps the tone the
         // theme gave its undressed view.
@@ -453,6 +455,10 @@ class PlatformSplashSurface(private val provider: SplashScreenViewProvider) : Sp
     }
 
     override fun remove() = provider.remove()
+    override fun describe(): String {
+        val view = provider.view
+        return "attached ${view.isAttachedToWindow}, shown ${view.isShown}, visibility ${view.visibility}, alpha ${view.alpha}, ${view.width}x${view.height} at ${view.left},${view.top}, parent ${view.parent?.javaClass?.simpleName ?: "none"}, window ${view.windowVisibility}"
+    }
 }
 
 /**

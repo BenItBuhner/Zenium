@@ -45,8 +45,12 @@
 #   warm, alias open  the alias with NEW_TASK alone (what `getLaunchIntentForPackage` callers
 #                     and a bare `am start` send) on the running browser, every scheme: the
 #                     trampoline added on top, its splash transferred to the browser's window
-#                     and its copy handed to the app after the lift – the flash, judged to its
-#                     end (the copy sent away at once, the page standing after it)
+#                     – and, the app's listener released at the cold start's lift (API 33+),
+#                     never copied to the app: the platform's own splash, judged to its end
+#                     (no hand-over line, the page standing after it, no splash back over it)
+#   comparison        Chrome's relaunch with NEW_TASK alone over its warm process on the same
+#                     image (light pass), read by the reader's signature mode: the platform's
+#                     own path with no listener at all – COMPARISON lines, never failures
 #   cold, trampoline  the launcher's intent at the shortcuts' NoDisplay trampoline
 #                     (LauncherIconActivity, as root: not exported) – the icon's path as it was
 #                     before round 4, the BEFORE on the same build
@@ -625,58 +629,82 @@ hot_start() {
 # The alias with NEW_TASK alone on the running browser behind the launcher – what a bare
 # `am start` and callers of `getLaunchIntentForPackage` (Settings' Open) send: the platform adds
 # the trampoline on top of the browser, draws its splash for the task switch and, at the
-# forward's clear-top, transfers the starting window to the browser's window – whose exit
-# listener is handed the copy AFTER the lift, the chrome READY long since (IconTapActivity's
-# documented edge). Nothing of the platform's ends that copy; until round 5 nothing of the app's
-# did either (runs 36099054999 and 36107136195: the splash to the recording's end, or back over
-# the page), and StartupSplash now sends a hand-over after the lift away at once. JUDGED, on every
-# scheme: the log carries that hand-over's line once and no watchdog line; the recording, run to
-# the flash's end, shows the flash ending on the page within the exit's motion, no splash frame
-# after the page's first, the page standing to the end.
+# forward's clear-top, transfers the starting window to the browser's window. What happens next
+# is the browser's last resume's word: with an exit listener registered the platform COPIES the
+# splash to the browser's window (the shell's window hidden through a leash, the copy the app's
+# to end, the shell's surface reparented back as the attach completes – the flash of runs
+# 36099054999, 36107136195 and 36125129683: the copy for good, or back over the page); with none
+# the platform runs its own exit and removes the window. StartupSplash RELEASES the listener at
+# the cold start's lift (API 33+), so on this image the copy never comes. JUDGED, on every
+# scheme: the log carries the forward once and (API 33+) no hand-over line after the request –
+# the copy never came – (below 33) the late hand-over's line once, and no watchdog line; the
+# recording shows the splash ending on the page within the exit's motion, no splash frame after
+# the page's first, nothing but the page once up. The instrument: the FULL logcat of the act
+# (WindowManager, the shell, SplashScreenView, ActivityThread beside ours), a ZenStartupDemo mark
+# on logcat's clock as the recording is requested, the cold start's release line counted.
 alias_open() {
   local theme=$1 dir=$2
-  local slot
+  local slot sdk
   slot=$(sed -n 's/^slot: //p' "$dir/android-startup-notes.txt" 2> /dev/null | head -n 1 || true)
-  echo "== warm launch through the alias with NEW_TASK alone ($theme)"
+  sdk=$(adb shell getprop ro.build.version.sdk 2> /dev/null | tr -d '\r' || true)
+  sdk=${sdk:-0}
+  echo "== warm launch through the alias with NEW_TASK alone ($theme; API $sdk)"
   window_transitions 0
   adb shell input keyevent KEYCODE_HOME || true
   sleep 3
   adb logcat -c || true
+  # The mark: logcat's clock as the recording is requested (the recording's own clock starts at
+  # its first captured frame, within screenrecord's start-up of this line).
+  adb shell log -p i -t ZenStartupDemo "alias_open: screenrecord requested ($theme)" || true
   adb shell screenrecord --bit-rate 6000000 --time-limit 30 "/sdcard/startup-alias-open-$theme.mp4" &
   local recorder_pid=$!
   sleep 1.5
+  adb shell log -p i -t ZenStartupDemo "alias_open: am start requested ($theme)" || true
   local answer
   answer=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$alias" 2>&1 | tr -d '\r' || true)
   local splash_seen
   splash_seen=$(splash_windows)
-  # The copy's hand-over is the flash's end: wait for its line (the platform's own transfer
-  # timeout is 2 s; a copy that never came leaves the wait at its limit), then record the page
-  # standing for two seconds and a half more.
+  # `am start -W` returned at the relaunch's Displayed. The platform's own exit follows within
+  # half a second; a copy, were one made, would be handed over within its transfer timeout
+  # (2 s). Wait up to 4 s for a hand-over line (none expected on API 33+), then record the page
+  # standing a second and a half more.
   local late_line
-  late_line=$(wait_line "ZenStartup.*a hand-over after the lift" 8 || true)
-  sleep 2.5
+  late_line=$(wait_line "ZenStartup.*a hand-over after the lift" 4 || true)
+  sleep 1.5
+  adb shell log -p i -t ZenStartupDemo "alias_open: screenrecord stop requested ($theme)" || true
   adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
   wait "$recorder_pid" || true
   window_transitions 1
   adb pull "/sdcard/startup-alias-open-$theme.mp4" "$dir/startup-alias-open-$theme.mp4" > /dev/null || true
   startup_log > "$dir/alias-open-startup-log.txt" || true
+  adb logcat -d -v epoch > "$dir/alias-open-logcat.txt" 2> /dev/null || true
   printf '%s\n' "$answer" > "$dir/am-start-alias-open.txt"
-  local total wait_ state forwards late_lines watchdog_lines request_at forward_at late_at forward_ms=- late_ms=- splash_frames=- flash_line=-
+  local total wait_ state forwards late_lines splash_lines watchdog_lines release_lines request_at forward_at late_at mark_at forward_ms=- late_ms=- request_ms=- splash_frames=- flash_line=-
   total=$(field TotalTime "$answer")
   wait_=$(field WaitTime "$answer")
   state=$(field LaunchState "$answer")
   forwards=$(grep -c "START u0 .*cmp=$app_id/$activity" "$dir/alias-open-startup-log.txt" || true)
   late_lines=$(grep -c "a hand-over after the lift" "$dir/alias-open-startup-log.txt" || true)
+  splash_lines=$(grep -c "ZenStartup.*splash:" "$dir/alias-open-startup-log.txt" || true)
   watchdog_lines=$(grep -c "did not report ready" "$dir/alias-open-startup-log.txt" || true)
-  # On logcat's clock, from the request (the trampoline's START): the forward's START of
-  # MainActivity, and the app's line at the copy's hand-over.
+  # The cold start's lift released the listener (its logcat, saved by the cold act of this scheme).
+  release_lines=$(cat "$dir"/cold*-logcat.txt 2> /dev/null | grep -c "exit listener released at the lift" || true)
+  # On logcat's clock: the recording's mark, the request (the trampoline's START), the forward's
+  # START of MainActivity, and the app's line at a copy's hand-over.
+  mark_at=$(grep -E -m 1 "ZenStartupDemo.*screenrecord requested" "$dir/alias-open-logcat.txt" | awk '{ print $1 }' || true)
   request_at=$(grep -E -m 1 "START u0 .*cmp=$app_id/" "$dir/alias-open-startup-log.txt" | awk '{ print $1 }' || true)
   forward_at=$(grep -E -m 1 "START u0 .*cmp=$app_id/$activity" "$dir/alias-open-startup-log.txt" | awk '{ print $1 }' || true)
   late_at=$(grep -E -m 1 "a hand-over after the lift" "$dir/alias-open-startup-log.txt" | awk '{ print $1 }' || true)
+  if [ -n "$mark_at" ] && [ -n "$request_at" ]; then request_ms=$(awk -v a="$mark_at" -v b="$request_at" 'BEGIN { printf "%d", (b - a) * 1000 }'); fi
   if [ -n "$request_at" ] && [ -n "$forward_at" ]; then forward_ms=$(awk -v a="$request_at" -v b="$forward_at" 'BEGIN { printf "%d", (b - a) * 1000 }'); fi
   if [ -n "$request_at" ] && [ -n "$late_at" ]; then late_ms=$(awk -v a="$request_at" -v b="$late_at" 'BEGIN { printf "%d", (b - a) * 1000 }'); fi
   verdict "$([ "$forwards" -eq 1 ] && echo true || echo false)" "the warm launch through the alias ran the trampoline's forward once ($theme)" "$forwards START line(s) naming MainActivity; LaunchState ${state:-?}, TotalTime ${total:-?}"
-  verdict "$([ "$late_lines" -eq 1 ] && echo true || echo false)" "the trampoline's starting window was handed to the running browser once, after the lift, and sent away at once ($theme)" "$late_lines late hand-over line(s); ${late_line:-none within 8 s}; hand-over +$late_ms ms after the request"
+  if [ "$sdk" -ge 33 ]; then
+    verdict "$([ "$release_lines" -ge 1 ] && echo true || echo false)" "the cold start's lift released the platform's exit listener (API $sdk) ($theme)" "$release_lines release line(s) in the cold acts' logcat"
+    verdict "$([ "$splash_lines" -eq 0 ] && echo true || echo false)" "the trampoline's starting window was never copied to the running browser: no hand-over after the request, the platform ended its own splash ($theme)" "$splash_lines ZenStartup splash line(s) after the request, $late_lines of them a late hand-over; ${late_line:-none within 4 s}"
+  else
+    verdict "$([ "$late_lines" -eq 1 ] && echo true || echo false)" "the trampoline's starting window was handed to the running browser once, after the lift, and sent away at once (API $sdk, below the release) ($theme)" "$late_lines late hand-over line(s); ${late_line:-none within 4 s}; hand-over +$late_ms ms after the request"
+  fi
   verdict "$([ "$watchdog_lines" -eq 0 ] && echo true || echo false)" "no watchdog lifted anything on the warm launch ($theme)" "$watchdog_lines watchdog line(s)"
   if [ -n "$slot" ] && command -v ffmpeg > /dev/null 2>&1; then
     local status=0
@@ -689,9 +717,80 @@ alias_open() {
     flash_line=$(sed -n 's/^flash: //p' "$dir/alias-open-frames.txt" | head -n 1 || true)
     flash_line=${flash_line:--}
   fi
-  echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; splash windows right after: $splash_seen; forwards to MainActivity: $forwards (+$forward_ms ms); the copy's hand-over after the lift +$late_ms ms; $splash_frames"
-  echo "warm launch through the alias with NEW_TASK alone ($theme): LaunchState ${state:-?}, TotalTime ${total:-?}, splash windows right after $splash_seen, forwards to MainActivity $forwards (+$forward_ms ms), the copy's hand-over +$late_ms ms after the request; recording: $flash_line" >> "$findings"
-  rows+=("| warm, the alias with NEW_TASK alone ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | - | - | the copy at +$late_ms, sent away at once | $splash_seen / - | $forward_ms | - | - | - | - | ${splash_frames%%;*} | - |")
+  local copy_word="no copy: the listener released at the cold start's lift"
+  [ "$sdk" -ge 33 ] || copy_word="the copy at +$late_ms, sent away at once"
+  echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; splash windows right after: $splash_seen; forwards to MainActivity: $forwards (+$forward_ms ms); request +$request_ms ms after the recording's mark; hand-over lines: $late_lines (+$late_ms ms); release lines at the cold start: $release_lines; $splash_frames"
+  echo "warm launch through the alias with NEW_TASK alone ($theme, API $sdk): LaunchState ${state:-?}, TotalTime ${total:-?}, splash windows right after $splash_seen, forwards to MainActivity $forwards (+$forward_ms ms), the request +$request_ms ms after the recording's mark, hand-over lines after the request $late_lines (+$late_ms ms), the cold start's release lines $release_lines; recording: $flash_line" >> "$findings"
+  rows+=("| warm, the alias with NEW_TASK alone ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | - | - | $copy_word | $splash_seen / - | $forward_ms | - | - | - | - | ${splash_frames%%;*} | - |")
+}
+
+# THE COMPARISON (round 5, the root's rider): the same NEW_TASK-alone relaunch against CHROME
+# on this image – `com.android.chrome`, its launcher activity resolved from the package (a
+# trampoline of Chrome's own into ChromeTabbedActivity; Chrome registers no splash exit
+# listener) – over its warm process, recorded like `alias_open` and read by the frames reader's
+# signature mode (`compare`: the launcher, the splash and the page learnt from the recording).
+# Chrome cold first (its first screen, the first run's, is content enough: the page is whatever
+# Chrome shows), HOME, then the relaunch. No flash in Chrome = the platform's own path is clean
+# and the copy path was ours to leave; the same flash = the platform's, documented with the
+# recording. A reading, not a claim: its lines are COMPARISON lines, never the run's failures.
+# Chrome absent from the image: a NOTE (no other browser with a splash ships on it). Once per run.
+compare_chrome() {
+  local theme=$1 dir=$2
+  local slot pkg=com.android.chrome component
+  slot=$(sed -n 's/^slot: //p' "$dir/android-startup-notes.txt" 2> /dev/null | head -n 1 || true)
+  if ! adb shell pm path "$pkg" 2> /dev/null | tr -d '\r' | grep -q '^package:'; then
+    echo "NOTE: the comparison against Chrome did not run – $pkg is not on this image, and no other browser with a splash is" | tee -a "$findings"
+    return
+  fi
+  component=$(adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER "$pkg" 2> /dev/null | tr -d '\r' | grep -m 1 "^$pkg/" || true)
+  if [ -z "$component" ]; then
+    echo "NOTE: the comparison against Chrome did not run – no launcher activity resolved for $pkg" | tee -a "$findings"
+    return
+  fi
+  echo "== the comparison: Chrome's relaunch with NEW_TASK alone ($theme; $component)"
+  window_transitions 0
+  adb shell am force-stop "$pkg" || true
+  adb shell input keyevent KEYCODE_HOME || true
+  sleep 2
+  # Chrome cold, so its process is warm behind the launcher for the relaunch; its first screen given six seconds to settle.
+  adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$component" 2>&1 | tr -d '\r' > "$dir/am-start-compare-chrome-cold.txt" || true
+  sleep 6
+  adb shell input keyevent KEYCODE_HOME || true
+  sleep 3
+  adb logcat -c || true
+  adb shell log -p i -t ZenStartupDemo "compare: screenrecord requested ($theme)" || true
+  adb shell screenrecord --bit-rate 6000000 --time-limit 30 "/sdcard/startup-compare-chrome-$theme.mp4" &
+  local recorder_pid=$!
+  sleep 1.5
+  adb shell log -p i -t ZenStartupDemo "compare: am start requested ($theme)" || true
+  local answer
+  answer=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$component" 2>&1 | tr -d '\r' || true)
+  local splash_seen
+  splash_seen=$(adb shell dumpsys window windows 2> /dev/null | tr -d '\r' | grep -c "Splash Screen $pkg" || true)
+  # The same tail as the alias act's: the platform's exit, a would-be transfer's timeout, the page standing.
+  sleep 5.5
+  adb shell log -p i -t ZenStartupDemo "compare: screenrecord stop requested ($theme)" || true
+  adb shell pkill -INT screenrecord || adb shell "kill -2 \$(pidof screenrecord)" || true
+  wait "$recorder_pid" || true
+  window_transitions 1
+  adb pull "/sdcard/startup-compare-chrome-$theme.mp4" "$dir/startup-compare-chrome-$theme.mp4" > /dev/null || true
+  adb logcat -d -v epoch > "$dir/compare-chrome-logcat.txt" 2> /dev/null || true
+  printf '%s\n' "$answer" > "$dir/am-start-compare-chrome.txt"
+  adb shell am force-stop "$pkg" || true
+  local total state builds compare_line=-
+  total=$(field TotalTime "$answer")
+  state=$(field LaunchState "$answer")
+  builds=$(grep -c 'Build android.window.SplashScreenView' "$dir/compare-chrome-logcat.txt" || true)
+  if [ -n "$slot" ] && command -v ffmpeg > /dev/null 2>&1; then
+    node .github/scripts/android-startup-frames.mjs compare "$dir/startup-compare-chrome-$theme.mp4" "$slot" "${display%@*}" "$dir/compare-chrome-frames.txt" \
+      --tile "$dir/android-startup-frames-compare-chrome-$theme.png" > /dev/null || true
+    grep -E '^(COMPARISON|NOTE):' "$dir/compare-chrome-frames.txt" | sed "s/)$/; $theme Chrome comparison recording)/" >> "$findings" || true
+    compare_line=$(sed -n 's/^compare: \([0-9][0-9]* splash frames.*\)/\1/p' "$dir/compare-chrome-frames.txt" | head -n 1 || true)
+    compare_line=${compare_line:--}
+  fi
+  echo "  Chrome: TotalTime ${total:-?} ${state:-?}; splash windows right after: $splash_seen; SplashScreenView builds: $builds; $compare_line"
+  echo "comparison – Chrome's relaunch with NEW_TASK alone ($theme, $component): LaunchState ${state:-?}, TotalTime ${total:-?}, splash windows right after $splash_seen, SplashScreenView builds $builds; recording: $compare_line" >> "$findings"
+  rows+=("| comparison: Chrome, the same relaunch ($theme) | ${state:-?} | ${total:-?} | - | - | - | Chrome's own splash, no listener | $splash_seen / - | - | - | - | - | - | ${compare_line%%;*} | - |")
 }
 
 # A link's cold start: the process gone, a VIEW of the fixture URL at LinkDispatchActivity (the
@@ -1122,6 +1221,8 @@ for theme in $themes; do
   # the launcher after the hot start; the act sends it HOME again and fires the alias with
   # NEW_TASK alone.
   alias_open "$theme" "$dir"
+  # The comparison once, on the light pass: Chrome's own relaunch, read the same way.
+  if [ "$theme" = light ]; then compare_chrome "$theme" "$dir"; fi
   if [ "$theme" = light ]; then warm_start "$theme" "$dir"; fi
   # The reach: the same session through the trampolines' paths, on this build and boot. The
   # link's start comes last of the browser's acts – it opens the fixture in a tab of its own and

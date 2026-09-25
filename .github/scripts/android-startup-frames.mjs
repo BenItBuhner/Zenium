@@ -99,10 +99,24 @@
 // a hand-over after the lift). The rules: a splash frame was seen (the flash happened – the
 // logcat side of the act judges the hand-over itself); the flash ended on the page within the
 // exit's motion of its last frame; no splash frame after the page's first (the splash never
-// came back over the page – run 36107136195's shape before the rule); the page stood to the
-// recording's end, at least FLASH_TAIL_FRAMES of it after the last splash frame.
+// came back over the page – run 36107136195's shape before the rule); nothing but the page
+// once it was up. screenrecord writes a frame only when the display changes, so a page that
+// stands still writes none and the recording ends at its last change: the tail's length after
+// the last splash frame is reported, not judged (run 36125129683's dark recording ended 750 ms
+// after its last splash frame – a good tail read as short by the floor this replaces).
 //
-//   node android-startup-frames.mjs <cold|hot|webapp|lead|flash> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
+// The comparison (`compare`): the same NEW_TASK-alone relaunch of ANOTHER browser (Chrome on the
+// google_apis image) over its warm process, read with no palette of ours: the signatures are
+// learnt from the recording itself – the launcher is the first frame, the splash the first
+// frame that differs from it (the platform's starting window is the first thing the relaunch
+// puts on screen), the page the last frame. A frame is `splash` when its five points sit within
+// the tolerance of the splash's and not the page's, `page` the other way round. The rules: the
+// platform drew a splash for the relaunch; no splash frame after the page's first (the flash,
+// if the platform's own path has one, would show here). A reading of the platform, not a claim
+// of the app's: COMPARISON lines (yes/NO), never failures. Signatures too alike to tell apart
+// (a white splash over a white page at every point) make the reading a NOTE.
+//
+//   node android-startup-frames.mjs <cold|hot|webapp|lead|flash|compare> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
 //        [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>]
 //
 // The findings carry the timeline (runs of frames), the verdicts (and the NOTE lines) and each
@@ -146,8 +160,8 @@ const NAV_INK_MIN = 20
 const LEAD_ERROR_FRAMES = 2
 /** The emulator's latency to the starting window's first frame, as read between runs of one act (ms): the lead's real spread, stated with it. */
 const LEAD_LATENCY_SPREAD_MS = [0, 700]
-/** The flash's recording must hold the page this many frames past the last splash frame (1.5 s): "stood to the end" has a floor. */
-const FLASH_TAIL_FRAMES = 30
+/** The splash the comparison learns from the recording is read this many frames after the first frame that differs from the launcher (its steady state, past any first blend). */
+const COMPARE_SETTLE_FRAMES = 2
 
 const args = process.argv.slice(2)
 const positional = []
@@ -195,13 +209,13 @@ if (
   !slotArg ||
   !displayArg ||
   !outPath ||
-  !['cold', 'hot', 'webapp', 'lead', 'flash'].includes(kind)
+  !['cold', 'hot', 'webapp', 'lead', 'flash', 'compare'].includes(kind)
 )
   usage()
 
 function usage() {
   console.error(
-    'usage: android-startup-frames.mjs <cold|hot|webapp|lead|flash> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>] [--nav-systemui "<light|dark> (<detail>)"] [--nav-drawer <window>]'
+    'usage: android-startup-frames.mjs <cold|hot|webapp|lead|flash|compare> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>] [--nav-systemui "<light|dark> (<detail>)"] [--nav-drawer <window>]'
   )
   process.exit(2)
 }
@@ -454,6 +468,26 @@ if (video !== '-') {
   const buffer = decode(video, [`fps=${FPS}`])
   if (buffer) frames = readFrames(buffer)
 }
+/** The comparison's signatures, learnt from the recording (`compare`); null for the other kinds. */
+let compare = null
+if (kind === 'compare' && frames.length) {
+  const POINTS = ['left', 'right', 'centre', 'mark', 'bar']
+  const alike = (a, b) => POINTS.every((p) => near(a[p], b[p]))
+  const launcher = frames[0]
+  const firstChange = frames.findIndex((f) => !alike(f, launcher))
+  const splashAt =
+    firstChange < 0 ? -1 : Math.min(firstChange + COMPARE_SETTLE_FRAMES, frames.length - 1)
+  const splashSig = splashAt < 0 ? null : frames[splashAt]
+  const pageSig = frames[frames.length - 1]
+  const apart = splashSig !== null && !alike(splashSig, pageSig)
+  for (const f of frames) {
+    if (alike(f, launcher) && !(splashSig && alike(f, splashSig))) f.cls = 'launcher'
+    else if (apart && alike(f, splashSig)) f.cls = 'splash'
+    else if (alike(f, pageSig)) f.cls = 'page'
+    else f.cls = 'other'
+  }
+  compare = { launcher, splashSig, pageSig, apart, firstChange, splashAt }
+}
 // A frame between the splash's last and the chrome's first that is neither is the exit's blend
 // (the splash's ground without its icon there is the icon's fade done, the reveal not yet) –
 // within the exit's window; ground standing longer than the exit stays in the timeline as ground.
@@ -506,7 +540,7 @@ if (frames.length) {
   const shown =
     kind === 'webapp' ? ['plain', 'dress', 'splash', 'window', 'ground', 'bare'] : ['splash']
   const firstShown = classes.findIndex((c) => shown.includes(c))
-  if (kind !== 'hot' && kind !== 'flash') {
+  if (kind !== 'hot' && kind !== 'flash' && kind !== 'compare') {
     if (anchorMs === null) say('lead: unread (no --anchor ready=<ms>)')
     else if (lastSplash < 0) say('lead: unread (no splash frame to anchor the lift on)')
     else if (firstShown < 0) say('lead: unread (nothing of the app was shown)')
@@ -595,10 +629,50 @@ if (frames.length) {
       `${back} splash frames after the page's first at ${at(firstPage)}`
     )
     verdict(
-      "the page stood to the recording's end",
-      pageAfter > lastSplash && lastSplash >= 0 && tail >= FLASH_TAIL_FRAMES && offPage === 0,
-      `${ms(tail)} recorded after the last splash frame (the floor ${ms(FLASH_TAIL_FRAMES)}), ${offPage} frames of anything but the page once it was up`
+      "nothing but the page once it was up, to the recording's end",
+      pageAfter > lastSplash && lastSplash >= 0 && offPage === 0,
+      `${offPage} frames of anything but the page after its first at ${at(pageAfter)}; ${ms(tail)} recorded after the last splash frame (a page standing still writes no frames: the recording ends at its last change)`
     )
+  } else if (kind === 'compare') {
+    // Another browser's relaunch, read by the recording's own signatures: the platform's splash
+    // for the task switch, the page after it, and whether the splash came back over the page.
+    const sig = (f) =>
+      `left ${hex(f.left)} right ${hex(f.right)} centre ${hex(f.centre)} mark ${hex(f.mark)} bar ${hex(f.bar)}`
+    say(`compare: launcher ${sig(compare.launcher)}`)
+    say(
+      `compare: first change from the launcher at ${at(compare.firstChange)}; splash signature ${compare.splashSig ? `read at ${at(compare.splashAt)}: ${sig(compare.splashSig)}` : 'none'}; page signature (the last frame): ${sig(compare.pageSig)}`
+    )
+    const firstPage = classes.findIndex((c, i) => i > firstSplash && c === 'page')
+    const back = classes.filter((c, i) => firstPage >= 0 && i > firstPage && c === 'splash').length
+    const backRuns = []
+    for (let i = firstPage + 1; firstPage >= 0 && i < classes.length; i++) {
+      if (classes[i] !== 'splash') continue
+      const last = backRuns[backRuns.length - 1]
+      if (last && last.to === i - 1) last.to = i
+      else backRuns.push({ from: i, to: i })
+    }
+    say(
+      `compare: ${count('splash')} splash frames${count('splash') ? ` from ${at(firstSplash)} to ${at(lastSplash)}` : ''}; the page from ${at(firstPage)}; ${back} splash frames after the page's first${backRuns.length ? ` (${backRuns.map((r) => `${at(r.from)}–${at(r.to)}`).join(', ')})` : ''}`
+    )
+    if (!compare.apart) {
+      say(
+        `NOTE: the comparison cannot tell this splash from this page – not judged: their signatures agree at every point read (splash ${compare.splashSig ? sig(compare.splashSig) : 'none'}; page ${sig(compare.pageSig)})`
+      )
+    } else {
+      // A reading of the platform's own path, not a claim of the app's: COMPARISON lines, never failures.
+      const comparison = (rule, holds, detail) =>
+        say(`COMPARISON: ${rule} – ${holds ? 'yes' : 'NO'} (${detail})`)
+      comparison(
+        "the platform drew a splash for the other browser's relaunch",
+        count('splash') > 0,
+        `${count('splash')} splash frames, the first at ${at(firstSplash)}, the last at ${at(lastSplash)}`
+      )
+      comparison(
+        "no splash frame after the other browser's page's first: the platform's own splash did not come back over the page",
+        firstSplash >= 0 && firstPage >= 0 && back === 0,
+        `${back} splash frames after the page's first at ${at(firstPage)}${backRuns.length ? ` (${backRuns.map((r) => `${at(r.from)}–${at(r.to)}`).join(', ')})` : ''}`
+      )
+    }
   } else if (kind === 'webapp') {
     verdict(
       "the splash showed the app's tile on its ground",
@@ -708,7 +782,10 @@ if (frames.length) {
   if (tile) {
     // Three rows of six frames from the start to a second past the page's paint (or the end);
     // for the flash, to a second past the last splash frame, so its end is on the sheet.
-    const anchorFrame = kind === 'flash' ? Math.max(lastSplash, 0) : Math.max(firstOf('page'), 0)
+    const anchorFrame =
+      kind === 'flash' || kind === 'compare'
+        ? Math.max(lastSplash, 0)
+        : Math.max(firstOf('page'), 0)
     const untilS = Math.min(frames.length / FPS, (anchorFrame + FPS) / FPS)
     const fps = 18 / Math.max(untilS, 1)
     const result = spawnSync('ffmpeg', [
