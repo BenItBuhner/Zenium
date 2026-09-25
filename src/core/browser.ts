@@ -1048,14 +1048,16 @@ export class Browser {
    * confirmed by holding the chord (`QuitHoldService`, `held`) skips the tab-count question –
    * the hold was the confirmation (design language v2 §10.5) – and keeps the rest.
    *
-   * A request that is not the hold's while a hold runs is refused: the chord that arms the hold
-   * is left unconsumed so its release can be seen (`KeyboardHandler`), and on macOS Chromium
-   * hands an unconsumed ⌘Q on to the menu bar, whose Quit role asks to quit at once – that
-   * request is the chord's own, and the hold decides it.
+   * A request that is not the hold's while the chord's press is in progress – a hold running,
+   * or one that fired whose keys are still down – is refused: the chord that arms the hold is
+   * left unconsumed so its release can be seen (`KeyboardHandler`), and on macOS Chromium hands
+   * an unconsumed ⌘Q and each of its repeats on to the menu bar, whose Quit role asks to quit at
+   * once – that request is the chord's own, and the hold decides it (a fired hold already has
+   * its own request in flight; a repeat's must not ask the questions again once it is refused).
    */
   async requestQuit(from?: ZenWindow, { held = false }: { held?: boolean } = {}): Promise<boolean> {
     if (this.quitting) return true
-    if (!held && this.quitHold.holding) return false
+    if (!held && this.quitHold.engaged) return false
     if (!this.quitCheck) {
       // Clear browsing data on exit once the quit is agreed, with a budget: what does not
       // finish in time is owed to the next launch (`SiteDataService.runOnExit` writes the

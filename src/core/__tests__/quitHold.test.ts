@@ -49,6 +49,8 @@ interface Host {
   os: PlatformOs
   /** The page views made, in order. */
   views: FakeView[]
+  /** With `objecting`: the "Leave site?" questions asked of the pages, each answered by the test. */
+  unloadAnswers: Array<(leave: boolean) => void>
 }
 
 interface HostOptions {
@@ -57,14 +59,16 @@ interface HostOptions {
   everywhere?: boolean
   /** A host whose page views draw no panel (Android's `TabView` has no `showQuitHold`). */
   pageless?: boolean
+  /** Pages whose `beforeunload` objects: a quit's "Leave site?" stays open until the test answers it. */
+  objecting?: boolean
 }
 
 /** A desktop host on `os`, counting the quits the core asks of it; `everywhere` is the drives' flag. */
 function fakePlatform(
   io: StoreIO,
-  { os, everywhere = false, pageless = false }: HostOptions
+  { os, everywhere = false, pageless = false, objecting = false }: HostOptions
 ): Platform & { host: Host } {
-  const host: Host = { quits: 0, os, views: [] }
+  const host: Host = { quits: 0, os, views: [], unloadAnswers: [] }
   const capabilities = stub<HostCapabilities>({
     windows: true,
     updates: false,
@@ -97,8 +101,14 @@ function fakePlatform(
           isDestroyed: () => false,
           isVisible: () => true,
           getZoom: () => 1,
-          // No page objects to unloading: a quit's checks pass without a "Leave site?".
-          confirmUnload: undefined,
+          // No page objects to unloading unless asked to: a quit's checks pass without a
+          // "Leave site?"; an objecting page's question waits for the test's answer.
+          confirmUnload: objecting
+            ? () =>
+                new Promise<boolean>((resolve) => {
+                  host.unloadAnswers.push(resolve)
+                })
+            : undefined,
           // An explicit undefined stays undefined through the stub, as a host without the method.
           showQuitHold: pageless ? undefined : vi.fn<(panel: QuitHoldPanel | null) => void>()
         })
@@ -166,6 +176,16 @@ const release = (key: string): KeyEventInput => ({
 /** Let the quit's checks (all async) run through. */
 const settle = async (): Promise<void> => {
   for (let i = 0; i < 8; i++) await Promise.resolve()
+}
+
+/** What a quit request resolved to once the checks ran, or 'pending' while it waits on an answer. */
+async function outcome(request: Promise<boolean>): Promise<boolean | 'pending'> {
+  let result: boolean | 'pending' = 'pending'
+  void request.then((agreed) => {
+    result = agreed
+  })
+  await settle()
+  return result
 }
 
 describe('the quit chord held quits (session-08)', () => {
@@ -288,6 +308,87 @@ describe('the quit chord held quits (session-08)', () => {
     await expect(requestQuit.mock.results[0]?.value).resolves.toBe(true)
     expect(browser.quitting).toBe(true)
     expect(platform.host.quits).toBe(1)
+  })
+
+  it('a hold that fired latches the press: the chord’s repeats arm nothing and pop no panel while the fired quit asks its questions; a key up, then a key down, holds afresh', async () => {
+    const { browser, platform, win } = start({ os: 'darwin', objecting: true })
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    const view = platform.host.views[0]!
+    const requestQuit = vi.spyOn(browser, 'requestQuit')
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    vi.advanceTimersByTime(QUIT_HOLD_MS)
+    await settle()
+    // The hold fired: its quit is asking the page's "Leave site?"; the panel went first.
+    expect(requestQuit).toHaveBeenCalledTimes(1)
+    expect(platform.host.unloadAnswers).toHaveLength(1)
+    expect(view.showQuitHold).toHaveBeenCalledTimes(2)
+    expect(view.showQuitHold).toHaveBeenLastCalledWith(null)
+    // The finger is still down: the chord's repeats keep coming – unconsumed, as the mechanism
+    // needs (a consumed one would lose the key up) – and arm nothing.
+    for (let i = 0; i < 6; i++) {
+      expect(browser.keys.handle(quitChord('darwin', 'keyDown', true), null, win)).toBe(false)
+      vi.advanceTimersByTime(300)
+    }
+    await settle()
+    expect(browser.quitHold.holding).toBe(false)
+    expect(win.quitHold).toBeNull()
+    expect(view.showQuitHold).toHaveBeenCalledTimes(2)
+    expect(requestQuit).toHaveBeenCalledTimes(1)
+    expect(platform.host.unloadAnswers).toHaveLength(1)
+    // The user stays; the keys come up; the next press is a new hold, panel and all.
+    platform.host.unloadAnswers[0]!(false)
+    await settle()
+    expect(browser.quitting).toBe(false)
+    browser.keys.handle(release('q'), null, win)
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    expect(browser.quitHold.holding).toBe(true)
+    expect(view.showQuitHold).toHaveBeenCalledTimes(3)
+    expect(win.quitHold?.startedAt).toBe(Date.now())
+  })
+
+  it('a plain quit request from the chord’s repeats after the hold fired is refused, as during the hold – the menu bar’s Quit role asks nothing twice', async () => {
+    const { browser, platform, win } = start({ os: 'darwin', objecting: true })
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    vi.advanceTimersByTime(QUIT_HOLD_MS)
+    await settle()
+    expect(platform.host.unloadAnswers).toHaveLength(1)
+    // A repeat reached the role while "Leave site?" is up: refused at once, not joined to the
+    // fired quit's check.
+    browser.keys.handle(quitChord('darwin', 'keyDown', true), null, win)
+    expect(await outcome(browser.requestQuit())).toBe(false)
+    // The user stays. The keys stay down for longer than a hold takes: the repeats arm no hold
+    // that could fire a second time, and the role's requests riding on them are refused, so the
+    // page is not asked again.
+    platform.host.unloadAnswers[0]!(false)
+    await settle()
+    for (let i = 0; i < 6; i++) {
+      browser.keys.handle(quitChord('darwin', 'keyDown', true), null, win)
+      expect(await outcome(browser.requestQuit())).toBe(false)
+      vi.advanceTimersByTime(300)
+    }
+    expect(platform.host.unloadAnswers).toHaveLength(1)
+    expect(platform.host.quits).toBe(0)
+    // The keys up: a plain request is a plain quit again, asking the page as before.
+    browser.keys.handle(release('q'), null, win)
+    const plain = browser.requestQuit()
+    await settle()
+    expect(platform.host.unloadAnswers).toHaveLength(2)
+    platform.host.unloadAnswers[1]!(true)
+    await expect(plain).resolves.toBe(true)
+    expect(platform.host.quits).toBe(1)
+  })
+
+  it('the press of a fired hold is over when the window loses the keyboard or closes: the key up will not be seen, and the next press holds afresh', () => {
+    const { browser, win } = start({ os: 'darwin', objecting: true })
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    vi.advanceTimersByTime(QUIT_HOLD_MS)
+    expect(browser.quitHold.engaged).toBe(true)
+    win.onBlur()
+    expect(browser.quitHold.engaged).toBe(false)
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    expect(browser.quitHold.holding).toBe(true)
   })
 
   it('a quit request with no hold running goes ahead as before (the Dock, the menu row picked)', async () => {

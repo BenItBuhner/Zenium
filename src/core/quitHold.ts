@@ -39,11 +39,22 @@ export const QUIT_HOLD_MS = 1500
  * measured under an X server).
  */
 export class QuitHoldService {
-  /** The window whose chrome shows the hold, while one runs. */
+  /**
+   * The window the chord's press is in progress in: the one whose chrome shows the hold while
+   * one runs, and the one a fired hold's keys are still down in (`latched`).
+   */
   private win: ZenWindow | null = null
   /** The page view the panel was posted to, to take it down from the same one. */
   private view: TabView | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * A hold fired and its keys have not come up yet: the chord's auto-repeats go on arriving
+   * (macOS repeats a ⌘ chord every few tens of ms, and the finger is normally still down when
+   * the hold completes) and must arm nothing – a fresh hold would pop the panel again over the
+   * downloads prompt or a page's "Leave site?" the fired quit is asking. Cleared by the next key
+   * up, or by the window losing the keyboard or closing (the key up will not be seen then).
+   */
+  private latched = false
 
   constructor(
     private readonly browser: Browser,
@@ -68,6 +79,16 @@ export class QuitHoldService {
     return this.timer !== null
   }
 
+  /**
+   * Whether the chord's press is still in progress: a hold running, or one that fired whose
+   * keys are still down. Either way the press has a quit request of its own in flight or
+   * decided, and any other request that reaches the browser meanwhile is the chord's – the
+   * menu bar's Quit role firing on the unconsumed key and its repeats (`Browser.requestQuit`).
+   */
+  get engaged(): boolean {
+    return this.timer !== null || this.latched
+  }
+
   /** The quit chord as the platform spells it ("⌘Q"; "Ctrl + Shift + Q" under the drives' flag). */
   chord(): string {
     const { state } = this.browser
@@ -83,12 +104,13 @@ export class QuitHoldService {
   /**
    * The quit chord went down in `win`. True when the hold took the key: a hold began in the
    * window, or the one running goes on (a key repeat, or a second press before the first key came
-   * up). False when the chord is to quit at once – the setting is off, this host never holds, or
-   * the window is gone.
+   * up), or a hold fired and the keys are still down (a repeat after the fire arms nothing until
+   * a key up). False when the chord is to quit at once – the setting is off, this host never
+   * holds, or the window is gone.
    */
   keyDown(win: ZenWindow): boolean {
     if (!this.applies()) return false
-    if (this.timer !== null) return true
+    if (this.timer !== null || this.latched) return true
     if (!win.alive) return false
     this.win = win
     const hold: QuitHoldState = {
@@ -103,17 +125,26 @@ export class QuitHoldService {
     return true
   }
 
-  /** A key came up while the hold ran: it ends here and nothing quits. */
+  /**
+   * A key came up: a hold running ends here and nothing quits; the press of a hold that fired is
+   * over, and the next key down begins a hold afresh.
+   */
   keyUp(): void {
     this.cancel()
   }
 
-  /** End a running hold without quitting (a release, the window closing). */
+  /**
+   * End a running hold without quitting, and the press of a fired one (a release, the window
+   * losing the keyboard or closing).
+   */
   cancel(): void {
-    if (this.timer === null) return
-    this.clearTimer(this.timer)
-    this.timer = null
-    this.clearWindow()
+    this.latched = false
+    if (this.timer !== null) {
+      this.clearTimer(this.timer)
+      this.timer = null
+      this.clearPanel()
+    }
+    this.win = null
   }
 
   /** The window went away: a hold it showed is moot. */
@@ -148,10 +179,10 @@ export class QuitHoldService {
     view.showQuitHold(this.panelFor(win, hold))
   }
 
-  private clearWindow(): void {
+  /** Take the panel down, from the page it was posted to and from the window's chrome. */
+  private clearPanel(): void {
     const win = this.win
     const view = this.view
-    this.win = null
     this.view = null
     if (view && !view.isDestroyed()) view.showQuitHold?.(null)
     if (!win) return
@@ -159,11 +190,15 @@ export class QuitHoldService {
     this.browser.state.commitVolatile()
   }
 
-  /** The keys were down for the whole hold: the panel goes and the quit runs, confirmed. */
+  /**
+   * The keys were down for the whole hold: the panel goes and the quit runs, confirmed. The
+   * press stays latched until a key comes up – its repeats arm nothing more.
+   */
   private held(): void {
     this.timer = null
+    this.latched = true
+    this.clearPanel()
     const win = this.win
-    this.clearWindow()
     void this.browser.requestQuit(win?.alive ? win : undefined, { held: true })
   }
 }
