@@ -14,8 +14,6 @@ name: Android menu icon row demo
 # android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/services-pass-6-24d1]
 
 permissions:
   contents: read
