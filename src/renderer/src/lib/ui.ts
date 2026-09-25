@@ -36,6 +36,7 @@ import { devtoolsDockOf } from './contentRadius'
 import { isPhone, viewportStore } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
 import { onboardingCovers } from './onboarding'
+import { awaitingShow, coverStore, markCoverDrop } from './cover'
 import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
 import { activeTab } from './selectors'
 import { createStore } from './store'
@@ -1240,8 +1241,10 @@ let snapshotStale = false
 /**
  * Drop the cached snapshot once nothing needs it, so the next overlay gets a fresh capture.
  * Where the chrome lies under the pages the picture stays a little longer: until the host has
- * drawn the live page back in its place (`lib/pageView.ts`), so the frame between shows the
- * page's picture and not the window behind it; the drop then follows on its own.
+ * drawn the live page back in its place (`lib/pageView.ts`) and – on a host that answers
+ * placements (Q1, `lib/cover.ts` `awaitingShow`) – answered the placement that brought it
+ * back, so the frame between shows the page's picture and not the window behind it; the drop
+ * then follows on its own, on the chrome's next frame after the host's word.
  */
 export function invalidateSnapshot(): void {
   const ui = uiStore.get()
@@ -1297,11 +1300,16 @@ export function invalidateSnapshot(): void {
     !bookmarkChromeOpen(ui) &&
     ui.frameDialogCover === 0
   ) {
-    if (ui.snapshotTabId && pageOffScreen(pageViewStore.get(), ui.snapshotTabId)) {
+    if (
+      ui.snapshotTabId &&
+      (pageOffScreen(pageViewStore.get(), ui.snapshotTabId) ||
+        awaitingShow(coverStore.get(), ui.snapshotTabId))
+    ) {
       snapshotStale = true
       return
     }
     snapshotStale = false
+    if (ui.snapshotTabId && ui.snapshot) markCoverDrop(ui.snapshotTabId)
     uiStore.set({ snapshot: null, snapshotTabId: null, toolboxSnapshot: null })
   }
 }
@@ -1373,6 +1381,10 @@ const snapshotFlags = globalThis as unknown as { __zenSnapshotWired?: boolean }
 if (!snapshotFlags.__zenSnapshotWired) {
   snapshotFlags.__zenSnapshotWired = true
   pageViewStore.subscribe(() => {
+    if (snapshotStale) invalidateSnapshot()
+  })
+  // The host's answer to the landing (Q1): the stale picture goes on it as on the drawn frame.
+  coverStore.subscribe(() => {
     if (snapshotStale) invalidateSnapshot()
   })
 }

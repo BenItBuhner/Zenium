@@ -146,9 +146,10 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   const hostGlobal = installHostGlobal(bridge, platformRef)
 
   const boot = bridge.callSync<BootInfo>('boot', {})
-  // The host's asynchronous channel for the storage calls (`bridge.ts` PORTED): asked for here,
-  // taken when the host posts it to the document – the writes before that take the synchronous
-  // hop, as they always did; the order holds across the switch (`Bridge.adoptPort`).
+  // The host's asynchronous channel (`bridge.ts`: the port is the bridge for every call, post
+  // and batch once the page holds it; `callSync` alone keeps the hop): asked for here, taken
+  // when the host posts it to the document – the strings before that take their synchronous
+  // hops, as they always did; the order holds across the switch (`Bridge.adoptPort`).
   if (!preview) openBridgePort(bridge, window)
   const handoffFetch: HandoffFetch = (url, init) => fetch(url, init)
   const io = new AndroidStoreIO(bridge, boot.files, boot.deferred, handoffFetch)

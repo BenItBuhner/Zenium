@@ -906,6 +906,17 @@ export function createPreviewBridge(): NativeBridge {
         host().hostEvent('view.drawn', JSON.stringify({ tabId: String(tabId), visible }))
       )
     },
+    // Q1's answer to the placement batch before it (`views.ts` `askShown`; Kotlin's is
+    // `PlacementAnswer.kt`): `false` at once for a frame the preview has not or does not show,
+    // else `true` once the frame showing the view is drawn – the second animation frame, the
+    // first to begin with the previous one's pixels on screen (as `lib/cover.ts` counts a paint).
+    'view.shown': ({ tabId }) => {
+      const frame = views.get(String(tabId))
+      if (!frame || !frameShown(frame)) return false
+      return new Promise<boolean>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))
+      )
+    },
     'view.bringToFront': ({ tabId }) => {
       const frame = views.get(String(tabId))
       if (frame) document.body.appendChild(frame)

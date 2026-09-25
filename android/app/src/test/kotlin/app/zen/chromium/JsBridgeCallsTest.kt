@@ -42,6 +42,7 @@ class JsBridgeCallsTest {
         main = { work -> mainThread.execute(work) },
         dispatch = { id, method, _ -> dispatched.add("main $method #$id on ${Thread.currentThread().name}") },
         dispatchStorage = { id, method, args -> dispatched.add("storage $method #$id on ${Thread.currentThread().name} (${args.optString("name")})") },
+        dispatchOneWay = { method, _ -> dispatched.add("one-way $method on ${Thread.currentThread().name}") },
         reject = { id, message -> rejected.add("#$id $message") },
         log = { message, _ -> logged.add(message) },
         parse = { json -> parsed.add(json.take(40) to Thread.currentThread().name); JSONObject(json) }
@@ -177,6 +178,7 @@ class JsBridgeCallsTest {
             main = { work -> mainThread.execute(work) },
             dispatch = { _, _, _ -> },
             dispatchStorage = { _, _, _ -> throw IllegalStateException("no write 3") },
+            dispatchOneWay = { _, _ -> },
             reject = { id, message -> rejected.add("#$id $message on ${Thread.currentThread().name}") },
             log = { message, _ -> logged.add(message) }
         )

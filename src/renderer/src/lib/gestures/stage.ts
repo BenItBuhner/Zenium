@@ -1,8 +1,10 @@
 import type { UIState } from '@shared/types'
 import { run } from '../api'
+import { awaitingShow, chromeUnderPages, coverStore, markCoverDrop, SHOWN_WAIT_MS } from '../cover'
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '../motion/spring'
 import { pushBackSurface } from '../back'
 import { resetOverviewUi } from '../overviewUi'
+import { pageViewStore } from '../pageView'
 import { resetOverviewPane, sameModeAs } from '../privateTabs'
 import { activeSpace, activeTab, tabOrderOf } from '../selectors'
 import { createStore } from '../store'
@@ -64,9 +66,25 @@ export function overviewInteractive(overview: OverviewState): boolean {
   return overview.phase === 'open' || (overview.phase === 'settling' && overview.target === 1)
 }
 
+/**
+ * A landing held (Q1, the observable landing – the §11 stand-in rule): the gesture is over and
+ * the browser shows `tabId`, but the card that stood in for the page – the track's landed card
+ * (`tabs`) or the overview's hero at the page's frame (`overview`) – stays drawn until the host
+ * has answered the placement that brings the page back (`lib/cover.ts` `awaitingShow`), so
+ * the frames between the gesture's end and the page's first drawn frame show the picture and
+ * not the window behind it. The phases stand at `idle` / `closed` meanwhile: nothing is in
+ * flight for a finger to catch, and a new gesture starts afresh over the held card
+ * (`cancelLanding`).
+ */
+export interface StageLanding {
+  tabId: string
+  stage: 'tabs' | 'overview'
+}
+
 export interface StageState {
   tabs: TabSwitchState
   overview: OverviewState
+  landing: StageLanding | null
 }
 
 /** Gap between neighbouring cards on the tab track. */
@@ -81,7 +99,7 @@ const OVERVIEW_CLOSED: OverviewState = {
 }
 
 export const stageStore = createStore<StageState>(
-  { tabs: TABS_IDLE, overview: OVERVIEW_CLOSED },
+  { tabs: TABS_IDLE, overview: OVERVIEW_CLOSED, landing: null },
   'stage'
 )
 
@@ -170,6 +188,94 @@ function whenActive(tabId: string, then: () => void): () => void {
 }
 
 // ---------------------------------------------------------------------------
+// The landing (Q1): the stand-in leaves on the host's answer, not on the chrome's clock
+// ---------------------------------------------------------------------------
+
+/**
+ * The chrome's patience for a landing as a whole – the layout reporter's report, the core's
+ * placement, the host's answer (`SHOWN_WAIT_MS`, itself above the host's own bound) and the
+ * frames between – for a landing whose layout never comes (nothing to report under a page's
+ * fullscreen; a view host torn down). Overlap is the safe side; this only ends a hold nothing
+ * else would.
+ */
+const LANDING_WAIT_MS = SHOWN_WAIT_MS + 200
+
+let cancelLandingHold: (() => void) | null = null
+
+/**
+ * Whether a landing is to be held for the host's answer: the chrome lies under the pages and
+ * the host answers placements (`HostCapabilities.placementAnswered`), and the stage did hide the
+ * pages – the last layout the core applied had them hidden, so the show that brings the landed
+ * page back is still to come; a gesture too short for its cover to paint never took the pages
+ * down, and its landing has no gap to fill.
+ */
+function holdsLanding(): boolean {
+  const state = currentState()
+  return (
+    state !== null &&
+    chromeUnderPages(state.platform) &&
+    state.capabilities?.placementAnswered === true &&
+    pageViewStore.get().lastApplied?.contentHidden === true
+  )
+}
+
+/**
+ * Keep the landed stand-in for `tabId` until the layout that brings the page back has been
+ * applied and the host has answered it (`awaitingShow` set with the placement, cleared by the
+ * answer or its bound), then `drop` it – at once when that layout brought no view back (a tab
+ * without one: nothing to wait for), and in any case after `LANDING_WAIT_MS`.
+ */
+function holdLanding(tabId: string, drop: () => void): void {
+  cancelLandingHold?.()
+  const before = pageViewStore.get().lastApplied
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const offs: Array<() => void> = []
+  const stop = (): void => {
+    if (timer !== null) clearTimeout(timer)
+    timer = null
+    for (const off of offs) off()
+    offs.length = 0
+    cancelLandingHold = null
+  }
+  const check = (): void => {
+    if (pageViewStore.get().lastApplied === before) return
+    if (awaitingShow(coverStore.get(), tabId)) return
+    stop()
+    drop()
+  }
+  offs.push(pageViewStore.subscribe(check), coverStore.subscribe(check))
+  timer = setTimeout(() => {
+    stop()
+    drop()
+  }, LANDING_WAIT_MS)
+  cancelLandingHold = stop
+}
+
+/**
+ * A new gesture takes the stage while a landing's card stands: the hold ends without a drop of
+ * its own – the new gesture's stand-in takes over where the card was – and the held geometry
+ * goes back to rest for the gesture to set its own.
+ */
+function cancelLanding(): void {
+  const { landing } = stageStore.get()
+  if (!landing) return
+  cancelLandingHold?.()
+  stageStore.set({
+    landing: null,
+    ...(landing.stage === 'tabs' ? { tabs: TABS_IDLE } : { overview: OVERVIEW_CLOSED })
+  })
+}
+
+/** The held stand-in of `stage` leaves now: its hold ended, the moment marked for the trace. */
+function dropLanding(stage: StageLanding['stage']): boolean {
+  const { landing } = stageStore.get()
+  if (landing?.stage !== stage) return false
+  cancelLandingHold?.()
+  markCoverDrop(landing.tabId)
+  return true
+}
+
+// ---------------------------------------------------------------------------
 // Tab switching
 // ---------------------------------------------------------------------------
 
@@ -224,6 +330,7 @@ export function beginTabSwitch(state: UIState): boolean {
   }
   const width = contentAreaStore.get().area?.width ?? window.innerWidth
   tabDragStart = origin
+  cancelLanding()
   stageStore.set({
     tabs: { phase: 'dragging', order, position: origin, origin, advance: width + CARD_GAP }
   })
@@ -299,8 +406,35 @@ function settleTabSwitchAt(index: number): void {
   run('tab.activate', { tabId })
   cancelCommit = whenActive(tabId, () => {
     cancelCommit = null
-    if (stageStore.get().tabs.phase === 'committing') endTabSwitch()
+    if (stageStore.get().tabs.phase === 'committing') landTabSwitch()
   })
+}
+
+/**
+ * The browser shows the tab the track landed on: the stage stops hiding the pages, and where
+ * the host answers placements the landed card stays at the page's frame – the track's phase at
+ * `idle`, its geometry kept so the card is drawn where it came to rest – until the host has
+ * answered the placement that brings the page back (`holdLanding`); elsewhere, and where the
+ * pages were never hidden, the track leaves at once as it always did.
+ */
+function landTabSwitch(): void {
+  const tabs = stageStore.get().tabs
+  const index = Math.round(tabs.position)
+  const tabId = tabs.order[index]
+  if (!tabId || !holdsLanding()) {
+    endTabSwitch()
+    return
+  }
+  tabSpring.stop()
+  pendingCapture = null
+  stageStore.set({
+    tabs: { ...tabs, phase: 'idle', position: index, origin: index },
+    landing: { tabId, stage: 'tabs' }
+  })
+  tabsShown = false
+  syncStageActive()
+  invalidateSnapshot()
+  holdLanding(tabId, endTabSwitch)
 }
 
 function endTabSwitch(): void {
@@ -308,7 +442,8 @@ function endTabSwitch(): void {
   cancelCommit?.()
   cancelCommit = null
   pendingCapture = null
-  stageStore.set({ tabs: TABS_IDLE })
+  const landed = dropLanding('tabs')
+  stageStore.set(landed ? { tabs: TABS_IDLE, landing: null } : { tabs: TABS_IDLE })
   tabsShown = false
   syncStageActive()
   invalidateSnapshot()
@@ -356,6 +491,7 @@ function showOverview(state: UIState): void {
   const hero = activeTab(state)
   const overview = stageStore.get().overview
   if (overview.phase !== 'closed') return
+  cancelLanding()
   stageStore.set({
     overview: { phase: 'dragging', progress: 0, heroTabId: hero?.id ?? null, target: 1 }
   })
@@ -456,13 +592,42 @@ export function toggleOverview(state: UIState): void {
 
 function finishOverviewClose(): void {
   const hero = stageStore.get().overview.heroTabId
-  const done = (): void => {
-    cancelOverviewCommit = null
+  if (!hero) {
     dismissOverview()
+    return
   }
   // Wait for the picked tab to be the one the layout will show, otherwise the old page flashes.
-  cancelOverviewCommit = hero ? whenActive(hero, done) : null
-  if (!hero) done()
+  cancelOverviewCommit = whenActive(hero, () => {
+    cancelOverviewCommit = null
+    landOverview(hero)
+  })
+}
+
+/**
+ * The browser shows the tab the page morphed into: the overview stops hiding the pages, and
+ * where the host answers placements its hero stays at the page's frame – the overview `closed`
+ * with the hero kept, so `TabOverview` draws it at progress 0 and nothing else – until the host
+ * has answered the placement that brings the page back (`holdLanding`); elsewhere, and where
+ * the pages were never hidden, the overview leaves at once as it always did. The overview's
+ * own state – its pane, its search, its picks, its scroll – is over with the gesture, whichever
+ * way the card leaves.
+ */
+function landOverview(hero: string): void {
+  if (!holdsLanding()) {
+    dismissOverview()
+    return
+  }
+  overviewSpring.stop()
+  stageStore.set({
+    overview: { ...OVERVIEW_CLOSED, heroTabId: hero },
+    landing: { tabId: hero, stage: 'overview' }
+  })
+  overviewShown = false
+  resetOverviewPane()
+  resetOverviewUi()
+  syncStageActive()
+  invalidateSnapshot()
+  holdLanding(hero, dismissOverview)
 }
 
 // --- the system back gesture -------------------------------------------------------------------
@@ -507,7 +672,10 @@ export function dismissOverview(): void {
   overviewSpring.stop()
   cancelOverviewCommit?.()
   cancelOverviewCommit = null
-  if (stageStore.get().overview.phase !== 'closed') stageStore.set({ overview: OVERVIEW_CLOSED })
+  const landed = dropLanding('overview')
+  if (landed) stageStore.set({ overview: OVERVIEW_CLOSED, landing: null })
+  else if (stageStore.get().overview.phase !== 'closed')
+    stageStore.set({ overview: OVERVIEW_CLOSED })
   overviewShown = false
   // The pane picked with the segment was this overview's; the next one opens on the tab's own.
   // So were its search, its picks, its sheet and its scroll (`overviewUiStore`, kept outside
@@ -521,7 +689,8 @@ export function dismissOverview(): void {
 
 /** Everything off the stage at once (the phone layout went away). */
 export function dismissStage(): void {
-  if (stageStore.get().tabs.phase !== 'idle') endTabSwitch()
+  const { tabs, landing } = stageStore.get()
+  if (tabs.phase !== 'idle' || landing?.stage === 'tabs') endTabSwitch()
   dismissOverview()
 }
 

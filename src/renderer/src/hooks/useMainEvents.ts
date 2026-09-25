@@ -14,7 +14,7 @@ import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
 import { bookmarkEditUndone, showBookmarkDeleted } from '@renderer/lib/bookmarkUndo'
 import { openCapture } from '@renderer/lib/captureOverlay'
 import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
-import { chromeUnderPages } from '@renderer/lib/cover'
+import { chromeUnderPages, landingAnswered, landingsSent } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone, isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
@@ -90,6 +90,12 @@ function currentActiveTabId(): string | null {
 function followsCover(): boolean {
   const state: UIState | null = browserStore.get().state
   return state !== null && chromeUnderPages(state.platform)
+}
+
+/** Whether the host answers a placement with the view's drawn frame (Q1, `view.shown`). */
+function answersPlacements(): boolean {
+  const state: UIState | null = browserStore.get().state
+  return state?.capabilities?.placementAnswered === true
 }
 
 /** How wide the host is to make a card picture for this screen, in device pixels. */
@@ -475,10 +481,20 @@ export function useMainEvents(): void {
       // Where the chrome lies under the pages, the swap between a live page and its cover is
       // timed from these (lib/pageView.ts); the desktop hosts swap the moment they are asked.
       onEvent('layout.applied', (applied) => {
-        if (followsCover()) onLayoutApplied(applied)
+        if (!followsCover()) return
+        // Q1: the views a layout brought back are landings, and their stand-ins wait for the
+        // host's answer – noted before the phases take the event, so a watcher of both sees the
+        // wait begin with the placement (`lib/gestures/stage.ts` holds the landed card on it).
+        if (answersPlacements()) landingsSent(applied.shown)
+        onLayoutApplied(applied)
       }),
       onEvent('view.drawn', ({ tabId, visible }) => {
         if (followsCover()) onViewDrawn(tabId, visible)
+      }),
+      // The host's answer to a landing (Q1): the stand-in for the page leaves on it, whether the
+      // page is on screen or nothing is coming.
+      onEvent('view.shown', ({ tabId }) => {
+        if (followsCover()) landingAnswered(tabId)
       }),
       // A hardware keyboard's Tab past the page's end (Shift+Tab past its start) came to the
       // chrome: the focus lands on its first (last) control, ringed as the keyboard's (A11Y-09).

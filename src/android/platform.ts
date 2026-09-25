@@ -206,7 +206,10 @@ export function androidCapabilities({
     pageLanguages: false,
     // Blink's Android font selection ignores the generic-family settings: the standard family
     // and the sizes take effect, `serif` / `sansSerif` / `fixed` do not (CT-25's recorded limit).
-    genericFontFamilies: false
+    genericFontFamilies: false,
+    // The chrome lies under the page views: `Host.kt` answers `view.shown` from the view's own
+    // drawn frame (Q1, `views.ts` `askShown`), and the chrome's stand-ins leave on that answer.
+    placementAnswered: true
   }
 }
 
@@ -1368,6 +1371,9 @@ export class AndroidPlatform implements Platform {
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
+    // The host's answer to a placement (Q1): the chrome drops its stand-in for the page on it
+    // (`useMainEvents` → `lib/cover.ts` `landingAnswered`).
+    this.views.shown = (tabId, shown) => this.events.send('view.shown', { tabId, shown })
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
     this.privacy = new AndroidPrivacyHost(bridge)
