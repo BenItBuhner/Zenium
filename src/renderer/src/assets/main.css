@@ -4869,10 +4869,11 @@
    * §11's 250 ms as the menu's rows and title, drawn once more in absolute layers over them, fade
    * out over §11's 120 ms; the chassis measures its new detents from the panel's rows alone (the
    * layers take no height of their own) and re-detents on its spring. The rows' layer fills the
-   * body while the sheet is still the menu's height, clipped to it and inert, and its rows re-run
-   * none of their own entrances; the title's layer sits where the centred title stood. Reduced
-   * motion is the cut: the global rule at the foot removes both fades, and the sheet draws no
-   * outgoing layer at all.
+   * body while the sheet is still the menu's height, clipped to it and inert, its rows shifted
+   * by the offset the list was scrolled to when Share was tapped (the chassis starts new
+   * content at its top) and re-running none of their own entrances; the title's layer sits where
+   * the centred title stood. Reduced motion is the cut: the global rule at the foot removes both
+   * fades, and the sheet draws no outgoing layer at all.
    */
   .zen-share-seam {
     position: relative;
@@ -4891,7 +4892,7 @@
     justify-content: center;
     padding: 0 46px;
   }
-  .zen-share-seam > .zen-share-seam-out > * {
+  .zen-share-seam > .zen-share-seam-out > .zen-share-seam-scrolled > * {
     animation: none;
   }
   .zen-share-seam-in {

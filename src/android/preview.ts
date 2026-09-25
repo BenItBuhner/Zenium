@@ -18,7 +18,7 @@ import { previewRangeAnswer } from './previewRange'
 import { createPreviewDownloads } from './previewDownloads'
 import { createPreviewScreenshots } from './previewScreenshots'
 import { previewPdfVariantOf } from './previewPdf'
-import { PREVIEW_SHARE_TARGETS } from './previewShare'
+import { PREVIEW_SHARE_TARGETS, awaitedPanelAnswer, type PreviewShareOutcome } from './previewShare'
 import {
   PREVIEW_SITE_DATA_EVENT,
   previewCookies,
@@ -397,6 +397,29 @@ export function createPreviewBridge(): NativeBridge {
   // 34 the browser's own shares go to Zenium's panel).
   const sdkInt = Number(params.get('sdk')) || 34
   let shareSeq = 0
+  // The share panel up in the stand-in host (`Share.Panel`): the share's data, for More's system
+  // sheet, and – for a page's awaited share – the `app.share` reply the panel's action settles.
+  let sharePanelUp: {
+    id: string
+    data: ShareData
+    settle: ((outcome: PreviewShareOutcome) => void) | null
+  } | null = null
+  // The browser's own share sheet where the preview runs in one (`navigator.share`), else a log
+  // line; an awaited share's outcome is the sheet's word – nothing shared where there is no sheet.
+  const systemShare = async (
+    data: ShareData,
+    awaited: boolean
+  ): Promise<PreviewShareOutcome | undefined> => {
+    if (typeof navigator.share !== 'function') {
+      console.info('[zen preview] share', data)
+      return awaited ? 'aborted' : undefined
+    }
+    const outcome = await navigator.share(data).then(
+      (): PreviewShareOutcome => 'shared',
+      (): PreviewShareOutcome => 'aborted'
+    )
+    return awaited ? outcome : undefined
+  }
   // `?fontScale=1.3` stands in for the system font size (`Configuration.fontScale`): the
   // chrome's text is drawn at that zoom the way the Kotlin host's `textZoom` draws it
   // (`previewTextZoom.ts` multiplies the stylesheets' font sizes, a desktop browser having no
@@ -1129,38 +1152,62 @@ export function createPreviewBridge(): NativeBridge {
     // The pages are cross-origin iframes here: no forms script to talk to.
     'view.forms': () => undefined,
     'app.openExternal': ({ url }) => void window.open(String(url), '_blank'),
-    // Below Android 14 (`?sdk=33`) the browser's own shares go to Zenium's panel, as the Kotlin
-    // host sends them (`Share.kt`; SH-03), with the stand-in row of apps; a page's awaited share
-    // and every share on 14 and later go to the browser's own share sheet where there is one, or
-    // are just logged.
-    'app.share': async ({ title, text, url, imageUrl, tabId, favicon, awaitOutcome, files }) => {
-      if (sdkInt < 34 && !awaitOutcome && !(Array.isArray(files) && files.length)) {
-        const request: SharePanelRequest = {
-          id: `preview-share-${++shareSeq}`,
-          kind: imageUrl ? 'image' : text ? 'text' : 'link',
-          title: title ? String(title) : null,
-          url: imageUrl ? null : url ? String(url) : null,
-          text: text ? String(text) : null,
-          favicon: imageUrl ? null : favicon ? String(favicon) : null,
-          image: imageUrl ? String(imageUrl) : null,
-          tabId: tabId ? String(tabId) : null,
-          private: false,
-          source: 'menu',
-          targets: [...PREVIEW_SHARE_TARGETS]
-        }
-        host().hostEvent('share.panel', JSON.stringify(request))
-        return
-      }
+    // Below Android 14 (`?sdk=33`) a share of a link, text or an image goes to Zenium's panel, as
+    // the Kotlin host sends it (`Share.kt`; SH-03), with the stand-in row of apps: the browser's
+    // own is answered as the event goes out, a page's `navigator.share` (`awaitOutcome`) is the
+    // panel's `page` share and is answered by the panel's action, as Chrome's hub answers a Web
+    // Share's promise. A page's files, and every share on 14 and later, go to the browser's own
+    // share sheet where there is one, or are just logged.
+    'app.share': ({ title, text, url, imageUrl, tabId, favicon, awaitOutcome, files }) => {
       const data = {
         title: title ? String(title) : undefined,
         text: text ? String(text) : undefined,
         url: url ? String(url) : imageUrl ? String(imageUrl) : undefined
       }
-      if (typeof navigator.share === 'function') await navigator.share(data).catch(() => undefined)
-      else console.info('[zen preview] share', data)
+      const awaited = awaitOutcome === true
+      if (sdkInt >= 34 || (Array.isArray(files) && files.length > 0))
+        return systemShare(data, awaited)
+      const request: SharePanelRequest = {
+        id: `preview-share-${++shareSeq}`,
+        kind: imageUrl ? 'image' : text ? 'text' : 'link',
+        title: title ? String(title) : null,
+        url: imageUrl ? null : url ? String(url) : null,
+        text: text ? String(text) : null,
+        favicon: imageUrl ? null : favicon ? String(favicon) : null,
+        image: imageUrl ? String(imageUrl) : null,
+        tabId: tabId ? String(tabId) : null,
+        private: false,
+        source: awaited ? 'page' : 'menu',
+        targets: [...PREVIEW_SHARE_TARGETS]
+      }
+      // A panel still up is superseded: the chrome replaces its sheet, a page's hears `aborted`.
+      sharePanelUp?.settle?.('aborted')
+      host().hostEvent('share.panel', JSON.stringify(request))
+      if (!awaited) {
+        sharePanelUp = { id: request.id, data, settle: null }
+        return undefined
+      }
+      return new Promise<PreviewShareOutcome>((resolve) => {
+        sharePanelUp = { id: request.id, data, settle: resolve }
+      })
     },
-    // The panel's answer: the stand-in host holds no intent, so the pick is logged and that is all.
-    'share.panelAction': (action) => console.info('[zen preview] share panel', action),
+    // The panel's action, as the Kotlin host hears it (`Share.onPanelAction`): the stand-in host
+    // holds no intent, so an app's pick is logged as taken; More opens the browser's own share
+    // sheet with the same data; a page's awaited share hears the answer `Share.kt` would give.
+    'share.panelAction': async (action) => {
+      console.info('[zen preview] share panel', action)
+      const up = sharePanelUp
+      if (!up || up.id !== action.id) return
+      sharePanelUp = null
+      const kind = String(action.kind)
+      if (kind === 'more') {
+        const outcome = await systemShare(up.data, true)
+        up.settle?.(outcome ?? 'aborted')
+        return
+      }
+      const answer = awaitedPanelAnswer(kind)
+      if (answer) up.settle?.(answer)
+    },
     'app.openAppLinkSettings': () => console.info('[zen preview] open-by-default settings'),
     'voice.start': () => voice.start(),
     'voice.cancel': () => voice.cancel(),

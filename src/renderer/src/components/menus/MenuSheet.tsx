@@ -194,6 +194,9 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
     return () => window.clearTimeout(timer)
   }, [hostedId])
   const pickShare = (then: () => void): void => sheet.current?.dismiss(then)
+  // Where the list stood when Share was tapped: the chassis starts new content at its top, so
+  // the fading copy of the rows is drawn shifted by the offset, where the user was looking.
+  const [seamScroll, setSeamScroll] = useState(0)
 
   const keyOf = (item: MenuItemDescriptor): string | undefined => item.key
   const defaultOrder = menu.defaultOrder
@@ -321,7 +324,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                     aria-checked={
                       item.type === 'checkbox' || item.type === 'radio' ? item.checked : undefined
                     }
-                    onClick={() => {
+                    onClick={(e) => {
                       // The rows stand inert while the host gathers the share panel's row.
                       if (gathering) return
                       // The Change Menu row opens the edit pose in place: the sheet stays.
@@ -330,9 +333,10 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                         setNav((n) => ({ path: [...n.path, item], direction: 1 }))
                       // The Share row hands the sheet to the panel (§9.38): the pick runs with
                       // the sheet standing, and the panel's request takes the chassis over.
-                      else if (handsOverToSharePanel(item, { sharePanel: sharePanelStandsIn }))
+                      else if (handsOverToSharePanel(item, { sharePanel: sharePanelStandsIn })) {
+                        setSeamScroll(e.currentTarget.closest('.zen-sheet-scroll')?.scrollTop ?? 0)
                         beginShareSeam(menu.id, item.id)
-                      else sheet.current?.dismiss(() => pickMenuItem(item.id))
+                      } else sheet.current?.dismiss(() => pickMenuItem(item.id))
                     }}
                   >
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
@@ -427,7 +431,12 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
         <div className="zen-share-seam" data-seam="share-panel">
           {outgoing && (
             <div className="zen-share-seam-out" aria-hidden inert>
-              {rows}
+              <div
+                className="zen-share-seam-scrolled"
+                style={seamScroll > 0 ? { transform: `translateY(${-seamScroll}px)` } : undefined}
+              >
+                {rows}
+              </div>
             </div>
           )}
           <div className="zen-share-seam-in">

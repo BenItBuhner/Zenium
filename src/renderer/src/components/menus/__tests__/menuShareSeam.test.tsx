@@ -394,6 +394,25 @@ describe('the hand-off (the seam’s second half: the menu’s chassis becomes t
     expect(q('.zen-share-seam-in [data-row="chips"]')).not.toBeNull()
   })
 
+  it("draws the fading rows where the list was scrolled to when Share was tapped – the chassis starts the panel's content at its top", async () => {
+    await show()
+    const scroller = q<HTMLElement>('.zen-sheet-scroll')!
+    scroller.scrollTop = 180
+    await pickShare()
+    await arrive()
+    const copy = q<HTMLElement>('.zen-share-seam > .zen-share-seam-out > .zen-share-seam-scrolled')!
+    expect(copy.style.transform).toBe('translateY(-180px)')
+    expect(copy.querySelector('.zen-sheet-item')?.textContent).toBe('Share…')
+  })
+
+  it('draws the fading rows unshifted when the list stood at its top', async () => {
+    await show()
+    await pickShare()
+    await arrive()
+    const copy = q<HTMLElement>('.zen-share-seam > .zen-share-seam-out > .zen-share-seam-scrolled')!
+    expect(copy.style.transform).toBe('')
+  })
+
   it('cuts under reduced motion: no outgoing layer, the panel simply where the rows were', async () => {
     reducedMotion(true)
     await show()
