@@ -4341,13 +4341,17 @@ export class TabManager {
       this.pressureTimer = setTimeout(() => this.discardNextBatch(), DISCARD_BATCH_INTERVAL_MS)
   }
 
-  /** The next `DISCARD_BATCH` ids of the queue, each read again at its turn. */
+  /**
+   * The next `DISCARD_BATCH` ids of the queue, each read again at its turn: the page may have
+   * been shown, closed, or started playing since the plan (`protectedReason` on a fresh candidate;
+   * the recency guard and the list were the plan's to apply, and stay applied).
+   */
   private discardBatch(): void {
     const visible = this.allVisibleTabIds()
+    const now = Date.now()
     for (const id of this.pressureQueue.splice(0, DISCARD_BATCH)) {
-      // The user may have gone back to the page since the plan.
-      const tab = this.tab(id)
-      if (!tab || !this.view(id) || visible.has(id) || tab.audible) continue
+      const page = this.sleepCandidate(id, visible)
+      if (page === null || protectedReason(page, now) !== null) continue
       this.discard(id)
     }
   }
@@ -4357,23 +4361,29 @@ export class TabManager {
     const visible = this.allVisibleTabIds()
     const out: SleepCandidate[] = []
     for (const [id] of this.views) {
-      const tab = this.tab(id)
-      if (!tab) continue
-      out.push({
-        id,
-        url: tab.url,
-        lastActiveAt: tab.lastActiveAt,
-        visible: visible.has(id),
-        audible: tab.audible,
-        quietAt: this.quietAt.get(id) ?? null,
-        capturing: tab.capture !== undefined && tab.capture !== null,
-        formEdited: tab.formEdited === true,
-        loading: tab.loading,
-        devtools: this.browser.state.devtoolsOpenFor.has(id),
-        driven: this.browser.agents.isDriving(id)
-      })
+      const page = this.sleepCandidate(id, visible)
+      if (page !== null) out.push(page)
     }
     return out
+  }
+
+  /** One loaded page as the sleep policies read it, or null if the tab or its view is gone. */
+  private sleepCandidate(id: string, visible: Set<string>): SleepCandidate | null {
+    const tab = this.tab(id)
+    if (!tab || !this.view(id)) return null
+    return {
+      id,
+      url: tab.url,
+      lastActiveAt: tab.lastActiveAt,
+      visible: visible.has(id),
+      audible: tab.audible,
+      quietAt: this.quietAt.get(id) ?? null,
+      capturing: tab.capture !== undefined && tab.capture !== null,
+      formEdited: tab.formEdited === true,
+      loading: tab.loading,
+      devtools: this.browser.state.devtoolsOpenFor.has(id),
+      driven: this.browser.agents.isDriving(id)
+    }
   }
 
   destroyAll(): void {
@@ -4389,6 +4399,12 @@ export class TabManager {
    */
   onHostTeardown(): void {
     this.hostGone = true
+    // A pressure plan still queued was for views the host has dropped.
+    this.pressureQueue = []
+    if (this.pressureTimer !== null) {
+      clearTimeout(this.pressureTimer)
+      this.pressureTimer = null
+    }
   }
 }
 
