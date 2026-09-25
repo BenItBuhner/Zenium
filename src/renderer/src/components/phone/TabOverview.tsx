@@ -2058,7 +2058,22 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                 <div
                   ref={(el) => {
                     scrollRef.current = el
-                    return fadeGrid(el)
+                    if (!el) return
+                    // The edge fades attach once the commit is over: `attachFadeEdges` measures
+                    // the scroller as it attaches, and in the commit that swaps the grids at a
+                    // Space switch that read was a forced layout in the middle of the commit,
+                    // with the commit's other writes still to come (ruling 5). After the commit
+                    // the same read is the frame's own layout, done once, before anything is
+                    // drawn – no edge is seen unfaded.
+                    let detach: (() => void) | undefined
+                    let gone = false
+                    queueMicrotask(() => {
+                      if (!gone) detach = fadeGrid(el) ?? undefined
+                    })
+                    return () => {
+                      gone = true
+                      detach?.()
+                    }
                   }}
                   className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
                   data-pane={pane}

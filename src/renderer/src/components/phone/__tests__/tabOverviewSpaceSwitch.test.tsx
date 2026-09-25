@@ -147,10 +147,15 @@ const measured = HTMLElement.prototype.getBoundingClientRect
  * For every cell measured: whether the Space slot over it had its transform held at none (an
  * inline `!important`) at that moment – the FLIP tracker's read under the slide.
  */
-let cellReads: Array<{ id: string; held: boolean }> = []
+let cellReads: Array<{ id: string; held: boolean; slot: HTMLElement | null }> = []
 function installLayout(): void {
   HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
-    if (this.classList.contains('zen-overview-grid')) return new DOMRect(0, 0, AREA.width, GRID_H)
+    // The Space slot and its grid fill the area under the strip: the box a still is taken in.
+    if (
+      this.classList.contains('zen-overview-space') ||
+      this.classList.contains('zen-overview-grid')
+    )
+      return new DOMRect(0, 0, AREA.width, GRID_H)
     const grid = this.closest<HTMLElement>('.zen-overview-grid')
     if (!grid || !this.hasAttribute('data-cell')) return measured.call(this)
     const slot = this.closest<HTMLElement>('.zen-overview-space')
@@ -158,7 +163,8 @@ function installLayout(): void {
       id: this.dataset.cell!,
       held:
         slot?.style.getPropertyValue('transform') === 'none' &&
-        slot.style.getPropertyPriority('transform') === 'important'
+        slot.style.getPropertyPriority('transform') === 'important',
+      slot
     })
     const cells = [...grid.querySelectorAll<HTMLElement>('[data-cell][data-tab-id]')]
     const i = this.hasAttribute('data-tab-id') ? cells.indexOf(this) : cells.length
@@ -427,6 +433,49 @@ describe('a Space switch in the overview', () => {
     expect(slot().style.getPropertyValue('transform')).toBe('')
   })
 
+  it('the still copies the cards its box shows; the cells beyond the box are empty boxes at their laid-out heights, every row in its place', () => {
+    render(stateOf(WORK))
+    // Every card of Work built, as a grid at rest after its idle fill stands.
+    runIdleAll()
+    expect(cardIds()).toEqual(ids('w', 0, 29))
+    grid().scrollTop = 30
+
+    render(stateOf(HOME))
+
+    const [still] = stills()
+    const cells = [
+      ...still.querySelector<HTMLElement>('[data-still-scroller]')!.firstElementChild!.children
+    ] as HTMLElement[]
+    // Thirty cards and the New Tab cell: the same count as the grid, the rows unchanged.
+    expect(cells).toHaveLength(31)
+    // Rows 0–3 (with the scroll of 30 px, the fourth row's top is inside the 800 px box): the
+    // cards as they stood, thumbnails and titles.
+    for (const [i, cell] of cells.slice(0, 8).entries()) {
+      expect(cell.querySelector('.zen-overview-card')).not.toBeNull()
+      expect(cell.textContent).toContain(`w${i}`)
+      expect(cell.style.height).toBe('')
+    }
+    // Rows 4–15 lie below the box: each cell an empty box the height the card had.
+    for (const cell of cells.slice(8)) {
+      expect(cell.childElementCount).toBe(0)
+      expect(cell.textContent).toBe('')
+      expect(cell.style.height).toBe(`${CARD_H}px`)
+    }
+    // The still is drawn where the pane stood, scrolled where it was.
+    expect(still.querySelector<HTMLElement>('[data-still-scroller]')!.scrollTop).toBe(30)
+  })
+
+  it("the new grid's edge fades attach once the commit that mounts it is over, not inside it", async () => {
+    render(stateOf(WORK))
+    render(stateOf(HOME))
+    // Nothing measured the scroller in the commit: the fade's variables are not on it yet.
+    expect(grid().dataset.fadeAxis).toBeUndefined()
+    expect(grid().style.getPropertyValue('--zen-fade-end')).toBe('')
+    await Promise.resolve()
+    expect(grid().dataset.fadeAxis).toBe('y')
+    expect(grid().style.getPropertyValue('--zen-fade-end')).toBe('0px')
+  })
+
   it('the next grid fills the rest of its cards in idle time after the switch, as a mounting grid does', () => {
     render(stateOf(WORK))
     runIdleAll()
@@ -486,9 +535,11 @@ describe('a Space switch in the overview', () => {
     expect(newTabCell().style.transform).toBe('')
     cellReads = []
     render(stateOf(HOME))
-    // Every cell of the new grid was read with the slot's transform held off.
-    const reads = cellReads.filter((r) => r.id.startsWith('h') || r.id === 'new-tab')
+    // Every cell of the new grid was read with the slot's transform held off. (The grid that
+    // left is read too, for its still – in its own slot, before the new one is up.)
+    const reads = cellReads.filter((r) => r.slot === slot())
     expect(reads.length).toBeGreaterThan(0)
+    expect(reads.every((r) => r.id.startsWith('h') || r.id === 'new-tab')).toBe(true)
     expect(reads.every((r) => r.held)).toBe(true)
     // And no glide: the New Tab card stands at its slot, no transform written for a travel
     // from Work's grid.

@@ -109,13 +109,44 @@ const HOOKS = [
 /** The pane's scroller, whose place the still keeps: the overview's grid, or the sidebar's list in view. */
 const SCROLLER = '.zen-overview-grid, [data-tab-scroller][data-active="true"]'
 
+/**
+ * A copy of the pane for its still, as deep as the pane's box `box` shows and no deeper: a grid
+ * cell (`data-cell`) lying wholly above or below the box – the rows scrolled past, the rows
+ * below the fold – is copied as its empty box at its laid-out height, so the rows keep their
+ * places and the scroller's offset its meaning; everything else is copied whole. The still is
+ * seen for 120 ms in the box it left, so the cards beyond it are never seen, and copying them
+ * (and styling and laying them out once the still is up) was the largest share of the one
+ * main-thread task a Space switch cannot split, the commit that swaps the grids (ruling 5). A
+ * box without a height (a layout unmeasured) copies the pane whole.
+ */
+function copyForStill(el: HTMLElement, box: DOMRect): HTMLElement {
+  if (!(box.height > 0)) return el.cloneNode(true) as HTMLElement
+  const copy = (node: Node): Node => {
+    if (!(node instanceof HTMLElement)) return node.cloneNode(true)
+    if (node.hasAttribute('data-cell')) {
+      const r = node.getBoundingClientRect()
+      if (r.height > 0 && (r.bottom <= box.top || r.top >= box.bottom)) {
+        const shell = node.cloneNode(false) as HTMLElement
+        shell.style.height = `${r.height}px`
+        return shell
+      }
+      return node.cloneNode(true)
+    }
+    if (!node.querySelector('[data-cell]')) return node.cloneNode(true)
+    const shallow = node.cloneNode(false) as HTMLElement
+    for (const child of node.childNodes) shallow.appendChild(copy(child))
+    return shallow
+  }
+  return copy(el) as HTMLElement
+}
+
 /** The pane's box in the root's layout space, and a copy of its DOM that nothing finds or touches. */
 function takeStill(el: HTMLElement, root: HTMLElement): PaneStill {
   const r = el.getBoundingClientRect()
   const rr = root.getBoundingClientRect()
   const scale = root.offsetWidth ? rr.width / root.offsetWidth : 1
   const scrollTop = el.querySelector<HTMLElement>(SCROLLER)?.scrollTop ?? 0
-  const node = el.cloneNode(true) as HTMLElement
+  const node = copyForStill(el, r)
   // The copy's scroller is marked before the hooks go, so the still finds it to scroll it.
   node.querySelector<HTMLElement>(SCROLLER)?.setAttribute('data-still-scroller', '')
   node.classList.remove('zen-overview-pane')
