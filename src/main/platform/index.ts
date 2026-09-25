@@ -588,6 +588,9 @@ export class ElectronPlatform implements Platform {
   start(options: { windows?: boolean; restoreLastSession?: boolean } = {}): Browser {
     const browser = new Browser(this)
     this.browser = browser
+    // A toolbox's quit-chord relay reads the chord the key table binds to `app.quit` (`devtoolsKeys.ts`).
+    this.views.quitChord = () =>
+      browser.state.shortcuts.find((shortcut) => shortcut.action === 'app.quit')?.binding ?? null
     this.windows.bind(browser)
     this.downloads.bind(browser.downloads, {
       tabIdFor: (source) => this.views.tabIdForWebContents(source) ?? null,

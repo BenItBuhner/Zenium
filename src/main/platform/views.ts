@@ -21,6 +21,7 @@ import type {
   CertificateDetails,
   ColorScheme,
   DevtoolsDock,
+  KeyBinding,
   NavigationSnapshot,
   NavigationSnapshotEntry,
   NewTabPageCommand,
@@ -39,6 +40,7 @@ import {
   dockFromConsoleMessage,
   pageBoundsFromConsoleMessage
 } from './devtoolsFrontend'
+import { devtoolsKeyFromMessage, devtoolsQuitChordScript } from './devtoolsKeys'
 import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
@@ -1333,6 +1335,16 @@ export class ElectronTabView implements TabView {
     if (!frontend || frontend.isDestroyed() || this.dressedFrontends.has(frontend)) return
     this.dressedFrontends.add(frontend)
     frontend.on('console-message', (event) => {
+      // The quit chord typed into the toolbox (session-08, review F3): the frontend's keys raise
+      // `before-input-event` on nothing – its delegate is Electron's `InspectableWebContents`,
+      // which hands only the keys the frontend left unhandled on, to the menu bar – so the
+      // frontend says the chord's key down and the key up after it on its console, and they go
+      // to the key table for this page's window as the page's own keys do (`devtoolsKeys.ts`).
+      const key = devtoolsKeyFromMessage(event.message)
+      if (key) {
+        this.events?.onKey(key)
+        return
+      }
       const hole = pageBoundsFromConsoleMessage(event.message)
       if (hole) {
         this.devtoolsPageBounds = hole
@@ -1346,6 +1358,9 @@ export class ElectronTabView implements TabView {
     frontend.executeJavaScript(DEVTOOLS_DOCK_HOOK_SCRIPT, true).catch(() => undefined)
     frontend.executeJavaScript(DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT, true).catch(() => undefined)
     frontend.executeJavaScript(DEVTOOLS_SEAM_SCRIPT, true).catch(() => undefined)
+    frontend
+      .executeJavaScript(devtoolsQuitChordScript(this.owner.quitChord()), true)
+      .catch(() => undefined)
   }
 
   downloadURL(url: string, options?: { saveAs?: boolean }): void {
@@ -2563,6 +2578,11 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly focusWatched = new WeakSet<BrowserWindow>()
   /** The certificates the sessions verified, by host, for the site-information card (`certificate`). */
   readonly certificates = new SiteCertificates()
+  /**
+   * The chord bound to `app.quit` as the key table has it now, for a toolbox's quit-chord relay
+   * (`devtoolsKeys.ts`); the platform supplies it once the core is up (`ElectronPlatform.start`).
+   */
+  quitChord: () => KeyBinding | null = () => null
 
   constructor(
     private readonly sessions: SessionManager,
