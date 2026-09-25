@@ -1376,7 +1376,10 @@ describe('the page tabs follow the window’s class (the class-change seam, W6-S
   }
 
   /** A tablet-class window holding a site and, over it, the page tab `id` (a `page.open` on the tablet). */
-  function tabletWith(id: string, query?: Record<string, string>): { f: Fixture; site: Tab; tabId: string } {
+  function tabletWith(
+    id: string,
+    query?: Record<string, string>
+  ): { f: Fixture; site: Tab; tabId: string } {
     const f = fixture()
     report(f, 'tablet')
     const site = openSite(f, 'https://a.test/')
@@ -1493,7 +1496,11 @@ describe('the page tabs follow the window’s class (the class-change seam, W6-S
 
   it('hands a restored tablet profile’s page tab over at the chrome’s first report on a phone (the restore seam)', () => {
     const space = createSpace('Work', '')
-    const site = createTabRecord({ spaceId: space.id, containerId: 'default', url: 'https://a.test/' })
+    const site = createTabRecord({
+      spaceId: space.id,
+      containerId: 'default',
+      url: 'https://a.test/'
+    })
     const history = createTabRecord({
       spaceId: space.id,
       containerId: 'default',
