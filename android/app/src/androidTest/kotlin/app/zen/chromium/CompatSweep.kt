@@ -1700,7 +1700,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * all and its wallpaper's arrival flips with the boot – its app removes the body's
      * `hide-opacity` once loaded and fills `.site-items` with its icon grid, `.search-box` with
      * its search; a filled root or the body shown with children counts), or for text or imagery
-     * (Momentum's greeting and photograph, daily.dev's feed), within the row's budget.
+     * (Momentum's greeting and photograph, daily.dev's feed), within the row's budget – through
+     * the page's open shadow roots as well as its light DOM (round 19: Infinity's loaded app lives
+     * in Lit shadow roots and takes its light-DOM skeleton away, so the light DOM alone read a
+     * drawn page as empty; [NEW_TAB_RENDERED]).
      */
     private fun momentum(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -1731,7 +1734,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             found.optInt("mounted") > 0 -> "its app's mounted root (${found.optInt("mounted")} elements)"
             else -> "nothing"
         }
-        return Grade(if (found.optBoolean("pass")) "P" else "F", "new tab override: the page read by $by after ${found.optLong("ms")} ms: ${found.toString().take(240)}", extra)
+        val roots = found.optInt("shadowRoots").let { if (it > 0) " through $it open shadow root${if (it == 1) "" else "s"}" else "" }
+        return Grade(if (found.optBoolean("pass")) "P" else "F", "new tab override: the page read by $by$roots after ${found.optLong("ms")} ms: ${found.toString().take(240)}", extra)
     }
 
     /** Stylus: a `.user.css` opens its install page, the style installs, the page it targets turns red. */
@@ -11630,14 +11634,29 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /**
          * A new-tab override's page rendered ([momentum]): text of more than twenty characters,
          * imagery (an image, a canvas, a background element), or the app's mounted root filled –
-         * Infinity New Tab's icon grid in `.site-items` or its search in `.search-box`, a framework
+         * Infinity New Tab's icon cards (`.items-card`) or its search in `.search-box`, a framework
          * root (`#app`, `#root`, `main`) with children – with the body shown (Infinity keeps
          * `hide-opacity` on the body until its app has loaded).
+         *
+         * Read through the page's open shadow roots as well as its light DOM (compat round 19):
+         * Infinity's app is Lit components – `newtab-main` and the rest render into open shadow
+         * roots – and once it has loaded it removes the static skeleton (`.main-middle`, with the
+         * skeleton's images and its footer) from the light DOM, so the light DOM of the loaded page
+         * is the wallpaper layer and a row of empty hosts; `body.innerText` and the document's
+         * `querySelectorAll` read nothing of a page fully drawn (rounds 17-19's F on both WebViews,
+         * `textLength:0, imagery:0, mounted:0, shown:true` under a rendered grid). The probe walks
+         * every open `shadowRoot` (nested ones too, a hundred hosts at most), counts the imagery
+         * and the mounted selectors in each, and adds each root's rendered text – its shown element
+         * children's `innerText`, `style`/`script`/`template`/`link` and `display:none` children
+         * left out, as a stylesheet's text is not the page's. `shadowRoots` is the count found.
          */
         private const val NEW_TAB_RENDERED =
-            "(function(){var b=document.body;var text=b?b.innerText.replace(/\\s+/g,' ').trim():'';var imagery=document.querySelectorAll('img, canvas, .background, [class*=\"background\"]').length;" +
-                "var mounted=document.querySelectorAll('.site-items .items-card, .site-items a, .search-box input, .search-box form, #app > *, #root > *, main > *').length;var shown=!!b&&!b.classList.contains('hide-opacity');" +
-                "return JSON.stringify({pass:text.length>20||imagery>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,mounted:mounted,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
+            "(function(){var b=document.body;var IMG='img, canvas, .background, [class*=\"background\"]';var MOUNT='.site-items .items-card, .items-card, .site-items a, .search-box input, .search-box form, #app > *, #root > *, main > *';" +
+                "var roots=[document],hosts=0;for(var i=0;i<roots.length&&hosts<100;i++){var all=roots[i].querySelectorAll('*');for(var j=0;j<all.length;j++){if(all[j].shadowRoot){roots.push(all[j].shadowRoot);hosts++}}}" +
+                "var text=b?b.innerText:'',imagery=0,mounted=0;for(var k=0;k<roots.length;k++){var r=roots[k];imagery+=r.querySelectorAll(IMG).length;mounted+=r.querySelectorAll(MOUNT).length;" +
+                "if(k>0){var cs=r.children;for(var c=0;c<cs.length;c++){var e=cs[c],t=e.tagName;if(t==='STYLE'||t==='SCRIPT'||t==='TEMPLATE'||t==='LINK'||getComputedStyle(e).display==='none')continue;text+=' '+(e.innerText||'')}}}" +
+                "text=text.replace(/\\s+/g,' ').trim();var shown=!!b&&!b.classList.contains('hide-opacity');" +
+                "return JSON.stringify({pass:text.length>20||imagery>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,mounted:mounted,shadowRoots:hosts,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
 
         // --- compat round 19 (ranks 451-480) ---
 
