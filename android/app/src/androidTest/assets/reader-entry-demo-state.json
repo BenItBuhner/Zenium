@@ -50,7 +50,7 @@
       "spaceId": "space_work",
       "containerId": "default",
       "folderId": null,
-      "url": "http://127.0.0.1:18153/",
+      "url": "http://127.0.0.1:18153/plain",
       "title": "Reader entry demo",
       "pinned": false,
       "essential": false

@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import android.graphics.PointF
 import android.os.Build
 import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -18,10 +19,12 @@ import java.util.concurrent.TimeUnit
 
 /**
  * The `android-reader-entry-demo` workflow: the reader entry's offer and the crossing into
- * Reader View on the phone (PUI-14, MOT-36; v2 §9.33, §11). Four loopback SITES on one port –
- * `127.0.0.1` to `.4`, each a site of its own to the entry's per-site memory – serve the
- * read-aloud demo's article (`read-aloud-demo-page.html`) at `/`, a re-titled copy at `/second`
- * and a page too short for the readability probe at `/plain`. Writes `reader-entry-findings.txt`
+ * Reader View on the phone (PUI-14, MOT-36; v2 §9.33, §11). Five loopback SITES on one port –
+ * `127.0.0.1` to `.5`, each a site of its own to the entry's per-site memory – serve the
+ * read-aloud demo's article (`read-aloud-demo-page.html`) at `/`, a re-titled copy at `/second`,
+ * a page too short for the readability probe at `/plain`, and the site's icon at `/favicon.ico`
+ * (every page links it). The tab starts on site A's `/plain`, a page with no offer, so the
+ * offer's clock (item 3) is not running through the warm-up. Writes `reader-entry-findings.txt`
  * next to the stills (a `PASS` or `FAIL` per check; the run fails at its end when any did, or
  * when a touch did not take):
  *
@@ -29,27 +32,42 @@ import java.util.concurrent.TimeUnit
  *     (`tab.readerable`), the frame's top banner "Show Reader View?" with its glyph, its one
  *     action Show and the X – the same §9.33 host the connectivity banner uses – and nothing
  *     else on the stack; no crossing layer in the chrome at rest.
- *  2. THE CROSSING IN (the `reader-crossing-enter` scene, `open`): a real finger on Show; the
- *     chrome's crossing layer runs `covering` → `loading` (the reader's surface shown over the
- *     page's picture) → `landing` and leaves once the host has drawn the `zen://reader`
- *     document; the reader document up with the article's title; the offer gone; the pill at
- *     rest still the favicon, the host and the one site-information glyph (no reader chip).
+ *  2. THE CROSSING IN (the `reader-crossing-enter` scene, `open`): a real finger on Show, within
+ *     the offer's clock (its age at the tap is reported); the chrome's crossing layer runs
+ *     `covering` → `loading` (the reader's surface shown over the page's picture) → `landing`
+ *     and leaves once the host has drawn the `zen://reader` document; the reader document up
+ *     with the article's title; the offer gone; the pill at rest still the favicon, the host and
+ *     the one site-information glyph (no reader chip) – and THE FAVICON THE SITE'S STILL: the
+ *     pill's icon in Reader View is the article's icon, the same address as before the finger,
+ *     never the globe of a siteless page (the design gate for #491's root addition; the core
+ *     keeps `favicon` over the reader's navigation, `Favicon.tsx` reads the identity through the
+ *     reader URL where the page had none).
  *  3. THE CROSSING OUT (`reader-crossing-exit`, `open`): the app menu's checked Reader View row
  *     under a finger; the same layer the other way (`exit`), the article back in its place.
  *     Whether the offer returns for the article after the exit (the action un-muted the site)
- *     is reported, not gated – the gate's question (f).
- *  4. THE MEMORY: a swipe off the strip (site A) mutes the site – its `/second` article shows no
+ *     is reported, not gated – the gate's question (f) – and, when it does, THE CLOCK (§9.33
+ *     as amended on the gate): the offer left standing leaves on its own at about ten seconds –
+ *     its life on the banner stack read from a `MutationObserver` in the chrome's document
+ *     ([armBannerLog]), its paint to its going – and the timeout is a refusal remembered for the
+ *     site as the X is: site A's `/second` brings no offer.
+ *  4. THE MEMORY: a swipe off the strip (site E) mutes the site – its `/second` article shows no
  *     offer though the probe reads it as an article; the X (site B) does the same; leaving the
  *     page with the offer standing (site D: another document without an answer) does the same,
  *     Chrome's `ReaderModeManager` rule; and `/plain` (site B), which the probe does not read as
  *     an article, shows no strip at all.
- *  5. DARK (site C): the strip, the crossing in (`reader-crossing-enter-dark`), the reader
+ *  5. THE SITE-INFORMATION SHEET'S ROW (site B, muted by then: no offer stands, the sheet's row
+ *     is the door; §9.29 names the reader chip among the sheet's rows, always): on `/plain` the
+ *     sheet the pill's site icon opens lists no Reader View row; on the article it lists one,
+ *     named "Reader View" for TalkBack after the shield's row; a finger on it runs the same
+ *     crossing (`reader-crossing-sheet-row`, begun on the picture the sheet holds of the page),
+ *     the sheet gone with it, the favicon kept as in item 2.
+ *  6. DARK (site C): the strip, the crossing in (`reader-crossing-enter-dark`), the reader
  *     document on its dark ground (`#18181c`), the crossing out (`reader-crossing-exit-dark`),
  *     the X – Zenium's own Dark first, the system's second, as [ReaderUiDemo] settles the order.
  *
  * The frame record ([traceFrames], `frames.jsonl`; PERF-3's harness and its scene names): the
  * app menu opened under a finger and dismissed with a back first (`menu-sheet-open` /
- * `menu-sheet-close`, the table's point of reference on this recipe), then the four crossing
+ * `menu-sheet-close`, the table's point of reference on this recipe), then the five crossing
  * scenes. Each block is the finger and [MOTION_MS] for what it does, nothing else – the node is
  * found and the finger's point fixed BEFORE the block, the claim polled AFTER it ([scene]); the
  * crossing's phases are read by a `MutationObserver` armed in the chrome's document before the
@@ -68,12 +86,14 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
 
     @Test
     fun record() {
-        val article = readAsset("read-aloud-demo-page.html")
+        // Every page links the site's icon: the identity the pill keeps through Reader View.
+        val article = readAsset("read-aloud-demo-page.html").replace("</head>", "$FAVICON_LINK</head>")
         val second = article.replace("lighthouse keeper", "harbourmaster")
         val routes = mapOf(
             "/" to (HTML to article.toByteArray()),
             "/second" to (HTML to second.toByteArray()),
-            "/plain" to (HTML to PLAIN_PAGE.toByteArray())
+            "/plain" to (HTML to PLAIN_PAGE.replace("</head>", "$FAVICON_LINK</head>").toByteArray()),
+            "/favicon.ico" to ("image/png" to Base64.decode(FAVICON_PNG, Base64.DEFAULT))
         )
         servers = SITES.map { address -> DemoServer(PORT, routes, address = address).also { it.start() } }
         try {
@@ -90,10 +110,12 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
         for ((i, server) in servers.withIndex()) finding("demo server ${SITES[i]}: ${server.selfCheck()}")
         val caps = coreState().getJSONObject("capabilities")
         finding("capabilities: phone=${caps.optBoolean("phone")}")
-        awaitLoaded("$SITE_A/")
-        val readerable = poll(15_000) { tab()?.optBoolean("readerable") == true }
-        finding("article: ${describeTab()}; readerable=$readerable")
-        check("the reader core finds the article readerable (what the offer waits for)", readerable)
+        // The start page is no article: no offer stands – and no clock runs – through the warm-up
+        // and the reference scenes; the entry act navigates to the article itself.
+        awaitLoaded("$SITE_A/plain")
+        SystemClock.sleep(1_500)
+        finding("start page: ${describeTab()}; strip=${stripUp()}")
+        check("the start page is no article to the probe: no offer, no clock, before the entry act", tab()?.optBoolean("readerable") != true && !stripUp())
         // A promo sheet from the default-browser campaign would sit over the page; answer it
         // off camera, and say so.
         if (findNode { it == "Not now" } != null) {
@@ -119,6 +141,7 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
             baselineScenes()
             entry()
             memory()
+            siteInfoRow()
             dark()
             finding("\nend: ${describeTab()}${if (failures == 0) "" else "; $failures FAIL"}")
         } finally {
@@ -152,9 +175,17 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
 
     private fun entry() {
         finding("\nPUI-14 the entry: the article's offer on the §9.33 banner stack")
+        // The banner log armed before the article comes: the offer's paint is on the chrome's
+        // clock, and its age at the finger is reported against the clock it stands on.
+        armBannerLog()
+        navigate("$SITE_A/")
+        val readerable = poll(15_000) { tab()?.optBoolean("readerable") == true }
+        finding("  article: ${describeTab()}; readerable=$readerable")
+        check("the reader core finds the article readerable (what the offer waits for)", readerable)
         val up = stripCheck("site A's article")
         snap("article-strip")
-        beat()
+        // No beat here: the offer is on its clock, and the finger is due within it.
+        SystemClock.sleep(400)
         if (!up) {
             finding("  no offer: the crossing cannot be recorded")
             return
@@ -164,11 +195,39 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
         snap("reader")
         beat()
         finding("\nMOT-36 the crossing out: the app menu's Reader View row under a finger")
+        // Armed again before the exit: the offer's return, and its life to the clock, are the
+        // log's first `shown` after this and the `gone` that follows it.
+        armBannerLog()
         crossOut("reader-crossing-exit")
         awaitLoaded("$SITE_A/")
         val returns = poll(8_000) { stripUp() }
         finding("  the offer returns for the article after the exit (the action un-muted the site): $returns (reported, not gated; the gate's question f)")
         snap("article-after-exit")
+        if (returns) clock() else finding("  no offer returned: the clock cannot be recorded here")
+    }
+
+    /**
+     * §9.33 as amended: the offer standing unanswered leaves on its own at about ten seconds –
+     * `READER_ENTRY_CLOCK_MS`, armed at the show, the leave motion after it – and the timeout is a
+     * refusal remembered for the site as the X is. Nothing touches the screen meanwhile (a finger
+     * on the card would pause the clock); the life is read from the banner log armed before the
+     * offer's return, its paint to its going from the document.
+     */
+    private fun clock() {
+        finding("\n§9.33 the clock: the offer left standing leaves on its own, and the timeout is a mute")
+        val gone = poll(CLOCK_MS + 8_000) { !stripUp() }
+        val log = bannerLog()
+        finding("  the banner stack since the exit (ms from the arming): ${describeLog(log)}")
+        val shown = log.firstOrNull { it.second == "shown" }?.first
+        val left = shown?.let { at -> log.firstOrNull { it.second == "gone" && it.first > at }?.first }
+        val life = if (shown != null && left != null) left - shown else -1L
+        finding("  the offer stood $life ms on the stack (its paint to its leaving the document, the leave motion included); the clock is $CLOCK_MS ms")
+        check("site A: the offer left standing leaves on its own", gone)
+        check("site A: it stood about ten seconds – within ${CLOCK_MIN_MS / 1000}–${CLOCK_MAX_MS / 1000.0} s of its paint (the clock and its leave motion)", life in CLOCK_MIN_MS..CLOCK_MAX_MS)
+        snap("clock-ran-out")
+        beat()
+        mutedCheck("site A after the clock ran out", "$SITE_A/second")
+        snap("site-a-muted-by-the-clock")
         beat()
     }
 
@@ -204,7 +263,11 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
             check("a finger can reach '$STRIP_ACTION'", false)
             return false
         }
+        val pillBefore = pillProbe()
+        finding("  the pill on the article before the finger: $pillBefore")
         armCrossingLog()
+        val age = offerAge()
+        finding("  the offer's age at the finger: ${age ?: "unknown"} ms of its $CLOCK_MS")
         val before = SystemClock.uptimeMillis()
         val entered = scene(name, JankBudget.Kind.OPEN, timeoutMs = 15_000, took = { isReader() && readerProbe().optString("title").isNotEmpty() && !crossingPresent() }) {
             Finger().tap(show)
@@ -223,14 +286,36 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
             phases.indexOf("enter:covering") >= 0 && phases.indexOf("enter:loading+surface") > phases.indexOf("enter:covering") &&
                 phases.indexOf("enter:landing+surface") > phases.indexOf("enter:loading+surface") && phases.lastOrNull() == "none"
         )
+        readerChecks(pillBefore)
+        check("the offer is gone with the crossing (no banner on the stack)", bannerProbe().optInt("count") == 0 && findNode { it == STRIP_TITLE } == null)
+        return true
+    }
+
+    /**
+     * The reader document up: its title the article's; the pill at rest the favicon, the host
+     * and the one site-information glyph – and the favicon the site's still, the same address the
+     * pill drew on the article (`pillBefore`), never the globe or a letter tile in its place.
+     */
+    private fun readerChecks(pillBefore: JSONObject) {
         val probe = readerProbe()
         finding("  the reader document: $probe")
         check("the reader document carries the article's title", probe.optString("title").startsWith("The lighthouse keeper") || probe.optString("title").startsWith("a long night of tides") || probe.optString("title").startsWith("The harbourmaster"))
-        check("the offer is gone with the crossing (no banner on the stack)", bannerProbe().optInt("count") == 0 && findNode { it == STRIP_TITLE } == null)
         val pill = pillProbe()
-        finding("  the pill at rest in Reader View: $pill")
+        finding("  the pill at rest in Reader View: $pill; the tab's favicon as the core holds it: ${tab()?.optString("favicon")?.take(72)}")
         check("the pill at rest is the favicon, the host and one site-information glyph: no reader chip (ReaderUiDemo's contract)", pill.optInt("chips") == 1 && pill.optInt("siteInfo") == 1 && pill.optInt("readerChip") == 0)
-        return true
+        val icon = pill.optString("favicon")
+        check(
+            "the pill keeps the site's favicon through Reader View: an icon drawn (no globe, no letter tile), the same as on the article",
+            icon.isNotEmpty() && icon == pillBefore.optString("favicon") && pill.optInt("globe") == 0 && pill.optString("letter").isEmpty()
+        )
+        val host = getHost(tab()?.optString("url") ?: "")
+        check("the pill shows the article's host ($host) in Reader View", host.isNotEmpty() && pill.optString("text").contains(host))
+    }
+
+    /** The host the pill should read for a reader URL: the article's `url` parameter's, as `displayHost` unwraps it. */
+    private fun getHost(url: String): String {
+        val source = if (url.startsWith("zen://reader")) runCatching { android.net.Uri.parse(url).getQueryParameter("url") }.getOrNull() ?: url else url
+        return runCatching { android.net.Uri.parse(source).let { u -> u.host?.let { h -> if (u.port > 0) "$h:${u.port}" else h } ?: "" } }.getOrDefault("")
     }
 
     /**
@@ -284,13 +369,11 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
 
     private fun memory() {
         finding("\nPUI-14 the memory: a refusal is remembered per site for the session")
-        // Site A: the offer standing (it returned after the exit, or `/second` brings a fresh one).
-        if (!stripUp()) {
-            navigate("$SITE_A/second")
-            poll(15_000) { tab()?.optBoolean("readerable") == true }
-        }
+        // Site E: a fresh site's article, its offer standing to be swiped (within its clock).
+        navigate("$SITE_E/")
+        poll(15_000) { tab()?.optBoolean("readerable") == true }
         val title = waitFor(STRIP_TITLE, 10_000)
-        check("site A: an offer stands to be swiped", title != null)
+        check("site E: an offer stands to be swiped", title != null)
         if (title != null) {
             // From the title, not the action: a touch on a control stays the control's (FirstRunDemo's swipe).
             Finger().apply {
@@ -302,12 +385,11 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
             val gone = waitForGone(STRIP_TITLE, 4_000)
             finding("  the swipe: strip gone=$gone; stack: ${bannerProbe()}")
             if (!gone) touchFault("a swipe on the strip did not take it off")
-            check("site A: the swipe takes the strip off", gone)
+            check("site E: the swipe takes the strip off", gone)
             SystemClock.sleep(600)
         }
-        val other = if (tab()?.optString("url") == "$SITE_A/") "$SITE_A/second" else "$SITE_A/"
-        mutedCheck("site A after the swipe", other)
-        snap("site-a-muted")
+        mutedCheck("site E after the swipe", "$SITE_E/second")
+        snap("site-e-muted")
         beat()
 
         // Site B: no article, no strip; the X.
@@ -358,7 +440,117 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
         check("$where: another article of the site brings no offer (the site is muted for the session)", readerable && !strip)
     }
 
-    // --- 3. dark (site C) -------------------------------------------------------------------------------
+    // --- 3. the site-information sheet's Reader View row (site B) ------------------------------------
+
+    /**
+     * §9.29: the reader chip is a row in the site-information sheet on the phone, always. Site B
+     * is muted by now (the X): no offer stands on its article, and the sheet's row is the door.
+     * On `/plain` the sheet lists no such row; on the article it lists "Reader View" after the
+     * shield's row; a finger on it runs the crossing (`reader-crossing-sheet-row`) on the picture
+     * the sheet holds of the page, and the sheet is gone with it. Whether the site's mute stands
+     * after Reader View was entered by the sheet's row (no offer was answered) is reported.
+     */
+    private fun siteInfoRow() {
+        finding("\nPUI-14 the site-information sheet's Reader View row (§9.29: every informational chip a row there, always)")
+        navigate("$SITE_B/plain")
+        SystemClock.sleep(1_000)
+        if (openSiteInfo("site B's /plain")) {
+            val rows = sheetRows()
+            val node = findNode { it == READER_ROW }
+            finding("  the sheet's rows on /plain: $rows; the tree reads '$READER_ROW': ${node != null}")
+            check("site B's /plain (no article): the sheet lists no Reader View row", rows.none { it.startsWith(READER_ROW) } && node == null)
+            snap("siteinfo-plain")
+            beat()
+            closeSheet()
+        }
+        navigate("$SITE_B/second")
+        val readerable = poll(15_000) { tab()?.optBoolean("readerable") == true }
+        val strip = poll(3_000) { stripUp() }
+        finding("  ${describeTab()}; readerable=$readerable; strip=$strip (the site is muted by the X: no offer, the sheet's row is the door)")
+        // The pill's favicon on the article, read before the sheet stands over the bar.
+        val pillBefore = pillProbe()
+        finding("  the pill on the article: $pillBefore")
+        if (!openSiteInfo("site B's article")) return
+        val rows = sheetRows()
+        val node = findNode { it == READER_ROW }
+        finding("  the sheet's rows on the article: $rows; the tree reads '$READER_ROW': ${node != null}")
+        check(
+            "site B's article: the sheet lists the Reader View row, named plainly for TalkBack, after the shield's row",
+            rows.indexOf(READER_ROW) > rows.indexOfFirst { it.startsWith("Requests blocked") } && node != null
+        )
+        snap("siteinfo-article-row")
+        beat()
+        val row = fingerOn(READER_ROW) ?: run {
+            check("a finger can reach the sheet's $READER_ROW row", false)
+            closeSheet()
+            return
+        }
+        armCrossingLog()
+        val before = SystemClock.uptimeMillis()
+        val entered = scene("reader-crossing-sheet-row", JankBudget.Kind.OPEN, timeoutMs = 15_000, took = { isReader() && readerProbe().optString("title").isNotEmpty() && !crossingPresent() && !chromeSurfaceUp() }) {
+            Finger().tap(row)
+        }
+        val took = SystemClock.uptimeMillis() - before
+        val log = crossingLog()
+        finding("  the crossing's phases (ms from the first): ${describeLog(log)}")
+        finding("  after the finger: ${describeTab()}; reader up in ≤ $took ms (the scene's block included)")
+        if (!entered) {
+            touchFault("a touch on the sheet's $READER_ROW row did not bring the reader document up through the crossing")
+            closeSheet()
+            return
+        }
+        val phases = log.map { it.second }
+        check(
+            "the sheet's row ran the same crossing: covering → loading (the surface over the sheet's picture) → landing, then left, the sheet gone with it",
+            phases.indexOf("enter:covering") >= 0 && phases.indexOf("enter:loading+surface") > phases.indexOf("enter:covering") &&
+                phases.indexOf("enter:landing+surface") > phases.indexOf("enter:loading+surface") && phases.lastOrNull() == "none"
+        )
+        readerChecks(pillBefore)
+        snap("reader-from-sheet")
+        beat()
+        navigate("$SITE_B/")
+        poll(15_000) { tab()?.optBoolean("readerable") == true }
+        val offer = poll(4_000) { stripUp() }
+        finding("  back on site B's article: strip=$offer (the mute from the X stands – no offer was answered by the sheet's row; reported, not gated)")
+    }
+
+    /** The pill's site icon under a finger, then the sheet up with its rows' group in the chrome's document. */
+    private fun openSiteInfo(where: String): Boolean {
+        val icon = fingerOnButton(SITE_ICON_LABEL) ?: run {
+            check("$where: a finger can reach '$SITE_ICON_LABEL'", false)
+            return false
+        }
+        Finger().tap(icon)
+        val up = poll(10_000) { chromeSurfaceUp() && sheetPresent() }
+        if (!up) touchFault("$where: a finger on '$SITE_ICON_LABEL' did not bring the site-information sheet up")
+        check("$where: the site-information sheet opens under a finger", up)
+        SystemClock.sleep(1_500)
+        return up
+    }
+
+    /** Back while the sheet is up, so nothing of it is left over the page. */
+    private fun closeSheet() {
+        back()
+        awaitSurface(up = false, timeoutMs = 8_000)
+        SystemClock.sleep(600)
+    }
+
+    private fun sheetPresent(): Boolean =
+        jsonString(chromeJs("(function(){return document.querySelector('.zen-sheet-title-block')||document.querySelector('[data-testid=\"siteinfo-pill-chips\"]')?'yes':'no'})()")) == "yes"
+
+    /** The sheet's chip rows by their accessible names ("Requests blocked, 0", "Reader View"), in the sheet's order. */
+    private fun sheetRows(): List<String> {
+        val raw = jsonString(chromeJs(
+            "(function(){return JSON.stringify(Array.from(document.querySelectorAll('[data-testid=\"siteinfo-pill-chips\"] button'))" +
+                ".map(function(b){return b.getAttribute('aria-label')||(b.textContent||'').trim()}))})()"
+        ))
+        return runCatching {
+            val a = JSONArray(raw)
+            (0 until a.length()).map { a.getString(it) }
+        }.getOrDefault(emptyList())
+    }
+
+    // --- 4. dark (site C) -------------------------------------------------------------------------------
 
     /**
      * Zenium's own Dark first (`settings.update`; the host sets the app's night mode from the
@@ -374,6 +566,7 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
         shellCommand("cmd uimode night yes")
         SystemClock.sleep(2_500)
         ensureForeground()
+        armBannerLog()
         navigate("$SITE_C/")
         poll(15_000) { tab()?.optBoolean("readerable") == true }
         val pageDark = poll(8_000) { pageScheme() == "dark" }
@@ -381,7 +574,8 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
         check("dark: the chrome is dark under the strip", chromeTheme() == "dark")
         val up = stripCheck("site C's article in dark")
         snap("article-strip-dark")
-        beat()
+        // No beat: the offer is on its clock (the entry act's rule).
+        SystemClock.sleep(400)
         if (up && crossIn("reader-crossing-enter-dark")) {
             val probe = readerProbe()
             check("dark: the reader document paints its dark ground (${probe.optString("bg")})", probe.optString("scheme") == "dark" && probe.optString("bg").startsWith("rgb(24, 24, 28)"))
@@ -537,6 +731,41 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
     private fun crossingPresent(): Boolean =
         jsonString(chromeJs("(function(){return document.querySelector('.zen-reader-crossing')?'yes':'no'})()")) == "yes"
 
+    // --- the banner log ----------------------------------------------------------------------------------
+
+    /**
+     * A `MutationObserver` in the chrome's document that notes when a banner comes onto the stack
+     * and when the last leaves it – `shown` / `gone`, with the document's clock – armed (or
+     * emptied) before an offer is expected, read after ([bannerLog]). The offer's paint and its
+     * going are its two edges: the clock's reading. Presence alone is watched (`childList`), one
+     * `querySelector` per DOM change; it touches nothing.
+     */
+    private fun armBannerLog() {
+        chromeJs(
+            "(function(){var w=window;if(!w.__zenBanners){var log=[];var seen=null;var read=function(){" +
+                "var s=document.querySelector('.zen-banner')?'shown':'gone';" +
+                "if(s!==seen){seen=s;log.push([Math.round(performance.now()),s]);}};" +
+                "new MutationObserver(read).observe(document.body,{subtree:true,childList:true});" +
+                "w.__zenBanners={log:log,reset:function(){log.length=0;seen=null;read();}};read();}else{w.__zenBanners.reset();}return 'armed'})()"
+        )
+    }
+
+    /** The banner log's entries since it was armed: (ms, `shown` | `gone`). */
+    private fun bannerLog(): List<Pair<Long, String>> {
+        val raw = jsonString(chromeJs("(function(){var b=window.__zenBanners;return b?JSON.stringify(b.log):'[]'})()"))
+        return runCatching {
+            val a = JSONArray(raw)
+            (0 until a.length()).map { i -> val e = a.getJSONArray(i); e.getLong(0) to e.getString(1) }
+        }.getOrDefault(emptyList())
+    }
+
+    /** How long the standing offer has been on the stack, by the banner log (its last `shown` to now, the document's clock); null when the log has none. */
+    private fun offerAge(): Long? {
+        val shown = bannerLog().lastOrNull { it.second == "shown" }?.first ?: return null
+        val now = jsonString(chromeJs("(function(){return String(Math.round(performance.now()))})()")).toLongOrNull() ?: return null
+        return now - shown
+    }
+
     // --- the strip, the pill, the page --------------------------------------------------------------------
 
     private fun stripUp(): Boolean = findNode { it == STRIP_TITLE } != null || bannerProbe().optString("title") == STRIP_TITLE
@@ -555,12 +784,18 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
 
     private fun chromeTheme(): String = jsonString(chromeJs("(function(){return document.documentElement.getAttribute('data-theme')||''})()"))
 
-    /** The phone pill's chips, from the chrome's document: how many, the site-information glyph, any reader chip. */
+    /**
+     * The phone pill's chips, from the chrome's document: how many, the site-information glyph,
+     * any reader chip; and the favicon slot – the icon's address when an image is drawn
+     * (`img.zen-tab-favicon`), a letter tile's letter, the globe's presence.
+     */
     private fun pillProbe(): JSONObject {
         val raw = jsonString(chromeJs(
             "(function(){var p=document.querySelector('.zen-phone-pill');if(!p)return '{}';" +
+                "var img=p.querySelector('img.zen-tab-favicon');var tile=p.querySelector('.zen-tab-favicon.zen-squircle');" +
                 "return JSON.stringify({chips:p.querySelectorAll('[data-pill-chip]').length,siteInfo:p.querySelectorAll('[data-site-info]').length," +
-                "readerChip:p.querySelectorAll('[data-reader-prefs-chip]').length,text:(p.textContent||'').trim().slice(0,40)})})()"
+                "readerChip:p.querySelectorAll('[data-reader-prefs-chip]').length,text:(p.textContent||'').trim().slice(0,40)," +
+                "favicon:img?(img.getAttribute('src')||'').slice(0,80):'',letter:tile?(tile.textContent||'').trim():'',globe:p.querySelectorAll('svg.lucide-globe').length})})()"
         ))
         return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
     }
@@ -647,13 +882,28 @@ class ReaderEntryDemo : DemoHarness("reader-entry-demo-state.json", MEDIA_PREFIX
 
     companion object {
         private const val PORT = 18153
-        /** Four loopback addresses, four sites to the entry's memory, one port. */
-        private val SITES = listOf("127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4")
+        /** Five loopback addresses, five sites to the entry's memory, one port. */
+        private val SITES = listOf("127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4", "127.0.0.5")
         private const val SITE_A = "http://127.0.0.1:$PORT"
         private const val SITE_B = "http://127.0.0.2:$PORT"
         private const val SITE_C = "http://127.0.0.3:$PORT"
         private const val SITE_D = "http://127.0.0.4:$PORT"
+        private const val SITE_E = "http://127.0.0.5:$PORT"
         private const val TAB = "tab_demo"
+        /** The pill's site icon: the button that opens the site-information sheet. */
+        private const val SITE_ICON_LABEL = "Site information"
+        /**
+         * The offer's clock (`lib/readerEntry.ts` `READER_ENTRY_CLOCK_MS`) and the band its life on
+         * the stack is read against: the show to the paint is a frame, the going after the clock
+         * is the card's leave motion (the host's `EXIT_SWEEP_MS` at most, 800 ms).
+         */
+        private const val CLOCK_MS = 10_000L
+        private const val CLOCK_MIN_MS = 9_000L
+        private const val CLOCK_MAX_MS = 12_500L
+        /** The site's icon, linked from every page: a 32 × 32 PNG (a white square on rust), served at `/favicon.ico`. */
+        private const val FAVICON_LINK = "<link rel=\"icon\" type=\"image/png\" href=\"/favicon.ico\">"
+        private const val FAVICON_PNG =
+            "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAL0lEQVR42mM44MBDU8QwasGoBUPYgv8kglELRi0YtWDUglELhqcFo1XmqAUjyAIAZbQhW0/RSN8AAAAASUVORK5CYII="
         private const val HTML = "text/html; charset=utf-8"
         /** The stills' and the frame files' prefix (the harness's `shotPrefix`). */
         private const val MEDIA_PREFIX = "android-reader-entry"
