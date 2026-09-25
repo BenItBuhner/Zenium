@@ -37,12 +37,14 @@ import java.util.concurrent.TimeUnit
  *     past sentence 0, or ended without an error). The mode's finish collapsed the page's
  *     selection before the core's extraction reached the document and the page script stood the
  *     cleared one in (`selectionMemory.ts`), so the document is left collapsed.
- *  B. THE SENTENCE (light): the long press again, then – the mode still up – the selection
- *     extended by script to the paragraph's second sentence; the touch on Listen hands the
- *     engine that sentence first and the text is the 3 sentences from it on. (A handle drag is
- *     the user's way; the script's extension keeps the driver off the emulator's handle
- *     geometry. Should the mode not survive the extension, that is said and the act is
- *     recorded as not run, not as a failure of the product.)
+ *  B. THE SENTENCE (light): the long press again, then the selection extended by script to the
+ *     paragraph's second sentence; IF the mode survives the extension, the touch on Listen
+ *     hands the engine that sentence first and the text is the 3 sentences from it on. (A
+ *     handle drag is the user's way; the script's extension keeps the driver off the emulator's
+ *     handle geometry.) ON THE RECORDED IMAGE IT DOES NOT: the WebView drops the mode on a
+ *     scripted selection change, so the act is written down as NOT RUN – a finding, not a FAIL
+ *     of the product (run 36175414202); the sentence case is pinned in
+ *     `readAloudSelectionStart.test.ts`.
  *  C. THE WORD (dark): act A again under the dark scheme, for the design record.
  *
  * Without a speech engine (a build's image without one) the host's availability is overridden
@@ -159,9 +161,11 @@ class ReadAloudSelectionDemo : DemoHarness("read-aloud-selection-demo-state.json
 
     /**
      * The long press, then the live selection extended by script to the paragraph's second
-     * sentence with the mode up (the WebView keeps one mode across selection changes and
-     * re-lists the items: `TabWebView.SelectionActionMode`); the touch on Listen hands the engine
-     * that sentence first.
+     * sentence – and the act runs only if the mode survives that change and re-lists the items
+     * (`TabWebView.SelectionActionMode`), in which case the touch on Listen hands the engine that
+     * sentence first. On the recorded image the WebView DROPS the mode on a scripted selection
+     * change, so the act is written down as NOT RUN (a finding, not a FAIL): a test-method limit,
+     * not the product's – the sentence case is pinned in `readAloudSelectionStart.test.ts`.
      */
     private fun fromSentence() {
         finding("\nB. EDGE-12 $TOOLBAR_ITEM from a selected SENTENCE (the selection extended under the live mode)")

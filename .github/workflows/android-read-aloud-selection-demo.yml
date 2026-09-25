@@ -6,8 +6,10 @@ name: Android read aloud from the selection demo
 # Listen (behind the overflow on a phone), and the reading starting AT the selection – the engine
 # handed the selected word itself first, the text only the sentences from the selection on (the
 # heading and the first paragraph not in it), the highlight in the second or third paragraph;
-# then the same from a sentence the selection is extended to; then the word again in dark for
-# the design record. The driver writes `read-aloud-selection-findings.txt` with a PASS or FAIL
+# then an attempt at the same from a sentence the selection is extended to by script, which the
+# recorded image's WebView does not allow (it drops the mode on a scripted selection change) –
+# written down as NOT RUN, not a failure; then the word again in dark for the design record.
+# The driver writes `read-aloud-selection-findings.txt` with a PASS or FAIL
 # per check and fails when any did. Dispatch-only, like the other demos: it takes about five
 # minutes. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
 # file only picks the driver and the demo it runs. The image stays the shared default (Google
