@@ -319,6 +319,16 @@ export class ElectronTabView implements TabView {
   private readonly wc: WebContents
   private host: ElectronWindow | null = null
   private visible = false
+  /**
+   * Whether the engine's view is a child of its window's `contentView`. A view joins the window
+   * the first time it is shown, asked for the keyboard or brought to the front, not when it is
+   * attached: Electron 44 hands a new `WebContentsView` the window's keyboard once its renderer
+   * is up, hidden or not, and a view that is in no window has no keyboard to take (the popup
+   * surface in `window.ts` keeps out of the window the same way). Hidden after being shown, the
+   * view stays in the window (`setVisible(false)`: no re-embedding on the next tab switch), so
+   * the hand-back in the `focus` handler stays as the backstop for that case.
+   */
+  private inWindow = false
   private navigationHint: ViewNavigationHint | null = null
   /**
    * The main-frame certificate the current navigation was refused over (`certificate-error`),
@@ -423,6 +433,9 @@ export class ElectronTabView implements TabView {
       // 44 gives a new WebContentsView the keyboard once its renderer is up, hidden or not, so a
       // tab opened in the background (a middle-clicked link, `target=_blank`) would leave the
       // next Ctrl+1..9 or Ctrl+W with a page nobody sees: a hidden widget drops its key events.
+      // A view that has never been shown is kept out of the window for this (`inWindow`); the
+      // hand-back here is the backstop for one hidden after it was shown (`setVisible(false)`
+      // leaves it in the window) and for whatever else gives a hidden view the keyboard.
       // Deferred, and asked again then: the core may activate this very tab meanwhile. Not
       // reported as the page taking the keyboard either (`onFocused`), or the chrome would let
       // go of the control it is typing in over a focus that is handed back a moment later – the
@@ -976,6 +989,11 @@ export class ElectronTabView implements TabView {
 
   focus(): void {
     this.keyboardAsked = true
+    // A tab being activated is focused a frame before the layout shows it, and a view in no
+    // window has no keyboard to be given (`WebContents.focus` is a no-op there): into the window
+    // first, hidden, and its own `focus` event is the asked-for one.
+    const win = this.win
+    if (win) this.enterWindow(win)
     this.wc.focus()
   }
 
@@ -996,6 +1014,12 @@ export class ElectronTabView implements TabView {
 
   // --- placement ---------------------------------------------------------------
 
+  /**
+   * Make the view the window's: it joins the window's `contentView` when it is first shown
+   * (`setVisible`), asked for the keyboard (`focus`) or brought to the front, not here – see
+   * `inWindow`. A view attached while shown (a page moving between windows keeps its state)
+   * joins at once.
+   */
   attachTo(host: WindowHost): void {
     const target = host as ElectronWindow
     if (this.host === target) return
@@ -1004,13 +1028,21 @@ export class ElectronTabView implements TabView {
     const win = this.win
     if (!win) return
     this.owner.watchKeyboard(win)
-    win.contentView.addChildView(this.view)
+    if (this.visible) this.enterWindow(win)
   }
 
   detach(): void {
     const win = this.win
-    if (win) win.contentView.removeChildView(this.view)
+    if (win && this.inWindow) win.contentView.removeChildView(this.view)
+    this.inWindow = false
     this.host = null
+  }
+
+  /** Into the window's `contentView` (on top), once; a view already there is left where it is. */
+  private enterWindow(win: BrowserWindow): void {
+    if (this.inWindow) return
+    win.contentView.addChildView(this.view)
+    this.inWindow = true
   }
 
   setBounds(rect: Rect): void {
@@ -1030,6 +1062,12 @@ export class ElectronTabView implements TabView {
   setVisible(visible: boolean): void {
     const flipped = this.visible !== visible
     this.visible = visible
+    if (visible) {
+      // The first showing puts the view into the window, at the box the layout gave it just
+      // before (`setBounds`), as the popup surface is placed: added, then shown.
+      const win = this.win
+      if (win) this.enterWindow(win)
+    }
     this.view.setVisible(visible)
     if (flipped) this.owner.visibilityChanged(this)
   }
@@ -1039,9 +1077,12 @@ export class ElectronTabView implements TabView {
   }
 
   bringToFront(): void {
-    // Re-adding moves the view to the top of the z-order.
+    // Re-adding moves the view to the top of the z-order; a view not in the window yet (a tab
+    // glanced at or made fullscreen before it was ever shown) joins there.
     const win = this.win
-    if (win) win.contentView.addChildView(this.view)
+    if (!win) return
+    win.contentView.addChildView(this.view)
+    this.inWindow = true
   }
 
   // --- page operations -----------------------------------------------------------

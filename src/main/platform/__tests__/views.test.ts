@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import type { WebPreferences } from 'electron'
 import type { Tab } from '../../../shared/types'
 import type {
   AgentInputEvent,
@@ -270,13 +271,18 @@ class FakeChrome extends EventEmitter {
   }
 }
 
-/** A BrowserWindow as `attachTo` sees it: its chrome page, its `contentView`, its focus. */
+/**
+ * A BrowserWindow as `attachTo` sees it: its chrome page, its `contentView`, its focus. Adding a
+ * child again moves it to the top of the z-order, as Electron's `addChildView` does.
+ */
 class FakeBrowserWindow extends EventEmitter {
   focused = true
   readonly children: unknown[] = []
   readonly contentView = {
     children: this.children,
     addChildView: (view: unknown): void => {
+      const at = this.children.indexOf(view)
+      if (at >= 0) this.children.splice(at, 1)
       this.children.push(view)
     },
     removeChildView: (view: unknown): void => {
@@ -747,6 +753,160 @@ describe('a hidden tab page and the keyboard', () => {
       expect(focused()).toBe(1)
       expect(keyboard.current).toBe(pageOf(view))
     })
+  })
+})
+
+/**
+ * The cause of the hidden page's keyboard: Electron 44 gives a `WebContentsView` in a window the
+ * window's keyboard once its renderer is up, shown or not. A view is kept out of the window –
+ * not a child of its `contentView` – until the layout first shows it, the core asks for its
+ * keyboard or brings it to the front; out of the window there is no keyboard to take, and the
+ * hand-back above stays as the backstop for a view hidden after it was shown.
+ */
+describe('a hidden tab page and the window', () => {
+  type Page = { focusCalls: number; emit(event: string): unknown }
+  const pageOf = (view: ElectronTabView): Page => view.webContents as unknown as Page
+  const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
+  const box = { x: 0, y: 40, width: 800, height: 560 }
+  const setup = (): {
+    host: ElectronTabViewHost
+    window: ReturnType<typeof fakeWindow>
+    inWindow: (view: ElectronTabView, window?: ReturnType<typeof fakeWindow>) => boolean
+    create: (window?: ReturnType<typeof fakeWindow>) => ElectronTabView
+  } => {
+    keyboard.current = null
+    const host = new ElectronTabViewHost(sessions)
+    const window = fakeWindow()
+    let n = 0
+    const create = (target = window): ElectronTabView =>
+      host.createView(
+        { id: `tab_win${++n}`, containerId: 'default' } as Tab,
+        noEvents,
+        target
+      ) as ElectronTabView
+    const inWindow = (view: ElectronTabView, target = window): boolean =>
+      target.win.children.includes(view.view)
+    return { host, window, inWindow, create }
+  }
+
+  it('is made outside the window, hidden: a tab opened in the background has no keyboard to take', () => {
+    const { window, inWindow, create } = setup()
+    const view = create()
+    expect(inWindow(view)).toBe(false)
+    expect(window.win.children).toEqual([])
+    expect(view.isVisible()).toBe(false)
+    // Attached all the same: the window's chrome is followed for the keyboard from here.
+    expect(window.chrome.listenerCount('blur')).toBe(1)
+  })
+
+  it('joins the window the first time the layout shows it, at the box it was given', () => {
+    const { inWindow, create } = setup()
+    const view = create()
+    view.setBounds(box)
+    expect(inWindow(view)).toBe(false)
+    view.setVisible(true)
+    expect(inWindow(view)).toBe(true)
+    expect(view.view.getVisible()).toBe(true)
+    expect((view.view as unknown as { bounds: unknown }).bounds).toEqual(box)
+  })
+
+  it('stays out of the window while hidden, and in it once hidden after being shown', () => {
+    const { window, inWindow, create } = setup()
+    const view = create()
+    view.setVisible(false)
+    view.setVisible(false)
+    expect(inWindow(view)).toBe(false)
+    view.setVisible(true)
+    view.setVisible(false)
+    // Hidden the way a tab switch hides a page: still the window's, shown again without re-entering.
+    expect(inWindow(view)).toBe(true)
+    expect(view.isVisible()).toBe(false)
+    view.setVisible(true)
+    expect(window.win.children).toEqual([view.view])
+  })
+
+  it('joins the window when the core asks for its keyboard (a tab activated a frame before its layout)', async () => {
+    const { window, inWindow, create } = setup()
+    window.chrome.focus()
+    const view = create()
+    view.focus()
+    expect(inWindow(view)).toBe(true)
+    expect(view.isVisible()).toBe(false)
+    expect(keyboard.current).toBe(pageOf(view))
+    await settle()
+    // Its own, asked-for focus: not handed back.
+    expect(keyboard.current).toBe(pageOf(view))
+    expect(window.chrome.focusCalls).toBe(1)
+    view.setBounds(box)
+    view.setVisible(true)
+    expect(window.win.children).toEqual([view.view])
+  })
+
+  it('joins the window when brought to the front (a glance at a page never shown), on top', () => {
+    const { window, inWindow, create } = setup()
+    const shown = create()
+    shown.setVisible(true)
+    const glanced = create()
+    glanced.bringToFront()
+    expect(inWindow(glanced)).toBe(true)
+    expect(window.win.children).toEqual([shown.view, glanced.view])
+    // Shown next, as the glance layout does: no second entry.
+    glanced.setVisible(true)
+    expect(window.win.children).toEqual([shown.view, glanced.view])
+    shown.bringToFront()
+    expect(window.win.children).toEqual([glanced.view, shown.view])
+  })
+
+  it('leaves the window with `detach` – and only what is in it is taken out', () => {
+    const { window, inWindow, create } = setup()
+    const shown = create()
+    shown.setVisible(true)
+    const hidden = create()
+    expect(() => hidden.detach()).not.toThrow()
+    expect(window.win.children).toEqual([shown.view])
+    shown.detach()
+    expect(inWindow(shown)).toBe(false)
+    expect(window.win.children).toEqual([])
+    // Detached: attaching again while still marked shown joins at once.
+    shown.attachTo(window)
+    expect(window.win.children).toEqual([shown.view])
+    shown.destroy()
+    expect(window.win.children).toEqual([])
+  })
+
+  it('moves between windows the way the tab manager moves it: hidden first, in the new window once shown there', () => {
+    const { window, inWindow, create } = setup()
+    const other = fakeWindow()
+    const view = create()
+    view.setVisible(true)
+    expect(inWindow(view)).toBe(true)
+    // `TabManager.claim`: detach, hide, attach to the other window, whose layout shows it.
+    view.detach()
+    view.setVisible(false)
+    view.attachTo(other)
+    expect(window.win.children).toEqual([])
+    expect(inWindow(view, other)).toBe(false)
+    expect(other.chrome.listenerCount('blur')).toBe(1)
+    view.setVisible(true)
+    expect(inWindow(view, other)).toBe(true)
+    // Attaching to the window it is already attached to changes nothing.
+    view.attachTo(other)
+    expect(other.win.children).toEqual([view.view])
+  })
+
+  it('is quiet for a view whose window is gone', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const view = host.createView(
+      { id: 'tab_nowin', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    expect(() => {
+      view.setVisible(true)
+      view.focus()
+      view.bringToFront()
+      view.detach()
+    }).not.toThrow()
   })
 })
 
@@ -1495,6 +1655,60 @@ describe('page fonts (CT-25)', () => {
     ;(nativeTheme as unknown as EventEmitter).emit('updated')
     await settle()
     expect(made.dbg.log).toEqual([])
+  })
+})
+
+/**
+ * A link dropped on a page's content area navigates the page, as Chrome's does (dnd-13): the
+ * preference is Electron's `navigateOnDragDrop`, off by default, and it reaches Blink – a
+ * synthesised (CDP `Input.dispatchDragEvent`) drop is accepted with it on and refused with it
+ * off, though only a real OS drop runs the navigation itself. The W5-11 drive can therefore read
+ * the browser's accept signal and no more; this pins the wiring so it cannot go quietly.
+ */
+describe('page web preferences', () => {
+  const prefsOf = (tabId: string, host = new ElectronTabViewHost(sessions)): WebPreferences => {
+    constructed.length = 0
+    host.createView({ id: tabId, containerId: 'default' } as Tab, noEvents, detachedWindow)
+    return (constructed[0] as { webPreferences: WebPreferences }).webPreferences
+  }
+
+  it('makes every page view with `navigateOnDragDrop` on, the popup’s adopted page included', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    expect(prefsOf('tab_dnd', host).navigateOnDragDrop).toBe(true)
+    // The page Chromium made for a `window.open`, given the tab page preferences on adoption.
+    const opener = host.createView(
+      { id: 'tab_dnd_opener', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    const guest = await guestWebContents()
+    constructed.length = 0
+    host.openTicket(
+      {
+        action: 'window',
+        url: 'https://example.com/',
+        adopt: () => ({
+          tab: { id: 'tab_dnd_popup', containerId: 'default' } as Tab,
+          events: noEvents
+        })
+      },
+      opener,
+      guest,
+      {}
+    )
+    const popup = constructed[0] as { webPreferences: WebPreferences }
+    expect(popup.webPreferences.navigateOnDragDrop).toBe(true)
+  })
+
+  it('keeps the page sandboxed and isolated alongside it: the drop preference never widens the page’s powers', () => {
+    const prefs = prefsOf('tab_dnd_sandbox')
+    expect(prefs).toMatchObject({
+      navigateOnDragDrop: true,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true
+    })
   })
 })
 
