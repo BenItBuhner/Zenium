@@ -62,10 +62,19 @@ import kotlin.math.roundToInt
  * an image's (a planted picture's long-press menu → Share Image…: the picture itself in the
  * preview, Copy image the one chip); the three panels in dark; and a private tab's share, whose
  * panel draws every chip, QR code with them, and which records nothing (where the image's
- * WebView supports private tabs). Findings land in `share-findings.txt`
- * (one PASS or FAIL per claim), the frame sheets in `share-frames-open-{light,dark}.png`; a
- * failed check fails the run. On both branches the recording and the stills (`share-*.png`) are
- * the evidence for the eye.
+ * WebView supports private tabs). The menu's Share… is one motion (§9.38's hand-off,
+ * `lib/shareSeam.ts`): the menu's sheet stands while the host gathers the row and then becomes
+ * the panel's – the probe marks the hand-off and samples the sheets on every frame from the touch
+ * to the panel, so a gap frame (no sheet) or a sheet over a sheet would fail the run – and back
+ * from the panel closes to the page, no menu left under it. A page's `navigator.share` takes the
+ * panel too (Chrome's Web Share goes through its hub): a button planted over the page calls it
+ * under a real touch, the payload is the preview (its text first, the link beneath; a link alone
+ * reads as a page's), the chips are the payload's (Copy and QR code; Copy text alone for a text
+ * alone; never Long screenshot or Print), and the page's promise settles as the panel is
+ * answered – a chip or an app resolves it, back rejects it with `AbortError`. Findings land in
+ * `share-findings.txt` (one PASS or FAIL per claim), the frame sheets in
+ * `share-frames-open-{light,dark,page-light,page-dark}.png`; a failed check fails the run. On
+ * both branches the recording and the stills (`share-*.png`) are the evidence for the eye.
  */
 @RunWith(AndroidJUnit4::class)
 class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
@@ -282,20 +291,25 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             }
         }
 
-        // 9. Back dismisses the panel (the predictive back's commit), and the share is let go.
+        // 9. Back dismisses the panel (the predictive back's commit), and the share is let go. The
+        //    panel stands in the menu's chassis (the seam), and back closes to the page, as Chrome's
+        //    hub closes to the page: no menu is left under it to land on.
         if (reopen("the back check")) {
             SystemClock.sleep(600)
             back()
             expect("back dismisses the panel", awaitTrue(6_000) { !panelUp() })
+            expect("back from the panel closes to the page: the menu's chassis goes with the panel, no sheet left", awaitTrue(6_000) { chromeJs(SHEETS_JS) == "0" })
             SystemClock.sleep(800)
         }
 
         // 10. A selection's share: the panel for the selected text, its link to the highlight
-        //     beneath; then an image's: the panel for the picture. Light here, dark below.
+        //     beneath; then an image's: the panel for the picture; then a page's navigator.share.
+        //     Light here, dark below.
         selectionScene("light")
         imageScene("light")
+        pageShareScene("light")
 
-        // 11. Dark: the same three panels on the dark scheme, the page's open on record too.
+        // 11. Dark: the same panels on the dark scheme, the page's open on record too.
         coreInvoke("settings.update", "{\"colorScheme\":\"dark\"}")
         SystemClock.sleep(2_000)
         val dark = openPanel(frames = "dark")
@@ -309,6 +323,7 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
         }
         selectionScene("dark")
         imageScene("dark")
+        pageShareScene("dark")
         coreInvoke("settings.update", "{\"colorScheme\":\"light\"}")
         SystemClock.sleep(1_500)
 
@@ -511,13 +526,177 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
     }
 
     /** The demo picture in the page (planted once; found again after) and its centre on the screen. */
-    private fun plantImage(web: TabWebView): PointF? {
-        val text = evalJs(web, PLANT_IMAGE_JS) ?: return null
+    private fun plantImage(web: TabWebView): PointF? = plant(web, PLANT_IMAGE_JS)
+
+    /** A script that plants something in the page and answers its centre (device px, WebView-relative): that centre on the screen. */
+    private fun plant(web: TabWebView, script: String): PointF? {
+        val text = evalJs(web, script) ?: return null
         val point = runCatching { JSONObject(text) }.getOrNull() ?: return null
         val origin = IntArray(2)
         instrumentation.runOnMainSync { web.getLocationOnScreen(origin) }
         return PointF(origin[0] + point.getDouble("x").toFloat(), origin[1] + point.getDouble("y").toFloat())
     }
+
+    /**
+     * A page's `navigator.share` below Android 14 (SH-03's page route: a Web Share goes through
+     * Chrome's hub as the menu's share does). A button planted over the page calls `navigator.share`
+     * with the payload the test set out for it – the shim wants a user gesture, so the call rides a
+     * real touch on the button – and the panel comes up on its own chassis (a page's share is not
+     * the menu's: no seam) with the payload as the preview: the text leads, the link is the line
+     * beneath, and no favicon for a text (§9.38's text rule); a link alone reads as the page's,
+     * title over link with the favicon. The chips are the payload's, never the page's: Copy and
+     * QR code for text with a link, Copy text alone for a text alone, Copy link and QR code for a
+     * link alone – no Long screenshot, no Print. The page's promise settles as the panel is
+     * answered, as Chrome's `TargetChosenCallback` settles it: a chip or an app resolves it, back
+     * rejects it with `AbortError`. Light: Copy (the text, then the link on its own line, on the
+     * clipboard) resolves; a text alone dismissed by back rejects. Dark: the share to the fixture
+     * resolves once the app has it (its window reads the text and the link back); a link alone
+     * dismissed by back rejects.
+     */
+    private fun pageShareScene(scheme: String) {
+        finding("== a page's navigator.share ($scheme)")
+        val web = sharePage() ?: run {
+            expect("a page is on screen for its navigator.share ($scheme)", false)
+            return
+        }
+        val up = pageShare(web, payload("title" to PAGE_SHARE_TITLE, "text" to PAGE_SHARE_TEXT, "url" to PAGE_SHARE_URL), frames = "page-$scheme")
+        expect("a page's navigator.share of text and a link opens the share panel ($scheme)", up)
+        if (!up) return
+        awaitPanelRest()
+        shot("14-page-share-panel-$scheme")
+        val title = panelString(TITLE_JS)
+        val url = panelString(URL_JS)
+        val favicon = chromeJs(FAVICON_JS)
+        val chips = panelList(CHIP_KINDS_JS)
+        val chipLabels = panelList(CHIP_LABELS_JS)
+        val apps = panelList(APPS_JS)
+        finding("  preview: first line '$title', second line '$url', favicon slot $favicon; chips $chips reading $chipLabels; apps row $apps")
+        expect("the preview leads with the page's text ($scheme)", title == PAGE_SHARE_TEXT)
+        expect("the page's link is the line beneath ($scheme)", url == PAGE_SHARE_URL)
+        expect("a text's preview has no favicon ($scheme)", favicon == "false")
+        expect("the chips are the payload's: Copy and QR code, no Long screenshot, no Print ($scheme)", chips == listOf("copy", "qr") && chipLabels == listOf(PAGE_COPY_LABEL, QR_LABEL))
+        expect("the apps row stands, More at its end ($scheme)", apps.lastOrNull() == MORE_KIND)
+        expect("the page's promise is pending while the panel stands ($scheme)", pageOutcome(web) == OUTCOME_PENDING)
+        if (scheme == "light") {
+            val copiedAt = SystemClock.uptimeMillis()
+            expect("Copy dismisses the page's panel", tapCell(PAGE_COPY_LABEL))
+            val clip = awaitClipboard(PAGE_SHARE_BODY)
+            finding("  clipboard after Copy: '${clip?.replace("\n", " ⏎ ")}'")
+            expect("Copy puts the text and the link on the clipboard, the link on its own line", clip == PAGE_SHARE_BODY)
+            val outcome = awaitPageOutcome(web)
+            finding("  the page reads its promise: '$outcome'")
+            expect("a chip resolves the page's promise (Chrome's first-party tap calls the target-chosen callback)", outcome == OUTCOME_SHARED)
+            awaitClipboardOverlayGone(copiedAt)
+
+            val textOnly = pageShare(web, payload("text" to PAGE_SHARE_TEXT), frames = null)
+            expect("a page's navigator.share of text alone opens the panel", textOnly)
+            if (textOnly) {
+                awaitPanelRest()
+                shot("15-page-share-text-only")
+                val t = panelString(TITLE_JS)
+                val u = panelString(URL_JS)
+                val c = panelList(CHIP_KINDS_JS)
+                val l = panelList(CHIP_LABELS_JS)
+                finding("  preview: first line '$t', second line '$u'; chips $c reading $l")
+                expect("a text alone leads the preview with nothing beneath", t == PAGE_SHARE_TEXT && u.isEmpty())
+                expect("a text alone gets Copy text and no other chip: no QR code without a link, no Long screenshot", c == listOf("copy") && l == listOf(COPY_TEXT_LABEL))
+                back()
+                expect("back dismisses the page's panel", awaitTrue(6_000) { !panelUp() })
+                val rejected = awaitPageOutcome(web)
+                finding("  the page reads its promise: '$rejected'")
+                expect("a dismissal rejects the page's promise with AbortError (Chrome's cancel)", rejected == OUTCOME_ABORTED)
+            }
+        } else {
+            val fixture = fixtureComponent()
+            expect("the page's share to the app dismisses the panel (dark)", tapTarget(fixture))
+            val received = awaitFixture()
+            finding("  the app received: '${received?.replace("\n", " ⏎ ")}'")
+            expect("the app received the page's text with its link (dark)", received != null && received.contains(PAGE_SHARE_TEXT) && received.contains(PAGE_SHARE_URL))
+            finishFixture()
+            val outcome = awaitPageOutcome(web)
+            finding("  the page reads its promise: '$outcome'")
+            expect("an app resolves the page's promise once it has the share (dark)", outcome == OUTCOME_SHARED)
+
+            val linkOnly = pageShare(web, payload("title" to PAGE_SHARE_TITLE, "url" to PAGE_SHARE_URL), frames = null)
+            expect("a page's navigator.share of a link alone opens the panel (dark)", linkOnly)
+            if (linkOnly) {
+                awaitPanelRest()
+                shot("15-page-share-link-only-dark")
+                val t = panelString(TITLE_JS)
+                val u = panelString(URL_JS)
+                val f = chromeJs(FAVICON_JS)
+                val c = panelList(CHIP_KINDS_JS)
+                val l = panelList(CHIP_LABELS_JS)
+                finding("  preview: first line '$t', second line '$u', favicon slot $f; chips $c reading $l")
+                expect("a link alone reads as a page's: the title over the link, the favicon slot drawn (dark)", t == PAGE_SHARE_TITLE && u == PAGE_SHARE_URL && f == "true")
+                expect("a link alone gets Copy link and QR code, no Long screenshot, no Print (dark)", c == listOf("copy", "qr") && l == listOf(COPY_LABEL, QR_LABEL))
+                back()
+                expect("back dismisses the page's panel (dark)", awaitTrue(6_000) { !panelUp() })
+                val rejected = awaitPageOutcome(web)
+                finding("  the page reads its promise: '$rejected'")
+                expect("a dismissal rejects the page's promise with AbortError (dark)", rejected == OUTCOME_ABORTED)
+            }
+        }
+        SystemClock.sleep(800)
+    }
+
+    /** The page on screen for its share, a panel a failed step left up taken down first; null (with the finding) when no page view is there. */
+    private fun sharePage(): TabWebView? {
+        ensureForeground()
+        if (panelUp()) {
+            back()
+            awaitTrue(6_000) { !panelUp() }
+            SystemClock.sleep(600)
+        }
+        return awaitPageWebView(10_000) ?: run {
+            finding("  no tab WebView on screen for the page's share")
+            null
+        }
+    }
+
+    /**
+     * The page's `navigator.share(payload)`: the payload set out for the planted button, the
+     * probe started, a real touch on the button (the shim's user-gesture rule), and the panel
+     * awaited – its open on a frame sheet when `frames` names it, its numbers to the findings
+     * either way. True when the panel came; a miss records what the page read of its call.
+     */
+    private fun pageShare(web: TabWebView, payload: JSONObject, frames: String?): Boolean {
+        val point = plant(web, PLANT_SHARE_BUTTON_JS) ?: run {
+            finding("  the share button could not be planted in the page")
+            return false
+        }
+        evalJs(web, "window.__zenDemoShare=$payload;window.__zenShareOutcome='';'set'")
+        SystemClock.sleep(400)
+        val burst = if (frames != null) FrameBurst().also { it.start() } else null
+        chromeJs("window.__zenShare&&window.__zenShare.begin()")
+        val touchAt = SystemClock.uptimeMillis()
+        Finger().tap(point.x, point.y)
+        val up = awaitTrue(12_000) { panelUp() }
+        val wall = SystemClock.uptimeMillis() - touchAt
+        if (frames != null && burst != null) {
+            SystemClock.sleep(700)
+            frameSheet(frames, burst.halt(touchAt), "navigator.share → the share panel ($frames), API ${Build.VERSION.SDK_INT}, ${width}x$height")
+        }
+        noteOpen(frames ?: "page again", wall, up)
+        if (!up) finding("  no panel for the page's share; the page reads its call as '${pageOutcome(web)}' (a touch at ${point.x.toInt()},${point.y.toInt()})")
+        return up
+    }
+
+    /** What the page read of its `navigator.share` promise so far: '' before a call, `pending`, `shared`, or `rejected:<name>`. */
+    private fun pageOutcome(web: TabWebView): String = evalJs(web, "String(window.__zenShareOutcome||'')").orEmpty()
+
+    /** [pageOutcome] once the promise has settled (or the time is up: the pending word then). */
+    private fun awaitPageOutcome(web: TabWebView, timeoutMs: Long = 8_000): String {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var outcome = pageOutcome(web)
+        while ((outcome == OUTCOME_PENDING || outcome.isEmpty()) && SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(200)
+            outcome = pageOutcome(web)
+        }
+        return outcome
+    }
+
+    private fun payload(vararg fields: Pair<String, String>): JSONObject = JSONObject().also { for ((key, value) in fields) it.put(key, value) }
 
     /**
      * A private tab on the page, its share to the fixture: the panel is the public tab's panel –
@@ -604,8 +783,35 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
             SystemClock.sleep(700)
             frameSheet(frames, burst.halt(touchAt), "Share… → the share panel ($frames), API ${Build.VERSION.SDK_INT}, ${width}x$height")
         }
-        noteOpen(frames ?: "again", wall, up)
+        val record = noteOpen(frames ?: "again", wall, up)
+        if (frames != null && up) expectSeam(frames, record)
         return up
+    }
+
+    /**
+     * The seam's evidence in the probe's record of a recorded open (§9.38's hand-off,
+     * `lib/shareSeam.ts`): the menu's sheet was handed to the panel, not left first – the hand-off
+     * marked (`.zen-share-seam` in the menu's sheet), no menu sheet removed and no second panel
+     * sheet mounted on the way – there was one sheet on every frame sampled from the touch to the
+     * panel (no gap frame between the sheets, no sheet over a sheet), and the outgoing rows'
+     * inert copy left after its fade (the §11 leave; on the emulator's clock, so its length is a
+     * finding, its order the check).
+     */
+    private fun expectSeam(scene: String, record: JSONObject?) {
+        val first = record?.let { firstMarks(it) }.orEmpty()
+        val hosting = first[MARK_SEAM_HOSTING]
+        val faded = first[MARK_SEAM_FADED]
+        val menuGone = first[MARK_MENU_GONE]
+        val mounted = first[MARK_PANEL_MOUNTED]
+        val sheets = sheetsPerFrame(record)
+        finding(
+            "  the seam ($scene): hand-off ${if (hosting != null) "marked" else "not marked"}, menu sheet ${if (menuGone != null) "removed" else "kept"}, " +
+                "a panel sheet of its own ${if (mounted != null) "mounted" else "not mounted"}, the rows' fade ${if (faded != null && hosting != null) "done ${(faded - hosting).roundToInt()} ms after the hand-off" else "not marked"}; " +
+                "${sheets.size} frames sampled, sheets per frame ${sheets.minOrNull() ?: "-"}..${sheets.maxOrNull() ?: "-"}"
+        )
+        expect("the menu's sheet is handed to the panel, not left first: the hand-off marked, no menu sheet removed, no second sheet mounted ($scene)", hosting != null && menuGone == null && mounted == null)
+        expect("one sheet on every frame from the touch to the panel: no gap frame between the sheets, no sheet over a sheet ($scene)", sheets.isNotEmpty() && sheets.all { it == 1 })
+        expect("the outgoing rows fade and leave after the hand-off ($scene)", hosting != null && faded != null && faded >= hosting)
     }
 
     /** [openPanel] for a step, with the finding when it could not. */
@@ -737,52 +943,79 @@ class ShareDemo : DemoHarness("share-demo-state.json", "share", "share-demo") {
 
     /**
      * The probe in the chrome (test-only): long tasks (`PerformanceObserver`, 50 ms and over), the
-     * tap's `pointerup` and the moment the panel's sheet is mounted (a MutationObserver on the
-     * body), all on the chrome's clock. Reads nothing that forces a style pass; nothing is
-     * written into the product.
+     * tap's `pointerup`, and the marks of the panel's coming (a MutationObserver on the body) –
+     * a panel sheet of its own mounted (a page's share), the menu's sheet handed over to the panel
+     * (the seam's `.zen-share-seam` drawn in it), its outgoing rows' copy removed at the fade's end,
+     * a menu sheet removed – and, from `begin()` to `end()`, a count of the sheets in the DOM on
+     * every animation frame (a gap frame between the sheets would read 0, a sheet over a sheet 2),
+     * all on the chrome's clock. Reads nothing that forces a style pass; nothing is written into
+     * the product.
      */
     private fun installProbe() {
         chromeJs(
-            """(function(){if(window.__zenShare)return;var P=window.__zenShare={long:[],marks:[],from:0};
+            """(function(){if(window.__zenShare)return;var P=window.__zenShare={long:[],marks:[],frames:[],from:0,raf:0};
 try{new PerformanceObserver(function(l){l.getEntries().forEach(function(e){P.long.push({t:e.startTime,d:e.duration})})}).observe({type:'longtask'})}catch(_){}
-function isPanel(n){return n.matches('.zen-share-panel')||!!n.querySelector('.zen-share-panel')}
-function isSheet(n){return n.matches('.zen-sheet')||!!n.querySelector('.zen-sheet')}
-try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes;for(var j=0;j<a.length;j++){var n=a[j];if(n.nodeType===1&&isPanel(n))P.marks.push({t:performance.now(),n:'panel-mounted'})}
-var r=ms[i].removedNodes;for(var k=0;k<r.length;k++){var m=r[k];if(m.nodeType===1&&isSheet(m)&&!isPanel(m))P.marks.push({t:performance.now(),n:'menu-gone'})}}}).observe(document.body,{childList:true,subtree:true})}catch(_){}
-document.addEventListener('pointerup',function(){P.marks.push({t:performance.now(),n:'pointerup'})},{capture:true,passive:true});
-P.begin=function(){P.long=[];P.marks=[];P.from=performance.now()};
-P.end=function(){var ms=P.marks.slice();try{performance.getEntriesByType('mark').forEach(function(e){if(e.startTime>=P.from&&(e.name==='share.panel'||e.name==='share.panel.set'))ms.push({t:e.startTime,n:e.name})})}catch(_){}
-ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:ms})}})()"""
+function has(n,s){return n.matches(s)||!!n.querySelector(s)}
+function mark(n){P.marks.push({t:performance.now(),n:n})}
+try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes;for(var j=0;j<a.length;j++){var n=a[j];if(n.nodeType!==1)continue;if(has(n,'.zen-share-panel'))mark('$MARK_PANEL_MOUNTED');if(has(n,'.zen-share-seam'))mark('$MARK_SEAM_HOSTING')}
+var r=ms[i].removedNodes;for(var k=0;k<r.length;k++){var m=r[k];if(m.nodeType!==1)continue;if(has(m,'.zen-sheet')&&!has(m,'.zen-share-panel'))mark('$MARK_MENU_GONE');if(has(m,'.zen-share-seam-out'))mark('$MARK_SEAM_FADED')}}}).observe(document.body,{childList:true,subtree:true})}catch(_){}
+document.addEventListener('pointerup',function(){mark('pointerup')},{capture:true,passive:true});
+function sample(){if(!P.raf)return;var t=performance.now();P.frames.push({t:t,s:document.querySelectorAll('.zen-sheet').length,p:!!document.querySelector('.zen-share-panel'),o:!!document.querySelector('.zen-share-seam-out')});
+if(t-P.from<$PROBE_FRAMES_MS&&P.frames.length<$PROBE_FRAMES_MAX)P.raf=requestAnimationFrame(sample);else P.raf=0}
+P.begin=function(){P.long=[];P.marks=[];P.frames=[];P.from=performance.now();if(P.raf)cancelAnimationFrame(P.raf);P.raf=requestAnimationFrame(sample)};
+P.end=function(){if(P.raf){cancelAnimationFrame(P.raf);P.raf=0}var ms=P.marks.slice();try{performance.getEntriesByType('mark').forEach(function(e){if(e.startTime>=P.from&&(e.name==='share.panel'||e.name==='share.panel.set'))ms.push({t:e.startTime,n:e.name})})}catch(_){}
+ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({from:P.from,long:P.long,marks:ms,frames:P.frames})}})()"""
         )
     }
 
-    /**
-     * The open's numbers into the findings: the wall time, and on the chrome's clock from the
-     * tap's pointerup the marks on the way – the menu sheet's leave done (its DOM gone), the
-     * host's request in (`share.panel`, `openSharePanel`), the sheet asked for once the page's
-     * cover is captured (`share.panel.set`), the panel's DOM mounted – with the long tasks from
-     * the tap and those within the panel's own open (the request in to the mount), which is the
-     * panel's number: what comes before it is the menu's leave, the core's and the host's.
-     */
-    private fun noteOpen(scene: String, wallMs: Long, up: Boolean) {
-        val raw = panelString("window.__zenShare?window.__zenShare.end():''")
-        val json = runCatching { JSONObject(raw) }.getOrNull()
-        if (json == null) {
-            finding("  open ($scene): ${if (up) "$wallMs ms from the touch to the panel (wall)" else "no panel within $wallMs ms"}; no probe record")
-            return
-        }
+    /** The first time each mark was set in a probe record, by name. */
+    private fun firstMarks(record: JSONObject): Map<String, Double> {
         val first = HashMap<String, Double>()
-        val marks = json.optJSONArray("marks") ?: JSONArray()
+        val marks = record.optJSONArray("marks") ?: JSONArray()
         for (i in 0 until marks.length()) {
             val mark = marks.getJSONObject(i)
             val name = mark.optString("n")
             if (!first.containsKey(name)) first[name] = mark.optDouble("t")
         }
+        return first
+    }
+
+    /** The sheets in the DOM on each frame the probe sampled, in order. */
+    private fun sheetsPerFrame(record: JSONObject?): List<Int> {
+        val frames = record?.optJSONArray("frames") ?: return emptyList()
+        return (0 until frames.length()).map { frames.getJSONObject(it).optInt("s") }
+    }
+
+    /**
+     * The open's numbers into the findings: the wall time, and on the chrome's clock – from the
+     * tap's pointerup, or from the probe's start for a touch that landed on the page and left
+     * no mark in the chrome – the marks on the way: the host's request in (`share.panel`,
+     * `openSharePanel`), the sheet asked for (`share.panel.set`; once the page's cover is
+     * captured, or at once for the menu's chassis, which covers the page already), the panel
+     * shown – the menu's sheet handed over to it (the seam) or a sheet of the panel's own mounted
+     * (a page's share) – and the outgoing rows' fade done; the frames sampled with the sheets on
+     * each; with the long tasks from the tap and those within the panel's own open (the request
+     * in to the panel shown), which is the panel's number: what comes before it is the core's and
+     * the host's. The record, for the seam's checks; null without one.
+     */
+    private fun noteOpen(scene: String, wallMs: Long, up: Boolean): JSONObject? {
+        val raw = panelString("window.__zenShare?window.__zenShare.end():''")
+        val json = runCatching { JSONObject(raw) }.getOrNull()
+        if (json == null) {
+            finding("  open ($scene): ${if (up) "$wallMs ms from the touch to the panel (wall)" else "no panel within $wallMs ms"}; no probe record")
+            return null
+        }
+        val first = firstMarks(json)
         val tap = first["pointerup"]
-        val menuGone = first["menu-gone"]
+        val origin = tap ?: json.optDouble("from").takeIf { !it.isNaN() }
+        val originWord = if (tap != null) "the tap's pointerup" else "the probe's start (a touch on the page leaves no mark in the chrome)"
+        val menuGone = first[MARK_MENU_GONE]
         val request = first["share.panel"]
         val asked = first["share.panel.set"]
-        val mounted = first["panel-mounted"]
+        val hosting = first[MARK_SEAM_HOSTING]
+        val faded = first[MARK_SEAM_FADED]
+        val mounted = first[MARK_PANEL_MOUNTED]
+        val shown = hosting ?: mounted
         val long = json.optJSONArray("long") ?: JSONArray()
         var count = 0
         var longest = 0.0
@@ -795,27 +1028,33 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
             val at = entry.optDouble("t")
             val duration = entry.optDouble("d")
             // The tasks from the tap on (a task the tap landed in counts).
-            if (tap == null || at + duration >= tap) {
+            if (origin == null || at + duration >= origin) {
                 count++
                 total += duration
                 longest = max(longest, duration)
             }
             // The tasks within the panel's own open (one that runs into it counts).
-            if (request != null && mounted != null && at + duration >= request && at <= mounted) {
+            if (request != null && shown != null && at + duration >= request && at <= shown) {
                 ownCount++
                 ownTotal += duration
                 ownLongest = max(ownLongest, duration)
             }
         }
-        val since = { at: Double? -> if (tap != null && at != null) "+${(at - tap).roundToInt()} ms" else "no mark" }
-        val own = if (request != null && mounted != null) "${(mounted - request).roundToInt()} ms" else "no reading"
+        val since = { at: Double? -> if (origin != null && at != null) "+${(at - origin).roundToInt()} ms" else "no mark" }
+        val own = if (request != null && shown != null) "${(shown - request).roundToInt()} ms" else "no reading"
+        val sheets = sheetsPerFrame(json)
+        val way = when {
+            hosting != null -> "the menu's sheet handed over to the panel at ${since(hosting)} (the seam), its rows' fade done at ${since(faded)}"
+            else -> "a sheet of the panel's own mounted at ${since(mounted)}"
+        } + if (menuGone != null) ", a menu sheet gone at ${since(menuGone)}" else ""
         finding(
             "  open ($scene): ${if (up) "$wallMs ms from the touch to the panel (wall)" else "no panel within $wallMs ms"}; " +
-                "on the chrome's clock from the tap's pointerup: the menu sheet gone at ${since(menuGone)}, the host's request in at ${since(request)}, " +
-                "the sheet asked for at ${since(asked)}, the panel mounted at ${since(mounted)}; " +
-                "the panel's own open (request to mount): $own, long tasks in it: $ownCount (longest ${ownLongest.roundToInt()} ms, together ${ownTotal.roundToInt()} ms); " +
-                "long tasks from the tap: $count (longest ${longest.roundToInt()} ms, together ${total.roundToInt()} ms)"
+                "on the chrome's clock from $originWord: the host's request in at ${since(request)}, the sheet asked for at ${since(asked)}, $way; " +
+                "${sheets.size} frames sampled, sheets per frame ${sheets.minOrNull() ?: "-"}..${sheets.maxOrNull() ?: "-"}; " +
+                "the panel's own open (request to shown): $own, long tasks in it: $ownCount (longest ${ownLongest.roundToInt()} ms, together ${ownTotal.roundToInt()} ms); " +
+                "long tasks from the touch: $count (longest ${longest.roundToInt()} ms, together ${total.roundToInt()} ms)"
         )
+        return json
     }
 
     /**
@@ -1218,6 +1457,19 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
         private const val PAGE_TITLE = "Example Domain"
         private const val PAGE_URL = "https://example.com/"
 
+        /** What the planted button hands `navigator.share` (the payload, not the page: the preview and the chips are its). */
+        private const val PAGE_SHARE_TITLE = "How the tides work"
+        private const val PAGE_SHARE_TEXT = "Worth a read: the moon does most of it, the sun the rest."
+        private const val PAGE_SHARE_URL = "https://example.com/tides"
+        /** The message as it goes out and as Copy copies it: the text, then the link on its own line (`Share.messageBody`). */
+        private const val PAGE_SHARE_BODY = "$PAGE_SHARE_TEXT\n$PAGE_SHARE_URL"
+        /** The Copy chip's word for a page's text with a link (Chrome's `LINK_AND_TEXT` Copy; `sharePanelChips`). */
+        private const val PAGE_COPY_LABEL = "Copy"
+        /** What the page writes of its promise (`PLANT_SHARE_BUTTON_JS`). */
+        private const val OUTCOME_PENDING = "pending"
+        private const val OUTCOME_SHARED = "shared"
+        private const val OUTCOME_ABORTED = "rejected:AbortError"
+
         // The panel's cells read their captions (`SharePanelSheet`), the code dialog and the
         // editor their own labels (`Share.showQrCode`, `LongScreenshotSheet`); the image menu's
         // row is the core's (`Menus.imageGroup`).
@@ -1292,6 +1544,17 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
             "(function(){var i=document.querySelector('[data-testid=longshot-editor] img');return !!(i&&i.complete&&i.naturalWidth>0)})()"
         private const val EDITOR_HANDLES_JS = "document.querySelector('[data-testid=longshot-handle-top]')!=null"
 
+        /** How many sheets the chrome has up (`.zen-sheet`, the §9.16 chassis): 0 once back has closed to the page. */
+        private const val SHEETS_JS = "document.querySelectorAll('.zen-sheet').length"
+        // The probe's marks (`installProbe`): the panel's coming, one way or the other.
+        private const val MARK_PANEL_MOUNTED = "panel-mounted"
+        private const val MARK_SEAM_HOSTING = "seam-hosting"
+        private const val MARK_SEAM_FADED = "seam-faded"
+        private const val MARK_MENU_GONE = "menu-gone"
+        /** The probe's frame sampler runs this long after `begin()`, or to this many frames. */
+        private const val PROBE_FRAMES_MS = 8_000
+        private const val PROBE_FRAMES_MAX = 600
+
         // The frame bursts: a screenshot as often as the emulator gives one, at most this many, a fifth the size, eight to a row.
         private const val MAX_FRAMES = 24
         private const val FRAME_PERIOD_MS = 60L
@@ -1346,6 +1609,46 @@ ms.sort(function(a,b){return a.t-b.t});return JSON.stringify({long:P.long,marks:
               var dx = vv ? vv.offsetLeft : 0;
               var dy = vv ? vv.offsetTop : 0;
               var r = img.getBoundingClientRect();
+              return JSON.stringify({ x: (r.left + r.width / 2 - dx) * scale, y: (r.top + r.height / 2 - dy) * scale });
+            })()
+        """.trimIndent()
+
+        /**
+         * A button over the page whose click calls `navigator.share` with what the test set out
+         * in `window.__zenDemoShare` – the call rides the touch's click, the user gesture the shim
+         * wants – and writes the promise's course to `window.__zenShareOutcome`: `pending`, then
+         * `shared` or `rejected:<name>` (`threw:<name>` for a call that did not return a promise).
+         * Planted once and found again after; its centre in device pixels relative to the WebView
+         * (CSS px through the visual viewport and the pixel ratio, as PLANT_LINKS_JS).
+         */
+        private val PLANT_SHARE_BUTTON_JS = """
+            (function () {
+              var b = document.getElementById('zen-demo-share');
+              if (!b) {
+                b = document.createElement('button');
+                b.id = 'zen-demo-share';
+                b.type = 'button';
+                b.textContent = 'Share this';
+                b.style.cssText = 'position:fixed;left:50%;top:22%;margin-left:-110px;width:220px;padding:18px 0;border:0;border-radius:14px;' +
+                  'background:#1a73e8;color:#fff;font:600 18px/1.2 system-ui,sans-serif;z-index:2147483647;box-shadow:0 2px 10px rgba(0,0,0,.2)';
+                b.addEventListener('click', function () {
+                  var data = window.__zenDemoShare || {};
+                  window.__zenShareOutcome = 'pending';
+                  try {
+                    var p = navigator.share(data);
+                    p.then(function () { window.__zenShareOutcome = 'shared'; },
+                      function (e) { window.__zenShareOutcome = 'rejected:' + (e && e.name); });
+                  } catch (e) {
+                    window.__zenShareOutcome = 'threw:' + (e && e.name);
+                  }
+                });
+                document.body.appendChild(b);
+              }
+              var vv = window.visualViewport;
+              var scale = (vv ? vv.scale : 1) * (window.devicePixelRatio || 1);
+              var dx = vv ? vv.offsetLeft : 0;
+              var dy = vv ? vv.offsetTop : 0;
+              var r = b.getBoundingClientRect();
               return JSON.stringify({ x: (r.left + r.width / 2 - dx) * scale, y: (r.top + r.height / 2 - dy) * scale });
             })()
         """.trimIndent()
