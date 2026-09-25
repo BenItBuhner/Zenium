@@ -3,11 +3,18 @@ import {
   READER_MUTE_CAP,
   ReaderMuteRecord,
   readerArticleTab,
+  readerOfferEndEffect,
   readerOfferFor,
   readerSiteOf
 } from '../readerEntry'
 
-const article = (url = 'https://example.com/story') => ({ url, readerable: true, discarded: false })
+const article = (
+  url = 'https://example.com/story'
+): { url: string; readerable: boolean; discarded: boolean } => ({
+  url,
+  readerable: true,
+  discarded: false
+})
 
 describe('readerSiteOf', () => {
   it("keys a page by its host, lower-cased, as Chrome's muted-sites set does", () => {
@@ -91,5 +98,22 @@ describe('readerOfferFor', () => {
     expect(readerOfferFor(null, muted)).toBeNull()
     expect(readerOfferFor({ ...article(), readerable: false }, muted)).toBeNull()
     expect(readerOfferFor(article('zen://reader?id=a&url=x'), muted)).toBeNull()
+  })
+})
+
+describe("readerOfferEndEffect (Chrome's onMessageDismissed)", () => {
+  it('mutes on every end but the action: the swipe, the X, a clock, the page left', () => {
+    expect(readerOfferEndEffect({ reason: 'swipe' })).toBe('mute')
+    expect(readerOfferEndEffect({ reason: 'close' })).toBe('mute')
+    expect(readerOfferEndEffect({ reason: 'timeout' })).toBe('mute')
+    expect(readerOfferEndEffect({ reason: 'program', movedOn: true })).toBe('mute')
+  })
+  it('un-mutes on the action', () => {
+    expect(readerOfferEndEffect({ reason: 'action' })).toBe('unmute')
+  })
+  it("changes nothing for the chrome's own ends: a gate over the page, a banner pushed off", () => {
+    expect(readerOfferEndEffect({ reason: 'program', movedOn: false })).toBe('none')
+    expect(readerOfferEndEffect({ reason: 'program' })).toBe('none')
+    expect(readerOfferEndEffect({ reason: 'replaced' })).toBe('none')
   })
 })

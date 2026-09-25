@@ -5,7 +5,9 @@ import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { stageStore } from '@renderer/lib/gestures/stage'
 import { onboardingCovers } from '@renderer/lib/onboarding'
+import { usePrivateTabLocked } from '@renderer/lib/privateLock'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
+import { useReaderEntryMessage } from '@renderer/lib/readerEntryMessage'
 import { activeTab } from '@renderer/lib/selectors'
 import { type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -86,6 +88,11 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   // The window surfaces are on the private theme (blending to it): a private tab is in view, or
   // the overview shows the private pane (§9.29; MOT-14).
   const privateSurface = usePrivateSurface(state)
+
+  // The reader entry's offer (PUI-14) is the phone's strip on this shell's message frame: the
+  // tablet has no toolbar entry of its own for it either (lib/readerEntryMessage.ts).
+  const privateLocked = usePrivateTabLocked(state)
+  useReaderEntryMessage(tab, !onboarding && !htmlFullscreen && !privateLocked)
 
   // Picking a tab in the drawer closes it (the phone's drawer rule); the room for a docked
   // sidebar coming back drops it without motion.

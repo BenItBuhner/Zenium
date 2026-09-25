@@ -68,7 +68,9 @@ export class ReaderMuteRecord {
 }
 
 /** Whether the tab's page is one Reader View could be offered for at all: a web page the probe read as an article. */
-export function readerArticleTab(tab: Pick<Tab, 'url' | 'readerable' | 'discarded'> | null): boolean {
+export function readerArticleTab(
+  tab: Pick<Tab, 'url' | 'readerable' | 'discarded'> | null
+): boolean {
   return (
     tab !== null &&
     tab.readerable &&
@@ -92,4 +94,39 @@ export function readerOfferFor(
   const site = readerSiteOf(tab!.url)
   if (site === null || muted.has(site)) return null
   return { site }
+}
+
+/**
+ * How an offer ended, in the banner host's words (`BannerDismissReason`) plus what the shell
+ * knows of a `program` end: `movedOn` says the page was left – a navigation, another tab in
+ * front, the tab closed – while the offer stood, as against a gate closing over it (a page's
+ * fullscreen, the private lock, onboarding), which is no answer.
+ */
+export interface ReaderOfferEnd {
+  reason: 'action' | 'swipe' | 'close' | 'timeout' | 'replaced' | 'program'
+  movedOn?: boolean
+}
+
+/**
+ * What an offer's end does to the site's mute: Chrome's `onMessageDismissed` mutes the host on
+ * EVERY dismissal but the primary action – the gesture, the timer, the scope destroyed by a
+ * navigation or the tab's going – and the action un-mutes it (`removeUrlFromMutedSites`). Here
+ * the same, read through the §9.33 host's reasons: the swipe, the X and a clock (this banner
+ * has none) mute; the action un-mutes; a `program` end mutes when the page was left with the
+ * offer standing and not when a gate closed over it; `replaced` – a third banner pushing this
+ * one off the stack – is the chrome's doing, not the user's, and changes nothing.
+ */
+export function readerOfferEndEffect(end: ReaderOfferEnd): 'mute' | 'unmute' | 'none' {
+  switch (end.reason) {
+    case 'action':
+      return 'unmute'
+    case 'swipe':
+    case 'close':
+    case 'timeout':
+      return 'mute'
+    case 'program':
+      return end.movedOn ? 'mute' : 'none'
+    case 'replaced':
+      return 'none'
+  }
 }
