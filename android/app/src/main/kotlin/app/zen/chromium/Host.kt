@@ -602,8 +602,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (exit != null) Log.w(TAG, "renderer exit: $exit (first report from ${tab.tabId})")
         // Whatever the prompt was about is over with the renderer.
         endUnresponsivePrompt()
+        // So is a picture-in-picture window showing the page (Chrome's CRASH).
+        media.onRendererGone(tab.tabId)
         return rendererExits.peek(tab.tabId)?.let { json("reason" to it.reason, "repeat" to it.repeat) }
     }
+
+    // A new document in the tab, or the tab going: a picture-in-picture window showing it ends (MOT-30, MediaSessions.kt).
+    override fun documentStarted(tab: TabWebView) = media.onDocumentStarted(tab.tabId)
+    override fun tabRemoved(tab: TabWebView) = media.onTabRemoved(tab.tabId)
 
     override fun watchRenderer(view: WebView) {
         val client = rendererClient ?: return
@@ -1442,8 +1448,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (fullscreenVideoTab === tab) clearFullscreenVideo()
         hintCue.exited(tab.tabId)
         if (!immersive) setSystemBarsHidden(false)
-        // Out of fullscreen while the window is the small one: the tab's own view takes it over.
-        if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
+        // Out of fullscreen while the window is the small one: the tab's own view takes it over,
+        // and a window that came in from this fullscreen ends, as Chrome's does (MOT-30).
+        media.onFullscreenExited(tab)
         // A hint standing over the page (the exit hint, GN-20 / MED-03) leaves with the fullscreen.
         tab.postToPage(json("type" to "hint", "hint" to null).toString())
         // The bars are on their way back: said before the exit itself, so the chrome's return
@@ -2207,6 +2214,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // core now brings it back itself (its layout, once the lock is off), or asks it hidden as
         // the lock cover is up – then it is the core's to bring back, not the release's.
         if (privateLock.forget(tabId)) refreshGuard()
+        // Another tab coming on screen under the picture-in-picture window ends it (Chrome's NEW_TAB).
+        if (visible) media.onTabShown(tabId)
         val ticket = pageVisibility.request(tabId, visible) ?: return
         // What covers the page is up in the chrome already: out of a screen reader's tree from
         // the ask, not from the frame the hide waits for (A11Y-03, [TabHost.hideRequested]).

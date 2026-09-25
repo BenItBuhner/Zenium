@@ -63,8 +63,13 @@ import java.util.concurrent.Executor
  * playing fullscreen ([PictureInPictureParams.Builder.setAutoEnterEnabled]), on Android 8-11
  * [onUserLeaveHint] asks the same. The mode changes come back through
  * [onPictureInPictureModeChanged], which reports `media.pip` to the core (whose page lays the
- * video over the viewport for the small window) and pauses the video when the window was closed
- * rather than expanded, as Chrome's does.
+ * video over the viewport for the small window); a window closed with its X rather than
+ * expanded pauses the video and takes the tab out of fullscreen, as Chrome's does. The window
+ * also ends by itself, as Chrome's controller ends its own (`FullscreenVideoPictureInPicture
+ * Controller.dismissActivityIfNeeded`, [PictureInPictureRule]): when its tab closes, its
+ * renderer goes, another tab comes on screen under it, the fullscreen it came from is left, or
+ * a new document starts in its tab – the task goes to the back ([endPictureInPicture]) and the
+ * system's answer is the close above.
  *
  * A session that is not a page's – a chrome player's, `source: "chrome"` (the read-aloud
  * player, registered with the core's `registerSource`) – shows and behaves like a page's audio:
@@ -87,11 +92,17 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     private var artworkUrl: String? = null
     private var destroyed = false
 
-    /** The tab whose page the window shows as picture-in-picture, once the system said it does. */
-    var pictureInPictureTab: String? = null
+    /** The window as picture-in-picture – whose tab, which way in – once the system said it is; null otherwise. */
+    var pictureInPictureWindow: PictureInPictureRule.Window? = null
         private set
+    /** The tab whose page the window shows as picture-in-picture, once the system said it does. */
+    val pictureInPictureTab: String? get() = pictureInPictureWindow?.tabId
+    /** When the window went small (`elapsedRealtime`), for Chrome's exit delay ([PictureInPictureRule.exitDelayMs]). */
+    private var pictureInPictureEnteredAt = 0L
     /** The tab a `media.pip` (or an auto-enter) asked the window into picture-in-picture for, until the system answers. */
     private var pictureInPictureRequested: String? = null
+    /** Why the host is ending the window itself ([endPictureInPicture]), for the `media.pip` the system's answer reports. */
+    private var pictureInPictureEnding: PictureInPictureRule.End? = null
 
     /** Whether this device has picture-in-picture at all (Android TV and some Go devices do not). */
     val pictureInPictureSupported: Boolean =
@@ -365,29 +376,112 @@ class MediaSessions(private val host: Host, private val io: Executor) {
      * In: the tab's view alone fills the small window (unless its video is fullscreen already,
      * whose view fills it as it is) and the core hears `media.pip`, whose page lays the video
      * over the viewport. Out: the view goes back to where the chrome puts it, and the core hears
-     * the same; a window closed with its X rather than expanded – the activity is stopping – also
-     * pauses the video, as Chrome does.
+     * the same – with `dismissed` for a window closed with its X rather than expanded (the
+     * activity is stopping), and `reason` when the host ended it itself ([endPictureInPicture]).
+     * Expanded, the page resumes as it was, a fullscreen video still fullscreen; closed, the
+     * video pauses and the tab's element leaves fullscreen, as Chrome's does
+     * ([PictureInPictureRule.onLeft]) – the tab the user comes back to is the page, not a paused
+     * video filling the screen.
      */
     fun onPictureInPictureModeChanged(active: Boolean) {
         if (active) {
             val tabId = pictureInPictureRequested ?: current?.tabId ?: return
             pictureInPictureRequested = null
-            pictureInPictureTab = tabId
+            pictureInPictureWindow = PictureInPictureRule.Window(tabId, PictureInPictureRule.entryOf(tabId, host.fullscreenTab?.tabId))
+            pictureInPictureEnteredAt = SystemClock.elapsedRealtime()
+            pictureInPictureEnding = null
             if (host.fullscreenTab?.tabId != tabId) host.tabs.fillWindow(tabId)
             host.hostEvent("media.pip", json("tabId" to tabId, "active" to true))
+            // A tab closed between the ask and the system's answer: the window has nothing to show.
+            if (host.tabs.get(tabId) == null) endPictureInPicture(PictureInPictureRule.End.TAB_CLOSED)
             return
         }
         pictureInPictureRequested = null
-        val tabId = pictureInPictureTab ?: return
-        pictureInPictureTab = null
+        val window = pictureInPictureWindow ?: return
+        val ending = pictureInPictureEnding
+        pictureInPictureWindow = null
+        pictureInPictureEnding = null
         host.tabs.fillWindow(null)
-        val dismissed = !activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-        host.hostEvent("media.pip", json("tabId" to tabId, "active" to false, "dismissed" to dismissed))
-        if (dismissed && current?.tabId == tabId && current?.playing == true) act(MediaControl.PAUSE)
+        val tabId = window.tabId
+        // A window the host ended goes with its task, whichever state the callback finds the activity in.
+        val exit = PictureInPictureRule.onLeft(
+            resumed = ending == null && activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+            playing = current?.tabId == tabId && current?.playing == true,
+            fullscreen = host.fullscreenTab?.tabId == tabId
+        )
+        val event = json("tabId" to tabId, "active" to false, "dismissed" to exit.dismissed)
+        if (ending != null) event.put("reason", ending.reason)
+        host.hostEvent("media.pip", event)
+        if (exit.pause) act(MediaControl.PAUSE)
+        if (exit.exitFullscreen) host.tabs.get(tabId)?.let(host::exitFullscreen)
     }
 
     /** A page's element went fullscreen or came back ([Host.enterFullscreen] / [Host.exitFullscreen]): the auto-enter rule follows. */
     fun onFullscreenChanged() = updatePictureInPictureParams()
+
+    // --- the window's endings by themselves (Chrome's dismissals, PictureInPictureRule) ---------
+
+    /** `tabId`'s view is being torn down ([TabHost.destroy]): a window showing it ends. */
+    fun onTabRemoved(tabId: String) {
+        PictureInPictureRule.onTabRemoved(pictureInPictureWindow, tabId)?.let(::endPictureInPicture)
+    }
+
+    /** `tabId`'s renderer is gone ([Host.rendererGone]): a window showing it ends. */
+    fun onRendererGone(tabId: String) {
+        PictureInPictureRule.onRendererGone(pictureInPictureWindow, tabId)?.let(::endPictureInPicture)
+    }
+
+    /** The core brings `tabId`'s view on screen ([Host.setTabVisible]): a window showing another tab ends. */
+    fun onTabShown(tabId: String) {
+        PictureInPictureRule.onActiveTabChanged(pictureInPictureWindow, tabId)?.let(::endPictureInPicture)
+    }
+
+    /** `tab`'s main frame started a new document ([Host.documentStarted]): a window showing it ends. */
+    fun onDocumentStarted(tabId: String) {
+        PictureInPictureRule.onDocumentStarted(pictureInPictureWindow, tabId)?.let(::endPictureInPicture)
+    }
+
+    /**
+     * `tab`'s element left fullscreen ([Host.exitFullscreen]) while the window is the small one.
+     * The tab's own view takes the window over from the layer that is gone either way – so the
+     * frames until the system answers show the page, not the chrome – and a window that came in
+     * from that fullscreen ends (Chrome's LEFT_FULLSCREEN); an inline video's window stays, out
+     * of a fullscreen the page went into around it.
+     */
+    fun onFullscreenExited(tab: TabWebView) {
+        val window = pictureInPictureWindow?.takeIf { it.tabId == tab.tabId } ?: return
+        if (host.tabs.get(tab.tabId) != null) host.tabs.fillWindow(tab.tabId)
+        PictureInPictureRule.onFullscreenExited(window, tab.tabId)?.let(::endPictureInPicture)
+    }
+
+    /**
+     * End the window as Chrome's controller does (`dismissActivityIfNeeded`): the task goes to
+     * the back, the system takes the small window down, and its answer comes through
+     * [onPictureInPictureModeChanged] as a close – the video pauses, the fullscreen exits – with
+     * `end` as the `media.pip`'s `reason`. Within Chrome's exit delay of the entry the end waits
+     * it out ([PictureInPictureRule.exitDelayMs]): the system is still animating the window in.
+     * A window the system has already taken down (the states drifted) only drops the record.
+     */
+    private fun endPictureInPicture(end: PictureInPictureRule.End) {
+        val window = pictureInPictureWindow ?: return
+        // Already on its way out (every view of a gone renderer reports, then the rebuild drops them all).
+        if (destroyed || pictureInPictureEnding != null) return
+        if (!activity.isInPictureInPictureMode) {
+            Log.w(TAG, "picture-in-picture record for ${window.tabId} without the window; dropped ($end)")
+            pictureInPictureWindow = null
+            pictureInPictureEnding = null
+            host.tabs.fillWindow(null)
+            return
+        }
+        val delay = PictureInPictureRule.exitDelayMs(SystemClock.elapsedRealtime(), pictureInPictureEnteredAt)
+        if (delay > 0) {
+            main.postDelayed({ if (pictureInPictureWindow === window) endPictureInPicture(end) }, delay)
+            return
+        }
+        Log.i(TAG, "ending picture-in-picture for ${window.tabId}: $end")
+        pictureInPictureEnding = end
+        runCatching { activity.moveTaskToBack(true) }.onFailure { Log.w(TAG, "moveTaskToBack refused: $it") }
+    }
 
     /**
      * Chrome's rule for going into the small window by itself when the user leaves: a video
@@ -406,11 +500,16 @@ class MediaSessions(private val host: Host, private val io: Executor) {
      * The activity's params, kept current with the session: the auto-enter rule and the window's
      * actions. While a chrome player holds the controls they are those of no session (as after
      * [clear]): no video to frame, and a page's auto-enter from before must not linger and pull
-     * the player's tab into the small window from Home.
+     * the player's tab into the small window from Home. While the window is the small one its
+     * params are its own tab's: a session another tab's audio takes meanwhile (the core resolves
+     * the playing one) neither reshapes the window to its ratio nor hands it buttons for a page
+     * the window does not show – the window keeps the params it has until its tab reports again.
      */
     private fun updatePictureInPictureParams() {
         if (!pictureInPictureSupported || destroyed) return
         val info = current?.takeIf(MediaControls::pictureInPictureEligible)
+        val window = pictureInPictureWindow
+        if (window != null && info?.tabId != window.tabId) return
         runCatching { activity.setPictureInPictureParams(paramsOf(info, autoEnter(info))) }
     }
 

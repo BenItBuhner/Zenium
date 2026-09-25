@@ -154,6 +154,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     /** Tear a view down (already removed from [views]); the chrome is not told. */
     private fun drop(view: TabWebView) {
+        host.tabRemoved(view)
         if (filled?.tabId == view.tabId) filled = null
         host.exitFullscreen(view)
         view.backTransition?.abort()
