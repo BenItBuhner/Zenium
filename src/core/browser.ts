@@ -1033,9 +1033,17 @@ export class Browser {
    * restored, and so is the empty space the user makes later by closing a space's last tab (Zen's
    * "This space is empty" – a matter of design, not of this rule). Windows without a tab strip
    * (a page's sized popup, a web app's window) are their caller's to fill.
+   *
+   * A host without the new tab page (the phone: `newTabPage` off) is left as it was: its fresh
+   * tab would be the blank page, which its chrome draws itself and never places as a page view –
+   * the boot's READY, armed on the active tab, would wait for a placement that never comes and
+   * the splash would hold to the host's watchdog. Its window comes up with no tab, the chrome's
+   * own empty surface in the content area and the first run ending in the omnibox
+   * (`onboarding.complete` → `openNewTab`), exactly as before this rule.
    */
   ensureFirstTab(win: ZenWindow): void {
     if (!win.alive || win.chrome !== 'full') return
+    if (!this.state.capabilities.newTabPage) return
     if (this.tabs.activeTabFor(win)) return
     const space = win.activeSpace()
     const m = this.state.model
