@@ -1,12 +1,13 @@
 import type { Browser } from './browser'
 import { surfaceMounted, type ZenWindow } from './window'
-import type {
-  ChromeContextParams,
-  LinkAppTarget,
-  MenuItemTemplate,
-  MenuSource,
-  PageContextParams,
-  TabView
+import {
+  opensInNewTab,
+  type ChromeContextParams,
+  type LinkAppTarget,
+  type MenuItemTemplate,
+  type MenuSource,
+  type PageContextParams,
+  type TabView
 } from './platform'
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
@@ -3046,7 +3047,9 @@ export class Menus {
    * The tab's back/forward stack, from a long press or right click on the back / forward
    * button: up to ten entries around the current one (forward entries on top, like Firefox),
    * the current entry checked, and "Show Full History". A menu rather than a chrome panel
-   * because on desktop only native popups draw above the page views.
+   * because on desktop only native popups draw above the page views. A row picked with Ctrl
+   * (⌘ on macOS) held opens its entry in a new background tab instead, as Chrome's rows do
+   * (shortcuts-menus-93), this tab unmoved.
    */
   showNavigationMenu(tabId: string, win: ZenWindow): void {
     const { tabs, history } = this.browser
@@ -3061,7 +3064,12 @@ export class Menus {
         type: current ? 'checkbox' : 'normal',
         checked: current || undefined,
         icon: current ? null : history.faviconFor(entry.url),
-        click: current ? undefined : () => tabs.goToIndex(tabId, i)
+        click: current
+          ? undefined
+          : (event) => {
+              if (opensInNewTab(event)) void tabs.openNavigationEntryInNewTab(tabId, i, win)
+              else tabs.goToIndex(tabId, i)
+            }
       })
     }
     this.popup(
@@ -3300,6 +3308,17 @@ export class Menus {
       label: 'New Blank Window',
       action: 'window.newUnsynced',
       click: () => this.browser.openWindow('unsynced', win)
+    })
+    // Duplicate Window (session-19), beside the other window rows of More Tools – the app
+    // menu's top level has no row to spare (#396's 661 on 800 px; the #451 lead check records
+    // More Tools full at 14 rows). Listed after Name Window… – the window's own name first,
+    // then the verb that makes another; the mac Window menu keeps the same order. A popup or
+    // an app window has no tab strip to duplicate: the row is left out, as `when`'s rule has it
+    // (an app window's menu is `showWebAppMenu`'s in any case).
+    const duplicateWindow = when(caps.windows && win.chrome === 'full', {
+      label: 'Duplicate Window',
+      action: 'window.duplicate',
+      click: () => void this.browser.duplicateWindow(win)
     })
     // Chrome's More tools › Name window… (shortcuts-menus-121): the desktop's, whose OS title
     // bar and window switcher read the name; a tablet's one window has neither.
@@ -3780,6 +3799,7 @@ export class Menus {
             ...newSpace,
             ...newBlankWindow,
             ...nameWindow,
+            ...duplicateWindow,
             separator,
             ...compactMode,
             splitView,

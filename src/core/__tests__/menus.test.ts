@@ -476,6 +476,7 @@ const DESKTOP_APP_MENU = [
   'More Tools > New Space…',
   'More Tools > New Blank Window',
   'More Tools > Name Window…',
+  'More Tools > Duplicate Window',
   'More Tools > -',
   'More Tools > Compact Mode',
   'More Tools > Split View',
@@ -874,10 +875,15 @@ describe('the app menu', () => {
   it('carries Chrome’s Name Window… in More Tools with the window rows and asks the chrome for the prompt (shortcuts-menus-121)', () => {
     const h = harness(DESKTOP)
     const menu = appMenu(h)
+    // The window rows: New Blank Window, the one that names this one, then its double – the
+    // group closes after Duplicate Window (the #451 lead check's order).
     expect(menu.indexOf('More Tools > Name Window…')).toBe(
       menu.indexOf('More Tools > New Blank Window') + 1
     )
-    expect(menu[menu.indexOf('More Tools > Name Window…') + 1]).toBe('More Tools > -')
+    expect(menu[menu.indexOf('More Tools > Name Window…') + 1]).toBe(
+      'More Tools > Duplicate Window'
+    )
+    expect(menu[menu.indexOf('More Tools > Duplicate Window') + 1]).toBe('More Tools > -')
     const row = deepItem(h.shown(), 'Name Window…')
     expect(row.action).toBe('window.name')
     // Unbound in both presets, as in Chrome: no chord after the label.
@@ -890,6 +896,48 @@ describe('the app menu', () => {
     const phone = harness(ANDROID, 'phone')
     appMenu(phone)
     expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Name Window…')
+  })
+
+  it('carries Duplicate Window right after Name Window… in More Tools (the name first, then the verb that makes another – the #451 lead check’s order), making a second window on this one’s space; left out for a popup (session-19)', () => {
+    const h = harness(DESKTOP)
+    const menu = appMenu(h)
+    expect(menu.indexOf('More Tools > Duplicate Window')).toBe(
+      menu.indexOf('More Tools > Name Window…') + 1
+    )
+    expect(menu.indexOf('More Tools > Name Window…')).toBe(
+      menu.indexOf('More Tools > New Blank Window') + 1
+    )
+    const row = deepItem(h.shown(), 'Duplicate Window')
+    expect(row.action).toBe('window.duplicate')
+    // Never greyed: the row is there to run or not there at all.
+    expect(row.enabled).toBeUndefined()
+    // Unbound in both presets: no chord after the label.
+    expect(row.accelerator).toBeUndefined()
+    const before = h.browser.allWindows()
+    row.click?.()
+    const windows = h.browser.allWindows()
+    expect(windows).toHaveLength(before.length + 1)
+    const dup = windows.find((w) => !before.includes(w))
+    expect(dup?.kind).toBe(h.win.kind)
+    expect(dup?.activeSpace().id).toBe(h.win.activeSpace().id)
+    expect(dup?.cascadeFrom).toBe(h.win)
+    // A popup's toolbar-only chrome has no tab strip to duplicate: the row is left out rather
+    // than greyed (`when`'s rule for a row the host cannot act on); the window rows around it stay.
+    const popup = h.browser.createWindow({
+      kind: 'synced',
+      from: h.win,
+      chrome: 'popup',
+      bounds: { x: 0, y: 0, width: 400, height: 300 }
+    })
+    h.browser.handleCommand(popup, 'app.menu', {})
+    const popupLabels = allItems(h.shown()).map((i) => i.label)
+    expect(popupLabels).not.toContain('Duplicate Window')
+    expect(popupLabels).toContain('New Blank Window')
+    expect(popupLabels).toContain('Name Window…')
+    // A host with one window has nothing to duplicate into: no row.
+    const phone = harness(ANDROID, 'phone')
+    appMenu(phone)
+    expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Duplicate Window')
   })
 
   describe('the developer tools dock rows (design language v2 §9.29)', () => {
@@ -1005,10 +1053,11 @@ describe('the app menu', () => {
     expect(everywhere).not.toContain('Take Screenshot')
     expect(everywhere).not.toContain('Capture Full Page')
     expect(desktopMenu).toContain('Save and Share > Web Capture…')
-    // More Tools: two rows and a separator fewer than the row had – nine of its own (the
-    // desktop's Task Manager among them, W5-8), the four dock rows after them, two separators.
+    // More Tools: two rows and a separator fewer than the row had – ten of its own (the
+    // desktop's Task Manager among them, W5-8; Duplicate Window with the window rows, W5-13),
+    // the four dock rows after them, two separators.
     const moreTools = item(desktop.shown(), 'More Tools').submenu!
-    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(13)
+    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(14)
     expect(separators(moreTools)).toBe(2)
     // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
     // in their own group before the resources.
@@ -1554,6 +1603,7 @@ describe('the app menu', () => {
     for (const label of [
       'New Window',
       'New Blank Window',
+      'Duplicate Window',
       'New Private Window',
       'Add-ons and Themes',
       'Developer Tools',

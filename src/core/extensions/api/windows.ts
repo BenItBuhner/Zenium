@@ -2,9 +2,26 @@
  * The `chrome.windows` data model: Chrome's `Window` shape and the `QueryOptions` filters of
  * `windows.getAll` / `windows.get`. Pure; hosts fill the records from their own windows.
  */
+import type { WindowChrome } from '../../../shared/types'
 import type { ChromeTab } from './tabs'
 
 export type ChromeWindowType = 'normal' | 'popup' | 'panel' | 'app' | 'devtools'
+
+/**
+ * Chrome's type for a browser window by the chrome it draws: a tab strip makes a `normal`
+ * window; the toolbar-only window a sized `window.open` makes (Secure Shell's connection
+ * dialog) is a `popup`, as Chrome reports its own; a standalone web app's window is an `app`.
+ */
+export function windowTypeForChrome(chrome: WindowChrome): ChromeWindowType {
+  switch (chrome) {
+    case 'popup':
+      return 'popup'
+    case 'app':
+      return 'app'
+    default:
+      return 'normal'
+  }
+}
 export type ChromeWindowState = 'normal' | 'minimized' | 'maximized' | 'fullscreen'
 
 export interface ChromeWindow {

@@ -275,6 +275,27 @@ describe('Name Window…', () => {
   })
 })
 
+describe('Duplicate Window (session-19)', () => {
+  it('is in the table under Window & Tab Management, unbound in both presets on every platform – neither browser has a chord for it', () => {
+    for (const platform of PLATFORMS) {
+      for (const preset of ['zen', 'chrome'] as const) {
+        const row = defaultShortcuts(platform, preset).find((s) => s.id === 'zen-duplicate-window')
+        expect(row).toMatchObject({
+          action: 'window.duplicate',
+          group: 'windowAndTabManagement',
+          label: 'Duplicate Window',
+          binding: null
+        })
+        expect(row?.hidden).toBeUndefined()
+        // As New Window's row: no layout limit – the host's `windows` capability decides where
+        // the action does anything, as it does for the palette's row (`requires: 'windows'`).
+        expect(row?.layouts).toBeUndefined()
+        expect(extras('zen-duplicate-window', platform, preset)).toEqual([])
+      }
+    }
+  })
+})
+
 describe('the Chrome preset', () => {
   const chrome = (id: string, platform: Platform = 'linux'): KeyBinding | null =>
     key(id, platform, 'chrome')

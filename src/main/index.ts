@@ -6,6 +6,7 @@ import { ElectronPlatform } from './platform'
 import { APP_USER_MODEL_ID } from './platform/notifications'
 import { moveLegacyDirectory } from './platform/legacyPaths'
 import { applyResourceSwitches } from './platform/resources/startup'
+import { installWindowsRestart } from './platform/restartRegistration'
 import { ENABLE_SANDBOX_SWITCH, sandboxRequest } from './platform/sandbox'
 import { installShellTasks } from './platform/shellTasks'
 import { runStdioShim } from './agent/shim'
@@ -182,14 +183,29 @@ function main(): void {
     // Windows groups taskbar buttons and toast notifications by this id; it must be the one the
     // installer stamps on the shortcuts, in development too (electron-toolkit's helper would
     // substitute the executable's path there, which no toast registration can carry).
-    if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID)
+    // The profile a relaunch of this copy names (the RunOnce entry below, a private window's
+    // taskbar button): the resolved directory when the launch named one.
+    const userDataDir = switches.userDataDir === null ? null : app.getPath('userData')
+    if (process.platform === 'win32') {
+      app.setAppUserModelId(APP_USER_MODEL_ID)
+      // A restart or a sign-out ends the session: Windows relaunches Zenium with its session at
+      // the next sign-in (os-49; the RunOnce entry `session-end` writes, gated on the user's
+      // "restart my apps" toggle). Before the first window: the hook listens per window.
+      installWindowsRestart(app, {
+        execPath: process.execPath,
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        userDataDir,
+        systemVersion: process.getSystemVersion()
+      })
+    }
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
     const platform = new ElectronPlatform(app.getPath('userData'), {
       // The desktop demo drivers' hold on the startup sweeps (`--hold-background-work`; a normal
       // launch never carries it): the core's `performance.releaseBackgroundWork` ends it.
       holdBackgroundWork: holdBackgroundWorkRequested(process.argv),
-      windowSwitches: windowSwitchesOf(switches)
+      windowSwitches: windowSwitchesOf(switches, userDataDir)
     })
     // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's
     // window comes up by itself, as Chrome's does; the browser windows wait for the first thing

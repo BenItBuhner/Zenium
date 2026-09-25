@@ -11,7 +11,12 @@ import type { ZenWindow } from '../../../core/window'
 import { essentialsForSpace, tabVisibleIn } from '../../../core/model'
 import { TabGroupIds } from '../../../core/extensions/api/tabGroups'
 import { type ChromeTab, TAB_GROUP_NONE } from '../../../core/extensions/api/tabs'
-import { type ChromeWindow, windowStateFrom } from '../../../core/extensions/api/windows'
+import {
+  type ChromeWindow,
+  type ChromeWindowType,
+  windowStateFrom,
+  windowTypeForChrome
+} from '../../../core/extensions/api/windows'
 import type { ElectronTabView, ElectronTabViewHost } from '../views'
 import type { ElectronWindow } from '../window'
 import { WINDOW_ID_NONE, type Sender } from './types'
@@ -106,8 +111,15 @@ export class ApiModel {
     return ids
   }
 
-  windowTypeOf(windowId: number): 'normal' | 'popup' {
-    return this.popups.has(windowId) ? 'popup' : 'normal'
+  /**
+   * Chrome's type for a window id: an API-created popup window's is `popup`; a Zenium window's
+   * follows its chrome (`normal` with a tab strip, `popup` for a toolbar-only window, `app` for
+   * a web app's), and an id nobody holds reads as `normal`.
+   */
+  windowTypeOf(windowId: number): ChromeWindowType {
+    if (this.popups.has(windowId)) return 'popup'
+    const win = this.zenWindow(windowId)
+    return win ? windowTypeForChrome(win.chrome) : 'normal'
   }
 
   /** A `chrome.windows.Window` for any id we hand out, or null when it is unknown. */
@@ -160,7 +172,7 @@ export class ApiModel {
       width: bounds?.width,
       height: bounds?.height,
       incognito: win.isPrivate,
-      type: 'normal',
+      type: windowTypeForChrome(win.chrome),
       state: windowStateFrom({
         minimized: bw?.isMinimized() ?? false,
         fullscreen: bw?.isFullScreen() ?? false,

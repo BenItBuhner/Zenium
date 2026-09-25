@@ -91,6 +91,8 @@ $ClientKey = "Software\Clients\StartMenuInternet\$ProductName"
 $CapabilitiesKey = "$ClientKey\Capabilities"
 $ProgIdKey = "Software\Classes\$ProgId"
 $AppIdClassKey = "Software\Classes\AppUserModelId\$AppUserModelId"
+# The private windows' second id (src/main/platform/privateTaskbar.ts): their own taskbar group.
+$PrivateAppIdClassKey = "Software\Classes\AppUserModelId\$AppUserModelId.private"
 $Extensions = @('.htm', '.html', '.shtml', '.xht', '.xhtml', '.mhtml', '.mht', '.svg', '.webp', '.avif', '.pdf')
 
 # The values named in `$names` under `$path` of the user's hive ('' for the key's default value),
@@ -122,6 +124,7 @@ function Get-BrowserRegistration {
     registeredApplications = $null
     hklmRegisteredApplications = $null
     appUserModelIdClass = Read-UserKey $AppIdClassKey @('DisplayName', 'IconUri')
+    privateAppUserModelIdClass = Read-UserKey $PrivateAppIdClassKey @('DisplayName', 'IconUri')
     client = Read-UserKey $ClientKey @('')
     clientOpenCommand = Read-UserKey "$ClientKey\shell\open\command" @('')
     clientDefaultIcon = Read-UserKey "$ClientKey\DefaultIcon" @('')
@@ -232,6 +235,7 @@ function Test-BrowserUnregistered($reg) {
   $left = @()
   if ($null -ne $reg.registeredApplications) { $left += "RegisteredApplications\$ProductName is still '$($reg.registeredApplications)'" }
   if ($reg.appUserModelIdClass) { $left += "HKCU\$AppIdClassKey is still there (DisplayName '$($reg.appUserModelIdClass['DisplayName'])', IconUri '$($reg.appUserModelIdClass['IconUri'])')" }
+  if ($reg.privateAppUserModelIdClass) { $left += "HKCU\$PrivateAppIdClassKey is still there (DisplayName '$($reg.privateAppUserModelIdClass['DisplayName'])', IconUri '$($reg.privateAppUserModelIdClass['IconUri'])')" }
   foreach ($pair in @(@('client', $ClientKey), @('capabilities', $CapabilitiesKey), @('urlAssociations', "$CapabilitiesKey\URLAssociations"), @('progId', $ProgIdKey), @('progIdOpenCommand', "$ProgIdKey\shell\open\command"))) {
     if ($reg[$pair[0]]) { $left += "HKCU\$($pair[1]) is still there" }
   }

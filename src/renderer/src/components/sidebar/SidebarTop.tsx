@@ -1176,8 +1176,11 @@ function fieldEngine(state: UIState): SearchEngine | null {
 
 /**
  * Back or forward: a click navigates one step; press-and-hold (about 400 ms, released) or a
- * right click lists the tab's back/forward stack instead, like Firefox's buttons. `title` is
- * the button's name and its tooltip's text, chord included (a11y-26).
+ * right click lists the tab's back/forward stack instead, like Firefox's buttons; a middle
+ * click, or a click with Ctrl (⌘ on macOS) held – either is taken on every host, a Ctrl+click
+ * on macOS being the right click that never arrives as a click – opens the step's page in a new
+ * background tab and leaves this tab where it is, like Chrome's (shortcuts-menus-93). `title`
+ * is the button's name and its tooltip's text, chord included (a11y-26).
  */
 function NavigationButton({
   tab,
@@ -1193,6 +1196,7 @@ function NavigationButton({
   children: ReactNode
 }): JSX.Element {
   const press = useLongPress(() => tab && run('tab.navigationMenu', { tabId: tab.id }))
+  const inNewTab = command === 'tab.back' ? 'tab.backInNewTab' : 'tab.forwardInNewTab'
   return (
     <button
       type="button"
@@ -1201,9 +1205,16 @@ function NavigationButton({
       data-tooltip={title}
       disabled={!enabled}
       {...press.handlers}
-      onClick={() => {
+      onClick={(e) => {
         if (press.swallowsClick() || !tab) return
-        run(command, { tabId: tab.id })
+        run(e.ctrlKey || e.metaKey ? inNewTab : command, { tabId: tab.id })
+      }}
+      onAuxClick={(e) => {
+        // The middle button alone: the right button is the stack menu's (`onContextMenu`). React
+        // swallows `click` on a disabled button but not `auxclick`, so the guard is ours.
+        if (e.button !== 1 || !tab || !enabled) return
+        e.preventDefault()
+        run(inNewTab, { tabId: tab.id })
       }}
     >
       {children}

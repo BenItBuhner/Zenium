@@ -56,6 +56,14 @@ export class WebNavigationApi {
   private readonly pendingTargets: PendingTarget[] = []
   /** A tab's outermost frame committed a document at `url` (activeTab and dNR follow tabs this way). */
   onMainFrameCommitted: ((tabId: number, url: string) => void) | null = null
+  /** A tab's outermost frame started a cross-document navigation (`tabs.onUpdated`'s status edges). */
+  onMainFrameNavigationStarted: ((tabId: number) => void) | null = null
+  /**
+   * A navigation Chrome's `NavigationEntryCommitted` reports committed in a tab: the outermost
+   * frame's (cross-document or same-document), or a sub-frame's after its first document (Chrome's
+   * `NEW_SUBFRAME`; a frame's first load is an `AUTO_SUBFRAME` commit without an entry).
+   */
+  onNavigationCommitted: ((tabId: number) => void) | null = null
 
   constructor(private readonly host: ApiHost) {}
 
@@ -192,6 +200,7 @@ export class WebNavigationApi {
       state.errorOccurred = false
       const id = tabId()
       if (id === null) return
+      if (details.isMainFrame) this.onMainFrameNavigationStarted?.(id)
       // The main frame's hint (reload / history / typed) is consumed by the commit below.
       this.emit('onBeforeNavigate', {
         ...this.details(id, frame, details.url, state),
@@ -206,11 +215,16 @@ export class WebNavigationApi {
 
     wc.on('did-frame-navigate', (_e, url, _code, _text, isMainFrame, processId, routingId) => {
       const frame = frameFromIds(processId, routingId) ?? (isMainFrame ? wc.mainFrame : null)
+      const key = `${processId}:${routingId}`
+      // A sub-frame this view followed through an earlier document navigated again (Chrome's
+      // `NEW_SUBFRAME`, which commits a navigation entry); a frame's first load, from nothing or
+      // the initial empty document, and a frame arriving in a fresh process are not that.
+      const prior = this.statesOf(wc).get(key)?.url ?? ''
+      const renavigated = isMainFrame || (prior !== '' && prior !== 'about:blank')
       const state = frame ? this.stateOf(wc, frame) : this.stateByIds(wc, processId, routingId)
       state.documentId = newDocumentId()
       state.url = url
       state.errorOccurred = false
-      const key = `${processId}:${routingId}`
       const hint: NavigationHint = {
         isMainFrame,
         serverRedirect: this.redirected.delete(key),
@@ -219,6 +233,7 @@ export class WebNavigationApi {
       const transition = transitionFor(hint)
       const id = tabId()
       if (id === null) return
+      if (renavigated) this.onNavigationCommitted?.(id)
       this.emit('onCommitted', {
         ...this.details(id, frame, url, state, processId, routingId, isMainFrame),
         timeStamp: Date.now(),
@@ -241,6 +256,12 @@ export class WebNavigationApi {
       }
       const id = tabId()
       if (id === null) return
+      // Chrome commits a navigation entry for the outermost frame's same-document navigation
+      // too, and `tabs.onUpdated` reports `{ status, url }` on it.
+      if (isMainFrame) {
+        this.onNavigationCommitted?.(id)
+        this.host.scheduleTick()
+      }
       this.emit(fragment ? 'onReferenceFragmentUpdated' : 'onHistoryStateUpdated', {
         ...this.details(id, frame, url, state, processId, routingId, isMainFrame),
         timeStamp: Date.now(),
