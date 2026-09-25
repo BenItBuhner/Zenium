@@ -110,6 +110,23 @@ describe('the chrome’s Hold ⌘Q to quit', () => {
     }
   })
 
+  it('draws over a hung page after the prompt’s Wait – Wait dismisses the prompt, it un-hangs nothing – and leaves as the page answers again (C4)', () => {
+    // `Tabs.waitUnresponsive` deleted the prompt's mark; the monitor's own reading stands.
+    const afterWait = { url: 'https://example.com/a', errorCode: null, hung: true as const }
+    expect(pageCanPaint(afterWait)).toBe(false)
+    render({ hold: hold(), show: !pageCanPaint(afterWait) })
+    expect(notice()).not.toBeNull()
+    expect(notice()!.querySelector('.zen-quit-hold-panel')).not.toBeNull()
+    expect(notice()!.getAttribute('aria-label')).toBe('Hold ⌘Q to quit')
+    // `Tabs.onResponsive`: the reading goes, the page paints its own notice, the twin fades.
+    const answering = { url: 'https://example.com/a', errorCode: null }
+    expect(pageCanPaint(answering)).toBe(true)
+    render({ hold: hold(), show: !pageCanPaint(answering) })
+    expect(notice()!.querySelector('.zen-quit-hold-panel')!.hasAttribute('data-leaving')).toBe(true)
+    act(() => vi.advanceTimersByTime(QUIT_HOLD_PANEL.fadeMs))
+    expect(notice()).toBeNull()
+  })
+
   it('is a status block with the ring and the chord as a key cap, stepped from the hold’s clock', () => {
     render({ hold: hold(), show: true })
     const el = notice()!

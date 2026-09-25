@@ -235,6 +235,7 @@ describe('a page whose renderer stopped answering', () => {
     viewOf(f, tab).events.onNavigated(PAGE, false)
     viewOf(f, tab).events.onUnresponsive!()
     expect(f.browser.tabs.tab(tab.id)!.unresponsive).toBe(true)
+    expect(f.browser.tabs.tab(tab.id)!.hung).toBe(true)
 
     f.browser.state.flushSync()
     const state = f.files['state.json']
@@ -243,6 +244,72 @@ describe('a page whose renderer stopped answering', () => {
     const record = persisted.tabs.find((t) => t.id === tab.id)
     expect(record).toBeDefined()
     expect(record).not.toHaveProperty('unresponsive')
+    expect(record).not.toHaveProperty('hung')
+  })
+})
+
+describe("the hang monitor's own reading (`hung`, the hold notice's – C4 on #486)", () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it("stands through the prompt's Wait – waiting un-hangs nothing – and goes when the page answers again", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+    expect(f.browser.tabs.tab(tab.id)!).not.toHaveProperty('hung')
+
+    view.events.onUnresponsive!()
+    expect(f.browser.tabs.tab(tab.id)!).toMatchObject({ unresponsive: true, hung: true })
+
+    f.browser.handleCommand(win, 'tab.waitUnresponsive', { tabIds: [tab.id] })
+    const waited = f.browser.tabs.tab(tab.id)!
+    expect(waited.unresponsive).toBeUndefined()
+    expect(waited.hung).toBe(true)
+
+    // The next report marks the prompt's again; the reading stands as it was.
+    view.events.onUnresponsive!()
+    expect(f.browser.tabs.tab(tab.id)!).toMatchObject({ unresponsive: true, hung: true })
+    f.browser.handleCommand(win, 'tab.waitUnresponsive', { tabIds: [tab.id] })
+
+    // The page answers: both gone, the fields absent as on a record that never had them.
+    view.events.onResponsive!()
+    const after = f.browser.tabs.tab(tab.id)!
+    expect(after).not.toHaveProperty('hung')
+    expect(after).not.toHaveProperty('unresponsive')
+  })
+
+  it("goes with a navigation's commit (never an in-page one), with the renderer, and with the page unloaded", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+    view.events.onUnresponsive!()
+    f.browser.handleCommand(win, 'tab.waitUnresponsive', { tabIds: [tab.id] })
+    view.events.onNavigated(`${PAGE}#part`, true)
+    expect(f.browser.tabs.tab(tab.id)!.hung).toBe(true)
+    view.events.onNavigated(OTHER, false)
+    expect(f.browser.tabs.tab(tab.id)!).not.toHaveProperty('hung')
+
+    // The renderer goes (the prompt's Exit page, or a crash of its own): the crash page follows
+    // in a fresh renderer, which paints.
+    view.events.onUnresponsive!()
+    expect(f.browser.tabs.tab(tab.id)!.hung).toBe(true)
+    view.events.onCrashed('crashed', 5)
+    expect(f.browser.tabs.tab(tab.id)!).not.toHaveProperty('hung')
+    expect(f.browser.tabs.tab(tab.id)!.errorCode).toBe(CRASH_ERROR_CODE)
+
+    // A sleeping page has no renderer to be hung.
+    f.browser.tabs.createTab({ url: OTHER, active: true }, win)
+    const back = f.browser.tabs.createTab({ url: PAGE, active: false }, win)
+    f.browser.tabs.load(back.id, win)
+    viewOf(f, back).events.onNavigated(PAGE, false)
+    viewOf(f, back).events.onUnresponsive!()
+    expect(f.browser.tabs.tab(back.id)!.hung).toBe(true)
+    f.browser.tabs.discard(back.id)
+    expect(f.browser.tabs.tab(back.id)!).not.toHaveProperty('hung')
   })
 })
 

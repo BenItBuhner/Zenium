@@ -13,7 +13,8 @@ import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
-import { pageCanPaint } from '@renderer/lib/quitHoldRoute'
+import { closeQuitHoldCover, openQuitHoldCover } from '@renderer/lib/quitHoldCover'
+import { holdCoversPage, pageCanPaint } from '@renderer/lib/quitHoldRoute'
 import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
@@ -204,6 +205,20 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
     !staged &&
     !contentHidden &&
     pageCanPaint(tab)
+  // A hold over a HUNG page (C4 after the prompt's Wait): the twin is drawn, but the view over
+  // the chrome keeps the hung renderer's last frame painted above it – so the view gives way to
+  // its picture for the hold, as under the "Page unresponsive" prompt, and comes back with the
+  // hold's cancel or end (`lib/quitHoldCover.ts`). A page shown in another window has no view
+  // here to give way; a chrome page has no renderer to hang.
+  const holdCoverTabId =
+    tab !== null && !pageTab && !foreign && holdCoversPage(state.window.quitHold, tab)
+      ? tab.id
+      : null
+  useEffect(() => {
+    if (!holdCoverTabId) return
+    void openQuitHoldCover(holdCoverTabId)
+    return () => closeQuitHoldCover()
+  }, [holdCoverTabId])
   const dropKey = dropStore.use((s) => s.key)
   const dropOverPage = dropStore.use((s) => s.page)
   // The translate bar shares the frame with the live page, under the strips and directly above

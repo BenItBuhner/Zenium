@@ -565,6 +565,18 @@ export interface Tab {
    */
   unresponsive?: true
   /**
+   * The hang monitor's own reading of the renderer, kept apart from the prompt's mark above
+   * (session-08's C4 on #486, the first line's R3): set with `unresponsive` when the host
+   * reports the page hung, and standing until the renderer answers again (`onResponsive`), a
+   * navigation commits, or the renderer goes – NOT cleared by the prompt's Wait, which takes the
+   * prompt down and nothing else: the page is as hung as it was until the host reports it again.
+   * Read where the chrome must know whether the page can paint what is posted to it: "Hold ⌘Q to
+   * quit" over a hung page is the chrome's own to draw (`lib/quitHoldRoute.ts`), and the page's
+   * view gives way to its picture for the hold. A session's own (not persisted); absent on hosts
+   * without a hang monitor and on records older than the field.
+   */
+  hung?: true
+  /**
    * The user typed into a form field of the current document (OS-37; Chrome's
    * `kHasFormInteraction` protection): the sleep policies leave the page loaded, timer and
    * memory pressure alike – a discard would lose what was typed. Set by the page script's
