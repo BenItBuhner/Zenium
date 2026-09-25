@@ -23,7 +23,10 @@ import { bootNeedsPlacement } from '../startup'
  * page out of every layout report and draws its own page there), so `bootAndroid`'s READY armed
  * on it waited for a placement that never came, and the splash held to the host's watchdog on
  * every fresh profile's start. The phone starts as it did before #490: the window without a tab,
- * READY on the theme's paint and the insets, the first run ending in the omnibox.
+ * READY on the theme's paint and the insets, the first run ending in the omnibox. And a profile
+ * restored on a blank tab – the one #490's first tab left in every profile made on v0.4.71 to
+ * v0.4.74, or one the user is on – arms READY without a placement to wait for, as the phone's
+ * chrome never places that view; the tablet, which does, waits for it as for any page.
  */
 
 function memoryIo(): StoreIO {
@@ -153,7 +156,7 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
     expect(browser.allWindows()).toHaveLength(1)
     expect(Object.keys(browser.state.model.tabs)).toEqual([])
     expect(browser.tabs.activeTabFor(win)).toBeUndefined()
-    expect(bootNeedsPlacement(browser, win)).toBe(false)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
   })
 
   it('a first run past onboarding starts the same way: no tab', () => {
@@ -161,7 +164,7 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
     browser.state.settings.onboardingDone = true
     browser.start()
     expect(Object.keys(browser.state.model.tabs)).toEqual([])
-    expect(bootNeedsPlacement(browser, only(browser))).toBe(false)
+    expect(bootNeedsPlacement(browser, only(browser), true)).toBe(false)
   })
 
   it('the first run still ends in the omnibox over the empty space, as before #490', () => {
@@ -191,7 +194,7 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
     const win = only(browser)
     expect(browser.tabs.activeTabFor(win)?.id).toBe(id)
     expect(Object.keys(browser.state.model.tabs)).toEqual([id])
-    expect(bootNeedsPlacement(browser, win)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
   })
 
   it('a restored space emptied of its tabs comes up empty too, as before #490', () => {
@@ -199,7 +202,7 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
     browser.state.settings.onboardingDone = true
     browser.start()
     expect(Object.keys(browser.state.model.tabs)).toEqual([])
-    expect(bootNeedsPlacement(browser, only(browser))).toBe(false)
+    expect(bootNeedsPlacement(browser, only(browser), true)).toBe(false)
   })
 
   it('a host with the new tab page keeps #490: one new tab page tab at startup', () => {
@@ -212,19 +215,28 @@ describe("the boot's first tab on the phone (no new tab page capability)", () =>
     const win = only(browser)
     expect(Object.values(browser.state.model.tabs).map((t) => t.url)).toEqual([NEW_TAB_URL])
     expect(browser.tabs.activeTabFor(win)?.url).toBe(NEW_TAB_URL)
-    expect(bootNeedsPlacement(browser, win)).toBe(true)
+    expect(bootNeedsPlacement(browser, win, true)).toBe(true)
   })
 
-  it("the phone's own new tab (a blank tab the user opens) is still no chrome page: the arm reads it as a page", () => {
-    // The latent case named in the hotfix's report: a profile left on the phone's new tab page
-    // restores a `zen://blank` active tab, which the chrome draws itself and never places. The
-    // predicate is boot.ts's as it stands; this pins what it says, not what it should.
+  it("a profile restored on the phone's own new tab (a blank tab) arms READY without a placement to wait for", () => {
+    // The blank tab #490's first tab left in every profile made on v0.4.71–v0.4.74, and any blank
+    // tab the user is on: the phone draws its new tab page in the chrome and reports no placement
+    // for the tab, so the arm reads it as nothing to place (as `useLayoutReporter` leaves it out).
+    const { browser } = phone(phoneCapabilities())
+    browser.state.settings.onboardingDone = true
+    const id = seedTab(browser, BLANK_URL)
+    browser.start()
+    const win = only(browser)
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(id)
+    expect(Object.keys(browser.state.model.tabs)).toEqual([id])
+    expect(bootNeedsPlacement(browser, win, true)).toBe(false)
+  })
+
+  it('the tablet places the blank view like any page, so its arm waits for it', () => {
     const { browser } = phone(phoneCapabilities())
     browser.state.settings.onboardingDone = true
     seedTab(browser, BLANK_URL)
     browser.start()
-    const win = only(browser)
-    expect(browser.tabs.activeTabFor(win)?.url).toBe(BLANK_URL)
-    expect(bootNeedsPlacement(browser, win)).toBe(true)
+    expect(bootNeedsPlacement(browser, only(browser), false)).toBe(true)
   })
 })
