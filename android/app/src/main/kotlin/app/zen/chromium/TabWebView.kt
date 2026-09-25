@@ -886,7 +886,7 @@ class TabWebView(
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         val step = wheelZoom.step(
             event.actionMasked == MotionEvent.ACTION_SCROLL,
-            event.isCtrlPressed,
+            event.metaState and KeyEvent.META_CTRL_ON != 0,
             event.getAxisValue(MotionEvent.AXIS_VSCROLL)
         )
         step.direction?.let { host.viewEvent(tabId, "zoomChanged", json("direction" to it)) }
