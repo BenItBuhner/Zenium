@@ -1266,6 +1266,17 @@ class TabWebView(
      */
     fun hostState(): String? = NavigationState.hostStateOf(this, Profiles.isPrivate(containerId))
 
+    /**
+     * The host's mirror takes this view's state as it is now, without a list push: on the page's
+     * way off the screen ([Host.setTabVisible]'s hide). The list was last pushed at its commit,
+     * before the user scrolled; the engine writes the scroll into the current entry within a
+     * second of it, so the state a sleep of the hidden page records (`view.navigationHostState`,
+     * read from the mirror) is the one its return restores the scroll from (OS-37). Main thread.
+     */
+    fun refreshHostState() {
+        host.navigationStateChanged(tabId, hostState())
+    }
+
     /** Jump to entry `index` of the list (the back list's row): nothing for an index outside it. */
     fun goToIndex(index: Int) {
         val history = copyBackForwardList()

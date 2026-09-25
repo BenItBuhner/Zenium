@@ -2236,8 +2236,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tabs.hideRequested(tabId)
         // A page on its way off the screen has its card picture taken while it is still there. The
         // chrome may have just captured its cover for the same frame: the copy is shared, and a
-        // fresh cover stands as the picture ([TabWebView.captureThumbnail]).
-        tabs.get(tabId)?.captureThumbnail()
+        // fresh cover stands as the picture ([TabWebView.captureThumbnail]). Its list's state goes
+        // to the mirror with the scroll it is left at, for the sleep that may take it while hidden
+        // ([TabWebView.refreshHostState], OS-37).
+        tabs.get(tabId)?.let {
+            it.captureThumbnail()
+            it.refreshHostState()
+        }
         val deadline = Runnable {
             if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
         }
