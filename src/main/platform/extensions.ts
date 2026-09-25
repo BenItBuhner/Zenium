@@ -1562,7 +1562,6 @@ export class ExtensionService implements ExtensionHost {
       extensionPageOpenHandler({
         views: views instanceof ElectronTabViewHost ? views : undefined,
         windowFor: () => win,
-        openerUrl: () => wc.getURL(),
         browser: this.browser,
         opened: () => {
           if (this.popup?.view === view) this.closePopup()

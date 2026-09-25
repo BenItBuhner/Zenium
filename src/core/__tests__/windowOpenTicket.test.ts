@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
+import { displayUrl, fullUrl, isEmptyTabUrl, isNewTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
 import type {
@@ -157,6 +158,66 @@ describe('a page opening a window', () => {
     expect(events.onOpenWindow('mailto:someone@example.com', 'foreground-tab', true)?.action).toBe(
       'tab'
     )
+  })
+
+  it("gives window.open('about:blank') its tab beside the opener, which then fills it (the noopener idiom)", () => {
+    const { browser, parent, events } = openerWithPage()
+    const win = browser.allWindows()[0]
+    const space = win.activeSpace()
+    const ticket = events.onOpenWindow('about:blank', 'foreground-tab', true)
+    expect(ticket).toMatchObject({ action: 'tab', url: 'about:blank' })
+    const view = fakeView()
+    const { tab, events: blankEvents } = ticket!.adopt(view)
+    expect(browser.allWindows()).toHaveLength(1)
+    expect(view.attachedTo).toBe(win.host)
+    expect(space.tabIds.indexOf(tab.id)).toBe(space.tabIds.indexOf(parent.id) + 1)
+    expect(win.selectedTabIn(space)).toBe(tab.id)
+    expect(tab.openerTabId).toBe(parent.id)
+    // The core never loads the page itself: Chromium already made the opener's blank page.
+    expect(view.loaded).toEqual([])
+
+    // The blank page commits: the tab is an empty tab – the pill shows the empty-tab slot, the
+    // title is a new tab's – and never the new tab page (that is `zen://newtab` alone).
+    view.getURL = () => 'about:blank'
+    blankEvents.onNavigated('about:blank', false)
+    expect(tab.url).toBe('about:blank')
+    expect(isEmptyTabUrl(tab.url)).toBe(true)
+    expect(displayUrl(tab.url)).toBe('')
+    expect(fullUrl(tab.url)).toBe('')
+    expect(tab.title).toBe('New Tab')
+    expect(isNewTabUrl(tab.url)).toBe(false)
+    expect(browser.newTab.stateFor(tab.id)).toBeNull()
+    expect(browser.history.recent(10).map((e) => e.url)).not.toContain('about:blank')
+
+    // The opener sets the popup's location: the tab follows the page, as any tab does.
+    view.getURL = () => 'https://pay.example/checkout'
+    blankEvents.onNavigated('https://pay.example/checkout', false)
+    expect(tab.url).toBe('https://pay.example/checkout')
+    expect(tab.title).toBe('pay.example')
+    expect(displayUrl(tab.url)).toBe('pay.example/checkout')
+    expect(browser.history.recent(10).map((e) => e.url)).toContain('https://pay.example/checkout')
+  })
+
+  it('puts a sized window.open(about:blank) into a toolbar-only window, like a sized page', () => {
+    const { browser, events } = openerWithPage()
+    const opener = browser.allWindows()[0]
+    const ticket = events.onOpenWindow('about:blank', 'new-window', true, 'width=500,height=400')
+    expect(ticket).toMatchObject({ action: 'window', url: 'about:blank' })
+    const view = fakeView()
+    const { tab } = ticket!.adopt(view)
+    const popup = browser.allWindows().find((w) => w !== opener)!
+    expect(popup.chrome).toBe('popup')
+    expect(popup.initialBounds).toEqual({ x: 80, y: 80, width: 500, height: 400 })
+    expect(view.attachedTo).toBe(popup.host)
+    expect(popup.selectedTabIn(popup.activeSpace())).toBe(tab.id)
+    expect(view.loaded).toEqual([])
+  })
+
+  it('keeps the pop-up blocker over about:blank: no gesture, no window', () => {
+    const { browser, parent, events } = openerWithPage()
+    expect(events.onOpenWindow('about:blank', 'new-window', null, 'width=500')).toBeNull()
+    expect(browser.allWindows()).toHaveLength(1)
+    expect(browser.popups.blockedFor(parent.id).map((p) => p.url)).toEqual(['about:blank'])
   })
 
   it('keeps a pop-up the blocker refused blocked, listed for the URL bar', () => {
