@@ -252,6 +252,12 @@ interface HeldGroup {
 interface ShownGroups {
   /** The pane the grid showed: its groups are that pane's, and the other pane has none. */
   pane: OverviewPane
+  /**
+   * The Space the grid showed: its groups are that Space's. Another Space's grid (a switch in
+   * the strip, MOT-05) is a fresh one in the same component – the last Space's groups did not
+   * lose their cards, they are simply not there.
+   */
+  spaceId: string
   /** The groups holding cards after the last render, by folder id. */
   held: ReadonlyMap<string, HeldGroup>
   /**
@@ -958,6 +964,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   // is found here, from the last render's groups, not in an effect after it.
   const [shownGroups, setShownGroups] = useState<ShownGroups>(() => ({
     pane,
+    spaceId: space.id,
     held: new Map(),
     lingering: new Map()
   }))
@@ -967,8 +974,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     const count = members.get(folder.id)?.length ?? 0
     if (count) held.set(folder.id, { folder, count })
   }
-  // The other pane's grid is a fresh one: its groups did not dissolve, they are simply not here.
-  const samePane = shownGroups.pane === pane
+  // The other pane's grid, or another Space's, is a fresh one: its groups did not dissolve, they
+  // are simply not here (the Space switch draws the last grid as a still over this one, the
+  // group's card among what it shows, see `PaneSlot`).
+  const samePane = shownGroups.pane === pane && shownGroups.spaceId === space.id
   // A group with an exit standing for it leaves whole, and does not linger. Read off the store
   // here, in the render that finds the group empty, not subscribed: the exit was drawn before
   // the close was asked, or in the same turn as the query, and stands until the grid has
@@ -992,7 +1001,7 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     held.size !== shownGroups.held.size ||
     [...held].some(([id, h]) => shownGroups.held.get(id)?.count !== h.count)
   ) {
-    setShownGroups({ pane, held, lingering })
+    setShownGroups({ pane, spaceId: space.id, held, lingering })
   }
   const dissolvedGroup = (folder: Folder): void =>
     setShownGroups((shown) => {

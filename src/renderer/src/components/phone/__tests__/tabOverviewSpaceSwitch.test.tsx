@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { StrictMode, act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Space, Tab, UIState } from '@shared/types'
+import type { Folder, Space, Tab, UIState } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type { OverviewState } from '@renderer/lib/gestures/stage'
 import {
@@ -137,6 +137,21 @@ function stateOf(active: string): UIState {
   } as unknown as UIState
 }
 
+/** The same profile with a group in Work: `docs`, open, holding `w0` and `w1` at the head of its grid. */
+function grouped(state: UIState): UIState {
+  const docs: Folder = {
+    id: 'docs',
+    spaceId: WORK,
+    name: 'Docs',
+    icon: '',
+    collapsed: false,
+    color: 'blue'
+  }
+  const tabs = { ...state.tabs }
+  for (const id of ['w0', 'w1']) tabs[id] = { ...tabs[id]!, folderId: docs.id }
+  return { ...state, tabs, folders: { docs } }
+}
+
 const OPEN: OverviewState = { phase: 'open', progress: 1, heroTabId: null, target: 1 }
 const CLOSING: OverviewState = { phase: 'settling', progress: 0.8, heroTabId: 'h0', target: 0 }
 
@@ -167,6 +182,15 @@ function installLayout(): void {
       slot
     })
     const cells = [...grid.querySelectorAll<HTMLElement>('[data-cell][data-tab-id]')]
+    const row = (cell: HTMLElement): number => Math.floor(cells.indexOf(cell) / 2)
+    // A group's cell spans the rows of the cards it holds, the full width; one holding none
+    // (shrinking to nothing) sits where the New Tab cell does, after the last card.
+    const members = [...this.querySelectorAll<HTMLElement>('[data-cell][data-tab-id]')]
+    if (this.classList.contains('zen-group') && members.length) {
+      const first = row(members[0]!)
+      const rows = row(members.at(-1)!) - first + 1
+      return new DOMRect(0, first * PITCH - grid.scrollTop, AREA.width, rows * PITCH)
+    }
     const i = this.hasAttribute('data-tab-id') ? cells.indexOf(this) : cells.length
     const y = Math.floor(i / 2) * PITCH - grid.scrollTop
     return new DOMRect((i % 2) * 200, y, 200, CARD_H)
@@ -257,6 +281,8 @@ const chip = (id: string): HTMLElement =>
 const indicator = (): HTMLElement =>
   host!.querySelector<HTMLElement>('[data-testid="overview-strip-indicator"]')!
 const newTabCell = (): HTMLElement => host!.querySelector<HTMLElement>('[data-cell="new-tab"]')!
+/** The group cells of the live grid (never a still's). */
+const groupCells = (): HTMLElement[] => [...grid().querySelectorAll<HTMLElement>('.zen-group')]
 
 /** The idle callbacks asked for (the window suite's clock), run by hand until none is left. */
 const idle = new Map<number, (d: IdleDeadline) => void>()
@@ -463,6 +489,37 @@ describe('a Space switch in the overview', () => {
     }
     // The still is drawn where the pane stood, scrolled where it was.
     expect(still.querySelector<HTMLElement>('[data-still-scroller]')!.scrollTop).toBe(30)
+  })
+
+  it('a group of the Space that left is simply not in the next grid: it neither lingers there as a group shrinking to nothing nor forms again when its Space is back', () => {
+    render(grouped(stateOf(WORK)))
+    // Work's grid: the Docs group's cell holding its two cards, the loose cards, the New Tab cell.
+    expect(groupCells()).toHaveLength(1)
+    expect(groupCells()[0]!.querySelectorAll('[data-tab-id]')).toHaveLength(2)
+    expect(groupCells()[0]!.dataset.dissolving).toBeUndefined()
+    expect(grid().querySelectorAll('[data-cell]')).toHaveLength(32)
+    expect(cardIds()).toContain('w0')
+
+    render(grouped(stateOf(HOME)))
+
+    // Home's grid: its twelve cells and the New Tab cell, no group cell – Work's Docs group did
+    // not lose its cards, Home never had it.
+    expect(groupCells()).toEqual([])
+    expect(grid().querySelectorAll('[data-cell]')).toHaveLength(13)
+    expect(cardIds()).toEqual(ids('h', 0, 7))
+    // The still over it shows Work as it stood, the group's header among it.
+    expect(stills()[0]!.textContent).toContain('Docs')
+
+    render(grouped(stateOf(WORK)))
+
+    // Back in Work: the group holds its two cards as before, a card among cards – neither
+    // dissolving nor forming (its header and tint drawn from the first frame).
+    const [docs] = groupCells()
+    expect(groupCells()).toHaveLength(1)
+    expect(docs!.querySelectorAll('[data-tab-id]')).toHaveLength(2)
+    expect(docs!.dataset.dissolving).toBeUndefined()
+    expect(docs!.dataset.chrome).toBeUndefined()
+    expect(grid().querySelectorAll('[data-cell]')).toHaveLength(32)
   })
 
   it("the new grid's edge fades attach once the commit that mounts it is over, not inside it", async () => {
