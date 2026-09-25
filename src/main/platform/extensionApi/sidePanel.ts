@@ -120,7 +120,8 @@ export class SidePanelApi {
 
   private setOptions(ctx: ApiContext, raw: unknown): void {
     this.requirePermission(ctx.extension)
-    const options = checked(() => normalizePanelOptions(raw))
+    // The extension's own absolute URL (`runtime.getURL('/sidepanel.html')`) stands as a path.
+    const options = checked(() => normalizePanelOptions(raw, ctx.extensionId))
     if (options.tabId !== undefined && !this.host.model.zenTab(options.tabId)) {
       throw new ApiError(noTab(options.tabId))
     }
