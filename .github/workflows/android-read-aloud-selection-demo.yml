@@ -1,0 +1,60 @@
+name: Android read aloud from the selection demo
+
+# Records read aloud FROM THE SELECTION on the phone (parity row EDGE-12; the entry is GN-13's
+# selection toolbar, the model services' EDGE-11 player): a page of three short paragraphs served
+# from the process, a real long press on a word in the second, a real touch on the toolbar's
+# Listen (behind the overflow on a phone), and the reading starting AT the selection – the engine
+# handed the selected word itself first, the text only the sentences from the selection on (the
+# heading and the first paragraph not in it), the highlight in the second or third paragraph;
+# then the same from a sentence the selection is extended to; then the word again in dark for
+# the design record. The driver writes `read-aloud-selection-findings.txt` with a PASS or FAIL
+# per check and fails when any did. Dispatch-only, like the other demos: it takes about five
+# minutes. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file only picks the driver and the demo it runs. The image stays the shared default (Google
+# APIs, API 34): that is where the speech engine is.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W6-8): a push trigger scoped to the PR's branch – worker tokens cannot dispatch
+  # workflows. Removed before the PR is marked ready.
+  push:
+    branches:
+      - cursor/android-read-aloud-link-menu-d9be
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-read-aloud-selection-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Read aloud from the selection demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ReadAloudSelectionDemo
+        DEMO_DIR=read-aloud-selection-demo
+        DEMO_OUT=artifacts/android-read-aloud-selection-demo
+        DEMO_VIDEO=android-read-aloud-selection-demo.mp4
+      artifact-name: android-read-aloud-selection-demo
+      artifact-path: artifacts/android-read-aloud-selection-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Read aloud from the selection demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ReadAloudSelectionDemo
+        DEMO_DIR=read-aloud-selection-demo
+        DEMO_OUT=artifacts/android-read-aloud-selection-demo
+        DEMO_VIDEO=android-read-aloud-selection-demo.mp4
+      artifact-name: android-read-aloud-selection-demo-second-boot
+      artifact-path: artifacts/android-read-aloud-selection-demo/

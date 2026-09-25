@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  The read-aloud-from-selection demo's page (ReadAloudSelectionDemo.kt; EDGE-12). Three short
+  paragraphs: the driver long-presses the word in the second one and touches the selection
+  toolbar's Listen, and the model (services' `selectionBlocks`, `from: 'selection-on'`) reads the
+  selected word first, then the rest of its paragraph and the third one – never the heading or
+  the first paragraph. The counts the driver asserts: the whole page is 8 sentences (the heading,
+  three, three, one); from the word, 5; from the sentence "Its tail follows the selection.", 3.
+  Every sentence is under 40 characters where the host's log clips the utterance's text.
+-->
+<title>Three paragraphs for a finger</title>
+<style>
+  body { margin: 0; padding: 24px 20px 120px; font: 19px/1.6 Georgia, "Times New Roman", serif; color: #1f2328; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e6e6e6; background: #121212; } }
+  h1 { font-size: 26px; line-height: 1.25; margin: 0 0 18px; }
+  p { margin: 0 0 18px; }
+  #word { background: rgba(255, 213, 79, .35); border-radius: 3px; padding: 0 2px; }
+</style>
+</head>
+<body>
+<article>
+  <h1>Three paragraphs for a finger</h1>
+  <p id="one">The first paragraph opens the page. It is never read from below. It has three sentences.</p>
+  <p id="two">The second paragraph is where the <span id="word">finger</span> lands. Its tail follows the selection. And a third sentence closes it.</p>
+  <p id="three">The third paragraph ends the page, and its last word is <span id="tail">calm</span>.</p>
+</article>
+</body>
+</html>
