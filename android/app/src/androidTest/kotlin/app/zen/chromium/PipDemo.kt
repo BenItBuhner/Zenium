@@ -372,7 +372,7 @@ class PipDemo : MediaDemoBase("android-pip") {
         val menuAfterClear = menuButtons(win)
         note("  the menu: $menuAfterClear")
         check("the handlers cleared, the window's menu drops Next track and Previous track and keeps Pause", dropped && menuAfterClear != null && "Next track" !in menuAfterClear && "Previous track" !in menuAfterClear && "Pause" in menuAfterClear)
-        waitMenuGone()
+        settleMenu()
         pageJs("(function(){var m=document.getElementById('media');m.pause();m.removeAttribute('src');m.load();navigator.mediaSession.metadata=null;navigator.mediaSession.playbackState='none';return 'ended'})()")
         val ended = poll(8_000) { host.media.current == null }
         note("  the session ended by the page: current=${host.media.current?.tabId} (ended=$ended); pip=${inPip()} pip tab=${host.media.pictureInPictureTab}")
@@ -380,7 +380,7 @@ class PipDemo : MediaDemoBase("android-pip") {
         note("  the menu: $menuAfterEnd")
         check("the session ended, the window stands with the platform's Close alone: no Pause, no Play, no track buttons", ended && inPip() && menuAfterEnd != null && "Close" in menuAfterEnd && menuAfterEnd.none { it == "Pause" || it == "Play" || it == "Next track" || it == "Previous track" })
         shot("15-ended-session-menu")
-        waitMenuGone()
+        settleMenu()
         bringToFront()
         awaitPip(false, 8_000)
         frontApp()
@@ -403,7 +403,7 @@ class PipDemo : MediaDemoBase("android-pip") {
         note("  the menu: $singleMenu")
         check("a page without track handlers gets Pause and no Next track or Previous track", singleEntered && singleMenu != null && "Pause" in singleMenu && "Next track" !in singleMenu && "Previous track" !in singleMenu)
         shot("16-undeclared-skips-menu")
-        waitMenuGone()
+        settleMenu()
         coreInvoke("tab.close", """{"tabId":"$single"}""")
         awaitPip(false, 10_000)
         SystemClock.sleep(1_000)
@@ -561,8 +561,8 @@ class PipDemo : MediaDemoBase("android-pip") {
     /**
      * The small window's menu opened by a tap ([MediaDemoBase.openPipMenu], the look for its
      * Close) and every label SystemUI shows in it – the app's actions and the platform's own
-     * buttons – or null when the menu never showed. The menu is left up; [waitMenuGone] before
-     * the next tap on the window.
+     * buttons – or null when the menu never showed. The menu is left up; [MediaDemoBase.settleMenu]
+     * before the next tap on the window.
      */
     private fun menuButtons(win: Rect): List<String>? {
         openPipMenu(win, "Close") ?: return null
@@ -582,12 +582,6 @@ class PipDemo : MediaDemoBase("android-pip") {
             }
         }
         return labels.toList()
-    }
-
-    /** The menu hides itself 3.5 s after it shows; a tap while it is up would hide it instead of opening it. */
-    private fun waitMenuGone() {
-        poll(6_000) { findInWindows(SYSTEM_UI) { it == "Close" } == null }
-        SystemClock.sleep(500)
     }
 
     /**
