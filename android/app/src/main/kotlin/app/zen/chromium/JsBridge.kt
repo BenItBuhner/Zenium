@@ -74,9 +74,10 @@ class JsBridge(
     /** Parses an admitted string; a malformed one is logged and its reservation returned. */
     private fun parseAdmitted(json: String, kind: String): JSONObject? = calls.parseAdmitted(json, kind)
 
-    /** Posts [block] for an admitted string of [chars] to the main thread; the reservation ends as it runs. */
-    private fun dispatchLater(chars: Int, block: () -> Unit) {
+    /** Posts [block] for an admitted string of [chars] to the main thread; the reservation ends as it runs, [sample] stamped first. */
+    private fun dispatchLater(chars: Int, sample: BridgeLatency.Sample?, block: () -> Unit) {
         main.post {
+            sample?.dispatched()
             admission.release(chars)
             block()
         }
@@ -84,6 +85,9 @@ class JsBridge(
 
     @JavascriptInterface
     fun call(json: String) = calls.call(json)
+
+    /** A string off the asynchronous channel ([BridgePort]): the `call` route, its arrival stamped as the port's ([BridgeLatency]). */
+    fun fromPort(json: String) = calls.call(json, BridgeLatency.PORT)
 
     /**
      * The route of one `call` string, apart from the WebView and the host (so the unit test runs
@@ -153,7 +157,13 @@ class JsBridge(
             null
         }
 
-        fun call(json: String) {
+        /**
+         * One `call` string, from the hop ([via] `hop`) or the port (`port`): its arrival is
+         * stamped first, before the head is looked at, and its dispatch as the task it becomes
+         * begins on its thread ([BridgeLatency], flag-gated).
+         */
+        fun call(json: String, via: String = BridgeLatency.HOP) {
+            val arrivedUs = BridgeLatency.stamp()
             // Admission first, on the raw length: a refused call is never parsed. Its id and
             // method come off the string's head, so the chrome's promise still settles.
             val head = BridgeAdmission.head(json)
@@ -164,10 +174,12 @@ class JsBridge(
                 return
             }
             if (head != null && head.method in STORAGE_CALLS) {
+                val sample = BridgeLatency.arrived(BridgeLatency.STORAGE, via, arrivedUs, head.method)
                 // The raw string to the storage thread; parsed and dispatched there, behind every
                 // storage call before it. The reservation ends as the parse begins, as it does when
                 // the main thread takes a call: the string is the storage thread's from here.
                 val queued = storage {
+                    sample?.dispatched()
                     admission.release(json.length)
                     val call = try {
                         parse(json)
@@ -194,7 +206,9 @@ class JsBridge(
             val id = call.optInt("id")
             val method = call.str("method")
             val args = call.obj("args")
+            val sample = BridgeLatency.arrived(BridgeLatency.CALL, via, arrivedUs, method)
             main {
+                sample?.dispatched()
                 admission.release(json.length)
                 try {
                     dispatch(id, method, args)
@@ -215,9 +229,11 @@ class JsBridge(
      */
     @JavascriptInterface
     fun post(json: String) {
+        val arrivedUs = BridgeLatency.stamp()
         if (admit(json) { BridgeAdmission.commandMethod(json) ?: "a post" } != null) return
         val call = parseAdmitted(json, "post") ?: return
-        dispatchLater(json.length) { dispatchOneWay(call) }
+        val sample = BridgeLatency.arrived(BridgeLatency.POST, BridgeLatency.HOP, arrivedUs, call.str("method"))
+        dispatchLater(json.length, sample) { dispatchOneWay(call) }
     }
 
     /**
@@ -231,6 +247,7 @@ class JsBridge(
      */
     @JavascriptInterface
     fun batch(json: String) {
+        val arrivedUs = BridgeLatency.stamp()
         if (admit(json) { "a batch" } != null) return
         val calls = try {
             JSONArray(json)
@@ -239,7 +256,8 @@ class JsBridge(
             Log.w(TAG, "bad batch payload", e)
             return
         }
-        dispatchLater(json.length) {
+        val sample = if (arrivedUs == 0L) null else BridgeLatency.arrived(BridgeLatency.BATCH, BridgeLatency.HOP, arrivedUs, batchMethods(calls))
+        dispatchLater(json.length, sample) {
             for (i in 0 until calls.length()) {
                 val call = calls.optJSONObject(i)
                 if (call == null) Log.w(TAG, "bad batch command at $i") else dispatchOneWay(call)
@@ -281,6 +299,16 @@ class JsBridge(
 
     companion object {
         const val TAG = "ZenBridge"
+
+        /** A batch's commands' methods joined with `+`, the page's name for it (`bridge:batch:<m1+m2>`); built only under [BridgeLatency]'s switch. */
+        fun batchMethods(calls: JSONArray): String {
+            val sb = StringBuilder()
+            for (i in 0 until calls.length()) {
+                if (i > 0) sb.append('+')
+                sb.append(calls.optJSONObject(i)?.optString("method") ?: "?")
+            }
+            return sb.toString()
+        }
 
         /**
          * The calls parsed and dispatched on the storage thread rather than this one ([Calls]):

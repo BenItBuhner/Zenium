@@ -224,7 +224,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
      */
     fun openBridgePort(token: String, handler: Handler): Boolean {
         closeBridgePort()
-        val opened = BridgePort.open(this, token, documentOrigin(), handler, bridge::call) ?: return false
+        val opened = BridgePort.open(this, token, documentOrigin(), handler, bridge::fromPort) ?: return false
         bridgePort = opened
         return true
     }
