@@ -1762,8 +1762,88 @@ describe('the app menu', () => {
       '-',
       'Settings',
       '-',
-      'About Zenium 1.2.3'
+      'About Zenium 1.2.3',
+      '-',
+      'Change Menu'
     ])
+  })
+
+  describe('the phone menu’s order (Edge’s Change menu, TB-22)', () => {
+    const keysOf = (items: MenuItemTemplate[]): (string | undefined)[] => items.map((i) => i.key)
+
+    it('names every item of the phone menu for the saved order – the icon row’s `icon.*`, the rows’ `row.*`, the hairlines’ `sep.*` – each once, and the Change Menu row last, outside the order', () => {
+      const h = harness(ANDROID, 'phone')
+      appMenu(h)
+      const shown = h.shown()
+      const keys = keysOf(shown)
+      // Every item carries a key but the structural hairline between the sections and the one
+      // before the Change Menu row.
+      const unkeyed = shown.filter((i) => i.key === undefined)
+      expect(unkeyed.every((i) => i.type === 'separator')).toBe(true)
+      expect(unkeyed).toHaveLength(2)
+      const named = keys.filter((k): k is string => k !== undefined)
+      expect(new Set(named).size).toBe(named.length)
+      const glyphs = shown.filter((i) => i.glyph)
+      expect(glyphs.length).toBeGreaterThan(0)
+      expect(glyphs.every((i) => i.key?.startsWith('icon.'))).toBe(true)
+      const rows = shown.filter((i) => !i.glyph && i.type !== 'separator' && i.key !== 'menu.change')
+      expect(rows.every((i) => i.key?.startsWith('row.'))).toBe(true)
+      const hairlines = shown.filter((i) => i.type === 'separator' && i.key)
+      expect(hairlines.every((i) => i.key?.startsWith('sep.'))).toBe(true)
+      expect(shown.at(-1)).toMatchObject({ label: 'Change Menu', key: 'menu.change' })
+      expect(shown.at(-1)!.click).toBeUndefined()
+      // Reload and Stop share the row's last slot and its key.
+      expect(item(shown, 'Reload').key).toBe('icon.reload')
+      // The desktop's and the tablet's menus carry no keys: the order is the phone's.
+      for (const other of [harness(DESKTOP), harness(DESKTOP, 'tablet')]) {
+        appMenu(other)
+        expect(keysOf(other.shown()).every((k) => k === undefined)).toBe(true)
+      }
+    })
+
+    it('reads `settings.menuOrder` per section: the named items first in the saved order, the rest after them in the default order, a key the build has no item for dropped, the Change Menu row last whatever the order says', () => {
+      const h = harness(ANDROID, 'phone')
+      h.browser.state.settings.menuOrder = [
+        'row.settings',
+        'icon.reload',
+        'row.readAloud',
+        'menu.change',
+        'sep.4',
+        'row.downloads',
+        'icon.home'
+      ]
+      const menu = appMenu(h)
+      expect(menu.slice(0, 7)).toEqual([
+        'Reload',
+        'Home',
+        'Forward',
+        'Bookmark',
+        'Download Page',
+        'Page Info',
+        '-'
+      ])
+      // Settings, then the fourth hairline (Find in Page…'s group's), then Downloads, then the
+      // default order less the three; the row's Zoom… group lost its hairline to Settings' side.
+      expect(menu.slice(7, 12)).toEqual(['Settings', '-', 'Downloads', 'New Tab', 'New Private Tab'])
+      expect(menu.filter((l) => l === 'Settings')).toHaveLength(1)
+      expect(menu.filter((l) => l === 'Downloads')).toHaveLength(1)
+      expect(menu.at(-2)).toBe('-')
+      expect(menu.at(-1)).toBe('Change Menu')
+      expect(menu).not.toContain('row.readAloud')
+    })
+
+    it('saves the order through `settings.update` – sanitised – and an empty list is the Reset: the setting absent, the default order back', () => {
+      const h = harness(ANDROID, 'phone')
+      const before = appMenu(h)
+      h.browser.handleCommand(h.win, 'settings.update', {
+        menuOrder: ['row.about', 3, 'row.about', '', 'row.newTab']
+      })
+      expect(h.browser.state.settings.menuOrder).toEqual(['row.about', 'row.newTab'])
+      expect(appMenu(h).slice(7, 9)).toEqual(['About Zenium 1.2.3', 'New Tab'])
+      h.browser.handleCommand(h.win, 'settings.update', { menuOrder: [] })
+      expect('menuOrder' in h.browser.state.settings).toBe(false)
+      expect(appMenu(h)).toEqual(before)
+    })
   })
 
   it('on a phone Home is the icon row’s glyph after Forward (SET-36, v2 §9.13), never a text row: gone while Off, and it opens the homepage on the active tab', () => {
@@ -2071,13 +2151,15 @@ describe('the app menu', () => {
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).not.toContain('Dark Theme for This Site')
     h.browser.pageControls.update({ darkenSites: true })
-    expect(appMenu(h).slice(-6)).toEqual([
+    expect(appMenu(h).slice(-8)).toEqual([
       'Desktop Site',
       'Dark Theme for This Site',
       '-',
       'Settings',
       '-',
-      'About Zenium 1.2.3'
+      'About Zenium 1.2.3',
+      '-',
+      'Change Menu'
     ])
   })
 

@@ -18,6 +18,12 @@ export const MENU_KEY_ROW = 'row.'
 /** The prefix of a hairline's key (the list's groups reorder as one list, hairlines included). */
 export const MENU_KEY_SEP = 'sep.'
 
+/**
+ * The key of the "Change Menu" row: the list's last row, outside the order – the sheet opens its
+ * edit mode in place when it is picked, and the edit mode neither moves nor saves it.
+ */
+export const MENU_KEY_CHANGE_MENU = 'menu.change'
+
 /** A saved order longer than this is cut: the phone menu has a few dozen items at most. */
 export const MENU_ORDER_MAX = 96
 
