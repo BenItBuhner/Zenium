@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  READER_ENTRY_CLOCK_MS,
   READER_MUTE_CAP,
   ReaderMuteRecord,
   readerArticleTab,
+  readerOfOffer,
   readerOfferEndEffect,
   readerOfferFor,
   readerSiteOf
@@ -102,18 +104,45 @@ describe('readerOfferFor', () => {
 })
 
 describe("readerOfferEndEffect (Chrome's onMessageDismissed)", () => {
-  it('mutes on every end but the action: the swipe, the X, a clock, the page left', () => {
+  it('mutes on every end but the action: the swipe, the X, the clock, the page left', () => {
     expect(readerOfferEndEffect({ reason: 'swipe' })).toBe('mute')
     expect(readerOfferEndEffect({ reason: 'close' })).toBe('mute')
     expect(readerOfferEndEffect({ reason: 'timeout' })).toBe('mute')
     expect(readerOfferEndEffect({ reason: 'program', movedOn: true })).toBe('mute')
   })
+  it("the clock's running out is a mute exactly as the X is (§9.33 as amended: about 10 s, a refusal remembered for the site)", () => {
+    expect(READER_ENTRY_CLOCK_MS).toBe(10_000)
+    expect(readerOfferEndEffect({ reason: 'timeout' })).toBe(
+      readerOfferEndEffect({ reason: 'close' })
+    )
+  })
   it('un-mutes on the action', () => {
     expect(readerOfferEndEffect({ reason: 'action' })).toBe('unmute')
+  })
+  it('un-mutes when the page was left for Reader View on itself: the offer taken by another door', () => {
+    expect(readerOfferEndEffect({ reason: 'program', movedOn: true, toReader: true })).toBe(
+      'unmute'
+    )
   })
   it("changes nothing for the chrome's own ends: a gate over the page, a banner pushed off", () => {
     expect(readerOfferEndEffect({ reason: 'program', movedOn: false })).toBe('none')
     expect(readerOfferEndEffect({ reason: 'program' })).toBe('none')
     expect(readerOfferEndEffect({ reason: 'replaced' })).toBe('none')
+  })
+})
+
+describe('readerOfOffer', () => {
+  const page = 'https://news.example.com/story'
+  const reader = (url: string): string => `zen://reader?id=article_1&url=${encodeURIComponent(url)}`
+  it('is Reader View on the offer’s own page, a footnote’s fragment aside', () => {
+    expect(readerOfOffer(page, reader(page))).toBe(true)
+    expect(readerOfOffer(page, reader(`${page}#footnote-3`))).toBe(true)
+    expect(readerOfOffer(`${page}#top`, reader(page))).toBe(true)
+  })
+  it('is not another page’s reader, nor any plain navigation', () => {
+    expect(readerOfOffer(page, reader('https://news.example.com/other'))).toBe(false)
+    expect(readerOfOffer(page, 'https://news.example.com/other')).toBe(false)
+    expect(readerOfOffer(page, page)).toBe(false)
+    expect(readerOfOffer(page, 'zen://reader?id=article_1')).toBe(false)
   })
 })

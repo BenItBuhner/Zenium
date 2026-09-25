@@ -4,9 +4,16 @@ import { act, createElement, type JSX } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Tab } from '@shared/types'
 import { run } from '../api'
-import { READER_ENTRY_ACTION, READER_ENTRY_TITLE } from '../readerEntry'
+import { READER_ENTRY_ACTION, READER_ENTRY_CLOCK_MS, READER_ENTRY_TITLE } from '../readerEntry'
 import { READER_BANNER_KEY, readerMutes, useReaderEntryMessage } from '../readerEntryMessage'
-import { dismissBanner, pickBannerAction, showBanner, uiStore, type Banner } from '../ui'
+import {
+  dismissBanner,
+  holdBanner,
+  pickBannerAction,
+  showBanner,
+  uiStore,
+  type Banner
+} from '../ui'
 
 vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () => undefined) }))
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -62,7 +69,7 @@ describe('the offer', () => {
     expect(banner).toBeDefined()
     expect(banner!.title).toBe(READER_ENTRY_TITLE)
     expect(banner!.action?.label).toBe(READER_ENTRY_ACTION)
-    expect(banner!.duration).toBeNull()
+    expect(banner!.duration).toBe(READER_ENTRY_CLOCK_MS)
     expect(banners()).toHaveLength(1)
   })
 
@@ -108,6 +115,61 @@ describe("Chrome's dismissal memory", () => {
     render(article())
     act(() => dismissBanner(offer()!.id, 'close'))
     expect(readerMutes.has('news.example.com')).toBe(true)
+  })
+
+  it("the clock's running out mutes as the X does: the offer left standing is gone at about 10 s and the site is muted for the session (§9.33 as amended)", () => {
+    vi.useFakeTimers()
+    try {
+      render(article())
+      expect(offer()).toBeDefined()
+      act(() => vi.advanceTimersByTime(READER_ENTRY_CLOCK_MS - 1))
+      expect(offer()).toBeDefined()
+      expect(readerMutes.has('news.example.com')).toBe(false)
+      act(() => vi.advanceTimersByTime(1))
+      expect(offer()).toBeUndefined()
+      expect(readerMutes.has('news.example.com')).toBe(true)
+      // The next page on the site gets no offer, as after the X.
+      render(article({ url: 'https://news.example.com/other-story' }))
+      expect(offer()).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a finger on the banner pauses the clock (the §9.33 host’s hold); it resumes on the release', () => {
+    vi.useFakeTimers()
+    try {
+      render(article())
+      const id = offer()!.id
+      act(() => vi.advanceTimersByTime(4000))
+      act(() => holdBanner(id, true))
+      act(() => vi.advanceTimersByTime(READER_ENTRY_CLOCK_MS))
+      expect(offer()).toBeDefined()
+      expect(readerMutes.has('news.example.com')).toBe(false)
+      act(() => holdBanner(id, false))
+      act(() => vi.advanceTimersByTime(READER_ENTRY_CLOCK_MS - 4000))
+      expect(offer()).toBeUndefined()
+      expect(readerMutes.has('news.example.com')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Reader View entered by another door while the offer stood (the menu’s row, the sheet’s) is the offer taken: no mute', () => {
+    render(article())
+    expect(offer()).toBeDefined()
+    // The core drops `readerable` on the reader document; the same tab now shows the page's reader.
+    render(
+      article({
+        url: `zen://reader?id=article_1&url=${encodeURIComponent('https://news.example.com/story')}`,
+        readerable: false
+      })
+    )
+    expect(offer()).toBeUndefined()
+    expect(readerMutes.has('news.example.com')).toBe(false)
+    // Back on the article after the exit, the offer returns (gate (f): the memory works as Chrome's).
+    render(article())
+    expect(offer()).toBeDefined()
   })
 
   it('leaving the page with the offer standing mutes the site (the scope destroyed)', () => {

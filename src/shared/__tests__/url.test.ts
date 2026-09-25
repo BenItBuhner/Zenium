@@ -25,8 +25,28 @@ import {
   isWebPageUrl,
   pillText,
   presentedUrl,
+  readerSourceUrl,
   titleForUrl
 } from '../url'
+
+describe('readerSourceUrl', () => {
+  it('names the page a Reader View URL stands in for, as the core wrote it', () => {
+    expect(
+      readerSourceUrl('zen://reader?id=article_1&url=https%3A%2F%2Fnews.example%2Fstory')
+    ).toBe('https://news.example/story')
+    expect(readerSourceUrl('zen://reader/?id=a&url=http%3A%2F%2F127.0.0.1%3A18153%2F')).toBe(
+      'http://127.0.0.1:18153/'
+    )
+  })
+
+  it('is null for any other page, a reader URL without its page, and a malformed one', () => {
+    expect(readerSourceUrl('https://news.example/story')).toBeNull()
+    expect(readerSourceUrl('zen://settings')).toBeNull()
+    expect(readerSourceUrl('zen://reader?id=article_1')).toBeNull()
+    expect(readerSourceUrl('zen://reader?id=article_1&url=')).toBeNull()
+    expect(readerSourceUrl('zen://reader:port?url=https%3A%2F%2Fnews.example%2F')).toBeNull()
+  })
+})
 
 describe('isProbablyUrl / inputToUrl', () => {
   it('recognises hosts, IPs, localhost and schemes', () => {

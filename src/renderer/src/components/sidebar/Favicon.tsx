@@ -3,7 +3,7 @@ import { Frown, Globe, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { getHost, isEmptyTabUrl } from '@shared/url'
+import { getHost, isEmptyTabUrl, readerSourceUrl } from '@shared/url'
 import { CRASH_ERROR_CODE } from '@shared/zenPages'
 import { useExtensionPage } from '@renderer/lib/extensions/pages'
 import { useFaviconSrc } from '@renderer/lib/favicons'
@@ -25,6 +25,12 @@ import { ExtensionIcon } from '../extensions/ExtensionIcon'
  * backwards while the load waits for the server's first response (`waiting`), the accent
  * colour turning forwards once the document is coming in; the icon that then takes its place
  * fades back in over 150 ms. An icon that never spun draws at once.
+ *
+ * A Reader View tab keeps its page's identity (v2 §9.29; the design gate for #491): its icon is
+ * the page's still – the core keeps `favicon` across the reader's navigation, and the reader
+ * document reports none of its own – and where the page had no icon, the letter tile is the
+ * page's host's, read through `zen://reader?…&url=` as the address is, never the globe of a
+ * siteless page.
  */
 /** What the favicon is drawn from: a tab, or a row that carries the same fields (tab search). */
 export type FaviconSource = Pick<
@@ -139,13 +145,15 @@ export function Favicon({
         />
       )
     }
-    const host = getHost(tab.url).replace(/^www\./, '')
+    // The page the slot stands for: Reader View's is the article's.
+    const identity = readerSourceUrl(tab.url) ?? tab.url
+    const host = getHost(identity).replace(/^www\./, '')
     const letter = (tab.customTitle ?? (host || tab.title)).trim().charAt(0).toUpperCase()
-    if (!letter || isEmptyTabUrl(tab.url) || tab.url.startsWith('zen://')) {
+    if (!letter || isEmptyTabUrl(identity) || identity.startsWith('zen://')) {
       // The private marker (v2 §9.19): the mask glyph while the private tab has no page, at the
       // row stroke when drawn at the phone's 20.
       const Icon =
-        tab.containerId === PRIVATE_CONTAINER_ID && isEmptyTabUrl(tab.url) ? VenetianMask : Globe
+        tab.containerId === PRIVATE_CONTAINER_ID && isEmptyTabUrl(identity) ? VenetianMask : Globe
       return (
         <Icon
           className={cn('zen-tab-favicon shrink-0 opacity-60', back, className)}

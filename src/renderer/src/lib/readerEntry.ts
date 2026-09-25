@@ -1,5 +1,5 @@
 import type { Tab } from '@shared/types'
-import { READER_URL_PREFIX } from '@shared/url'
+import { READER_URL_PREFIX, readerSourceUrl } from '@shared/url'
 
 /*
  * The reader entry's offer on the phone (PUI-14; v2 §9.33): when an article page has loaded and
@@ -10,13 +10,28 @@ import { READER_URL_PREFIX } from '@shared/url'
  * SITE (its host) for the rest of the session, so the same site never asks twice; the action
  * un-mutes it (Chrome's `removeUrlFromMutedSites` on activation); the record is capped at a
  * hundred hosts, the oldest forgotten first (`MAX_SIZE_OF_DECLINED_SITES`). Chrome keys the set
- * by the host's hash; the host itself serves here. This module is the rule, pure and testable;
+ * by the host's hash; the host itself serves here. The offer stands on Chrome's clock too: an
+ * offer banner – information the user did not ask for – leaves on its own after about ten
+ * seconds (§9.33 as amended on the design gate for PUI-14), and the timeout is a refusal
+ * remembered for the site this session exactly as the X and a swipe are, since a reader who has
+ * read that long has answered. This module is the rule, pure and testable;
  * `lib/readerEntryMessage.ts` shows the banner from it.
  */
 
 /** The banner's words: the sentence as its title, the one action's label (gate question (a)). */
 export const READER_ENTRY_TITLE = 'Show Reader View?'
 export const READER_ENTRY_ACTION = 'Show'
+
+/**
+ * How long the offer stands unanswered before it leaves on its own (§9.33 as amended: "about
+ * 10 s" – the Messages autodismiss Chrome's reader message stands on, `TIMER` being one of the
+ * dismissals `ReaderModeManager.onMessageDismissed` mutes for). The §9.33 host runs the clock:
+ * armed as the banner is shown – its paint follows on the next frame – paused while a finger or
+ * pointer holds the card and resumed with at least a second left on its release (`lib/ui.ts`
+ * `holdBanner`), and its running out is the `timeout` end below. Motion has no part in it: the
+ * clock runs the same under reduced motion.
+ */
+export const READER_ENTRY_CLOCK_MS = 10_000
 
 /** Chrome's cap on the declined-sites record (`ReaderModeManager.MAX_SIZE_OF_DECLINED_SITES`). */
 export const READER_MUTE_CAP = 100
@@ -100,21 +115,41 @@ export function readerOfferFor(
  * How an offer ended, in the banner host's words (`BannerDismissReason`) plus what the shell
  * knows of a `program` end: `movedOn` says the page was left – a navigation, another tab in
  * front, the tab closed – while the offer stood, as against a gate closing over it (a page's
- * fullscreen, the private lock, onboarding), which is no answer.
+ * fullscreen, the private lock, onboarding), which is no answer; `toReader` says the page was
+ * left FOR Reader View on itself – the app menu's row, the site-information sheet's, the page
+ * menu's – which is the offer accepted by another door.
  */
 export interface ReaderOfferEnd {
   reason: 'action' | 'swipe' | 'close' | 'timeout' | 'replaced' | 'program'
   movedOn?: boolean
+  toReader?: boolean
+}
+
+/**
+ * Whether `next` is Reader View on the offer's own page – the reader URL naming `page` (its
+ * fragment aside, as a footnote's hash is the same document) as the page it stands in for.
+ */
+export function readerOfOffer(page: string, next: string): boolean {
+  const source = readerSourceUrl(next)
+  return source !== null && withoutFragment(source) === withoutFragment(page)
+}
+
+function withoutFragment(url: string): string {
+  const hash = url.indexOf('#')
+  return hash === -1 ? url : url.slice(0, hash)
 }
 
 /**
  * What an offer's end does to the site's mute: Chrome's `onMessageDismissed` mutes the host on
  * EVERY dismissal but the primary action – the gesture, the timer, the scope destroyed by a
  * navigation or the tab's going – and the action un-mutes it (`removeUrlFromMutedSites`). Here
- * the same, read through the §9.33 host's reasons: the swipe, the X and a clock (this banner
- * has none) mute; the action un-mutes; a `program` end mutes when the page was left with the
- * offer standing and not when a gate closed over it; `replaced` – a third banner pushing this
- * one off the stack – is the chrome's doing, not the user's, and changes nothing.
+ * the same, read through the §9.33 host's reasons: the swipe, the X and the clock running out
+ * ({@link READER_ENTRY_CLOCK_MS}; §9.33 as amended – a reader who has read that long has
+ * answered) mute; the action un-mutes; a `program` end mutes when the page was left with the
+ * offer standing and not when a gate closed over it – and un-mutes, as the action does, when
+ * the page was left for Reader View on itself (`toReader`): the offer answered by another door
+ * is no refusal; `replaced` – a third banner pushing this one off the stack – is the chrome's
+ * doing, not the user's, and changes nothing.
  */
 export function readerOfferEndEffect(end: ReaderOfferEnd): 'mute' | 'unmute' | 'none' {
   switch (end.reason) {
@@ -125,6 +160,7 @@ export function readerOfferEndEffect(end: ReaderOfferEnd): 'mute' | 'unmute' | '
     case 'timeout':
       return 'mute'
     case 'program':
+      if (end.toReader) return 'unmute'
       return end.movedOn ? 'mute' : 'none'
     case 'replaced':
       return 'none'
