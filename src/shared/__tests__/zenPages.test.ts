@@ -19,6 +19,7 @@ import {
   crashCodeName,
   describeNetError,
   errorPageAccentStyle,
+  errorPageAttributesScript,
   errorPageContent,
   errorPageHtml,
   errorPageStyle,
@@ -710,7 +711,7 @@ describe('ERROR_PAGE_ATTRIBUTES_SCRIPT', () => {
    */
   function attributes(
     metrics: ViewportMetrics,
-    { dark = false, webViewSaysFine = false } = {}
+    { dark = false, webViewSaysFine = false, script = ERROR_PAGE_ATTRIBUTES_SCRIPT } = {}
   ): Record<string, string> {
     const dataset: Record<string, string> = {}
     const queries: Record<string, boolean> = {
@@ -725,7 +726,7 @@ describe('ERROR_PAGE_ATTRIBUTES_SCRIPT', () => {
       'navigator',
       'innerWidth',
       'innerHeight',
-      ERROR_PAGE_ATTRIBUTES_SCRIPT
+      script
     )
     run(
       { documentElement: { dataset } },
@@ -761,6 +762,56 @@ describe('ERROR_PAGE_ATTRIBUTES_SCRIPT', () => {
     expect(seenAsFine.pointer).toBe('coarse')
     expect(seenAsFine.formFactor).toBe('phone')
     expect(attributes({ ...phone, coarse: false, hover: true }).pointer).toBe('fine')
+  })
+
+  /**
+   * The app's scheme, not the engine's: on Linux `nativeTheme.themeSource` never reaches a
+   * renderer's `prefers-color-scheme`, so an explicit setting is written as the chrome writes
+   * its own `data-theme`, whatever the media query says; System alone reads the query.
+   */
+  it('writes an explicit Light or Dark setting whatever the media query says, and reads the query for System only', () => {
+    const desktop = { width: 1440, height: 900, coarse: false, hover: true }
+    const dark = errorPageAttributesScript('dark')
+    const light = errorPageAttributesScript('light')
+    expect(attributes(desktop, { script: dark }).theme).toBe('dark')
+    expect(attributes(desktop, { dark: true, script: dark }).theme).toBe('dark')
+    expect(attributes(desktop, { script: light }).theme).toBeUndefined()
+    expect(attributes(desktop, { dark: true, script: light }).theme).toBeUndefined()
+    // The pointer and form factor are still read from the media the tab sees.
+    expect(attributes(desktop, { script: dark })).toMatchObject({
+      pointer: 'fine',
+      formFactor: 'desktop'
+    })
+    expect(dark).not.toContain('prefers-color-scheme')
+    expect(light).not.toContain('prefers-color-scheme')
+    expect(errorPageAttributesScript('system')).toBe(ERROR_PAGE_ATTRIBUTES_SCRIPT)
+    expect(errorPageAttributesScript()).toBe(ERROR_PAGE_ATTRIBUTES_SCRIPT)
+    expect(ERROR_PAGE_ATTRIBUTES_SCRIPT).toContain("q('(prefers-color-scheme: dark)')")
+  })
+
+  it('reaches every zen:// document that paints the theme: the error page, the interstitials, the in-place script and the protocol’s entry', () => {
+    const dark = `<script>${errorPageAttributesScript('dark')}</script>`
+    const system = `<script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script>`
+    const pages = [
+      errorPageHtml(parseZenUrl(REFUSED)!, 'dark'),
+      errorPageHtml(parseZenUrl(EXPIRED)!, 'dark'),
+      errorPageHtml(parseZenUrl(safeBrowsingPageUrl('https://bad.example/', 'malware'))!, 'dark'),
+      errorPageHtml(parseZenUrl(httpsOnlyPageUrl('http://plain.example/', -102))!, 'dark'),
+      zenPageHtml(REFUSED, undefined, undefined, undefined, 'dark')
+    ]
+    for (const html of pages) {
+      expect(html).toContain(dark)
+      expect(html).not.toContain(system)
+    }
+    // Without a scheme (Android's WebViews follow the setting already) the page reads the query.
+    expect(errorPageHtml(parseZenUrl(REFUSED)!)).toContain(system)
+    expect(zenPageHtml(REFUSED)).toContain(system)
+    const inPlace = inPlaceErrorPageScript(parseZenUrl(EXPIRED)!, 'dark')
+    expect(inPlace).toContain(`${errorPageAttributesScript('dark')};return true`)
+    expect(inPlace).not.toContain('prefers-color-scheme')
+    expect(
+      inPlace.endsWith(`})(${JSON.stringify(errorPageHtml(parseZenUrl(EXPIRED)!, 'dark'))})`)
+    ).toBe(true)
   })
 })
 

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest'
-import type { NewTabPageAction, NewTabPageState } from '../types'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { NewTabPageAction, NewTabPageCommand, NewTabPageState } from '../types'
 import { PRIVATE_COOKIES, newTabPageHtml } from '../newTabPage'
 import { installNewTabPage, type NewTabTransport } from '../newTabPageScript'
 
@@ -25,6 +25,7 @@ function state(overrides: Partial<NewTabPageState> = {}): NewTabPageState {
     topSites: [],
     backgroundImage: null,
     canPickImage: false,
+    engineFavicon: null,
     ...overrides
   }
 }
@@ -183,5 +184,207 @@ describe('zen://newtab: the private page\'s "Block third-party cookies" switch',
     h.push(privateState(null))
     h.toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(cookieActions(h)).toEqual([])
+  })
+})
+
+/**
+ * The field's leading glyph (v2 §6): the default engine's favicon at 16 once loaded, the
+ * magnifier until then and for good without one. happy-dom fires no load events of its own, so
+ * the image's load and error are dispatched by hand.
+ */
+describe("zen://newtab: the field's engine favicon", () => {
+  const glyph = (): HTMLSpanElement =>
+    document.getElementById('zen-engine-glyph') as HTMLSpanElement
+  const img = (): HTMLImageElement =>
+    document.getElementById('zen-engine-favicon') as HTMLImageElement
+  const magnifier = (): SVGSVGElement => glyph().querySelector('svg') as SVGSVGElement
+  const magnifierShown = (): boolean => magnifier().style.display !== 'none'
+
+  it('leads with the magnifier alone while the engine has no favicon', () => {
+    mount(state({ engineFavicon: null }))
+    expect(glyph().parentElement?.id).toBe('zen-search')
+    expect(glyph().firstElementChild).toBe(magnifier())
+    expect(img().hidden).toBe(true)
+    expect(img().hasAttribute('src')).toBe(false)
+    expect(magnifierShown()).toBe(true)
+  })
+
+  it('keeps the magnifier until the favicon loads, then shows the favicon in its place', async () => {
+    mount(state({ engineFavicon: 'https://engine.example/favicon.ico' }))
+    expect(img().getAttribute('src')).toBe('https://engine.example/favicon.ico')
+    expect(img().getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(img().hidden).toBe(true)
+    expect(magnifierShown()).toBe(true)
+    img().dispatchEvent(new Event('load'))
+    expect(img().hidden).toBe(false)
+    expect(magnifierShown()).toBe(false)
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    expect(img().hasAttribute('data-shown')).toBe(true)
+  })
+
+  it('a favicon that never comes leaves the magnifier; a new default engine starts over', () => {
+    const h = mount(state({ engineFavicon: 'https://broken.example/favicon.ico' }))
+    img().dispatchEvent(new Event('error'))
+    expect(img().hidden).toBe(true)
+    expect(img().hasAttribute('src')).toBe(false)
+    expect(magnifierShown()).toBe(true)
+    h.push(state({ engineFavicon: 'https://other.example/favicon.ico' }))
+    expect(img().getAttribute('src')).toBe('https://other.example/favicon.ico')
+    expect(magnifierShown()).toBe(true)
+    img().dispatchEvent(new Event('load'))
+    expect(magnifierShown()).toBe(false)
+    // Back to an engine without one: the magnifier returns and the image is dropped.
+    h.push(state({ engineFavicon: null }))
+    expect(img().hidden).toBe(true)
+    expect(img().hasAttribute('src')).toBe(false)
+    expect(magnifierShown()).toBe(true)
+  })
+
+  it('a re-push of the same favicon changes nothing; one that loaded before shows at once', () => {
+    const h = mount(state({ engineFavicon: 'https://same.example/favicon.ico' }))
+    img().dispatchEvent(new Event('load'))
+    expect(img().hidden).toBe(false)
+    h.push(state({ engineFavicon: 'https://same.example/favicon.ico', greeting: true }))
+    expect(img().hidden).toBe(false)
+    expect(magnifierShown()).toBe(false)
+    // A fresh page for an address this page already loaded: no magnifier frame first.
+    mount(state({ engineFavicon: 'https://same.example/favicon.ico' }))
+    expect(img().hidden).toBe(false)
+    expect(img().hasAttribute('data-shown')).toBe(true)
+    expect(magnifierShown()).toBe(false)
+  })
+})
+
+/**
+ * The toast after a change to the grid (NTP-22, v2 §9.33: one action): a sentence and Undo,
+ * never a second link – Chrome's "Restore default shortcuts" is the page menu's row, whose
+ * `defaults-restored` command raises the restore's own toast with Undo. The tiles' Remove runs
+ * through the chrome's `remove-tile` command, so the harness feeds that.
+ */
+describe('zen://newtab: the toast carries Undo alone; the restore is the menu’s and comes back as a command', () => {
+  const toast = (): HTMLDivElement => document.getElementById('zen-toast') as HTMLDivElement
+  const buttons = (): string[] =>
+    Array.from(toast().querySelectorAll('button')).map((b) => b.textContent ?? '')
+  const shortcuts = [
+    { id: 's1', title: 'One', url: 'https://one.example/', favicon: null },
+    { id: 's2', title: 'Two', url: 'https://two.example/', favicon: null }
+  ]
+
+  function mountWithCommands(initial: NewTabPageState): {
+    h: Harness
+    command(c: NewTabPageCommand): void
+  } {
+    const listeners: Array<(c: NewTabPageCommand) => void> = []
+    const html = newTabPageHtml()
+    document.body.innerHTML = html.slice(
+      html.indexOf('<body') + html.slice(html.indexOf('<body')).indexOf('>') + 1,
+      html.indexOf('</body>')
+    )
+    const sent: NewTabPageAction[] = []
+    const stateListeners: Array<(s: NewTabPageState) => void> = []
+    installNewTabPage({
+      initialState: () => initial,
+      onState: (l) => {
+        stateListeners.push(l)
+      },
+      onCommand: (l) => {
+        listeners.push(l)
+      },
+      send: (a) => {
+        sent.push(a)
+      }
+    })
+    const h = {
+      sent,
+      push: (next: NewTabPageState) => stateListeners.forEach((l) => l(next)),
+      row: document.getElementById('zen-cookies') as HTMLElement,
+      toggle: document.getElementById('zen-cookies-switch') as HTMLButtonElement,
+      label: document.getElementById('zen-cookies-label') as HTMLLabelElement,
+      description: document.getElementById('zen-cookies-desc') as HTMLElement
+    }
+    return { h, command: (c) => listeners.forEach((l) => l(c)) }
+  }
+
+  it('a removal offers Undo alone – no second link on the toast (§9.33; the restore is the page menu’s row)', () => {
+    const { h, command } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
+    expect(toast().hidden).toBe(true)
+    command({ type: 'remove-tile', id: 's1' })
+    expect(toast().hidden).toBe(false)
+    expect(toast().querySelector('span')?.textContent).toBe('Shortcut removed')
+    expect(buttons()).toEqual(['Undo'])
+    expect(document.getElementById('zen-restore-defaults')).toBeNull()
+    expect(h.sent.at(-1)).toEqual({ type: 'remove-shortcut', id: 's1' })
+    // Nothing the page sends asks for the defaults: that is the chrome's row, not the page's.
+    expect(h.sent.map((a) => a.type)).not.toContain('restore-default-shortcuts')
+  })
+
+  it('the menu’s restore comes back as `defaults-restored`: the toast says so with Undo alone, and Undo asks for the three back', () => {
+    const { h, command } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
+    command({ type: 'defaults-restored' })
+    expect(toast().hidden).toBe(false)
+    expect(toast().querySelector('span')?.textContent).toBe('Default shortcuts restored')
+    expect(buttons()).toEqual(['Undo'])
+    toast().querySelector('button')!.click()
+    expect(h.sent.at(-1)).toEqual({ type: 'undo-restore-default-shortcuts' })
+    expect(toast().hidden).toBe(true)
+  })
+
+  it('a section the chrome hid (NTP-18) raises the toast with Undo alone; Undo asks for the section back', () => {
+    const { h, command } = mountWithCommands(state({ greeting: true, shortcuts }))
+    command({ type: 'section-hidden', section: 'greeting' })
+    expect(toast().hidden).toBe(false)
+    expect(toast().querySelector('span')?.textContent).toBe('Greeting hidden')
+    expect(buttons()).toEqual(['Undo'])
+    toast().querySelector('button')!.click()
+    expect(h.sent.at(-1)).toEqual({ type: 'show-section', section: 'greeting' })
+    expect(toast().hidden).toBe(true)
+    command({ type: 'section-hidden', section: 'shortcuts' })
+    expect(toast().querySelector('span')?.textContent).toBe('Shortcuts hidden')
+  })
+
+  it('Undo on a removal restores the tile as before and closes the toast', () => {
+    const { h, command } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
+    command({ type: 'remove-tile', id: 's2' })
+    toast().querySelector('button')!.click()
+    expect(h.sent.at(-1)).toEqual({
+      type: 'restore-shortcut',
+      id: 's2',
+      title: 'Two',
+      url: 'https://two.example/',
+      index: 1
+    })
+    expect(toast().hidden).toBe(true)
+  })
+
+  it('a drag that reorders the shortcuts sends the new order and raises no toast (Chrome raises none; a move is undone by dragging back)', () => {
+    // The drag's frames are taken by hand: every slot measures alike in happy-dom, so the
+    // nearest slot to a moved tile is the first, and the drop settles on its spring frame by
+    // frame until the script commits the order.
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+    try {
+      const { h } = mountWithCommands(state({ shortcutsMode: 'my-shortcuts', shortcuts }))
+      const link = document.querySelector<HTMLElement>(
+        '.zen-tile[data-id="s2"] a.zen-v2-shortcut'
+      ) as HTMLElement
+      const pointer = (type: string, clientX: number): boolean =>
+        link.dispatchEvent(
+          new PointerEvent(type, { bubbles: true, button: 0, pointerId: 1, clientX, clientY: 0 })
+        )
+      pointer('pointerdown', 0)
+      pointer('pointermove', 12)
+      pointer('pointerup', 12)
+      let now = performance.now()
+      for (let i = 0; frames.length && i < 1000; i++) {
+        now += 16
+        ;(frames.shift() as FrameRequestCallback)(now)
+      }
+      expect(h.sent.at(-1)).toEqual({ type: 'reorder-shortcuts', ids: ['s2', 's1'] })
+      expect(toast().hidden).toBe(true)
+      expect(buttons()).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

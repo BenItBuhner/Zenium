@@ -7,6 +7,7 @@ import type {
   Point,
   Settings,
   Space,
+  SplitGroup,
   SplitLayout,
   Tab,
   TabMoveResult,
@@ -39,8 +40,11 @@ import {
   removeTabFromLists,
   removeTabFromSplit,
   replaceTabInSplit,
+  swapSplitPanes,
   savedGroupTab,
   sectionIndexOf,
+  setSplitLinksToRight,
+  splitLinksToRight,
   splitPlacement,
   tabVisibleIn,
   type Model,
@@ -158,6 +162,20 @@ export class TabManager {
   private hostGone = false
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
+  /**
+   * What each live page was last told about the left pane's link rule (`PageFlags.
+   * linksToSplitPane`), so `syncSplitLinkFlags` writes to a page only when its answer changed.
+   */
+  private readonly splitLinkFlags = new Map<string, boolean>()
+
+  /**
+   * The pane loading a link routed from the pane to its left (split-13), keyed by the loading
+   * tab's id with the origin's: while the load runs, the right pane's new document taking the
+   * keyboard is Chromium's doing and not the user moving there, so the keyboard is handed back
+   * (`handKeyboardBack`). Cleared at the load's `dom-ready`, by the user's own input in the
+   * right pane, or with the view.
+   */
+  private readonly splitLinkLoads = new Map<string, string>()
   /**
    * The server redirects the navigation under way in a tab went through (history-23): `hops`
    * first to last, `to` the address it is bound for now. The hosts report each hop before the
@@ -869,16 +887,22 @@ export class TabManager {
         this.browser.menus.showPageContextMenu(tabId, params, ownerWindow()),
       onKey: (input) => this.browser.keys.handle(input, tabId, ownerWindow()),
       onFocused: () => {
+        // A routed link's load grabbing the keyboard for the right pane is not the user moving
+        // there: the keyboard goes back to the left pane and nothing is activated (split-13).
+        if (this.handKeyboardBack(tabId)) return
         this.activatePaneOf(tabId)
         this.browser.emit('focus.page', { tabId }, ownerWindow())
       },
       onTargetUrl: (url) => this.browser.emit('status', { text: url }, ownerWindow()),
       onDomReady: () => {
+        this.splitLinkLoads.delete(tabId)
         this.sendPageFlags(tabId)
         this.browser.onPageReady(tabId)
       },
       onDestroyed: () => this.onViewGone(tabId),
       onUserActivation: () => {
+        // The user's own press or key in the pane: theirs to activate, mid-load or not.
+        this.splitLinkLoads.delete(tabId)
         this.activatePaneOf(tabId)
         this.browser.popups.activate(tabId)
       },
@@ -1251,16 +1275,123 @@ export class TabManager {
     const view = this.view(tabId)
     if (!tab || !view) return
     const owner = this.owners.get(tabId)
+    const linksToSplitPane = this.linksToSplitPane(tab)
     const flags: PageFlags = {
       glanceEnabled: this.settings.glanceEnabled && !owner?.glance,
       glanceTrigger: this.settings.glanceTrigger,
-      thirdParty: tab.pinned || tab.essential ? this.settings.thirdPartyOnPinned : null
+      thirdParty: tab.pinned || tab.essential ? this.settings.thirdPartyOnPinned : null,
+      linksToSplitPane
     }
+    this.splitLinkFlags.set(tabId, linksToSplitPane)
     view.sendPageFlags(flags)
   }
 
   broadcastPageFlags(): void {
     for (const id of this.views.keys()) this.sendPageFlags(id)
+  }
+
+  /**
+   * Whether links clicked in `tab`'s page go to the pane to its right (split-13): the tab's split
+   * carries the rule (`SplitGroup.linksToRight`, this split's own – v2 §9.35) and the tab is the
+   * first pane of a side-by-side split – vertical, or the grid, whose second pane is the top
+   * right; a stacked split has no left and right.
+   */
+  linksToSplitPane(tab: Tab): boolean {
+    if (!tab.splitGroupId) return false
+    const group = this.model.splitGroups[tab.splitGroupId]
+    return Boolean(
+      group &&
+      splitLinksToRight(group) &&
+      group.layout !== 'horizontal' &&
+      group.tabIds.length >= 2 &&
+      group.tabIds[0] === tab.id
+    )
+  }
+
+  /**
+   * The pane header's ⋯ menu wrote this split's link rule (split-13): the one home of the switch,
+   * kept with the split; the commit re-syncs the left pane's flag (`syncSplitLinkFlags`).
+   */
+  setSplitLinksToRight(groupId: string, on: boolean): void {
+    if (setSplitLinksToRight(this.model, groupId, on)) this.browser.state.commit()
+  }
+
+  /**
+   * The left pane's link rule is the split's, not the page's: a swap, a pane joining or leaving,
+   * the layout turning, the split dissolving or the rule written from the pane's menu change
+   * what a page's flag should say. After every commit the live pages' flags are checked against
+   * the model and the ones whose answer changed are re-sent (a page whose flag holds is not
+   * written to; a page that has not had its flags yet gets them at its `dom-ready`, as every
+   * page does).
+   */
+  syncSplitLinkFlags(): void {
+    for (const [id, sent] of this.splitLinkFlags) {
+      const tab = this.tab(id)
+      if (!tab || !this.views.has(id)) {
+        this.splitLinkFlags.delete(id)
+        continue
+      }
+      if (this.linksToSplitPane(tab) !== sent) this.sendPageFlags(id)
+    }
+  }
+
+  /**
+   * A link clicked in the left pane of a split with the rule on (split-13, Edge's "Open links
+   * from the left pane in the right pane"): the pane to its right loads it, the left pane stays
+   * where it is and stays the active pane (v2 §9.35) – the reader stays where they read, as a
+   * list drives a detail pane and keeps the focus; the pill keeps the left's address and the
+   * outline does not move. The right pane's load takes no focus: Chromium hands a new document
+   * the keyboard as it commits (twice on the desktop host, both before `dom-ready`), so the load
+   * is noted here and `handKeyboardBack` returns the keyboard to the left pane on each grab
+   * until the document is ready. The page prevented the click's own navigation on the flag's
+   * word, so when the flag no longer holds by the time the message lands (the split dissolved,
+   * the rule turned off) the link loads where it was clicked, and is never lost.
+   */
+  openInSplitPane(fromTabId: string, url: string): void {
+    const tab = this.tab(fromTabId)
+    if (!tab) return
+    const group = tab.splitGroupId ? this.model.splitGroups[tab.splitGroupId] : undefined
+    const target = this.linksToSplitPane(tab) && group ? group.tabIds[1] : undefined
+    if (target !== undefined) this.splitLinkLoads.set(target, fromTabId)
+    this.navigate(target ?? fromTabId, url, { transition: 'link' })
+  }
+
+  /**
+   * `tabId`'s page took the keyboard while it loads a link routed from the pane to its left
+   * (`splitLinkLoads`): the grab is the load's, not the user's, so the keyboard goes back to the
+   * left pane – deferred, since a `focus()` asked for inside the grab's own event leaves the
+   * keyboard where Chromium put it (measured on the desktop host: a tick later it moves) – and
+   * true says the caller activates nothing. False, and the note dropped, once the two are no
+   * longer panes of one split or the left pane is not the active tab any more (the user
+   * activated the right pane themselves through its header): then the grab is an ordinary one.
+   */
+  private handKeyboardBack(tabId: string): boolean {
+    const origin = this.splitLinkLoads.get(tabId)
+    if (origin === undefined) return false
+    const win = this.windowFor(tabId)
+    if (!this.splitLinkHolds(tabId, origin, win)) {
+      this.splitLinkLoads.delete(tabId)
+      return false
+    }
+    defer(() => {
+      const view = this.view(origin)
+      if (view && !view.isDestroyed() && this.splitLinkHolds(tabId, origin, win)) view.focus()
+    })
+    return true
+  }
+
+  /** Whether `origin` (the left pane) and `tabId` are still panes of one split with `origin` the window's active tab. */
+  private splitLinkHolds(tabId: string, origin: string, win: ZenWindow): boolean {
+    const tab = this.tab(tabId)
+    const from = this.tab(origin)
+    return Boolean(
+      tab &&
+      from &&
+      tab.splitGroupId &&
+      tab.splitGroupId === from.splitGroupId &&
+      this.views.has(origin) &&
+      this.activeTabFor(win)?.id === origin
+    )
   }
 
   /** The pop-up rule of `origin` changed: tell every live page of that site. */
@@ -1628,6 +1759,8 @@ export class TabManager {
     this.owners.delete(tabId)
     this.httpsUpgraded.delete(tabId)
     this.pendingTransition.delete(tabId)
+    this.splitLinkFlags.delete(tabId)
+    this.splitLinkLoads.delete(tabId)
     this.pendingRedirects.delete(tabId)
     this.crashPagePending.delete(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
@@ -3541,6 +3674,23 @@ export class TabManager {
     if (next && next !== active.id) this.activateTab(next, win)
   }
 
+  /**
+   * Swap Panes (split-07; Chrome's "Reverse position", Edge's "Swap" in the pane's More options):
+   * the pane of `tabId` – the active pane when none is named – trades places with the pane after
+   * it in the split's order, the last pane with the one before it, so a two-pane split reverses
+   * and in a grid a pane steps along the reading order. Each tab keeps its size
+   * (`swapSplitPanes`). The active pane stays the active tab wherever it lands; outside a split
+   * the command does nothing (the row is not offered there).
+   */
+  swapPanes(tabId: string | undefined, win: ZenWindow = this.browser.focusedWindow()): void {
+    const tab = tabId === undefined ? this.activeTabFor(win) : this.tab(tabId)
+    const group = tab?.splitGroupId ? this.model.splitGroups[tab.splitGroupId] : undefined
+    if (!tab || !group) return
+    const at = group.tabIds.indexOf(tab.id)
+    const other = at === group.tabIds.length - 1 ? at - 1 : at + 1
+    if (swapSplitPanes(this.model, group.id, at, other)) this.browser.state.commit()
+  }
+
   unsplit(groupId?: string, tabId?: string, win: ZenWindow = this.browser.focusedWindow()): void {
     let id = groupId
     if (!id) {
@@ -3613,6 +3763,49 @@ export class TabManager {
     this.browser.state.afterBroadcast(() =>
       this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
     )
+  }
+
+  /**
+   * Whether a link in `tab`'s page has a pane to open in ("Open Link in Split View",
+   * context-menus-24): the tab's page can be split – a chrome page cannot – and the split it is
+   * in, if any, has room for the link's tab.
+   */
+  canSplitLink(tab: Tab): boolean {
+    if (!this.browser.pages.splittable(tab)) return false
+    const group = tab.splitGroupId ? this.model.splitGroups[tab.splitGroupId] : undefined
+    return !group || group.tabIds.length < MAX_SPLIT_TABS
+  }
+
+  /**
+   * The split shown in `win` when `tab` may join it as a pane ("Add Tab to Split View",
+   * context-menus-92), else null: the active tab is in a split with room, the tab is not one of
+   * its panes, its page can be split and it may join a split of that space (`joinable`).
+   */
+  shownSplitFor(tab: Tab, win: ZenWindow): SplitGroup | null {
+    const active = this.activeTabFor(win)
+    const group = active?.splitGroupId ? this.model.splitGroups[active.splitGroupId] : undefined
+    if (!group || group.tabIds.includes(tab.id) || group.tabIds.length >= MAX_SPLIT_TABS)
+      return null
+    if (!this.browser.pages.splittable(tab) || !this.joinable(tab, group.spaceId, win)) return null
+    return group
+  }
+
+  /**
+   * Add Tab to Split View (context-menus-92, Vivaldi's row): the tab joins the split shown in
+   * `win` as its last pane – moving into the split's space first, as a dropped tab does – and
+   * is shown, the pane the user asked for. False when there is no split it may join.
+   */
+  addToShownSplit(tabId: string, win: ZenWindow): boolean {
+    const tab = this.tab(tabId)
+    const group = tab ? this.shownSplitFor(tab, win) : null
+    if (!tab || !group) return false
+    this.bringIntoSpace(tab, group.spaceId)
+    if (!addTabToSplit(this.model, group.id, tab.id)) return false
+    this.ensureLoaded(tab.id, win)
+    this.claim(tab.id, win)
+    this.activateTab(tab.id, win)
+    this.browser.state.commit()
+    return true
   }
 
   addToSplit(groupId: string, tabId: string): void {

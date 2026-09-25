@@ -168,6 +168,8 @@ export function androidCapabilities({
     // The WebView cannot draw a PDF: one it navigates to is downloaded and shown in `zen://pdf`.
     pdfViewer: true,
     agents: true,
+    // No coding harness lives on the phone; the skill is the desktop's to install.
+    agentSkills: false,
     updates: true,
     share: true,
     clipboardChip: sdkInt >= CLIPBOARD_CHIP_SDK,

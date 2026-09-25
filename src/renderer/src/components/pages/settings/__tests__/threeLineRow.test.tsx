@@ -774,7 +774,7 @@ describe('a stacked field row puts the field under its text (§9.12, FieldRow.fo
     expect(height(2) + gap + line).toBe(132)
   })
 
-  it('the inline form is unchanged: `form` absent or inline trails the field on a control row', () => {
+  it('the inline form is unchanged in its geometry: `form` absent or inline trails the field on a control row, the label its `<label for>`', () => {
     laidOut(3)
     for (const form of [undefined, 'inline'] as const) {
       const inline: FieldRow = form ? { ...apiKey, form } : apiKey
@@ -791,11 +791,16 @@ describe('a stacked field row puts the field under its text (§9.12, FieldRow.fo
       const input = field.querySelector<HTMLInputElement>('input')!
       expect(input.classList.contains('zen-settings-field-text')).toBe(true)
       expect(row.querySelector('.zen-settings-field-block')).toBeNull()
-      // The builder's convention for a control beside its text: `aria-label`, the label a span
-      // (the `<label for>` sweep is a later pass, the #453 lead check).
-      expect(input.getAttribute('aria-label')).toBe('Google Safe Browsing API key')
-      expect(input.id).toBe('')
-      expect(row.querySelector('.zen-settings-label')!.tagName.toLowerCase()).toBe('span')
+      // The inline field is bound as the stacked one is (the `<label for>` sweep, the #453 lead
+      // check): the visible label is the field's `<label for>`, the same class on the same line,
+      // and no `aria-label` – the label names the field.
+      const label = row.querySelector<HTMLLabelElement>('.zen-settings-label')!
+      expect(label.tagName.toLowerCase()).toBe('label')
+      expect(input.id).not.toBe('')
+      expect(label.htmlFor).toBe(input.id)
+      expect(label.control).toBe(input)
+      expect(label.textContent).toBe('Google Safe Browsing API key')
+      expect(input.hasAttribute('aria-label')).toBe(false)
       act(() => root?.unmount())
     }
   })

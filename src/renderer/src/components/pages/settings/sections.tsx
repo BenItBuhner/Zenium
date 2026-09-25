@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
-import { Check, CreditCard, Fingerprint, MapPin } from 'lucide-react'
+import { Check, CircleAlert, CreditCard, Fingerprint, MapPin } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
+  AgentSkillStatus,
   AppLinkState,
   BookmarksBarMode,
   ColorScheme,
@@ -50,6 +51,7 @@ import {
 import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '@shared/downloads'
 import { TOOLBAR_CONTROLS, toolbarPinned, withToolbarPin } from '@shared/toolbarPins'
 import {
+  DEFAULT_NEW_TAB_SETTINGS,
   MAX_NEW_TAB_SHORTCUTS,
   newTabPresetChoices,
   newTabSections,
@@ -847,6 +849,8 @@ function lookSection({
           checked: s.splitEdgeZones,
           onChange: (v) => set({ splitEdgeZones: v })
         }
+        // The left pane's link rule (split-13) is not a row here: it is each split's own, on the
+        // pane header's ⋯ menu – one home for the switch (v2 §9.35).
       ]
     })
   }
@@ -1267,7 +1271,8 @@ function voiceOptionDescription(voice: ReadAloudVoice, lang: string): string {
 function newTabSection({ state, set }: SectionContext): RowGroup[] {
   const prefs = state.settings.newTab
   const write = (next: NewTabSettings): void => set({ newTab: next })
-  const { image, canPick } = state.newTabBackground
+  const { image, canPick, accent } = state.newTabBackground
+  const activeSpace = state.spaces.find((s) => s.id === state.activeSpaceId)
   const backgroundOptions: Array<{ value: NewTabBackgroundKind; label: string }> = [
     { value: 'space', label: 'Space gradient' },
     { value: 'solid', label: 'Solid colour' }
@@ -1332,9 +1337,25 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
             else write(setNewTabBackground(prefs, v))
           }
         }),
-        // The image rows exist where a file can be picked; both depend on an image being set.
+        // The image rows exist where a file can be picked; each depends on an image being set.
         ...(canPick
           ? [
+              // The picture's colour as the space's accent (NTP-14): Chrome recolours the browser
+              // from the image on its own; here it is the user's switch, under the background it
+              // reads from. On, this space takes the picture's colour the moment it is flipped
+              // (§9.23) and follows each new picture; off, the colours stay. It rests at .4
+              // without a picture, and until the picture's colour is read.
+              {
+                kind: 'switch',
+                id: 'newtab-image-colour',
+                label: "Use the picture's colour",
+                description:
+                  'This space takes the colour your picture is mostly of, and follows a new one.',
+                keywords: ['theme', 'accent', 'colour', 'color', 'wallpaper'],
+                checked: activeSpace?.theme?.fromImage === true,
+                disabled: !image || !accent,
+                onChange: (v) => run('newtab.useImageColor', { on: v })
+              } satisfies SettingsRow,
               {
                 kind: 'action',
                 id: 'newtab-change-image',
@@ -1355,6 +1376,18 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
               } satisfies SettingsRow
             ]
           : []),
+        // Chrome's "Reset to default" for the theme (NTP-12): the background alone, back to the
+        // space gradient with the picked image let go. One row's reset asks nothing (§10.5).
+        {
+          kind: 'action',
+          id: 'newtab-reset-background',
+          label: 'Reset background to default',
+          description: 'The space gradient; an image kept on this device is removed.',
+          keywords: ['restore', 'theme', 'wallpaper'],
+          button: 'Reset',
+          disabled: background === DEFAULT_NEW_TAB_SETTINGS.background && !image,
+          onPress: () => run('newtab.resetBackground', undefined)
+        },
         {
           kind: 'switch',
           id: 'newtab-greeting',
@@ -1459,6 +1492,32 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
               />
             )
           }
+        }
+      ]
+    },
+    {
+      id: 'newtab-reset',
+      heading: null,
+      rows: [
+        // The whole page (NTP-22): a bulk reset, so the row's §9.23 confirmation stands before
+        // it – Cancel | Reset in the danger ink, no primary, Enter inert (§9.22). Whether a new
+        // tab opens the page at all (the first switch) is not the page's content and stays.
+        {
+          kind: 'action',
+          id: 'newtab-reset',
+          label: 'Reset new tab page',
+          description:
+            'Layout, shortcuts, background and greeting return to their defaults; removed sites come back.',
+          keywords: ['restore', 'defaults'],
+          button: 'Reset…',
+          destructive: true,
+          confirm: {
+            title: 'Reset the new tab page?',
+            description:
+              'Your shortcuts and a background image kept on this device are removed; the layout, background and greeting return to their defaults.',
+            action: 'Reset'
+          },
+          onPress: () => run('newtab.reset', undefined)
         }
       ]
     }
@@ -4246,6 +4305,7 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
       ]
     })
   }
+  if (state.capabilities.agentSkills) groups.push(agentSkillGroup(state.agentSkills))
   groups.push(
     {
       id: 'behaviour',
@@ -4298,7 +4358,7 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
         item(
           `agent:${agent.id}`,
           agent.name,
-          `${agent.pending ? 'Awaiting approval · ' : ''}${agent.transport === 'stdio' ? 'stdio' : 'HTTP'} · ${agent.tabIds.length} tab${agent.tabIds.length === 1 ? '' : 's'} · ${agent.calls} action${agent.calls === 1 ? '' : 's'} · active ${relativeTime(agent.lastActiveAt)}`,
+          `${agent.pending ? 'Awaiting approval · ' : ''}${agent.transport === 'stdio' ? 'stdio' : 'HTTP'} · ${agent.groupIds.length} group${agent.groupIds.length === 1 ? '' : 's'} · ${agent.tabIds.length} tab${agent.tabIds.length === 1 ? '' : 's'} · ${agent.calls} action${agent.calls === 1 ? '' : 's'} · active ${relativeTime(agent.lastActiveAt)}`,
           [
             choice({
               id: `agent:${agent.id}:mode`,
@@ -4356,6 +4416,103 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
     })
   }
   return groups
+}
+
+/**
+ * Settings › AI Agents › Agent skill (desktop hosts, `capabilities.agentSkills`): the
+ * `zenium-browser` Agent Skill – the file that teaches a coding agent to drive this browser
+ * politely – installed into each detected agent's global skills folder from a switch per
+ * agent, or all at once; a status row above them. The rows say "agent", never the developer's
+ * "harness" (the #460 gate). The status row's error state trails §10.4's 16 status glyph in the
+ * danger ink through the row's one `tone`; its neutral states stay bare. A failure that is one
+ * agent's – the same sentence as that row's `note` – is said once, by the row it is about,
+ * while any agent has the skill: the status row keeps its count in the danger tone with the
+ * glyph (the lead's tidy from the #460 r3 delta read); the line carries the sentence itself when
+ * the operation failed as a whole (its record could not be saved – a sentence no row carries) or
+ * when no agent has the skill. An agent's row wears the ink of its sentence's kind, not of its
+ * place (the lead's #468 delta read): a failure takes the danger ink wherever it is said, a
+ * caution – an edited copy left in place, a copy Zenium did not install – the warn ink; no
+ * row trails a glyph (§9.33: the glyph marks the row whose whole point is the status). Remove
+ * everywhere asks nothing and wears no danger ink (§10.5 as amended on #450): the files are
+ * Zenium's copies, an edited one is spared by the installer's own rule, and Install brings them
+ * back in one click. No modal: the group is the nudge.
+ */
+function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
+  const detected = skills.targets.filter((t) => t.detected)
+  const installed = detected.filter((t) => t.installed)
+  const allInstalled = detected.length > 0 && installed.length === detected.length
+  const count =
+    detected.length === 0
+      ? 'No coding agent found on this computer'
+      : installed.length === 0
+        ? 'Not installed'
+        : `Installed for ${installed.length} of ${detected.length} agents found · version ${installed[0].installedVersion ?? skills.version}`
+  const rowSaysWhy =
+    skills.error !== null && installed.length > 0 && detected.some((t) => t.note === skills.error)
+  const status = skills.error && !rowSaysWhy ? skills.error : count
+  const rows: SettingsRow[] = [
+    {
+      kind: 'info',
+      id: 'skill-status',
+      label: 'zenium-browser skill',
+      description: status,
+      tone: skills.error ? 'danger' : undefined,
+      trailing: skills.error ? (
+        <CircleAlert className="zen-settings-trailing-glyph" aria-hidden="true" />
+      ) : undefined,
+      keywords: ['skill', 'claude code', 'cursor', 'codex', 'opencode', 'gemini cli', 'copilot']
+    },
+    ...detected.map((t): SettingsRow => ({
+      kind: 'switch',
+      id: `skill:${t.id}`,
+      label: t.label,
+      description: t.note ?? t.dir,
+      tone: t.note ? (isSkillFailure(t.note) ? 'danger' : 'warn') : undefined,
+      keywords: ['skill', t.dir],
+      checked: t.installed,
+      onChange: (v) => run(v ? 'agent.installSkill' : 'agent.uninstallSkill', { targets: [t.id] })
+    })),
+    allInstalled
+      ? {
+          kind: 'action',
+          id: 'skill-all',
+          label: 'Remove everywhere',
+          description: 'Takes Zenium’s copy out of each folder above; a copy you edited stays.',
+          button: 'Remove',
+          onPress: () => run('agent.uninstallSkill', {})
+        }
+      : {
+          kind: 'action',
+          id: 'skill-all',
+          label: 'Install for every agent found',
+          description:
+            detected.length === 0
+              ? 'Install Claude Code, Cursor, Codex, Gemini CLI, Copilot CLI or OpenCode first, then check again.'
+              : 'Writes the skill into each folder above and keeps it current when Zenium updates.',
+          button: detected.length === 0 ? 'Check again' : 'Install',
+          onPress: () =>
+            detected.length === 0
+              ? run('agent.refreshSkill', undefined)
+              : run('agent.installSkill', {})
+        }
+  ]
+  return {
+    id: 'skill',
+    heading: 'Agent skill',
+    description:
+      'A skill file that teaches coding agents to drive this browser beside you: their own tab group, nothing touched that is not theirs. Zenium keeps a copy in each agent’s skills folder.',
+    rows
+  }
+}
+
+/**
+ * Whether an agent's skill `note` reports a failure – the installer's `Could not <operation>: …`
+ * sentence (`failedAt` in `src/main/agent/skills.ts`, the same sentence the status line carries
+ * as `error`) – rather than a caution (an edited copy left in place, a copy Zenium did not
+ * install). The renderer cannot import the installer, so the sentence's opener is the contract.
+ */
+function isSkillFailure(note: string): boolean {
+  return note.startsWith('Could not ')
 }
 
 // ---------------------------------------------------------------------------

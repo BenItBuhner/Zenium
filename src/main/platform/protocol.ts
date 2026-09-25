@@ -1,5 +1,6 @@
 import { protocol, type CustomScheme, type Session } from 'electron'
 import { CHROMIUM_LICENCES_HOST } from '../../shared/licences'
+import type { ColorScheme } from '../../shared/types'
 import { ZEN_SCHEME, zenPageHtml, type ReaderPageLookup } from '../../shared/zenPages'
 import { EXTENSION_RESOURCE_SCHEME_PRIVILEGES } from './extensionApi/resourceOrigin'
 import type { ChromiumLicencesResponder } from './licences'
@@ -40,13 +41,16 @@ export type BackgroundImageResponder = () => Promise<Response>
 /**
  * Serve `zen://newtab`, `zen://blank`, `zen://error` and `zen://reader` (articles come from the
  * core), plus the new tab page's background image and Chromium's credits document
- * (`zen://chromium-licences`, `./licences.ts`).
+ * (`zen://chromium-licences`, `./licences.ts`). `colorScheme` is the Appearance setting as it
+ * stands when a page is served: the documents that paint a theme of their own take it from
+ * there rather than from the engine (`errorPageAttributesScript`).
  */
 export function installZenProtocol(
   ses: Session,
   reader: ReaderPageLookup,
   background?: BackgroundImageResponder,
-  chromiumLicences?: ChromiumLicencesResponder
+  chromiumLicences?: ChromiumLicencesResponder,
+  colorScheme: () => ColorScheme = () => 'system'
 ): void {
   if (ses.protocol.isProtocolHandled(ZEN_SCHEME)) return
   ses.protocol.handle(ZEN_SCHEME, (request) => {
@@ -54,7 +58,9 @@ export function installZenProtocol(
     if (background && host === NEW_TAB_BACKGROUND_HOST) return background()
     if (chromiumLicences && host === CHROMIUM_LICENCES_HOST) return chromiumLicences()
     const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
-    return new Response(zenPageHtml(request.url, reader), { headers })
+    return new Response(zenPageHtml(request.url, reader, undefined, undefined, colorScheme()), {
+      headers
+    })
   })
 }
 

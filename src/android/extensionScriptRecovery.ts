@@ -1,5 +1,5 @@
 import { extensionOrigin } from '@core/extensions/runtime/plan'
-import { presentExtensionUrl } from '@core/extensions/runtime/extensionUrls'
+import { pageAliasUrl, presentExtensionUrl } from '@core/extensions/runtime/extensionUrls'
 
 /**
  * Extension-origin scripts and stylesheets under the page's Content-Security-Policy.
@@ -42,9 +42,21 @@ import { presentExtensionUrl } from '@core/extensions/runtime/extensionUrls'
  * attribute keeps what the content attribute hides): its `import` descendants inherit the
  * nonce, and the graph evaluates as the content script's `import()` would have had it. The
  * loader's own promise stays rejected, which Buyhatke's (`onExecute?.()` on a module that
- * exports none) never minds. In an isolated world the module would evaluate in the world, whose
- * policy is the document's on a WebView, and a module of the page's world would find no
- * `chrome`: there the refusal is recorded and nothing is retried.
+ * exports none) never minds.
+ *
+ * A policy that lends no nonce but admits the page's own origin (`script-src 'self' …`: Steam's,
+ * where Eneba's CRXJS loader imports its widget chunk, compat rounds 14-16) refuses the served
+ * origin and nothing else of ours, so the graph is asked for again from the page's own origin,
+ * `<page origin>/.zenium-ext/<id>/<path>` (`pageAliasUrl`), which the host serves in
+ * `shouldInterceptRequest` as it serves the extension's origin (the web-accessible resources
+ * only, subresources only). In an isolated world (Chromium 146+) the retry is the world's own
+ * `import()` of the alias (`importModule`), so the graph evaluates in the world beside the
+ * content script's `chrome`, as Chrome's would have; on the one-realm WebView the alias goes
+ * into the module `<script>` in the nonce's place, bracketed by the host as the served graph is.
+ * A policy that names neither a nonce nor the page's origin refuses the alias too (Flipkart's
+ * nonce-only `script-src` on an isolated-world WebView, Buyhatke): that refusal is recorded and
+ * nothing is retried further – the alias is not an extension URL, so its own violation is not
+ * this recovery's.
  */
 
 /** What the bootstrap lends the recovery: the attached extensions, the bridge and a file read. */
@@ -63,9 +75,17 @@ export interface ScriptRecoveryHost {
   /**
    * Whether a module evaluated on the page's real global finds the extension's `chrome` there
    * (the `with` fallback's bracket): only then is a refused module graph retried from a module
-   * script of the page's; in an isolated world the refusal is recorded instead.
+   * script of the page's; in an isolated world it is retried through `importModule`.
    */
   pageModules?: boolean
+  /** The page's origin (`location.origin`), the root of the alias a refused graph is asked from again. */
+  pageOrigin?: string
+  /**
+   * The world's own dynamic `import()` (an isolated world's: the graph evaluates beside the
+   * content script's `chrome`); without it, or without `pageOrigin`, an isolated world's refusal
+   * is recorded and nothing is retried.
+   */
+  importModule?(url: string): Promise<unknown>
 }
 
 /** A `securitypolicyviolation` event, the little of it the recovery reads. */
@@ -183,17 +203,63 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
     return false
   }
 
+  /** The page-origin alias of a refused module's URL, or null when the page lends no origin to root it under. */
+  const aliasOf = (url: string): string | null =>
+    host.pageOrigin === undefined ? null : pageAliasUrl(host.pageOrigin, url)
+
+  /** An isolated world's retry: the world's own `import()` of the alias, the graph evaluating beside the content script's `chrome`. */
+  const importAlias = (
+    url: string,
+    alias: string,
+    importModule: (url: string) => Promise<unknown>
+  ): void => {
+    modules += 1
+    let imported: Promise<unknown>
+    try {
+      imported = importModule(alias)
+    } catch (reason) {
+      modules -= 1
+      host.error(
+        `[Zenium] ${url} could not be retried past the page's policy from its page-origin alias: ${String(reason)}`
+      )
+      return
+    }
+    imported.then(
+      () => {
+        modules -= 1
+      },
+      (reason: unknown) => {
+        modules -= 1
+        // The alias refused too (a policy naming neither a nonce nor the page's origin), or the
+        // graph itself failed: the extension's loader saw its own rejection; this one is ours to record.
+        host.error(
+          `[Zenium] ${url} could not load past the page's policy from its page-origin alias ${alias}: ${String(reason)}`
+        )
+      }
+    )
+  }
+
   const retryModule = (url: string): void => {
     const doc = host.document
     if (!doc) return
     if (!host.pageModules) {
-      ;(host.warn ?? host.error)(
-        `[Zenium] ${url}: the page's policy refused the extension's module, and the isolated world cannot load one past it (recorded)`
-      )
+      const alias = aliasOf(url)
+      const importModule = host.importModule
+      if (alias === null || !importModule) {
+        ;(host.warn ?? host.error)(
+          `[Zenium] ${url}: the page's policy refused the extension's module, and the isolated world cannot load one past it (recorded)`
+        )
+        return
+      }
+      importAlias(url, alias, importModule)
       return
     }
     const nonce = pageNonce(doc)
-    if (nonce === null) {
+    // No nonce to carry: the graph from the page's own origin, which `'self'` or the page's
+    // host admits, in the served URL's place; a policy admitting neither refuses this too and
+    // the element's `error` records it.
+    const alias = nonce === null ? aliasOf(url) : null
+    if (nonce === null && alias === null) {
       host.error(`[Zenium] ${url} could not load past the page's policy: the page lends no nonce`)
       return
     }
@@ -201,9 +267,9 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
     try {
       element = doc.createElement('script')
       element.type = 'module'
-      element.nonce = nonce
+      if (nonce !== null) element.nonce = nonce
       // A Trusted Types sink: an enforcing page without the shield's policy refuses the string.
-      element.src = url
+      element.src = alias ?? url
     } catch (reason) {
       host.error(`[Zenium] ${url} could not be retried past the page's policy: ${String(reason)}`)
       return
@@ -223,7 +289,9 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
     element.addEventListener('error', () => {
       settle()
       host.error(
-        `[Zenium] ${url} could not load past the page's policy from a module script with its nonce`
+        alias === null
+          ? `[Zenium] ${url} could not load past the page's policy from a module script with its nonce`
+          : `[Zenium] ${url} could not load past the page's policy from a module script at its page-origin alias ${alias}`
       )
     })
     const parent = doc.head ?? doc.documentElement

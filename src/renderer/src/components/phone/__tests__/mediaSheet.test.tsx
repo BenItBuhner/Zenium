@@ -342,8 +342,8 @@ describe('the media sheet', () => {
       'media.action',
       { tabId: 't1', action: 'seekto', seekTime: expect.closeTo(10.1, 6) as number }
     ])
-    // The step's own change (reported after its commit) is no scrub: the page's next report
-    // takes the display, which a finger still down would hold.
+    // The step's change is reported before its commit, and the commit ends the scrub: the page's
+    // next report takes the display, which a finger still down would hold.
     render(
       state([
         track({

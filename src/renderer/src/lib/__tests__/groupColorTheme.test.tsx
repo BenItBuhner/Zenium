@@ -2,7 +2,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PropertySymbol } from 'happy-dom'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Folder } from '@shared/types'
@@ -48,18 +47,13 @@ const RULES = [
 ].join('\n')
 
 /**
- * The theme flipped as `useTheme`'s `paint()` flips it. happy-dom (20.14) keeps an element's
- * selector matches – and with them its computed style – cached across an ANCESTOR's attribute
- * change, where a browser restyles (it drops them on the element's own attributes, a tree
- * mutation, a focus change), so the flip is followed by the drop a restyle stands for: the
- * document's cache cleared through happy-dom's own symbol, before anything reads a computed
- * style (a read between the flip and the clear caches the stale match again, and that one the
- * document's clear does not reach). Nothing in the tree changes.
+ * The theme flipped as `useTheme`'s `paint()` flips it. The root's attribute change restyles
+ * every descendant, as in a browser (happy-dom needs `patches/happy-dom+20.14.5.patch` for
+ * that; happyDomAncestorRestyle.test.ts pins it). Nothing in the tree changes.
  */
 function flipTheme(scheme: 'light' | 'dark'): void {
   document.documentElement.dataset.theme = scheme
   document.documentElement.style.colorScheme = scheme
-  ;(document as unknown as Record<symbol, () => void>)[PropertySymbol.clearCache]()
 }
 
 const computed = (el: Element, property: string): string =>

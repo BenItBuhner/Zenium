@@ -235,6 +235,59 @@ describe('installExtensionApi', () => {
     expect(clicks).toHaveLength(1)
   })
 
+  it("contextMenus.create and update throw Chrome's TypeError in the binding for a context or type outside the enum (SingleFile's probe of Firefox's tab context, caught by its try)", async () => {
+    installExtensionApi(host, API_SPEC)
+    const contextTypes =
+      'all, page, frame, selection, link, editable, image, video, audio, launcher, browser_action, page_action, action'
+    const created =
+      "Error in invocation of contextMenus.create(object createProperties, optional function callback): Error at parameter 'createProperties': "
+    // SingleFile's probe, verbatim from its worker: `await at.create({id:"temporary-id",contexts:["tab"],title:"title"})` in a try.
+    const probe = (): unknown =>
+      g.chrome.contextMenus.create({ id: 'temporary-id', contexts: ['tab'], title: 'title' })
+    expect(probe).toThrow(TypeError)
+    expect(probe).toThrow(
+      `${created}Error at property 'contexts': Error at index 0: Value must be one of ${contextTypes}.`
+    )
+    expect(() => g.chrome.contextMenus.create({ id: 'x', contexts: [], title: 't' })).toThrow(
+      `${created}Error at property 'contexts': Array must have at least 1 items; found 0.`
+    )
+    expect(() => g.chrome.contextMenus.create({ id: 'x', contexts: 'page', title: 't' })).toThrow(
+      `${created}Error at property 'contexts': Invalid type: expected array, found string.`
+    )
+    expect(() =>
+      g.chrome.contextMenus.create({ id: 'x', contexts: ['page', 7], title: 't' })
+    ).toThrow(
+      `${created}Error at property 'contexts': Error at index 1: Invalid type: expected string, found number.`
+    )
+    expect(() => g.chrome.contextMenus.create({ id: 'x', type: 'tab', title: 't' })).toThrow(
+      `${created}Error at property 'type': Value must be one of normal, checkbox, radio, separator.`
+    )
+    expect(() => g.chrome.contextMenus.update('x', { contexts: ['page', 'tab'] })).toThrow(
+      "Error in invocation of contextMenus.update(integer|string id, object updateProperties, optional function callback): Error at parameter 'updateProperties': Error at property 'contexts': Error at index 1: Value must be one of " +
+        `${contextTypes}.`
+    )
+    // The binding refused every one of them: nothing reached the host, no lastError was queued.
+    await flush()
+    expect(host.calls).toHaveLength(0)
+    // What Chrome admits goes through, an optional property given as null reading as absent.
+    expect(
+      g.chrome.contextMenus.create({
+        id: 'ok',
+        contexts: ['page', 'action'],
+        type: 'normal',
+        title: 'ok'
+      })
+    ).toBe('ok')
+    g.chrome.contextMenus.create({ id: 'nulls', contexts: null, type: null, title: 'n' })
+    g.chrome.contextMenus.update('ok', { type: 'checkbox', checked: true })
+    await flush()
+    expect(host.calls.map((c) => `${c.method}:${JSON.stringify(c.args[0])}`)).toEqual([
+      'create:{"id":"ok","contexts":["page","action"],"type":"normal","title":"ok"}',
+      'create:{"id":"nulls","contexts":null,"type":null,"title":"n"}',
+      'update:"ok"'
+    ])
+  })
+
   it('registers URL-filtered listeners with the host and delivers by filter id', () => {
     installExtensionApi(host, API_SPEC)
     const everyone: unknown[] = []
@@ -275,7 +328,7 @@ describe('installExtensionApi', () => {
     ])
   })
 
-  it('holds a delivery the host could not match to the filtered listener’s own UrlFilters', () => {
+  it('holds a delivery the host could not match to the filtered listener’s own UrlFilters', async () => {
     // PDF Viewer's shape: a worker woken by the navigation registers its `file://*.pdf`-filtered
     // `onBeforeNavigate` listener only once its script runs, after the host queued the event with
     // its URL. Delivered unfiltered, the listener turns every http(s) tab into its viewer.
@@ -302,8 +355,10 @@ describe('installExtensionApi', () => {
         { urlPrefix: 'file://', pathSuffix: '.PDF' }
       ]
     })
+    // The queue reaches the script's listeners in the task after it (F3 of round 8).
+    await flush()
     expect(seen).toEqual(['file:///home/me/doc.pdf#page=2'])
-    // The first listener consumed the queue (as before); a later unfiltered one sees what follows.
+    // The queue is spent; a listener added later sees what follows.
     g.chrome.webNavigation.onBeforeNavigate.addListener((d: Any) => everyone.push(d.url))
     // Live listeners, a worker still in its start-up window: the same rule, the URL against
     // this listener's filters when the host did not name it.
@@ -648,15 +703,38 @@ describe('installExtensionApi', () => {
     expect(typeof ev.addRules).toBe('function')
   })
 
-  it('queues events that arrive before the first listener (worker start-up)', () => {
+  it('queues events that arrive before the first listener (worker start-up) for a task after the registering script', async () => {
     installExtensionApi(host, API_SPEC)
     host.push('runtime', 'onInstalled', { reason: 'install' })
     const fn = vi.fn()
     g.chrome.runtime.onInstalled.addListener(fn)
+    // Chrome dispatches a wake-up event after the worker's evaluation, never from addListener.
+    expect(fn).not.toHaveBeenCalled()
+    await flush()
     expect(fn).toHaveBeenCalledWith({ reason: 'install' })
     const later = vi.fn()
     g.chrome.runtime.onInstalled.addListener(later)
+    await flush()
     expect(later).not.toHaveBeenCalled()
+  })
+
+  it('a queued event reaches a listener that read the wake-up as its own alarm without throwing (Rabby)', async () => {
+    installExtensionApi(host, API_SPEC)
+    host.push('alarms', 'onAlarm', { name: 'ALARMS_USER_ENABLE' })
+    // The module registers at its top level and fills `store` right after: with the replay inside
+    // addListener the listener read `store.sendEnableTime` of undefined and threw.
+    const service: { store?: { sendEnableTime: number } } = {}
+    const seen: number[] = []
+    g.chrome.alarms.onAlarm.addListener((alarm: { name: string }) => {
+      if (alarm.name !== 'ALARMS_USER_ENABLE') return
+      const store = service.store
+      if (!store)
+        throw new TypeError("Cannot read properties of undefined (reading 'sendEnableTime')")
+      seen.push(store.sendEnableTime)
+    })
+    service.store = { sendEnableTime: 7 }
+    await flush()
+    expect(seen).toEqual([7])
   })
 
   it('delivers action events to browserAction listeners as well', () => {
@@ -686,6 +764,49 @@ describe('installExtensionApi', () => {
     expect(g.chrome.storage.local.QUOTA_BYTES).toBeUndefined()
     const got = await new Promise((resolve) => g.chrome.storage.local.get(null, resolve))
     expect(got).toEqual({})
+  })
+
+  it('notifies storage.local writes in the form Chrome stores: methods and undefined dropped, the write resolved (Rabby)', async () => {
+    installExtensionApi(host, API_SPEC)
+    // The host's transport clones structurally and refuses a function, as ipcRenderer does.
+    host.notify = (kind, payload) => {
+      const check = (value: unknown): void => {
+        if (typeof value === 'function') throw new Error('An object could not be cloned.')
+        if (value && typeof value === 'object') Object.values(value).forEach(check)
+      }
+      check(payload)
+      host.notifications.push({ kind, payload })
+    }
+    class Preference {
+      balanceMap = { a: 1 }
+      hidden = undefined
+      list = [1, (): number => 2, undefined]
+      patch(): void {
+        this.balanceMap.a += 1
+      }
+    }
+    await expect(
+      g.chrome.storage.local.set({ preference: new Preference(), fn: (): number => 1, n: 3 })
+    ).resolves.toBeUndefined()
+    const changes = host.notifications
+      .filter((n) => n.kind === 'storage-changed')
+      .map((n) => n.payload)
+    expect(changes).toEqual([
+      {
+        area: 'local',
+        changes: {
+          preference: { newValue: { balanceMap: { a: 1 }, list: [1, null, null] } },
+          n: { newValue: 3 }
+        }
+      }
+    ])
+    // The host-kept areas get the same form, which is what can cross to them.
+    await g.chrome.storage.sync.set({ preference: new Preference(), fn: (): number => 1 })
+    expect(host.calls.at(-1)).toEqual({
+      namespace: 'storage',
+      method: 'set',
+      args: ['sync', { preference: { balanceMap: { a: 1 }, list: [1, null, null] } }]
+    })
   })
 
   it('routes storage.sync and storage.managed through the host', async () => {

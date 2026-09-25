@@ -151,15 +151,21 @@ export const NEW_TAB_PAGE_STYLE = `
   }
 
   /*
-   * The resting field is the floating URL bar's field (§9.29): 48 tall, at most 560 wide, a 20 px
-   * glyph, the placeholder 15/400 at 69 %; its surface, radius 12, panel shadow and no border are
-   * the shared rule's. A page surface on the window: it takes the page family.
+   * The resting field is the floating URL bar's field (§9.29): 48 tall, at most 560 wide, the
+   * placeholder 15/400 at 69 %; its surface, radius 12, panel shadow and no border are the
+   * shared rule's. A page surface on the window: it takes the page family. Its leading glyph is
+   * the default engine's favicon at 16 (§6, as the pill's empty tab draws it – radius 3, its own
+   * colours), the 16 magnifier at the row stroke in its place while no favicon has come or the
+   * engine has none (components/urlbar/EngineFieldGlyph is the chrome's form of the same slot).
    */
   .zen-ntp-field {
     display: flex; align-items: center; gap: 12px; box-sizing: border-box;
     width: min(560px, 100%); height: 48px; padding: 0 16px;
   }
-  .zen-ntp-field svg { width: 20px; height: 20px; color: var(--v2-text-deemphasized); flex: none; }
+  .zen-ntp-glyph { position: relative; display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; }
+  .zen-ntp-field svg { width: 16px; height: 16px; color: var(--v2-text-deemphasized); flex: none; }
+  .zen-ntp-engine-favicon { width: 16px; height: 16px; border-radius: 3px; flex: none; opacity: 0; transition: opacity 120ms var(--zen-ease); }
+  .zen-ntp-engine-favicon[data-shown] { opacity: 1; }
   .zen-ntp-field input {
     flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent;
     font-size: var(--v2-font-body); font-weight: var(--v2-weight-body); line-height: var(--v2-line-body); color: var(--v2-text);
@@ -349,7 +355,7 @@ export function newTabPageHtml(): string {
 <div class="zen-bg" id="zen-bg-current"></div><div class="zen-bg" id="zen-bg-next"></div><div class="zen-ntp-scrim" aria-hidden="true"></div>
 <main class="zen-ntp" id="zen-ntp">
   <h1 class="zen-greeting" id="zen-greeting" hidden></h1>
-  <form class="zen-ntp-field" id="zen-search" role="search" autocomplete="off" data-surface="page">${newTabIconSvg('search')}<input id="zen-search-input" type="text" placeholder="Search or enter address" aria-label="Search or enter address" autocomplete="off" autocapitalize="off" spellcheck="false"></form>
+  <form class="zen-ntp-field" id="zen-search" role="search" autocomplete="off" data-surface="page"><span class="zen-ntp-glyph" id="zen-engine-glyph" aria-hidden="true">${newTabIconSvg('search')}<img class="zen-ntp-engine-favicon" id="zen-engine-favicon" alt="" referrerpolicy="no-referrer" hidden></span><input id="zen-search-input" type="text" placeholder="Search or enter address" aria-label="Search or enter address" autocomplete="off" autocapitalize="off" spellcheck="false"></form>
   <section class="zen-ntp-private" id="zen-private" aria-labelledby="zen-private-title" hidden><h2 id="zen-private-title">${PRIVATE_EXPLAINER.title}</h2><p>${PRIVATE_EXPLAINER.description}</p></section>
   <div class="zen-v2-row zen-ntp-cookies" id="zen-cookies" data-static hidden><div class="zen-ntp-cookies-text"><label class="zen-ntp-cookies-label" id="zen-cookies-label" for="zen-cookies-switch">${PRIVATE_COOKIES.label}</label><p class="zen-ntp-cookies-desc" id="zen-cookies-desc">${PRIVATE_COOKIES.description}</p></div><button type="button" class="zen-v2-switch" id="zen-cookies-switch" role="switch" aria-checked="false" aria-describedby="zen-cookies-desc"></button></div>
   <p class="zen-ntp-empty" id="zen-empty" hidden>Sites you visit often will appear here</p>
