@@ -155,6 +155,7 @@ function suffixOf(domain: string): string {
 export function decodePunycodeLabel(label: string): string {
   if (!label.startsWith('xn--')) return label
   const input = label.slice(4)
+  if (!input) return label
   const base = 36
   const tMin = 1
   const tMax = 26
@@ -182,7 +183,7 @@ export function decodePunycodeLabel(label: string): string {
     }
     return k + Math.floor(((base - tMin + 1) * d) / (d + skew))
   }
-  for (let index = basic > 0 ? basic + 1 : 0; index < input.length; ) {
+  for (let index = basic > 0 ? basic + 1 : 0; index < input.length;) {
     const oldI = i
     let w = 1
     for (let k = base; ; k += base) {
@@ -313,7 +314,8 @@ export class LookalikeChecker {
     for (const target of context.engaged)
       if (nameOf(target).length >= MIN_EDIT_TARGET_LENGTH && near(target))
         return { target, reason: 'edit-distance' }
-    for (const target of this.editTargets) if (near(target)) return { target, reason: 'edit-distance' }
+    for (const target of this.editTargets)
+      if (near(target)) return { target, reason: 'edit-distance' }
     return null
   }
 
@@ -353,7 +355,11 @@ export class LookalikeChecker {
 }
 
 /** The reason in the warning page's words. */
-export function describeLookalikeReason(reason: LookalikeReason, lookalike: string, target: string): string {
+export function describeLookalikeReason(
+  reason: LookalikeReason,
+  lookalike: string,
+  target: string
+): string {
   switch (reason) {
     case 'edit-distance':
       return `${lookalike} is one character off ${target}.`

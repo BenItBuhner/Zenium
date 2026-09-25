@@ -103,6 +103,12 @@ export class ProtectionService {
         this.refresh()
         this.browser.state.commitVolatile()
       }),
+      // The engaged set follows history: visits arrive synchronously through `onVisits` (the
+      // throttled `onChange('visit')` would leave a just-typed site unknown for half a second),
+      // deletions and clears through `onChange`.
+      this.browser.history.onVisits(() => {
+        this.engagedSites = null
+      }),
       this.browser.history.onChange(() => {
         this.engagedSites = null
       })

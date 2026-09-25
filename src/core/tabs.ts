@@ -400,6 +400,13 @@ export class TabManager {
       }
       return view
     }
+    // A page the question page stood in for (a new tab opened on the address, a tab woken on
+    // it) is held again on the host without the engine's hold; the desktop's engine holds it.
+    if (url && url !== BLANK_URL) {
+      const held = this.lookalikeHold(tabId, url)
+      if (held !== url) tab.url = held
+      url = held
+    }
     view.loadURL(url || BLANK_URL)
     return view
   }
@@ -2369,16 +2376,7 @@ export class TabManager {
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, `http://${opts.upgradedFrom}`)
     else this.httpsUpgraded.delete(tabId)
     this.pendingTransition.set(tabId, opts.transition ?? 'typed')
-    // A host whose request engine cannot hold a navigation on the core's lookalike verdict
-    // (Android): the address the browser was asked for is checked here, before its request –
-    // the question page loads in its place (PS-18). Hosts with the hold leave it to their engine.
-    const lookalike = this.browser.state.capabilities.lookalikeHolds
-      ? null
-      : this.browser.protection.checkLookalike(url)
-    if (lookalike) {
-      tab.url = this.browser.protection.lookalikePage(tabId, url, lookalike)
-      tab.errorCode = BLOCKED_BY_CLIENT_CODE
-    }
+    tab.url = this.lookalikeHold(tabId, url)
     const hadView = this.view(tabId) !== undefined
     this.thawForNavigation(tabId)
     const view = this.ensureLoaded(tabId)
@@ -2387,6 +2385,22 @@ export class TabManager {
     // ensureLoaded() already loads `tab.url` when it has to create the view.
     if (hadView) view.loadURL(tab.url)
     this.browser.state.commit()
+  }
+
+  /**
+   * The address a tab is about to load, or – on a host whose request engine cannot hold a
+   * navigation on the core's lookalike verdict (Android) – the question page in its place, the
+   * tab marked as blocked, before any request for the address goes out (PS-18). Hosts with the
+   * hold (`HostCapabilities.lookalikeHolds`) leave it to their engine, which answers through
+   * `onLookalikeNavigation` and the failed load.
+   */
+  private lookalikeHold(tabId: string, url: string): string {
+    if (this.browser.state.capabilities.lookalikeHolds) return url
+    const verdict = this.browser.protection.checkLookalike(url)
+    if (!verdict) return url
+    const tab = this.tab(tabId)
+    if (tab) tab.errorCode = BLOCKED_BY_CLIENT_CODE
+    return this.browser.protection.lookalikePage(tabId, url, verdict)
   }
 
   goBack(tabId: string): void {

@@ -86,7 +86,9 @@ async function main(): Promise<void> {
       'Hardened Against Manipulation", Le Pochat et al., NDSS 2019 – and that the list id be cited.',
       `Built ${today} by scripts/lookalikes-snapshot.mts for the lookalike-domain check`,
       '(src/core/protection/lookalikes.ts). One registrable domain per line, rank order.'
-    ]) + domains.join('\n') + '\n'
+    ]) +
+    domains.join('\n') +
+    '\n'
   const trancoGz = gzipSync(trancoText, { level: 9 })
   writeFileSync(join(OUT_DIR, 'tranco-top.txt.gz'), trancoGz)
 

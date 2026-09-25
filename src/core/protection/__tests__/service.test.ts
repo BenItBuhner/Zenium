@@ -1,7 +1,14 @@
+// The bundled tables are read from disk the way a host reads them: a test's fixture, not core code.
+// eslint-disable-next-line no-restricted-imports
+import { readFileSync } from 'node:fs'
+// eslint-disable-next-line no-restricted-imports
+import { fileURLToPath } from 'node:url'
+// eslint-disable-next-line no-restricted-imports
+import { gunzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../../shared/types'
 import type { PrivacyFlags, PrivacySettings } from '../../../shared/privacy'
-import { HTTPS_ONLY_PERMISSION } from '../../../shared/privacy'
+import { HTTPS_ONLY_PERMISSION, LOOKALIKE_PERMISSION } from '../../../shared/privacy'
 import { BLANK_URL } from '../../../shared/url'
 import { Browser } from '../../browser'
 import { BUILTIN_RULE_SETS } from '../../blocking/rules'
@@ -14,7 +21,26 @@ import type {
   TabViewHost,
   WindowHost
 } from '../../platform'
-import { httpsOnlyRule } from '../service'
+import { ENGAGED_TYPED_VISITS, ENGAGED_VISITS, httpsOnlyRule } from '../service'
+
+/** The tables the build ships, read the way the hosts read them. */
+const LOOKALIKE_TABLES: Record<string, string> = Object.fromEntries(
+  ['tranco-top', 'confusables'].map((name) => [
+    name,
+    gunzipSync(
+      readFileSync(
+        fileURLToPath(new URL(`../../../../resources/lookalikes/${name}.txt.gz`, import.meta.url))
+      )
+    ).toString('utf8')
+  ])
+)
+
+/** The tables arrive a tick after start (`loadLookalikeTables` awaits the host). */
+async function tablesLoaded(f: Fixture): Promise<void> {
+  for (let i = 0; i < 10 && !f.browser.protection.lookalikes.ready; i++)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(f.browser.protection.lookalikes.ready).toBe(true)
+}
 
 function memoryIo(): StoreIO {
   const files: Record<string, string> = {}
@@ -53,8 +79,11 @@ interface Fixture {
   applied: PrivacyFlags[]
 }
 
-/** `io` shared between two fixtures is a restart: the second reads what the first persisted. */
-function fixture(io: StoreIO = memoryIo()): Fixture {
+/**
+ * `io` shared between two fixtures is a restart: the second reads what the first persisted.
+ * `caps` overrides the desktop-like capabilities (`lookalikeHolds: false` is the Android host).
+ */
+function fixture(io: StoreIO = memoryIo(), caps: Partial<HostCapabilities> = {}): Fixture {
   const views: Recorded[] = []
   const applied: PrivacyFlags[] = []
   const capabilities = stub<HostCapabilities>({
@@ -62,7 +91,9 @@ function fixture(io: StoreIO = memoryIo()): Fixture {
     updates: false,
     agents: false,
     secureDns: true,
-    quitsThroughCore: true
+    quitsThroughCore: true,
+    lookalikeHolds: true,
+    ...caps
   })
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
@@ -129,7 +160,9 @@ function fixture(io: StoreIO = memoryIo()): Fixture {
     privacy: {
       apply: (flags) => {
         applied.push(flags)
-      }
+      },
+      // The bundled lookalike tables the way a host hands them over (`resources/lookalikes`).
+      bundledLookalikeTable: async (name) => LOOKALIKE_TABLES[name] ?? null
     },
     readabilitySource: () => null
   }
@@ -625,6 +658,230 @@ describe('ProtectionService: Safe Browsing interstitial', () => {
       1
     )
     expect(f.browser.protection.safeBrowsing.lookup('http://evil.example/')).toBeNull()
+  })
+})
+
+describe('ProtectionService: the lookalike-domain warning (PS-18)', () => {
+  const LOOKALIKE = 'https://gogle.com/'
+
+  it('loads the bundled tables once after start, off the boot path, and answers with a verdict', async () => {
+    const f = fixture()
+    expect(f.browser.protection.lookalikes.ready).toBe(false)
+    await tablesLoaded(f)
+    expect(f.browser.protection.lookalikes.topCount).toBe(2000)
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).toEqual({
+      target: 'google.com',
+      reason: 'edit-distance'
+    })
+    expect(f.browser.protection.checkLookalike('https://google.com/')).toBeNull()
+    // The check sits under the Safe Browsing switch.
+    setPrivacy(f, { safeBrowsingEnabled: false })
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).toBeNull()
+  })
+
+  it("turns the host engine's hold into the question page before commit and lets the user continue once (desktop)", async () => {
+    const io = memoryIo()
+    const f = fixture(io)
+    await tablesLoaded(f)
+    const view = open(f, 'https://start.example/')
+    view.commit('https://start.example/')
+    view.history = ['https://start.example/']
+
+    // The hold: the engine cancelled the main frame on the core's verdict, the way Safe
+    // Browsing's does; the failed load asks for the verdict and shows the question in its place.
+    const verdict = f.browser.protection.checkLookalike(LOOKALIKE)!
+    view.events.onLookalikeNavigation!(LOOKALIKE, verdict)
+    view.events.onFailLoad(-20, 'net::ERR_BLOCKED_BY_CLIENT', LOOKALIKE)
+    const warning = lastLoad(view)
+    expect(warning.protocol).toBe('zen:')
+    expect(warning.searchParams.get('kind')).toBe('lookalike')
+    expect(warning.searchParams.get('url')).toBe(LOOKALIKE)
+    expect(warning.searchParams.get('target')).toBe('google.com')
+    expect(warning.searchParams.get('reason')).toBe('edit-distance')
+    view.commit(warning.href)
+    expect(f.browser.tabs.tab(view.tabId)!.errorCode).toBe(-20)
+    // The verdict was consumed: another failure of the tab is its own.
+    expect(f.browser.protection.takePendingLookalike(view.tabId, LOOKALIKE)).toBeNull()
+
+    // Back returns to the last good entry.
+    view.history = ['https://start.example/', warning.href]
+    f.browser.handlePageMessage(view.tabId, {
+      type: 'interstitial',
+      action: 'back',
+      url: LOOKALIKE
+    })
+    expect(view.jumps).toEqual([0])
+
+    // "Continue to gogle.com": the host is allowed from now on and the address reloads.
+    expect(f.browser.protection.isLookalikeAllowed(LOOKALIKE)).toBe(false)
+    f.browser.handlePageMessage(view.tabId, {
+      type: 'interstitial',
+      action: 'proceed',
+      url: LOOKALIKE
+    })
+    expect(view.loads[view.loads.length - 1]).toBe(LOOKALIKE)
+    expect(f.browser.protection.isLookalikeAllowed(LOOKALIKE)).toBe(true)
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).toBeNull()
+    expect(f.browser.protection.checkLookalike('https://gogle.com/another')).toBeNull()
+    // The allow is written for the host, beside HTTPS-only's in the permission store; the apex
+    // covers its subdomains, an allowed subdomain covers no sibling.
+    expect(f.browser.permissions.get(LOOKALIKE_PERMISSION, 'https://gogle.com')).toBe('allow')
+    expect(f.browser.protection.checkLookalike('https://mail.gogle.com/')).toBeNull()
+    f.browser.protection.allowLookalike('https://www.paypa1.com/')
+    expect(f.browser.protection.checkLookalike('https://www.paypa1.com/')).toBeNull()
+    expect(f.browser.protection.checkLookalike('https://paypa1.com/')).not.toBeNull()
+    // A restart keeps the allow: it lives in permissions.json.
+    f.browser.permissions.flushSync()
+    const restarted = fixture(io)
+    await tablesLoaded(restarted)
+    expect(restarted.browser.protection.isLookalikeAllowed(LOOKALIKE)).toBe(true)
+    expect(restarted.browser.protection.checkLookalike(LOOKALIKE)).toBeNull()
+    expect(restarted.browser.protection.checkLookalike('https://paypa1.com/')).not.toBeNull()
+  })
+
+  it('takes "Go to google.com" to the site the address looks like, over https, as a typed visit', async () => {
+    const f = fixture()
+    await tablesLoaded(f)
+    const view = open(f, LOOKALIKE)
+    const verdict = f.browser.protection.checkLookalike(LOOKALIKE)!
+    view.events.onLookalikeNavigation!(LOOKALIKE, verdict)
+    view.events.onFailLoad(-20, 'net::ERR_BLOCKED_BY_CLIENT', LOOKALIKE)
+    view.commit(lastLoad(view).href)
+    f.browser.handlePageMessage(view.tabId, {
+      type: 'interstitial',
+      action: 'suggested',
+      url: LOOKALIKE
+    })
+    expect(view.loads[view.loads.length - 1]).toBe('https://google.com/')
+    // Nothing was allowed by going to the right site.
+    expect(f.browser.protection.isLookalikeAllowed(LOOKALIKE)).toBe(false)
+    // A stale answer for another address is ignored.
+    f.browser.handlePageMessage(view.tabId, {
+      type: 'interstitial',
+      action: 'proceed',
+      url: 'https://paypa1.com/'
+    })
+    expect(f.browser.protection.isLookalikeAllowed('https://paypa1.com/')).toBe(false)
+  })
+
+  it('is quiet for the safe browsing hold, an unrelated failure and an expired or other-URL verdict', async () => {
+    const f = fixture()
+    await tablesLoaded(f)
+    const view = open(f, 'https://start.example/')
+    view.commit('https://start.example/')
+    // A verdict noted for one address does not explain the failure of another.
+    f.browser.protection.notePendingLookalike(view.tabId, LOOKALIKE, {
+      target: 'google.com',
+      reason: 'edit-distance'
+    })
+    view.events.onFailLoad(-102, 'net::ERR_CONNECTION_REFUSED', 'https://other.example/')
+    expect(lastLoad(view).searchParams.get('kind')).toBeNull()
+    expect(f.browser.protection.takePendingLookalike(view.tabId, LOOKALIKE)).toBeNull()
+  })
+
+  it('never asks about an engaged site, and history drives engagement', async () => {
+    const f = fixture()
+    await tablesLoaded(f)
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).not.toBeNull()
+    // Typed visits to the site make it the user's own.
+    for (let i = 0; i < ENGAGED_TYPED_VISITS; i++)
+      f.browser.history.visit('https://gogle.com/', 'Gogle', null, { transition: 'typed' })
+    expect(f.browser.protection.engaged()).toContain('gogle.com')
+    expect(f.browser.protection.checkLookalike(LOOKALIKE)).toBeNull()
+    expect(f.browser.protection.checkLookalike('https://www.gogle.com/x')).toBeNull()
+    // Plain visits count too, at the higher bar; pages of one site fold together.
+    for (let i = 0; i < ENGAGED_VISITS; i++)
+      f.browser.history.visit(`https://mybank.example/page${i % 3}`, 'Bank', null)
+    expect(f.browser.protection.engaged()).toContain('mybank.example')
+    // The engaged site is a target: its neighbour is a lookalike of it.
+    expect(f.browser.protection.checkLookalike('https://mybamk.example/')).toEqual({
+      target: 'mybank.example',
+      reason: 'edit-distance'
+    })
+    // Below the bar nothing changes.
+    f.browser.history.visit('https://twice.example/', 'Twice', null, { transition: 'typed' })
+    f.browser.history.visit('https://twice.example/', 'Twice', null, { transition: 'typed' })
+    expect(f.browser.protection.engaged()).not.toContain('twice.example')
+  })
+
+  it('on a host without the hold (Android) turns a browser-asked navigation into the question before any request', async () => {
+    const f = fixture(memoryIo(), { lookalikeHolds: false })
+    await tablesLoaded(f)
+    // Typed into the address bar of a tab: `navigate` loads the question, never the address.
+    const view = open(f, 'https://start.example/')
+    view.commit('https://start.example/')
+    f.browser.handleCommand(f.browser.focusedWindow(), 'urlbar.submit', {
+      input: LOOKALIKE,
+      newTab: false,
+      tabId: view.tabId,
+      background: false
+    })
+    expect(view.loads).toEqual(['https://start.example/', expect.stringMatching(/^zen:/)])
+    const warning = lastLoad(view)
+    expect(warning.searchParams.get('kind')).toBe('lookalike')
+    expect(warning.searchParams.get('url')).toBe(LOOKALIKE)
+    expect(warning.searchParams.get('target')).toBe('google.com')
+    const tab = f.browser.tabs.tab(view.tabId)!
+    expect(tab.url).toBe(warning.href)
+    expect(tab.errorCode).toBe(-20)
+    view.commit(warning.href)
+
+    // Continue: the allow is written, then the address loads for real.
+    f.browser.handlePageMessage(view.tabId, {
+      type: 'interstitial',
+      action: 'proceed',
+      url: LOOKALIKE
+    })
+    expect(view.loads[view.loads.length - 1]).toBe(LOOKALIKE)
+    expect(f.browser.protection.isLookalikeAllowed(LOOKALIKE)).toBe(true)
+    // The next visit goes straight through.
+    const again = open(f, LOOKALIKE)
+    expect(again.loads).toEqual([LOOKALIKE])
+
+    // A new tab opened on a lookalike (a link in a new tab, an intent) is held the same way:
+    // its view is created on the question page.
+    const fresh = open(f, 'https://paypa1.com/')
+    expect(fresh.loads).toHaveLength(1)
+    expect(lastLoad(fresh).searchParams.get('kind')).toBe('lookalike')
+    expect(lastLoad(fresh).searchParams.get('target')).toBe('paypal.com')
+    expect(lastLoad(fresh).searchParams.get('reason')).toBe('skeleton')
+    expect(f.browser.tabs.tab(fresh.tabId)!.errorCode).toBe(-20)
+  })
+
+  it('on a host without the hold replaces a link or redirect commit with the question, and leaves the desktop commit alone', async () => {
+    const android = fixture(memoryIo(), { lookalikeHolds: false })
+    await tablesLoaded(android)
+    const view = open(android, 'https://start.example/')
+    view.commit('https://start.example/')
+    // A link took the tab to the lookalike: the host committed it without asking.
+    view.commit(LOOKALIKE)
+    const warning = lastLoad(view)
+    expect(warning.searchParams.get('kind')).toBe('lookalike')
+    expect(warning.searchParams.get('url')).toBe(LOOKALIKE)
+    expect(android.browser.tabs.tab(view.tabId)!.errorCode).toBe(-20)
+
+    // The desktop's engine held it before commit; a commit is the real page.
+    const desktop = fixture()
+    await tablesLoaded(desktop)
+    const held = open(desktop, 'https://start.example/')
+    held.commit('https://start.example/')
+    held.commit(LOOKALIKE)
+    expect(held.loads).toEqual(['https://start.example/'])
+    expect(desktop.browser.tabs.tab(held.tabId)!.url).toBe(LOOKALIKE)
+  })
+
+  it('renders the question page for the URL the core builds', async () => {
+    const f = fixture()
+    await tablesLoaded(f)
+    const page = f.browser.protection.lookalikePage('tab', LOOKALIKE, {
+      target: 'google.com',
+      reason: 'edit-distance'
+    })
+    const url = new URL(page)
+    expect(url.protocol).toBe('zen:')
+    expect(url.searchParams.get('kind')).toBe('lookalike')
+    expect(url.searchParams.get('code')).toBe('-20')
+    expect(url.searchParams.get('target')).toBe('google.com')
   })
 })
 

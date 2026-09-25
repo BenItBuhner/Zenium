@@ -5,6 +5,9 @@ import {
   crashPageUrl,
   errorPageUrl,
   httpsOnlyPageUrl,
+  interstitialKindOf,
+  lookalikePageTarget,
+  lookalikePageUrl,
   safeBrowsingPageUrl,
   type CrashPageOptions
 } from '../url'
@@ -619,6 +622,95 @@ describe('errorPageHtml', () => {
         parseZenUrl(httpsOnlyPageUrl('http://<img src=x onerror=alert(1)>/', -102))!
       )
       expect(hostile).not.toContain('<img')
+    })
+  })
+
+  describe('the lookalike question (PS-18)', () => {
+    const url = lookalikePageUrl('https://gogle.com/login', 'google.com', 'edit-distance')
+    const page = errorPageHtml(parseZenUrl(url)!)
+
+    it('is one of the interstitial family, in warn ink, carrying its URL words', () => {
+      expect(interstitialKindOf(url)).toBe('lookalike')
+      expect(lookalikePageTarget(url)).toBe('google.com')
+      expect(
+        lookalikePageTarget(safeBrowsingPageUrl('https://evil.example/', 'malware'))
+      ).toBeNull()
+      const parsed = new URL(url)
+      expect(parsed.searchParams.get('code')).toBe(String(BLOCKED_BY_CLIENT_CODE))
+      expect(parsed.searchParams.get('url')).toBe('https://gogle.com/login')
+      expect(page).toContain('<html class="zen-error-document">')
+      expect(page).toContain(
+        '<main data-interstitial="lookalike" data-reason="edit-distance" data-target="google.com">'
+      )
+      expect(page).toContain('data-tone="warn"')
+      expect(page).toContain('<title>Did you mean google.com?</title>')
+      expect(page).toContain('<h1>Did you mean google.com?</h1>')
+      expect(page).toContain(
+        'The address <strong>gogle.com</strong> looks like <strong>google.com</strong>. Sites imitating well-known names are a common way to steal passwords.'
+      )
+    })
+
+    it('offers Go to <target> as the one primary, Continue to <lookalike> beside it, Back under Details', () => {
+      expect(page.match(/<button[^>]* data-primary/g)).toHaveLength(1)
+      expect(page).toContain(
+        'class="zen-v2-button zen-interstitial-action" data-primary autofocus data-action="suggested"><span class="zen-interstitial-label">Go to google.com</span>'
+      )
+      expect(page).toContain(
+        'class="zen-v2-button zen-interstitial-action" data-action="proceed"><span class="zen-interstitial-label">Continue to gogle.com</span>'
+      )
+      // The order of the row: Details, the way on, the primary trailing.
+      expect(page.indexOf('>Details</button>')).toBeLessThan(page.indexOf('data-action="proceed"'))
+      expect(page.indexOf('data-action="proceed"')).toBeLessThan(
+        page.indexOf('data-action="suggested"')
+      )
+      // Back is under Details, after the address.
+      expect(page).toContain(
+        'class="zen-v2-button zen-interstitial-action" data-action="back"><span class="zen-interstitial-label">Back</span>'
+      )
+      expect(page.indexOf('id="zen-details"')).toBeLessThan(page.indexOf('data-action="back"'))
+      expect(page.indexOf('zen-interstitial-address">https://gogle.com/login</p>')).toBeLessThan(
+        page.indexOf('data-action="back"')
+      )
+      // Nothing here is a danger control: the way on is a question, not a Safe Browsing bypass.
+      expect(page).not.toMatch(/<button[^>]*zen-interstitial-danger/)
+      expect(page.match(/class="zen-interstitial-spinner"/g)).toHaveLength(3)
+      expect(page).toContain(
+        `window.postMessage({${INTERSTITIAL_MESSAGE_KEY}:{action:b.dataset.action,url:"https://gogle.com/login"}},"*")`
+      )
+    })
+
+    it('names the test that matched under Details, in each of its three wordings', () => {
+      expect(page).toContain(
+        '<p><strong>gogle.com</strong> is one character off <strong>google.com</strong>, a site many people visit.'
+      )
+      const embedding = errorPageHtml(
+        parseZenUrl(lookalikePageUrl('https://paypal-login.com/', 'paypal.com', 'embedding'))!
+      )
+      expect(embedding).toContain(
+        '<strong>paypal-login.com</strong> contains the name of <strong>paypal.com</strong>'
+      )
+      const skeleton = errorPageHtml(
+        parseZenUrl(lookalikePageUrl('https://xn--pple-43d.com/', 'apple.com', 'skeleton'))!
+      )
+      expect(skeleton).toContain(
+        '<strong>xn--pple-43d.com</strong> is spelled with characters that look like those of <strong>apple.com</strong>'
+      )
+      expect(skeleton).toContain('<title>Did you mean apple.com?</title>')
+    })
+
+    it('escapes the target and the address, and falls back for a reason it does not know', () => {
+      const hostile = errorPageHtml(
+        parseZenUrl(
+          lookalikePageUrl('https://gogle.com/', '<img src=x onerror=alert(1)>', 'edit-distance')
+        )!
+      )
+      expect(hostile).not.toContain('<img')
+      expect(hostile).toContain('&lt;img')
+      const odd = errorPageHtml(
+        parseZenUrl(lookalikePageUrl('https://gogle.com/', 'google.com', 'made-up'))!
+      )
+      expect(odd).toContain('data-reason="edit-distance"')
+      expect(odd).toContain('is one character off')
     })
   })
 })
