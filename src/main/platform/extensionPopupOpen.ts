@@ -6,18 +6,13 @@ import type {
   WindowOpenTicket
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
-import { isOpenableUrl, openedWindowKind, planWindowOpen } from '../../core/windowOpen'
+import { openedWindowKind, planWindowOpen } from '../../core/windowOpen'
 import { newId } from '../../shared/ids'
 import type { Rect, Tab, WindowChrome, WindowKind } from '../../shared/types'
 import type { ElectronTabView, ElectronTabViewHost } from './views'
 
-/** Chromium reports `window.open()` with no URL as `about:blank`. */
-const BLANK = 'about:blank'
-
 /** What completing a popup's `window.open` needs from the browser. */
 export interface PopupOpenerHost {
-  /** The popup document's own address. */
-  openerUrl: string
   /** The window the popup hangs from: where a new tab goes. */
   win: ZenWindow
   /** The window's active tab: the new tab sits next to it, in its space. */
@@ -47,7 +42,8 @@ export interface PopupOpenerHost {
  * (extension origins are exempt from its pop-up blocker), so the call's return value is a live
  * window: `window.open()` with no URL – libdot's noopener idiom, which Secure Shell's popup
  * uses to open its connection dialog: open an empty window, cut its opener, then set its
- * location – gets a page at about:blank that the caller navigates itself. A sized open (Secure
+ * location – gets a page at about:blank that the caller navigates itself (the core plans the
+ * empty page as it plans any page a script may open, `isOpenableUrl`). A sized open (Secure
  * Shell asks for 900x600 with `chrome=no`) becomes a toolbar-only window as it does from a
  * tab; everything else a tab next to the active one.
  */
@@ -57,11 +53,7 @@ export function popupWindowOpenTicket(
   features: string,
   host: PopupOpenerHost
 ): WindowOpenTicket | null {
-  const blank = url === BLANK
-  if (!blank && !isOpenableUrl(url)) return null
-  // The core refuses about:blank as a page's target; the plan is read here for its placement
-  // alone, so an empty open plans as the popup's own document would.
-  const plan = planWindowOpen(blank ? host.openerUrl : url, disposition, features)
+  const plan = planWindowOpen(url, disposition, features)
   if (plan.action === 'deny') return null
   const opensWindow = plan.action === 'window' && host.windowsCapable
   return {
@@ -99,8 +91,6 @@ export interface ExtensionPageOpenHost {
    * none is left.
    */
   windowFor(): ZenWindow | undefined
-  /** The opener document's own address. */
-  openerUrl(): string
   browser: {
     tabs: {
       activeTabFor(win: ZenWindow): Tab | undefined
@@ -141,7 +131,6 @@ export function extensionPageOpenHandler(
     const ticket =
       views && win && active && opener
         ? popupWindowOpenTicket(url, disposition as WindowOpenDisposition, features ?? '', {
-            openerUrl: host.openerUrl(),
             win,
             activeTabId: active.id,
             windowsCapable: host.browser.state.capabilities.windows,
