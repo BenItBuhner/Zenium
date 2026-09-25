@@ -11,6 +11,11 @@ name: Android startup demo
 # the three moments. The claims fail the run under `assert`. Dispatch-only, like the other demos;
 # the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  # TEMPORARY (PR #454): the branch's own push trigger, gated on `[startup-run]` in the head
+  # commit's message; removed before the PR leaves draft.
+  push:
+    branches:
+      - cursor/android-startup-9615
   workflow_dispatch:
     inputs:
       assert:
