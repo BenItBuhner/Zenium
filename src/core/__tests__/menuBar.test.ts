@@ -563,7 +563,10 @@ describe('the macOS menu bar', () => {
           '-',
           'Show Full History'
         ])
-        expect(item(menu, 'Recently Visited').enabled).toBe(false)
+        // The header is a heading, in the note form the sibling "Tabs from Other Devices"
+        // heading takes (#396's A7): disabled, and a note to a renderer that draws the template.
+        expect(item(menu, 'Recently Visited')).toMatchObject({ enabled: false, note: true })
+        expect(item(menu, 'Recently Visited').click).toBeUndefined()
         expect(item(menu, 'Page 12').click).toBeTypeOf('function')
         // Each row carries its page's favicon (shortcuts-menus-157).
         expect(item(menu, 'Page 12').icon).toBe('data:image/png;base64,Page 12')

@@ -428,7 +428,9 @@ function recentlyClosed(browser: Browser): MenuItemTemplate {
  * Chrome's "Recently Visited" block of the mac History menu (history-12, Chrome's
  * `HistoryMenuBridge` with its `kVisitedCount`): the ten pages last visited, newest first, each
  * by its title (its address when it has none) with its favicon (shortcuts-menus-157), behind a
- * separator and Chrome's disabled header,
+ * separator and Chrome's disabled header – a heading, not a dead command: the note kind the
+ * sibling "Tabs from Other Devices" heading takes (#396's A7; §9.30), which a renderer-drawn
+ * menu writes at the note's ink and the native bar shows disabled –
  * between Recently Closed and Tabs from Other Devices as Chrome orders them. A row loads its
  * page in the front window's current tab, as Chrome's does (a window is opened for it when none
  * is up – the bar stands without one). Nothing while history is empty: the block goes, separator
@@ -439,7 +441,7 @@ function recentlyVisited(browser: Browser): Template {
   if (entries.length === 0) return []
   return [
     { type: 'separator' },
-    { label: 'Recently Visited', enabled: false },
+    { label: 'Recently Visited', enabled: false, note: true },
     ...entries.map((e): MenuItemTemplate => {
       // History keeps the address as the title of a page that had none: the row shows it the
       // way the bar does, scheme and `www.` dropped.
