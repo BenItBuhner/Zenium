@@ -187,7 +187,14 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Every session's `Accept-Language` follows the preferred languages (`session.setUserAgent`).
   pageLanguages: true,
   // Blink on the desktop maps `serif` / `sans-serif` / `monospace` through the web preferences.
-  genericFontFamilies: true
+  genericFontFamilies: true,
+  // DESKTOP FYI (Q1, the observable landing): the page's `WebContentsView` composites above the
+  // chrome and the main process places it synchronously, so the chrome's stand-ins leave as
+  // they always have; nothing here answers a placement with the view's drawn frame. Were the
+  // desktop ever to want the §11 rule too (`hideFollowsCover` records the frame it lost on the
+  // hide side, #299 F1), the answer would be `ElectronTabView`'s, from the view's
+  // `paint`/`did-frame-finish-load`-class signal, and this flag turns the chrome's waits on.
+  placementAnswered: false
 }
 
 /**

@@ -210,11 +210,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * The thread the bridge's asynchronous channel is received on ([BridgePort]): started when the
      * chrome first asks for a port, so a WebView without the ports (or a chrome that never asks)
      * never pays for it. The messages only cross it – the storage calls go straight on to the
-     * storage thread from here, the way [JsBridge.Calls] routes them, and a thumbnail read
-     * (`thumbnail.load`, the port's other class since services perf pass 3) is parsed here, a line
-     * of JSON, and posted to the main thread, where [dispatch] hands it to [io] as it always has –
-     * so it never runs anything long; it exists so that no message is ever received on the main
-     * thread.
+     * storage thread from here, the way [JsBridge.Calls] routes them, and every other string (a
+     * call, a post, a batch: the port is the bridge since services perf pass 4, [JsBridge.route]
+     * telling them apart by shape) is parsed here, a line of JSON or a layout report's array, and
+     * posted to the main thread as one task, where [dispatch] runs it as the hop's task did – so
+     * it never runs anything long; it exists so that no message is ever parsed on the main thread.
      */
     private var bridgePortThread: HandlerThread? = null
     private fun bridgePortHandler(): Handler {
@@ -417,6 +417,45 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         tabs.setVisible(tabId, visible)
         reportDrawn(tabId, visible, change)
     }
+    /** Serial of the visual-state callbacks [placementAnswer] posts (a request id per ask). */
+    private var shownSeq = 0L
+    /**
+     * Q1, the observable landing: `view.shown`'s answer – the chrome's stand-in for a page a
+     * layout just brought back leaves on it, not on a clock of the chrome's ([PlacementAnswer]
+     * has the rule). The ask follows the placement batch through the port, so the view is
+     * already `VISIBLE` (or refused, [PrivateLock.refusesShow]) when it is read here; the frame
+     * is the view's own, counted as [reportDrawn] counts `view.drawn`'s; the bound is that one's.
+     */
+    private val placementAnswer = PlacementAnswer(
+        showing = { tabId -> tabs.get(tabId)?.visibility == View.VISIBLE },
+        armFrame = { tabId, onFrame ->
+            val view = tabs.get(tabId)
+            if (view == null) {
+                onFrame()
+            } else {
+                view.postVisualStateCallback(++shownSeq, object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) {
+                        // Flag-gated, the motion profile's (BridgeLatency.SHOWN): the frame the
+                        // callback names, and the reply two frames on; 0 and nothing when off.
+                        val drawnUs = BridgeLatency.stamp()
+                        afterFrames(2) {
+                            onFrame()
+                            BridgeLatency.arrived(BridgeLatency.SHOWN, BridgeLatency.FRAME, drawnUs, "view.shown:$tabId")?.dispatched()
+                        }
+                    }
+                })
+            }
+        },
+        armDeadline = { tabId, onDeadline ->
+            val deadline = Runnable {
+                onDeadline()
+                BridgeLatency.arrived(BridgeLatency.SHOWN, BridgeLatency.DEADLINE, BridgeLatency.stamp(), "view.shown:$tabId")?.dispatched()
+            }
+            main.postDelayed(deadline, PageVisibility.DRAWN_DEADLINE_MS)
+            val disarm: () -> Unit = { main.removeCallbacks(deadline) }
+            disarm
+        }
+    )
     /** Last: it reads the tabs and fullscreen state above when it decides what back would do. */
     val back = PredictiveBack(activity, this, chrome = { chrome }, onLeave = { activity.moveTaskToBack(true) })
     val lifecycle = HostLifecycle()
@@ -933,6 +972,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
             "view.setCover" -> { tabs.setCover(args.str("tabId"), args.obj("cover")); reply(null) }
             "view.setVisible" -> { setTabVisible(args.str("tabId"), args.bool("visible")); reply(null) }
+            // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).
+            "view.shown" -> placementAnswer.answer(args.str("tabId")) { shown -> reply(shown) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
             "view.download" -> {
                 if (tab != null) downloads.start(args.str("url"), tab.settings.userAgentString, null, null, -1, tab.tabId)

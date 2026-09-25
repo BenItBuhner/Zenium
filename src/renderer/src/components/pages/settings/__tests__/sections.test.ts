@@ -137,7 +137,8 @@ const ANDROID: HostCapabilities = {
   qrScan: false,
   readAloud: false,
   pageLanguages: false,
-  genericFontFamilies: false
+  genericFontFamilies: false,
+  placementAnswered: true
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {

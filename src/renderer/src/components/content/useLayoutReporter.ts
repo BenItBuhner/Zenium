@@ -4,6 +4,7 @@ import { BLANK_URL } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { contentRadius } from '@renderer/lib/contentRadius'
 import {
+  awaitingShow,
   chromeUnderPages,
   COVER_WAIT_MS,
   coverStatus,
@@ -34,8 +35,9 @@ export interface LayoutInfo {
    * Whether chrome covers the content area, so the chrome paints the page's picture there. The
    * host is told to hide the page views a little later than this turns true: once that picture
    * is painted (see `lib/cover.ts`); on Android it also stays true a little after the chrome has
-   * uncovered the page: until the host has drawn the live view back (`lib/pageView.ts`), so the
-   * picture never leaves before the page is there to take its place.
+   * uncovered the page: until the host has drawn the live view back (`lib/pageView.ts`) and, on
+   * a host that answers placements, until it has answered the one that brought the view back
+   * (Q1, `awaitingShow`), so the picture never leaves before the page is there to take its place.
    */
   contentHidden: boolean
 }
@@ -170,6 +172,9 @@ export function useLayoutReporter(
   const followsCover = chromeUnderPages(state.platform)
   const activeTabId = activeTab(state)?.id ?? null
   const pageAway = pageViewStore.use((s) => followsCover && pageOffScreen(s, activeTabId))
+  // Q1, the observable landing: the host that answers placements has not yet answered the one
+  // that brought the active page back – the cover stays until it does (`lib/cover.ts`).
+  const awaiting = coverStore.use((s) => followsCover && awaitingShow(s, activeTabId))
   /** What the last report said about the page views (the latch of `decideHidden`). */
   const reportedHidden = useRef(false)
   /** When the current wait for a cover began, or null outside one. */
@@ -294,5 +299,5 @@ export function useLayoutReporter(
     fullscreenTabId
   ])
 
-  return { area, contentHidden: contentHidden || pageAway }
+  return { area, contentHidden: contentHidden || pageAway || awaiting }
 }

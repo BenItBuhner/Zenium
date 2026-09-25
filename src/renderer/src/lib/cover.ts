@@ -20,10 +20,19 @@ interface CoverState {
   loading: ReadonlyMap<string, number>
   /** Per tab: mounted cover images whose pixels are on screen. */
   painted: ReadonlyMap<string, number>
+  /**
+   * Tabs whose page view a layout just brought back and whose host has not yet said the view is
+   * on screen (Q1, the observable landing – the §11 stand-in rule): whatever stands in for the
+   * page of such a tab – the cover under a sheet's close, the gesture stage's card where a swipe
+   * or the overview lands – stays until the host's answer (`landingAnswered`) or the bound
+   * (`SHOWN_WAIT_MS`). Only ever set on a host that answers placements
+   * (`HostCapabilities.placementAnswered`); the others' stand-ins leave as they always did.
+   */
+  awaitingShow: ReadonlySet<string>
 }
 
 export const coverStore = createStore<CoverState>(
-  { loading: new Map(), painted: new Map() },
+  { loading: new Map(), painted: new Map(), awaitingShow: new Set() },
   'cover'
 )
 
@@ -79,6 +88,89 @@ export function coverPrimed(
  * keep a sheet under the live page; on any device that paints at all the wait ends far sooner.
  */
 export const COVER_WAIT_MS = 2500
+
+/**
+ * How long a stand-in waits for the host's answer to the placement that brought the page back
+ * (`awaitingShow`). The host bounds its own answer by the view's frame deadline
+ * (`PageVisibility.DRAWN_DEADLINE_MS`, 600 ms – a renderer that never draws is not waited on
+ * past it, and the answer is then `false`), so the answer comes within that; this is the
+ * chrome's patience for a host that never answers at all – a call lost with its port, a view
+ * host torn down – and it is the chrome's patience for the host's `view.drawn`
+ * (`ACK_TIMEOUT_MS`, `lib/pageView.ts`) for the same frame, above the host's bound so the
+ * host's word is heard first. The safe side is overlap – a stand-in a frame too long over a
+ * page that is there – and a wait this long is still the safe side; the forbidden side, a gap,
+ * is what the answer removes.
+ */
+export const SHOWN_WAIT_MS = 1000
+
+/** Whether `tabId`'s page view was just brought back and its host has not yet said it is on screen. */
+export function awaitingShow(state: CoverState, tabId: string | null | undefined): boolean {
+  return tabId ? state.awaitingShow.has(tabId) : false
+}
+
+const shownBounds = new Map<string, ReturnType<typeof setTimeout>>()
+
+function stopAwaiting(tabId: string): void {
+  const bound = shownBounds.get(tabId)
+  if (bound !== undefined) {
+    clearTimeout(bound)
+    shownBounds.delete(tabId)
+  }
+  coverStore.set((s) => {
+    if (!s.awaitingShow.has(tabId)) return s
+    const next = new Set(s.awaitingShow)
+    next.delete(tabId)
+    return { awaitingShow: next }
+  })
+}
+
+/**
+ * A layout the core applied brought these tabs' page views back (`layout.applied`'s `shown`):
+ * their stand-ins now wait for the host's answer to the placement. Called before the page-view
+ * phases take the same event (`lib/pageView.ts`), so whoever watches both sees the wait begin
+ * with the placement, not after it.
+ */
+export function landingsSent(tabIds: readonly string[]): void {
+  if (tabIds.length === 0) return
+  coverStore.set((s) => {
+    const next = new Set(s.awaitingShow)
+    for (const tabId of tabIds) next.add(tabId)
+    return { awaitingShow: next }
+  })
+  for (const tabId of tabIds) {
+    const previous = shownBounds.get(tabId)
+    if (previous !== undefined) clearTimeout(previous)
+    shownBounds.set(
+      tabId,
+      setTimeout(() => {
+        shownBounds.delete(tabId)
+        stopAwaiting(tabId)
+      }, SHOWN_WAIT_MS)
+    )
+  }
+}
+
+/**
+ * The host answered the placement that brought `tabId`'s view back (`view.shown`): the page is
+ * on screen, or it is not and nothing is coming – a view the host does not have or does not
+ * show, a frame that never came within the host's bound (the event's `shown` tells which; the
+ * bridge marks it). Either way the stand-in has nothing left to wait for and leaves.
+ */
+export function landingAnswered(tabId: string): void {
+  stopAwaiting(tabId)
+}
+
+/**
+ * The moment a stand-in for `tabId`'s live page actually leaves the chrome's state (the next
+ * frame draws without it), marked in the performance timeline under the bridge's trace flag
+ * (`bridge.ts`), so a scene's trace reads the landing's sequence – the placement's batch, the
+ * view's frame, the host's answer, this drop – and the overlap between the page's frame and the
+ * stand-in's last one is counted, never a gap.
+ */
+export function markCoverDrop(tabId: string): void {
+  if ((globalThis as { __zenBridgeTrace?: unknown }).__zenBridgeTrace === true)
+    performance.mark(`cover:drop:${tabId}`)
+}
 
 export interface CoverStatus {
   /** A cover for the tab is mounted and its picture is still loading or decoding. */

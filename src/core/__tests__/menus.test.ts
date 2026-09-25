@@ -105,7 +105,8 @@ const DESKTOP: HostCapabilities = {
   qrScan: false,
   readAloud: false,
   pageLanguages: false,
-  genericFontFamilies: false
+  genericFontFamilies: false,
+  placementAnswered: false
 }
 
 /**
@@ -161,7 +162,8 @@ const ANDROID: HostCapabilities = {
   qrScan: false,
   readAloud: false,
   pageLanguages: false,
-  genericFontFamilies: false
+  genericFontFamilies: false,
+  placementAnswered: false
 }
 
 function memoryIo(files: Record<string, string> = {}): StoreIO {
