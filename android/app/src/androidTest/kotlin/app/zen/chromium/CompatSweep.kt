@@ -528,13 +528,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      */
     private fun install(row: Row, entry: JSONObject, slug: String): JSONObject? {
         val existing = extensions().firstOrNull { it.getString("id") == row.id }
-        if (skipInstall && existing != null) {
+        // A pass after the first of a `repeat` run finds the row's extension installed by the
+        // first pass and disabled by its cleanup (the store refuses a second install of an
+        // installed id with its "already installed" toast): kept and enabled again, as
+        // `skipInstall` keeps an earlier run's.
+        val attempt = entry.optInt("attempt", 1)
+        if ((skipInstall || attempt > 1) && existing != null) {
             if (!existing.getBoolean("enabled")) {
                 coreCall("extension.setEnabled", JSONObject().put("id", row.id).put("enabled", true).toString())
                 poll(20_000, 400) { extensions().firstOrNull { it.getString("id") == row.id }?.takeIf { it.getBoolean("enabled") } }
             }
             val ext = extensions().firstOrNull { it.getString("id") == row.id } ?: existing
-            stage(entry, "install", if (ext.isNull("error")) "P" else "F", "kept from the earlier run: v${ext.optString("version")}${if (ext.isNull("error")) "" else " error=${ext.optString("error")}"}")
+            val kept = if (attempt > 1) "kept from pass ${attempt - 1} of this boot (enabled again)" else "kept from the earlier run"
+            stage(entry, "install", if (ext.isNull("error")) "P" else "F", "$kept: v${ext.optString("version")}${if (ext.isNull("error")) "" else " error=${ext.optString("error")}"}")
             return ext.takeIf { it.isNull("error") }
         }
         row.fixture?.let { files ->
@@ -6800,7 +6806,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("llaficoajjainaijghjlofdfmbjpebpa", "Speed Dial [FVD]", "speed-dial-fvd", core = ::momentum),
         Row("gjknjjomckknofjidppipffbpoekiipm", "VPN Free - Betternet Unlimited VPN Proxy", "betternet", core = vpn("Betternet", pac = true)),
         Row("abikfbojmghmfjdjlbagiamkinbmbaic", "Equalizer for Chrome browser", "equalizer", core = captureLimit("Equalizer for Chrome browser", "/equalizer|bass|treble|preset|volume|gain|hz|band/i", firstClickSetsPopup = true)),
-        Row("pnjaodmkngahhkoihejjehlcdlnohgmp", "RSS Feed Reader", "rss-feed-reader", core = feedDetector("RSS Feed Reader", "feed.html?rss", "Zenium fixture feed")),
+        Row("pnjaodmkngahhkoihejjehlcdlnohgmp", "RSS Feed Reader", "rss-feed-reader", core = ::rssFeedReader),
         Row("mefhakmgclhhfbdadeojlkbllmecialg", "Tabby Cat", "tabby-cat", core = ::momentum),
         Row("emalgedpdlghbkikiaeocoblajamonoh", "Karma | Online shopping, but better", "karma", core = accountGate("Karma", Regex("karmanow|karma", RegexOption.IGNORE_CASE), injects = "[id*='karma'], [class*='karma']", gate = "a Karma account and a merchant page")),
         Row("emnoomldgleagdjapdeckpmebokijail", "wanteeed", "wanteeed", core = contentAttached("wanteeed", "its widget shows on its partner merchants' pages (a list its service holds), which the fixture is not (not measurable here)", injects = "[id*='wanteeed'], [class*='wanteeed']", verdict = "n/m")),
@@ -7369,6 +7375,87 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             popup == null -> Grade("F", "Scrolling screenshot tool: popup did not render in the core check; $captureLine", extra)
             !click.optBoolean("clicked") -> Grade("F", "Scrolling screenshot tool: no \"Capture visible part\" control found in the popup (${click.toString().take(120)}); $captureLine", extra)
             else -> Grade("F", "Scrolling screenshot tool: \"Capture visible part\" pressed and no annotation frame in the page within ${scaled(40_000, factor) / 1000} s (${frame.toString().take(200)}); $flow; $captureLine", extra)
+        }
+    }
+
+    /**
+     * RSS Feed Reader (pnjao…, rounds 15 and 16 §7.7: "no badge count on the feed page"): the
+     * discovery read as the bundle does it. Its `content.js` evaluates an XPath over the document
+     * (every `link` element whose `rel` contains "alternate" and whose `type` contains "rss",
+     * "atom" or "rdf" – an XPath over `local-name()`, no CSS),
+     * sends `contentScript:feedsFound {feeds: [{href, title}], url}` to its worker, and the worker
+     * keeps the tab's feeds (`feedFinder:availableFeeds`) and sets the action's icon for that tab
+     * (`action.setIcon({path: <its add-feed icon>, tabId})`). No badge is ever set for a found
+     * feed – the badge is the unread count of an account's feeds, off by default – so the rows of
+     * rounds 15 and 16 waited on an observable the bundle does not produce; and the Android
+     * runtime's `setIcon` keeps the manifest's icon (per-tab variants are not drawn yet,
+     * `extensionApi.ts`), so the icon cannot be read either. What can: the content script's own
+     * log when the page's URL carries `feeder_rss_logging=1` (a `textarea` it appends to the body
+     * with "findFeedLinks: eval found: <href> <title>"), the `contentScript:feedsFound` message on
+     * the bridge, and the popup's "Add feed" control, which takes the class `feeds-available` (and
+     * a solid plus) once the worker's `/-extension-api/feeds-in-tab` has answered the active
+     * tab's feeds; tapped, it lists them under "Available feeds" with the fixture's title. Round
+     * 15's account prompt, when it shows, is taken past on its no-account control and the popup
+     * opened again (the choice closes it and opens the web app as a tab).
+     */
+    private fun rssFeedReader(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val title = "Zenium fixture feed"
+        val page = "feed.html?rss&feeder_rss_logging=1"
+        val since = StepEvidence(row)
+        val (_, view) = fixture(page, factor, 2_000)
+        val log = pollExpr(view, FEEDER_LOG, scaled(15_000, factor))
+        extra.put("contentLog", log)
+        fun bridgeCounts(trace: List<String>) = JSONObject()
+            .put("feedsFound", trace.count { it.contains("type=contentScript:feedsFound") })
+            .put("setIcon", trace.count { it.contains("action.setIcon") })
+            .put("lines", trace.size)
+        extra.put("bridgeAfterLoad", bridgeCounts(since.trace()))
+        extra.put("action", extensionAction(row.id) ?: JSONObject.NULL)
+        val popup = openPopup(row, factor)
+        var addFeed = JSONObject()
+        var listed = JSONObject()
+        val steps = JSONArray()
+        val listing = DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:${JSONObject.quote(title)}.split(' ').every(function(w){return text.toLowerCase().indexOf(w.toLowerCase())>=0})||/feed\\.xml/.test(text),text:")
+        if (popup != null) {
+            addFeed = pollExpr(popup, FEEDER_ADD_FEED, scaled(20_000, factor))
+            if (!addFeed.optBoolean("pass") && !addFeed.optBoolean("present") && Regex("without (an )?account|skip|continue", RegexOption.IGNORE_CASE).containsMatchIn(addFeed.optString("text"))) {
+                if (tapLabel("/^(continue without( an)? account|skip( for now)?|continue)$/i", factor, steps, "no-account")) {
+                    SystemClock.sleep(scaled(5_000, factor))
+                    extra.put("tabsAfterChoice", JSONArray(tabUrls().values.toList()))
+                    runCatching { coreCall("extension.closePopup", "null") }
+                    fixture(page, factor, 3_000)
+                    openPopup(row, factor)?.let { fresh -> addFeed = pollExpr(fresh, FEEDER_ADD_FEED, scaled(20_000, factor)) }
+                }
+            }
+            if (tapLabel("/^add feed$/i", factor, steps, "add feed")) {
+                popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                    listed = pollExpr(live, listing, scaled(20_000, factor))
+                    listed.put("console", JSONArray(consoleOf(live).takeLast(10)))
+                }
+            }
+        }
+        extra.put("addFeed", addFeed).put("listed", listed).put("steps", steps)
+        val trace = since.trace()
+        val bridge = bridgeCounts(trace)
+        extra.put("bridge", bridge)
+        File(out, "bridge-${entry.optString("slug")}.txt").writeText(trace.joinToString("\n"))
+        extra.put("bridgeFile", "bridge-${entry.optString("slug")}.txt")
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-feed")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val discovered = log.optBoolean("pass")
+        val offered = addFeed.optBoolean("pass")
+        val logLine = if (log.optBoolean("present")) "the content script's log \"${log.optString("found").take(100)}\"" else "no content-script log in the page (its logging flag unread, or its check never ran)"
+        val bridgeLine = "${bridge.optInt("feedsFound")} feedsFound message(s) and ${bridge.optInt("setIcon")} setIcon call(s) on the bridge"
+        return when {
+            listed.optBoolean("pass") -> Grade("P", "RSS Feed Reader: the page's one feed discovered ($logLine; $bridgeLine) and offered in the popup – \"Add feed\" marked feeds-available=$offered, its list names the feed: \"${listed.optString("text").take(120)}\"", extra)
+            offered -> Grade("PARTIAL", "RSS Feed Reader: the page's one feed discovered ($logLine; $bridgeLine) and the popup's \"Add feed\" marked feeds-available; its list did not name the feed within the wait: \"${listed.optString("text").take(120)}\" (${steps.toString().take(140)})", extra)
+            popup == null -> Grade("F", "RSS Feed Reader: $logLine; $bridgeLine; the popup did not render", extra)
+            discovered -> Grade("F", "RSS Feed Reader: the content script found the feed ($logLine; $bridgeLine) and the popup did not offer it: Add feed ${addFeed.toString().take(160)}; list \"${listed.optString("text").take(100)}\"", extra)
+            else -> Grade("F", "RSS Feed Reader: the content script did not find the page's feed ($logLine; $bridgeLine); popup: Add feed ${addFeed.toString().take(160)}", extra)
         }
     }
 
@@ -8061,12 +8148,42 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val back = reloaded()
         extra.put("backDirect", back)
         bg?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        // Round 16 §7.7's measurement: the options page's help frame against `Nav`'s static
+        // initialiser (`content/nav.js:36` on WebView 156, clean on 113). The page is opened as
+        // a tab and both documents waited for, then the two timelines are read together – the
+        // frame's navigation entry rebased onto the parent's time origin. The module graph's
+        // last fetch and the parent's DOMContentLoaded bracket the graph's evaluation; the
+        // frame's response, its parsing end (`domInteractive`) and the span between them (the
+        // frame's own document-start bootstrap plus the parse of help.html) stand beside them.
+        // The `.chrome-extension` link's `display` reading `unset` is the initialiser having run
+        // with the frame parsed; the page's console keeps the `nav.js` line otherwise. Not part
+        // of the grade (the row's core is the proxy pick); the note carries the reading.
+        val optionsTab = createTab("chrome-extension://${row.id}/content/options.html")
+        val options = runCatching { waitForView(optionsTab) }.getOrNull()
+        val frameTiming = if (options != null) {
+            pollExpr(options, FOXY_FRAME_TIMING, scaled(20_000, factor))
+            SystemClock.sleep(scaled(1_500, factor))
+            val timing = json(tabEval(options, FOXY_FRAME_TIMING))
+            val console = consoleOf(options)
+            timing.put("console", JSONArray(console.takeLast(8)))
+                .put("navJsError", console.any { Regex("nav\\.js:\\d+").containsMatchIn(it) && it.contains("Uncaught") })
+            SystemClock.sleep(600)
+            snap("${entry.optString("slug")}-options-frame")
+            timing
+        } else JSONObject().put("error", "the options tab's view did not come up")
+        extra.put("optionsFrameTiming", frameTiming)
+        closeTab(optionsTab)
+        showTab(tab)
         since.record(extra, "atEnd")
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-core")
         val failedThrough = through.optBoolean("errorPage")
         val restored = back.optBoolean("loaded")
-        val note = "chrome.proxy: ${proxy.toString().take(140)}; seeded ${extra.optJSONObject("seed")?.toString()?.take(100)}; picked ${picked.toString().take(120)}; fixture through the proxy: ${through.toString().take(140)}; back on disable: ${back.toString().take(120)}"
+        val frame = frameTiming.optJSONObject("frame")
+        val frameLine = if (frame != null && frameTiming.has("evalWindow")) {
+            "options help frame: response ${frame.opt("responseEnd")} ms, parsed ${frame.opt("domInteractive")} ms (its bootstrap+parse ${frame.opt("bootstrap")} ms) against the module graph's evaluation window ${frameTiming.optJSONArray("evalWindow")} ms (${frameTiming.optInt("modules")} modules, the last fetched at ${frameTiming.optInt("lastModuleEnd")} ms); Nav's link wired ${frameTiming.optBoolean("navLinkWired")}, nav.js error ${frameTiming.optBoolean("navJsError")}"
+        } else "options help frame: ${frameTiming.toString().take(120)}"
+        val note = "chrome.proxy: ${proxy.toString().take(140)}; seeded ${extra.optJSONObject("seed")?.toString()?.take(100)}; picked ${picked.toString().take(120)}; fixture through the proxy: ${through.toString().take(140)}; back on disable: ${back.toString().take(120)}; $frameLine"
         return when {
             failedThrough && restored -> Grade("P", "FoxyProxy: the seeded proxy picked the popup's way reached ProxyController (the fixture came back as the ${through.optString("code").ifEmpty { "proxy error" }} error page) and disable cleared it (the fixture loaded again): $note", extra)
             failedThrough -> Grade("PARTIAL", "FoxyProxy: the seeded proxy reached ProxyController (${through.optString("code").ifEmpty { "the error page" }}) but disable did not bring the fixture back within the wait: $note", extra)
@@ -10187,6 +10304,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){window.__zenFoxyMode={done:false};var mode=__MODE__;try{chrome.storage.local.get(null,function(r){var pref=Object.assign({},r,{mode:mode});chrome.storage.local.set({mode:mode},function(){" +
                 "try{chrome.runtime.sendMessage({update:'setProxy',pref:pref},function(reply){window.__zenFoxyMode={done:true,mode:mode,proxies:(pref.data||[]).length,reply:reply===undefined?null:reply,err:chrome.runtime.lastError?String(chrome.runtime.lastError.message):null}})}catch(e){window.__zenFoxyMode={done:true,mode:mode,error:String(e&&e.message||e)}}})})}catch(e){window.__zenFoxyMode={done:true,error:String(e&&e.message||e)}}return 'setting'})()"
 
+        /**
+         * FoxyProxy's options page and its help frame on one timeline (round 16 §7.7): the
+         * parent's navigation and `.js` resource entries (the module graph), the help frame's
+         * navigation entry rebased by the difference of the two time origins, the frame's
+         * `.chrome-extension` link (its `display` is `unset` once `Nav`'s static initialiser ran
+         * with the frame parsed). `pass` is both documents complete; the numbers are the reading.
+         */
+        private const val FOXY_FRAME_TIMING =
+            "(function(){var p=performance;var nav=p.getEntriesByType('navigation')[0];var res=p.getEntriesByType('resource').map(function(r){return {name:r.name.replace(/^.*\\//,''),type:r.initiatorType,start:Math.round(r.startTime),end:Math.round(r.responseEnd)}});" +
+                "var scripts=res.filter(function(r){return /\\.js\$/.test(r.name)});var lastModuleEnd=scripts.reduce(function(m,r){return Math.max(m,r.end)},0);var navJs=scripts.filter(function(r){return r.name==='nav.js'})[0]||null;var frames=res.filter(function(r){return r.type==='iframe'||/\\.html\$/.test(r.name)});" +
+                "var f=document.querySelector('iframe[src=\"help.html\"]');var frame=null;try{var fw=f&&f.contentWindow;var fd=f&&f.contentDocument;var fn=fw&&fw.performance.getEntriesByType('navigation')[0];var off=fw?fw.performance.timeOrigin-p.timeOrigin:null;var link=fd&&fd.querySelector('.chrome-extension');" +
+                "frame={url:fd?fd.URL.replace(/^.*\\//,''):null,ready:fd?fd.readyState:null,link:!!link,linkDisplay:link?link.style.display:null,originOffset:off===null?null:Math.round(off),responseStart:fn?Math.round(off+fn.responseStart):null,responseEnd:fn?Math.round(off+fn.responseEnd):null,domInteractive:fn?Math.round(off+fn.domInteractive):null,domContentLoaded:fn?Math.round(off+fn.domContentLoadedEventEnd):null,loadEnd:fn?Math.round(off+fn.loadEventEnd):null,bootstrap:fn?Math.round(fn.domInteractive-fn.responseEnd):null,bodyChars:fd&&fd.body?fd.body.innerHTML.length:0}}catch(e){frame={error:String(e)}}" +
+                "var evalFrom=Math.max(nav?nav.domInteractive:0,lastModuleEnd);var evalTo=nav?nav.domContentLoadedEventStart:0;" +
+                "return JSON.stringify({pass:!!(frame&&frame.url==='help.html'&&frame.ready==='complete'&&document.readyState==='complete'),parent:nav?{responseEnd:Math.round(nav.responseEnd),domInteractive:Math.round(nav.domInteractive),dclStart:Math.round(nav.domContentLoadedEventStart),dclEnd:Math.round(nav.domContentLoadedEventEnd),loadEnd:Math.round(nav.loadEventEnd)}:null," +
+                "modules:scripts.length,lastModuleEnd:lastModuleEnd,navJs:navJs,evalWindow:[Math.round(evalFrom),Math.round(evalTo)],frames:frames,frame:frame,frameParsedBeforeEval:!!(frame&&frame.domInteractive!==null&&frame.domInteractive<=evalFrom),frameParsedBeforeDcl:!!(frame&&frame.domInteractive!==null&&frame.domInteractive<=evalTo),navLinkWired:!!(frame&&frame.linkDisplay==='unset')})})()"
+
         // --- compat round 16 ---
 
         /** Forest's popup with a tree growing: a `mm:ss` countdown beside its give-up / growing words. */
@@ -10329,5 +10462,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** The Save clicked by script through the shadow root (a way to the state when its box is off screen). */
         private const val SCREENSHOT_SAVE_CLICK =
             "(function(){var w=document.getElementById('as_select_wrapper');var sr=w&&w.shadowRoot;var el=sr?sr.querySelector('#awesome_screenshot_capture'):null;if(!el)return 'absent';el.click();return 'clicked'})()"
+
+        /**
+         * RSS Feed Reader's content script's own log in the page (its `feeder_rss_logging=1` flag: a `textarea`
+         * at z-index 100000000 appended to the body): the "findFeedLinks: eval found: <href> <title>" line is the
+         * discovery; the page's announced feed links are counted beside it.
+         */
+        private const val FEEDER_LOG =
+            "(function(){var ta=Array.prototype.slice.call(document.querySelectorAll('textarea')).find(function(t){return t.style&&t.style.zIndex==='100000000'});var v=ta?ta.value:'';var m=/findFeedLinks: eval found: (\\S+) ([^\\n]*)/.exec(v);" +
+                "var links=document.querySelectorAll('link[rel~=\"alternate\"][type*=\"rss\"], link[rel~=\"alternate\"][type*=\"atom\"]').length;return JSON.stringify({pass:!!m,present:!!ta,found:m?m[1]+' '+m[2]:'',lines:v?v.split('\\n').filter(Boolean).length:0,log:v.slice(0,600),links:links})})()"
+        /** RSS Feed Reader's popup: its "Add feed" control (`.add-feed-button`, aria-label "Add feed") marked `feeds-available` once the worker answered the tab's feeds. */
+        private const val FEEDER_ADD_FEED =
+            "(function(){var el=document.querySelector('.add-feed-button, [aria-label=\"Add feed\"], [feeder-title=\"Add feed\"]');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!(el&&el.classList.contains('feeds-available')),present:!!el,classes:el?el.className.replace(/\\s+/g,' ').trim().slice(0,80):null,text:t.slice(0,200)})})()"
     }
 }
