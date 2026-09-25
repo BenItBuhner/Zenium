@@ -6,7 +6,9 @@ import { centredOver, planFramedWindow, type DisplayArea } from '../windowPlacem
  * The task manager's window is framed by the OS (`WindowChrome` `page`), so its sizes come in
  * two kinds: the page's (content) and the frame's (outer: the page plus a title bar and
  * borders). `planFramedWindow` keeps them apart – the window is BUILT from content sizes
- * (`useContentSize`), so 760×520 and the 480×320 minimum are of the page on every OS; its
+ * (`useContentSize`), so the default and the 480×320 minimum are of the page on every OS (the
+ * page's default is `window.ts`'s 736×518; the plan is size-agnostic and this file feeds it a
+ * 760×520 stand-in, the frames below sized round that); its
  * REMEMBERED bounds are outer (`getNormalBounds`) and go back as outer (`setBounds`), never as
  * a content size, which would grow the window by a frame on every open; and a first open
  * centres the FRAME over the window it was asked from. The harness cannot measure a Windows or
@@ -30,7 +32,7 @@ function centre(rect: Rect): { x: number; y: number } {
 }
 
 describe('planFramedWindow', () => {
-  it('builds a first open from CONTENT sizes: 760×520 of page, no smaller than 480×320 of page, on every OS', () => {
+  it('builds a first open from CONTENT sizes: the default of page (the fixture’s 760×520), no smaller than 480×320 of page, on every OS', () => {
     const opener = { x: 100, y: 60, width: 1400, height: 900 }
     const plan = planFramedWindow({ ...base, saved: null, displayId: 1, anchor: opener }, [
       primary,

@@ -136,8 +136,8 @@ export class ElectronWindow implements WindowHost {
       displayId = screen.getDisplayMatching(b).id
     }
     // A framed window's sizes are its PAGE's (`useContentSize`): the OS puts its title bar and
-    // borders outside them, so 760×520 is the same five rows under a Windows caption as on X11,
-    // and 480×320 is the least page, not the least frame. Its remembered bounds are outer
+    // borders outside them, so 736×518 is the same seven whole rows under a Windows caption as
+    // on X11, and 480×320 is the least page, not the least frame. Its remembered bounds are outer
     // (`getNormalBounds`, through `onBoundsChanged`) and go back through `setBounds` below –
     // the matching setter; restoring them as a content size would grow it a frame per open.
     const framedPlan = framed
