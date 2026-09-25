@@ -310,7 +310,7 @@ describe('chrome.userScripts in the shim', () => {
       expect(host.notifications).toHaveLength(before + 1)
     })
 
-    it('does not accept a port nobody listens for until a listener registers', () => {
+    it('does not accept a port nobody listens for until a listener registers', async () => {
       const { chrome, host } = install()
       host.deliver('runtime', 'onUserScriptConnect', [{ portId: 'p', name: 'late', sender: {} }])
       expect(host.notifications.some((n) => n.kind === USER_SCRIPTS_SHIM.port)).toBe(false)
@@ -318,6 +318,8 @@ describe('chrome.userScripts in the shim', () => {
       chrome.runtime.onUserScriptConnect.addListener((p: Any) => {
         port = p
       })
+      // The queued connection reaches the listener in the task after its registration.
+      await flush()
       expect(port?.name).toBe('late')
       expect(host.notifications.at(-1)).toEqual({
         kind: USER_SCRIPTS_SHIM.port,
