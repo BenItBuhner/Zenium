@@ -4424,22 +4424,28 @@ function agentsSection({ state, set }: SectionContext): RowGroup[] {
  * politely – installed into each detected agent's global skills folder from a switch per
  * agent, or all at once; a status row above them. The rows say "agent", never the developer's
  * "harness" (the #460 gate). The status row's error state trails §10.4's 16 status glyph in the
- * danger ink through the row's one `tone`; its neutral states stay bare. Remove everywhere asks
- * nothing and wears no danger ink (§10.5 as amended on #450): the files are Zenium's copies, an
- * edited one is spared by the installer's own rule, and Install brings them back in one click.
- * No modal: the group is the nudge.
+ * danger ink through the row's one `tone`; its neutral states stay bare. A failure that is one
+ * agent's – the same sentence as that row's `note` – is said once, by the row it is about,
+ * while any agent has the skill: the status row keeps its count in the danger tone with the
+ * glyph (the lead's tidy from the #460 r3 delta read); the line carries the sentence itself when
+ * the operation failed as a whole (its record could not be saved – a sentence no row carries) or
+ * when no agent has the skill. Remove everywhere asks nothing and wears no danger ink (§10.5 as
+ * amended on #450): the files are Zenium's copies, an edited one is spared by the installer's
+ * own rule, and Install brings them back in one click. No modal: the group is the nudge.
  */
 function agentSkillGroup(skills: AgentSkillStatus): RowGroup {
   const detected = skills.targets.filter((t) => t.detected)
   const installed = detected.filter((t) => t.installed)
   const allInstalled = detected.length > 0 && installed.length === detected.length
-  const status = skills.error
-    ? skills.error
-    : detected.length === 0
+  const count =
+    detected.length === 0
       ? 'No coding agent found on this computer'
       : installed.length === 0
         ? 'Not installed'
         : `Installed for ${installed.length} of ${detected.length} agents found · version ${installed[0].installedVersion ?? skills.version}`
+  const rowSaysWhy =
+    skills.error !== null && installed.length > 0 && detected.some((t) => t.note === skills.error)
+  const status = skills.error && !rowSaysWhy ? skills.error : count
   const rows: SettingsRow[] = [
     {
       kind: 'info',
