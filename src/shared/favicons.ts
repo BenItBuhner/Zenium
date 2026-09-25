@@ -96,9 +96,12 @@ export function faviconSrc(
   return host && options.openHosts?.has(host) ? favicon : null
 }
 
-/** The host a page's site is known by in `openHosts`: lowercase, `www.` aside; '' for no host. */
+/**
+ * The host a page's site is known by in `openHosts`: lowercase, `www.` aside; '' for no host
+ * and for a page on a scheme that is no site's (an internal page, an extension's).
+ */
 export function siteHost(url: string | null | undefined): string {
-  if (!url) return ''
+  if (!url || !/^https?:/i.test(url)) return ''
   return getHost(url)
     .toLowerCase()
     .replace(/^www\./, '')
