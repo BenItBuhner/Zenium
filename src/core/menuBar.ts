@@ -361,15 +361,16 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) },
       { type: 'separator' },
       // The group about this window, in the order More Tools has the pair (one order in both
-      // menus): Duplicate Window (session-19) – greyed for a popup or an app window, which have
-      // no tab strip to duplicate, as a menu bar greys rather than hides – then Chrome's
-      // Window › Name Window…, in a group of its own as Chrome's menu has it.
+      // menus, the #451 lead check's): Chrome's Window › Name Window… – the window's own name
+      // first – then Duplicate Window (session-19), the verb that makes another, greyed for a
+      // popup or an app window, which have no tab strip to duplicate, as a menu bar greys rather
+      // than hides. A group of its own, as Chrome's menu has it.
+      { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
       {
         label: 'Duplicate Window',
         action: 'window.duplicate',
         enabled: Boolean(win) && win!.chrome === 'full'
       },
-      { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
       { type: 'separator' },
       { label: 'Next Space', action: 'space.next', enabled: Boolean(win) && !local },
       { label: 'Previous Space', action: 'space.prev', enabled: Boolean(win) && !local },

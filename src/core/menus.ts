@@ -3310,9 +3310,11 @@ export class Menus {
       click: () => this.browser.openWindow('unsynced', win)
     })
     // Duplicate Window (session-19), beside the other window rows of More Tools – the app
-    // menu's top level has no row to spare (#396's 661 on 800 px). A popup or an app window
-    // has no tab strip to duplicate: the row is left out, as `when`'s rule has it (an app
-    // window's menu is `showWebAppMenu`'s in any case).
+    // menu's top level has no row to spare (#396's 661 on 800 px; the #451 lead check records
+    // More Tools full at 14 rows). Listed after Name Window… – the window's own name first,
+    // then the verb that makes another; the mac Window menu keeps the same order. A popup or
+    // an app window has no tab strip to duplicate: the row is left out, as `when`'s rule has it
+    // (an app window's menu is `showWebAppMenu`'s in any case).
     const duplicateWindow = when(caps.windows && win.chrome === 'full', {
       label: 'Duplicate Window',
       action: 'window.duplicate',
@@ -3796,8 +3798,8 @@ export class Menus {
             separator,
             ...newSpace,
             ...newBlankWindow,
-            ...duplicateWindow,
             ...nameWindow,
+            ...duplicateWindow,
             separator,
             ...compactMode,
             splitView,

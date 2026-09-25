@@ -475,8 +475,8 @@ const DESKTOP_APP_MENU = [
   'More Tools',
   'More Tools > New Space…',
   'More Tools > New Blank Window',
-  'More Tools > Duplicate Window',
   'More Tools > Name Window…',
+  'More Tools > Duplicate Window',
   'More Tools > -',
   'More Tools > Compact Mode',
   'More Tools > Split View',
@@ -875,11 +875,15 @@ describe('the app menu', () => {
   it('carries Chrome’s Name Window… in More Tools with the window rows and asks the chrome for the prompt (shortcuts-menus-121)', () => {
     const h = harness(DESKTOP)
     const menu = appMenu(h)
-    // The window rows: the two that make one, then the one that names this one.
+    // The window rows: New Blank Window, the one that names this one, then its double – the
+    // group closes after Duplicate Window (the #451 lead check's order).
     expect(menu.indexOf('More Tools > Name Window…')).toBe(
-      menu.indexOf('More Tools > New Blank Window') + 2
+      menu.indexOf('More Tools > New Blank Window') + 1
     )
-    expect(menu[menu.indexOf('More Tools > Name Window…') + 1]).toBe('More Tools > -')
+    expect(menu[menu.indexOf('More Tools > Name Window…') + 1]).toBe(
+      'More Tools > Duplicate Window'
+    )
+    expect(menu[menu.indexOf('More Tools > Duplicate Window') + 1]).toBe('More Tools > -')
     const row = deepItem(h.shown(), 'Name Window…')
     expect(row.action).toBe('window.name')
     // Unbound in both presets, as in Chrome: no chord after the label.
@@ -894,10 +898,13 @@ describe('the app menu', () => {
     expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Name Window…')
   })
 
-  it('carries Duplicate Window right after New Blank Window in More Tools, making a second window on this one’s space; left out for a popup (session-19)', () => {
+  it('carries Duplicate Window right after Name Window… in More Tools (the name first, then the verb that makes another – the #451 lead check’s order), making a second window on this one’s space; left out for a popup (session-19)', () => {
     const h = harness(DESKTOP)
     const menu = appMenu(h)
     expect(menu.indexOf('More Tools > Duplicate Window')).toBe(
+      menu.indexOf('More Tools > Name Window…') + 1
+    )
+    expect(menu.indexOf('More Tools > Name Window…')).toBe(
       menu.indexOf('More Tools > New Blank Window') + 1
     )
     const row = deepItem(h.shown(), 'Duplicate Window')
