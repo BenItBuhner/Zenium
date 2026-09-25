@@ -149,7 +149,8 @@ describe('chrome.windows window types', () => {
       browser: {
         extensions: { list: () => [{ id: EXT, path: '/ext/' + EXT, allowFileAccess: false }] },
         tabs: { createTab: () => undefined },
-        allWindows: () => [main]
+        allWindows: () => [main],
+        platform: { views: undefined }
       },
       model,
       sessions: { get: () => ({}) },
