@@ -26,6 +26,11 @@ name: Android tab groups demo
 # into the job summary by the shared workflow and kept as its jank-report artifact; the gate is
 # the shared default, soft.
 on:
+  # TEMPORARY (W6-0, the overview's windowed grid: this surface's driver on the branch's head, the
+  # proof its reads of the grid still hold – no token in the project can dispatch); removed before
+  # the PR is nod-ready.
+  push:
+    branches: [cursor/android-overview-windowed-grid-82b6]
   workflow_dispatch:
 
 permissions:

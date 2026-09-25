@@ -23,6 +23,11 @@ name: Android tablet layout demo
 # live in android-emulator-demo.yml; this file picks the driver, the profile, the display and the
 # colour scheme.
 on:
+  # TEMPORARY (W6-0, the overview's windowed grid: this surface's driver on the branch's head, the
+  # proof its reads of the grid still hold – no token in the project can dispatch); removed before
+  # the PR is nod-ready.
+  push:
+    branches: [cursor/android-overview-windowed-grid-82b6]
   workflow_dispatch:
     inputs:
       theme:
