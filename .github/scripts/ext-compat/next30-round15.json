@@ -1,0 +1,806 @@
+{
+ "$comment": "Compatibility sweep round 15 list (compiled by Android compat round 18; no desktop sweep ran for these ranks, the desktop sweep having moved to a per-release cadence after its round 7): the next 30 Chrome Web Store extensions by install count after the top 30 of round 1, the 30 of next30.json and the 30 of each of next30-round3.json to next30-round14.json (ranks 421-450; manifests under the project store internal/extensions/next30-round15/). Counts are the store detail pages' rounded figures read 2026-09-25; ties inside one rounded bucket are ordered by the page's rating count, equal rounded rating counts by name. Candidates came from the store's category listings and keyword searches, about 22,800 detail pages probed across rounds 3 to 15 (this round added 551 search terms and 2,020 new detail pages; one of them reads the rounded 400,000 bucket or above - Scratch Addons at 700,000 users and 933 ratings - a count that would have placed it in an earlier list had the store's listings or the earlier rounds' terms surfaced it, so it is rank 421 as the highest-count item not yet listed, the earlier lists standing as compiled; one more reads the rounded 400,000 bucket (Maps Scraper by Presto at 47 ratings, below this round's cut) and the other 2,018 are below it). Every unlisted candidate at or above the rounded 400,000 bucket (91 detail pages) was read again on 2026-09-25, later the same day as round 14's list's read; no user count and no rating count moved. Rank 421 is Scratch Addons, the rounded 700,000 bucket's one rankable item (Securly for Chromebooks, Idira Identity Browser Extension and Citrix Web Extension are organisation-managed, Dark Theme for Google Chrome a theme, OpenDyslexic for Chrome listed at rank 392); the rounded 600,000 and 500,000 buckets hold no unlisted rankable item (Postman a Chrome App, Cegid Peoplenet ClickOnce launcher organisation-managed); ranks 422-450 are the rounded 400,000 bucket's 29 items with the most ratings after the 18 of next30-round14.json, and the cut falls between Enable right click - allow copy & select at 522 ratings and CSS Peeper at 475. Equal rounded rating counts are ordered by name: Smart Sidebar before Zoom Video at 2.6K, Salesforce before Web Paint at 1.7K, Distill Web Monitor, SelectorsHub and Toggl Track at 1.5K, Advanced Font Settings before Save.to at 1.3K, Screen Recorder before Youtube-shorts block at 1.1K. Salesforce is Sales Cloud Everywhere, Salesforce's own companion whose core check stops at the account, ranked as round 14's list ranked Reflect in Seesaw Extension and round 11's Nearpod for Classroom; MarketApp P2P is the Market.CSGO marketplace's Steam trade companion, its core check stopping at the Steam login; Lusha, SignalHire, Toggl Track, Distill Web Monitor, Save.to and Ahrefs SEO Toolbar sign in to their services and are ranked as earlier lists ranked Grammarly and HubSpot Sales. The rows carry the manifests' names: the store lists Zoom Video - UltraWide Fill as Zoom Video - UltraWide Video and Screenshot & Screen Video Recorder as Screen Video Recorder & Screenshot. Not ranked: themes (Morpheon Dark, Dark Theme for Google Chrome), Chrome Apps (Google Classroom, Postman), organisation-managed or organisation-login-only items (the list of round 13's comment - ClassLink OneClick, Clever, Mobility Print, Endpoint Verification, Lightspeed Insight Agent, Okta Browser Plugin, Trellix Endpoint Security Web Control, LearnPlatform for Students, OpenText Content Server Browser Web Extension, My Apps Secure Sign-in Extension, MasteryConnect LockDown Browser, HID Credential Management Extension, Snow Web Application Metering, iboss Cloud Connector, LanSchool Web Helper, Browser Security Plus, Browser Redirection Extension, ActivID CMS extension, Britannica School Insights, Securly for Chromebooks, Idira Identity Browser Extension, Citrix Web Extension, Cegid Peoplenet ClickOnce launcher, iboss Classroom Management for Students) and Google items whose detail pages publish no user count.",
+ "measuredAt": "2026-09-25",
+ "baseline": "35d69b9a",
+ "rows": [
+  {
+   "rank": 421,
+   "id": "fbeffbjdlemaoicjdapfpikkikjoneco",
+   "name": "Scratch Addons",
+   "version": "1.45.2",
+   "mv": 3,
+   "users": 700000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/scratch-addons/fbeffbjdlemaoicjdapfpikkikjoneco), \"700,000 users\", read 2026-09-25; 933 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "webpages/popup/index.html",
+   "options": "webpages/settings/index.html",
+   "permissions": [
+    "cookies",
+    "webRequest",
+    "declarativeNetRequestWithHostAccess",
+    "storage",
+    "contextMenus",
+    "alarms"
+   ],
+   "optionalPermissions": [
+    "notifications"
+   ],
+   "hostPermissions": [
+    "https://scratch.mit.edu/*",
+    "https://api.scratch.mit.edu/*",
+    "https://clouddata.scratch.mit.edu/*"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 3749291
+  },
+  {
+   "rank": 422,
+   "id": "fnmihdojmnkclgjpcoonokmkhjpjechg",
+   "name": "Smart Sidebar: Chat GPT, Claude & DeepSeek",
+   "version": "2.0.7",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/smart-sidebar-chat-gpt-cl/fnmihdojmnkclgjpcoonokmkhjpjechg), \"400,000 users\", read 2026-09-25; 2.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "bluePopup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "scripting",
+    "system.display",
+    "contextMenus"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 16758889
+  },
+  {
+   "rank": 423,
+   "id": "ochhcgamjcnhpaekcckimgofnedofplf",
+   "name": "Zoom Video - UltraWide Fill",
+   "version": "1.1.10",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/zoom-video-ultrawide-fill/ochhcgamjcnhpaekcckimgofnedofplf), \"400,000 users\", read 2026-09-25; 2.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "src/layouts/popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "activeTab"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 178619
+  },
+  {
+   "rank": 424,
+   "id": "lfdconleibeikjpklmlahaihpnkpmlch",
+   "name": "Video Downloader - Download M3U8, MP4, HLS and Live Streams",
+   "version": "1.18",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/video-downloader-download/lfdconleibeikjpklmlahaihpnkpmlch), \"400,000 users\", read 2026-09-25; 2.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "tabs",
+    "webRequest",
+    "downloads",
+    "declarativeNetRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 279318
+  },
+  {
+   "rank": 425,
+   "id": "appcnhiefcidclcdjeahgklghghihfok",
+   "name": "Google Meet Attendance List",
+   "version": "5.3.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/google-meet-attendance-li/appcnhiefcidclcdjeahgklghghihfok), \"400,000 users\", read 2026-09-25; 2.4K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "tabs",
+    "webRequest",
+    "storage",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*.meetlist.io/*",
+    "*://api.meetlist.io/*"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 1897127
+  },
+  {
+   "rank": 426,
+   "id": "ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg",
+   "name": "2048",
+   "version": "1.1.0.53",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/2048/ijkmjnaahlnmdjjlbhbjbhlnmadmmlgg), \"400,000 users\", read 2026-09-25; 2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [
+    "identity",
+    "identity.email"
+   ],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 5976919
+  },
+  {
+   "rank": 427,
+   "id": "mcebeofpilippmndlpcghpmghcljajna",
+   "name": "Lusha - Easily find B2B contact information",
+   "version": "10.11.6",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/lusha-easily-find-b2b-con/mcebeofpilippmndlpcghpmghcljajna), \"400,000 users\", read 2026-09-25; 1.9K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "tabs",
+    "storage",
+    "scripting",
+    "sidePanel"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*.lusha.com/*",
+    "https://*.linkedin.com/*",
+    "https://*.salesforce.com/*",
+    "https://*.lightning.force.com/*",
+    "https://*.hubspot.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 795368,
+   "minimumChromeVersion": "116"
+  },
+  {
+   "rank": 428,
+   "id": "jjghhkepijgakdammjldcbnjehfkfmha",
+   "name": "Salesforce",
+   "version": "2.264.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/salesforce/jjghhkepijgakdammjldcbnjehfkfmha), \"400,000 users\", read 2026-09-25; 1.7K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options/html/options.html",
+   "permissions": [
+    "management",
+    "storage",
+    "declarativeNetRequest",
+    "cookies",
+    "sidePanel",
+    "idle"
+   ],
+   "optionalPermissions": [
+    "activeTab",
+    "notifications",
+    "system.display",
+    "scripting"
+   ],
+   "hostPermissions": [
+    "https://mail.google.com/",
+    "https://calendar.google.com/",
+    "*://*.googleusercontent.com/*",
+    "*://*.salesforceiq.com/*",
+    "https://*.salesforce.com/",
+    "https://*.force.com/",
+    "https://*.visualforce.com/",
+    "https://*.cloudforce.com/",
+    "https://*.my-lightning.com/",
+    "https://*.crmforce.com/",
+    "https://*.my-salesforce/",
+    "https://*.crm.dev/"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 3172681
+  },
+  {
+   "rank": 429,
+   "id": "mnopmeepcnldaopgndiielmfoblaennk",
+   "name": "Web Paint - Page Marker & Editor",
+   "version": "1.0.3",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/web-paint-page-marker-edi/mnopmeepcnldaopgndiielmfoblaennk), \"400,000 users\", read 2026-09-25; 1.7K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "settings.html",
+   "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 115460
+  },
+  {
+   "rank": 430,
+   "id": "inlikjemeeknofckkjolnjbpehgadgge",
+   "name": "Distill Web Monitor",
+   "version": "4.1.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/distill-web-monitor/inlikjemeeknofckkjolnjbpehgadgge), \"400,000 users\", read 2026-09-25; 1.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "ui/popup.html",
+   "options": null,
+   "permissions": [
+    "contextMenus",
+    "notifications",
+    "tabs",
+    "unlimitedStorage",
+    "offscreen",
+    "scripting",
+    "storage",
+    "alarms"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 6074706,
+   "minimumChromeVersion": "116.0.0.0"
+  },
+  {
+   "rank": 431,
+   "id": "ndgimibanhlabgdgjcpbbndiehljcpfh",
+   "name": "SelectorsHub",
+   "version": "5.8.3",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/selectorshub/ndgimibanhlabgdgjcpbbndiehljcpfh), \"400,000 users\", read 2026-09-25; 1.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "extension/popup.html",
+   "options": null,
+   "permissions": [
+    "tabs",
+    "notifications",
+    "storage",
+    "contextMenus",
+    "clipboardWrite",
+    "cookies",
+    "sidePanel"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 607890
+  },
+  {
+   "rank": 432,
+   "id": "oejgccbfbmkkpaidnkphaiaecficdnfn",
+   "name": "Toggl Track: Productivity & Time Tracker",
+   "version": "4.11.22",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/toggl-track-productivity/oejgccbfbmkkpaidnkphaiaecficdnfn), \"400,000 users\", read 2026-09-25; 1.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "src/pages/popup/index.html",
+   "options": "settings.html",
+   "permissions": [
+    "alarms",
+    "background",
+    "contextMenus",
+    "idle",
+    "notifications",
+    "scripting",
+    "storage",
+    "cookies",
+    "offscreen",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [
+    "tabs"
+   ],
+   "hostPermissions": [
+    "*://*.toggl.com/*",
+    "*://toggl.com/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 3807091,
+   "minimumChromeVersion": "88"
+  },
+  {
+   "rank": 433,
+   "id": "caclkomlalccbpcdllchkeecicepbmbm",
+   "name": "Advanced Font Settings",
+   "version": "0.71",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/advanced-font-settings/caclkomlalccbpcdllchkeecicepbmbm), \"400,000 users\", read 2026-09-25; 1.3K ratings (tie-break within the rounded bucket)",
+   "bg": null,
+   "popup": null,
+   "options": "options.html",
+   "permissions": [
+    "fontSettings"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 40701
+  },
+  {
+   "rank": 434,
+   "id": "ldmmifpegigmeammaeckplhnjbbpccmm",
+   "name": "Save.to - formerly Save to Notion",
+   "version": "4.3.11",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/save-to-notion/ldmmifpegigmeammaeckplhnjbbpccmm), \"400,000 users\", read 2026-09-25; 1.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "storage",
+    "cookies",
+    "scripting",
+    "contextMenus",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [
+    "tabs",
+    "webNavigation"
+   ],
+   "hostPermissions": [
+    "https://*.notion.so/*",
+    "https://*.notion.com/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 4219524
+  },
+  {
+   "rank": 435,
+   "id": "jdopnakmnlnccgpfpmjmdjjohmcdgabp",
+   "name": "Screen Recorder",
+   "version": "3.0.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/screen-recorder/jdopnakmnlnccgpfpmjmdjjohmcdgabp), \"400,000 users\", read 2026-09-25; 1.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 1244189
+  },
+  {
+   "rank": 436,
+   "id": "jiaopdjbehhjgokpphdfgmapkobbnmjp",
+   "name": "Youtube-shorts block",
+   "version": "1.5.5",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/youtube-shorts-block/jiaopdjbehhjgokpphdfgmapkobbnmjp), \"400,000 users\", read 2026-09-25; 1.1K ratings (tie-break within the rounded bucket)",
+   "bg": null,
+   "popup": "popup/index.html",
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 35714
+  },
+  {
+   "rank": 437,
+   "id": "pbeheebcldakpkohnellphloljkaanfa",
+   "name": "MarketApp P2P",
+   "version": "1.9.1",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/marketapp-p2p/pbeheebcldakpkohnellphloljkaanfa), \"400,000 users\", read 2026-09-25; 1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "notifications",
+    "storage",
+    "background",
+    "offscreen",
+    "cookies",
+    "tabs",
+    "activeTab",
+    "declarativeNetRequest",
+    "alarms"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://steamcommunity.com/*",
+    "https://api.steampowered.com/*",
+    "https://market.csgo.com/*",
+    "https://api.marketapp.online/*",
+    "https://dota2.net/*",
+    "https://open.faceit.com/*",
+    "https://hasura.fastcup.net/*",
+    "https://store.steampowered.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 1777609
+  },
+  {
+   "rank": 438,
+   "id": "nkkhljadiejecbgelalchmjncoilpnlk",
+   "name": "Video Speed Controller - video manager",
+   "version": "1.0.6",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/video-speed-controller-vi/nkkhljadiejecbgelalchmjncoilpnlk), \"400,000 users\", read 2026-09-25; 885 ratings (tie-break within the rounded bucket)",
+   "bg": null,
+   "popup": "html/pp.html",
+   "options": "html/options.html",
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 10533715,
+   "minimumChromeVersion": "89"
+  },
+  {
+   "rank": 439,
+   "id": "cmkdbmfndkfgebldhnkbfhlneefdaaip",
+   "name": "WhatRuns",
+   "version": "1.10.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/whatruns/cmkdbmfndkfgebldhnkbfhlneefdaaip), \"400,000 users\", read 2026-09-25; 845 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "tabs",
+    "activeTab",
+    "webRequest",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 1994251
+  },
+  {
+   "rank": 440,
+   "id": "glcipcfhmopcgidicgdociohdoicpdfc",
+   "name": "Muzli - Design inspiration hub",
+   "version": "33.1.11",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/muzli-design-inspiration/glcipcfhmopcgidicgdociohdoicpdfc), \"400,000 users\", read 2026-09-25; 834 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "alarms"
+   ],
+   "optionalPermissions": [
+    "topSites",
+    "bookmarks",
+    "favicon",
+    "search"
+   ],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 3276507
+  },
+  {
+   "rank": 441,
+   "id": "bnjjngeaknajbdcgpfkgnonkmififhfo",
+   "name": "Fake Filler",
+   "version": "4.1.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/fake-filler/bnjjngeaknajbdcgpfkgnonkmififhfo), \"400,000 users\", read 2026-09-25; 793 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "index.html",
+   "permissions": [
+    "contextMenus",
+    "activeTab",
+    "storage",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 548545
+  },
+  {
+   "rank": 442,
+   "id": "eollffkcakegifhacjnlnegohfdlidhn",
+   "name": "Voice Control for ChatGPT",
+   "version": "4.4.2",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/voice-control-for-chatgpt/eollffkcakegifhacjnlnegohfdlidhn), \"400,000 users\", read 2026-09-25; 670 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "src/pages/popup/index.html",
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 7035124
+  },
+  {
+   "rank": 443,
+   "id": "jhidcpailhmpjpbdbhceiaeeggkalgmd",
+   "name": "Ice Dodo",
+   "version": "0.281",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/ice-dodo/jhidcpailhmpjpbdbhceiaeeggkalgmd), \"400,000 users\", read 2026-09-25; 603 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html",
+   "options": null,
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 57573823
+  },
+  {
+   "rank": 444,
+   "id": "lknmjhcajhfbbglglccadlfdjbaiifig",
+   "name": "Record, Transcribe & ChatGPT/Claude for Google Meet",
+   "version": "2.28.1771",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/record-transcribe-chatgpt/lknmjhcajhfbbglglccadlfdjbaiifig), \"400,000 users\", read 2026-09-25; 595 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "tabs",
+    "storage",
+    "alarms"
+   ],
+   "optionalPermissions": [
+    "clipboardWrite"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 6072934
+  },
+  {
+   "rank": 445,
+   "id": "looepbdllpjgdmkpdcdffhdbmpbcfekj",
+   "name": "Live Stream Downloader",
+   "version": "0.5.9",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/live-stream-downloader/looepbdllpjgdmkpdcdffhdbmpbcfekj), \"400,000 users\", read 2026-09-25; 575 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "contextMenus",
+    "webRequest",
+    "declarativeNetRequestWithHostAccess",
+    "declarativeContent",
+    "scripting",
+    "alarms"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 218472
+  },
+  {
+   "rank": 446,
+   "id": "aeidadjdhppdffggfgjpanbafaedankd",
+   "name": "SignalHire - find email or phone number",
+   "version": "5.12.0",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/signalhire-find-email-or/aeidadjdhppdffggfgjpanbafaedankd), \"400,000 users\", read 2026-09-25; 568 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "cookies",
+    "tabs",
+    "scripting",
+    "notifications"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 3474407
+  },
+  {
+   "rank": 447,
+   "id": "hgmoccdbjhknikckedaaebbpdeebhiei",
+   "name": "Ahrefs SEO Toolbar",
+   "version": "3.2.13",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/ahrefs-seo-toolbar/hgmoccdbjhknikckedaaebbpdeebhiei), \"400,000 users\", read 2026-09-25; 551 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "declarativeNetRequestWithHostAccess",
+    "identity",
+    "tabs",
+    "storage",
+    "webNavigation",
+    "webRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*",
+    "https://ahrefs.com/v4/",
+    "https://app.ahrefs.com/"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 1155780
+  },
+  {
+   "rank": 448,
+   "id": "cnojnbdhbhnkbcieeekonklommdnndci",
+   "name": "Search by Image",
+   "version": "8.5.4",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/search-by-image/cnojnbdhbhnkbcieeekonklommdnndci), \"400,000 users\", read 2026-09-25; 541 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "src/options/index.html",
+   "permissions": [
+    "alarms",
+    "contextMenus",
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "activeTab",
+    "notifications",
+    "webRequest",
+    "declarativeNetRequest",
+    "scripting"
+   ],
+   "optionalPermissions": [
+    "clipboardRead"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 886174,
+   "minimumChromeVersion": "123.0"
+  },
+  {
+   "rank": 449,
+   "id": "lhannfkhjdhmibllojbbdjdbpegidojj",
+   "name": "Screenshot & Screen Video Recorder",
+   "version": "1.5.2",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/screenshot-screen-video-r/lhannfkhjdhmibllojbbdjdbpegidojj), \"400,000 users\", read 2026-09-25; 538 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "html/popup.html",
+   "options": "html/options.html",
+   "permissions": [
+    "storage",
+    "tabCapture",
+    "tabs",
+    "downloads",
+    "offscreen"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 11784922
+  },
+  {
+   "rank": 450,
+   "id": "mlloloooolpffjkjaclpfpeednngpjon",
+   "name": "Enable right click - allow copy & select",
+   "version": "1.0.9",
+   "mv": 3,
+   "users": 400000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/enable-right-click-allow/mlloloooolpffjkjaclpfpeednngpjon), \"400,000 users\", read 2026-09-25; 522 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "webRequest"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 156101
+  }
+ ]
+}
