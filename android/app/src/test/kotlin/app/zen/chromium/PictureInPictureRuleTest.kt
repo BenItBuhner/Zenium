@@ -120,6 +120,25 @@ class PictureInPictureRuleTest {
         assertTrue(PictureInPictureRule.shouldDeferEnding(interactive = true, keyguardLocked = true))
     }
 
+    @Test
+    fun theHeldEndingConsumedAtOnStartGoesWhateverTheKeyguardSays() {
+        // The platform's unlock starts the activity (`keyguardGoingAway`) before SystemUI reports
+        // the keyguard gone (`onKeyguardExitFinished`): `isKeyguardLocked` still reads true as
+        // `onStart` runs. Read there, the gate would hold the ending it was meant to finish and
+        // the window of a closed tab would stand after the unlock (the review's REQUIRED 1 at
+        // 2341ec967). At the start the keyguard's word is not read.
+        assertFalse(PictureInPictureRule.shouldDeferEnding(interactive = true, keyguardLocked = true, atStart = true))
+        assertFalse(PictureInPictureRule.shouldDeferEnding(interactive = true, keyguardLocked = false, atStart = true))
+    }
+
+    @Test
+    fun aStartWithTheScreenOffHoldsTheEndingAgain() {
+        // Chrome's `onStart` re-check is `isInteractive` alone: a start with the screen off is not
+        // one to end from, whatever the keyguard says.
+        assertTrue(PictureInPictureRule.shouldDeferEnding(interactive = false, keyguardLocked = false, atStart = true))
+        assertTrue(PictureInPictureRule.shouldDeferEnding(interactive = false, keyguardLocked = true, atStart = true))
+    }
+
     // --- endings by the user's hand ---
 
     @Test

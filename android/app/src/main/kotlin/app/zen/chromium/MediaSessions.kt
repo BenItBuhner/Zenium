@@ -165,7 +165,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         activity.lifecycle.addObserver(LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_START) pictureInPictureEndPending?.let { pending ->
                 pictureInPictureEndPending = null
-                endPictureInPicture(pending)
+                endPictureInPicture(pending, atStart = true)
             }
         })
     }
@@ -515,9 +515,11 @@ class MediaSessions(private val host: Host, private val io: Executor) {
      * With the screen off or the keyguard up the end is held, as Chrome holds its own ("turning
      * off pip while the screen is off or the keyguard is active gets Android into a bad state"):
      * the window's tab's media pauses now – what the end would have done – and the task goes to
-     * the back from the activity's next `onStart`, after the unlock.
+     * the back from the activity's next `onStart`, after the unlock. Consumed there (`atStart`),
+     * the keyguard's word is not read again: the unlock starts the activity while
+     * `isKeyguardLocked` still answers true ([PictureInPictureRule.shouldDeferEnding]).
      */
-    private fun endPictureInPicture(end: PictureInPictureRule.End) {
+    private fun endPictureInPicture(end: PictureInPictureRule.End, atStart: Boolean = false) {
         val tabId = pictureInPictureTab ?: return
         // Already on its way out (every view of a gone renderer reports, then the rebuild drops them all).
         if (destroyed || pictureInPictureEnding != null) return
@@ -532,18 +534,18 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         val delay = PictureInPictureRule.exitDelayMs(SystemClock.elapsedRealtime(), enteredAt)
         if (delay > 0) {
             // The same window still: the same tab in from the same entry, not one re-entered since.
-            main.postDelayed({ if (pictureInPictureTab == tabId && pictureInPictureEnteredAt == enteredAt) endPictureInPicture(end) }, delay)
+            main.postDelayed({ if (pictureInPictureTab == tabId && pictureInPictureEnteredAt == enteredAt) endPictureInPicture(end, atStart) }, delay)
             return
         }
         val interactive = screenInteractive()
         val keyguard = keyguardLocked()
-        if (PictureInPictureRule.shouldDeferEnding(interactive, keyguard)) {
-            Log.i(TAG, "picture-in-picture for $tabId ends with the screen off or the keyguard up (interactive=$interactive, keyguard=$keyguard): held for onStart ($end)")
+        if (PictureInPictureRule.shouldDeferEnding(interactive, keyguard, atStart)) {
+            Log.i(TAG, "picture-in-picture for $tabId ends with the screen off or the keyguard up (interactive=$interactive, keyguard=$keyguard, atStart=$atStart): held for onStart ($end)")
             pictureInPictureEndPending = end
             if (pictureInPicturePlaying) act(tabId, MediaControl.PAUSE)
             return
         }
-        Log.i(TAG, "ending picture-in-picture for $tabId: $end")
+        Log.i(TAG, "ending picture-in-picture for $tabId: $end${if (atStart) " (held; the activity started, keyguard=$keyguard)" else ""}")
         pictureInPictureEnding = end
         val moved = runCatching { activity.moveTaskToBack(true) }
             .onFailure { Log.w(TAG, "moveTaskToBack refused: $it") }

@@ -96,8 +96,19 @@ object PictureInPictureRule {
      * whose comment names both states while its predicate reads `isInteractive` alone; the
      * keyguard is read here as the comment says). Held, the window's tab's media pauses at once –
      * what the end would have done – and the task goes to the back after the unlock.
+     *
+     * At the start itself (`atStart`: the held ending consumed from `onStart`) the keyguard's word
+     * is not read. The platform's unlock starts the activity before it reports the keyguard gone:
+     * `keyguardGoingAway` makes the pinned task's activity visible and schedules its `onStart`,
+     * while SystemUI clears the showing state `KeyguardManager.isKeyguardLocked` reads only in
+     * `onKeyguardExitFinished`, after the exit animation – so the reading is still true as
+     * `onStart` runs (on swipe-to-unlock from the swipe's start). Read there it would hold the
+     * ending it was meant to finish, and the window of a closed tab would come back with the
+     * unlock and stand. Chrome's `onStart` re-check is `isInteractive` alone, and so is this one:
+     * a start with the screen off is not a start to end from.
      */
-    fun shouldDeferEnding(interactive: Boolean, keyguardLocked: Boolean): Boolean = !interactive || keyguardLocked
+    fun shouldDeferEnding(interactive: Boolean, keyguardLocked: Boolean, atStart: Boolean = false): Boolean =
+        !interactive || (keyguardLocked && !atStart)
 
     /**
      * The window left by the user's hand: `pipTabId` is the tab the window was pinned to,
