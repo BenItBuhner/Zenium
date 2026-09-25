@@ -2795,8 +2795,8 @@ function OverviewWindowScope({ children }: { children: ReactNode }): JSX.Element
   return <OverviewWindowContext.Provider value={token}>{children}</OverviewWindowContext.Provider>
 }
 
-/** The chip's pill radius, for the indicator's ends to keep under its `scaleX` (`main.css`). */
-const STRIP_CHIP_RADIUS = 18
+/** The indicator's `scaleX` this frame, for its ends to keep their radius under it (`main.css`). */
+const STRIP_SCALE_VAR = '--zen-strip-indicator-scale'
 
 /**
  * The spaces as chips: pills, the current one in the accent tint, edges fading into the gutter.
@@ -2824,9 +2824,10 @@ function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string })
     if (!el) return
     const { dx, scale } = g ? indicatorFrame(g.from, g.to, p) : { dx: 0, scale: 1 }
     el.style.transform = `translate3d(${dx}px, 0, 0) scaleX(${scale})`
-    // The ends stay round under the horizontal scale: the radius' x is scaled the other way.
-    el.style.borderRadius =
-      scale === 1 ? '' : `${STRIP_CHIP_RADIUS / scale}px / ${STRIP_CHIP_RADIUS}px`
+    // The ends stay round under the horizontal scale: the sheet divides the radius' x by it
+    // (`--zen-strip-indicator-scale`, `main.css`).
+    if (scale === 1) el.style.removeProperty(STRIP_SCALE_VAR)
+    else el.style.setProperty(STRIP_SCALE_VAR, String(scale))
   }
   /** The box the indicator is drawn at this frame, when a glide is in flight. */
   const drawnBox = (): StripBox | null => {
@@ -2878,6 +2879,8 @@ function SpaceStrip({ spaces, activeId }: { spaces: Space[]; activeId: string })
       return
     }
     glide.current = { from, to, travel }
+    // Drawn at the old chip before this commit paints: the spring's first frame is the next one.
+    paintIndicator(0)
     spring.current ??= new SpringAnimation(
       SPRING_SNAPPY,
       (x) => paintIndicator(glide.current ? 1 - x / glide.current.travel : 1),

@@ -3892,15 +3892,16 @@
   /*
    * The strip's INDICATOR (MOT-05, `SpaceStrip`): the current chip's accent tint is one pill
    * under the chips that glides from the chip that was current to the one that is, on
-   * `SPRING_SNAPPY`, by a transform alone (`translate3d` and `scaleX` from the old chip's box,
-   * the radius held round under the scale by an inline `border-radius` per frame); the chips
-   * draw their own fills over it – the current one none, the others the element fill – as
-   * 120 ms state changes (v2 §11.4), so the tint reads as leaving one chip for the other. The
-   * chips are positioned to paint over the indicator. Under reduced motion the indicator jumps
-   * (`SpaceStrip`, §11.3) and the fills cut with the sheet's closing rule.
+   * `SPRING_SNAPPY`, by a transform alone (`translate3d` and `scaleX` from the old chip's box;
+   * the ends stay round under the scale, the radius' x divided by the frame's
+   * `--zen-strip-indicator-scale`); the chips draw their own fills over it – the current one
+   * none, the others the element fill – as 120 ms state changes (v2 §11.4), so the tint reads
+   * as leaving one chip for the other. The chips are positioned to paint over the indicator.
+   * Under reduced motion the indicator jumps (`SpaceStrip`, §11.3) and the fills cut with the
+   * sheet's closing rule.
    */
   .zen-overview-strip-indicator {
-    border-radius: 18px;
+    border-radius: calc(18px / var(--zen-strip-indicator-scale, 1)) / 18px;
     background: rgb(var(--zen-accent-rgb) / 0.16);
     transform-origin: left center;
   }
