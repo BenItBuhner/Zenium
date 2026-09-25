@@ -4,11 +4,13 @@ import { createRoot } from 'react-dom/client'
 import { AutofillSurface } from './components/autofill/AutofillSurface'
 import { ErrorBoundary, Root } from './Root'
 import { chromeSurface } from './lib/formFactor'
+import { startFaviconSync } from './lib/favicons'
 import './lib/lastInput'
 import { startBrowserSync } from './lib/ui'
 import { startEngineRelay } from './translate/engine'
 
 startBrowserSync()
+startFaviconSync()
 
 // The same document serves the window's chrome and, with `?surface=autofill`, the picker's popup
 // surface the desktop host floats over the page (`ElectronWindow.setPopupSurface`).

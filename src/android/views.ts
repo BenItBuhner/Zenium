@@ -669,14 +669,29 @@ export class AndroidTabView implements TabView {
     // Android WebViews are inspected from desktop Chrome (chrome://inspect); nothing to open here.
   }
 
-  downloadURL(url: string): void {
-    this.bridge.send('view.download', { tabId: this.tabId, url })
+  /**
+   * A download the menu starts. `saveAs` (Save Link As… / Save Image As…, HB-40) crosses as the
+   * one flag: the host asks where that one file goes – its save dialog (`ACTION_CREATE_DOCUMENT`,
+   * the ask-where-to-save path of `Downloads.bind`) – whatever the downloads setting says, as
+   * Chrome's per-file dialog does; a plain download carries no flag and goes where the setting says.
+   */
+  downloadURL(url: string, options?: { saveAs?: boolean }): void {
+    this.bridge.send('view.download', {
+      tabId: this.tabId,
+      url,
+      ...(options?.saveAs ? { saveAs: true } : {})
+    })
   }
 
   print(): void {
     this.bridge.send('view.print', { tabId: this.tabId })
   }
 
+  /**
+   * The host writes the page as one MHTML archive into the public Downloads whatever `format`
+   * the core asks for (`capabilities.savePageFormats` is off, so the core asks in the last-used
+   * format's name only) and answers with the archive's path; the format does not cross.
+   */
   savePage(suggestedName: string): Promise<string | null> {
     return this.bridge.call<string | null>('view.savePage', {
       tabId: this.tabId,

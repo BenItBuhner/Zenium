@@ -87,6 +87,11 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         var disposition: String? = null
         /** Record this transfer continues (a retry); the core keeps the row instead of adding one. */
         var resumes: String? = null
+        /**
+         * The menu's Save Link As… / Save Image As… started this (HB-40): the file goes where the
+         * save dialog says, whatever the ask-where-to-save setting ([DownloadLogic.placement]).
+         */
+        var saveAs = false
         var referrer = ""
         /** Name the server, the page or the URL suggested. */
         var filename = "download"
@@ -142,7 +147,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         referrer: String? = null,
         containerId: String? = null,
         resumes: String? = null,
-        navigation: Boolean = false
+        navigation: Boolean = false,
+        saveAs: Boolean = false
     ) {
         val kind = when {
             url.startsWith("blob:") -> Kind.BLOB
@@ -162,6 +168,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         val l = Live("dl-${++seq}-${SystemClock.elapsedRealtime()}", kind, url, userAgent.ifEmpty { defaultUserAgent() }, sourceTabId)
         l.resumes = resumes
         l.navigation = navigation
+        l.saveAs = saveAs
         l.disposition = DownloadLogic.dispositionType(contentDisposition)
         l.containerId = tab?.containerId ?: containerId?.ifEmpty { null } ?: Profiles.DEFAULT_CONTAINER
         l.isPrivate = l.containerId == PRIVATE_CONTAINER
@@ -229,8 +236,9 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
             launch(l)
             return
         }
-        when (destination.str("mode")) {
-            "ask" -> activity.createDocument(l.filename, l.mimeType.ifEmpty { DownloadSink.mimeFor(l.filename) }) { uri ->
+        // The setting's mode, or the save dialog for the one download the menu's Save As… started.
+        when (DownloadLogic.placement(destination.str("mode"), l.saveAs)) {
+            DownloadLogic.Placement.ASK -> activity.createDocument(l.filename, l.mimeType.ifEmpty { DownloadSink.mimeFor(l.filename) }) { uri ->
                 if (uri == null) {
                     // Like Chrome: dismissing the save dialog means no download at all.
                     done(l, "cancelled", error = "dismissed")
@@ -239,12 +247,12 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
                 l.destination = Destination.Document(uri)
                 launch(l)
             }
-            "folder" -> {
+            DownloadLogic.Placement.FOLDER -> {
                 val tree = destination.strOrNull("folder")?.let { runCatching { Uri.parse(it) }.getOrNull() }
                 l.destination = if (tree != null) Destination.Folder(tree) else Destination.Default
                 launch(l)
             }
-            else -> launch(l)
+            DownloadLogic.Placement.DEFAULT -> launch(l)
         }
     }
 

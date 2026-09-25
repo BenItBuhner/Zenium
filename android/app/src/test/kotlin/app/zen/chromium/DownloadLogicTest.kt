@@ -362,6 +362,22 @@ class DownloadLogicTest {
         assertNull(DownloadLogic.parseDataUrl("https://x/y"))
     }
 
+    // --- where a bound transfer goes (HB-40) -----------------------------------------------------
+
+    @Test
+    fun theSettingPlacesADownloadUnlessTheMenusSaveAsStartedIt() {
+        // The core's mode, as the setting says.
+        assertEquals(DownloadLogic.Placement.ASK, DownloadLogic.placement("ask", false))
+        assertEquals(DownloadLogic.Placement.FOLDER, DownloadLogic.placement("folder", false))
+        assertEquals(DownloadLogic.Placement.DEFAULT, DownloadLogic.placement("default", false))
+        assertEquals(DownloadLogic.Placement.DEFAULT, DownloadLogic.placement("", false))
+        // Save Link As… / Save Image As…: the save dialog for that one download, whatever the setting.
+        assertEquals(DownloadLogic.Placement.ASK, DownloadLogic.placement("default", true))
+        assertEquals(DownloadLogic.Placement.ASK, DownloadLogic.placement("folder", true))
+        assertEquals(DownloadLogic.Placement.ASK, DownloadLogic.placement("ask", true))
+        assertEquals(DownloadLogic.Placement.ASK, DownloadLogic.placement("", true))
+    }
+
     // --- the file behind a savePath --------------------------------------------------------------
 
     @Test

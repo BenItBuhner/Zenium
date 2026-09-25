@@ -769,6 +769,47 @@ describe('NewTabService: my shortcuts and most visited', () => {
     expect(state.topSites).toEqual([])
   })
 
+  it('tiles draw the favicon cache: cached → zen://favicon, uncached open site → live, uncached closed site → the letter (HB-47)', async () => {
+    const f = fixture()
+    const svc = f.browser.newTab
+    const png = new Uint8Array(64)
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    for (let i = 8; i < png.length; i++) png[i] = (i * 7) & 0xff
+    f.browser.history.visit('https://a.example/', 'A', 'https://a.example/icon.png')
+    f.browser.history.visit('https://b.example/', 'B', 'https://b.example/icon.png')
+    f.browser.history.visit('https://c.example/', 'C', 'https://c.example/icon.png')
+    const cached = await f.browser.favicons.put('https://a.example/icon.png', {
+      bytes: png,
+      mime: 'image/png'
+    })
+    expect(cached).toMatch(/^zen:\/\/favicon\/[0-9a-f]{32}$/)
+    const win = f.browser.focusedWindow()
+    // B is open in a tab: its icon may load live until the cache has it. C is closed.
+    f.browser.handleCommand(win, 'tab.create', { url: 'https://b.example/', active: false })
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const tiles = (): Record<string, string | null> =>
+      Object.fromEntries(svc.stateFor(tab.id)!.topSites.map((s) => [s.url, s.favicon]))
+    expect(tiles()).toEqual({
+      'https://a.example/': cached,
+      'https://b.example/': 'https://b.example/icon.png',
+      'https://c.example/': null
+    })
+    // A shortcut's tile follows the same rule.
+    svc.addShortcut('C', 'https://c.example/')
+    expect(svc.stateFor(tab.id)!.shortcuts.map((s) => s.favicon)).toEqual([null])
+    // The icon arriving in the cache re-pushes the page with the cached address.
+    const view = f.views.find((v) => v.tabId === tab.id)!
+    const pushes = view.pushes.length
+    const c = await f.browser.favicons.put('https://c.example/icon.png', {
+      bytes: png.map((b, i) => (i < 8 ? b : (b + 1) & 0xff)),
+      mime: 'image/png'
+    })
+    expect(c).toMatch(/^zen:\/\/favicon\//)
+    expect(view.pushes.length).toBeGreaterThan(pushes)
+    expect(view.pushes.at(-1)!.shortcuts.map((s) => s.favicon)).toEqual([c])
+  })
+
   it("the phone's tile menu pins, unpins and removes through the same device state", () => {
     const f = fixture()
     const svc = f.browser.newTab

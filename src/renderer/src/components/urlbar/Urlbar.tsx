@@ -32,6 +32,7 @@ import { cmd, onEvent, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorph'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { focusBackPulled, focusTakesCommit } from '@renderer/lib/omniboxFocus'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
@@ -195,6 +196,13 @@ function childBy(list: HTMLElement, attr: string, value: string): HTMLElement | 
 
 /** Rows that come from the user's own typing or pages, worth remembering as shortcuts. */
 const LEARNABLE_KINDS = new Set<Suggestion['kind']>(['url', 'history', 'search', 'entity'])
+
+/**
+ * Rows that stand for a page (`item.url` is the page): their favicon follows the history rows'
+ * rule (HB-47) – the cached copy, else live only while the page's site is open in a tab. A
+ * search, engine or extension row's icon is the engine's or extension's own mark, no page's.
+ */
+const PAGE_ROW_KINDS = new Set<Suggestion['kind']>(['url', 'history', 'bookmark', 'tab'])
 
 export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.Element {
   const phone = Boolean(phoneEdge)
@@ -1816,7 +1824,9 @@ function PageHeader({
   const url = pageTextFor(tab)
   const shown = displayUrl(url) || url
   const title = tab.customTitle ?? (tab.title || shown)
-  const favicon = tab.favicon && !faviconBroken ? tab.favicon : null
+  // The tab's own icon: the core's cached copy where it holds one (HB-47), else live.
+  const tabFavicon = useFaviconSrc(tab.favicon)
+  const favicon = tabFavicon && !faviconBroken ? tabFavicon : null
   const face = (
     <>
       {favicon ? (
@@ -1994,8 +2004,14 @@ function SuggestionRow({
     : pointerProps
   // The desktop row's glyph is a §9.3 row glyph – 16 at stroke 1.5 (`V2_GLYPH`) in the row's
   // ink (§10.4: a leading glyph is full ink like the title it introduces); the phone sheet's row
-  // keeps its own.
-  const favicon = page || faviconBroken ? null : item.favicon
+  // keeps its own. The icon is the core's cached copy where it holds one (HB-47); a row that
+  // names a page (a history, bookmark, tab or address row) draws an uncached icon live only
+  // while that page's site is open in a tab – the popup asks no closed page's site for one.
+  const rowFavicon = useFaviconSrc(
+    item.favicon,
+    PAGE_ROW_KINDS.has(item.kind) ? item.url : undefined
+  )
+  const favicon = page || faviconBroken ? null : rowFavicon
   // The globe alone is a stand-in – the address offered no favicon – and the slot draws it at
   // 69%, §10.4's one exception; a kind's glyph (the clock, the star, the magnifier) says what
   // the row is and is no stand-in.

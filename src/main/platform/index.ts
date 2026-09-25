@@ -65,7 +65,7 @@ import {
 import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent, systemLocales } from './sessions'
 import { acceptLanguageList } from '../../shared/languages'
-import { installZenProtocol } from './protocol'
+import { installFaviconProtocol, installZenProtocol } from './protocol'
 import { chromiumLicencesResponder } from './licences'
 import { ElectronDownloads } from './downloads'
 import { ElectronDownloadsShell } from './downloadsShell'
@@ -141,6 +141,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Pages render to PDF (`printToPDF`) and printers are listed (`getPrintersAsync`): Ctrl+P opens
   // Zenium's preview; Chromium's own preview is not part of Electron.
   printPreview: true,
+  // `webContents.savePage` writes HTMLComplete, HTMLOnly and MHTML: Save Page As is the submenu.
+  savePageFormats: true,
   // Chromium's PDF viewer draws PDFs in the page itself.
   pdfViewer: false,
   agents: true,
@@ -665,7 +667,8 @@ export class ElectronPlatform implements Platform {
         (id) => browser.reader.pageHtml(id),
         () => this.newTabBackground.response(),
         chromiumLicences,
-        () => this.views.colorScheme
+        () => this.views.colorScheme,
+        (hash) => browser.favicons.document(hash)
       )
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
@@ -690,6 +693,8 @@ export class ElectronPlatform implements Platform {
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.attachChromePermissions()
+    // The chrome's documents draw the cached favicons (HB-47) from their own session.
+    installFaviconProtocol(session.defaultSession, (hash) => browser.favicons.document(hash))
     this.registerIpc(browser)
     attachSecurityHandlers(browser, this.views, extensionApi.webRequest)
     attachBluetoothChoosers(browser, this.views)

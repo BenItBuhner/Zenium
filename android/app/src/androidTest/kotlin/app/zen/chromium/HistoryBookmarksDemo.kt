@@ -37,6 +37,9 @@ import java.util.Locale
  * [DemoServer] (each with its own favicon), so the day groups, titles and icons come out of the
  * history contract as they would from browsing. The older days are seeded (`history.json`
  * version 2, an aggregate and its visits per page) because a demo cannot browse yesterday.
+ * Today's icons are the favicon cache's (HB-47, [cachedFavicons]): the WebView's
+ * `onReceivedIcon` PNG kept under `files/zen/favicons/<hash>` and drawn from the app origin's
+ * `/zen-favicon/<hash>`, read off the DOM, the server's hit counts and the files through `run-as`.
  * Findings land in `history-bookmarks-findings.txt` next to the screenshots.
  */
 @RunWith(AndroidJUnit4::class)
@@ -240,6 +243,9 @@ class HistoryBookmarksDemo :
                 "$weekday ${seen(weekday)}, $date ${seen(date)} (the last two may sit below the fold)"
         )
         finding("today's real rows: " + PAGES.map { "'${it.title}' ${verdict(row(it.title) != null)}" }.joinToString(", "))
+
+        // 1b. Today's icons come from the favicon cache (HB-47), not from the sites.
+        cachedFavicons()
 
         // 2. Swipe a visit away – slowly at first, so the trash behind it shows – and undo it.
         //    From the title, not the trailing button: a touch on a control stays the control's.
@@ -490,6 +496,66 @@ class HistoryBookmarksDemo :
         finding("back on the star editor: gone ${verdict(!present("Save"))}")
     }
 
+    /**
+     * 1b. HB-47: today's rows draw their icons from the core's favicon cache. Each page's PNG
+     * came to the chrome as the WebView's `onReceivedIcon` data URL, hashed and kept core-side
+     * as `files/zen/favicons/<hash>`; the row's `<img>` draws it from the app origin's
+     * `/zen-favicon/<hash>` ([ChromeWebView]'s handoff), never from the site and never as the
+     * data URL. Read off the chrome's DOM (each row's `src`, whether it decoded), the loopback
+     * server's hit counts (no icon asked for again while the panel is up) and the files as
+     * `adb shell run-as` lists them, each document's bytes hashed back to its name.
+     */
+    private fun cachedFavicons() {
+        val iconPaths = PAGES.map { "/icons/${it.letter.lowercase()}.png" }
+        val hitsBefore = iconPaths.associateWith { server.hits(it) }
+        SystemClock.sleep(2_000)
+        val raw = chromeJs(
+            "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-phone-row'),function(r){" +
+                "var t=r.querySelector('.zen-list-title');var i=r.querySelector('.zen-list-lead img.zen-list-favicon');" +
+                "return {title:t?t.textContent:'',src:i?i.getAttribute('src'):null,decoded:i?i.naturalWidth>0:null," +
+                "glyph:!!r.querySelector('.zen-list-lead svg')}}))"
+        )
+        val text = runCatching { JSONObject("{\"v\":$raw}").getString("v") }.getOrDefault("[]")
+        val rows = runCatching { JSONArray(text) }.getOrDefault(JSONArray())
+        val all = (0 until rows.length()).map { rows.getJSONObject(it) }
+        val today = PAGES.mapNotNull { page -> all.firstOrNull { it.optString("title") == page.title } }
+        finding(
+            "\nfavicons from the cache (HB-47): " +
+                today.joinToString("; ") { "'${it.optString("title").take(18)}' src ${it.optString("src", "null").take(80)} decoded ${it.opt("decoded")}" }
+        )
+        val hashes = today.mapNotNull { it.optString("src", "").takeIf { s -> s.startsWith(CACHED_ICON_PREFIX) }?.removePrefix(CACHED_ICON_PREFIX) }
+        finding(
+            "every one of today's ${PAGES.size} rows draws the app origin's /zen-favicon/<hash>, decoded " +
+                verdict(today.size == PAGES.size && today.all { it.optString("src", "").startsWith(CACHED_ICON_PREFIX) && it.optBoolean("decoded") })
+        )
+        finding(
+            "no row of today's asks the site ($ORIGIN) or carries the WebView's data: URL " +
+                verdict(today.isNotEmpty() && today.none { val s = it.optString("src", ""); s.startsWith(ORIGIN) || s.startsWith("data:") })
+        )
+        val hitsAfter = iconPaths.associateWith { server.hits(it) }
+        finding(
+            "the server's icon hits are the WebView's own and did not move while the panel is up (" +
+                iconPaths.joinToString(", ") { "${it.substringAfterLast('/')} ${hitsBefore[it]}->${hitsAfter[it]}" } + ") " +
+                verdict(hitsAfter == hitsBefore && hitsBefore.values.all { it >= 1 })
+        )
+        // The cache on disk as `adb shell run-as` reads it; then each document's bytes hashed back to its name.
+        val listing = shellCommand("run-as ${app.packageName} ls files/zen/favicons").trim()
+        val names = listing.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        finding("run-as ${app.packageName} ls files/zen/favicons: ${names.size} document(s) ${names.joinToString(" ").take(240)}")
+        val dir = File(app.filesDir, "zen/favicons")
+        val addressed = names.count { name ->
+            val document = runCatching { File(dir, name).readText() }.getOrNull() ?: return@count false
+            val icon = BootHandoff.decodeImageDataUrl(document) ?: return@count false
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest(icon.bytes)
+            icon.mimeType == "image/png" && digest.take(16).joinToString("") { "%02x".format(it) } == name
+        }
+        finding("each document is a data:image/png whose bytes hash (SHA-256, first 128 bits) to its name: $addressed of ${names.size} ${verdict(names.isNotEmpty() && addressed == names.size)}")
+        finding("the rows' hashes are all among the documents ${verdict(hashes.isNotEmpty() && hashes.all { it in names })}")
+        val index = runCatching { JSONObject(File(app.filesDir, "zen/favicons.json").readText()) }.getOrNull()
+        finding("favicons.json: ${index?.optJSONObject("urls")?.length() ?: 0} url(s) -> ${index?.optJSONObject("entries")?.length() ?: 0} entr(ies)")
+        shot("01b-history-favicons-cached")
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     /** Poll until the active tab per the core is `url` with `title` (its page loaded and named). */
@@ -690,6 +756,8 @@ class HistoryBookmarksDemo :
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         private const val HISTORY_SEARCH = "Search history"
         private const val BOOKMARKS_SEARCH = "Search bookmarks"
+        /** Where the chrome draws a cached favicon from on this host (`hostFaviconUrl` in `src/shared/favicons.ts`, [BootHandoff.FAVICON_PATH]). */
+        private const val CACHED_ICON_PREFIX = "https://appassets.androidplatform.net" + BootHandoff.FAVICON_PATH
 
         // The app menu's entries (the engine's labels). The star is the icon row's button at the
         // head of the phone's menu (TB-08 / TB-16), named "Bookmark" on a page that is not

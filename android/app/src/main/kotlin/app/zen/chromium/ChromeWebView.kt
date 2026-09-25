@@ -174,10 +174,12 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
 
     /**
      * The file-backed handoffs (`BootHandoff.kt`) on the app origin: the core's big boot documents
-     * under `/zen-docs/<name>` and the spilled `net.fetch` bodies under `/zen-net/<token>`, streamed
-     * from their files on WebView's IO thread. Null for every other URL (the asset loader's turn).
-     * `Cache-Control: no-store` keeps the renderer from answering a later boot with a stale copy;
-     * the `ETag` is the version tag the boot manifest named, for the chrome to compare.
+     * under `/zen-docs/<name>`, the spilled `net.fetch` bodies under `/zen-net/<token>` and the
+     * cached favicons under `/zen-favicon/<hash>` (HB-47), streamed from their files on WebView's
+     * IO thread. Null for every other URL (the asset loader's turn). `Cache-Control: no-store`
+     * keeps the renderer from answering a later boot with a stale copy of a document; a favicon,
+     * named by its content, is cacheable for good (`BootHandoff.Answer.cacheControl`). The `ETag`
+     * is the version tag the boot manifest named, for the chrome to compare.
      */
     private fun handoffResponse(url: Uri): WebResourceResponse? {
         if (url.scheme != "https" || url.host != APP_HOST) return null
@@ -185,14 +187,17 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         val answer = when {
             path.startsWith(BootHandoff.DOCS_PATH) -> host.handoff.document(path.removePrefix(BootHandoff.DOCS_PATH))
             path.startsWith(BootHandoff.NET_PATH) -> host.handoff.spilled(path.removePrefix(BootHandoff.NET_PATH))
+            path.startsWith(BootHandoff.FAVICON_PATH) -> host.handoff.favicon(path.removePrefix(BootHandoff.FAVICON_PATH))
             else -> return null
         }
         if (!answer.ok) return WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), null)
         val headers = HashMap<String, String>()
-        headers["Cache-Control"] = "no-store"
+        headers["Cache-Control"] = answer.cacheControl
         headers["Content-Length"] = answer.length.toString()
         answer.etag?.let { headers["ETag"] = "\"$it\"" }
-        return WebResourceResponse(answer.mimeType, "utf-8", 200, "OK", headers, answer.stream)
+        // A favicon's bytes are binary: no charset on the response (WebView would append one).
+        val encoding = if (answer.mimeType.startsWith("image/")) null else "utf-8"
+        return WebResourceResponse(answer.mimeType, encoding, 200, "OK", headers, answer.stream)
     }
 
     /**

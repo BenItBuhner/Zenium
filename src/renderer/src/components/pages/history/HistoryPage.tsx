@@ -19,6 +19,7 @@ import { cmd, onEvent, run } from '@renderer/lib/api'
 import { dayLabel, daysBetween } from '@renderer/lib/historyGroups'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 import { hiddenDeviceCount, OTHER_DEVICES_COPY } from '@renderer/lib/otherDevices'
@@ -706,7 +707,7 @@ function VisitRow({
         />
       )}
       <span className="zen-page-row-lead" aria-hidden>
-        <FaviconImage src={visit.favicon} />
+        <FaviconImage src={visit.favicon} page={visit.url} />
       </span>
       <button
         type="button"
@@ -769,23 +770,37 @@ function VisitRow({
  * The row's 16 px favicon: the visit's icon, a page tab's registered glyph where `url` names
  * one (a closed Settings, History, Bookmarks or Downloads tab fetches no icon; the glyph is
  * its mark in every favicon slot, v2 §10.1), the globe for a site with none or a broken one.
+ *
+ * The icon is drawn from the core's favicon cache when it holds a copy (HB-47, `useFaviconSrc`):
+ * a row for `page` never asks the network for an icon the cache lacks unless the page's site is
+ * open in a tab – a closed page's row with no cached icon is the globe, not a request.
  */
-function FaviconImage({ src, url }: { src: string | null; url?: string | null }): JSX.Element {
+function FaviconImage({
+  src,
+  url,
+  page = url
+}: {
+  src: string | null
+  url?: string | null
+  /** The page the row stands for (`url` when not given): its icon is live only while that site is open. */
+  page?: string | null
+}): JSX.Element {
   const [broken, setBroken] = useState<string | null>(null)
+  const resolved = useFaviconSrc(src, page)
   const glyph = url ? internalPageOf(url)?.glyph : undefined
   if (glyph) {
     const Glyph = PAGE_GLYPHS[glyph]
     return <Glyph className="zen-page-row-favicon zen-page-row-glyph" aria-hidden />
   }
-  if (src && broken !== src) {
+  if (resolved && broken !== resolved) {
     return (
       <img
-        src={src}
+        src={resolved}
         alt=""
         className="zen-page-row-favicon"
         referrerPolicy="no-referrer"
         draggable={false}
-        onError={() => setBroken(src)}
+        onError={() => setBroken(resolved)}
       />
     )
   }

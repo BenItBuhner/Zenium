@@ -42,6 +42,7 @@ import type {
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
+  SavePageFormat,
   ScreenCaptureSource,
   ScreenshotSaved,
   SharePanelAction,
@@ -802,6 +803,15 @@ export interface TabView {
   focusEdge?(edge: FocusEdge): void
   /** Whether this page holds the keyboard right now. Hosts that cannot tell leave it out. */
   isFocused?(): boolean
+  /**
+   * Fetch the bytes of the page's icon at `url` through this page's own session – the site's
+   * cookies go with the request, as Chrome's favicon fetch sends them – for the favicon cache
+   * (HB-47, `core/favicons.ts`): the bytes and the response's type, or null when the icon
+   * cannot be had (a refusal, no image, a body over `maxBytes`). Hosts whose engine hands the
+   * icon over decoded already (the Android WebView's `onReceivedIcon`, a `data:` URL in the
+   * `favicon` event) leave this out.
+   */
+  fetchFavicon?(url: string, maxBytes: number): Promise<{ bytes: Uint8Array; mime: string } | null>
   isDestroyed(): boolean
   destroy(): void
   /**
@@ -867,8 +877,14 @@ export interface TabView {
    * Hosts without it have no print preview (`capabilities.printPreview` off).
    */
   printToPDF?(options: PdfRenderOptions): Promise<Uint8Array>
-  /** Save the page (host decides where / whether to ask); resolves with the saved path or null. */
-  savePage(suggestedName: string): Promise<string | null>
+  /**
+   * Save the page in `format` (host decides where / whether to ask); resolves with the saved
+   * path or null. A host with `capabilities.savePageFormats` honours the format (Electron's
+   * `webContents.savePage`); one without writes its one archive whatever was asked – Android's
+   * `saveWebArchive`, an MHTML file into the public Downloads – and answers with that file's
+   * path, which the core reads the type from (`shared/savePage.ts` `savePageMimeType`).
+   */
+  savePage(suggestedName: string, format: SavePageFormat): Promise<string | null>
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
   snapshot(): Promise<string | null>
   /**
