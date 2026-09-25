@@ -8074,7 +8074,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
                 extra.put("accountPrompt", steps)
             }
-            popupView()?.takeIf { it.context == "popup" }?.let { live -> found.put("console", JSONArray(consoleOf(live).takeLast(10))) }
+            popupView()?.takeIf { it.context == "popup" }?.let { live ->
+                found.put("console", JSONArray(consoleOf(live).takeLast(10)))
+                // What the popup itself sees when it does not name the feed: the tab `tabs.query`
+                // calls active and the keys the worker left in `storage.local` (RSS Subscription
+                // Extension keys the feed list by the reporting tab's id and compares the stored
+                // URL with the active tab's; "Not a valid feed." is either side's mismatch).
+                if (!found.optBoolean("pass") && tabEval(live, FEED_POPUP_DIAG_START) == "started") {
+                    extra.put("popupDiag", poll(scaled(5_000, factor), 250) {
+                        tabEval(live, "String(window.__zenFeedDiag||'')").takeIf { it.isNotEmpty() }?.let { json(it) }
+                    } ?: JSONObject.NULL)
+                }
+            }
         }
         extra.put("popup", found)
         backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
@@ -10419,6 +10430,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({clicked:true,title:String(hit.getAttribute('title')).slice(0,60),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2,entries:entries.length})})()"
 
         // --- compat round 17 ---
+
+        /**
+         * A feed detector's popup that did not name the feed (`feedDetector`): what the popup's
+         * own `tabs.query({active, currentWindow})` answers and which keys the worker left in
+         * `storage.local`, gathered into `window.__zenFeedDiag` for the driver to read.
+         */
+        private const val FEED_POPUP_DIAG_START =
+            "(function(){if(window.__zenFeedDiag||!window.chrome||!chrome.tabs||!chrome.storage)return 'no';var out={};" +
+                "chrome.tabs.query({active:true,currentWindow:true},function(t){out.active=(t||[]).map(function(x){return {id:String(x.id),url:String(x.url||'').slice(0,120)}});" +
+                "chrome.storage.local.get(null,function(all){all=all||{};out.storageKeys=Object.keys(all).slice(0,10);out.storage=JSON.stringify(all).slice(0,400);window.__zenFeedDiag=JSON.stringify(out)})});return 'started'})()"
 
         /** OpenDyslexic applied to the fixture: its `#opendyslexic-font-styles` sheet, the body's `opendyslexic-font-*` class, or the font in the body's computed family. */
         private const val OPENDYSLEXIC_APPLIED =
