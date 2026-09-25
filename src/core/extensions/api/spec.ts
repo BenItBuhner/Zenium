@@ -13,6 +13,7 @@ import {
   CONTENT_SETTING_TYPES,
   CONTENT_SETTING_TYPE_NAMES
 } from './contentSettings'
+import { fontSettingsConstants } from './fontSettings'
 import { OFFSCREEN_PERMISSION, OFFSCREEN_REASON_CONSTANTS } from './offscreen'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
@@ -1076,6 +1077,36 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['webRequest', 'webRequestBlocking'],
     eventStyle: 'webRequest'
+  },
+  // Absent from Electron altogether (Chrome's font prefs and their preference service are not
+  // part of the engine). The host keeps the extensions' fonts and sizes as a layer over the
+  // user's Settings → Fonts, resolved by install order as Chrome resolves them
+  // (`core/extensions/api/fontSettings.ts`), applies the effective fonts to pages the way the
+  // user's setting is applied, and answers the font list from the installed families.
+  fontSettings: {
+    methods: {
+      getFontList: { params: [] },
+      getFont: { params: [object('details')] },
+      setFont: { params: [object('details')] },
+      clearFont: { params: [object('details')] },
+      getDefaultFontSize: { params: [object('details', true)] },
+      setDefaultFontSize: { params: [object('details')] },
+      clearDefaultFontSize: { params: [object('details', true)] },
+      getDefaultFixedFontSize: { params: [object('details', true)] },
+      setDefaultFixedFontSize: { params: [object('details')] },
+      clearDefaultFixedFontSize: { params: [object('details', true)] },
+      getMinimumFontSize: { params: [object('details', true)] },
+      setMinimumFontSize: { params: [object('details')] },
+      clearMinimumFontSize: { params: [object('details', true)] }
+    },
+    events: {
+      onFontChanged: {},
+      onDefaultFontSizeChanged: {},
+      onDefaultFixedFontSizeChanged: {},
+      onMinimumFontSizeChanged: {}
+    },
+    constants: fontSettingsConstants(),
+    permissions: ['fontSettings']
   },
   // Absent from Electron altogether (Chrome's preference service is not part of the engine),
   // and probed at start-up by uBlock Origin and Privacy Badger. The settings live in the host
