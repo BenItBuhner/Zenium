@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
+import android.view.Choreographer
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -274,8 +275,16 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         // The still while the picture stands (the page's server holds its document back): the
         // picture is decoded off the main thread and placed a moment after the list is restored.
         val pictureUp = awaitFine(2_500) { onMain { host.restoredPictures.isShowing(TAB_SCROLL) } }
-        if (pictureUp) shot("frames-return-$THEME")
-        else Log.w(tag, "no picture up within 2.5 s of the return; no still of it")
+        if (pictureUp) {
+            // The placed picture is on the screen only with the frame after it: two of the
+            // choreographer's frames (the recipe's emulator draws one in 120 to 250 ms; run 2's
+            // dark act shot the frame before the picture's and got the fresh view's white).
+            awaitFrames(2, 800)
+            finding("the still of the return taken with the picture ${if (onMain { host.restoredPictures.isShowing(TAB_SCROLL) }) "still up" else "already down"}")
+            shot("frames-return-$THEME")
+        } else {
+            Log.w(tag, "no picture up within 2.5 s of the return; no still of it")
+        }
         sampler.join(RETURN_WATCH_MS + 2_000)
         stop.countDown()
         finding("return sequence: ${samples.joinToString(" | ")}")
@@ -586,6 +595,25 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         }
         latch.await(5, TimeUnit.SECONDS)
         return (runCatching { JSONTokener(result).nextValue() }.getOrNull() as? String) ?: result.trim('"')
+    }
+
+    /**
+     * `count` frames of the main thread's choreographer, at most `timeoutMs`: a frame callback
+     * runs ahead of that frame's traversal, so the second one runs with the first frame after
+     * the call drawn and handed to the compositor.
+     */
+    private fun awaitFrames(count: Int, timeoutMs: Long) {
+        val latch = CountDownLatch(count)
+        instrumentation.runOnMainSync {
+            val choreographer = Choreographer.getInstance()
+            choreographer.postFrameCallback(object : Choreographer.FrameCallback {
+                override fun doFrame(frameTimeNanos: Long) {
+                    latch.countDown()
+                    if (latch.count > 0) choreographer.postFrameCallback(this)
+                }
+            })
+        }
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
     }
 
     /** [awaitTrue] at a finer step, for what stands a second or two. */
