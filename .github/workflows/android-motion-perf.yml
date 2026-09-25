@@ -31,10 +31,6 @@ name: Android motion perf
 # profile, some ten more for the drivers. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
-  # TEMPORARY (services perf pass 4, Q1's proof run: the tab swipe and overview scenes on this branch, the landings' sequence read off the trace – the batch's main task, the view's draw, the answer, the chrome's drop; no token in the project can dispatch); removed before the PR is nod-ready.
-  # The push run's scene default below is `tab-swipe,overview` in place of `all`; its functional drivers run, as a dispatch's do.
-  push:
-    branches: [cursor/services-perf-4-24d1]
   workflow_dispatch:
     inputs:
       theme:
@@ -83,7 +79,7 @@ jobs:
         PERF_OUT=artifacts/android-motion-perf
         PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
-        DEMO_SCENES=${{ inputs.scenes || 'tab-swipe,overview' }}
+        DEMO_SCENES=${{ inputs.scenes || 'all' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
@@ -107,7 +103,7 @@ jobs:
         PERF_OUT=artifacts/android-motion-perf
         PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
-        DEMO_SCENES=${{ inputs.scenes || 'tab-swipe,overview' }}
+        DEMO_SCENES=${{ inputs.scenes || 'all' }}
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
