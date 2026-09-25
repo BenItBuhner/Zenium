@@ -31,6 +31,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * thread. THE ORDER: one channel for the whole class of storage calls (`bridge.ts` `PORTED`), read
  * in the order sent into the storage executor's one FIFO queue – and a call the page made before
  * it held the port went through the hop, which handed its string over before the page went on.
+ * THE OTHER CLASS (services perf pass 3): the thumbnail read, `thumbnail.load`, comes through the
+ * same channel – it is ordered against nothing, a class of one – and takes the route any call off
+ * the port that is not a storage call takes: parsed on the handler's thread (a line of JSON) and
+ * dispatched on the main thread, where `Host.dispatch` hands it to the host's io pool as the hop's
+ * did; nothing of it touches the storage thread. The host decides nothing about the classes: it
+ * routes whatever arrives, and the page (`PORTED`) says what leaves through the port.
  * THE FALLBACK: a WebView without the features ([supported]) opens nothing, the page is told so
  * and keeps the hop. THE TEARDOWN: [close] with the document (replaced, rebuilt, destroyed –
  * `ChromeWebView`); the page end was transferred and dies with its document.
@@ -105,7 +111,7 @@ class BridgePort private constructor(
          */
         fun open(view: WebView, token: String, origin: Uri, handler: Handler, route: (json: String) -> Unit): BridgePort? {
             if (!supported()) {
-                Log.i(TAG, "this WebView has no message channel; the storage calls keep the hop")
+                Log.i(TAG, "this WebView has no message channel; the ported calls keep the hop")
                 return null
             }
             return runCatching {
@@ -118,9 +124,9 @@ class BridgePort private constructor(
                     }
                 })
                 WebViewCompat.postWebMessage(view, WebMessageCompat(token, arrayOf(ports[1])), origin)
-                Log.i(TAG, "channel open for $origin; the storage calls take the port")
+                Log.i(TAG, "channel open for $origin; the storage calls and the thumbnail reads take the port")
                 channel
-            }.onFailure { Log.w(TAG, "the channel could not be opened; the storage calls keep the hop", it) }.getOrNull()
+            }.onFailure { Log.w(TAG, "the channel could not be opened; the ported calls keep the hop", it) }.getOrNull()
         }
     }
 }

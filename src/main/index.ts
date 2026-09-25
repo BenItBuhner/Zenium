@@ -6,6 +6,8 @@ import { ElectronPlatform } from './platform'
 import { APP_USER_MODEL_ID } from './platform/notifications'
 import { moveLegacyDirectory } from './platform/legacyPaths'
 import { applyResourceSwitches } from './platform/resources/startup'
+import { installWindowsRestart } from './platform/restartRegistration'
+import { ENABLE_SANDBOX_SWITCH, sandboxRequest } from './platform/sandbox'
 import { installShellTasks } from './platform/shellTasks'
 import { runStdioShim } from './agent/shim'
 import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
@@ -77,6 +79,16 @@ function main(): void {
 
   // Must run before `ready`.
   registerZenScheme()
+  // Electron's sandboxed renderer client for every renderer, `--no-sandbox` or not: the only one
+  // that runs service-worker preloads, so MV3 extension workers get Zenium's chrome.* layer in a
+  // container or harness that turns the OS sandbox off (`platform/sandbox.ts`, which also says
+  // why the switch and not `app.enableSandbox()`). Before `ready`.
+  const sandbox = sandboxRequest({
+    platform: process.platform,
+    uid: typeof process.getuid === 'function' ? process.getuid() : null
+  })
+  if (sandbox.enable) app.commandLine.appendSwitch(ENABLE_SANDBOX_SWITCH)
+  else console.warn('[zen] sandbox:', sandbox.reason)
   // Renderer process limit, V8 heap caps, GPU profile … are Chromium command-line switches and
   // can only be applied before the browser process finishes starting up.
   applyResourceSwitches(app.getPath('userData'))
@@ -171,14 +183,29 @@ function main(): void {
     // Windows groups taskbar buttons and toast notifications by this id; it must be the one the
     // installer stamps on the shortcuts, in development too (electron-toolkit's helper would
     // substitute the executable's path there, which no toast registration can carry).
-    if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID)
+    // The profile a relaunch of this copy names (the RunOnce entry below, a private window's
+    // taskbar button): the resolved directory when the launch named one.
+    const userDataDir = switches.userDataDir === null ? null : app.getPath('userData')
+    if (process.platform === 'win32') {
+      app.setAppUserModelId(APP_USER_MODEL_ID)
+      // A restart or a sign-out ends the session: Windows relaunches Zenium with its session at
+      // the next sign-in (os-49; the RunOnce entry `session-end` writes, gated on the user's
+      // "restart my apps" toggle). Before the first window: the hook listens per window.
+      installWindowsRestart(app, {
+        execPath: process.execPath,
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        userDataDir,
+        systemVersion: process.getSystemVersion()
+      })
+    }
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
     const platform = new ElectronPlatform(app.getPath('userData'), {
       // The desktop demo drivers' hold on the startup sweeps (`--hold-background-work`; a normal
       // launch never carries it): the core's `performance.releaseBackgroundWork` ends it.
       holdBackgroundWork: holdBackgroundWorkRequested(process.argv),
-      windowSwitches: windowSwitchesOf(switches)
+      windowSwitches: windowSwitchesOf(switches, userDataDir)
     })
     // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's
     // window comes up by itself, as Chrome's does; the browser windows wait for the first thing

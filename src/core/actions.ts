@@ -389,6 +389,9 @@ export class Actions {
         if (win.formFactor !== 'desktop') return
         this.browser.emit('windowName.open', undefined, win)
         return
+      case 'window.duplicate':
+        this.browser.duplicateWindow(win)
+        return
       case 'menu.app':
         // The renderer opens the menu from its button so Escape leaves the keyboard there.
         this.browser.emit('menu.app', undefined, win)

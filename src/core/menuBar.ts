@@ -67,6 +67,9 @@ export { HELP_URL, ISSUES_URL }
 const BOOKMARK_MENU_MAX = 40
 const BOOKMARK_MENU_DEPTH = 3
 
+/** Pages the History menu's Recently Visited block lists (Chrome's `kVisitedCount`). */
+const RECENTLY_VISITED_MAX = 10
+
 /**
  * Actions the menu bar runs with every window closed (macOS keeps the app alive then): they
  * open one first. Everything else needs a window and is ignored without one.
@@ -299,6 +302,7 @@ export function applicationMenu(browser: Browser): Template {
       { type: 'separator' },
       { label: 'Reopen Closed Tab', action: 'tab.reopenClosed' },
       recentlyClosed(browser),
+      ...recentlyVisited(browser),
       ...tabsFromOtherDevices(browser),
       { type: 'separator' },
       { label: 'Show Full History', action: 'history.sidebar' }
@@ -356,8 +360,17 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Select Previous Tab', action: 'tab.prev', enabled: Boolean(active) },
       { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) },
       { type: 'separator' },
-      // Chrome's Window › Name Window…, in a group of its own as Chrome's menu has it.
+      // The group about this window, in the order More Tools has the pair (one order in both
+      // menus, the #451 lead check's): Chrome's Window › Name Window… – the window's own name
+      // first – then Duplicate Window (session-19), the verb that makes another, greyed for a
+      // popup or an app window, which have no tab strip to duplicate, as a menu bar greys rather
+      // than hides. A group of its own, as Chrome's menu has it.
       { label: 'Name Window…', action: 'window.name', enabled: Boolean(win) },
+      {
+        label: 'Duplicate Window',
+        action: 'window.duplicate',
+        enabled: Boolean(win) && win!.chrome === 'full'
+      },
       { type: 'separator' },
       { label: 'Next Space', action: 'space.next', enabled: Boolean(win) && !local },
       { label: 'Previous Space', action: 'space.prev', enabled: Boolean(win) && !local },
@@ -414,7 +427,39 @@ function recentlyClosed(browser: Browser): MenuItemTemplate {
 }
 
 /**
- * Chrome's "Tabs From Other Devices" block of the mac History menu, after Recently Closed and
+ * Chrome's "Recently Visited" block of the mac History menu (history-12, Chrome's
+ * `HistoryMenuBridge` with its `kVisitedCount`): the ten pages last visited, newest first, each
+ * by its title (its address when it has none) with its favicon (shortcuts-menus-157), behind a
+ * separator and Chrome's disabled header – a heading, not a dead command: the note kind the
+ * sibling "Tabs from Other Devices" heading takes (#396's A7; §9.30), which a renderer-drawn
+ * menu writes at the note's ink and the native bar shows disabled –
+ * between Recently Closed and Tabs from Other Devices as Chrome orders them. A row loads its
+ * page in the front window's current tab, as Chrome's does (a window is opened for it when none
+ * is up – the bar stands without one). Nothing while history is empty: the block goes, separator
+ * and header with it. Rebuilt with the history (`Browser` schedules the bar on its changes).
+ */
+function recentlyVisited(browser: Browser): Template {
+  const entries = browser.history.recent(RECENTLY_VISITED_MAX)
+  if (entries.length === 0) return []
+  return [
+    { type: 'separator' },
+    { label: 'Recently Visited', enabled: false, note: true },
+    ...entries.map((e): MenuItemTemplate => {
+      // History keeps the address as the title of a page that had none: the row shows it the
+      // way the bar does, scheme and `www.` dropped.
+      const untitled = !e.title || e.title === e.url
+      return {
+        label: clipLabel(untitled ? displayUrl(e.url) || e.url : e.title, 60),
+        icon: e.favicon,
+        click: () =>
+          browser.openRecentlyVisited(e.url, frontWindow(browser) ?? browser.ensureWindow())
+      }
+    })
+  ]
+}
+
+/**
+ * Chrome's "Tabs From Other Devices" block of the mac History menu, after Recently Visited and
  * behind its own separator: the app menu's block (`Menus.tabsFromDevicesItems` – the header,
  * the devices as submenus of their tabs, the hidden devices' way back) with a row opening its
  * tab in the front window through the held-tab rule, or in a window opened for it when none is

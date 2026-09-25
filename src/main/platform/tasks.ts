@@ -10,10 +10,12 @@
  * DevTools frontend's when a toolbox does, a window's own chrome when the window's web contents
  * does – all through `webContents.getAllWebContents()`, which lists every one of them. What is
  * left is a renderer with no frame the engine will name: the spare renderer Chromium keeps
- * warm, a process being torn down, or an MV3 extension's service worker alone in its process
- * (Electron says which VIRTUAL process a worker runs in, `ServiceWorkerInfo.renderProcessId`,
- * never the OS pid; when the extension has any document open the worker's process is placed
- * through it, when it has none the row reads "Renderer").
+ * warm, a process being torn down – or an MV3 extension's service worker alone in its process.
+ * Electron says which VIRTUAL process a worker runs in (`ServiceWorkerInfo.renderProcessId`),
+ * never the OS pid, so the worker's own preload reports its `process.pid` to the extension API
+ * host as it starts (`extensionApi/workerHandshake.ts`), and the host places that pid as the
+ * extension's while the worker runs; the row then carries the extension's name like a
+ * background page's would.
  *
  * Network is counted where it is cheap: the request multiplexer's `onCompleted` already fires
  * for every request of every session, and a tab id rides on each; the host adds the response's
@@ -29,6 +31,7 @@
 import { webContents as electronWebContents, type WebContents } from 'electron'
 import type { TaskHost, TaskSample } from '../../core/platform'
 import type { TaskKind } from '../../shared/types'
+import type { WorkerProcess } from './extensionApi/workerHandshake'
 import { hostMetrics } from './resources/hostMetrics'
 import type { WebRequestMultiplexer } from './webRequest'
 
@@ -121,6 +124,8 @@ export class ElectronTaskHost implements TaskHost {
   private readonly engine: TaskEngine
   private readonly now: () => number
   private multiplexer: WebRequestMultiplexer | null = null
+  /** The running MV3 workers' renderers, by the pids their preloads reported; wired at `start`. */
+  private extensionWorkers: (() => WorkerProcess[]) | null = null
   private detachNetwork: (() => void) | null = null
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   /** Bytes received per tab since the last sample. */
@@ -137,6 +142,15 @@ export class ElectronTaskHost implements TaskHost {
   /** The request multiplexer to count network on; wired once the blocking engine exists (`start`). */
   attachNetwork(multiplexer: WebRequestMultiplexer): void {
     this.multiplexer = multiplexer
+  }
+
+  /**
+   * Where the running extension workers' renderers are, as their preloads reported them
+   * (`ExtensionApiHost.workerProcesses`): a process with a worker and no document in it is
+   * the extension's, not a nameless renderer.
+   */
+  attachExtensionWorkers(source: () => WorkerProcess[]): void {
+    this.extensionWorkers = source
   }
 
   sample(): TaskSample[] {
@@ -270,6 +284,12 @@ export class ElectronTaskHost implements TaskHost {
         continue
       }
       put(c.osProcessId, placement('renderer', { serviceName: rendererName(c.url) }))
+    }
+    // An MV3 worker's process, by the pid its preload reported. Placed after the documents so
+    // the worker's word never outranks a tab's frame that shares the process, and an
+    // extension's documents alongside the worker still say the same extension.
+    for (const worker of this.extensionWorkers?.() ?? []) {
+      put(worker.osPid, placement('extension', { extensionId: worker.extensionId }))
     }
     return placements
   }

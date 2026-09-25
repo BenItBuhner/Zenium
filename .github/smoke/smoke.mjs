@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,downloads,notifications,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -11,11 +11,12 @@
 //                                 of the launch; on Linux the build's chrome-sandbox helper has
 //                                 to be setuid root where the kernel denies unprivileged user
 //                                 namespaces – ci.yml's step does that to the unpacked build.
-//                                 What the leg is for: Electron runs
-//                                 service-worker preload scripts in sandboxed renderers only, so
-//                                 a --no-sandbox leg cannot observe Zenium's chrome.* layer in an
-//                                 MV3 worker; the mv3-worker scenario expects it present here and
-//                                 absent under --no-sandbox)
+//                                 What the leg is for: Electron runs service-worker preload
+//                                 scripts in its sandboxed renderer client only, which the app
+//                                 asks for with --enable-sandbox whatever the OS sandbox does
+//                                 (src/main/platform/sandbox.ts); the mv3-worker scenario expects
+//                                 Zenium's chrome.* layer in the MV3 worker on both legs – here
+//                                 with the OS sandbox on, under --no-sandbox by the app's switch)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
@@ -30,7 +31,7 @@
 //
 // Scenarios (each one launch of the executable, on profiles under one temporary root; the pages
 // they load come from boot-fixture.mjs's server on 127.0.0.1, started once per run, so a run
-// needs no internet):
+// needs no internet – `recaptcha` alone reaches www.google.com, and skips itself when it cannot):
 //   boot         first launch: onboarding (on screen – in the DOM and painted – within the
 //                first-launch render budget, then clicked through with the same budget), one
 //                visible window titled Zenium, the fixture's first page typed into the URL bar
@@ -81,12 +82,16 @@
 //                fixture extension under fixtures/mv3-worker through the management page's drop
 //                path (the install prompt accepted), whose worker logs the `chrome` surface it
 //                starts with; the line is read off the session's ServiceWorkers console events.
-//                Under --sandbox the layer must be there (`chrome.permissions`, `windows`,
-//                `contextMenus` defined); under --no-sandbox it must be absent – Electron evaluates
-//                service-worker preloads in sandboxed renderers only – which is what makes the
-//                sandboxed leg necessary. The run has to say which it is (--sandbox, or
-//                --no-sandbox among the extra args); a worker console error from an extension
-//                is a failure (Linux job: one leg each way)
+//                The layer must be there (`chrome.permissions`, `windows`, `contextMenus`
+//                defined) on both legs: Electron evaluates service-worker preloads in its
+//                sandboxed renderer client only, and the app asks for that client with its own
+//                --enable-sandbox whether or not the OS sandbox is on (in-house fix D, row 14;
+//                before it a --no-sandbox launch got the engine's bare chrome.*). Under --sandbox
+//                the proof is the layer where the OS sandbox is on; under --no-sandbox it is the
+//                app's own switch. The app's startup self-check ("the service-worker preload did
+//                not run") must stay silent on either leg. The run has to say which it is
+//                (--sandbox, or --no-sandbox among the extra args); a worker console error from
+//                an extension is a failure (Linux job: one leg each way)
 //   pip          picture-in-picture (pip-02): a profile past onboarding (sidebar at 320, where
 //                the media hub's toolbar button stands in the row) opens video-fixture.mjs's
 //                page, whose `<video>` plays its own canvas with a tone – the views' autoplay
@@ -132,6 +137,20 @@
 //                bookmark to the Bookmarks bar and its chip appears named for the page, a click
 //                on the chip from the second page's tab opens the article in that tab, "Delete"
 //                from the chip's native menu takes chip and bookmark away (Linux job)
+//   recaptcha    Google's reCAPTCHA v2 widget completes on Google's own demo page (W5-P1, the
+//                compat sweep's row 281): a profile past onboarding opens
+//                https://www.google.com/recaptcha/api2/demo from the URL bar; the anchor frame
+//                with its checkbox and then the challenge `bframe` are there within 10 s of
+//                the load (the widget's anchor asks the Storage Access API for its cookies before
+//                it answers its handshake – a prompt left pending there stalled it until its 15 s
+//                timer); one trusted click at the checkbox ticks it (aria-checked=true) or puts
+//                the image challenge up within 20 s (a fresh profile on an automated build gets
+//                the challenge; either is the handshake at work); once the timer's window has
+//                passed, no `reCAPTCHA Timeout` and no permissions-policy violation among the
+//                tab's console lines; a graceful quit. The one scenario that leaves the loopback
+//                fixture (`allow-network` in its result): the harness reaches www.google.com
+//                first and records the scenario as skipped, with the reason, when it cannot
+//                (Linux job)
 //   notifications  a page's Web Notification on the OS (os-27/os-28/os-30; notifications-
 //                scenario.mjs): a profile past onboarding whose permissions.json allows
 //                notifications for the fixture origin reads `Notification.permission ===
@@ -145,6 +164,24 @@
 //                notification's `click`, dispatched in the page under a user gesture, brings
 //                its tab back to the front through the preload's focus IPC and the core's reveal
 //                (Windows jobs; the click's app path runs everywhere)
+//   restart-registration  Windows relaunches Zenium with its session after a restart or a
+//                sign-out (os-49; restart-scenario.mjs): with the user's "restart my apps when I
+//                sign back in" toggle set on, the main window's `session-end` (emitted from the
+//                main process as Electron raises it off WM_ENDSESSION) writes this profile's
+//                RunOnce entry – the executable, `--user-data-dir=<profile>`,
+//                `--restore-last-session` – and the `[zen] restart:` line says so; a `will-quit`
+//                takes it back; the toggle off, and the Restart Manager's `close-app`, write
+//                nothing; a `logoff` end registers again and the entry stands after the process
+//                is ended the way Windows ends it (taskkill); the entry is deleted and the
+//                toggle put back at the end (Windows jobs; no runner restarts)
+//   private-taskbar  Private windows on a taskbar group of their own with the private icon
+//                (os-56; private-taskbar-scenario.mjs): a private window opened from the main
+//                window's chrome carries, in its frame's shell property store, the second
+//                AppUserModelID (`<app id>.private`), a relaunch command that opens a private
+//                window of this copy on this profile, the group's name "Zenium (Private)" and
+//                the private ICO this copy ships; the main window's frame carries none of its
+//                own; the id's class key holds the name and the private PNG (Windows jobs; the
+//                taskbar itself is on the screenshot, not judged)
 //   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
@@ -157,9 +194,9 @@
 //                (macOS jobs)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash
-// pair, clear-on-exit, the two mv3-worker legs, pip, the split pair and features run on Linux under Xvfb
-// only.
+// restore), Windows notifications, restart-registration and private-taskbar too and macOS
+// default-browser too; the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs,
+// pip, the split pair, features and recaptcha run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -194,6 +231,8 @@ import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-brow
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
+import { RESTART_SCENARIO, scenarioRestartRegistration } from './restart-scenario.mjs'
+import { PRIVATE_TASKBAR_SCENARIO, scenarioPrivateTaskbar } from './private-taskbar-scenario.mjs'
 import {
   COOKIE_PATH,
   FIXTURE_COOKIE,
@@ -256,9 +295,9 @@ if (SANDBOX && NO_SANDBOX_ARG) {
   process.exit(2)
 }
 if (scenarios.includes('mv3-worker') && !SANDBOX && !NO_SANDBOX_ARG) {
-  // The scenario's expectation follows the sandbox (present under it, absent without): a run
-  // that says neither could pass by accident on a machine whose kernel sandboxes the renderers.
-  console.error('mv3-worker needs --sandbox or --no-sandbox in --extra-args to know what to expect')
+  // The two legs prove two different things (the layer where the OS sandbox is on; the app's
+  // own --enable-sandbox where it is off): a run that says neither would record neither.
+  console.error('mv3-worker needs --sandbox or --no-sandbox in --extra-args to say which leg it is')
   process.exit(2)
 }
 const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
@@ -1051,6 +1090,9 @@ class Session {
     this.quitStartedAt = null
     this.killedAt = null
     this.mainWindowId = null
+    /** The launched process (cmd.exe on Windows, see `launch`) and the browser process itself. */
+    this.pid = null
+    this.appPid = null
   }
 
   launchArgs() {
@@ -1108,6 +1150,11 @@ class Session {
       workerPartitions: [DEFAULT_CONTAINER_PARTITION]
     })
     this.timings.launchMs = Date.now() - t0
+    // The browser process's own pid. Playwright 1.63 launches Electron on Windows through
+    // cmd.exe (`shell: true` in its Electron launcher), so `proc.pid` is the shell's there and
+    // a taskkill or a window enumeration keyed on it misses the app (run 36020202657 saw no
+    // windows under it and a kill that left the app running); on Linux and macOS both are one.
+    this.appPid = await this.app.evaluate(() => process.pid)
     this.chrome = await this.waitForChromePage(RENDER_WAIT_MS)
     await this.chrome.locator('[data-testid="chrome-root"]').waitFor({
       state: 'attached',
@@ -1951,13 +1998,18 @@ class Session {
     return { ms, exit, prompt: asked }
   }
 
-  /** End the process the way a crash does: no quit path, no clean-exit marker. */
+  /**
+   * End the process the way a crash does: no quit path, no clean-exit marker. The browser
+   * process is the one ended (its children follow it); on Windows the cmd.exe Playwright
+   * launched it through exits with it, which is the exit the launch promise sees.
+   */
   async kill() {
     this.killedAt = Date.now()
-    if (IS_WIN) sh('taskkill', ['/F', '/PID', String(this.pid)], 20000)
-    else process.kill(this.pid, 'SIGKILL')
+    const pid = this.appPid ?? this.pid
+    if (IS_WIN) sh('taskkill', ['/F', '/PID', String(pid)], 20000)
+    else process.kill(pid, 'SIGKILL')
     const exit = await Promise.race([this.exitPromise, delay(10000).then(() => null)])
-    if (!exit) throw new Error(`process ${this.pid} still alive 10 s after SIGKILL`)
+    if (!exit) throw new Error(`process ${pid} still alive 10 s after SIGKILL`)
     return exit
   }
 
@@ -1967,11 +2019,15 @@ class Session {
     this.quitStartedAt ??= Date.now()
     await Promise.race([this.app.close().catch(() => undefined), delay(8000)])
     if (!this.exit && this.pid) {
-      log(`force killing pid ${this.pid}`)
-      if (IS_WIN) sh('taskkill', ['/F', '/T', '/PID', String(this.pid)], 20000)
+      // The tree under the browser process; the launching shell, where there is one, exits
+      // with it (a tree kill from the shell's pid would take the browser too, but the shell
+      // may already be gone while the app lives on).
+      const pid = this.appPid ?? this.pid
+      log(`force killing pid ${pid}`)
+      if (IS_WIN) sh('taskkill', ['/F', '/T', '/PID', String(pid)], 20000)
       else {
         try {
-          process.kill(this.pid, 'SIGKILL')
+          process.kill(pid, 'SIGKILL')
         } catch {
           // already gone
         }
@@ -2012,7 +2068,8 @@ class Session {
     const failures = this.failures()
     return {
       scenario: this.scenario,
-      pid: this.pid,
+      pid: this.appPid ?? this.pid,
+      launcherPid: this.pid,
       hook: this.hookResult,
       timings: this.timings,
       exit: this.exit,
@@ -2157,8 +2214,8 @@ async function runScenario(name, userData, sessionOptions, body) {
           userData: app.getPath('userData'),
           electron: process.versions.electron,
           chrome: process.versions.chrome,
-          // Whether the renderers run without Chromium's sandbox (the mv3-worker scenario's
-          // expectation turns on it; a --sandbox leg must read false here).
+          // Whether the renderers run without Chromium's sandbox (the mv3-worker scenario
+          // records it; a --sandbox leg must read false here).
           noSandbox: app.commandLine.hasSwitch('no-sandbox')
         }))
         if (SANDBOX && facts.noSandbox) {
@@ -5220,19 +5277,24 @@ async function scenarioDark() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// mv3-worker: Zenium's chrome.* layer in an MV3 background worker – present under the sandbox,
-// absent without it (the sandboxed leg's reason to exist).
+// mv3-worker: Zenium's chrome.* layer in an MV3 background worker – present with the OS sandbox
+// on, and present under --no-sandbox too, by the app's own --enable-sandbox (in-house fix D).
 // ---------------------------------------------------------------------------------------------
 
 const MV3_FIXTURE_DIR = path.join(here, 'fixtures', 'mv3-worker')
 const MV3_FIXTURE_NAME = 'Smoke: MV3 worker probe'
 const WORKER_PROBE_PREFIX = 'ZENIUM_SMOKE_WORKER_PROBE '
-// What the fixture's worker finds under the sandbox – the preload's namespaces: `permissions`
-// and `windows` for every extension, `contextMenus` for the permission the manifest holds – and
-// must not find without it: Electron's engine defines none of the three in a worker (its own
-// set there, for this manifest, is dom, extension, i18n, management, runtime, storage, tabs –
-// Electron 44.4.5 under --no-sandbox; `alarms` and the rest of the sandboxed set are the layer's).
+// What the fixture's worker finds when its preload ran – the preload's namespaces: `permissions`
+// and `windows` for every extension, `contextMenus` for the permission the manifest holds –
+// and none of which Electron's engine defines in a worker on its own (its bare set there, for
+// this manifest, is dom, extension, i18n, management, runtime, storage, tabs – Electron 44.4.5
+// under --no-sandbox before the app's --enable-sandbox; `alarms` and the rest are the layer's).
 const WORKER_LAYER_NAMESPACES = ['permissions', 'windows', 'contextMenus']
+// The app's startup self-check, one main-process warning when a worker ran and its preload never
+// spoke (src/main/platform/extensionApi/workerHandshake.ts); it fires this long after the worker
+// runs, and must not on either leg.
+const WORKER_PRELOAD_WARNING = 'the service-worker preload did not run'
+const WORKER_PRELOAD_GRACE_MS = 5000
 
 /** The fixture's probe, once its worker has logged it: the parsed line and the event it came in. */
 async function workerProbe(s, timeoutMs) {
@@ -5304,42 +5366,60 @@ async function scenarioMv3Worker() {
     })
     await s.step('worker-probe', async () => {
       const { event, probe } = await workerProbe(s, 20000)
-      const defined = WORKER_LAYER_NAMESPACES.filter((ns) => probe[ns] === 'object')
       const missing = WORKER_LAYER_NAMESPACES.filter((ns) => probe[ns] !== 'object')
-      const running = await s.app.evaluate(
-        ({ session }, partition) =>
-          Object.values(session.fromPartition(partition).serviceWorkers.getAllRunning()).map(
-            (w) => ({ scriptUrl: w.scriptUrl, versionId: w.versionId })
-          ),
+      const { running, enableSandbox } = await s.app.evaluate(
+        ({ app, session }, partition) => ({
+          running: Object.values(
+            session.fromPartition(partition).serviceWorkers.getAllRunning()
+          ).map((w) => ({ scriptUrl: w.scriptUrl, versionId: w.versionId })),
+          // The app's own switch (src/main/index.ts, src/main/platform/sandbox.ts): what puts
+          // Electron's sandboxed renderer client – the one that runs service-worker preloads –
+          // on under --no-sandbox. Off for root on Linux alone, where Electron refuses it.
+          enableSandbox: app.commandLine.hasSwitch('enable-sandbox')
+        }),
         DEFAULT_CONTAINER_PARTITION
       )
       const detail = {
         sandboxed: SANDBOX,
+        enableSandbox,
         probe,
         source: event.sourceUrl,
         partition: event.partition,
         running
       }
-      if (SANDBOX) {
-        if (missing.length || probe.getAll !== 'function') {
-          throw Object.assign(
-            new Error(
-              `the worker preload's layer is missing from the sandboxed worker: ${missing.length ? missing.join(', ') : 'permissions.getAll'} undefined (chrome keys: ${probe.keys.join(', ')})`
-            ),
-            { detail }
-          )
-        }
-      } else if (defined.length) {
-        // The negative leg: were this to fail, Electron would be running service-worker
-        // preloads in unsandboxed renderers, and the sandboxed leg would have lost its reason.
+      if (!enableSandbox) {
         throw Object.assign(
           new Error(
-            `the worker preload's layer is present under --no-sandbox (${defined.join(', ')} defined): this Electron runs service-worker preloads without the sandbox`
+            'the app runs without --enable-sandbox: the switch was not appended before ready (src/main/index.ts), or the run is root on Linux'
+          ),
+          { detail }
+        )
+      }
+      if (missing.length || probe.getAll !== 'function') {
+        const where = SANDBOX
+          ? 'the sandboxed worker'
+          : 'the worker under --no-sandbox (the app asks for the sandboxed renderer client with --enable-sandbox; Electron runs service-worker preloads there alone)'
+        throw Object.assign(
+          new Error(
+            `the worker preload's layer is missing from ${where}: ${missing.length ? missing.join(', ') : 'permissions.getAll'} undefined (chrome keys: ${probe.keys.join(', ')})`
           ),
           { detail }
         )
       }
       return detail
+    })
+    await s.step('preload-self-check-silent', async () => {
+      // The app's one warning for a worker that ran without its preload comes a grace period
+      // after the worker runs; with the layer just seen in the worker it must not come at all.
+      await delay(WORKER_PRELOAD_GRACE_MS + 1500)
+      const warnings = s.stderr
+        .join('')
+        .split(/\r?\n/)
+        .filter((l) => l.includes(WORKER_PRELOAD_WARNING))
+      if (warnings.length) {
+        throw new Error(`the app warned that a worker preload did not run: ${warnings[0]}`)
+      }
+      return { warnings: warnings.length, waitedMs: WORKER_PRELOAD_GRACE_MS + 1500 }
     })
     await s.step('quit', async () => s.quitGracefully())
   })
@@ -6655,6 +6735,241 @@ async function scenarioFeatures() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// recaptcha: Google's reCAPTCHA v2 widget on Google's own demo page (W5-P1)
+// ---------------------------------------------------------------------------------------------
+
+/** Google's own reCAPTCHA v2 demo: the widget on a google.com page, as Google's sign-in embeds it. */
+const RECAPTCHA_DEMO = 'https://www.google.com/recaptcha/api2/demo'
+/** The mark a scenario that leaves the loopback fixture carries in its result. */
+const ALLOW_NETWORK = 'allow-network'
+/**
+ * The challenge frame has to be there this soon after the page loaded. The widget's own timer
+ * gives its anchor 15 s before `reCAPTCHA Timeout`; a healthy handshake makes the frame in ~1 s.
+ */
+const RECAPTCHA_BFRAME_BUDGET_MS = 10000
+/** The click's outcome – the checkmark, or the image challenge put up – within this. */
+const RECAPTCHA_OUTCOME_BUDGET_MS = 20000
+/** How long after the page's load the widget's timer would have logged its failure. */
+const RECAPTCHA_TIMEOUT_WINDOW_MS = 17000
+
+/**
+ * Whether the run can reach `url` (a HEAD answered within `timeoutMs`, whatever the status).
+ * The recaptcha scenario is the one scenario that leaves the loopback fixture; a runner without
+ * a way out to www.google.com skips it with the reason instead of failing it.
+ */
+async function reachable(url, timeoutMs = 8000) {
+  const t = Date.now()
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs)
+    })
+    return { ok: true, status: res.status, ms: Date.now() - t }
+  } catch (e) {
+    const cause = e && typeof e === 'object' && e.cause ? e.cause.message || String(e.cause) : ''
+    return {
+      ok: false,
+      error: `${e && e.message ? e.message : e}${cause ? ` (${cause})` : ''}`,
+      ms: Date.now() - t
+    }
+  }
+}
+
+/**
+ * What the demo page's document says of the widget: its frames (Google's `anchor`, the
+ * checkbox's frame, and the challenge `bframe` the handshake creates), the checkbox's
+ * `aria-checked` and where it is on the page (the anchor frame is on the demo page's own origin,
+ * so its document is readable from the top one), whether the challenge box is shown (the widget
+ * flips its positioned box's visibility) and the length of the response token.
+ */
+const RECAPTCHA_WIDGET = `(() => {
+  const frames = [...document.querySelectorAll('iframe')].map((f) => ({
+    src: (f.getAttribute('src') || '').split('?')[0],
+    name: f.name || ''
+  }))
+  const anchorFrame = document.querySelector('iframe[src*="/recaptcha/api2/anchor"]')
+  const bframe = document.querySelector('iframe[src*="/recaptcha/api2/bframe"]')
+  let checkbox = null
+  try {
+    const doc = anchorFrame && anchorFrame.contentDocument
+    const box = doc && doc.querySelector('#recaptcha-anchor')
+    if (box) {
+      const f = anchorFrame.getBoundingClientRect()
+      const b = box.getBoundingClientRect()
+      checkbox = {
+        checked: box.getAttribute('aria-checked'),
+        x: Math.round(f.left + b.left + b.width / 2),
+        y: Math.round(f.top + b.top + b.height / 2)
+      }
+    }
+  } catch (e) {
+    checkbox = { error: String(e && e.message) }
+  }
+  let challenge = null
+  if (bframe) {
+    const box = bframe.closest('div[style*="visibility"]') || bframe.parentElement
+    const cs = getComputedStyle(box)
+    challenge = { visibility: cs.visibility, opacity: cs.opacity }
+  }
+  const response = document.getElementById('g-recaptcha-response')
+  return {
+    frames,
+    anchor: !!anchorFrame,
+    bframe: !!bframe,
+    checkbox,
+    challenge,
+    token: response ? response.value.length : null
+  }
+})()`
+
+/**
+ * `recaptcha` (W5-P1): Google's reCAPTCHA v2 widget completes on Google's own demo page, in a
+ * tab of a profile past onboarding. The widget's anchor frame asks the Storage Access API for
+ * its cookies before it answers its own handshake, and a permission prompt left pending there
+ * stalled the widget until its 15 s timer (the compat sweep's row 281: the anchor rendered, no
+ * challenge frame ever, `reCAPTCHA Timeout`). The steps: `widget` – the demo page opened from
+ * the URL bar, the anchor frame with its checkbox and then the challenge `bframe` within the
+ * budget of the page's load; `checkbox` – one trusted click at the checkbox (mouse events into
+ * the tab's view at the point the top document computes), after which the checkbox reads
+ * aria-checked=true or the image challenge is put up (a fresh profile on an automated build gets
+ * the challenge; either is the handshake at work); `console` – once the widget's timer window
+ * has passed, no `reCAPTCHA Timeout` and no permissions-policy violation among the tab's console
+ * lines; `quit`. Network-dependent (`allow-network`): the run reaches www.google.com first, and
+ * a runner that cannot records the scenario as skipped with the reason instead of failing it.
+ */
+async function scenarioRecaptcha() {
+  const reach = await reachable(RECAPTCHA_DEMO)
+  if (!reach.ok) {
+    const note = `www.google.com is unreachable from this runner (${reach.error}, ${reach.ms} ms): the widget cannot load, so the scenario did not run`
+    result.scenarios.recaptcha = { skipped: 'network', note, network: ALLOW_NETWORK }
+    log(`recaptcha: skipped: network (${note})`)
+    writeJson(path.join(outDir, 'result.json'), result)
+    return result.scenarios.recaptcha
+  }
+  log(`recaptcha: ${RECAPTCHA_DEMO} answered ${reach.status} in ${reach.ms} ms`)
+  const userData = freshProfile('profile-recaptcha', {
+    onboardingDone: true,
+    settings: { searchSuggestions: false }
+  })
+  return runScenario('recaptcha', userData, {}, async (s, out) => {
+    out.network = ALLOW_NETWORK
+    out.demo = { url: RECAPTCHA_DEMO, reach }
+    let tab = null
+    let loadedAt = 0
+    const widget = () => s.tabEval(tab.id, RECAPTCHA_WIDGET)
+    await s.step('widget', async () => {
+      const opened = await openUrlInNewTab(s, RECAPTCHA_DEMO)
+      tab = opened.tab
+      loadedAt = Date.now()
+      const anchor = await waitFor(
+        async () => {
+          const w = await widget()
+          return w.anchor && w.checkbox && !w.checkbox.error ? w : null
+        },
+        RECAPTCHA_BFRAME_BUDGET_MS,
+        'the anchor frame with its checkbox on the demo page'
+      )
+      const anchorMs = Date.now() - loadedAt
+      const seen = await waitFor(
+        async () => {
+          const w = await widget()
+          return w.bframe ? w : null
+        },
+        Math.max(1000, RECAPTCHA_BFRAME_BUDGET_MS - anchorMs),
+        `the challenge frame (bframe) created within ${RECAPTCHA_BFRAME_BUDGET_MS} ms of the load`
+      ).catch(async (e) => {
+        throw new Error(`${e.message}; the frames: ${JSON.stringify((await widget()).frames)}`)
+      })
+      const bframeMs = Date.now() - loadedAt
+      await s.shot('01-widget')
+      return {
+        anchorMs,
+        bframeMs,
+        frames: seen.frames,
+        ariaChecked: anchor.checkbox.checked,
+        retried: opened.retried
+      }
+    })
+    await s.step('checkbox', async () => {
+      if (!tab) throw new Error('the demo page did not open')
+      const before = await widget()
+      if (!before.checkbox || before.checkbox.error) {
+        throw new Error(`no checkbox to click: ${JSON.stringify(before)}`)
+      }
+      if (before.checkbox.checked !== 'false') {
+        throw new Error(
+          `the checkbox reads aria-checked=${before.checkbox.checked} before the click`
+        )
+      }
+      const { x, y } = before.checkbox
+      // Trusted input at the checkbox, into the tab's view (the anchor frame is on the page's
+      // own origin, so the point the top document computed is where the checkbox is).
+      await s.app.evaluate(
+        async ({ webContents }, { id, x, y }) => {
+          const wc = webContents.fromId(id)
+          if (!wc || wc.isDestroyed()) throw new Error(`tab webContents ${id} is gone`)
+          wc.focus()
+          wc.sendInputEvent({ type: 'mouseMove', x, y })
+          await new Promise((r) => setTimeout(r, 80))
+          wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+          await new Promise((r) => setTimeout(r, 60))
+          wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+        },
+        { id: tab.id, x, y }
+      )
+      const clickedAt = Date.now()
+      const outcome = await waitFor(
+        async () => {
+          const w = await widget()
+          const checked = Boolean(w.checkbox && w.checkbox.checked === 'true')
+          const challengeShown = Boolean(w.challenge && w.challenge.visibility === 'visible')
+          return checked || challengeShown ? { ...w, checked, challengeShown } : null
+        },
+        RECAPTCHA_OUTCOME_BUDGET_MS,
+        'the checkbox ticked (aria-checked=true) or the image challenge shown after the click'
+      )
+      const ms = Date.now() - clickedAt
+      await s.settle()
+      await s.shot('02-after-click')
+      return {
+        clickAt: { x, y },
+        ms,
+        ariaChecked: outcome.checkbox ? outcome.checkbox.checked : null,
+        checked: outcome.checked,
+        challengeShown: outcome.challengeShown,
+        challenge: outcome.challenge,
+        token: outcome.token
+      }
+    })
+    await s.step('console', async () => {
+      if (!tab) throw new Error('the demo page did not open')
+      // The widget's timer would have logged by now: nothing of the sweep's two lines may be
+      // among the tab's console messages (the anchor's and the page's own come through the
+      // same webContents).
+      const left = loadedAt + RECAPTCHA_TIMEOUT_WINDOW_MS - Date.now()
+      if (left > 0) await delay(left)
+      const lines = s
+        .readEvents()
+        .filter((e) => e.type === 'console' && e.wc === tab.id)
+        .map((e) => e.message)
+      const bad = lines.filter((m) => /reCAPTCHA Timeout|Permissions policy violation/i.test(m))
+      if (bad.length) {
+        throw new Error(
+          `the widget logged ${bad.length} failure line(s): ${JSON.stringify(bad.slice(0, 5))}`
+        )
+      }
+      return { consoleLines: lines.length, waitedMs: Math.max(0, left) }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      const state = assertCleanState(userData, RECAPTCHA_DEMO)
+      return { ...r, state }
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
 
 function finish(exitCode) {
   const failures = []
@@ -6768,6 +7083,7 @@ async function main() {
       pip: scenarioPip,
       split: scenarioSplit,
       features: scenarioFeatures,
+      recaptcha: scenarioRecaptcha,
       [DOWNLOADS_SCENARIO]: () =>
         scenarioDownloads({
           freshProfile,
@@ -6796,6 +7112,29 @@ async function main() {
           // The installed build's shortcuts carry the AUMID (the installer's WinShell); the
           // unpacked build has none and rides on the class key it registers for itself.
           expectShortcuts: IS_WIN && opts.label === 'installed',
+          isWin: IS_WIN
+        }),
+      [RESTART_SCENARIO]: () =>
+        scenarioRestartRegistration({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          ps,
+          isWin: IS_WIN
+        }),
+      [PRIVATE_TASKBAR_SCENARIO]: () =>
+        scenarioPrivateTaskbar({
+          freshProfile,
+          runScenario,
+          waitFor,
+          log,
+          grabScreen,
+          ps,
+          // The private ICO and the class key's PNG have to be this build's (under the
+          // executable's directory).
+          exe: opts.exe,
           isWin: IS_WIN
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>

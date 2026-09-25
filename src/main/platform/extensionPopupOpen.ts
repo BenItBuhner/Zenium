@@ -1,3 +1,4 @@
+import type { HandlerDetails, WebContents, WindowOpenHandlerResponse } from 'electron'
 import type {
   TabView,
   TabViewEvents,
@@ -8,6 +9,7 @@ import type { ZenWindow } from '../../core/window'
 import { isOpenableUrl, openedWindowKind, planWindowOpen } from '../../core/windowOpen'
 import { newId } from '../../shared/ids'
 import type { Rect, Tab, WindowChrome, WindowKind } from '../../shared/types'
+import type { ElectronTabView, ElectronTabViewHost } from './views'
 
 /** Chromium reports `window.open()` with no URL as `about:blank`. */
 const BLANK = 'about:blank'
@@ -80,6 +82,89 @@ export function popupWindowOpenTicket(
         { tabId: newId('tab'), parentTabId: opensWindow ? null : host.activeTabId, active: true },
         target
       )
+    }
+  }
+}
+
+/** The tab-view host's part in honouring a ticket, as `ElectronTabViewHost` provides it. */
+export type TicketViews = Pick<ElectronTabViewHost, 'viewForTab' | 'openTicket'>
+
+/** What an extension page's `window.open` handler needs from the browser. */
+export interface ExtensionPageOpenHost {
+  /** The tab-view host when the platform is Electron's; undefined leaves the links-as-tabs path. */
+  views: TicketViews | undefined
+  /**
+   * The window the page hangs from when the call comes: an action popup's or a side panel's
+   * own, an API-created popup window's the last focused window of its profile; undefined when
+   * none is left.
+   */
+  windowFor(): ZenWindow | undefined
+  /** The opener document's own address. */
+  openerUrl(): string
+  browser: {
+    tabs: {
+      activeTabFor(win: ZenWindow): Tab | undefined
+      createTab(options: { url: string; active: boolean }, win?: ZenWindow): unknown
+      adoptView: PopupOpenerHost['adoptView']
+    }
+    state: { capabilities: { windows: boolean } }
+    createWindow: PopupOpenerHost['createWindow']
+  }
+  /** Runs a tick after Chromium hands the new page over (the action popup closes here). */
+  opened?(): void
+  /**
+   * Runs when the call took the links-as-tabs path instead: a site or extension URL opened as a
+   * tab, anything else refused (the action popup closes here too).
+   */
+  fellBack?(): void
+}
+
+/**
+ * The `setWindowOpenHandler` callback of an extension's own pages – the action popup, a side
+ * panel, a `windows.create({ type: 'popup' })` window: Chrome gives each a real window for
+ * `window.open`, so the page Chromium made for the call is adopted into a tab of the page's
+ * window (next to its active tab) or, for a sized open, into a toolbar-only window, through
+ * `popupWindowOpenTicket` and the tab path a tab's own `window.open` takes
+ * (`ElectronTabViewHost.openTicket`). Without that path – no Electron views, no window or no
+ * view for its active tab – or for a URL no page may open, a site or extension URL still opens
+ * as a tab and the call gets null, the answer every one of these pages got before.
+ */
+export function extensionPageOpenHandler(
+  host: ExtensionPageOpenHost
+): (details: HandlerDetails) => WindowOpenHandlerResponse {
+  return ({ url, disposition, features, referrer }) => {
+    const views = host.views
+    const win = host.windowFor()
+    const active = win ? host.browser.tabs.activeTabFor(win) : undefined
+    const opener: ElectronTabView | undefined =
+      views && active ? views.viewForTab(active.id) : undefined
+    const ticket =
+      views && win && active && opener
+        ? popupWindowOpenTicket(url, disposition as WindowOpenDisposition, features ?? '', {
+            openerUrl: host.openerUrl(),
+            win,
+            activeTabId: active.id,
+            windowsCapable: host.browser.state.capabilities.windows,
+            createWindow: (opts) => host.browser.createWindow(opts),
+            adoptView: (page, opts, target) => host.browser.tabs.adoptView(page, opts, target)
+          })
+        : null
+    if (!ticket || !views || !opener) {
+      if (/^(https?|chrome-extension):/.test(url))
+        host.browser.tabs.createTab({ url, active: true }, win)
+      host.fellBack?.()
+      return { action: 'deny' }
+    }
+    return {
+      action: 'allow',
+      outlivesOpener: true,
+      createWindow: (options) => {
+        const guest = (options as { webContents?: WebContents }).webContents
+        const contents = views.openTicket(ticket, opener, guest, { httpReferrer: referrer })
+        // A tick later: Chromium is still handing the new page over when this runs.
+        setTimeout(() => host.opened?.(), 0)
+        return contents
+      }
     }
   }
 }

@@ -8,6 +8,7 @@ import {
   permissionPromptCopy,
   permissionSite,
   qualifiedPermission,
+  sameSiteEmbedding,
   schemeOf,
   type PermissionChange,
   type PermissionRequestDetails
@@ -285,6 +286,66 @@ describe('PermissionService: qualified keys and prompt copy', () => {
     expect(
       p.check('storage-access', 'https://social.example', { embedderUrl: 'https://x.example' })
     ).toBe(false)
+  })
+
+  // Google's reCAPTCHA anchor frame (www.google.com) on a google.com page calls
+  // `document.requestStorageAccess` before it answers its widget: Chrome resolves the same-site
+  // call on the spot, and a prompt left pending here stalled the widget until its timeout (W5-P1).
+  it('grants a frame of the embedding site storage access without a question', async () => {
+    const d = prompts(false)
+    const p = new PermissionService(fakeIo(), d)
+    const anchor = 'https://www.google.com/recaptcha/api2/anchor?ar=1&k=abc'
+    const onGoogle = { embedderUrl: 'https://www.google.com/recaptcha/api2/demo' }
+    expect(await p.decide('storage-access', anchor, onGoogle)).toBe(true)
+    expect(await p.decide('storage-access', anchor, { ...onGoogle, userGesture: false })).toBe(true)
+    // Another host of the same site is the same site (accounts.google.com in www.google.com).
+    expect(
+      await p.decide('storage-access', 'https://accounts.google.com/x', {
+        embedderUrl: 'https://www.google.com/'
+      })
+    ).toBe(true)
+    expect(p.check('storage-access', 'https://www.google.com', onGoogle)).toBe(true)
+    expect(d.asked).toEqual([])
+    // Nothing is remembered: the store has no answer to write.
+    expect(p.listForOrigin('https://www.google.com')).toEqual([])
+    // A stored block stands aside too: the same-site rule is the web platform's, not a setting.
+    p.set('storage-access:https://www.google.com', 'https://www.google.com', 'deny')
+    p.setDefault('storage-access', 'deny')
+    expect(await p.decide('storage-access', anchor, onGoogle)).toBe(true)
+    expect(p.check('storage-access', 'https://www.google.com', onGoogle)).toBe(true)
+    // Another scheme is another site; without an embedder there is nothing to compare.
+    expect(sameSiteEmbedding('http://www.google.com/a', onGoogle)).toBe(false)
+    expect(sameSiteEmbedding(anchor, {})).toBe(false)
+    expect(sameSiteEmbedding(anchor, { embedderUrl: 'https://news.example/' })).toBe(false)
+    expect(sameSiteEmbedding('not a url', onGoogle)).toBe(false)
+  })
+
+  it('refuses a cross-site storage access request without a gesture quietly', async () => {
+    const d = prompts(true)
+    const p = new PermissionService(fakeIo(), d)
+    const inNews = { embedderUrl: 'https://news.example/' }
+    const quiet = { ...inNews, userGesture: false }
+    expect(await p.decide('storage-access', 'https://social.example/embed', quiet)).toBe(false)
+    expect(
+      await p.decide('top-level-storage-access', 'https://social.example/embed', {
+        userGesture: false
+      })
+    ).toBe(false)
+    expect(d.asked).toEqual([])
+    // The refusal is not remembered: the same frame asks again with a gesture and is asked about.
+    expect(p.listForOrigin('https://social.example')).toEqual([])
+    expect(
+      await p.decide('storage-access', 'https://social.example/embed', {
+        ...inNews,
+        userGesture: true
+      })
+    ).toBe(true)
+    expect(d.asked.length).toBe(1)
+    // A host that cannot tell leaves the gesture out, and the prompt stands as before.
+    expect(await p.decide('storage-access', 'https://social.example/embed', inNews)).toBe(true)
+    // A stored answer is read before the gesture rule: no prompt, and no refusal either.
+    expect(await p.decide('storage-access', 'https://social.example/embed', quiet)).toBe(true)
+    expect(d.asked.length).toBe(1)
   })
 
   it('describes file system access by file and direction', () => {

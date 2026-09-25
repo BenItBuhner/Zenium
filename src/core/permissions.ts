@@ -13,6 +13,7 @@ import {
   type ContentDefault
 } from '../shared/contentSettings'
 import { newId } from '../shared/ids'
+import { isSameSite } from '../shared/url'
 
 export type PermissionDecision = PermissionRule['decision']
 type Decision = PermissionDecision
@@ -83,6 +84,14 @@ export interface PermissionRequestDetails {
   mediaTypes?: Array<'video' | 'audio'>
   /** Top-level page the request happens in, when the requesting frame is embedded in another site. */
   embedderUrl?: string
+  /**
+   * Whether the requesting page holds transient user activation (a click or key press within the
+   * last few seconds), where the host can tell: Electron never says, so the desktop reads the
+   * core's activation clock (`PopupBlocker.activation`). Left out when the host cannot tell, and
+   * the request is then treated as Chrome treats a gestured one. Read by the storage-access
+   * rows, whose request the web platform refuses outright without a gesture.
+   */
+  userGesture?: boolean
   /** `openExternal`: the URL that would be handed to another application. */
   externalUrl?: string
   /** `fileSystem`: the file or directory the page wants and how it wants it. */
@@ -199,6 +208,7 @@ export class PermissionService {
    */
   check(permission: string, requestingOrigin: string, details?: PermissionRequestDetails): boolean {
     if (permission === 'fileSystem') return this.checkFileSystem(requestingOrigin, details ?? {})
+    if (permission === 'storage-access' && sameSiteEmbedding(requestingOrigin, details)) return true
     if (permission === 'media')
       return mediaRows(details).every(
         (row) => this.resolve(row, requestingOrigin, details) === 'allow'
@@ -505,6 +515,10 @@ export class PermissionService {
     const origin = permissionSite(requestingUrl)
     if (!origin) return this.check(permission, requestingUrl, details)
     if (permission === 'media') return this.decideMedia(origin, details)
+    // A frame of the embedding site itself already has its cookies (Chrome's
+    // `kAllowedBySameSite`): the Storage Access API resolves such a request on the spot, and no
+    // question is asked or remembered. Google's reCAPTCHA frames on google.com pages rely on it.
+    if (permission === 'storage-access' && sameSiteEmbedding(requestingUrl, details)) return true
     const outcome = this.resolve(permission, requestingUrl, details)
     const key = decisionKey(origin, permission, details)
     if (outcome !== 'ask') {
@@ -512,6 +526,9 @@ export class PermissionService {
       return outcome === 'allow'
     }
     if (promptLabelFor(permission) === null) return false
+    // The Storage Access API needs a gesture before it may ask (Chrome's
+    // `kDeniedByPrerequisites`): a request without one is refused at once, nothing shown.
+    if (isStorageAccessPermission(permission) && details.userGesture === false) return false
     return this.askOnce(key, () => this.prompt(permission, origin, [key], details))
   }
 
@@ -1070,6 +1087,28 @@ export function safeOrigin(url: string): string {
   } catch {
     return ''
   }
+}
+
+/** The Storage Access API's two rows: `document.requestStorageAccess` and `requestStorageAccessFor`. */
+export function isStorageAccessPermission(permission: string): boolean {
+  return permission === 'storage-access' || permission === 'top-level-storage-access'
+}
+
+/**
+ * Whether a frame's storage-access request comes from the embedding page's own site: the same
+ * scheme and registrable domain (`www.google.com` in `google.com`, never `http:` in `https:`),
+ * which is what the web platform grants without a question. False when the host did not say
+ * which page embeds the frame.
+ */
+export function sameSiteEmbedding(
+  requestingUrl: string,
+  details?: PermissionRequestDetails
+): boolean {
+  const embedder = details?.embedderUrl
+  if (!embedder) return false
+  const scheme = schemeOf(requestingUrl)
+  if (!scheme || scheme !== schemeOf(embedder)) return false
+  return isSameSite(requestingUrl, embedder)
 }
 
 /**

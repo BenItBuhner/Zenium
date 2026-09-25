@@ -17,15 +17,21 @@ node .github/smoke/verdict.mjs --out /tmp/smoke-out --expect unpacked
 
 ## Sandboxed legs
 
-A `--no-sandbox` leg cannot observe the worker-preload layer: Electron evaluates a session's
-`service-worker` preload scripts in sandboxed renderers only, so Zenium's `chrome.*` layer for
-MV3 background workers (`src/preload/extension.ts`) is simply not there in a worker started
-under `--no-sandbox`, and a check on it that passes there checks the wrong thing. The
-`mv3-worker` scenario therefore runs twice in `ci.yml`: sandboxed (`--sandbox`, no
-`--no-sandbox`; the layer must be present) and under `--no-sandbox` (the negative: the layer must
-be absent). Where the kernel denies unprivileged user namespaces (ubuntu-24.04's AppArmor
-default) the sandboxed launch needs the build's `chrome-sandbox` helper setuid root, as the
-installers leave it. The leg's arguments are what the app gets: Playwright 1.63's Electron
+Electron evaluates a session's `service-worker` preload scripts in its sandboxed renderer client
+only, and picks that client for a renderer when `--enable-sandbox` is on its command line or
+`--no-sandbox` is not. Zenium's `chrome.*` layer for MV3 background workers
+(`src/preload/extension.ts`) is such a preload, so a plain `--no-sandbox` launch used to start
+every worker without it; the app now asks for the client itself (`--enable-sandbox` appended
+before `ready`, `src/main/platform/sandbox.ts` – not for root on Linux, where Electron refuses
+it; not `app.enableSandbox()`, which would also strip `--no-sandbox` from the launch), and
+the layer is there whatever the OS sandbox does. The `mv3-worker` scenario runs twice in
+`ci.yml` and expects the layer both times: sandboxed (`--sandbox`, no `--no-sandbox`; the layer
+with the OS sandbox on) and under `--no-sandbox` (the layer by the app's own switch – the
+in-house fix's proof; the app must carry `--enable-sandbox`, and its startup self-check for a
+preload that did not run must stay silent). Where the kernel denies unprivileged user
+namespaces (ubuntu-24.04's AppArmor default) the sandboxed launch needs the build's
+`chrome-sandbox` helper setuid root, as the installers leave it. The leg's arguments are what
+the app gets: Playwright 1.63's Electron
 launcher would add `--no-sandbox` on Linux by itself, so the smoke launches with
 `chromiumSandbox: true` and the `--no-sandbox` legs pass the switch themselves; and since
 Electron takes `ELECTRON_DISABLE_SANDBOX` in the environment as the same switch, a `--sandbox`
@@ -41,6 +47,26 @@ xvfb-run -a -s '-screen 0 1600x1000x24' node .github/smoke/smoke.mjs \
 
 The fixture extension lives under `fixtures/mv3-worker` (its worker logs the `chrome` surface it
 starts with; the hook in `smoke.mjs` reads the line off the session's ServiceWorkers console).
+
+## reCAPTCHA v2 (`recaptcha`, allow-network)
+
+The one scenario that leaves the loopback fixture: it opens Google's own reCAPTCHA v2 demo
+(`https://www.google.com/recaptcha/api2/demo`) in a tab and requires the widget's anchor frame
+and then its challenge frame (`bframe`) within 10 s of the load, one trusted click at the
+checkbox to tick it (`aria-checked=true`) or put the image challenge up within 20 s (a fresh
+profile on an automated build gets the challenge – either is the widget's handshake at work),
+and no `reCAPTCHA Timeout` or permissions-policy violation among the tab's console lines once
+the widget's 15 s timer window has passed (W5-P1: the anchor asks the Storage Access API for its
+cookies before it answers, and a permission prompt left pending there stalled the widget until
+that timer). The harness reaches `www.google.com` first (a HEAD within 8 s); when it cannot, the
+scenario is recorded as `skipped: network` with the reason in `result.json` and the log, and the
+verdict stays green – the result carries `network: "allow-network"` either way.
+
+```sh
+xvfb-run -a -s '-screen 0 1600x1000x24' node .github/smoke/smoke.mjs \
+  --exe dist/linux-unpacked/zenium --label recaptcha --out /tmp/smoke-out \
+  --scenarios recaptcha --extra-args="--no-sandbox --disable-gpu"
+```
 
 ## Windows installer
 
@@ -86,6 +112,59 @@ Server 2025 – so the click on it is best effort and its reading `osClick` says
 anywhere), Chromium's routing of an OS toast activation to the page's `onclick` (the one link the
 dispatched click does not exercise), whether Windows hands the foreground to the window
 (`windowFocused` is recorded, not judged), the Settings page's visual entry and Focus Assist.
+
+## Windows restart registration (`restart-registration`)
+
+`restart-scenario.mjs` runs on both Windows legs for os-49 – Windows bringing Zenium back with
+its session after a restart or a sign-out. Electron 44 has no `RegisterApplicationRestart`, so
+`src/main/platform/restartRegistration.ts` uses the alternative Windows offers every app: when a
+window's `session-end` says the session is ending (Electron raises it off `WM_ENDSESSION`; past
+that point the process is ended by Windows), the relaunch command goes under the user's
+`RunOnce` key (`HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce\Zenium[.<hash of the
+profile's path>]`), which Windows runs once at the next sign-in – gated on the user's
+"Automatically save my restartable apps and restart them when I sign back in" toggle
+(`Winlogon\RestartApps`; absent means the OS default: on since Windows 11, off on Windows 10); a
+clean quit takes the entry back. No runner restarts: the scenario emits the events on the running
+app from the main process and reads what Windows would run off the registry (`win-restart.ps1`);
+the toggle is set on for the run and put back as it was, the entry deleted at the end.
+
+| step                      | reads                                                                                                                                                                                                                                          | confirmed by                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `toggle-on`               | `RestartApps` before the run (restored at the end), then set to 1; a leftover entry of an earlier run removed                                                                                                                                  | the OS's registry                       |
+| `session-end-registers`   | `session-end` `{reasons:['shutdown']}` on the main window: this profile's RunOnce value holds `<exe> "--user-data-dir=<profile>" --restore-last-session` (the running executable, the profile the app resolved); the `[zen] restart:` line says so | the app's handler, the OS's registry    |
+| `clean-quit-unregisters`  | `will-quit` on the app: the value gone (the app stays up – the emit is the quit's event alone)                                                                                                                                                | the app's handler, the OS's registry    |
+| `toggle-off-skips`        | `RestartApps` = 0, `session-end` again: no value; the line says the toggle is off                                                                                                                                                              | the app's handler, the OS's registry    |
+| `close-app-skips`         | `RestartApps` = 1, `session-end` `{reasons:['close-app']}` (the Restart Manager closing the app for an installer, which restarts it itself): no value; the line says no sign-in follows                                                     | the app's handler, the OS's registry    |
+| `registration-survives`   | `session-end` `{reasons:['logoff']}` registers again; the process is ended the way Windows ends it after `WM_ENDSESSION` (`taskkill /F`): the value stands – what the next sign-in would run                                                    | the OS's registry                       |
+| `cleanup`                 | the value deleted; the toggle put back                                                                                                                                                                                                         | the OS's registry                       |
+
+What no runner confirms: the sign-in itself (RunOnce processed by the shell at the user's next
+sign-in, the app up with `--restore-last-session`), and that Windows delivers `WM_ENDSESSION`
+to the window in time for the write on a real shutdown (the events are emitted, not received).
+
+## Windows private windows' taskbar group (`private-taskbar`)
+
+`private-taskbar-scenario.mjs` runs on both Windows legs for os-56. Windows groups taskbar
+buttons by AppUserModelID, so a private window's frame carries a second id – the app's with
+`.private` – with the private icon (the mask on the private purple, `resources/icons/private/`)
+and a relaunch command that opens a private window; the main process registers that id's class
+key beside the app's (`notifications.ts`), which the installer's uninstall check sees gone. The
+taskbar cannot be asked what buttons it shows, so the facts are read where Windows reads them:
+the window's shell property store (`win-taskbar.ps1`, `SHGetPropertyStoreForWindow` on every
+top-level window of the process) and the registry.
+
+| step                      | what is read                                                                                                                                                                                                                                | confirmed by                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `open-private-window`     | `window.newPrivate` from the main window's chrome: a second `BrowserWindow`, visible, titled `… (Private)`, with its frame handle                                                                                                            | the app                                 |
+| `private-window-grouped`  | that frame's `System.AppUserModel.ID` = `<app id>.private`, `RelaunchCommand` = this executable, `--user-data-dir=<this profile>`, `--private-window`, `RelaunchDisplayNameResource` = `Zenium (Private)`; the main window's frame carries no id of its own | the OS's shell                          |
+| `private-icon`            | `RelaunchIconResource` = `<…\private\icon.ico>,0`, the file on disk under the running build's directory                                                                                                                                   | the OS's shell, the file system         |
+| `class-key`               | `HKCU\Software\Classes\AppUserModelId\<app id>.private`: `DisplayName` the group's name, `IconUri` the private `icon.png` under the build's directory (polled: written after `browser.start`)                                                | the OS's registry                       |
+| `taskbar-still`           | a screenshot with both windows up – recorded, not judged (the runner's session may show no taskbar)                                                                                                                                       | –                                       |
+| `close-private-window`    | the private window closed from the main process; one window remains                                                                                                                                                                       | the app                                 |
+
+What no runner confirms: the taskbar drawing two buttons (the still shows it when the session
+has a taskbar), and a click on a pinned "Zenium (Private)" button running the relaunch command
+(the command is asserted; the shell's launch of it is not exercised).
 
 ## macOS default browser (`default-browser`)
 

@@ -1,6 +1,8 @@
 import { BrowserWindow, type Rectangle } from 'electron'
 import { PRIVATE_CONTAINER_ID, type Tab } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
+import { extensionPageOpenHandler } from '../extensionPopupOpen'
+import { ElectronTabViewHost } from '../views'
 import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '../../../core/extensions/api/tabs'
 import {
   type ChromeWindow,
@@ -211,10 +213,19 @@ export class WindowsApi {
     })
     const popup = { bw, extensionId: ctx.extensionId, incognito }
     this.model.popups.set(bw.id, popup)
-    bw.webContents.setWindowOpenHandler(({ url }) => {
-      if (/^https?:/.test(url)) this.host.browser.tabs.createTab({ url, active: true })
-      return { action: 'deny' }
-    })
+    // Chrome gives the popup window's page a real window for `window.open`: the page Chromium
+    // made for the call joins the tabs of the last focused window of the popup's profile (or a
+    // toolbar-only window for a sized open) as an action popup's does; without that path a site
+    // or extension URL still opens as a tab.
+    const views = this.host.browser.platform.views
+    bw.webContents.setWindowOpenHandler(
+      extensionPageOpenHandler({
+        views: views instanceof ElectronTabViewHost ? views : undefined,
+        windowFor: () => this.lastFocusedWindowOfProfile(incognito),
+        openerUrl: () => bw.webContents.getURL(),
+        browser: this.host.browser
+      })
+    )
     bw.on('closed', () => {
       this.model.popups.delete(bw.id)
       this.host.scheduleTick()
@@ -232,6 +243,14 @@ export class WindowsApi {
     }, 1500)
     this.host.scheduleTick()
     return this.model.chromePopupWindow(popup, true)
+  }
+
+  /** The window a popup window's `window.open` lands in: the last focused one of its profile. */
+  private lastFocusedWindowOfProfile(incognito: boolean): ZenWindow | undefined {
+    return this.host.browser
+      .allWindows()
+      .filter((win) => win.isPrivate === incognito)
+      .sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
   }
 
   private update(ctx: ApiContext, windowId: unknown, info: unknown): ChromeWindow {
