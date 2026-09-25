@@ -1,0 +1,125 @@
+name: Android desktop windowing demo
+
+# Records wave 6's desktop windowing pass (W6-5: OS-12, desktop windowing and Samsung DeX) on a
+# hardware-accelerated Android emulator laid out as a 1600 x 1000 dp desktop at one px per dp,
+# with freeform windowing switched on (`enable_freeform_support`, `force_resizable_activities`)
+# and the browser started into a FREEFORM WINDOW through its launch options, and uploads the
+# video, the stills, the findings and the per-frame rows. DexWindowingDemo drives a MOUSE through
+# the input dispatcher (hover moves, the secondary button, the wheel with Ctrl in its meta state –
+# DemoHarness.Mouse) and a keyboard with Ctrl chords, and reads each claim off the chrome's DOM,
+# its stores, the core's state, the page's own document or the window manager, never off the
+# still alone; the run FAILS when one does not hold: the 1100 x 760 window laid out as the tablet
+# with no system bar reaching it and the chrome below the caption; the window dragged narrower in
+# eight steps under the frames record with the chrome's own requestAnimationFrame probe seeing no
+# frame with a stale root box, the phone chrome taking over as the short side drops under 600 px
+# and MainActivity kept (the chrome document that launched is the one still there); hover on the
+# tablet chrome following the live pointer (a row's fill and its close on approach, the toolbar
+# button's fill, a finger's tap lighting no hover fill, the mouse's return bringing it back) with
+# the WebView's cursor shapes (the hand over a link, the text beam in the URL field); the
+# secondary button opening a sidebar row's tab menu, reaching the page as a contextmenu event with
+# button 2, and offering "Paste and go" on the URL field; Ctrl+wheel over the page zooming along
+# the core's ladder (1.1, 1.25; 0.9) read off the core and off the page's own layout viewport,
+# Ctrl+0 resetting, the plain wheel scrolling, Ctrl+wheel over the chrome zooming nothing, the
+# engine's pinch scale staying 1; Ctrl+T, Ctrl+W (the tab, not the window), Ctrl+L and Ctrl+Tab;
+# a density change (160 -> 128 dpi) reaching the chrome with the document intact. The frame rows
+# of both resizes go into the job summary's frame table, reported only (the emulator's software
+# GPU).
+#
+# Two acts, in parallel, each on its own emulator: the light and the dark colour scheme (the
+# same claims; the stills of both are the design record's). Dispatch-only, like the other demos:
+# about fifteen minutes an act, and it says nothing about a change being correct. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the driver, the
+# display and the theme. The instrumentation runs with --no-hidden-api-checks: a mouse button's
+# press and release name their button through MotionEvent.setActionButton, a test API. One more
+# boot per act when the emulator itself went away under the driver, never when the driver failed.
+on:
+  workflow_dispatch:
+  # TEMPORARY while the pass is built: every push of its branch records both acts.
+  push:
+    branches:
+      - cursor/android-dex-windowing-46cc
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-dex-windowing-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Desktop windowing demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.DexWindowingDemo
+        DEMO_DIR=dex-windowing-demo
+        DEMO_OUT=artifacts/android-dex-windowing-demo
+        DEMO_VIDEO=android-dex-windowing-demo-light.mp4
+        DEMO_THEME=light
+        DEMO_DISPLAY=1600x1000@160
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-dex-windowing-demo-light
+      artifact-path: artifacts/android-dex-windowing-demo/
+
+  light-again:
+    name: Desktop windowing demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.DexWindowingDemo
+        DEMO_DIR=dex-windowing-demo
+        DEMO_OUT=artifacts/android-dex-windowing-demo
+        DEMO_VIDEO=android-dex-windowing-demo-light.mp4
+        DEMO_THEME=light
+        DEMO_DISPLAY=1600x1000@160
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-dex-windowing-demo-light-second-boot
+      artifact-path: artifacts/android-dex-windowing-demo/
+
+  dark:
+    name: Desktop windowing demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.DexWindowingDemo
+        DEMO_DIR=dex-windowing-demo
+        DEMO_OUT=artifacts/android-dex-windowing-demo
+        DEMO_VIDEO=android-dex-windowing-demo-dark.mp4
+        DEMO_THEME=dark
+        DEMO_DISPLAY=1600x1000@160
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-dex-windowing-demo-dark
+      artifact-path: artifacts/android-dex-windowing-demo/
+
+  dark-again:
+    name: Desktop windowing demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.DexWindowingDemo
+        DEMO_DIR=dex-windowing-demo
+        DEMO_OUT=artifacts/android-dex-windowing-demo
+        DEMO_VIDEO=android-dex-windowing-demo-dark.mp4
+        DEMO_THEME=dark
+        DEMO_DISPLAY=1600x1000@160
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-dex-windowing-demo-dark-second-boot
+      artifact-path: artifacts/android-dex-windowing-demo/
