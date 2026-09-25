@@ -19,9 +19,14 @@ export const QUIT_HOLD_MS = 1500
  *
  * The keys reach here through the key table (`KeyboardHandler`): the chord's `keyDown` in a
  * window's chrome or in one of its pages arms the hold (Chromium hands a ⌘ chord to the web
- * view before the menu bar sees it, and a consumed chord never reaches the bar's Quit role), a
- * key repeat while it runs is the same hold, and any `keyUp` releases it – Chrome's rule, whose
- * panel waits for the next key up. Timers are injected so the rule can be tested without waiting.
+ * view – and so to `before-input-event` – before the menu bar sees it), a key repeat while it
+ * runs is the same hold, and any `keyUp` releases it – Chrome's rule, whose panel waits for the
+ * next key up. The arming key down and its repeats are left UNCONSUMED: a key down the browser
+ * handles has Chromium drop the key up that follows it before Electron sees it
+ * (`suppress_events_until_keydown_`), and the release is the whole point. So the chord goes on
+ * to the page as a plain key and, on macOS, to the menu bar's Quit role, whose quit request
+ * `Browser.requestQuit` refuses while the hold runs. Timers are injected so the rule can be
+ * tested without waiting.
  *
  * The panel is drawn where the keyboard is and stays: by the page script of the window's active
  * page (`TabView.showQuitHold`, `shared/quitHoldPanel`) – the page's view lies over the chrome,

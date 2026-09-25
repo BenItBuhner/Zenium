@@ -164,11 +164,13 @@ describe('the quit chord held quits (session-08)', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  it('arms the hold in the window the chord was pressed in, on macOS with Warn Before Quitting on (the default)', () => {
+  it('arms the hold in the window the chord was pressed in, on macOS with Warn Before Quitting on (the default), and lets the key through', () => {
     const { browser, win } = start({ os: 'darwin' })
     expect(browser.state.settings.warnBeforeQuitting).toBe(true)
     const requestQuit = vi.spyOn(browser, 'requestQuit')
-    expect(browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)).toBe(true)
+    // Not consumed: Chromium drops the key up that follows a key down the browser handled, and
+    // the key up is what the hold waits for (measured: keys.ts).
+    expect(browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)).toBe(false)
     expect(browser.quitHold.holding).toBe(true)
     // The chord as the panel spells it: the platform's own spelling of the quit binding.
     expect(win.quitHold).toEqual({ startedAt: Date.now(), durationMs: QUIT_HOLD_MS, chord: '⌘Q' })
@@ -219,7 +221,7 @@ describe('the quit chord held quits (session-08)', () => {
   it('a page view without the panel (Android’s) leaves the hold to the chrome’s own copy', () => {
     const { browser, win } = start({ os: 'darwin', pageless: true })
     browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
-    expect(browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)).toBe(true)
+    expect(browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)).toBe(false)
     expect(win.quitHold).not.toBeNull()
     browser.keys.handle(release('q'), null, win)
     expect(win.quitHold).toBeNull()
@@ -257,6 +259,36 @@ describe('the quit chord held quits (session-08)', () => {
     expect(platform.host.quits).toBe(0)
   })
 
+  it('a plain quit request while the hold runs is refused – the unconsumed ⌘Q reaching the menu bar’s Quit role on macOS', async () => {
+    const { browser, platform, win } = start({ os: 'darwin' })
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    // The role's request (`app.quit()` → before-quit → requestQuit) arrives while the keys are down.
+    await expect(browser.requestQuit()).resolves.toBe(false)
+    await settle()
+    expect(win.prompt).toBeNull()
+    expect(platform.host.quits).toBe(0)
+    expect(browser.quitHold.holding).toBe(true)
+    // The hold still decides: the release quits nothing, a full hold quits.
+    browser.keys.handle(release('q'), null, win)
+    expect(browser.quitHold.holding).toBe(false)
+    expect(platform.host.quits).toBe(0)
+    const requestQuit = vi.spyOn(browser, 'requestQuit')
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    vi.advanceTimersByTime(QUIT_HOLD_MS)
+    expect(requestQuit).toHaveBeenCalledWith(win, { held: true })
+    await expect(requestQuit.mock.results[0]?.value).resolves.toBe(true)
+    expect(browser.quitting).toBe(true)
+    expect(platform.host.quits).toBe(1)
+  })
+
+  it('a quit request with no hold running goes ahead as before (the Dock, the menu row picked)', async () => {
+    const { browser, platform, win } = start({ os: 'darwin' })
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    await expect(browser.requestQuit()).resolves.toBe(true)
+    expect(platform.host.quits).toBe(1)
+  })
+
   it('a key coming up before the hold is over releases it and nothing quits', async () => {
     const { browser, platform, win } = start({ os: 'darwin' })
     const requestQuit = vi.spyOn(browser, 'requestQuit')
@@ -279,12 +311,13 @@ describe('the quit chord held quits (session-08)', () => {
     expect(win.quitHold).toBeNull()
   })
 
-  it('key repeats while the hold runs are the same hold: the clock is not restarted', () => {
+  it('key repeats while the hold runs are the same hold, let through like the first key: the clock is not restarted', () => {
     const { browser, win } = start({ os: 'darwin' })
     browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
     const started = win.quitHold
     vi.advanceTimersByTime(700)
-    expect(browser.keys.handle(quitChord('darwin', 'keyDown', true), null, win)).toBe(true)
+    // A consumed repeat would have Chromium drop the release that follows it, like the first key.
+    expect(browser.keys.handle(quitChord('darwin', 'keyDown', true), null, win)).toBe(false)
     expect(win.quitHold).toBe(started)
     vi.advanceTimersByTime(QUIT_HOLD_MS - 700)
     expect(browser.quitHold.holding).toBe(false)
@@ -305,7 +338,7 @@ describe('the quit chord held quits (session-08)', () => {
   it('the chord from a page of the window arms the hold as the chrome’s does', () => {
     const { browser, win } = start({ os: 'darwin' })
     const tab = browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
-    expect(browser.keys.handle(quitChord('darwin', 'keyDown'), tab.id, win)).toBe(true)
+    expect(browser.keys.handle(quitChord('darwin', 'keyDown'), tab.id, win)).toBe(false)
     expect(win.quitHold).not.toBeNull()
     browser.keys.handle(release('q'), tab.id, win)
     expect(win.quitHold).toBeNull()
@@ -333,7 +366,7 @@ describe('the quit chord held quits (session-08)', () => {
   it('holds on any OS when the host asks (the drives’ --test-quit-hold stand-in)', () => {
     const { browser, win } = start({ os: 'linux', everywhere: true })
     const requestQuit = vi.spyOn(browser, 'requestQuit')
-    expect(browser.keys.handle(quitChord('linux', 'keyDown'), null, win)).toBe(true)
+    expect(browser.keys.handle(quitChord('linux', 'keyDown'), null, win)).toBe(false)
     // The stand-in's panel names the Chrome preset's Linux chord, not a Mac's.
     expect(win.quitHold).toEqual({
       startedAt: Date.now(),

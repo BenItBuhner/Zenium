@@ -52,14 +52,22 @@ export class KeyboardHandler {
         (sourceTabId === null || this.editing.has(sourceTabId))
       )
         return false
+      // The quit chord on a host that holds (macOS with Warn Before Quitting on): the press arms
+      // the hold in this window instead of quitting, and the key is NOT consumed – nor are its
+      // repeats while the hold runs. Chromium drops the key up (and char) that follow a key
+      // down the browser handled (`RenderWidgetHostImpl`'s `suppress_events_until_keydown_`), so
+      // a consumed chord's release would never reach `before-input-event`, and the release is
+      // what the hold waits for (measured on Electron 44.4.5: a consumed key down's key up
+      // reaches neither `before-input-event` nor `input-event`; an unconsumed one's does). The
+      // chord goes on to the page as a plain key – no page action is bound to it – and, on
+      // macOS, on to the menu bar's Quit, whose quit request yields to the running hold
+      // (`Browser.requestQuit`). Off, the chord quits at once and is consumed as before.
+      if (shortcut.action === 'app.quit' && this.browser.quitHold.keyDown(win)) return false
       if (input.isAutoRepeat && !REPEATABLE.has(shortcut.action)) return true
       if (shortcut.unsupported) {
         this.browser.toast(`"${shortcut.label}" is not available in this build yet.`, 'info', win)
         return true
       }
-      // The quit chord on a host that holds (macOS with Warn Before Quitting on): the press arms
-      // the hold in this window instead of quitting; the chord is consumed either way.
-      if (shortcut.action === 'app.quit' && this.browser.quitHold.keyDown(win)) return true
       this.browser.actions.run(shortcut.action, { sourceTabId, win })
       return true
     }

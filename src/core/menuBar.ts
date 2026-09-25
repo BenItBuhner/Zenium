@@ -171,8 +171,11 @@ export function applicationMenu(browser: Browser): Template {
       },
       { type: 'separator' },
       // The role's chord stays registered: it is what quits with every window closed. With a
-      // window in front the key table takes ⌘Q first (the hold, or the plain quit) and the
-      // role never sees it; a pick of the row itself quits at once, as Chrome's does.
+      // window in front the key table sees ⌘Q first: off, it quits at once and consumes the
+      // key, and the role never sees it; on, it arms the hold and lets the key through (its
+      // release has to reach the table), so the role fires too – a quit request the browser
+      // refuses while the hold runs (`Browser.requestQuit`). A pick of the row itself quits at
+      // once, as Chrome's does.
       { label: 'Quit Zenium', role: 'quit' }
     ]
   }
