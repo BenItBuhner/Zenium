@@ -13,7 +13,11 @@ name: TEMPORARY - compat round 18 sweep and frame budget trigger
 #     isolated-world WebView and Speak Subtitles' externally_connectable page API; the driver rows
 #     RSS Feed Reader, Boxel 3D, RSS Subscription Extension and Infinity New Tab) on both
 #     WebViews. AdGuard VPN is not in any list: it reads n/a on the Google image by round 16's
-#     diagnosis (the emulator's own fault) and is not re-run.
+#     diagnosis (the emulator's own fault) and is not re-run. `[sweep113]` fires the System
+#     WebView sweep job alone (with its rows-left check and second boot): the one granted re-run
+#     of the 113 sweep lane after the round's AFTER run lost both of its boots to the emulator's
+#     host renderer under Buyhatke's Flipkart page scene at the document's start (the row now
+#     reads notOnGoogleImage there, as AdGuard VPN does; its 156 reading is the measure).
 #   - `[budget]` in the commit message: the runtime demo's two jobs with the frame budget alone
 #     (ExtensionScrollBudget under SKIP_DEMO=1: the long fixture scrolled with 0, 2, 3 and 6
 #     extensions and the fetch-heavy twin, the jank report in the job summary) and, ahead of it,
@@ -43,7 +47,7 @@ concurrency:
 
 jobs:
   system-webview:
-    if: contains(github.event.head_commit.message, '[sweep]')
+    if: contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep113]')
     name: System WebView (API 34 image)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
@@ -87,7 +91,7 @@ jobs:
   # minus its graded rows (the row in flight at the death is the first left, and runs last there);
   # every row when the driver never wrote one (the emulator never came up).
   remaining-system-webview:
-    if: always() && contains(github.event.head_commit.message, '[sweep]')
+    if: always() && (contains(github.event.head_commit.message, '[sweep]') || contains(github.event.head_commit.message, '[sweep113]'))
     needs: system-webview
     name: Rows left after an emulator death - System WebView
     runs-on: ubuntu-24.04
