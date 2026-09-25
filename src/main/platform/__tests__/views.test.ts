@@ -2090,25 +2090,19 @@ describe('page fonts (CT-25)', () => {
     })
   })
 
-  it('keeps the layer’s slots over a change of the setting, and passes the user’s change on', async () => {
+  it('keeps the layer’s slots over a change of the setting; the layer never reaches the setting', async () => {
     const host = new ElectronTabViewHost(sessions)
-    const heard: PageFontSettings[] = []
-    const stop = host.onUserFontsChanged((fonts) => heard.push(fonts))
     host.applyExtensionFonts({ families: { standard: 'Verdana' }, scripts: {}, sizes: {} })
     const { dbg } = page(host, 'tab_ext_fonts_user')
     // The user picks a standard and a serif: the standard stays the extension's on the page.
     host.applyFonts({ ...DEFAULT_FONT_SETTINGS, standard: 'Inter', serif: 'Lora' })
     await settle()
-    expect(heard).toEqual([{ ...DEFAULT_FONT_SETTINGS, standard: 'Inter', serif: 'Lora' }])
     expect(sent(dbg, 'Page.setFontFamilies')).toEqual([{ fontFamilies: { serif: 'Lora' } }])
     expect(ElectronTabViewHost.currentFonts()).toMatchObject({ standard: 'Inter' })
     // A new page too.
     const made = page(host, 'tab_ext_fonts_user_new')
     expect(made.prefs.defaultFontFamily).toEqual({ standard: 'Verdana', serif: 'Lora' })
-    // The listener let go hears nothing more; the layer never reaches the user's setting.
-    stop()
     host.applyFonts(DEFAULT_FONT_SETTINGS)
-    expect(heard).toHaveLength(1)
     expect(ElectronTabViewHost.currentFonts()).toEqual(DEFAULT_FONT_SETTINGS)
   })
 

@@ -3,7 +3,11 @@ import {
   FONT_SETTINGS_PERMISSION_ERROR,
   type FontValues
 } from '../../../core/extensions/api/fontSettings'
-import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '../../../shared/fonts'
+import {
+  DEFAULT_FONT_SETTINGS,
+  type ExtensionFontLayer,
+  type PageFontSettings
+} from '../../../shared/fonts'
 import type { ExtensionControl } from '../../../shared/types'
 import { ExtensionControls } from '../extensionApi/controls'
 import { FontSettingsApi } from '../extensionApi/fontSettings'
@@ -26,6 +30,8 @@ interface World {
   persisted: Map<string, FontValues>
   /** What the pages were handed, in order. */
   applied: PageFontSettings[]
+  /** What the pages' font hook was handed beside the setting, in order (null: nothing held). */
+  layers: Array<ExtensionFontLayer | null>
   /** Every `UIState.extensionControls` map the state was handed, in order. */
   controls: Array<Record<string, ExtensionControl>>
   user: PageFontSettings
@@ -34,10 +40,11 @@ interface World {
   ctx(extensionId: string): ApiContext
 }
 
-function world(options: { fonts?: string[]; attach?: boolean } = {}): World {
+function world(options: { fonts?: string[]; attach?: boolean; platform?: string } = {}): World {
   const dispatched: Dispatched[] = []
   const persisted = new Map<string, FontValues>()
   const applied: PageFontSettings[] = []
+  const layers: Array<ExtensionFontLayer | null> = []
   const controls: Array<Record<string, ExtensionControl>> = []
   const listeners: Array<() => void> = []
   let userApplied = ''
@@ -47,6 +54,7 @@ function world(options: { fonts?: string[]; attach?: boolean } = {}): World {
     loaded: new Set([OLD, NEW, NO_PERMISSION]),
     persisted,
     applied,
+    layers,
     controls,
     user: { ...DEFAULT_FONT_SETTINGS },
     broadcast: async () => {
@@ -109,10 +117,16 @@ function world(options: { fonts?: string[]; attach?: boolean } = {}): World {
     }
   } as unknown as ApiHost
   state.api = new FontSettingsApi(host, {
-    platform: 'linux',
+    platform: options.platform ?? 'linux',
     listFonts: async () => options.fonts ?? ['Tinos', 'Arimo', 'Cousine']
   })
   if (options.attach !== false) state.api.attach()
+  state.api.attachPages({
+    locale: 'en-US',
+    applyExtensionFonts: (layer) => {
+      layers.push(layer)
+    }
+  })
   for (const id of state.loaded) state.api.load(id)
   return state
 }
@@ -185,7 +199,7 @@ describe('FontSettingsApi handlers', () => {
     expect(w.applied.length).toBe(before + 1)
   })
 
-  it('answers per-script and slotless families with not_controllable and takes no value for them', () => {
+  it('takes per-script and slotless families beside the setting: answered, persisted, and handed to the pages\u2019 hook', () => {
     const w = world()
     call(w, OLD, 'setFont', {
       genericFamily: 'standard',
@@ -194,25 +208,81 @@ describe('FontSettingsApi handlers', () => {
     })
     call(w, OLD, 'setFont', { genericFamily: 'cursive', fontId: 'Comic Neue' })
     expect(call(w, OLD, 'getFont', { genericFamily: 'standard', script: 'Arab' })).toEqual({
-      fontId: '',
-      levelOfControl: 'not_controllable'
+      fontId: 'Noto Naskh Arabic',
+      levelOfControl: 'controlled_by_this_extension'
     })
-    expect(call(w, OLD, 'getFont', { genericFamily: 'cursive' })).toEqual({
-      fontId: '',
-      levelOfControl: 'not_controllable'
+    expect(call(w, NEW, 'getFont', { genericFamily: 'cursive' })).toEqual({
+      fontId: 'Comic Neue',
+      levelOfControl: 'controlled_by_other_extensions'
     })
+    // Nothing of the setting's shape is held: the pages keep the user's setting untouched…
     expect(w.applied).toEqual([])
+    // …and the hook has the layer beside it, once per change.
+    expect(w.layers).toEqual([
+      { families: {}, scripts: { Arab: { standard: 'Noto Naskh Arabic' } }, sizes: {} },
+      {
+        families: { cursive: 'Comic Neue' },
+        scripts: { Arab: { standard: 'Noto Naskh Arabic' } },
+        sizes: {}
+      }
+    ])
+    expect(w.persisted.get(OLD)).toEqual({
+      extras: { cursive: 'Comic Neue' },
+      scripts: { Arab: { standard: 'Noto Naskh Arabic' } }
+    })
+    // The same value again moves nothing.
+    call(w, OLD, 'setFont', { genericFamily: 'cursive', fontId: 'Comic Neue' })
+    expect(w.layers).toHaveLength(2)
+    // Cleared: the hook is told once, null when nothing is left (the Arabic slot goes with it;
+    // Linux has no family of its own for it, so the hook erases it by itself).
+    call(w, OLD, 'clearFont', { genericFamily: 'standard', script: 'Arab' })
+    expect(w.layers.at(-1)).toEqual({ families: { cursive: 'Comic Neue' }, scripts: {}, sizes: {} })
+    call(w, OLD, 'setFont', { genericFamily: 'cursive', fontId: '' })
+    expect(w.layers.at(-1)).toBeNull()
+    expect(w.layers).toHaveLength(4)
     expect(w.persisted.size).toBe(0)
+    expect(call(w, OLD, 'getFont', { genericFamily: 'cursive' })).toEqual({
+      fontId: 'Comic Sans MS',
+      levelOfControl: 'controllable_by_this_extension'
+    })
   })
 
-  it('sets the sizes; the fixed-width size follows the size and is not controllable', () => {
+  it('names the engine\u2019s own face again for a script slot let go where the engine has one (macOS, Windows)', () => {
+    const w = world({ platform: 'darwin', fonts: ['Hiragino Kaku Gothic ProN', 'Osaka'] })
+    call(w, OLD, 'setFont', { genericFamily: 'standard', script: 'Jpan', fontId: 'Noto Sans JP' })
+    expect(w.layers.at(-1)).toEqual({
+      families: {},
+      scripts: { Jpan: { standard: 'Noto Sans JP' } },
+      sizes: {}
+    })
+    call(w, OLD, 'clearFont', { genericFamily: 'standard', script: 'Jpan' })
+    expect(w.layers.at(-1)).toEqual({
+      families: {},
+      scripts: { Jpan: { standard: 'Hiragino Kaku Gothic ProN' } },
+      sizes: {}
+    })
+    expect(call(w, OLD, 'getFont', { genericFamily: 'standard', script: 'Jpan' })).toEqual({
+      fontId: 'Hiragino Kaku Gothic ProN',
+      levelOfControl: 'controllable_by_this_extension'
+    })
+  })
+
+  it('sets the sizes; the fixed-width size is a preference of its own, the size\u2019s companion until set', () => {
     const w = world()
     expect(call(w, OLD, 'getDefaultFontSize')).toEqual({
       pixelSize: 16,
       levelOfControl: 'controllable_by_this_extension'
     })
+    expect(call(w, OLD, 'getDefaultFixedFontSize')).toEqual({
+      pixelSize: 13,
+      levelOfControl: 'controllable_by_this_extension'
+    })
     call(w, OLD, 'setDefaultFontSize', { pixelSize: 24 })
     call(w, OLD, 'setMinimumFontSize', { pixelSize: 12 })
+    expect(call(w, OLD, 'getDefaultFixedFontSize', {})).toEqual({
+      pixelSize: 20,
+      levelOfControl: 'controllable_by_this_extension'
+    })
     call(w, OLD, 'setDefaultFixedFontSize', { pixelSize: 30 })
     expect(call(w, OLD, 'getDefaultFontSize', {})).toEqual({
       pixelSize: 24,
@@ -222,12 +292,15 @@ describe('FontSettingsApi handlers', () => {
       pixelSize: 12,
       levelOfControl: 'controlled_by_other_extensions'
     })
-    expect(call(w, OLD, 'getDefaultFixedFontSize', {})).toEqual({
-      pixelSize: 20,
-      levelOfControl: 'not_controllable'
+    expect(call(w, NEW, 'getDefaultFixedFontSize', {})).toEqual({
+      pixelSize: 30,
+      levelOfControl: 'controlled_by_other_extensions'
     })
     expect(w.applied.at(-1)).toEqual({ ...DEFAULT_FONT_SETTINGS, size: 24, minimumSize: 12 })
+    expect(w.layers.at(-1)).toEqual({ families: {}, scripts: {}, sizes: { fixed: 30 } })
+    expect(w.persisted.get(OLD)).toEqual({ size: 24, minimumSize: 12, fixedSize: 30 })
     call(w, OLD, 'clearDefaultFixedFontSize')
+    expect(w.layers.at(-1)).toBeNull()
     call(w, OLD, 'clearDefaultFontSize')
     call(w, OLD, 'clearMinimumFontSize', {})
     expect(w.applied.at(-1)).toEqual(DEFAULT_FONT_SETTINGS)
@@ -333,7 +406,67 @@ describe('FontSettingsApi events', () => {
     expect(w.dispatched).toEqual([])
   })
 
-  it('reports the sizes, the derived fixed-width size among them', () => {
+  it('reports a script\u2019s family and a slotless one the same way, the script named, the empty name once let go where the engine has none', () => {
+    const w = world()
+    call(w, NEW, 'setFont', { genericFamily: 'serif', script: 'Cyrl', fontId: 'PT Serif' })
+    call(w, OLD, 'setFont', { genericFamily: 'fantasy', fontId: 'Papyrus' })
+    expect(w.dispatched.map((d) => [d.extensionId, d.details])).toEqual([
+      [
+        OLD,
+        {
+          fontId: 'PT Serif',
+          script: 'Cyrl',
+          genericFamily: 'serif',
+          levelOfControl: 'controlled_by_other_extensions'
+        }
+      ],
+      [
+        NEW,
+        {
+          fontId: 'PT Serif',
+          script: 'Cyrl',
+          genericFamily: 'serif',
+          levelOfControl: 'controlled_by_this_extension'
+        }
+      ],
+      [
+        OLD,
+        {
+          fontId: 'Papyrus',
+          script: 'Zyyy',
+          genericFamily: 'fantasy',
+          levelOfControl: 'controlled_by_this_extension'
+        }
+      ],
+      [
+        NEW,
+        {
+          fontId: 'Papyrus',
+          script: 'Zyyy',
+          genericFamily: 'fantasy',
+          levelOfControl: 'controlled_by_other_extensions'
+        }
+      ]
+    ])
+    w.dispatched.length = 0
+    call(w, NEW, 'clearFont', { genericFamily: 'serif', script: 'Cyrl' })
+    expect(w.dispatched.map((d) => d.details)).toEqual([
+      {
+        fontId: '',
+        script: 'Cyrl',
+        genericFamily: 'serif',
+        levelOfControl: 'controllable_by_this_extension'
+      },
+      {
+        fontId: '',
+        script: 'Cyrl',
+        genericFamily: 'serif',
+        levelOfControl: 'controllable_by_this_extension'
+      }
+    ])
+  })
+
+  it('reports the sizes, the fixed-width size among them while it follows the size, and as its own once set', () => {
     const w = world()
     call(w, OLD, 'setDefaultFontSize', { pixelSize: 17 })
     expect(w.dispatched.map((d) => [d.extensionId, d.event, d.details])).toEqual([
@@ -350,13 +483,34 @@ describe('FontSettingsApi events', () => {
       [
         OLD,
         'fontSettings.onDefaultFixedFontSizeChanged',
-        { pixelSize: 14, levelOfControl: 'not_controllable' }
+        { pixelSize: 14, levelOfControl: 'controllable_by_this_extension' }
       ],
       [
         NEW,
         'fontSettings.onDefaultFixedFontSizeChanged',
-        { pixelSize: 14, levelOfControl: 'not_controllable' }
+        { pixelSize: 14, levelOfControl: 'controllable_by_this_extension' }
       ]
+    ])
+    w.dispatched.length = 0
+    // Held by an extension, the fixed-width size no longer follows the size.
+    call(w, NEW, 'setDefaultFixedFontSize', { pixelSize: 15 })
+    expect(w.dispatched.map((d) => [d.extensionId, d.event, d.details])).toEqual([
+      [
+        OLD,
+        'fontSettings.onDefaultFixedFontSizeChanged',
+        { pixelSize: 15, levelOfControl: 'controlled_by_other_extensions' }
+      ],
+      [
+        NEW,
+        'fontSettings.onDefaultFixedFontSizeChanged',
+        { pixelSize: 15, levelOfControl: 'controlled_by_this_extension' }
+      ]
+    ])
+    w.dispatched.length = 0
+    call(w, OLD, 'setDefaultFontSize', { pixelSize: 20 })
+    expect(w.dispatched.map((d) => d.event)).toEqual([
+      'fontSettings.onDefaultFontSizeChanged',
+      'fontSettings.onDefaultFontSizeChanged'
     ])
     w.dispatched.length = 0
     call(w, OLD, 'setMinimumFontSize', { pixelSize: 10 })

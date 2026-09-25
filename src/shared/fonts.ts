@@ -289,7 +289,7 @@ export interface ExtensionFontLayer {
   sizes: { standard?: number; fixed?: number; minimum?: number }
 }
 
-export const NO_EXTENSION_FONTS: ExtensionFontLayer = { families: {}, scripts: {}, sizes: {} }
+const NO_EXTENSION_FONTS: ExtensionFontLayer = { families: {}, scripts: {}, sizes: {} }
 
 /**
  * The fonts pages get: the user's setting with the extensions' layer over it. `settings` is

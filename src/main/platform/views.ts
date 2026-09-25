@@ -2613,28 +2613,21 @@ export class ElectronTabViewHost implements TabViewHost {
   applyFonts(fonts: PageFontSettings): void {
     userFontSettings = fonts
     this.refontPages()
-    for (const listener of this.fontsListeners) listener(fonts)
   }
 
   /**
-   * The extensions' layer over the setting (`chrome.fontSettings`, `platform/extensionApi/
-   * fontSettings.ts`): the families and sizes the extensions holding the permission control,
-   * resolved by the host, laid over the user's setting for every page – open pages over the
-   * protocol, new ones through their web preferences – exactly as the setting itself is. The
-   * setting is never written: null takes the layer off and the setting stands again.
+   * The extensions' layer beside the setting (`chrome.fontSettings`, `platform/extensionApi/
+   * fontSettings.ts`): the per-script families, the cursive, fantasy and math families and the
+   * fixed-width size the extensions holding the permission control – the preferences the page
+   * fonts setting has no slot for – laid over the fonts every page has, open pages over the
+   * protocol (`Page.setFontFamilies` with `forScripts`, `Page.setFontSizes`), new ones through
+   * their web preferences, exactly as the setting itself is. The setting is never written:
+   * null takes the layer off and the fonts stand again as the pages had them.
    */
   applyExtensionFonts(layer: ExtensionFontLayer | null): void {
     extensionFonts = layer
     this.refontPages()
   }
-
-  /** The user's setting changed (`applyFonts`); the extension layer reads it for its fallbacks. */
-  onUserFontsChanged(listener: (fonts: PageFontSettings) => void): () => void {
-    this.fontsListeners.add(listener)
-    return () => void this.fontsListeners.delete(listener)
-  }
-
-  private readonly fontsListeners = new Set<(fonts: PageFontSettings) => void>()
 
   private refontPages(): void {
     pageFontSettings = effectiveFonts(userFontSettings, extensionFonts)
