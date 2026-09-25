@@ -6,7 +6,6 @@ import android.os.Build
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -22,7 +21,7 @@ import kotlin.math.abs
  *  1. the clip playing fullscreen and Home: the window by itself (the auto-enter), the entry's
  *     frames traced (ruling 5: the chrome's long tasks across its hide), the window's bounds and
  *     ratio read, the tab's own view alone filling it over the chrome, and the chrome under it
- *     out of a screen reader's tree (the framework's word on its node); the window's menu under a
+ *     out of a screen reader's tree (the framework's word on the view); the window's menu under a
  *     finger – Pause (read back from the page), Play, Next track (the page's own handler) – then
  *     the expand, traced too: the page back inline in the chrome with the clip playing in its
  *     place and the chrome a reader's again. The WebView engine ends the element's fullscreen as the
@@ -122,9 +121,9 @@ class PipDemo : MediaDemoBase("android-pip") {
         check("$scheme: the engine ended the element's fullscreen with the entry (the fill stands in for Chrome's persistent video)", host.fullscreenTab == null && field("fs") == "0")
         check("$scheme: the window's ratio is the clip's", ratioMatches(win, field("size")))
         check("$scheme: the clip keeps playing in the window", field("state") == "playing")
-        val chrome = chromeNode()
-        note("  the chrome under the window: ${describeChrome(chrome)}; the page's view important=${pageNode()?.isImportantForAccessibility}")
-        check("$scheme: the chrome under the small window is out of a reader's tree (NO_HIDE_DESCENDANTS: TalkBack is handed the page alone)", chromeMode() == "no-hide-descendants" && chrome != null && !chrome.isImportantForAccessibility && pageNode()?.isImportantForAccessibility == true)
+        val under = chromeReader()
+        note("  the chrome under the window: $under")
+        check("$scheme: the chrome under the small window is out of a reader's tree (NO_HIDE_DESCENDANTS: TalkBack is handed the page alone)", under.mode == "no-hide-descendants" && !under.exposed)
         shot("02-window-$scheme")
         beat()
         if (win != null) {
@@ -146,9 +145,9 @@ class PipDemo : MediaDemoBase("android-pip") {
         }
         note("  expanded: pip=${inPip()} filling=${host.tabs.filling} fullscreenTab=${host.fullscreenTab?.tabId} pip tab=${host.media.pictureInPictureTab}; page fs=${field("fs")} state=${field("state")}; ${describeTab(TAB)}")
         check("$scheme: the expand brings the page back inline in the chrome, the clip playing in its place", !inPip() && host.tabs.filling == null && host.fullscreenTab == null && field("fs") == "0" && field("state") == "playing")
-        val chromeBack = chromeNode()
-        note("  expanded, the chrome: ${describeChrome(chromeBack)}")
-        check("$scheme: expanded, the chrome is a reader's again", chromeMode() == "auto" && chromeBack?.isImportantForAccessibility == true)
+        val back = chromeReader()
+        note("  expanded, the chrome: $back")
+        check("$scheme: expanded, the chrome is a reader's again", back.mode == "auto" && back.exposed)
         note("  ruling 5: enter ${longTasks(enter)}; expand ${longTasks(expand)} (the tables in frames.txt)")
         shot("05-expanded-$scheme")
         beat()
@@ -382,50 +381,41 @@ class PipDemo : MediaDemoBase("android-pip") {
     }
 
     /**
-     * The chrome WebView's node (`R.id.zen_chrome`) in the app's window, as the tree reports it
-     * with the harness's flags on (every view included, ids reported). Its
-     * `isImportantForAccessibility` is the framework's own word on whether a reader without the
-     * not-important flag – TalkBack – is handed the view: `View.isImportantForAccessibility` is
-     * false for a view in `NO_HIDE_DESCENDANTS` (and for everything under one), and a WebView
-     * left out takes its whole document with it. The service's flags are not changed for the
-     * read: UiAutomation's window list goes stale on a change, and the small window's menu is
-     * read through that list (run 36157165808 lost the menu three taps running after one).
+     * What a screen reader is handed of the chrome WebView: the importance the host set on the
+     * view ([Host.readChrome]) and the framework's own word on it, `View.isImportantForAccessibility`
+     * – false for a view in `NO_HIDE_DESCENDANTS`, true for the chrome as `AUTO` leaves it (a
+     * WebView is focusable and clickable) – which is what decides whether a service without the
+     * not-important flag, TalkBack, gets the view and the document under it. Read on the view
+     * itself, on the main thread: the harness's own tree cannot show the hide (its flags ask for
+     * every view), its flags are not to be changed for a read (UiAutomation's window list goes
+     * stale on a change, and the small window's menu is read through that list – run 36157165808
+     * lost the menu three taps running after one), and a WebView's node carries no importance
+     * to read (Chromium's `createNodeForHost` copies visibility, enabled, package, class and
+     * bounds onto it, not that – run 36159570565 read false in both states, for the page's
+     * WebView too). The node's presence in the harness's tree is noted with it: the view is
+     * covered for a reader, not gone.
      */
-    private fun chromeNode(): AccessibilityNodeInfo? = viewNode("zen_chrome")
-
-    /**
-     * The demo tab's page WebView node (the view's own, not the document's root under it, which
-     * carries the same class name), found up from the page's own button (`Pause video` / `Play video`).
-     */
-    private fun pageNode(): AccessibilityNodeInfo? {
-        var node = findInWindows(app.packageName) { it == "Pause video" || it == "Play video" }
-        while (node != null && node.className?.toString() != WEB_VIEW) node = node.parent
-        while (node?.parent?.className?.toString() == WEB_VIEW) node = node.parent
-        return node
-    }
-
-    private fun viewNode(id: String): AccessibilityNodeInfo? {
-        val root = ui.windows.firstNotNullOfOrNull { w -> w.root?.takeIf { it.packageName?.toString() == app.packageName } } ?: return null
-        return root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/$id").firstOrNull()
-    }
-
-    private fun describeChrome(node: AccessibilityNodeInfo?): String =
-        "mode ${chromeMode()}; node ${if (node == null) "not found" else "important=${node.isImportantForAccessibility} visible=${node.isVisibleToUser} children=${node.childCount}"}"
-
-    /** The chrome view's importance for accessibility as the host holds it ([Host.readChrome]). */
-    private fun chromeMode(): String {
-        var mode = "no chrome"
+    private fun chromeReader(): ChromeReader {
+        var reader = ChromeReader("no chrome", false)
         instrumentation.runOnMainSync {
             val chrome = host.underlay ?: return@runOnMainSync
-            mode = when (chrome.importantForAccessibility) {
+            val mode = when (chrome.importantForAccessibility) {
                 View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS -> "no-hide-descendants"
                 View.IMPORTANT_FOR_ACCESSIBILITY_AUTO -> "auto"
                 View.IMPORTANT_FOR_ACCESSIBILITY_YES -> "yes"
                 View.IMPORTANT_FOR_ACCESSIBILITY_NO -> "no"
                 else -> chrome.importantForAccessibility.toString()
             }
+            reader = ChromeReader(mode, chrome.isImportantForAccessibility)
         }
-        return mode
+        val root = ui.windows.firstNotNullOfOrNull { w -> w.root?.takeIf { it.packageName?.toString() == app.packageName } }
+        val node = root?.findAccessibilityNodeInfosByViewId("${app.packageName}:id/zen_chrome")?.firstOrNull()
+        return reader.copy(node = if (node == null) "not in the harness's tree" else "in the harness's tree, visible=${node.isVisibleToUser} children=${node.childCount}")
+    }
+
+    /** [chromeReader]'s read: the host's mode, whether the framework exposes the view to a reader, the node's presence. */
+    private data class ChromeReader(val mode: String, val exposed: Boolean, val node: String = "") {
+        override fun toString() = "mode $mode; exposed to a reader (View.isImportantForAccessibility)=$exposed; node $node"
     }
 
     /** Whether `view` is the size of `win` (within a few px: the window's own rounding). */
@@ -458,6 +448,5 @@ class PipDemo : MediaDemoBase("android-pip") {
     companion object {
         /** The rest after a window's change of state before it is read: the system's animation and the chrome's relayout. */
         private const val SETTLE_MS = 2_500L
-        private const val WEB_VIEW = "android.webkit.WebView"
     }
 }
