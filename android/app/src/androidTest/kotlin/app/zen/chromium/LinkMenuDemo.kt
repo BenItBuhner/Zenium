@@ -20,6 +20,10 @@ import kotlin.math.roundToInt
  *     tab in group, Open in new tab, Open in Incognito tab (Open Link in Private Tab), Copy link
  *     address, Copy link text, Download link (Save Link As…), Share link (Share Link…), Preview
  *     page (Open Link in Glance); Read later has no row, a stated limit (no reading list). The
+ *     private row is the host's to offer: the core draws it under `capabilities.privateTabs`,
+ *     which Android sets only on a WebView with profiles (Chrome 111+); the shared recipe's
+ *     Google APIs image ships WebView 113 without them, so there the row is absent, by design –
+ *     the driver reads the capability and expects the row exactly where it is on. The
  *     still `link-menu-design-rows-light.png` is the sheet. Then the touch on Open Link in New
  *     Tab in Group: a NEW folder (not the seeded Research) holds Home and the new tab, the new tab
  *     right behind Home in the background, Home still active, Research's two untouched, the
@@ -108,11 +112,17 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         val items = textsOf(SHEET_ITEM)
         finding("  rows as found, in Zenium's order (${items.size}):")
         items.forEachIndexed { i, row -> finding("    ${i + 1}. $row") }
+        val privateTabs = privateTabsCapability()
+        finding("  the host: capabilities.privateTabs $privateTabs (${webViewPackage()})")
         finding("  Chrome 152's rows, each looked up (its position in Zenium's list):")
         var missing = 0
         for ((chrome, ours) in CHROME_152) {
             if (ours == null) {
                 finding("    $chrome -> none: a STATED LIMIT (no reading list)")
+                continue
+            }
+            if (ours == PRIVATE_ROW && !privateTabs) {
+                finding("    $chrome -> $ours: no row on THIS host, by design (capabilities.privateTabs off: the WebView keeps no profiles); drawn where it is on")
                 continue
             }
             val at = items.indexOf(ours)
@@ -123,8 +133,14 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         val own = items.filter { it !in mapped }
         finding("  Zenium's own rows, not in Chrome's list: $own")
         check("$act: Open Link in New Tab in Group is the first row on a tab in no group (Chrome's first)", items.indexOf(GROUP_ROW) == 0, "rows $items")
-        check("$act: Open Link in New Tab is second, Open Link in Private Tab (Chrome's Incognito) third", items.indexOf(PLAIN_ROW) == 1 && items.indexOf("Open Link in Private Tab") == 2, "rows $items")
-        check("$act: every Chrome 152 row but Read later has its Zenium row", missing == 0, "$missing missing")
+        check("$act: Open Link in New Tab is second (Chrome's second)", items.indexOf(PLAIN_ROW) == 1, "rows $items")
+        check(
+            "$act: Open Link in Private Tab (Chrome's Incognito) is on the sheet exactly where capabilities.privateTabs is on" +
+                if (privateTabs) ", third" else " – off on this WebView, so no row",
+            if (privateTabs) items.indexOf(PRIVATE_ROW) == 2 else PRIVATE_ROW !in items,
+            "privateTabs $privateTabs, rows $items"
+        )
+        check("$act: every Chrome 152 row the host offers has its Zenium row (Read later the stated limit)", missing == 0, "$missing missing")
         check("$act: Open Link in Glance (Chrome's Preview page) is on the sheet", "Open Link in Glance" in items)
         check("$act: no Read later row (the stated limit)", items.none { it.contains("Read later", ignoreCase = true) || it.contains("Reading list", ignoreCase = true) })
         finding("  the rows' order against Chrome 152's is the design lead's (b): recorded, not judged here")
@@ -198,12 +214,20 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         return folders.keys().asSequence().toList()
     }
 
+    /** The core's word on private tabs: on only where the WebView keeps profiles (`androidCapabilities`). */
+    private fun privateTabsCapability(): Boolean =
+        runCatching { coreState().getJSONObject("capabilities").optBoolean("privateTabs") }.getOrDefault(false)
+
+    private fun webViewPackage(): String =
+        shellCommand("dumpsys webviewupdate").lines().firstOrNull { it.contains("Current WebView package") }?.trim() ?: "WebView package ?"
+
     companion object {
         private const val OPENED_PATH = "/opened.html"
         private const val OPENED_URL = "$ORIGIN$OPENED_PATH"
         private const val LINK_TEXT = "A page to open in a new group"
         private const val GROUP_ROW = "Open Link in New Tab in Group"
         private const val PLAIN_ROW = "Open Link in New Tab"
+        private const val PRIVATE_ROW = "Open Link in Private Tab"
 
         private const val SHEET = ".zen-sheet"
         private const val SHEET_ITEM = ".zen-sheet .zen-sheet-item"
@@ -218,7 +242,7 @@ class LinkMenuDemo : GroupsDemoBase("link-menu", "link-menu-demo") {
         private val CHROME_152: List<Pair<String, String?>> = listOf(
             "Open in new tab in group" to GROUP_ROW,
             "Open in new tab" to PLAIN_ROW,
-            "Open in Incognito tab" to "Open Link in Private Tab",
+            "Open in Incognito tab" to PRIVATE_ROW,
             "Copy link address" to "Copy Link Address",
             "Copy link text" to "Copy Link Text",
             "Download link" to "Save Link As…",
