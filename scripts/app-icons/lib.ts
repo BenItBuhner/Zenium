@@ -426,11 +426,13 @@ export const ANDROID_SHORTCUTS_META =
 
 /**
  * One launcher alias per variant, only the default enabled in the manifest; `LauncherIcon.kt`
- * flips them at runtime. They target `LauncherIconActivity`, which starts `MainActivity` in a
- * task of its own: a task rooted at an alias would be removed the moment that alias is disabled.
- * Deep links, share and search intents stay on `MainActivity` itself. Each alias carries the
- * static shortcuts' meta-data: the system parses `android.app.shortcuts` off the activity that
- * holds the launcher entry, and an alias has meta-data of its own, not its target's.
+ * flips them at runtime. They target `IconTapActivity`, which starts `MainActivity` in the task
+ * the tap opened and hands the task's identity to it: a task rooted at an alias would be removed
+ * the moment that alias is disabled, and a trampoline in a task of its own would keep the tap's
+ * splash from the browser (the platform transfers a starting window within a task only). Deep
+ * links, share and search intents stay on `MainActivity` itself. Each alias carries the static
+ * shortcuts' meta-data: the system parses `android.app.shortcuts` off the activity that holds
+ * the launcher entry, and an alias has meta-data of its own, not its target's.
  */
 export function manifestAliasesBlock(
   variants: readonly AppIconVariant[],
@@ -444,7 +446,7 @@ ${indent}    android:enabled="${v.id === APP_ICON_DEFAULT}"
 ${indent}    android:exported="true"
 ${indent}    android:icon="@mipmap/${androidMipmapName(v)}"
 ${indent}    android:label="@string/app_name"
-${indent}    android:targetActivity=".LauncherIconActivity">
+${indent}    android:targetActivity=".IconTapActivity">
 ${indent}    <intent-filter>
 ${indent}        <action android:name="android.intent.action.MAIN" />
 ${indent}        <category android:name="android.intent.category.LAUNCHER" />

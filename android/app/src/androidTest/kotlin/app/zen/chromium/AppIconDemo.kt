@@ -70,7 +70,8 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
 
         // 3. Pick Sunset: the ring moves, the row names it, the launcher alias flips underneath –
         //    and the browser stays where it is (the system removes tasks rooted at a disabled
-        //    alias; ours is rooted at MainActivity, see LauncherIconActivity).
+        //    alias; ours carries MainActivity's identity, handed over by the tap's trampoline the
+        //    moment the browser joined its task – see IconTapActivity).
         val task = activity.taskId
         if (awaitNode(10_000) { it == swatch("Sunset") } == null || !clickByLabel(swatch("Sunset"))) {
             // The tree without the swatch (it trails the document here): the document's own click

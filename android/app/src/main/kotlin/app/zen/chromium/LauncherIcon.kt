@@ -16,10 +16,11 @@ import android.util.Log
  *
  * Switching enables the new alias before the old one goes, both with DONT_KILL_APP: the app
  * keeps running, and the launcher – which reacts to each component change – never sees a
- * package without a launcher entry. The aliases target `LauncherIconActivity` rather than the
- * browser, so the browser's task is never rooted at an alias and the system leaves it alone when
- * one is disabled (it removes tasks rooted at a disabled component). Intents that name the
- * activity itself (links, share, search, notifications) are untouched by the aliases. Known
+ * package without a launcher entry. The aliases target `IconTapActivity` rather than the
+ * browser: it hands the task's identity to `MainActivity` the moment the browser joins its task,
+ * so the browser's task is never rooted at an alias and the system leaves it alone when one is
+ * disabled (it removes tasks rooted at a disabled component). Intents that name the activity
+ * itself (links, share, search, notifications) are untouched by the aliases. Known
  * launcher behaviour that no app can avoid: Launcher3-based home screens drop a home-screen icon
  * whose alias went away (the app drawer entry is updated in place).
  */

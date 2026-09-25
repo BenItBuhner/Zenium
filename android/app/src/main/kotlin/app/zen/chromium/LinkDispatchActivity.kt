@@ -12,6 +12,13 @@ import androidx.browser.customtabs.CustomTabsSessionToken
  * becomes a [CustomTabActivity] in *this* task – the caller's, since the trampoline itself was
  * started there – so closing the custom tab lands back in the app that opened it. Gone before it
  * draws (`Theme.NoDisplay`, no history, no Recents entry, empty affinity).
+ *
+ * `NoDisplay` stays where the icon's trampoline ([IconTapActivity]) wears the splash: this one
+ * runs in the caller's task, and the platform transfers a starting window within one task only,
+ * so a splash theme here would be one window over the mail app and then the browser's own in the
+ * browser's task. The caller's window stands until the browser's splash comes up (a cold
+ * browser: its process start and this forward – android-startup-demo.sh's link act measures that
+ * lead), as it does behind Chrome's `ChromeLauncherActivity`, `NoDisplay` too.
  */
 class LinkDispatchActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {

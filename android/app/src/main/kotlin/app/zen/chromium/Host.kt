@@ -408,6 +408,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The tab cards' pictures, one JPEG per tab under the cache dir (`thumbnail.*`, [TabWebView.captureThumbnail]). */
     override val thumbnails = Thumbnails(File(activity.cacheDir, Thumbnails.DIR))
     /**
+     * The restored tab's card picture over its page view from the boot's `view.load` to the
+     * page's first paint (OS-26, `RestoredPictures`): only while the boot's restore is in flight,
+     * before the chrome's READY.
+     */
+    val restoredPictures = RestoredPictures(thumbnails, main) { activity.restoringAtBoot }
+    /**
      * Each tab's last pushed list and the `hostState` behind it, for the synchronous
      * `view.navigationEntries` and `view.navigationHostState` the core makes from the bridge
      * thread, where the WebView cannot be asked (see [NavigationMirror]).
@@ -679,6 +685,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Synchronous methods (bridge thread!). Only cheap, thread-safe work belongs here. */
     fun dispatchSync(method: String, args: JSONObject): Any? = when (method) {
         "boot" -> {
+            BootMarks.mark("boot")
             // The core's documents: the small ones inline, the big ones listed for the chrome to
             // fetch through the document handler (`BootHandoff.kt`, `src/android/handoff.ts`).
             val documents = storage.bootDocuments(BootHandoff.BOOT_INLINE_LIMIT)
@@ -885,9 +892,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // A load the rebooted core sets up for a page whose renderer went with it in front
             // (`deliverRendererExit`): the crash page's word follows the reply and supersedes it.
             "view.load" -> {
-                tab?.loadUrl(args.str("url"))
+                val url = args.str("url")
+                tab?.loadUrl(url)
                 reply(null)
-                if (tab != null) deliverRendererExit(tab.tabId)
+                if (tab != null) {
+                    // At boot, the restored tab's last picture over the blank page until it paints.
+                    restoredPictures.offer(tab, url)
+                    deliverRendererExit(tab.tabId)
+                }
             }
             "view.loadHtml" -> {
                 val hold = tab?.let { debugLoadHtmlHold(it.tabId) }
@@ -920,11 +932,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                     Log.i(TAG, "the list of ${tab.tabId} is not restored: its page comes back as the crash page")
                     null
                 } else args.strOrNull("hostState")
-                val restored = tab?.restoreNavigation(args.arr("entries"), args.optInt("index", -1), hostState) ?: false
+                val entries = args.arr("entries")
+                val index = args.optInt("index", -1)
+                val restored = tab?.restoreNavigation(entries, index, hostState) ?: false
                 reply(json("restored" to restored))
                 // A restored list is loading its current entry; a refused one has the core load
                 // it next. Either way the crash page's word, when there is one, comes after.
-                if (tab != null) deliverRendererExit(tab.tabId)
+                if (tab != null) {
+                    // At boot, the session's tabs come back this way (their lists kept): the
+                    // restored tab's last picture over the entry the list is loading, as at
+                    // `view.load` for a tab without a list.
+                    if (restored) NavigationState.currentUrl(entries, index)?.let { restoredPictures.offer(tab, it) }
+                    deliverRendererExit(tab.tabId)
+                }
             }
             "view.reload" -> {
                 if (args.bool("ignoreCache")) tab?.clearCache(false)
@@ -1017,6 +1037,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
+            // The chrome's first real frame (boot.ts `ChromeReady`): the splash lifts and the launch's mark is set (OS-26, OS-27).
+            "chrome.ready" -> { activity.onChromeReady(); reply(null) }
             "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
             // The chrome asks for the bridge's asynchronous channel once its boot is answered
             // (`openBridgePort` in src/android/bridge.ts): the port travels back to the document
@@ -1812,9 +1834,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         activity.window.decorView.setBackgroundColor(color)
         // A veil up while the tone changes stays the window's tone.
         veilView?.takeIf { lockVeil.raised }?.setBackgroundColor(color)
-        val controller = WindowInsetsControllerCompat(activity.window, root)
-        controller.isAppearanceLightStatusBars = !dark
-        controller.isAppearanceLightNavigationBars = !dark
+        // Through the activity: while the cold start's splash is up the bars wear its tone, and
+        // the chrome's is applied as it lifts (StartupSplash).
+        activity.setSystemBarsLight(!dark)
         // Pages see Zenium's colour scheme, not only the system's: the app's night mode drives
         // `prefers-color-scheme` and the algorithmic darkening in every page WebView (the manifest
         // handles `uiMode` in place, so nothing reloads). The chrome hands `scheme` over as its
@@ -2423,6 +2445,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     fun destroy() {
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
+        restoredPictures.releaseAll("host destroyed")
         connectivity.stop()
         extensions.destroy()
         cancelProbe()
