@@ -24,13 +24,15 @@
 # record's `VERDICT delta (paired …)` lines are followed by the judgement, `P0 VERDICT: PASS` or
 # `P0 VERDICT: FAIL — <measure> paired median +N ms on the <direct|alias> way, over the +T ms
 # threshold` (a `::error::` with it and EXIT 1: the workflow goes red). TotalTime's paired median
-# over the way's threshold fails – +TOTAL_THRESHOLD_MS on the direct way, the ruling's number;
-# +ALIAS_THRESHOLD_MS on the alias way, its own where the null runs made it so (see the
-# calibration below); Fully drawn – the chrome's READY, the boot.ts side of the boot path a
-# TotalTime gate cannot see, and the noisier mark – is judged the same against
-# FULLY_DRAWN_THRESHOLD_MS (direct) and FULLY_DRAWN_ALIAS_THRESHOLD_MS (alias), its own numbers
-# from the same null runs; WaitTime is reported, not judged. A pair with a dash on either side is
-# left out; a judged row with FEWER THAN half its pairs valid is INCONCLUSIVE, which fails too.
+# over the way's threshold fails – +TOTAL_THRESHOLD_MS on the direct way, the ruling's +100;
+# +ALIAS_THRESHOLD_MS on the alias way, the same +100 since the null runs put the alias inside
+# the band once the order alternated (the calibration below); Fully drawn – the chrome's READY,
+# the boot.ts side of the boot path a TotalTime gate cannot see, and the noisier mark by four
+# (its paired spread ≈ 450–600 ms against TotalTime's ≈ 120 direct / ≈ 340 alias) – is judged
+# the same against FULLY_DRAWN_THRESHOLD_MS (direct, +300) and FULLY_DRAWN_ALIAS_THRESHOLD_MS
+# (alias, +500), twice the larger |paired median| the three null runs read on that way rounded up
+# to the next 50 ms; WaitTime is reported, not judged. A pair with a dash on either side is left
+# out; a judged row with FEWER THAN half its pairs valid is INCONCLUSIVE, which fails too.
 # The per-arm medians and the `delta (… the medians)` lines stand as round 1 left them, byte
 # for byte; only the paired delta is judged.
 #
@@ -60,23 +62,32 @@
 # odd blocks install the base first and the head second, even blocks the head first (A B / B A
 # …). The first two null runs at N = 30 (36168310688, base first in every block) read the direct
 # way at +1 / +15.5 ms and the alias way at +100 / +96 ms – a same-tree pair positive twice on
-# the alias alone smells of a POSITION effect (the second-installed arm paying for something in
-# the trampoline's path: the launcher's icon and intent cache after the reinstall, the second
-# install's residue, the WebView provider's state), not noise; alternated, such an effect falls
-# on both arms alike over the run and cancels in the paired median, and the POSITION READING in
-# the record – the medians by the arm's position in its block, first-installed or
-# second-installed, whatever the build, and the paired median second − first – measures it. (d)
-# the median stays (robust to the alias's tails; no trimming). Beside the numbers, each start
-# records whether the launcher's process (com.google.android.apps.nexuslauncher) was alive
-# before it and its pid (a launcher restarting on the intent is a plausible cost on the alias
-# way), and the frames rendered when probed FRAMES_AT_S after the start request, beside the
-# STATS_AT_S statistics – the clock's evidence: a count still growing between the probes and the
-# statistics means the boot's frames were not over, and a count that is not says the clock can
-# shorten. N is CALIBRATED on null pairs (the same tree in both arms): the TotalTime paired
-# median inside ±50 ms on both ways on two consecutive null runs at one N is the stopping rule;
-# a way that stays outside it with the order alternated is gated at twice its null half-width
-# rounded up to the next 50 ms. The numbers are in the PR body of #482 (H4, round 2) and in the
-# workflow's defaults.
+# the alias alone smelled of a POSITION effect (the second-installed arm paying for something in
+# the trampoline's path), so the third run alternated the order and read the position: the
+# POSITION READING in the record – the medians by the arm's position in its block,
+# first-installed or second-installed, whatever the build, and the paired median second − first
+# – found none on TotalTime (alias second − first +5 ms, paired +3.5; direct −9, paired −21.5)
+# and one on Fully drawn (paired second − first +76.5 direct, +110 alias: the second-installed
+# arm's READY comes later within its pair on both ways). Whatever the first two runs' alias
+# excess was – that host pair's position cost or the tail of the alias's spread (the paired
+# median's standard error is ≈ 75 ms there at N = 30, so +100 is 1.3 of them) – the alternated
+# order cancels a position cost in the paired median, and the third run read the alias at
+# +26.5. (d) the median stays (robust to the alias's tails; no trimming). Beside the numbers,
+# each start records whether the launcher's process (com.google.android.apps.nexuslauncher) was
+# alive before it and its pid (a launcher restarting on the intent was a plausible cost on the
+# alias way; the third null run read it alive before all 120 starts, one pid), and the frames
+# rendered when probed FRAMES_AT_S after the start request, beside the STATS_AT_S statistics –
+# the clock's evidence: a count still growing between the probes and the statistics means the
+# boot's frames were not over, and a count that is not says the clock can shorten (the third
+# null run read the 8 s count equal to the 15 s count on all 120 starts, so STATS_AT_S 8 and
+# NEXT_AT_S 15 would hold – ≈ 14 min less per run – once one null run at that cadence confirms
+# the band; the clock stays as calibrated until then). N is CALIBRATED on null pairs (the same
+# tree in both arms): the TotalTime paired median inside ±50 ms on both ways on consecutive
+# null runs at one N is the stopping rule – met at N = 30: direct +1 / +15.5 / −21.5, alias
+# +26.5 with the order alternated (36178688584) – and a measure whose null band is wider is
+# gated at twice its larger |null paired median| rounded up to the next 50 ms: Fully drawn's
+# −20 / +45.5 / −141.5 direct → +300, +236.5 / +83 / −56 alias → +500. The runs are in the PR
+# body of #482 (H4, round 2); the workflow's defaults are these.
 #
 #   P0_BASE_APK   – the base build's debug APK (the caller's setup-script built it from the base ref)
 #   P0_BASE_LABEL – how the base is named in the table (its commit), `base` by default
@@ -110,14 +121,15 @@ tap_flags=0x10200000
 runs=${P0_RUNS:-15}
 starts=${P0_STARTS:-2}
 pairs=$((runs * starts))
-# The gate's thresholds (ms, on the paired median; over = FAIL), per measure and way. The direct
-# way's TotalTime is the ruling's +100; the others are calibrated on the null runs (twice the
-# way's null half-width rounded up to the next 50 ms where that band is wider than ±50 ms, else
-# the same +100) – the PR body of #482 has the runs.
+# The gate's thresholds (ms, on the paired median; over = FAIL), per measure and way. TotalTime
+# is the ruling's +100 on both ways (the three null runs' paired medians sit inside ±50 on each,
+# the alias's once the order alternated); Fully drawn is twice the larger |paired median| the
+# three null runs read on the way, rounded up to the next 50 ms (direct 141.5 → 300, alias
+# 236.5 → 500) – the PR body of #482 has the runs.
 TOTAL_THRESHOLD_MS=${P0_TOTAL_THRESHOLD_MS:-100}
 ALIAS_THRESHOLD_MS=${P0_ALIAS_THRESHOLD_MS:-$TOTAL_THRESHOLD_MS}
-FULLY_DRAWN_THRESHOLD_MS=${P0_FULLY_DRAWN_THRESHOLD_MS:-100}
-FULLY_DRAWN_ALIAS_THRESHOLD_MS=${P0_FULLY_DRAWN_ALIAS_THRESHOLD_MS:-$FULLY_DRAWN_THRESHOLD_MS}
+FULLY_DRAWN_THRESHOLD_MS=${P0_FULLY_DRAWN_THRESHOLD_MS:-300}
+FULLY_DRAWN_ALIAS_THRESHOLD_MS=${P0_FULLY_DRAWN_ALIAS_THRESHOLD_MS:-500}
 READY_WAIT_S=12
 FRAMES_AT_S="8 12"
 STATS_AT_S=15

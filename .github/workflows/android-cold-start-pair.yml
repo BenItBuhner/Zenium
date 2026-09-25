@@ -4,8 +4,9 @@ name: Android cold start pair
 # build and under the HEAD (this workflow's commit) on the same emulator boot, `am start -W` after
 # `am force-stop`, N = runs × starts paired starts by each way (the arms interleaved in blocks),
 # judged on the PAIRED MEDIAN of TotalTime and of Fully drawn against the thresholds in
-# android-cold-start-pair.sh (the root's ruling of 25 Sep: over +100 ms on either way fails, the
-# job goes red); the record beside it – the medians of TotalTime, Fully drawn and WaitTime side
+# android-cold-start-pair.sh (the root's ruling of 25 Sep: TotalTime over +100 ms on either way
+# fails, Fully drawn over +300 direct / +500 alias – its null band –, the job goes red); the
+# record beside it – the medians of TotalTime, Fully drawn and WaitTime side
 # by side – lands in the job summary and in the artifact as cold-start-pair.txt with every am
 # start answer. The defaults (runs, starts, the timeout) are the calibration's, from null pairs
 # (the same tree in both arms; the PR body of #482, H4 round 2). The base build is assembled here
