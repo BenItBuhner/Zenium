@@ -124,12 +124,35 @@ describe('validateManifest', () => {
     expect(
       paths(validateManifest({ ...mv3, web_accessible_resources: [{ resources: ['a'] }] }).errors)
     ).toEqual(['web_accessible_resources[0]'])
+    // Chrome requires the `resources` key and one other; the list may be empty (Toggl Track's
+    // third entry exposes nothing) and a true `use_dynamic_url` is the other key.
     expect(
       paths(
         validateManifest({
           ...mv3,
           web_accessible_resources: [{ resources: [], matches: ['<all_urls>'] }]
         }).errors
+      )
+    ).toEqual([])
+    expect(
+      paths(
+        validateManifest({
+          ...mv3,
+          web_accessible_resources: [{ resources: ['a'], use_dynamic_url: true }]
+        }).errors
+      )
+    ).toEqual([])
+    expect(
+      paths(
+        validateManifest({
+          ...mv3,
+          web_accessible_resources: [{ resources: ['a'], use_dynamic_url: false }]
+        }).errors
+      )
+    ).toEqual(['web_accessible_resources[0]'])
+    expect(
+      paths(
+        validateManifest({ ...mv3, web_accessible_resources: [{ matches: ['<all_urls>'] }] }).errors
       )
     ).toEqual(['web_accessible_resources[0].resources'])
     expect(

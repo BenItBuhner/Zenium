@@ -585,12 +585,20 @@ function checkWebAccessibleResources(c: Checker, raw: Raw, mv: ManifestVersion):
       )
       return
     }
-    c.stringArray(`${path}.resources`, entry.resources, { required: true, nonEmpty: true })
+    // Chrome's parser (web_accessible_resources_info.cc) requires the `resources` key and
+    // reads whatever list it holds – an empty one exposes nothing (Toggl Track's third
+    // entry) – and wants one other key beside it: `matches`, `extension_ids` or a true
+    // `use_dynamic_url`.
+    c.stringArray(`${path}.resources`, entry.resources, { required: true })
     c.matchPatterns(`${path}.matches`, entry.matches, 'error')
     c.stringArray(`${path}.extension_ids`, entry.extension_ids)
     c.boolean(`${path}.use_dynamic_url`, entry.use_dynamic_url)
-    if (entry.matches === undefined && entry.extension_ids === undefined) {
-      c.error(path, "Needs 'matches' or 'extension_ids'")
+    if (
+      entry.matches === undefined &&
+      entry.extension_ids === undefined &&
+      entry.use_dynamic_url !== true
+    ) {
+      c.error(path, 'Entry must at least have resources, and one other valid key.')
     }
   })
 }
