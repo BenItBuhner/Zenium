@@ -215,12 +215,17 @@ class DownloadsDemo : DownloadsDemoBase("downloads-demo-state.json", "downloads"
             SystemClock.sleep(1_000)
             shot("12-link-menu")
             click(SAVE_LINK_AS)
-            val save = waitFor({ it == "Save" || it == "SAVE" }, 15_000)
+            // DocumentsUI's button reads SAVE (its text in capitals on the API 34 image); the
+            // finger goes where the tree puts it.
+            val save = waitFor({ it.equals("Save", ignoreCase = true) }, 15_000)
             check(save != null, "Save Link As… did not open the system's save dialog (no Save button on screen)")
             SystemClock.sleep(1_500)
             shot("13-save-dialog")
             if (save != null) {
-                click("Save")
+                Finger().tap(save.exactCenterX(), save.exactCenterY())
+                // A file of the name already in the folder: DocumentsUI asks before it overwrites.
+                waitFor({ it.equals("OK", ignoreCase = true) || it.equals("Overwrite", ignoreCase = true) }, 3_000)
+                    ?.let { Finger().tap(it.exactCenterX(), it.exactCenterY()) }
                 val saved = awaitRow("flaky.bin", 60_000) { it.optString("id") != flakyBefore && it.optString("state") == "completed" }
                 check(saved != null, "the download through the save dialog did not complete: ${rowFor("flaky.bin")}")
                 check(
