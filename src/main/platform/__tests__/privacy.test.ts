@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Decision, RequestContext } from '../../../core/blocking/rules'
-import type { PrivacyFlags, SafeBrowsingHit } from '../../../shared/privacy'
+import type { LookalikeVerdict, PrivacyFlags, SafeBrowsingHit } from '../../../shared/privacy'
 import { DEFAULT_SITE_DATA_POLICY } from '../../../shared/siteData'
 import type {
   ElectronPrivacy as PrivacyHostImpl,
@@ -23,7 +23,8 @@ vi.mock('electron', () => ({
   ipcMain: { on: () => undefined }
 }))
 
-const { ElectronPrivacy, PrivacyRequestHandler, SafeBrowsingHandler } = await import('../privacy')
+const { ElectronPrivacy, LookalikeHandler, PrivacyRequestHandler, SafeBrowsingHandler } =
+  await import('../privacy')
 const { HANDLER_ORDER } = await import('../webRequest')
 
 const FLAGS: PrivacyFlags = {
@@ -70,12 +71,15 @@ function request(ctx: Partial<RequestContext> & { url: string }, tabId = 'tab-1'
 class FakeTabs {
   upgraded: Array<[string, string, string]> = []
   unsafe: Array<[string, string, SafeBrowsingHit]> = []
+  lookalikes: Array<[string, string, LookalikeVerdict]> = []
   viewForTab(tabId: string): RequestTab | undefined {
     if (tabId === 'gone') return undefined
     return {
       noteUpgraded: (from: string, to: string) => void this.upgraded.push([tabId, from, to]),
       noteUnsafeNavigation: (url: string, hit: SafeBrowsingHit) =>
-        void this.unsafe.push([tabId, url, hit])
+        void this.unsafe.push([tabId, url, hit]),
+      noteLookalikeNavigation: (url: string, verdict: LookalikeVerdict) =>
+        void this.lookalikes.push([tabId, url, verdict])
     }
   }
 }
@@ -126,6 +130,62 @@ describe('SafeBrowsingHandler', () => {
       cancel: true
     })
     expect(tabs.unsafe).toEqual([])
+  })
+})
+
+describe('LookalikeHandler', () => {
+  const VERDICT: LookalikeVerdict = { target: 'google.com', reason: 'edit-distance', source: 'top' }
+  const asking = (): {
+    lookup: { check: (url: string) => LookalikeVerdict | null }
+    asked: string[]
+  } => {
+    const asked: string[] = []
+    return {
+      asked,
+      lookup: {
+        check: (url: string) => {
+          asked.push(url)
+          return new URL(url).hostname === 'gogle.com' ? VERDICT : null
+        }
+      }
+    }
+  }
+
+  it("runs after Safe Browsing and before the rules, holds a lookalike document on the core's verdict and tells the tab", () => {
+    const tabs = new FakeTabs()
+    const { lookup, asked } = asking()
+    const handler = new LookalikeHandler(lookup, tabs)
+    expect(handler.order).toBe(HANDLER_ORDER.lookalike)
+    expect(handler.order).toBeGreaterThan(HANDLER_ORDER.safeBrowsing)
+    expect(handler.order).toBeLessThan(HANDLER_ORDER.ruleEngine)
+
+    expect(handler.onBeforeRequest(request({ url: 'https://gogle.com/' }))).toEqual({
+      cancel: true
+    })
+    expect(tabs.lookalikes).toEqual([['tab-1', 'https://gogle.com/', VERDICT]])
+    expect(asked).toEqual(['https://gogle.com/'])
+  })
+
+  it('asks the core about documents of tabs alone: never a frame, a subresource or a tabless request', () => {
+    const tabs = new FakeTabs()
+    const { lookup, asked } = asking()
+    const handler = new LookalikeHandler(lookup, tabs)
+    expect(
+      handler.onBeforeRequest(
+        request({
+          url: 'https://gogle.com/frame',
+          type: 'sub_frame',
+          documentUrl: 'https://a.example/'
+        })
+      )
+    ).toBeUndefined()
+    expect(
+      handler.onBeforeRequest(request({ url: 'https://gogle.com/a.js', type: 'script' }))
+    ).toBeUndefined()
+    expect(handler.onBeforeRequest(request({ url: 'https://gogle.com/' }, 'gone'))).toBeUndefined()
+    expect(handler.onBeforeRequest(request({ url: 'https://fine.example/' }))).toBeUndefined()
+    expect(asked).toEqual(['https://fine.example/'])
+    expect(tabs.lookalikes).toEqual([])
   })
 })
 

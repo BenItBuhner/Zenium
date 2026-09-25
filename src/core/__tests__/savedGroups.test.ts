@@ -3,6 +3,7 @@ import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER } from '../../shared/defaults'
 import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { isEmptyTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import { createSpace, createTabRecord, isPrivateFolder, isSavedFolder } from '../model'
 import type {
   MenuHost,
@@ -115,6 +116,7 @@ function harness(
   }
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   browser.handleCommand(win, 'window.formFactor', { formFactor })
   return {

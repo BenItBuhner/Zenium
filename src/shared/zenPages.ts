@@ -15,8 +15,16 @@
 import chromeStylesheet from '../renderer/src/assets/main.css?raw'
 import { PHONE_MAX_WIDTH } from './formFactor'
 import type { CertificateDetails, ColorScheme, Platform as PlatformOs } from './types'
-import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
+import {
+  SAFE_BROWSING_THREAT_LABELS,
+  isLookalikeReason,
+  isLookalikeSource,
+  type LookalikeReason,
+  type LookalikeSource,
+  type SafeBrowsingThreat
+} from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
+import { unicodeHost } from './punycode'
 import { isCertificateError } from './siteInfo'
 import {
   crashPageOptionsOf,
@@ -713,6 +721,18 @@ export function errorPageHtml(url: URL, scheme: ColorScheme = 'system'): string 
   if (kind === 'safebrowsing')
     return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')), accent, scheme)
   if (kind === 'https-only') return httpsOnlyPageHtml(target, code, accent, scheme)
+  if (kind === 'lookalike') {
+    const reason = url.searchParams.get('reason')
+    const source = url.searchParams.get('source')
+    return lookalikePageHtml(
+      target,
+      url.searchParams.get('target') ?? '',
+      isLookalikeReason(reason) ? reason : 'edit-distance',
+      isLookalikeSource(source) ? source : 'top',
+      accent,
+      scheme
+    )
+  }
   if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
   const content = errorPageContent(
     code,
@@ -791,6 +811,31 @@ function hostOf(target: string): string {
   }
 }
 
+/**
+ * A host named on the lookalike page (PS-18): an IDN host in the form the user saw (`аpple.com`)
+ * with its punycode beside it in the family's deemphasised ink (`(xn--80ak6aa92e.com)`, 69 %),
+ * only when the two differ – an ASCII host once. The address bar keeps the punycode form; only
+ * the page names both. `strong` wraps the shown name, never the punycode.
+ */
+function hostHtml(host: string, strong = false): string {
+  const shown = unicodeHost(host)
+  const name = strong ? `<strong>${escapeHtml(shown)}</strong>` : escapeHtml(shown)
+  return shown === host ? name : `${name} ${punycodeHtml(host)}`
+}
+
+function punycodeHtml(host: string): string {
+  return `<span class="zen-interstitial-punycode">(${escapeHtml(host)})</span>`
+}
+
+/** `url` for the page's address line: its host in the form the user saw, the punycode beside it when the two differ. */
+function addressHtml(url: string): string {
+  const host = hostOf(url)
+  const shown = unicodeHost(host)
+  if (shown === host) return escapeHtml(url)
+  // The scheme cannot spell `xn--`, so the first occurrence is the host.
+  return `${escapeHtml(url.replace(host, shown))} ${punycodeHtml(host)}`
+}
+
 function threatOf(value: string | null): SafeBrowsingThreat {
   return value && value in SAFE_BROWSING_THREAT_LABELS ? (value as SafeBrowsingThreat) : 'unknown'
 }
@@ -806,6 +851,8 @@ const GLYPHS = {
     '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
   'lock-open':
     '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
+  'shield-question':
+    '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M9.1 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   'loader-circle': '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>'
 } as const
 
@@ -817,6 +864,8 @@ function glyph(name: keyof typeof GLYPHS): string {
 interface WarningButton {
   action: InterstitialAction
   label: string
+  /** HTML in `label`'s place: the lookalike page's Continue names an IDN address in its two forms. */
+  labelHtml?: string
   /** The page's one primary (Back to safety). */
   primary?: boolean
   /** Goes on to a site Safe Browsing flagged: the label in danger ink. */
@@ -825,12 +874,13 @@ interface WarningButton {
 
 /** What a warning page says and offers; `warningPageHtml` lays it out. */
 interface WarningPage {
-  kind: 'safebrowsing' | 'https-only'
+  kind: 'safebrowsing' | 'https-only' | 'lookalike'
   /** The `<title>`. */
   name: string
   /** The status ink of the title's glyph. */
   tone: 'danger' | 'warn'
   glyph: keyof typeof GLYPHS
+  /** HTML: the `<h1>`. */
   title: string
   /** HTML: the title block's description. */
   description: string
@@ -838,10 +888,12 @@ interface WarningPage {
   actions: WarningButton[]
   /** HTML paragraphs under Details, before the address. */
   details: string
-  /** The actions under Details, after the address. */
+  /** The actions under Details, after the address; none for a page whose only way back is the browser's own. */
   detailActions: WarningButton[]
   /** The page the interstitial stands in for. */
   target: string
+  /** HTML: the address line under Details, `target` escaped when absent. */
+  address?: string
   /** Extra `data-` attributes on the page's `<main>`. */
   data?: Record<string, string>
 }
@@ -870,7 +922,7 @@ function warningPageScript(target: string): string {
 function warningButton(button: WarningButton, autofocus: boolean): string {
   const classes = ['zen-v2-button', 'zen-interstitial-action']
   if (button.danger) classes.push('zen-interstitial-danger')
-  return `<button type="button" class="${classes.join(' ')}"${button.primary ? ' data-primary' : ''}${autofocus ? ' autofocus' : ''} data-action="${button.action}"><span class="zen-interstitial-label">${escapeHtml(button.label)}</span><span class="zen-interstitial-spinner">${glyph('loader-circle')}</span></button>`
+  return `<button type="button" class="${classes.join(' ')}"${button.primary ? ' data-primary' : ''}${autofocus ? ' autofocus' : ''} data-action="${button.action}"><span class="zen-interstitial-label">${button.labelHtml ?? escapeHtml(button.label)}</span><span class="zen-interstitial-spinner">${glyph('loader-circle')}</span></button>`
 }
 
 /**
@@ -895,12 +947,18 @@ function warningPageHtml(
     `<button type="button" id="zen-details-toggle" class="zen-v2-button zen-interstitial-action" aria-expanded="false" aria-controls="zen-details">Details</button>`,
     ...page.actions.map((b) => warningButton(b, b.primary === true))
   ]
+  const detailActions = page.detailActions.length
+    ? `
+    <div class="zen-interstitial-actions">
+      ${page.detailActions.map((b) => warningButton(b, false)).join('\n      ')}
+    </div>`
+    : ''
   return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${errorPageAttributesScript(scheme)}</script><style>${errorDocumentStyle(accent)}</style></head>
 <body class="zen-error-page"><main${data}>
   <div class="zen-interstitial-title" data-tone="${page.tone}">
     ${glyph(page.glyph)}
     <div>
-      <h1>${escapeHtml(page.title)}</h1>
+      <h1>${page.title}</h1>
       <p>${page.description}</p>
     </div>
   </div>
@@ -909,10 +967,7 @@ function warningPageHtml(
   </div>
   <section id="zen-details" class="zen-interstitial-details" hidden>
     ${page.details}
-    <p class="zen-interstitial-address">${escapeHtml(page.target)}</p>
-    <div class="zen-interstitial-actions">
-      ${page.detailActions.map((b) => warningButton(b, false)).join('\n      ')}
-    </div>
+    <p class="zen-interstitial-address">${page.address ?? escapeHtml(page.target)}</p>${detailActions}
   </section>
 </main><script>${warningPageScript(page.target)}</script></body></html>`
 }
@@ -936,7 +991,7 @@ export function safeBrowsingPageHtml(
       name: 'Security warning',
       tone: 'danger',
       glyph: 'shield-alert',
-      title: copy.title,
+      title: escapeHtml(copy.title),
       description: `Zenium stopped this page. ${escapeHtml(copy.description)}`,
       actions: [{ action: 'back', label: 'Back to safety', primary: true }],
       details: `<p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and Security.</p>`,
@@ -978,6 +1033,79 @@ export function httpsOnlyPageHtml(
     <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and Security.</p>`,
       detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
       target: httpUrl
+    },
+    accent,
+    scheme
+  )
+}
+
+/**
+ * The lookalike page's one vocabulary for the three tests (`LookalikeReason`): the clause between
+ * the address and the target, and what follows the target (the embedding test's "but is not part
+ * of that site"). The Details sentence is `<address> <clause> <target>, <source>[<tail>].`
+ */
+export const LOOKALIKE_REASON_LABELS: Record<LookalikeReason, { clause: string; tail: string }> = {
+  'edit-distance': { clause: 'is one character off', tail: '' },
+  embedding: { clause: 'contains the name of', tail: ', but is not part of that site' },
+  skeleton: { clause: 'is spelled with characters that look like those of', tail: '' }
+}
+
+/** What the target is to the user, by the list it came from (`LookalikeSource`). */
+export const LOOKALIKE_SOURCE_LABELS: Record<LookalikeSource, string> = {
+  top: 'a site many people visit',
+  engaged: 'a site you visit'
+}
+
+/**
+ * The lookalike question (PS-18; Chrome's "Did you mean…?" interstitial, Edge's typo
+ * protection) on the family's surface: the address asked for looks like a well-known site's
+ * (one character off, containing its name, or spelled in look-alike characters). The primary
+ * goes to the site it looks like (`suggested`), "Continue to <lookalike>" beside it goes on to
+ * the address and remembers the host (`proceed`, the `lookalike` permission); Details names the
+ * test that matched, whose site the target is (the top list's or the user's own), what Continue
+ * does, and the address. No Back row: the browser's own back is the way back. An IDN address is
+ * named in the form the user saw with its punycode beside it (`hostHtml`); the address bar keeps
+ * the punycode.
+ */
+export function lookalikePageHtml(
+  lookalikeUrl: string,
+  target: string,
+  reason: LookalikeReason,
+  source: LookalikeSource,
+  accent: ErrorPageAccent | null = null,
+  scheme: ColorScheme = 'system'
+): string {
+  const host = hostOf(lookalikeUrl)
+  const shownTarget = target || 'another site'
+  const targetName = unicodeHost(shownTarget)
+  const question = `Did you mean ${targetName}${targetName === shownTarget ? '' : ` (${shownTarget})`}?`
+  const { clause, tail } = LOOKALIKE_REASON_LABELS[reason]
+  return warningPageHtml(
+    {
+      kind: 'lookalike',
+      name: question,
+      tone: 'warn',
+      glyph: 'shield-question',
+      title: `Did you mean ${hostHtml(shownTarget)}?`,
+      description: `The address ${hostHtml(host, true)} looks like ${hostHtml(shownTarget, true)}. Sites imitating well-known names are a common way to steal passwords.`,
+      actions: [
+        {
+          action: 'proceed',
+          label: `Continue to ${unicodeHost(host)}`,
+          labelHtml: `Continue to ${hostHtml(host)}`
+        },
+        {
+          action: 'suggested',
+          label: `Go to ${targetName}`,
+          labelHtml: `Go to ${hostHtml(shownTarget)}`,
+          primary: true
+        }
+      ],
+      details: `<p>${hostHtml(host, true)} ${clause} ${hostHtml(shownTarget, true)}, ${LOOKALIKE_SOURCE_LABELS[source]}${tail}. If you meant to open ${hostHtml(host)}, Continue takes you there and Zenium will not ask about it again.</p>`,
+      detailActions: [],
+      target: lookalikeUrl,
+      address: addressHtml(lookalikeUrl),
+      data: { reason, source, target: shownTarget }
     },
     accent,
     scheme

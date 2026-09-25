@@ -1094,6 +1094,11 @@ export class HistoryService {
     return topSites([...this.entries.values()], n, excludedHosts, this.now())
   }
 
+  /** Every page's aggregate (visit and typed counts), for readers that fold them by site (the lookalike check's engaged sites). */
+  aggregates(): Iterable<HistoryEntry> {
+    return this.entries.values()
+  }
+
   /**
    * Visits with `fromMs <= visitTime < toMs`, the redirect chains' hops aside (the clear-data
    * counter counts what the history page lists, as Chrome's `GetHistoryCount` counts `CHAIN_END`

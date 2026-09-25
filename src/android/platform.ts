@@ -63,6 +63,7 @@ import type {
   Platform,
   PlatformInfo,
   PrivacyHost,
+  LookalikeTableName,
   QrScanHost,
   ScreenshotHost,
   PrivateSessionHost,
@@ -94,6 +95,7 @@ import type { Bridge } from './bridge'
 import type { AndroidExtensions } from './extensionHost'
 import {
   fetchBundledFeed,
+  fetchBundledLookalikeTable,
   readSpilledBody,
   type DeferredDocument,
   type SpilledBody
@@ -189,6 +191,7 @@ export function androidCapabilities({
     inactiveTabs: true,
     secureDns: false,
     quitsThroughCore: false,
+    lookalikeHolds: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
     pageTabs: true,
@@ -1132,6 +1135,16 @@ class AndroidPrivacyHost implements PrivacyHost {
     if (fetched !== null) return fetched
     const raw = await this.bridge.call<unknown>('privacy.bundledFeed', { id })
     return typeof raw === 'string' && raw ? raw : null
+  }
+
+  /**
+   * One of the lookalike check's tables from the APK's assets (`assets/lookalikes/`, copied from
+   * `resources/lookalikes` by the Gradle build). The asset merger inflates a `.gz` asset and
+   * drops the extension, so the plain text is asked for first; a build that packaged the
+   * gzip verbatim is inflated here (`DecompressionStream`, the core's runtime has it).
+   */
+  async bundledLookalikeTable(name: LookalikeTableName): Promise<string | null> {
+    return fetchBundledLookalikeTable(name, (url, init) => fetch(url, init))
   }
 
   async lookupSafeBrowsing(url: string): Promise<SafeBrowsingHit | null> {

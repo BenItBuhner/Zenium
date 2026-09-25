@@ -7,6 +7,7 @@ import type {
 } from '../../shared/types'
 import { INACTIVE_TAB_AUTO_CLOSE_DAYS } from '../../shared/defaults'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import {
   DAY_MS,
   INACTIVE_TABS_FIRST_PASS_DELAY_MS,
@@ -151,6 +152,7 @@ function start(
   const platform = fakePlatform(io, inactiveTabs)
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   return { browser, platform, win, io }
 }

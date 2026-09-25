@@ -7,6 +7,7 @@ import type {
 } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import { dialogSite, isEmbeddedDialog } from '../pageDialogs'
 import type {
   AppHost,
@@ -185,6 +186,7 @@ function fixture(io: StoreIO = memoryIo(), os: PlatformOs = 'linux'): Fixture {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
+  closeBootTabs(browser, views)
   f.browser = browser
   return f
 }

@@ -12,6 +12,7 @@ import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../shared/newTab'
 import { makeTheme, resolveTheme, unfollowedTheme } from '../../shared/theme'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type { RequestContext } from '../blocking/rules'
 import { MAX_NEW_TAB_SHORTCUTS, normalizeShortcutInput } from '../newtab'
 import { blocksThirdPartyCookies } from '../protection/policy'
@@ -175,6 +176,7 @@ function fixture(opts: { newTabPage?: boolean; withBackground?: boolean } = {}):
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
+  closeBootTabs(browser, views)
   return { browser, views, sent, background }
 }
 

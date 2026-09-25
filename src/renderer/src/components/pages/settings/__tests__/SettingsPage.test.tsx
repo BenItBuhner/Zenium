@@ -76,6 +76,7 @@ const DESKTOP: HostCapabilities = {
   inactiveTabs: false,
   secureDns: true,
   quitsThroughCore: true,
+  lookalikeHolds: true,
   newTabPage: true,
   pageTabs: true,
   pinShortcuts: false,

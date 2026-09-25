@@ -294,7 +294,7 @@ describe('forgetSession', () => {
 // ---------------------------------------------------------------------------
 
 /** A minimal profile as an older build wrote it (`version` picks the schema). */
-function legacyProfile(version: 1 | 2 | 3 | 4 | 5, extra: Partial<Persisted> = {}): string {
+function legacyProfile(version: 1 | 2 | 3 | 4 | 5 | 6, extra: Partial<Persisted> = {}): string {
   const base: Persisted = {
     version,
     spaces: [],
@@ -358,7 +358,7 @@ describe('state.json v5 (new tab page)', () => {
     await s.flush()
     const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
     expect(written.version).toBe(PERSISTED_VERSION)
-    expect(written.version).toBe(5)
+    expect(written.version).toBe(6)
     expect(written.newTabDevice).toEqual({
       shortcuts: [{ id: 'sc_1', title: 'Zen', url: 'https://zen-browser.app/' }],
       hiddenHosts: ['news.example']
@@ -524,13 +524,13 @@ describe('state.json v5 (new tab page)', () => {
     await s.flush()
     const first = io.writes.at(-1) ?? '{}'
     const keys = newTabKeys(first)
-    expect(keys.version).toBe(5)
+    expect(keys.version).toBe(6)
     expect(keys.newTabPhone).toBeUndefined()
     expect(keys.newTabShortcuts).toBeUndefined()
     expect(keys.newTabHiddenHosts).toBeUndefined()
     expect(keys.newTabDevice).toEqual(s.newTabDevice)
 
-    // A second launch reads the v5 file as it was written: nothing to migrate, nothing changes.
+    // A second launch reads the v6 file as it was written: nothing to migrate, nothing changes.
     const again = fakeIo(first)
     const s2 = state(again)
     expect(s2.settings.newTab).toEqual(s.settings.newTab)
@@ -562,5 +562,60 @@ describe('state.json v5 (new tab page)', () => {
     expect(s.settings.newTab.mode).toBe('my-shortcuts')
     expect('newTabPhone' in s.settings).toBe(false)
     expect(s.newTabDevice.hiddenHosts).toEqual(['kept.example'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The rail's Expand on hover, on by default (state.json v5 → v6; tabs-03, W5-17)
+// ---------------------------------------------------------------------------
+
+describe('state.json v6 (Expand on hover on by default)', () => {
+  const stored = (version: 1 | 2 | 3 | 4 | 5 | 6, value: unknown): BrowserState => {
+    const settings = structuredClone(DEFAULT_SETTINGS) as unknown as Record<string, unknown>
+    if (value === undefined) delete settings.sidebarExpandOnHover
+    else settings.sidebarExpandOnHover = value
+    return state(
+      fakeIo(legacyProfile(version, { settings: settings as unknown as Persisted['settings'] }))
+    )
+  }
+
+  it('ships on: a fresh profile and a profile from before the row (no key) take the default', () => {
+    expect(DEFAULT_SETTINGS.sidebarExpandOnHover).toBe(true)
+    expect(state(fakeIo()).settings.sidebarExpandOnHover).toBe(true)
+    for (const version of [1, 2, 3, 4, 5] as const) {
+      expect(stored(version, undefined).settings.sidebarExpandOnHover, `v${version}`).toBe(true)
+    }
+  })
+
+  it('reads a pre-v6 profile’s false as the old default written back, not a choice: on; its true was a choice and stays on', () => {
+    // The settings are written whole, so every profile a build with the off default wrote
+    // carries `false` whether or not the row was ever seen; only `true` could have been chosen.
+    for (const version of [4, 5] as const) {
+      expect(stored(version, false).settings.sidebarExpandOnHover, `v${version} false`).toBe(true)
+      expect(stored(version, true).settings.sidebarExpandOnHover, `v${version} true`).toBe(true)
+    }
+  })
+
+  it('keeps a v6 profile’s stored value, off only where it says so; garbage reads the default', () => {
+    expect(stored(6, false).settings.sidebarExpandOnHover).toBe(false)
+    expect(stored(6, true).settings.sidebarExpandOnHover).toBe(true)
+    expect(stored(6, undefined).settings.sidebarExpandOnHover).toBe(true)
+    expect(stored(6, 'off').settings.sidebarExpandOnHover).toBe(true)
+  })
+
+  it('writes v6, so a profile turned off after the flip stays off across a relaunch', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS)
+    settings.sidebarExpandOnHover = false
+    const io = fakeIo(legacyProfile(5, { settings }))
+    const s = state(io)
+    expect(s.settings.sidebarExpandOnHover).toBe(true)
+    s.settings.sidebarExpandOnHover = false
+    s.commit()
+    await s.flush()
+    const written = JSON.parse(io.writes.at(-1) ?? '{}') as Persisted
+    expect(written.version).toBe(6)
+    expect(written.settings.sidebarExpandOnHover).toBe(false)
+    const again = state(fakeIo(io.writes.at(-1) ?? '{}'))
+    expect(again.settings.sidebarExpandOnHover).toBe(false)
   })
 })
