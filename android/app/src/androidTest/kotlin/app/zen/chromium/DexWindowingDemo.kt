@@ -9,15 +9,19 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.PointerIcon
 import android.view.View
+import android.view.Window
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -60,11 +64,13 @@ import kotlin.math.roundToInt
  *     (1 → 1.1 → 1.25; back down 1.1 → 1 → 0.9), read off the core (`tab.zoom`) and off the
  *     page's own layout viewport, which narrows by the factor; Ctrl+0 resets; the plain wheel
  *     scrolls the page and leaves the zoom; Ctrl+wheel over the chrome zooms nothing; the
- *     WebView's own pinch scale stays 1 (no double zoom: `TabWebView.onGenericMotionEvent`
- *     takes the Ctrl+scroll ahead of the engine, `WheelZoom.kt`);
- *  5. THE KEYBOARD under DeX: Ctrl+T opens a tab, Ctrl+W closes the tab and not the window,
- *     Ctrl+L focuses the address bar, Ctrl+Tab moves to the next tab (`Keys.kt`, the core's
- *     shortcut table);
+ *     engine's own scale is the one the viewport rewrite implies and nothing on top – the page's
+ *     `innerWidth` times its `visualViewport.scale` stays the view's width (no double zoom:
+ *     `TabWebView.onGenericMotionEvent` takes the Ctrl+scroll ahead of the engine, `WheelZoom.kt`);
+ *  5. THE KEYBOARD under DeX: Ctrl+T asks for a new tab (on Android the URL bar opens in
+ *     new-tab mode for it, `openNewTab`; a tab is added where the new tab page is on), Ctrl+W
+ *     closes the tab and not the window, Ctrl+L focuses the address bar, Ctrl+Tab moves to the
+ *     next tab (`Keys.kt`, the core's shortcut table);
  *  6. A DENSITY change (160 → 128 dpi, DeX's own is 160): the chrome's device pixel ratio
  *     follows with the document intact – no relaunch (`configChanges` carries `density`).
  *
@@ -104,6 +110,8 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             "enable_freeform_support ${shellCommand("settings get global enable_freeform_support").trim()}, " +
                 "force_resizable_activities ${shellCommand("settings get global force_resizable_activities").trim()}"
         )
+        // The window manager reads both settings through an observer: a moment for them to land before the launch.
+        SystemClock.sleep(1_000)
     }
 
     /** The activity into a freeform task at the tablet pose: the options bundle's own key for the windowing mode, plus the bounds. */
@@ -365,8 +373,8 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
     // --- 2. hover --------------------------------------------------------------------------------
 
     private fun hoverSection() {
-        val hoverFill = probeColor("--v2-window-fill-hover")
-        val activeFill = probeColor("--v2-window-fill")
+        val hoverFill = probeColor("--v2-window-fill-hover", SIDEBAR)
+        val activeFill = probeColor("--v2-window-fill", SIDEBAR)
         finding("  the window's hover fill $hoverFill, its active fill $activeFill; data-hover before the mouse '${jsText(DATA_HOVER)}'")
         check(
             "before a mouse the root carries data-hover 'none' (the WebView's hover media query answers for the touch screen)",
@@ -379,14 +387,28 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             check("the page and the Gamma row are on screen for the mouse", false, "page $page, Gamma $gamma")
             return
         }
+        val trace = HoverTrace()
+        trace.install(pageView(ALPHA))
+        try {
+            hoverActs(page, gamma, hoverFill, activeFill, trace)
+        } finally {
+            trace.remove()
+        }
+        coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
+        awaitUntil(5_000) { activeTabId() == ALPHA }
+    }
+
+    private fun hoverActs(page: PointF, gamma: PointF, hoverFill: String, activeFill: String, trace: HoverTrace) {
         // The pointer appears over the page, then crosses onto the sidebar's Gamma row.
         mouse.moveTo(page.x, page.y)
         SystemClock.sleep(300)
         finding("  cursor over the page's text: ${cursorOf(pageView(ALPHA))}")
         mouse.moveTo(gamma.x, gamma.y, 400)
+        val flipped = awaitJs("$DATA_HOVER==='hover'", true, 3_000)
+        finding("  hover trace after the first moves: ${trace.report()}; chrome document ${jsText(POINTER_PROBE_COUNTS)}, last ${jsText(POINTER_PROBE_LAST)}")
         check(
             "the mouse's first move over the chrome flips the root to data-hover 'hover'",
-            awaitJs("$DATA_HOVER==='hover'", true, 3_000),
+            flipped,
             "data-hover '${jsText(DATA_HOVER)}'"
         )
         check(
@@ -454,7 +476,11 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             awaitJs("$DATA_HOVER==='hover'", true, 3_000) && awaitUntil(2_500) { backgroundOf(row(GAMMA)) == hoverFill },
             "data-hover '${jsText(DATA_HOVER)}', Gamma ${backgroundOf(row(GAMMA))}"
         )
-        // Cursor shapes: the hand over the page's link, the beam in the URL field.
+        // Cursor shapes: the hand over the page's link, the beam in the URL field. Alpha (the
+        // page with the link) back in front first: the finger put Delta there.
+        coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
+        awaitUntil(5_000) { activeTabId() == ALPHA && pageCenter(ALPHA) != null }
+        SystemClock.sleep(400)
         val link = linkOnScreen(ALPHA)
         if (link != null) {
             mouse.moveTo(link.x, link.y, 300)
@@ -462,15 +488,19 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             val cursor = cursorOf(pageView(ALPHA))
             check("the cursor over the page's link is the hand", cursor == "hand", cursor)
         } else {
-            finding("  (the page's link is not on screen for the cursor's read)")
+            check("the page's link is on screen for the cursor's read", false, "active ${activeTabId()}, page shown ${pageCenter(ALPHA) != null}")
         }
         val pill = at(ADDRESS_PILL)
         if (pill != null) {
             mouse.moveTo(pill.x, pill.y, 300)
             SystemClock.sleep(400)
             finding("  cursor over the address pill: ${cursorOf(host.chrome)}")
+            chromeJs("window.__dexPtr=[];'ok'")
             mouse.click()
-            if (awaitUntil(6_000) { urlbarOpen() } && awaitDom(FIELD, 4_000)) {
+            val opened = awaitUntil(6_000) { urlbarOpen() }
+            finding("  the click on the pill: urlbar open $opened; the chrome document's events ${jsText(POINTER_PROBE_LAST)}; ${trace.report()}")
+            check("a left click on the address pill opens the URL field", opened, "urlbar open ${urlbarOpen()}, focus ${focusName()}")
+            if (opened && awaitDom(FIELD, 4_000)) {
                 val field = at(FIELD)
                 if (field != null) {
                     mouse.moveTo(field.x, field.y, 200)
@@ -481,12 +511,91 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
                 key(KeyEvent.KEYCODE_ESCAPE)
                 if (!awaitUntil(3_000) { !urlbarOpen() }) back()
                 awaitUntil(3_000) { !urlbarOpen() }
-            } else {
-                finding("  (the click on the pill did not open the field: urlbar open ${urlbarOpen()})")
             }
         }
-        coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
-        awaitUntil(5_000) { activeTabId() == ALPHA }
+        if (!flipped) {
+            // The claims above stand as the injected mouse left them; now the diagnosis, with the
+            // pointer put back over the row through the real path first.
+            mouse.moveTo(gamma.x, gamma.y, 300)
+            SystemClock.sleep(300)
+            hoverLadder(gamma, trace)
+        }
+    }
+
+    /**
+     * The injected hover flipped nothing: where along the way it stopped, as findings (not
+     * claims) – the input dispatcher's own state with the pointer over the Gamma row (`dumpsys
+     * input`: the hovering pointer's window, the recent queue, the app's windows and connection),
+     * then the same hover handed in BELOW the dispatcher, at the window's decor and straight at
+     * the chrome view, each read off the trace, the chrome document's pointer probe, the root's
+     * `data-hover` and the row's `:hover`. Whichever rung first reaches the document names the
+     * hop the injected stream is lost at.
+     */
+    private fun hoverLadder(gamma: PointF, trace: HoverTrace) {
+        val dump = shellCommand("dumpsys input")
+        File(out, "dumpsys-input-hover.txt").writeText(dump)
+        finding("  dumpsys input with the pointer over the Gamma row (${dump.length} chars, in dumpsys-input-hover.txt); the trace so far: ${trace.report()}")
+        for (marker in listOf("TouchStatesByDisplay", "RecentQueue")) {
+            excerpt(dump, marker, 12).forEach { finding("    | $it") }
+        }
+        dump.lineSequence().filter { it.contains(app.packageName) }.take(14).forEach { finding("    | ${it.trim().take(240)}") }
+        val decor = activity.window.decorView
+        val decorAt = onMain { IntArray(2).also { decor.getLocationOnScreen(it) } }
+        val chromeAt = onMain { IntArray(2).also { host.chrome.getLocationOnScreen(it) } }
+        rung("the window's decor, below the dispatcher", decor, gamma.x - decorAt[0], gamma.y - decorAt[1], trace)
+        rung("the chrome view itself", host.chrome, gamma.x - chromeAt[0], gamma.y - chromeAt[1], trace)
+    }
+
+    /** One rung: a mouse's HOVER_ENTER, a HOVER_MOVE and a second move a step on, dispatched at `view` in its own coordinates; what followed. */
+    private fun rung(name: String, view: View, x: Float, y: Float, trace: HoverTrace) {
+        trace.reset()
+        chromeJs(POINTER_PROBE_START)
+        val hoverBefore = jsText(DATA_HOVER)
+        val said = onMain {
+            listOf(
+                dispatchHover(view, MotionEvent.ACTION_HOVER_ENTER, x, y),
+                dispatchHover(view, MotionEvent.ACTION_HOVER_MOVE, x, y)
+            )
+        }
+        SystemClock.sleep(120)
+        val moved = onMain { dispatchHover(view, MotionEvent.ACTION_HOVER_MOVE, x + 2, y + 1) }
+        val reached = awaitUntil(1_500) { jsText(POINTER_PROBE_COUNTS) != "{}" }
+        SystemClock.sleep(200)
+        finding(
+            "  rung – $name at ${x.roundToInt()},${y.roundToInt()}: the view said enter ${said[0]}, move ${said[1]}, second move $moved; " +
+                "the document ${if (reached) "heard it" else "heard nothing"}: ${jsText(POINTER_PROBE_COUNTS)}, last ${jsText(POINTER_PROBE_LAST)}; " +
+                "data-hover '$hoverBefore' -> '${jsText(DATA_HOVER)}', Gamma :hover ${gammaHover()}; ${trace.report()}"
+        )
+    }
+
+    private fun dispatchHover(view: View, action: Int, x: Float, y: Float): Boolean {
+        val properties = MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = MotionEvent.TOOL_TYPE_MOUSE
+        }
+        val coords = MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+            size = 1f
+        }
+        val now = SystemClock.uptimeMillis()
+        val event = MotionEvent.obtain(now, now, action, 1, arrayOf(properties), arrayOf(coords), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0)
+        return try {
+            view.dispatchGenericMotionEvent(event)
+        } finally {
+            event.recycle()
+        }
+    }
+
+    private fun gammaHover(): Boolean =
+        jsBoolean("(function(){var e=document.querySelector('${row(GAMMA)}');return !!e&&e.matches(':hover')})()")
+
+    /** The line `marker` first appears on and the `lines` after it, trimmed. */
+    private fun excerpt(text: String, marker: String, lines: Int): List<String> {
+        val all = text.lines()
+        val at = all.indexOfFirst { it.contains(marker) }
+        if (at < 0) return listOf("($marker: not in the dump)")
+        return all.subList(at, minOf(all.size, at + lines + 1)).map { it.trimEnd().take(240) }
     }
 
     // --- 3. right click --------------------------------------------------------------------------
@@ -502,7 +611,7 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         awaitDom("$MENU [role=\"menuitem\"]", 3_000)
         val items = textsOf("$MENU [role=\"menuitem\"]")
         check("a right click on a sidebar row opens the tab's menu", opened && items.isNotEmpty(), "menu open $opened, rows: ${items.joinToString(" | ")}")
-        val menuFill = probeColor("--v2-fill")
+        val menuFill = probeColor("--v2-fill", MENU)
         val second = domRect("$MENU [role=\"menuitem\"]:nth-of-type(2)") ?: domRect("$MENU [role=\"menuitem\"]")
         val target = screen(second)
         if (target != null) {
@@ -583,7 +692,9 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         SystemClock.sleep(300)
         val width0 = pageWidth(ALPHA)
         val zoom0 = zoomOf(ALPHA)
-        finding("  before the wheel: zoom $zoom0, the page's innerWidth $width0, pinch scale ${pageJs(ALPHA, "window.visualViewport.scale")}")
+        // The view's width in the page's CSS px at scale 1: what innerWidth × the engine's scale must stay.
+        val viewCss = onMain { (pageView(ALPHA)?.width ?: 0) / activity.resources.displayMetrics.density }.toDouble()
+        finding("  before the wheel: zoom $zoom0, the page's innerWidth $width0, visual scale ${pageScale(ALPHA)}, the view ${viewCss.roundToInt()} CSS px wide")
         mouse.wheel(1, ctrl = true)
         check("one Ctrl+notch away zooms the page a step, 1 -> 1.1 (the core's ladder)", awaitUntil(5_000) { near(zoomOf(ALPHA), 1.1) }, "zoom ${zoomOf(ALPHA)}")
         val width1 = pageWidth(ALPHA)
@@ -592,8 +703,18 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             awaitUntil(3_000) { near(pageWidth(ALPHA), width0 / 1.1, 2.0) },
             "innerWidth $width0 -> ${pageWidth(ALPHA)} (expected ${(width0 / 1.1).roundToInt()}); first read $width1"
         )
+        check(
+            "no double zoom at 1.1: the engine's scale is the viewport rewrite's own – innerWidth × visualViewport.scale is still the view's width",
+            awaitUntil(3_000) { near(pageWidth(ALPHA) * pageScale(ALPHA), viewCss, 3.0) },
+            "innerWidth ${pageWidth(ALPHA)} × scale ${pageScale(ALPHA)} = ${(pageWidth(ALPHA) * pageScale(ALPHA)).roundToInt()} against the view's $viewCss"
+        )
         mouse.wheel(1, ctrl = true)
         check("a second notch: 1.25", awaitUntil(5_000) { near(zoomOf(ALPHA), 1.25) }, "zoom ${zoomOf(ALPHA)}")
+        check(
+            "no double zoom at 1.25",
+            awaitUntil(3_000) { near(pageWidth(ALPHA) * pageScale(ALPHA), viewCss, 3.0) && near(pageWidth(ALPHA), width0 / 1.25, 2.0) },
+            "innerWidth ${pageWidth(ALPHA)} × scale ${pageScale(ALPHA)} against the view's $viewCss"
+        )
         SystemClock.sleep(600)
         still("zoom-125")
         mouse.wheel(-3, ctrl = true, gapMs = 500)
@@ -607,9 +728,9 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
             "innerWidth ${pageWidth(ALPHA)} against $width0"
         )
         check(
-            "the engine did not zoom on its own: the page's pinch scale stays 1 (no double zoom)",
-            near(pageJs(ALPHA, "window.visualViewport.scale").toDoubleOrNull() ?: Double.NaN, 1.0, 0.01),
-            "scale ${pageJs(ALPHA, "window.visualViewport.scale")}"
+            "at zoom 1 the engine's scale is 1 again (nothing of its own left over)",
+            awaitUntil(2_000) { near(pageScale(ALPHA), 1.0, 0.01) },
+            "scale ${pageScale(ALPHA)}"
         )
         still("zoom-reset")
 
@@ -652,17 +773,37 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         val count0 = tabCount()
         val active0 = activeTabId()
         key(KeyEvent.KEYCODE_T, ctrl = true)
-        val opened = awaitUntil(6_000) { tabCount() == count0 + 1 }
-        check("Ctrl+T opens a tab", opened && activeTabId() != active0, "tabs $count0 -> ${tabCount()}, active $active0 -> ${activeTabId()}")
+        // Android's new tab: the URL bar in new-tab mode over the page (`openNewTab`, the new tab
+        // page turned off); with the page on, a tab is added instead.
+        val answered = awaitUntil(6_000) { tabCount() == count0 + 1 || urlbarOpen() }
+        val mode = jsText("((window.__zenStores.ui.get().urlbar)||{}).mode")
+        finding("  after Ctrl+T: tabs $count0 -> ${tabCount()}, active $active0 -> ${activeTabId()}, urlbar open ${urlbarOpen()} in mode '$mode', focus ${focusName()}")
+        check(
+            "Ctrl+T asks for a new tab: the URL bar opens in new-tab mode for it (Android's new tab), or a tab is added",
+            answered && (tabCount() == count0 + 1 || (urlbarOpen() && mode == "new-tab")),
+            "tabs ${tabCount()}, urlbar open ${urlbarOpen()} in mode '$mode'"
+        )
         SystemClock.sleep(800)
         still("keys-new-tab")
-        finding("  focus after Ctrl+T: ${focusName()}")
+        if (urlbarOpen()) {
+            key(KeyEvent.KEYCODE_ESCAPE)
+            if (!awaitUntil(3_000) { !urlbarOpen() }) back()
+            awaitUntil(3_000) { !urlbarOpen() }
+        }
+        // Ctrl+W on a plain tab (Delta), the page focused: the tab goes, the window stays.
+        coreInvoke("tab.activate", JSONObject().put("tabId", DELTA).toString())
+        awaitUntil(5_000) { activeTabId() == DELTA && pageCenter(DELTA) != null }
+        pageCenter(DELTA)?.let { delta ->
+            mouse.click(delta.x, delta.y + (content.height() / 4f))
+            SystemClock.sleep(400)
+        }
+        val count1 = tabCount()
         key(KeyEvent.KEYCODE_W, ctrl = true)
-        val closed = awaitUntil(6_000) { tabCount() == count0 }
+        val closed = awaitUntil(6_000) { tabCount() == count1 - 1 }
         check(
             "Ctrl+W closes the tab and not the window",
-            closed && !activity.isFinishing && !activity.isDestroyed && onMain { activity.window.decorView.isShown },
-            "tabs ${tabCount()}, finishing ${activity.isFinishing}, destroyed ${activity.isDestroyed}"
+            closed && activeTabId() != DELTA && !activity.isFinishing && !activity.isDestroyed && onMain { activity.window.decorView.isShown },
+            "tabs $count1 -> ${tabCount()}, active ${activeTabId()}, finishing ${activity.isFinishing}, destroyed ${activity.isDestroyed}"
         )
         if (activeTabId() != ALPHA) {
             coreInvoke("tab.activate", JSONObject().put("tabId", ALPHA).toString())
@@ -740,9 +881,12 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         }
     }
 
-    /** A token's computed colour, as `rgb(...)` / `rgba(...)`, off a probe element. */
-    private fun probeColor(token: String): String =
-        jsString("(function(){var p=document.createElement('div');p.style.background='var($token)';document.body.appendChild(p);var c=getComputedStyle(p).backgroundColor;p.remove();return c})()")
+    /** A token's computed colour, as `rgb(...)` / `rgba(...)`, off a probe element appended inside `within` (the scope the token is set for; the body when it is not on screen). */
+    private fun probeColor(token: String, within: String): String =
+        jsString(
+            "(function(){var h=document.querySelector(${JSONObject.quote(within)})||document.body;var p=document.createElement('div');" +
+                "p.style.background='var($token)';h.appendChild(p);var c=getComputedStyle(p).backgroundColor;p.remove();return c})()"
+        )
 
     private fun backgroundOf(selector: String): String =
         jsString("(function(){var e=document.querySelector(${JSONObject.quote(selector)});return e?getComputedStyle(e).backgroundColor:'none'})()")
@@ -783,6 +927,9 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
 
     private fun pageWidth(tabId: String): Double = pageJs(tabId, "window.innerWidth").toDoubleOrNull() ?: Double.NaN
 
+    /** The engine's own scale of the page: its visual viewport against the layout viewport. */
+    private fun pageScale(tabId: String): Double = pageJs(tabId, "window.visualViewport.scale").toDoubleOrNull() ?: Double.NaN
+
     private fun pageScrollY(tabId: String): Double = pageJs(tabId, "window.scrollY").toDoubleOrNull() ?: Double.NaN
 
     private fun tabCount(): Int = coreState().getJSONObject("tabs").length()
@@ -813,6 +960,109 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
         instrumentation.runOnMainSync { result = block() }
         @Suppress("UNCHECKED_CAST")
         return result as T
+    }
+
+    /**
+     * Where a mouse event gets to inside the app, for the hover diagnosis: every motion event
+     * from a mouse source at the WINDOW (the window's callback, the first thing the view root
+     * hands an event to – before the decor and the view tree), at the ROOT the chrome and the
+     * pages sit in (its generic-motion listener: a hover no child took), at the CHROME view and
+     * at Alpha's PAGE view (their hover and generic-motion listeners, ahead of the WebView's own
+     * handling and leaving it in place). The chrome document's side is [POINTER_PROBE_START].
+     * Tallied by action with the first and last point, plus the source, tool type and device id
+     * of the first event seen (what Chromium keys its mouse handling on).
+     */
+    private inner class HoverTrace {
+        private val window = ArrayList<String>()
+        private val root = ArrayList<String>()
+        private val chrome = ArrayList<String>()
+        private val page = ArrayList<String>()
+        private var original: Window.Callback? = null
+        private var rootView: View? = null
+        private var pageView: View? = null
+
+        fun install(page: View?) {
+            pageView = page
+            onMain {
+                val callback = activity.window.callback
+                if (callback != null) {
+                    original = callback
+                    activity.window.callback = object : Window.Callback by callback {
+                        override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+                            note(window, event)
+                            return callback.dispatchGenericMotionEvent(event)
+                        }
+
+                        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                            note(window, event)
+                            return callback.dispatchTouchEvent(event)
+                        }
+                    }
+                }
+                rootView = host.chrome.parent as? View
+                rootView?.setOnGenericMotionListener { _, e ->
+                    note(root, e)
+                    false
+                }
+                host.chrome.setOnHoverListener { _, e ->
+                    note(chrome, e)
+                    false
+                }
+                host.chrome.setOnGenericMotionListener { _, e ->
+                    note(chrome, e)
+                    false
+                }
+                page?.setOnHoverListener { _, e ->
+                    note(this.page, e)
+                    false
+                }
+                page?.setOnGenericMotionListener { _, e ->
+                    note(this.page, e)
+                    false
+                }
+            }
+            chromeJs(POINTER_PROBE_START)
+        }
+
+        fun remove() {
+            onMain {
+                original?.let { activity.window.callback = it }
+                original = null
+                rootView?.setOnGenericMotionListener(null)
+                host.chrome.setOnHoverListener(null)
+                host.chrome.setOnGenericMotionListener(null)
+                pageView?.setOnHoverListener(null)
+                pageView?.setOnGenericMotionListener(null)
+            }
+            chromeJs("if(window.__dexPtrOff)window.__dexPtrOff();'ok'")
+        }
+
+        fun reset() {
+            for (list in listOf(window, root, chrome, page)) synchronized(list) { list.clear() }
+        }
+
+        fun report(): String =
+            "window [${tally(window)}], root unhandled [${tally(root)}], chrome view [${tally(chrome)}], page view [${tally(page)}]"
+
+        private fun note(into: ArrayList<String>, event: MotionEvent) {
+            if (!event.isFromSource(InputDevice.SOURCE_MOUSE)) return
+            synchronized(into) {
+                if (into.isEmpty()) {
+                    into += "@src 0x${Integer.toHexString(event.source)} tool ${event.getToolType(0)} dev ${event.deviceId} btn ${event.buttonState}"
+                }
+                if (into.size < 600) into += "${MotionEvent.actionToString(event.actionMasked)}@${event.x.roundToInt()},${event.y.roundToInt()}"
+            }
+        }
+
+        private fun tally(events: List<String>): String {
+            val list = synchronized(events) { events.toList() }
+            if (list.isEmpty()) return "nothing"
+            val meta = list.first().removePrefix("@")
+            val hits = list.drop(1).groupBy { it.substringBefore('@') }
+            return hits.entries.joinToString(", ") { (action, at) ->
+                "$action x${at.size} (${at.first().substringAfter('@')} -> ${at.last().substringAfter('@')})"
+            } + "; $meta"
+        }
     }
 
     companion object {
@@ -861,5 +1111,26 @@ class DexWindowingDemo : GroupsDemoBase("dex", "dex-windowing-demo") {
                 "document.documentElement.dataset.formFactor||'',b?Math.round(b.width):-1,b?Math.round(b.height):-1]);" +
                 "requestAnimationFrame(f)})();'ok'"
         private const val FRAME_PROBE_READ = "(function(){window.__dexProbe=false;return window.__dexFrames||[]})()"
+
+        /**
+         * The chrome document's side of the hover trace: every pointer and mouse event that
+         * reaches the window (capture phase, so a handler that stops one still counts), tallied
+         * by type, and the last twelve as `type:pointerType:x,y[:bN]:target` – the target's tag,
+         * `[pill]` inside the address pill, `[tab <id>]` inside a tab row. Installing again
+         * replaces the last probe.
+         */
+        private const val POINTER_PROBE_START =
+            "(function(){if(window.__dexPtrOff)window.__dexPtrOff();window.__dexPtr=[];window.__dexPtrCount={};" +
+                "var types=['pointerover','pointermove','pointerdown','pointerup','mousemove','mouseover','mousedown','mouseup','click','contextmenu'];" +
+                "var buttoned={pointerdown:1,pointerup:1,mousedown:1,mouseup:1,click:1,contextmenu:1};" +
+                "function name(t){if(!t||!t.tagName)return String((t&&t.nodeName)||'?');var n=t.tagName.toLowerCase();" +
+                "if(t.closest('[data-address-pill]'))n+='[pill]';var r=t.closest('[data-tab-id]');if(r)n+='[tab '+r.getAttribute('data-tab-id')+']';return n}" +
+                "function on(e){window.__dexPtrCount[e.type]=(window.__dexPtrCount[e.type]||0)+1;" +
+                "window.__dexPtr.push(e.type+':'+(e.pointerType||'-')+':'+Math.round(e.clientX)+','+Math.round(e.clientY)+(buttoned[e.type]?':b'+e.button:'')+':'+name(e.target));" +
+                "if(window.__dexPtr.length>400)window.__dexPtr.shift()}" +
+                "types.forEach(function(t){window.addEventListener(t,on,true)});" +
+                "window.__dexPtrOff=function(){types.forEach(function(t){window.removeEventListener(t,on,true)});window.__dexPtrOff=null};return 'ok'})()"
+        private const val POINTER_PROBE_COUNTS = "JSON.stringify(window.__dexPtrCount||{})"
+        private const val POINTER_PROBE_LAST = "JSON.stringify((window.__dexPtr||[]).slice(-12))"
     }
 }

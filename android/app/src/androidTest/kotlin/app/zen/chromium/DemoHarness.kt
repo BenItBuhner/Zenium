@@ -526,7 +526,17 @@ abstract class DemoHarness(
      * must wait for that itself (poll for the change, or [settle]), not lean on the still.
      */
     protected fun shot(name: String) {
-        val bitmap = ui.takeScreenshot() ?: return
+        // The screenshot service answers null now and then while the display is busy (a window
+        // mid-resize, a heavy frame): a moment and a second and third ask before the still is
+        // given up (three of a run's fourteen were lost to one null each, DexWindowingDemo #494).
+        var taken: Bitmap? = null
+        for (attempt in 1..3) {
+            taken = ui.takeScreenshot()
+            if (taken != null) break
+            Log.w(tag, "takeScreenshot returned null for $shotPrefix-$name (attempt $attempt of 3)")
+            SystemClock.sleep(400)
+        }
+        val bitmap = taken ?: return
         val file = File(out, "$shotPrefix-$name.png")
         shotEncoder.execute {
             file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
