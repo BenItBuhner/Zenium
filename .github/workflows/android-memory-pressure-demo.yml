@@ -7,8 +7,10 @@ name: Android memory pressure demo
 # RUNNING_CRITICAL (the rest) with the page in front and the page playing audio untouched, the
 # overview's sleeping cards, the return to a sleeping page (its last picture until the first
 # commit, then the page reloaded at its scroll, the sequence read off the host thirty times a
-# second), the renderer priorities of the shown, hidden and chrome WebViews, and BACKGROUND with
-# the app behind Home sleeping its share in one pass. Every check is a line of
+# second), the renderer priorities of the shown, hidden and chrome WebViews (every one at the
+# platform default, IMPORTANT unwaived), and BACKGROUND with the app behind Home – not pressure
+# on its own, graded by the MemoryInfo reading beside it, nothing sleeping at the switch with the
+# emulator's gigabytes free. Every check is a line of
 # android-memory-pressure-findings.txt in the artifact, with the memory table (`dumpsys meminfo`
 # PSS / RSS of the app and the renderer at each step); a FAIL fails the run once the stills are
 # taken.

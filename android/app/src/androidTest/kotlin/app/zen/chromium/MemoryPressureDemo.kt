@@ -7,6 +7,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
+import android.webkit.WebView
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -43,12 +44,14 @@ import kotlin.math.sin
  *  6. the return: the scrolled page shown again gets its last picture until its first commit,
  *     then reloads at its scroll – the sequence read off the host thirty times a second, the
  *     still `frames-return-<theme>` taken while the picture stands;
- *  7. the renderer's weight: the shown page IMPORTANT, a hidden one WAIVED when not visible, the
- *     chrome IMPORTANT and unwaived while the audio plays, waived once it stops;
+ *  7. the renderer's weight: every view at WebView's default policy – IMPORTANT, not waived when
+ *     not visible – the chrome's before and after the audio stops; the one shared renderer is
+ *     never made the cheaper kill, the memory is the discards' (the coordinator's ruling);
  *  8. Home: twelve sleeping pages reloaded hidden first; the poll stops with the window; what
- *     the platform delivers by itself on this API is recorded; then BACKGROUND, graded with the
- *     `MemoryInfo` reading beside it, sleeps its share in one pass; the process list read for
- *     the two processes' standing; back to the app, the poll running again.
+ *     the platform delivers by itself on this API is recorded; then BACKGROUND, which is not
+ *     pressure on its own: the `MemoryInfo` reading beside it grades, and with the emulator's
+ *     gigabytes free nothing sleeps at the switch; the process list read for the two processes'
+ *     standing; back to the app, the poll running again.
  *
  * Two acts, light and dark, chosen by the `theme` argument. The recording, the stills
  * (`android-memory-pressure-*.png`) and the findings file (the memory table) are the evidence.
@@ -302,23 +305,28 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
 
     // --- 7: the renderer's weight ---------------------------------------------------------------------
 
+    /**
+     * The one renderer every WebView shares runs at the highest policy any attached view asks,
+     * and the chrome's view keeps the platform default – IMPORTANT, not waived when not visible –
+     * at every moment (the coordinator's ruling, round 2): the memory this row saves is the
+     * discards', not a cheaper renderer. Read before and after the audio stops.
+     */
     private fun priorityScene() {
         val shown = onMain { host.tabs.get(TAB_SCROLL)?.let { it.rendererRequestedPriority to it.rendererPriorityWaivedWhenNotVisible } }
         val hidden = onMain { host.tabs.get(TAB_FRONT)?.let { it.rendererRequestedPriority to it.rendererPriorityWaivedWhenNotVisible } }
         var chrome = onMain { host.chrome.rendererRequestedPriority to host.chrome.rendererPriorityWaivedWhenNotVisible }
-        var held = onMain { host.rendererHeld() }
-        finding("renderer priority: shown page $shown, hidden page $hidden, chrome $chrome, held=$held (IMPORTANT=${RendererPriorities.IMPORTANT}, WAIVED=${RendererPriorities.WAIVED})")
-        claim(shown == (RendererPriorities.IMPORTANT to true), "the shown page's view asks IMPORTANT ($shown)")
-        claim(hidden == (RendererPriorities.WAIVED to true), "a hidden page's view is WAIVED when not visible ($hidden)")
-        claim(held && chrome == (RendererPriorities.IMPORTANT to false), "the chrome holds the renderer IMPORTANT, unwaived, while the audio plays ($chrome, held=$held)")
+        finding("renderer priority, audio playing: shown page $shown, hidden page $hidden, chrome $chrome (IMPORTANT=${WebView.RENDERER_PRIORITY_IMPORTANT}, WAIVED=${WebView.RENDERER_PRIORITY_WAIVED})")
+        claim(shown == IMPORTANT_UNWAIVED, "the shown page's view is at the platform default, IMPORTANT unwaived ($shown)")
+        claim(hidden == IMPORTANT_UNWAIVED, "a hidden page's view is at the platform default too – no view waives the shared renderer ($hidden)")
+        claim(chrome == IMPORTANT_UNWAIVED, "the chrome's view is IMPORTANT, unwaived, while the audio plays ($chrome)")
 
-        // The audio stops: the hold lifts, the chrome waives with the window.
+        // The audio stops: nothing about the renderer's standing changes with it.
         pageJs(TAB_AUDIO, "(function(){var a=document.querySelector('audio');if(a)a.pause();return 'paused'})()")
         pausedAudioAt = System.currentTimeMillis()
-        val quiet = awaitTrue(10_000) { coreTab(TAB_AUDIO)?.optBoolean("audible") == false && !onMain { host.rendererHeld() } }
+        val quiet = awaitTrue(10_000) { coreTab(TAB_AUDIO)?.optBoolean("audible") == false }
         chrome = onMain { host.chrome.rendererRequestedPriority to host.chrome.rendererPriorityWaivedWhenNotVisible }
-        held = onMain { host.rendererHeld() }
-        claim(quiet && chrome == (RendererPriorities.IMPORTANT to true), "the audio paused, the chrome waives when not visible ($chrome, held=$held)")
+        finding("renderer priority, audio paused: chrome $chrome")
+        claim(quiet && chrome == IMPORTANT_UNWAIVED, "the audio paused, the chrome's view is still IMPORTANT, unwaived ($chrome, quiet=$quiet)")
         finding("process list, window up: ${processStanding()}")
     }
 
@@ -350,6 +358,13 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         val lastActive = coreTabsLastActive()
         val eligible = mayBeSlept()
         finding("${eligible.size} page(s) the policy may sleep now (${describeIds(eligible)}); exempt: ${exemptions()}")
+        // BACKGROUND is not pressure on its own (the coordinator's ruling, round 2): the arrival is
+        // a moment to read `MemoryInfo` once, and only the reading's grade, if it has one, runs the
+        // plan – at once, the window being away. With this emulator's gigabytes free the reading
+        // has no grade and nothing sleeps at the switch; a real low reading cannot be provoked on
+        // this recipe, so the grading itself is proven by the JUnit on `MemoryPressure.ofTrimWith`.
+        val info = onMain { host.memoryPressure.read() }
+        val readingGrade = MemoryPressure.ofMemoryInfo(info.availMem, info.threshold, info.lowMemory)
         val delivered = trim("BACKGROUND")
         claim(delivered, "BACKGROUND reached the host with the window away")
         val graded = onMain { host.memoryPressure.trims.lastOrNull()?.graded }
@@ -360,13 +375,18 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
             null -> 0
         }
         val expectedIds = eligible.sortedBy { lastActive[it] ?: 0L }.take(expected).toSet()
-        // One pass, no batches: the plan is in the state as soon as the core answers.
+        // One pass, no batches: whatever the reading's grade plans is in the state as soon as the
+        // core answers; with no grade, nothing is.
         val settled = awaitTrue(10_000) { (discardedIds() - asleepBefore).size >= expected }
         SystemClock.sleep(1_000)
         val slept = discardedIds() - asleepBefore
-        finding("BACKGROUND graded ${graded?.wire ?: "none"} (${memoryInfo()}): $expected of ${eligible.size} expected, ${slept.size} slept: ${describeIds(slept)}")
-        claim(graded != null, "BACKGROUND was graded (${graded?.wire})")
-        claim(settled && slept.size == expected, "the background trim slept its share in one pass ($expected expected, ${slept.size} slept)")
+        finding("BACKGROUND with the reading beside it (${onMain { host.memoryPressure.describe(info) }}, reading graded ${readingGrade?.wire ?: "none"}): the trim graded ${graded?.wire ?: "none"}; $expected of ${eligible.size} expected, ${slept.size} slept: ${describeIds(slept)}")
+        claim(graded == readingGrade, "BACKGROUND alone is not pressure: the trim's grade is the reading's (trim ${graded?.wire ?: "none"}, reading ${readingGrade?.wire ?: "none"})")
+        if (graded == null) {
+            claim(slept.isEmpty(), "nothing slept at the switch to the background with the reading roomy (${slept.size} slept)")
+        } else {
+            claim(settled && slept.size == expected, "the reading's grade ran the plan at once ($expected expected, ${slept.size} slept)")
+        }
         claim(slept == expectedIds, "the pages shown longest ago went (${describeIds(slept - expectedIds)} unexpected, ${describeIds(expectedIds - slept)} missing)")
         val three = setOf(TAB_SCROLL, TAB_FRONT, TAB_AUDIO)
         val kept = three - eligible
@@ -783,6 +803,8 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         /** `RECENTLY_SHOWN_MS` and `RECENTLY_AUDIBLE_MS` in `src/core/memoryPressure.ts`. */
         private const val RECENTLY_SHOWN_MS = 60_000L
         private const val RECENTLY_AUDIBLE_MS = 60_000L
+        /** WebView's default renderer priority policy: IMPORTANT, not waived when the view is not visible. */
+        private val IMPORTANT_UNWAIVED = WebView.RENDERER_PRIORITY_IMPORTANT to false
         /** `am send-trim-memory`'s names for `ComponentCallbacks2`'s levels. */
         private val TRIM_LEVELS = mapOf(
             "HIDDEN" to HostLifecycle.TRIM_MEMORY_UI_HIDDEN,
