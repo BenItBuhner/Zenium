@@ -230,6 +230,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         results.put("heapAtStartKb", heapKb())
         for ((index, row) in list.withIndex()) {
             mainThread.row = "${index + 1} ${row.name}"
+            // The row in flight, named by id before anything of it runs: the hand-off after an
+            // emulator death reads it off the sweep log when the death was in the first row and
+            // no results.json was ever pulled (`ext-compat-rows-left.mjs`; round 18's AFTER 113
+            // ran the dead row first on both boots for want of it).
+            Log.i(TAG, "ROW-START ${index + 1}/${list.size} ${row.id} ${row.name}")
             if (!chromeAnswers()) {
                 // The chrome's JS is gone for good (a renderer wedged behind a dialog nothing
                 // could press, a heap with no room left): every row behind this one would spend
