@@ -584,12 +584,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * Memory pressure graded (a trim, or the poll's reading): the core sleeps the hidden pages
      * shown longest ago at the level's share (`Tabs.unloadForMemoryPressure`, never the page in
      * front, one playing or capturing, one with a form in progress, one shown in the last
-     * minute), and a restored tab's picture still up is a bitmap the page beneath will replace
-     * anyway.
+     * minute) – a few at a time while the window is up, in one pass while it is away (`background`:
+     * nothing draws, and the hidden chrome's timers run throttled) – and a restored tab's picture
+     * still up is a bitmap the page beneath will replace anyway.
      */
     private fun onMemoryPressure(level: MemoryPressure.Level, why: String) {
-        Log.i(TAG, "memory pressure ${level.wire} ($why)")
-        chrome.hostEvent("memoryPressure", json("level" to level.wire))
+        val background = !windowUp()
+        Log.i(TAG, "memory pressure ${level.wire}${if (background) ", window away" else ""} ($why)")
+        chrome.hostEvent("memoryPressure", json("level" to level.wire, "background" to background))
         restoredPictures.releaseAll("memory pressure")
     }
 

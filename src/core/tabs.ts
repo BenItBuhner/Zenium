@@ -4282,9 +4282,13 @@ export class TabManager {
    * `critical`). Independent of the timer's switch: pressure is not a preference. The pages go
    * a few at a time (`DISCARD_BATCH` now, the rest every `DISCARD_BATCH_INTERVAL_MS`): each is
    * a `WebView.destroy` on the main thread, and a signal that comes while a batch is pending
-   * replaces the queue with its own plan, read against the state of that moment.
+   * replaces the queue with its own plan, read against the state of that moment. `atOnce` (the
+   * host's word that the window is away – Android's stopped activity) takes the whole plan in
+   * one pass instead: nothing is drawn behind other apps, so no frame is there to protect, and
+   * a hidden chrome's timers run throttled – batches of two a second would leave most of the
+   * plan waiting on the return.
    */
-  unloadForMemoryPressure(level: MemoryPressureLevel): void {
+  unloadForMemoryPressure(level: MemoryPressureLevel, opts: { atOnce?: boolean } = {}): void {
     this.pressureQueue = planMemoryPressureDiscard(
       this.loadedPages(),
       level,
@@ -4294,6 +4298,10 @@ export class TabManager {
     if (this.pressureTimer !== null) {
       clearTimeout(this.pressureTimer)
       this.pressureTimer = null
+    }
+    if (opts.atOnce) {
+      while (this.pressureQueue.length > 0) this.discardBatch()
+      return
     }
     this.discardNextBatch()
   }
@@ -4328,15 +4336,20 @@ export class TabManager {
 
   private discardNextBatch(): void {
     this.pressureTimer = null
+    this.discardBatch()
+    if (this.pressureQueue.length > 0)
+      this.pressureTimer = setTimeout(() => this.discardNextBatch(), DISCARD_BATCH_INTERVAL_MS)
+  }
+
+  /** The next `DISCARD_BATCH` ids of the queue, each read again at its turn. */
+  private discardBatch(): void {
     const visible = this.allVisibleTabIds()
     for (const id of this.pressureQueue.splice(0, DISCARD_BATCH)) {
-      // Read again at its turn: the user may have gone back to the page since the plan.
+      // The user may have gone back to the page since the plan.
       const tab = this.tab(id)
       if (!tab || !this.view(id) || visible.has(id) || tab.audible) continue
       this.discard(id)
     }
-    if (this.pressureQueue.length > 0)
-      this.pressureTimer = setTimeout(() => this.discardNextBatch(), DISCARD_BATCH_INTERVAL_MS)
   }
 
   /** Every loaded page as the sleep policies read it (`SleepCandidate`), shown or not. */

@@ -12,32 +12,35 @@ package app.zen.chromium
  * and killing background processes (the foreground next once it leaves the screen) – graded a
  * quarter, a half, all, the shares Chrome's `BindingManager.onTrimMemory` un-protects of its
  * background renderers at those three. On the system's cached list BACKGROUND / MODERATE /
- * COMPLETE are the process at the start, the middle and the end of it, delivered only while the
- * system is short (`AppProfiler.updateLowMemStateLSP`: nothing but UI_HIDDEN reaches a cached
- * process under normal memory). They grade the way Chrome's `MemoryPressureMonitor.java`
- * grades them for its own caches – BACKGROUND and MODERATE its middle grade (`low` here: half),
- * COMPLETE critical – stronger than the foreground's first rung, and rightly: the window is off
- * the screen, so the pages' sleep costs nothing the user sees, and a cached process is the next
- * one killed, whole, pages and all. What holds at every level holds here too: the recency guard
- * and the exemptions, the never-sleep list until `critical`. UI_HIDDEN is not pressure (the user
- * left; nothing more) and neither is a level the table does not know.
+ * COMPLETE were the process at the start, the middle and the end of it under a short system
+ * (the legacy trim, API 33 and before: `AppProfiler.updateLowMemStateLSP`), and they take the
+ * same three grades in order – a quarter, a half, all. Since API 34 the platform delivers only
+ * UI_HIDDEN and BACKGROUND (the RUNNING_* levels and MODERATE / COMPLETE are deprecated "not
+ * notified since API 34"), and BACKGROUND at every transition into the cached state
+ * (`OomAdjuster`, `USE_MODERN_TRIM`) – an app switch, with no shortage implied. So on its own
+ * BACKGROUND is the gentlest grade, the oldest quarter of what may sleep, never a page shown
+ * within the minute; what makes it more is the second signal beside it.
  *
- * Since API 34 the platform delivers only UI_HIDDEN and BACKGROUND (the RUNNING_* levels and
- * MODERATE / COMPLETE are deprecated "not notified since API 34"; a cached process that would
- * have heard MODERATE or COMPLETE hears BACKGROUND). So the second signal,
- * `ActivityManager.getMemoryInfo()`, stands in for the grades the platform no longer sends:
- * `lowMemory` (`availMem` under the system's `threshold`, the point at which it starts killing
- * background processes – RUNNING_CRITICAL's word) grades `critical`; `availMem` under
- * [LOW_FACTOR] times the threshold grades `low`. [MemoryPressureMonitor] reads it every
- * [POLL_MS] while the window is up and beside every trim, and the higher of the two readings
- * is what the core hears ([higher]) – a BACKGROUND trim on a device that is truly short is a
- * `critical`, not a `low`. `am send-trim-memory` (the proof's tool) delivers any level on any
- * API; what the platform itself delivered on a boot is on the monitor's record ([MemoryPressureMonitor.trims]).
+ * That signal is `ActivityManager.getMemoryInfo()`, the stand-in for the grades the platform no
+ * longer sends: `lowMemory` (`availMem` under the system's `threshold`, the point at which it
+ * starts killing background processes – RUNNING_CRITICAL's word) grades `critical`; `availMem`
+ * under [LOW_FACTOR] times the threshold grades `low`. [MemoryPressureMonitor] reads it beside
+ * every trim and every [POLL_MS] while the window is up, and the higher of the two readings is
+ * what the core hears ([higher]) – a BACKGROUND trim on a device that is truly short is a
+ * `critical`, not a `moderate`; the cached family is the foreground's, and stronger exactly when
+ * the device says so. Away from the screen the core takes the plan in one pass rather than in
+ * batches (`Host.onMemoryPressure`, `background`). What holds at every level holds here too: the
+ * recency guard and the exemptions, the never-sleep list until `critical`. UI_HIDDEN is not
+ * pressure (the user left; nothing more) and neither is a level the table does not know.
  *
- * Chrome's `MemoryPressureMonitor.java` also re-reads `getMyMemoryState().lastTrimLevel` a
- * minute on to see whether the pressure holds; Zenium's renderer is one process shared by every
- * page and the chrome, so the pages themselves are what there is to give back, and the
- * `MemoryInfo` poll is that re-read.
+ * `am send-trim-memory` (the proof's tool) delivers any level on any API; what the platform
+ * itself delivered on a boot is on the monitor's record ([MemoryPressureMonitor.trims]).
+ * Chrome's `MemoryPressureMonitor.java` grades the same trims for its own caches (COMPLETE and
+ * RUNNING_CRITICAL critical; BACKGROUND and MODERATE its middle grade – caches purged, nothing
+ * the user sees; RUNNING_LOW, RUNNING_MODERATE and UI_HIDDEN nothing) and re-reads
+ * `getMyMemoryState().lastTrimLevel` a minute on to see whether the pressure holds; Zenium's
+ * renderer is one process shared by every page and the chrome, so the pages themselves are what
+ * there is to give back, and the `MemoryInfo` poll is that re-read.
  */
 object MemoryPressure {
     /** The core's grades (`HostEventPayloads['memoryPressure'].level`), in rising order. */
@@ -48,7 +51,7 @@ object MemoryPressure {
         HostLifecycle.TRIM_MEMORY_RUNNING_MODERATE -> Level.MODERATE
         HostLifecycle.TRIM_MEMORY_RUNNING_LOW -> Level.LOW
         HostLifecycle.TRIM_MEMORY_RUNNING_CRITICAL -> Level.CRITICAL
-        HostLifecycle.TRIM_MEMORY_BACKGROUND -> Level.LOW
+        HostLifecycle.TRIM_MEMORY_BACKGROUND -> Level.MODERATE
         HostLifecycle.TRIM_MEMORY_MODERATE -> Level.LOW
         HostLifecycle.TRIM_MEMORY_COMPLETE -> Level.CRITICAL
         else -> null

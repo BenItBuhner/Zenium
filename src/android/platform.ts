@@ -568,9 +568,11 @@ export interface HostEventPayloads {
    * The system is short of memory (`onTrimMemory` and `ActivityManager.MemoryInfo`, graded by
    * `MemoryPressure.kt`): the hidden pages shown longest ago go to sleep ahead of their timeout
    * – a quarter of them at `moderate`, half at `low`, all at `critical` (the process is about
-   * to be killed) – `planMemoryPressureDiscard`'s rules, a few at a time.
+   * to be killed) – `planMemoryPressureDiscard`'s rules, a few at a time while the window is
+   * up; in one pass when `background` says it is away (nothing draws, and a hidden page's
+   * timers run throttled).
    */
-  memoryPressure: { level: 'moderate' | 'low' | 'critical' }
+  memoryPressure: { level: 'moderate' | 'low' | 'critical'; background?: boolean }
   /**
    * The device's connectivity changed (`Connectivity.kt`, raw: a network switch reports a loss
    * and a gain within a second; the core's debounce settles it, ERR-06 / ERR-07).
@@ -1896,7 +1898,7 @@ export class AndroidPlatform implements Platform {
         const p = payload as Partial<HostEventPayloads['memoryPressure']> | null
         // An unknown grade from an older or newer host reads as the middle one.
         const level = p?.level === 'critical' || p?.level === 'moderate' ? p.level : 'low'
-        browser.tabs.unloadForMemoryPressure(level)
+        browser.tabs.unloadForMemoryPressure(level, { atOnce: p?.background === true })
         return
       }
       case 'connectivity': {

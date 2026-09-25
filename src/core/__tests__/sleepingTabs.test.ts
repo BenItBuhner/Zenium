@@ -322,6 +322,29 @@ describe('sleeping tabs on a host without a resource governor', () => {
     expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(5)
   })
 
+  it('takes the whole plan in one pass when the host says the window is away', () => {
+    // Behind other apps nothing draws and the chrome's timers run throttled: the batches would
+    // leave most of the plan waiting on the return.
+    const { browser, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadEnabled: false })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const hidden: Tab[] = []
+    for (let i = 0; i < 7; i++) {
+      const tab = browser.tabs.createTab({ url: `https://h${i}.example/`, active: false }, win)
+      browser.tabs.load(tab.id, win)
+      browser.tabs.tab(tab.id)!.lastActiveAt = Date.now() - (20 - i) * 60_000
+      hidden.push(tab)
+    }
+    browser.tabs.unloadForMemoryPressure('low', { atOnce: true })
+    // Half of seven, rounded up: four, all now – two would be a batch's worth.
+    expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(4)
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
+    expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(4)
+    browser.tabs.unloadForMemoryPressure('critical', { atOnce: true })
+    expect(hidden.every((t) => browser.tabs.tab(t.id)!.discarded)).toBe(true)
+    expect(browser.tabs.activeTabFor(win)!.discarded).toBe(false)
+  })
+
   it('honours a never-sleep entry written as the registrable domain, not only as the host', () => {
     // The desktop's Add current site and the pill's Never unload this site write `getDomain`
     // (`google.com` for a page of `mail.google.com`); the phone's Add sheet writes a host. Both

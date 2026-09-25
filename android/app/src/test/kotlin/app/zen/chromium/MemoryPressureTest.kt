@@ -31,16 +31,12 @@ class MemoryPressureTest {
     }
 
     @Test
-    fun `the cached trims grade as Chrome's MemoryPressureMonitor grades them, stronger than the foreground's first rung`() {
-        // BACKGROUND and MODERATE its middle grade (half), COMPLETE critical: the window is off
-        // the screen and the process is the next one killed.
-        assertEquals(Level.LOW, MemoryPressure.ofTrim(TRIM_MEMORY_BACKGROUND))
+    fun `the cached trims take the foreground family's three grades in order`() {
+        // BACKGROUND on its own is the gentlest grade: since API 34 it comes at every app switch
+        // (USE_MODERN_TRIM), no shortage implied; the MemoryInfo reading beside it is what lifts it.
+        assertEquals(Level.MODERATE, MemoryPressure.ofTrim(TRIM_MEMORY_BACKGROUND))
         assertEquals(Level.LOW, MemoryPressure.ofTrim(TRIM_MEMORY_MODERATE))
         assertEquals(Level.CRITICAL, MemoryPressure.ofTrim(TRIM_MEMORY_COMPLETE))
-        assertTrue(
-            "the cached family's first rung outranks the foreground's",
-            MemoryPressure.ofTrim(TRIM_MEMORY_BACKGROUND)!!.ordinal > MemoryPressure.ofTrim(TRIM_MEMORY_RUNNING_MODERATE)!!.ordinal
-        )
     }
 
     @Test
@@ -81,10 +77,10 @@ class MemoryPressureTest {
 
     @Test
     fun `a trim with the reading beside it takes the higher, a trim that is not pressure stays none`() {
-        // A BACKGROUND trim on a device that is truly short is a critical, not a low.
+        // A BACKGROUND trim on a device that is truly short is a critical, not a moderate.
         assertEquals(Level.CRITICAL, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, Level.CRITICAL))
-        assertEquals(Level.LOW, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, null))
-        assertEquals(Level.MODERATE, MemoryPressure.ofTrimWith(TRIM_MEMORY_RUNNING_MODERATE, null))
+        assertEquals(Level.LOW, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, Level.LOW))
+        assertEquals(Level.MODERATE, MemoryPressure.ofTrimWith(TRIM_MEMORY_BACKGROUND, null))
         assertEquals(Level.CRITICAL, MemoryPressure.ofTrimWith(TRIM_MEMORY_RUNNING_CRITICAL, Level.LOW))
         assertEquals(Level.LOW, MemoryPressure.ofTrimWith(TRIM_MEMORY_MODERATE, Level.MODERATE))
         // UI_HIDDEN on a busy device is still only the user leaving.
