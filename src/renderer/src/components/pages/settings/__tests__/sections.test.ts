@@ -257,6 +257,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     settings: { ...DEFAULT_SETTINGS, ...settings },
     shortcuts: [],
     searchEngines: DEFAULT_SEARCH_ENGINES,
+    extensionControls: {},
     glance: null,
     compactSidebarRevealed: false,
     window: {
@@ -3006,6 +3007,60 @@ describe('what a row does', () => {
       expect(reset.confirm).toBeUndefined()
       reset.onPress?.()
       expect(c.patches.at(-1)).toEqual({ fonts: DEFAULT_SETTINGS.fonts })
+    })
+
+    it('a slot or size an extension holds (chrome.fontSettings; state.extensionControls keyed fonts.<slot>, fonts.size, fonts.minimumSize) is drawn controlled in both of the row’s forms, the user’s own value kept in the row, its neighbours not; Disable takes the Extensions page’s path', () => {
+      const control = { extensionId: 'a'.repeat(32), name: 'Advanced Font Settings' }
+      const extensionControls = { 'fonts.standard': control, 'fonts.size': control }
+      const held = state(
+        {
+          platform: 'linux',
+          capabilities: { ...ANDROID, genericFontFamilies: true },
+          extensionControls
+        },
+        { fonts: { ...DEFAULT_SETTINGS.fonts, standard: 'Inter', size: 20 } }
+      )
+      const c = context(held)
+      const desktop = buildSection(PAGE.sections[0], {
+        ...c.ctx,
+        formFactor: 'desktop',
+        localFonts: ['Inter']
+      })
+      // The held rows carry the extension; the row's value stays the user's own (what stands
+      // again when the extension lets go), and the pages render the extension's meanwhile.
+      const standard = row(desktop, 'fonts-standard')
+      if (standard.kind !== 'value') throw new Error('not a value row')
+      expect(standard.controlled).toMatchObject(control)
+      expect(standard.value).toBe('Inter')
+      const size = row(desktop, 'fonts-size')
+      if (size.kind !== 'value') throw new Error('not a value row')
+      expect(size.controlled).toMatchObject(control)
+      expect(size.value).toBe('20')
+      // The rows beside them are the user's, and so are the preview and Reset.
+      for (const id of ['fonts-minimum-size', 'fonts-serif', 'fonts-sansSerif', 'fonts-fixed'])
+        expect(row(desktop, id).controlled).toBeUndefined()
+      expect(row(desktop, 'fonts-preview').controlled).toBeUndefined()
+      expect(row(desktop, 'fonts-reset').controlled).toBeUndefined()
+      // Disable goes through the host's own path, the one the Extensions page's switch takes.
+      standard.controlled!.onDisable()
+      expect(invoke).toHaveBeenCalledWith('extension.setEnabled', {
+        id: control.extensionId,
+        enabled: false
+      })
+
+      // The phone shell's forms of the same rows carry the same control.
+      const phone = buildSection(PAGE.sections[0], { ...c.ctx, formFactor: 'phone' })
+      expect(row(phone, 'fonts-standard-phone').controlled).toMatchObject(control)
+      expect(row(phone, 'fonts-size-phone').controlled).toMatchObject(control)
+      expect(row(phone, 'fonts-minimum-size-phone').controlled).toBeUndefined()
+
+      // No extension holding anything: no row is controlled.
+      const free = buildSection(PAGE.sections[0], {
+        ...context(desktopHost()).ctx,
+        formFactor: 'desktop'
+      })
+      for (const r of free.groups.find((g) => g.id === 'fonts')!.rows)
+        expect(r.controlled).toBeUndefined()
     })
 
     it('the preview is §10.3’s static content row – a 13/69 % label over the samples, which are decoration for the eye – in the page fonts themselves: the standard family at the size, the fixed one at Chrome’s ratio, both floored by the minimum', () => {

@@ -64,6 +64,7 @@ import {
   type GenericFontSlot,
   type PageFontSettings
 } from '../../../shared/fonts'
+import type { ExtensionControl } from '../../../shared/types'
 import { installOrderRank } from './privacy'
 import { ApiError, type ApiContext, type ApiHost, type NamespaceHandlers } from './types'
 
@@ -113,6 +114,21 @@ const USER_PREF_KEYS: readonly string[] = [
   fontPrefKey('sansserif', COMMON_SCRIPT),
   fontPrefKey('fixed', COMMON_SCRIPT),
   ...FONT_SIZE_PREFS
+]
+
+/**
+ * The Settings › Customise fonts rows, by their key in `UIState.extensionControls` (the
+ * setting's path in `Settings`), and the pref each one sets: an extension holding the pref
+ * holds the row. The fixed-width size has no row – Zenium derives it from the size – so an
+ * extension's `setDefaultFixedFontSize` controls no row.
+ */
+const SETTINGS_ROWS: ReadonlyArray<readonly [key: string, pref: string]> = [
+  ['fonts.standard', fontPrefKey('standard', COMMON_SCRIPT)],
+  ['fonts.serif', fontPrefKey('serif', COMMON_SCRIPT)],
+  ['fonts.sansSerif', fontPrefKey('sansserif', COMMON_SCRIPT)],
+  ['fonts.fixed', fontPrefKey('fixed', COMMON_SCRIPT)],
+  ['fonts.size', DEFAULT_FONT_SIZE_PREF],
+  ['fonts.minimumSize', MINIMUM_FONT_SIZE_PREF]
 ]
 
 const NO_PAGES: FontSettingsPages = {
@@ -373,6 +389,28 @@ export class FontSettingsApi {
       this.announce(key, next, rank)
     }
     this.applyLayer()
+    this.publishControls()
+  }
+
+  /**
+   * The Settings rows an extension holds, for the page's "Controlled by <extension>" lines:
+   * the controlling extension of each row's pref, named as the Extensions page names it.
+   */
+  private publishControls(): void {
+    const controls: Record<string, ExtensionControl> = {}
+    for (const [key, pref] of SETTINGS_ROWS) {
+      const controller = this.effective.get(pref)?.controller
+      if (controller === null || controller === undefined) continue
+      controls[key] = { extensionId: controller, name: this.nameOf(controller) }
+    }
+    this.host.controls.publish('fontSettings', controls)
+  }
+
+  private nameOf(extensionId: string): string {
+    const info = this.host.browser.extensions.list().find((record) => record.id === extensionId)
+    if (info?.name) return info.name
+    const loaded = this.host.loaded(extensionId)
+    return loaded?.extension.name || extensionId
   }
 
   private announce(key: string, next: EffectivePref<string | number>, rank: FontRank): void {

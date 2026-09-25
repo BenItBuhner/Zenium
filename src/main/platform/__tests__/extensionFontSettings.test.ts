@@ -11,6 +11,8 @@ import {
   type ExtensionFontLayer,
   type PageFontSettings
 } from '../../../shared/fonts'
+import type { ExtensionControl } from '../../../shared/types'
+import { ExtensionControls } from '../extensionApi/controls'
 import {
   FONT_SETTINGS_PERMISSION_ERROR,
   FontSettingsApi,
@@ -38,6 +40,8 @@ interface World {
   layers: Array<ExtensionFontLayer | null>
   families: string[] | null
   familiesAsked: number
+  /** What reached the state (`setExtensionControls`), every call in order. */
+  controls: Array<Record<string, ExtensionControl>>
   ctx(extensionId: string): ApiContext
   /** The user changed the setting (the Settings page's write reached the views). */
   userChanged(fonts: Partial<PageFontSettings>): void
@@ -59,6 +63,7 @@ function world(
     layers: [],
     families: options.families === undefined ? ['Inter', 'Arial'] : options.families,
     familiesAsked: 0,
+    controls: [],
     ctx: (extensionId) => ({ extensionId }) as unknown as ApiContext,
     userChanged: (fonts) => {
       state.userFonts = { ...state.userFonts, ...fonts }
@@ -85,12 +90,17 @@ function world(
         else persisted.set(extensionId, { ...values })
       }
     },
+    controls: new ExtensionControls({
+      setExtensionControls: (controls) => {
+        state.controls.push(controls)
+      }
+    }),
     browser: {
       extensions: {
         list: () => [
-          { id: OLD, installedAt: 1000 },
-          { id: NEW, installedAt: 2000 },
-          { id: NO_PERMISSION, installedAt: 3000 }
+          { id: OLD, installedAt: 1000, name: 'Older Fonts' },
+          { id: NEW, installedAt: 2000, name: 'Advanced Font Settings' },
+          { id: NO_PERMISSION, installedAt: 3000, name: 'No Permission' }
         ]
       },
       allWindows: () => []
@@ -508,5 +518,94 @@ describe('FontSettingsApi handlers', () => {
     w.families = ['Inter']
     expect(await call(w, OLD, 'getFontList')).toEqual([{ fontId: 'Inter', displayName: 'Inter' }])
     expect(w.familiesAsked).toBe(2)
+  })
+})
+
+describe('the Settings rows an extension holds (UIState.extensionControls)', () => {
+  it('publishes the controlling extension of each Customise fonts row, named as the Extensions page names it, and nothing for a pref no row sets', () => {
+    const w = world()
+    // Nothing set: the map is empty and no snapshot was committed for it.
+    expect(w.controls).toEqual([])
+    call(w, OLD, 'setFont', { ...STANDARD, fontId: 'Georgia' })
+    call(w, OLD, 'setDefaultFontSize', { pixelSize: 20 })
+    expect(w.controls.at(-1)).toEqual({
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' },
+      'fonts.size': { extensionId: OLD, name: 'Older Fonts' }
+    })
+    // The fixed-width size, the cursive slot and a per-script family set no row of the page.
+    const before = w.controls.length
+    call(w, OLD, 'setDefaultFixedFontSize', { pixelSize: 14 })
+    call(w, OLD, 'setFont', { ...CURSIVE, fontId: 'Zapfino' })
+    call(w, OLD, 'setFont', { ...JPAN_SANS, fontId: 'Noto Sans JP' })
+    expect(w.controls.length).toBe(before)
+    // The minimum size and the other three slots each name their row.
+    call(w, OLD, 'setMinimumFontSize', { pixelSize: 12 })
+    call(w, OLD, 'setFont', { genericFamily: 'serif', fontId: 'Lora' })
+    call(w, OLD, 'setFont', { genericFamily: 'sansserif', fontId: 'Inter' })
+    call(w, OLD, 'setFont', { genericFamily: 'fixed', fontId: 'Fira Code' })
+    expect(Object.keys(w.controls.at(-1)!).sort()).toEqual([
+      'fonts.fixed',
+      'fonts.minimumSize',
+      'fonts.sansSerif',
+      'fonts.serif',
+      'fonts.size',
+      'fonts.standard'
+    ])
+  })
+
+  it("names the extension whose value is in effect – the newest install – and follows a clear, a disable and the user's own change as Chrome's indicator does", () => {
+    const w = world()
+    call(w, OLD, 'setFont', { ...STANDARD, fontId: 'Georgia' })
+    call(w, NEW, 'setFont', { ...STANDARD, fontId: 'Inter' })
+    expect(w.controls.at(-1)).toEqual({
+      'fonts.standard': { extensionId: NEW, name: 'Advanced Font Settings' }
+    })
+    // The newer extension lets go: the older one's value is in effect, and its name shows.
+    call(w, NEW, 'clearFont', STANDARD)
+    expect(w.controls.at(-1)).toEqual({
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' }
+    })
+    // The user's own change of the setting moves no control: the extension still holds it.
+    const before = w.controls.length
+    w.userChanged({ standard: 'Verdana' })
+    expect(w.controls.length).toBe(before)
+    // Disabled: the row is the user's again.
+    w.loaded.delete(OLD)
+    w.api.unload(OLD)
+    expect(w.controls.at(-1)).toEqual({})
+    // Loaded again: the persisted value holds the row again.
+    w.loaded.add(OLD)
+    w.api.load(OLD)
+    expect(w.controls.at(-1)).toEqual({
+      'fonts.standard': { extensionId: OLD, name: 'Older Fonts' }
+    })
+  })
+})
+
+describe('ExtensionControls', () => {
+  it('merges every API’s map, drops a publish that changes nothing and an API’s empty map', () => {
+    const published: Array<Record<string, ExtensionControl>> = []
+    const controls = new ExtensionControls({
+      setExtensionControls: (map) => {
+        published.push(map)
+      }
+    })
+    const fonts = { 'fonts.standard': { extensionId: OLD, name: 'Older Fonts' } }
+    const privacy = { 'privacy.networkPredictionEnabled': { extensionId: NEW, name: 'Guard' } }
+    controls.publish('fontSettings', fonts)
+    controls.publish('privacy', privacy)
+    expect(published).toEqual([fonts, { ...fonts, ...privacy }])
+    // The same map again reaches no one.
+    controls.publish('fontSettings', { ...fonts })
+    expect(published).toHaveLength(2)
+    // One API letting go keeps the other's keys.
+    controls.publish('fontSettings', {})
+    expect(published.at(-1)).toEqual(privacy)
+    expect(controls.current).toEqual(privacy)
+    controls.publish('privacy', {})
+    expect(published.at(-1)).toEqual({})
+    // An empty map published into an empty state is no change.
+    controls.publish('proxy', {})
+    expect(published).toHaveLength(4)
   })
 })

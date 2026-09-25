@@ -6,6 +6,7 @@ import {
   type FontFamilySlot,
   type PageFontSettings
 } from '@shared/fonts'
+import { extensionControlled } from './controlled'
 import { FontPickList, FontPreview } from './fontBlocks'
 import { immediateFontsDraft } from './fontsDraft'
 import {
@@ -43,6 +44,13 @@ import type { SectionContext } from './sections'
  * settings) only the standard family and the two sizes are rows – the honest list, as the
  * interface note records – and the standard family's options are the aliases WebView resolves
  * by name.
+ *
+ * A row whose setting an extension holds (`chrome.fontSettings`; `state.extensionControls`
+ * keyed `fonts.<slot>`, `fonts.size`, `fonts.minimumSize`) is drawn controlled
+ * (`RowBase.controlled`, Chrome's extension-controlled indicator): the row shows the user's own
+ * value – what stands again when the extension lets go – with its control disabled, and the
+ * indicator row under it names the extension and disables it. The preview and Reset keep to
+ * the user's values, as the rows do; pages render the extension's.
  */
 
 /**
@@ -84,12 +92,16 @@ export function fontsGroups({
     if (minimumSize !== fonts.minimumSize) draft.step({ minimumSize })
   }
   const minimumDescription = 'The smallest text a page may use.'
+  // The extension holding a row's setting, if one does: both of a row's forms carry it.
+  const sizeControl = extensionControlled(state, 'fonts.size')
+  const minimumControl = extensionControlled(state, 'fonts.minimumSize')
   const rows: SettingsRow[] = [
     {
       kind: 'slider',
       id: 'fonts-size-phone',
       label: 'Font size',
       keywords,
+      controlled: sizeControl,
       layouts: ['phone'],
       value: stepIndex(FONT_SIZE_STEPS, fonts.size),
       min: 0,
@@ -108,6 +120,7 @@ export function fontsGroups({
       id: 'fonts-size',
       label: 'Font size',
       keywords,
+      controlled: sizeControl,
       layouts: ['desktop', 'tablet'],
       value: String(fonts.size),
       options: fontSizeOptions(FONT_SIZE_STEPS, fonts.size),
@@ -119,6 +132,7 @@ export function fontsGroups({
       label: 'Minimum font size',
       description: minimumDescription,
       keywords,
+      controlled: minimumControl,
       layouts: ['phone'],
       value: stepIndex(MINIMUM_FONT_SIZE_STEPS, fonts.minimumSize),
       min: 0,
@@ -138,6 +152,7 @@ export function fontsGroups({
       label: 'Minimum font size',
       description: minimumDescription,
       keywords,
+      controlled: minimumControl,
       layouts: ['desktop', 'tablet'],
       value: String(fonts.minimumSize),
       options: fontSizeOptions(MINIMUM_FONT_SIZE_STEPS, fonts.minimumSize),
@@ -154,12 +169,14 @@ export function fontsGroups({
     const value = current ?? DEFAULT_FAMILY
     const pick = (next: string): void => patch({ [slot]: next === DEFAULT_FAMILY ? null : next })
     const label = SLOT_LABELS[slot]
+    const controlled = extensionControlled(state, `fonts.${slot}`)
     rows.push(
       {
         kind: 'value',
         id: `fonts-${slot}`,
         label,
         keywords,
+        controlled,
         layouts: ['desktop', 'tablet'],
         value,
         options,
@@ -172,6 +189,7 @@ export function fontsGroups({
         label,
         description: options.find((o) => o.value === value)?.label ?? value,
         keywords,
+        controlled,
         layouts: ['phone'],
         form: {
           title: label,

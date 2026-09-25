@@ -1,6 +1,6 @@
 import type { FocusEvent, JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
+import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus, Puzzle } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
@@ -18,6 +18,7 @@ import {
   type CustomRow,
   type FieldRow,
   type InfoRow,
+  type RowControl,
   type RowCopy,
   type RowGroup,
   type RowMenu,
@@ -165,8 +166,81 @@ export function GroupList({
   )
 }
 
-/** One row of any kind; `caption` is the search result's "Category › Group" line above it. */
-export function RowView({
+/**
+ * One row of any kind; `caption` is the search result's "Category › Group" line above it. A row
+ * an extension holds (`RowBase.controlled`) is two: the row itself as a dependent row – its
+ * control disabled, at .4, no press (§10.4) – and the indicator row under it, the way out.
+ */
+export function RowView(props: {
+  row: SettingsRow
+  ctx: RowContext
+  caption?: string
+  variant?: RowVariant
+}): JSX.Element {
+  const control = props.row.controlled
+  if (!control) return <PlainRowView {...props} />
+  const held: SettingsRow = { ...props.row, controlled: undefined, disabled: true }
+  return (
+    <>
+      <PlainRowView {...props} row={held} />
+      <ControlledRow row={props.row} control={control} variant={props.variant ?? 'phone'} />
+    </>
+  )
+}
+
+/**
+ * The indicator under a row an extension holds (Chrome's extension-controlled indicator, its
+ * three parts in the settings rows' own forms): "Controlled by <name>" as the row's 15/400
+ * label in the text ink – full ink, since it is the way out and never under the held row's .4
+ * (§9.30 as amended on #299) – the 16 px puzzle glyph trailing it (§10.4: a lone status row
+ * trails its glyph before any trailing button, never leading in a group whose other rows carry
+ * none), and Disable. On the desktop Disable is the row's 32 secondary button after the glyph
+ * (§10.5's one action as a trailing button; named "Disable <name>" for a reader, since a page
+ * may hold several); on the phone the whole row is the target (§10.4: no inline buttons) and
+ * its description says what the press does. Disabling an extension destroys nothing – the
+ * Extensions page turns it back on – so nothing confirms, as Chrome's button asks nothing.
+ * The row is the held row's twin in id (`<id>-controlled`) and comes back with it.
+ */
+function ControlledRow({
+  row,
+  control,
+  variant
+}: {
+  row: SettingsRow
+  control: RowControl
+  variant: RowVariant
+}): JSX.Element {
+  const indicator: InfoRow = {
+    kind: 'info',
+    id: `${row.id}-controlled`,
+    label: `Controlled by ${control.name}`
+  }
+  const glyph = <Puzzle aria-hidden="true" />
+  if (variant === 'desktop') {
+    return (
+      <ControlRow row={indicator}>
+        {glyph}
+        <V2Button
+          variant="secondary"
+          aria-label={`Disable ${control.name}`}
+          onClick={control.onDisable}
+        >
+          Disable
+        </V2Button>
+      </ControlRow>
+    )
+  }
+  return (
+    <PressableRow
+      row={indicator}
+      description={`Disables ${control.name} so you can set this yourself.`}
+      trailing={glyph}
+      onPress={control.onDisable}
+    />
+  )
+}
+
+function PlainRowView({
   row,
   ctx,
   caption,

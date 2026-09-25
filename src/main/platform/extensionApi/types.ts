@@ -7,6 +7,7 @@ import type { WithheldPermissions } from '../../../core/extensions/withheldPermi
 import type { SessionManager } from '../sessions'
 import type { ApiModel } from './model'
 import type { ContextRegistry, DispatchOptions } from './contexts'
+import type { ExtensionControls } from './controls'
 import type { ApiStore } from './store'
 
 /** Who made an API call: a document of the extension, or its MV3 service worker. */
@@ -67,6 +68,12 @@ export interface ApiHost {
   readonly registry: ContextRegistry
   readonly sessions: SessionManager
   readonly store: ApiStore
+  /**
+   * The settings the extensions hold, for the Settings page's controlled rows
+   * (`UIState.extensionControls`): an API that keeps a layer of extension values over a user
+   * setting publishes the keys it holds here, under its own name, whenever its layer changes.
+   */
+  readonly controls: ExtensionControls
   loaded(extensionId: string): LoadedExtension | undefined
   allLoaded(): LoadedExtension[]
   /** Fan `namespace.event` out to every context of one extension. */

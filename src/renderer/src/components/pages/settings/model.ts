@@ -31,6 +31,15 @@ export interface RowBase {
   /** A dependent row whose parent is off: 40%, still laid out, not pressable (§10.4). */
   disabled?: boolean
   /**
+   * An extension holds the setting this row sets (`UIState.extensionControls`, Chrome's
+   * extension-controlled indicator): the row is drawn as a dependent row – its control
+   * disabled, the row at .4, no press – and the indicator row stands under it, full ink, the
+   * way out: "Controlled by <name>", the 16 px puzzle glyph trailing, and Disable – the
+   * desktop's 32 secondary button, the phone's whole row. `extensionControlled` builds it
+   * from the state for a setting key.
+   */
+  controlled?: RowControl
+  /**
    * The chrome layouts the row exists on, when what it sets is a control one shell alone has:
    * the phone bar's position and its editor are the phone shell's, the URL bar's full addresses
    * the desktop and tablet shells'. `onLayout` leaves the row out of the other layouts' pages –
@@ -47,6 +56,19 @@ export interface RowBase {
    * Nothing for a group's first row (no run above it) or a row shown alone (a search result).
    */
   hairline?: boolean
+}
+
+/**
+ * The extension holding a row's setting (`RowBase.controlled`; the shared `ExtensionControl`
+ * with the way out attached): Disable goes through the host's own path, the one the Extensions
+ * page's switch takes, and the host drops the extension's layer – the row re-enables through
+ * the same state that disabled it.
+ */
+export interface RowControl {
+  extensionId: string
+  /** The extension's name as the Extensions page shows it. */
+  name: string
+  onDisable(): void
 }
 
 export interface RowOption {

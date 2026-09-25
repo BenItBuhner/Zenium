@@ -88,6 +88,7 @@ import { electronOffscreenDocumentHost } from './offscreenBridge'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { PrivacyApi } from './privacy'
+import { ExtensionControls } from './controls'
 import { FontSettingsApi } from './fontSettings'
 import { ProxyApi } from './proxy'
 import { ContentSettingsApi } from './contentSettings'
@@ -191,6 +192,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly model: ApiModel
   readonly registry: ContextRegistry
   readonly store: ApiStore
+  readonly controls: ExtensionControls
   readonly tabs: TabsApi
   readonly windows: WindowsApi
   readonly runtime: RuntimeApi
@@ -281,6 +283,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   ) {
     this.model = new ApiModel(browser, views)
     this.store = new ApiStore(io, userDataDir)
+    this.controls = new ExtensionControls(browser.state)
     this.registry = new ContextRegistry({
       sessionsFor: (extensionId) => this.extensions.get(extensionId)?.sessions ?? [],
       persistWorkerEvents: (extensionId, events) => this.store.setWorkerEvents(extensionId, events),
