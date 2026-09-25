@@ -120,17 +120,30 @@ export class ProtectionService {
   /**
    * The lookalike check's bundled tables, read once through the host (`bundledLookalikeTable`)
    * after start – a few kilobytes off the boot path; the check answers nothing until they are in.
+   * One line goes to the log when they are (the boot record's evidence of what the read cost
+   * and when it landed): `+<ms>` is the core's own clock – `performance.now()`, whose zero is the
+   * core document's time origin (on Android the chrome WebView's navigation start, on the
+   * desktop the main process's start) – and `fetch` / `parse` are the host read and the tables'
+   * indexing, in the same clock.
    */
   private async loadLookalikeTables(): Promise<void> {
     const host = this.browser.platform.privacy
     if (!host?.bundledLookalikeTable) return
     try {
+      const fetchStart = performance.now()
       const [topDomains, confusables] = await Promise.all([
         host.bundledLookalikeTable('tranco-top'),
         host.bundledLookalikeTable('confusables')
       ])
+      const fetched = performance.now()
       if (topDomains === null || confusables === null) return
       this.lookalikes.load({ topDomains, confusables })
+      const loaded = performance.now()
+      console.info(
+        `[zen] lookalikes: tables loaded at +${Math.round(loaded)} ms ` +
+          `(fetch ${Math.round(fetched - fetchStart)} ms, parse ${Math.round(loaded - fetched)} ms): ` +
+          `${this.lookalikes.topCount} top domains, ${this.lookalikes.confusableCount} confusables`
+      )
     } catch (error) {
       console.warn('[zenium] lookalike tables not loaded:', (error as Error).message)
     }

@@ -241,6 +241,11 @@ export class LookalikeChecker {
     return this.top.size
   }
 
+  /** How many source characters the confusables table maps (the boot's log line, the tests). */
+  get confusableCount(): number {
+    return this.confusables.size
+  }
+
   load(tables: LookalikeTables): void {
     const top = new Set<string>()
     for (const raw of tables.topDomains.split('\n')) {

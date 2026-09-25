@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 // eslint-disable-next-line no-restricted-imports
 import { gunzipSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../../shared/types'
 import type { PrivacyFlags, PrivacySettings } from '../../../shared/privacy'
 import { HTTPS_ONLY_PERMISSION, LOOKALIKE_PERMISSION } from '../../../shared/privacy'
@@ -665,10 +665,29 @@ describe('ProtectionService: the lookalike-domain warning (PS-18)', () => {
   const LOOKALIKE = 'https://gogle.com/'
 
   it('loads the bundled tables once after start, off the boot path, and answers with a verdict', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const f = fixture()
     expect(f.browser.protection.lookalikes.ready).toBe(false)
     await tablesLoaded(f)
     expect(f.browser.protection.lookalikes.topCount).toBe(2000)
+    // The boot record's one line: when the tables landed on the core's clock, what the host
+    // read and the indexing cost, and the row counts – once per start.
+    const confusables = f.browser.protection.lookalikes.confusableCount
+    expect(confusables).toBeGreaterThan(0)
+    const logged = (): string[] =>
+      info.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.startsWith('[zen] lookalikes:'))
+    expect(logged()).toHaveLength(1)
+    expect(logged()[0]).toMatch(
+      new RegExp(
+        `^\\[zen\\] lookalikes: tables loaded at \\+\\d+ ms \\(fetch \\d+ ms, parse \\d+ ms\\): ` +
+          `2000 top domains, ${confusables} confusables$`
+      )
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(logged()).toHaveLength(1)
+    info.mockRestore()
     expect(f.browser.protection.checkLookalike(LOOKALIKE)).toEqual({
       target: 'google.com',
       reason: 'edit-distance'
