@@ -168,13 +168,22 @@ export function planUnits(
       if (missing.length > 0) add('isolated', missing, [])
     }
   }
-  // A unit over every origin runs everywhere anyway: fold that world's other units into it, so a
-  // page receives one copy of the bootstrap per world rather than one per origin rule set.
+  // A unit over every origin runs everywhere anyway: that world's units WITHOUT sources of their
+  // own (the transport over the host permissions, the connectable pages' copy) fold into it, so
+  // a page receives one copy of the bootstrap per world rather than one per origin rule set. A
+  // unit with sources keeps its own rules, as Chrome hands a frame the scripts whose patterns it
+  // matches alone: folded, its files ride into every frame of every origin – tl;dv's
+  // meet.google.com and calendar.google.com scripts (8.1 and 6.7 MB) beside its `<all_urls>`
+  // one (8.1 MB) made one 20.7 M-char unit for every frame, and the WebView's one renderer grew
+  // to 2.3 GB on a Meet page until the guest's low-memory killer took it, and the chrome and
+  // every tab with it (compat round 18). A frame matching several rule sets pays one more copy
+  // of the bootstrap (162 KB) per set instead.
   for (const world of ['isolated', 'main', 'user'] as const) {
     const everywhere = drafts.get(unitKey(world, ['*']))
     if (!everywhere) continue
     for (const [key, draft] of [...drafts]) {
       if (draft.world !== world || draft === everywhere) continue
+      if (draft.groups.some((group) => group.js.length > 0 || group.css.length > 0)) continue
       everywhere.groups.push(...draft.groups)
       drafts.delete(key)
     }

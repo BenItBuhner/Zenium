@@ -95,20 +95,56 @@ describe('planUnits', () => {
     expect(without.units.map((u) => u.key)).toEqual(['isolated:https://example.com'])
   })
 
-  it('folds every unit of a world into the one that runs everywhere', () => {
+  it('folds only the sourceless units of a world into the one that runs everywhere', () => {
+    // tl;dv's shape (compat round 18): a script for meet.google.com, one for
+    // calendar.google.com and one for every page. Chrome hands a frame the scripts whose
+    // patterns it matches alone; folded into the `<all_urls>` unit, the two host-bound scripts
+    // (14.8 MB of the 20.7 MB) rode into every frame of every origin.
     const manifest = manifestOf({
       permissions: ['scripting'],
       host_permissions: ['<all_urls>'],
       content_scripts: [
-        { matches: ['https://example.com/*'], js: ['ex.js'] },
-        { matches: ['<all_urls>'], js: ['all.js'] },
+        { matches: ['*://meet.google.com/*'], js: ['content-scripts/google-meet.js'] },
+        { matches: ['*://calendar.google.com/*'], js: ['content-scripts/google-calendar.js'] },
+        { matches: ['<all_urls>'], js: ['content-scripts/multi-tabs.js'] },
         { matches: ['https://example.com/*'], js: ['main.js'], world: 'MAIN' }
       ]
     })
     const boot = buildExtensionBoot(ID, manifest, null, [], 'world')
     const planned = planUnits(boot, manifest, env)
-    expect(planned.units.map((u) => u.key)).toEqual(['isolated:*', 'main:https://example.com'])
-    expect(planned.units[0].groups.map((g) => g.js)).toEqual([['ex.js'], ['all.js']])
+    expect(planned.units.map((u) => u.key)).toEqual([
+      'isolated:*',
+      'isolated:http://calendar.google.com https://calendar.google.com',
+      'isolated:http://meet.google.com https://meet.google.com',
+      'main:https://example.com'
+    ])
+    expect(planned.units.map((u) => u.groups.map((g) => g.js))).toEqual([
+      [['content-scripts/multi-tabs.js']],
+      [['content-scripts/google-calendar.js']],
+      [['content-scripts/google-meet.js']],
+      [['main.js']]
+    ])
+    // Each unit's config carries its own groups alone, so a Meet frame boots two copies of the
+    // bootstrap (the everywhere unit's and its own) and compiles no calendar script.
+    expect(planned.units[2].config.extension.groups.map((g) => g.js)).toEqual([
+      ['content-scripts/google-meet.js']
+    ])
+    // The three isolated units share the extension's one world.
+    expect(new Set(planned.units.slice(0, 3).map((u) => u.worldName)).size).toBe(1)
+    // A unit without sources beside one over every origin is the fold's: the scripting transport
+    // over the host permissions adds nothing next to `isolated:*`, and a CSS-only group keeps
+    // its rules like a script (its text rides in the unit as well).
+    const cssOnly = manifestOf({
+      content_scripts: [
+        { matches: ['https://example.com/*'], css: ['ex.css'] },
+        { matches: ['<all_urls>'], js: ['all.js'] }
+      ]
+    })
+    const cssBoot = buildExtensionBoot(ID, cssOnly, null, [], 'world')
+    expect(planUnits(cssBoot, cssOnly, env).units.map((u) => u.key)).toEqual([
+      'isolated:*',
+      'isolated:https://example.com'
+    ])
   })
 
   it('plans a main-world unit without sources over the externally connectable pages', () => {
