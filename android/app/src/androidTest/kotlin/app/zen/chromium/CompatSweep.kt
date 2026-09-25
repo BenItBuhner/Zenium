@@ -111,6 +111,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val screenRestored = JSONArray()
     /** Each row boundary a native sheet was still up at, with the sheet's texts and what a back left ([dismissSheets]). */
     private val sheetsDismissed = JSONArray()
+    /** Each chrome document found without the sweep's hooks – its renderer gone and the chrome rebuilt by the host ([chromeHooksLost]). */
+    private val chromeRebuilds = JSONArray()
+    /** When the hooks were last found gone (uptime), so a `zen()` call that saw it answers the prompt the old document took with it. */
+    private var hooksLostAt = 0L
 
     private class Grade(val verdict: String, val note: String, val extra: JSONObject? = null)
 
@@ -188,6 +192,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
             results.put("screenRestored", screenRestored)
             results.put("sheetsDismissed", sheetsDismissed)
+            results.put("chromeRebuilds", chromeRebuilds)
             write()
         }
     }
@@ -208,23 +213,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         results.put("webView", WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" } ?: JSONObject.NULL)
         results.put("only", only?.let { JSONArray(it.toList()) } ?: JSONObject.NULL)
         results.put("startedAt", System.currentTimeMillis())
-        // The core's toasts carry what an install refused to do (the store host toasts instead of rejecting).
-        chromeJs("window.__toasts=[];window.zen.on('toast',function(p){window.__toasts.push(String(p&&p.message||p))});'ok'")
-        // The prompts the chrome raises (install, permissions), by request id, so one its sheet
-        // did not put a reachable button on screen can still be answered through the command.
-        // The renderer answers a prompt through the same `window.zen.invoke` (a tap on its
-        // button, a dismissed sheet): that answer takes the prompt off the list, so a tap that
-        // did answer is never taken for one that did not and answered again through the command.
-        chromeJs(
-            "window.__prompts=[];window.__promptAnswers=[];" +
-                "window.zen.on('extensionInstallRequest',function(p){window.__prompts.push({kind:'install',id:p.requestId,ok:p.okLabel||''})});" +
-                "window.zen.on('extensionPermissionRequest',function(p){window.__prompts.push({kind:'permission',id:p.requestId,ok:p.okLabel||''})});" +
-                "(function(){var z=window.zen,invoke=z.invoke;z.invoke=function(name,args){" +
-                "if((name==='extension.confirmInstall'||name==='extension.respondPermissionRequest')&&args&&args.requestId){" +
-                "window.__prompts=window.__prompts.filter(function(p){return p.id!==args.requestId});" +
-                "window.__promptAnswers.push({id:args.requestId,accept:!!args.accept})}" +
-                "return invoke.apply(z,arguments)}})();'ok'"
-        )
+        armChromeHooks()
         fixtureTab = tabIdByUrl("$BASE/page-a.html") ?: createTab("$BASE/page-a.html")
         showTab(fixtureTab)
         SystemClock.sleep(1_500)
@@ -8644,18 +8633,36 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * answered late is not charged to the wait; the wait ends at two minutes whatever came. The
      * stall a read measured goes on the row (`coreStall`: reads that stalled, the longest poll, the
      * last command) so a grade made under one says so.
+     *
+     * A command that failed or ran out against a chrome document without the sweep's hooks was
+     * posted into a document a rebuild replaced ([chromeHooksLost]; the core reboots with the
+     * chrome, and an invoke posted into the dying document, or before `window.zen` is back, is
+     * lost). The loss is named on the row and the hooks armed again; the one read the row
+     * boundary leans on (`app.getState`) is asked once more of the rebuilt core, every other
+     * command's error names the replacement and stands (whether the core ran it before it died is
+     * not known, and an install or a tab command run twice is a different row).
      */
     private fun coreCall(name: String, args: String = "null"): String =
-        coreInvokeUnderStall(name, args, onStall = { longest ->
-            val entry = rowEntry
-            if (entry != null) {
-                val stall = entry.optJSONObject("coreStall") ?: JSONObject().also { entry.put("coreStall", it) }
-                stall.put("reads", stall.optInt("reads") + 1)
-                    .put("longestPollMs", maxOf(stall.optLong("longestPollMs"), longest))
-                    .put("last", name)
-                Log.w(TAG, "CORE STALL ${entry.optString("name")}: $name answered after a poll of $longest ms")
-            }
-        })
+        try {
+            coreInvokeUnderStall(name, args, onStall = coreStallOnRow(name))
+        } catch (e: IllegalStateException) {
+            if (!chromeHooksGone()) throw e
+            chromeHooksLost(name)
+            if (name == "app.getState") coreInvokeUnderStall(name, args, onStall = coreStallOnRow(name))
+            else throw IllegalStateException("${e.message}; the chrome's document was replaced meanwhile (its renderer gone, the chrome rebuilt)", e)
+        }
+
+    /** The stall evidence a [coreCall] of `name` leaves on the row under way. */
+    private fun coreStallOnRow(name: String): (Long) -> Unit = { longest ->
+        val entry = rowEntry
+        if (entry != null) {
+            val stall = entry.optJSONObject("coreStall") ?: JSONObject().also { entry.put("coreStall", it) }
+            stall.put("reads", stall.optInt("reads") + 1)
+                .put("longestPollMs", maxOf(stall.optLong("longestPollMs"), longest))
+                .put("last", name)
+            Log.w(TAG, "CORE STALL ${entry.optString("name")}: $name answered after a poll of $longest ms")
+        }
+    }
 
     /** The core's UI state (`app.getState`) through [coreCall]. */
     private fun coreSnapshot(): JSONObject = JSONObject(coreCall("app.getState"))
@@ -8960,15 +8967,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var lastRect: Rect? = null
         // Polls the chrome did not answer within chromeJs's 10 s: a JS thread that is busy or gone.
         var silent = 0
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        val started = SystemClock.uptimeMillis()
+        val deadline = started + timeoutMs
         var promptSeenAt = 0L
         while (SystemClock.uptimeMillis() < deadline) {
-            val result = chromeJs("(window.__sweep && window.__sweep[$token] !== undefined) ? window.__sweep[$token] : null")
+            val result = chromeJs("window.__sweep === undefined ? 'gone' : (window.__sweep[$token] !== undefined ? window.__sweep[$token] : null)")
             if (result.isEmpty()) {
                 silent++
                 if (silent == 1 || silent % 10 == 0) Log.w(TAG, "$command: the chrome did not answer a poll ($silent so far)")
                 // A page's dialog blocks the renderer the chrome shares: press it away and poll again.
                 dismissDialog()?.let { Log.w(TAG, "$command: a dialog pressed away: $it") }
+            }
+            if (result == "\"gone\"") {
+                // The slots' owner is not in the document: the one the call was posted into was
+                // replaced (its renderer gone, the chrome rebuilt), and with it the call's promise
+                // and any prompt it raised. Named on the row, the hooks armed again, and the call
+                // failed now rather than at its deadline.
+                chromeHooksLost(command)
+                error("$command was lost with the chrome's document (its renderer gone, the chrome rebuilt) after ${SystemClock.uptimeMillis() - started} ms")
             }
             if (result.isNotEmpty() && result != "null") {
                 chromeJs("delete window.__sweep[$token];'ok'")
@@ -8980,7 +8996,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     else -> JSONObject().put("value", value)
                 }
             }
-            val pending = if (answered) JSONArray() else pendingPrompts()
+            var pending = if (answered) JSONArray() else pendingPrompts()
+            // A prompt raised into the document a rebuild replaced is on no list: while this call
+            // has seen the hooks lost, the sheet's own button on screen stands for it – one of
+            // unknown id, tapped as any other and DOM-clicked when a finger does not answer it.
+            if (pending.length() == 0 && !answered && hooksLostAt >= started && promptButton()?.rect != null)
+                pending = JSONArray().put(JSONObject().put("kind", "unknown").put("id", ""))
             if (pending.length() == 0) {
                 // Nothing is asked: a sheet still on its way out (its button drawn below the
                 // viewport while it slides down) is not a prompt to answer, and the next prompt
@@ -9074,9 +9095,81 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
     }
 
-    /** The prompts the chrome raised since the last answer through the command: `[{kind, id, ok}]`. */
-    private fun pendingPrompts(): JSONArray =
-        runCatching { JSONArray(JSONTokener(chromeJs("JSON.stringify(window.__prompts||[])")).nextValue() as String) }.getOrDefault(JSONArray())
+    /**
+     * The prompts the chrome has raised and not answered (`[{kind, id, ok}]`), by the hooks in its
+     * document; a document without the hooks is a rebuilt chrome ([chromeHooksLost]), answered
+     * empty for this poll with the hooks armed again for the next.
+     */
+    private fun pendingPrompts(): JSONArray {
+        val raw = chromeJs("window.__prompts===undefined?'unarmed':JSON.stringify(window.__prompts)")
+        val text = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: return JSONArray()
+        if (text == "unarmed") {
+            chromeHooksLost("a prompt poll")
+            return JSONArray()
+        }
+        return runCatching { JSONArray(text) }.getOrDefault(JSONArray())
+    }
+
+    /**
+     * The sweep's hooks in the chrome's document. The core's toasts carry what an install refused
+     * to do (the store host toasts instead of rejecting). The prompts the chrome raises (install,
+     * permissions) are listed by request id, so one its sheet did not put a reachable button on
+     * screen can still be answered through the command; the renderer answers a prompt through the
+     * same `window.zen.invoke` (a tap on its button, a dismissed sheet), and that answer takes the
+     * prompt off the list, so a tap that did answer is never taken for one that did not and
+     * answered again through the command. Armed once at the start, and again whenever the chrome's
+     * document is found without them. The document has `window.zen` only once its core has booted
+     * (`main.tsx` sets it after `bootAndroid`), and a rebuilt chrome's core is a second or so
+     * behind the document: the script arms nothing before then (a marker left standing without its
+     * listeners would list no prompt and look armed), and is asked again at the lane's speed until
+     * it does. Whether the hooks are armed.
+     */
+    private fun armChromeHooks(): Boolean {
+        val script =
+            "if(!window.zen){'nozen'}else{" +
+                "window.__toasts=[];window.zen.on('toast',function(p){window.__toasts.push(String(p&&p.message||p))});" +
+                "window.__prompts=[];window.__promptAnswers=[];" +
+                "window.zen.on('extensionInstallRequest',function(p){window.__prompts.push({kind:'install',id:p.requestId,ok:p.okLabel||''})});" +
+                "window.zen.on('extensionPermissionRequest',function(p){window.__prompts.push({kind:'permission',id:p.requestId,ok:p.okLabel||''})});" +
+                "(function(){var z=window.zen,invoke=z.invoke;z.invoke=function(name,args){" +
+                "if((name==='extension.confirmInstall'||name==='extension.respondPermissionRequest')&&args&&args.requestId){" +
+                "window.__prompts=window.__prompts.filter(function(p){return p.id!==args.requestId});" +
+                "window.__promptAnswers.push({id:args.requestId,accept:!!args.accept})}" +
+                "return invoke.apply(z,arguments)}})();'ok'}"
+        return poll((HOOKS_ARM_TIMEOUT_MS * laneFactor).toLong(), 250) { if (chromeJs(script) == "\"ok\"") true else null } ?: false
+    }
+
+    /** Whether the chrome's document has lost the sweep's hooks (a poll the chrome did not answer is not a loss). */
+    private fun chromeHooksGone(): Boolean = chromeJs("typeof window.__prompts") == "\"undefined\""
+
+    /**
+     * The chrome's document no longer has the hooks: its renderer died and the host rebuilt the
+     * chrome (`ChromeWebView.onRenderProcessGone`; the core reboots from its persisted state), or
+     * the document was replaced. On compat round 18's BEFORE 156 lane (run 36122292349) the
+     * guest's low-memory killer took the WebView's one sandboxed renderer at 11:16:24 under
+     * tl;dv's 20.7 M-char unit on the Meet fixture page (2.3 GB RSS), and with it every tab's
+     * document, the extension's background view and the chrome; the host had the chrome back in
+     * three seconds, but the sweep's hooks went with the old document, and the eleven rows after
+     * it stood on install prompts drawn and reachable ("Add extension") that no poll listed, each
+     * to its four-minute timeout. Counted on the run (`chromeRebuilds`: when, at which row and
+     * step), named on the row (`chromeRebuilt`), the hooks armed again, and the prompt the old
+     * document took with it answered from its button (`zen`).
+     */
+    private fun chromeHooksLost(where: String) {
+        hooksLostAt = SystemClock.uptimeMillis()
+        val entry = rowEntry
+        val armed = armChromeHooks()
+        chromeRebuilds.put(
+            JSONObject().put("at", System.currentTimeMillis()).put("row", entry?.optString("slug") ?: "").put("where", where).put("rearmed", armed)
+        )
+        entry?.put("chromeRebuilt", where)
+        Log.w(
+            TAG,
+            "the chrome's document was replaced (its renderer gone, the chrome rebuilt) at " +
+                "${entry?.optString("name") ?: "no row"} / $where: the sweep's hooks " +
+                (if (armed) "armed again" else "NOT armed again (no window.zen within the wait)") + " (${chromeRebuilds.length()} so far)"
+        )
+    }
 
     /**
      * Accept the prompt on screen without a finger: a click on the sheet's own accepting button
@@ -9795,6 +9888,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * ([laneFactor]), for its sheet before the command answers it.
          */
         private const val PROMPT_DRAW_TIMEOUT_MS = 15_000L
+        /** How long a rebuilt chrome is given to boot its core (`window.zen`) before the sweep's hooks are given up ([armChromeHooks]). */
+        private const val HOOKS_ARM_TIMEOUT_MS = 15_000L
         /** Taps on the prompt's own button before the command answers it, and the wait between them. */
         private const val PROMPT_TAPS = 2
         private const val PROMPT_RETAP_MS = 3_000L
