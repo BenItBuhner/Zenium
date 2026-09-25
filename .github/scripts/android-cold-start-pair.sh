@@ -36,6 +36,23 @@
 # The per-arm medians and the `delta (… the medians)` lines stand as round 1 left them, byte
 # for byte; only the paired delta is judged.
 #
+# THE READ, hardened (the #481 re-read's suggestion, with its "runner-side null read" theory
+# refuted by the bisection of 25 Sep: the empty columns were a build's – #490's first tab under
+# the first-run tour, READY never posted – which is exactly what the read must be able to say).
+# Every log read is `adb logcat -d -b main,system -s <tag>`: the buffers named (the app's lines
+# are in main, ActivityTaskManager's in system; the default set is the device's to choose), and
+# the read's stderr KEPT – appended to read-errors.txt in the record, and the lines a start's
+# reads produced written into that start's am-start record (`ReadErrors:`) and counted in its log
+# line. A reading has three outcomes, told apart: a number; `-`, the buffers read and the line not
+# there (a build that did not reach READY within the wait, or one before the mark – the build's
+# own fact, judged: a Fully drawn row with fewer than half its pairs valid is INCONCLUSIVE and
+# fails, honestly, as the post-#490 builds did); and `UNREAD`, the read itself failed – adb's
+# error, or an empty buffer after a start (the system buffer always holds ActivityTaskManager's
+# own START line then; nothing read is a failed read). UNREAD is never a build's fact: a judged
+# row short of half its pairs whose missing readings are all UNREAD (no `-` among them) is
+# UNREAD, reported with a `::warning::` and NOT failed – TotalTime still gates – so a runner's
+# read failure cannot red a change, and cannot be mistaken for a boot regression either.
+#
 # THE DESIGN, and why. A paired difference's median has a standard error near 1.25·σ/√N, and
 # at the raw spread of one pair per install (σ ≈ 210 ms direct, ≈ 320 ms alias with heavy
 # tails on the null pair 36154411153) a ±50 ms null band would want N in the hundreds – so the
@@ -98,7 +115,7 @@
 #   P0_TOTAL_THRESHOLD_MS, P0_ALIAS_THRESHOLD_MS, P0_FULLY_DRAWN_THRESHOLD_MS,
 #   P0_FULLY_DRAWN_ALIAS_THRESHOLD_MS – the gate's thresholds, for a calibration run only; the
 #                   defaults below are the gate
-#   DEMO_OUT      – where the record goes (cold-start-pair.txt and the raw am start output)
+#   DEMO_OUT      – where the record goes (cold-start-pair.txt, the raw am start output, read-errors.txt)
 #
 # The arms are interleaved (seed 71): `adb install -r -d` of one build over the other (the same
 # applicationId, so the profile stays and both boot the same state; -d since the base may carry
@@ -200,50 +217,101 @@ sleep_until() {
   if [ "$now" -lt "$1" ]; then sleep $(($1 - now)); fi
 }
 
+# THE READ (the header's hardening). Every log read goes through read_log: `adb logcat -d -b
+# main,system -s <tag…>`, its stdout to a file (the lines, CR stripped, in $logcat_tmp for the
+# caller's greps), its stderr APPENDED to read-errors.txt in the record – nothing of the read's
+# is dropped. read_log fails (exit 1, the caller reads UNREAD) when adb does, with a line of its
+# own in read-errors.txt naming the read and adb's exit status. The device reads (`adb shell
+# dumpsys …`, `pidof`) keep their stderr the same way.
+logcat_raw=$(mktemp)
+logcat_tmp=$(mktemp)
+trap 'rm -f "$logcat_raw" "$logcat_tmp"' EXIT
+read_errors="$out/read-errors.txt"
+: > "$read_errors"
+read_log() {
+  local status=0
+  : > "$logcat_tmp"
+  adb logcat -d -b main,system -s "$@" > "$logcat_raw" 2>> "$read_errors" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "adb logcat -d -b main,system -s $* exited $status" >> "$read_errors"
+    return 1
+  fi
+  tr -d '\r' < "$logcat_raw" > "$logcat_tmp"
+}
+# Whether the last read_log answered any log line at all – logcat's own `--------- beginning of
+# <buffer>` dividers, printed for a buffer whatever the filter keeps of it, do not count.
+read_has_lines() {
+  grep -qv '^--------- ' "$logcat_tmp"
+}
+# A number (an integer or a decimal, signed or not): the readings' third kind beside `-` and UNREAD.
+is_number() {
+  [[ $1 =~ ^-?[0-9]+(\.[0-9]+)?$ ]]
+}
+
 # The chrome's first real frame: `reportFullyDrawn()` at the chrome's READY (MainActivity.onChromeReady,
 # OS-27) puts `ActivityTaskManager: Fully drawn <component>: +1s234ms` in logcat, the time from the
 # same start as TotalTime's; TotalTime is the plain window's first frame, under the splash. A build
 # without the mark (main before it) reads `-`. The duration is the platform's own format
 # (`+987ms`, `+1s234ms`, `+1m2s345ms`); milliseconds out.
+# The count of the mark's lines in the buffers, or UNREAD: adb failed, or the buffers answered no
+# line – after a start the system buffer holds ActivityTaskManager's own `START u0 {…}` line at
+# the least, so nothing read is a failed read, not a build without the mark.
 fully_drawn_count() {
-  adb logcat -d -s ActivityTaskManager:I 2> /dev/null | tr -d '\r' | grep -c "Fully drawn $app_id/$activity" || true
+  if read_log ActivityTaskManager:I && read_has_lines; then
+    grep -c "Fully drawn $app_id/$activity" "$logcat_tmp" || true
+  else
+    echo UNREAD
+  fi
 }
 duration_ms() {
   local s=${1#+}
   [[ $s =~ ^(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?$ ]] || { echo "-"; return; }
   echo $(( 10#${BASH_REMATCH[2]:-0} * 60000 + 10#${BASH_REMATCH[4]:-0} * 1000 + 10#${BASH_REMATCH[6]:-0} ))
 }
-# Wait up to $1 seconds for a new Fully drawn line past the $2 seen before the start; echo its ms or `-`.
+# Wait up to $1 seconds for a new Fully drawn line past the $2 seen before the start; echo its ms,
+# `-` when the buffers were read to the end of the wait and the line was not there (the build's
+# fact), or UNREAD when the wait's last read failed (the read's).
 fully_drawn_wait() {
-  local limit=$1 seen=$2 waited=0 line
+  local limit=$1 seen=$2 waited=0 count='' line
   while [ "$waited" -lt "$limit" ]; do
-    if [ "$(fully_drawn_count)" -gt "$seen" ]; then
-      line=$(adb logcat -d -s ActivityTaskManager:I 2> /dev/null | tr -d '\r' | grep "Fully drawn $app_id/$activity" | tail -n 1)
+    count=$(fully_drawn_count)
+    if [ "$count" != UNREAD ] && [ "$count" -gt "$seen" ]; then
+      line=$(grep "Fully drawn $app_id/$activity" "$logcat_tmp" | tail -n 1)
       duration_ms "$(printf '%s\n' "$line" | sed -n 's/.*Fully drawn [^:]*: *+\([0-9smh]*\).*/\1/p')"
       return
     fi
     sleep 1
     waited=$((waited + 1))
   done
-  echo "-"
+  if [ "$count" = UNREAD ]; then echo UNREAD; else echo "-"; fi
 }
-# The splash's hold as the head logs it (`ZenStartup: … splash held N ms, lifted by X`), the last such line; `-` without one.
+# The splash's hold as the head logs it (`ZenStartup: … splash held N ms, lifted by X`), the last
+# such line; `-` without one (a build before the line), UNREAD when the read failed.
 splash_held() {
-  adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'splash held [0-9-]* ms, lifted by [a-z]*' | tail -n 1 | sed 's/splash held \([0-9-]*\) ms, lifted by \([a-z]*\)/\1 (\2)/' | grep . || echo "-"
+  if read_log ZenStartup:I; then
+    grep -o 'splash held [0-9-]* ms, lifted by [a-z]*' "$logcat_tmp" | tail -n 1 | sed 's/splash held \([0-9-]*\) ms, lifted by \([a-z]*\)/\1 (\2)/' | grep . || echo "-"
+  else
+    echo UNREAD
+  fi
 }
 # The boot's marks as the build logs them at the chrome's first frame (`ZenStartup: boot marks:
 # app=41 activity=312 … frame=2890`, ms since the process start; BootMarks.kt), the last such line;
 # empty for a build without them (a grep with nothing to find exits 1, which under pipefail would
-# be the script's end – the readers of a build without the line must not be).
+# be the script's end – the readers of a build without the line must not be); UNREAD when the
+# read failed (a bare word without `=`, which the marks table's readers pass over).
 boot_marks() {
-  adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'boot marks: .*' | tail -n 1 | sed 's/^boot marks: //' || true
+  if read_log ZenStartup:I; then
+    grep -o 'boot marks: .*' "$logcat_tmp" | tail -n 1 | sed 's/^boot marks: //' || true
+  else
+    echo UNREAD
+  fi
 }
 # Ruling 5: the process's frame statistics since its start (`dumpsys gfxinfo`, the render thread's
 # own count), read at the same point of every run – STATS_AT_S after the start request – as `name=value` words:
 # frames rendered, janky, the UI thread slow (the main thread's long tasks during the boot), the
 # frame deadline missed, the 90th and 99th percentile frame times (ms). Empty when the process is gone.
 frame_stats() {
-  adb shell dumpsys gfxinfo "$app_id" 2> /dev/null | tr -d '\r' | awk -F': ' '
+  adb shell dumpsys gfxinfo "$app_id" 2>> "$read_errors" | tr -d '\r' | awk -F': ' '
     /^Total frames rendered:/ { printf "frames=%s ", $2 }
     /^Janky frames:/ { split($2, a, " "); printf "janky=%s ", a[1] }
     /^Number Slow UI thread:/ { printf "slowui=%s ", $2 }
@@ -252,15 +320,16 @@ frame_stats() {
     /^99th percentile:/ { sub(/ms/, "", $2); printf "p99=%s ", $2 }' || true
 }
 # The frames the process has rendered since its start (`dumpsys gfxinfo`'s `Total frames rendered`),
-# the one number the probes read; `-` when the process is gone.
+# the one number the probes read; `-` when the process is gone (or the dump failed: read-errors.txt).
 frames_rendered() {
-  adb shell dumpsys gfxinfo "$app_id" 2> /dev/null | tr -d '\r' | awk -F': ' '/^Total frames rendered:/ { print $2; found = 1 } END { if (!found) print "-" }'
+  adb shell dumpsys gfxinfo "$app_id" 2>> "$read_errors" | tr -d '\r' | awk -F': ' '/^Total frames rendered:/ { print $2; found = 1 } END { if (!found) print "-" }' || true
 }
 # The launcher's process before a start: `alive <pid>` or `dead` (a launcher restarting on the intent
-# would be a cost on the alias way, whose intent is the launcher's).
+# would be a cost on the alias way, whose intent is the launcher's). pidof exits 1 with no process,
+# which must not be the script's end.
 launcher_state() {
   local pid
-  pid=$(adb shell pidof "$launcher_id" 2> /dev/null | tr -d '\r' | awk '{ print $1 }')
+  pid=$(adb shell pidof "$launcher_id" 2>> "$read_errors" | tr -d '\r' | awk '{ print $1 }' || true)
   if [ -n "$pid" ]; then echo "alive $pid"; else echo "dead"; fi
 }
 # The names in the given marks lines, in order of first appearance, one per line.
@@ -278,7 +347,7 @@ mark_values() {
 # (`verify` for a debuggable package whatever compilation was asked, see the header), the distinct
 # values joined; empty when the dump has none.
 dexopt_state() {
-  adb shell dumpsys package "$app_id" 2> /dev/null | tr -d '\r' | grep -o 'status=[a-z-]*' | sed 's/status=//' | sort -u | tr '\n' ' ' | sed 's/ $//' || true
+  adb shell dumpsys package "$app_id" 2>> "$read_errors" | tr -d '\r' | grep -o 'status=[a-z-]*' | sed 's/status=//' | sort -u | tr '\n' ' ' | sed 's/ $//' || true
 }
 dexopt_ref=
 # Install one build over the other (the profile stays: the same applicationId), read its ART state
@@ -307,16 +376,20 @@ install_build() {
 # arrays (`<name>_totals` and the rest, `-` for a dash in the table), to the position's
 # (`pos<n>_<way>_totals`, `_drawn`, `_waits`: the position reading) and to `<name>-am-start.txt`
 # (the am start answer, the launcher's state before it, the mark, the hold, the boot's marks, the
-# frame statistics with the probes).
+# frame statistics with the probes, and the lines the start's reads left in read-errors.txt).
 measure_one() {
   local name=$1 way=$2 i=$3 pos=$4
   local -n m_totals=${name}_totals m_waits=${name}_waits m_states=${name}_states m_drawn=${name}_drawn
   local -n m_helds=${name}_helds m_marks=${name}_marks m_fstats=${name}_fstats m_launchers=${name}_launchers
   local -n p_totals=pos${pos}_${way}_totals p_drawn=pos${pos}_${way}_drawn p_waits=pos${pos}_${way}_waits
   local seen started answer fully held marks_ stats_ total wait_ state launcher probes t
+  local errors_before errors_lines errors_n errors_note=
   to_launcher
-  adb logcat -c > /dev/null 2>&1 || true
+  adb logcat -c -b main,system > /dev/null 2>> "$read_errors" || true
+  errors_before=$(wc -l < "$read_errors")
+  # The count before the start; a failed read here reads as none seen (the wait reads afresh).
   seen=$(fully_drawn_count)
+  [ "$seen" != UNREAD ] || seen=0
   launcher=$(launcher_state)
   started=$(date +%s)
   answer=$(start_app "$way")
@@ -337,11 +410,21 @@ measure_one() {
   stats_=$(frame_stats)
   stats_="${stats_% }"
   stats_="${stats_:+$stats_ }$probes"
-  printf 'run %s\n%s\nLauncher: %s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\nFrameStats: %s\n\n' "$i" "$answer" "$launcher" "$fully" "$held" "$marks_" "$stats_" >> "$out/${name//_/-}-am-start.txt"
+  # What this start's reads left in read-errors.txt (the lines past the count before them): into
+  # the start's record, and their number into its log line.
+  errors_lines=$(tail -n +"$((errors_before + 1))" "$read_errors")
+  errors_n=$(printf '%s\n' "$errors_lines" | grep -c . || true)
+  if [ "$errors_n" -gt 0 ]; then
+    errors_note="; read errors $errors_n line(s) (read-errors.txt)"
+    errors_lines="$errors_n line(s)"$'\n'"$(printf '%s\n' "$errors_lines" | sed 's/^/  /')"
+  else
+    errors_lines=none
+  fi
+  printf 'run %s\n%s\nLauncher: %s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\nFrameStats: %s\nReadErrors: %s\n\n' "$i" "$answer" "$launcher" "$fully" "$held" "$marks_" "$stats_" "$errors_lines" >> "$out/${name//_/-}-am-start.txt"
   total=$(printf '%s\n' "$answer" | sed -n 's/^TotalTime: *//p' | head -n 1)
   wait_=$(printf '%s\n' "$answer" | sed -n 's/^WaitTime: *//p' | head -n 1)
   state=$(printf '%s\n' "$answer" | sed -n 's/^LaunchState: *//p' | head -n 1)
-  echo "  $name run $i ($way, position $pos): TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} launcher $launcher splash held $held${marks_:+; marks $marks_}${stats_:+; frames $stats_}"
+  echo "  $name run $i ($way, position $pos): TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} launcher $launcher splash held $held$errors_note${marks_:+; marks $marks_}${stats_:+; frames $stats_}"
   # A start the platform answered without a time (a build without the alias: `Error: Activity
   # class does not exist`) reads `-`, and the median leaves it out.
   m_totals+=("${total:--}")
@@ -367,21 +450,42 @@ median() {
   printf '%s\n' "$nums" | sort -n | awk '{ a[NR] = $1 } END { if (NR % 2) print a[(NR + 1) / 2]; else print (a[NR / 2] + a[NR / 2 + 1]) / 2 }'
 }
 
-# after - before, or `-` when either side has no number.
+# after - before, or `-` when either side is not a number (`-`, UNREAD).
 delta() {
-  case "$1$2" in *-*) echo "-" ;; *) awk -v a="$1" -v b="$2" 'BEGIN { print a - b }' ;; esac
+  if is_number "$1" && is_number "$2"; then awk -v a="$1" -v b="$2" 'BEGIN { print a - b }'; else echo "-"; fi
 }
 
 join() { local IFS=' '; echo "$*"; }
 
 # The paired differences after_i - before_i of two arrays of the same length, one per line, in the
-# pairs' order; a pair with a dash on either side gives none (the median leaves it out).
+# pairs' order; a pair with a side that is not a number (`-`, UNREAD) gives none (the median leaves it out).
 paired() {
   local -n pd_before=$1 pd_after=$2
   local i
   for i in "${!pd_before[@]}"; do
-    case "${pd_before[$i]}${pd_after[$i]:--}" in *-*) ;; *) awk -v a="${pd_after[$i]}" -v b="${pd_before[$i]}" 'BEGIN { print a - b }' ;; esac
+    if is_number "${pd_before[$i]}" && is_number "${pd_after[$i]:--}"; then
+      awk -v a="${pd_after[$i]}" -v b="${pd_before[$i]}" 'BEGIN { print a - b }'
+    fi
   done
+}
+# The pairs of two arrays sorted by what they hold, three counts out (`valid dash unread`): both
+# sides numbers; a `-` on a side – the build's own fact (no mark within the wait, or a build
+# without it), whatever the other side holds; else UNREAD on a side and no `-` – the read's failure,
+# nothing known of the build.
+classify_pairs() {
+  local -n cp_before=$1 cp_after=$2
+  local i b a valid=0 dash=0 unread=0
+  for i in "${!cp_before[@]}"; do
+    b=${cp_before[$i]} a=${cp_after[$i]:--}
+    if is_number "$b" && is_number "$a"; then
+      valid=$((valid + 1))
+    elif [ "$b" = "-" ] || [ "$a" = "-" ]; then
+      dash=$((dash + 1))
+    else
+      unread=$((unread + 1))
+    fi
+  done
+  echo "$valid $dash $unread"
 }
 # The verdict: the median of the paired differences, then the differences themselves in brackets.
 paired_median() {
@@ -426,23 +530,36 @@ signed() {
 # THE GATE on one measure and way: $1 the measure's name, $2 the way, $3 and $4 the before and
 # after arrays, $5 the threshold (ms). Appends the row's reading to `judged` and, when the row
 # fails, its reason to `failures`: the paired median over the threshold, or INCONCLUSIVE when
-# fewer than half the pairs are valid (a dash on either side leaves a pair out).
+# fewer than half the pairs are valid (a side that is not a number leaves a pair out) – unless
+# every pair left out was left out by an UNREAD side and none by a `-`: then the row is UNREAD,
+# the read's failure and not the build's, its reason appended to `warnings` (a `::warning::`,
+# the row not judged, the run not failed by it). One `-` among the missing readings keeps the
+# row INCONCLUSIVE: a build that missed READY is red, honestly, whatever else the read did.
 judged=()
 failures=()
+warnings=()
 judge() {
-  local measure=$1 way=$2 threshold=$5 diffs n med
+  local measure=$1 way=$2 threshold=$5 diffs n dash unread med counts
   diffs=$(paired "$3" "$4")
-  n=$(printf '%s\n' "$diffs" | grep -c . || true)
+  read -r n dash unread <<< "$(classify_pairs "$3" "$4")"
+  counts="$n of $pairs pairs valid"
+  [ "$dash" -eq 0 ] || counts+=", $dash with a - side"
+  [ "$unread" -eq 0 ] || counts+=", $unread with an UNREAD side"
   # shellcheck disable=SC2086
   med=$(median $diffs)
   if [ $((n * 2)) -lt "$pairs" ]; then
-    judged+=("$measure, $way: INCONCLUSIVE ($n of $pairs pairs valid)")
-    failures+=("INCONCLUSIVE: $measure on the $way way has $n of $pairs pairs valid")
+    if [ "$unread" -gt 0 ] && [ "$dash" -eq 0 ]; then
+      judged+=("$measure, $way: UNREAD ($counts – the read's failure, not the build's; read-errors.txt)")
+      warnings+=("UNREAD: $measure on the $way way has $counts – the read failed on the runner (read-errors.txt in the record), the row is not judged")
+    else
+      judged+=("$measure, $way: INCONCLUSIVE ($counts)")
+      failures+=("INCONCLUSIVE: $measure on the $way way has $counts")
+    fi
   elif awk -v m="$med" -v t="$threshold" 'BEGIN { exit !(m > t) }'; then
-    judged+=("$measure, $way: $(signed "$med") ms, OVER the +$threshold ms threshold ($n of $pairs pairs valid)")
+    judged+=("$measure, $way: $(signed "$med") ms, OVER the +$threshold ms threshold ($counts)")
     failures+=("$measure paired median $(signed "$med") ms on the $way way, over the +$threshold ms threshold")
   else
-    judged+=("$measure, $way: $(signed "$med") ms, threshold +$threshold ms ($n of $pairs pairs valid)")
+    judged+=("$measure, $way: $(signed "$med") ms, threshold +$threshold ms ($counts)")
   fi
 }
 
@@ -499,7 +616,9 @@ for b in $(seq 1 "$runs"); do
   echo "== block $b done in $(( $(date +%s) - block_started )) s"
 done
 
-# The gate, judged before the record is written (the exit status follows it).
+# The gate, judged before the record is written (the exit status follows it). A row UNREAD is
+# named on the verdict line after the judgement it did not enter (PASS or FAIL are the judged
+# rows' alone) and repeated as a `::warning::` after the record.
 judge TotalTime direct before_totals after_totals "$TOTAL_THRESHOLD_MS"
 judge TotalTime alias before_alias_totals after_alias_totals "$ALIAS_THRESHOLD_MS"
 judge "Fully drawn" direct before_drawn after_drawn "$FULLY_DRAWN_THRESHOLD_MS"
@@ -509,6 +628,10 @@ if [ ${#failures[@]} -eq 0 ]; then
 else
   verdict="P0 VERDICT: FAIL — $(join_with '; ' "${failures[@]}")"
 fi
+if [ ${#warnings[@]} -ne 0 ]; then
+  verdict+=" (not judged: $(join_with '; ' "${warnings[@]}"))"
+fi
+read_errors_n=$(grep -c . "$read_errors" || true)
 
 before_total=$(median "${before_totals[@]}")
 after_total=$(median "${after_totals[@]}")
@@ -546,10 +669,10 @@ values_table() {
 }
 
 {
-  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $pairs starts per build and way on one emulator boot in $runs blocks of $starts, the arms interleaved and the order alternated (odd blocks base then head, even blocks head then base: each block installs one arm, reads its ART state (dexopt ${dexopt_ref:-?}: ART Service leaves a debuggable package no compiled code whatever is asked, so both arms boot in the one state the install leaves), starts it once to settle, measures it $starts times by each way, then the other arm the same; the i-th start of a block's one arm pairs with the i-th of its other; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. THE GATE is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter: TotalTime's paired median over +$TOTAL_THRESHOLD_MS ms on the direct way or +$ALIAS_THRESHOLD_MS ms on the alias way fails, Fully drawn's over +$FULLY_DRAWN_THRESHOLD_MS ms (direct) or +$FULLY_DRAWN_ALIAS_THRESHOLD_MS ms (alias) fails, a row with fewer than half its pairs valid is INCONCLUSIVE and fails; WaitTime is reported, not judged. The per-arm medians and their deltas are the record beside it; the position reading (the arm installed first in its block against the arm installed second, whatever the build) says what the order alone costs."
+  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $pairs starts per build and way on one emulator boot in $runs blocks of $starts, the arms interleaved and the order alternated (odd blocks base then head, even blocks head then base: each block installs one arm, reads its ART state (dexopt ${dexopt_ref:-?}: ART Service leaves a debuggable package no compiled code whatever is asked, so both arms boot in the one state the install leaves), starts it once to settle, measures it $starts times by each way, then the other arm the same; the i-th start of a block's one arm pairs with the i-th of its other; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. THE GATE is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter: TotalTime's paired median over +$TOTAL_THRESHOLD_MS ms on the direct way or +$ALIAS_THRESHOLD_MS ms on the alias way fails, Fully drawn's over +$FULLY_DRAWN_THRESHOLD_MS ms (direct) or +$FULLY_DRAWN_ALIAS_THRESHOLD_MS ms (alias) fails, a row with fewer than half its pairs valid is INCONCLUSIVE and fails – unless every pair it lacks was lost to a read that failed (UNREAD, below) and none to a build's -: that row is UNREAD, a warning, not judged; WaitTime is reported, not judged. The per-arm medians and their deltas are the record beside it; the position reading (the arm installed first in its block against the arm installed second, whatever the build) says what the order alone costs."
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
-  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - for a build without the mark. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
+  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - when the log was read to the end of the wait and the line was not there (a build without the mark, or one that did not reach READY within the wait: the build's fact), UNREAD when the read itself failed (adb's error, or a start after which the buffers answered nothing: the runner's, its stderr in read-errors.txt beside this record). Every log read is \`adb logcat -d -b main,system -s <tag>\`, its stderr kept. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
   echo
   echo "| build, way | TotalTime median | Fully drawn median | WaitTime median | TotalTime runs | Fully drawn runs | LaunchState | splash held (by) |"
   echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
@@ -564,6 +687,7 @@ values_table() {
   echo "VERDICT delta (paired: the median of after - before within each pair), alias: TotalTime $(paired_median before_alias_totals after_alias_totals), Fully drawn $(paired_median before_alias_drawn after_alias_drawn), WaitTime $(paired_median before_alias_waits after_alias_waits)"
   echo "P0 gate (the paired medians against the thresholds, $pairs pairs): $(join_with '; ' "${judged[@]}")"
   echo "$verdict"
+  echo "read errors: $read_errors_n line(s) over the run (read-errors.txt beside this record, every read's stderr; each start's own lines are in its am-start record's ReadErrors)"
   echo "the trampoline's cost (alias - direct, the same build): before TotalTime $(delta "$before_alias_total" "$before_total") ms, Fully drawn $(delta "$before_alias_fully" "$before_fully") ms; after TotalTime $(delta "$after_alias_total" "$after_total") ms, Fully drawn $(delta "$after_alias_fully" "$after_fully") ms"
   echo "position (the arm installed FIRST in its block against the arm installed SECOND, whatever the build – the base in the odd blocks, the head in the even – the medians over $pairs starts each, second - first of the medians, and in brackets the median of second - first within each pair): direct TotalTime $(position_reading pos1_direct_totals pos2_direct_totals), Fully drawn $(position_reading pos1_direct_drawn pos2_direct_drawn), WaitTime $(position_reading pos1_direct_waits pos2_direct_waits); alias TotalTime $(position_reading pos1_alias_totals pos2_alias_totals), Fully drawn $(position_reading pos1_alias_drawn pos2_alias_drawn), WaitTime $(position_reading pos1_alias_waits pos2_alias_waits)"
   echo "launcher ($launcher_id) before the start, alive of the starts: before direct $(alive_count "${before_launchers[@]}"), alias $(alive_count "${before_alias_launchers[@]}"); after direct $(alive_count "${after_launchers[@]}"), alias $(alive_count "${after_alias_launchers[@]}"); $(distinct_pids "${before_launchers[@]}" "${before_alias_launchers[@]}" "${after_launchers[@]}" "${after_alias_launchers[@]}") distinct launcher pid(s) over the run (a second one is a restart)"
@@ -584,6 +708,10 @@ values_table() {
 } | tee "$out/cold-start-pair.txt"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   { echo "### MainActivity cold start, before / after"; echo; cat "$out/cold-start-pair.txt"; } >> "$GITHUB_STEP_SUMMARY"
+fi
+# A row UNREAD is the run's warning (the read's failure, on the runner), never its red.
+if [ ${#warnings[@]} -ne 0 ]; then
+  for w in "${warnings[@]}"; do echo "::warning::$w"; done
 fi
 # The gate's exit: a FAIL is the workflow's red (the record above is written and uploaded first).
 if [ ${#failures[@]} -ne 0 ]; then
