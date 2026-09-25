@@ -3332,9 +3332,14 @@ export class Menus {
     // zero is disabled), so the menu keeps its shape from one opening to the next.
     const privateTabs = when(
       caps.privateTabs,
-      { label: 'New Private Tab', click: () => tabs.newPrivateTab(undefined, win) },
+      {
+        label: 'New Private Tab',
+        key: 'row.newPrivateTab',
+        click: () => tabs.newPrivateTab(undefined, win)
+      },
       {
         label: 'Close Private Tabs',
+        key: 'row.closePrivateTabs',
         enabled: tabs.privateTabs().length > 0,
         click: () => tabs.closePrivateTabs(win)
       }
@@ -3698,11 +3703,14 @@ export class Menus {
       // the next group (Edge's purpose: the rows one uses into the first detent). The order is
       // applied per section: the row keeps its membership (§9.13) and its place at the head,
       // the list follows; an item the saved order never named keeps to the default order after
-      // the named ones, a key this build has no item for is dropped.
+      // the named ones, a key this build has no item for is dropped. A group whose items come
+      // and go on separate conditions names each item's key where it is built (`privateTabs`,
+      // `pageControlItems`); a group of alternatives that never stand together shares one key
+      // (`homeScreenItems`: Open in the app, or Add to Home Screen).
       let hairlines = 0
       const hairline = (): Template => [{ type: 'separator', key: `sep.${++hairlines}` }]
       const keyed = (key: string, ...items: Template): Template =>
-        items.map((item, i) => ({ ...item, key: i === 0 ? key : `${key}.${i + 1}` }))
+        items.map((item, i) => ({ ...item, key: item.key ?? (i === 0 ? key : `${key}.${i + 1}`) }))
       const keyOf = (item: MenuItemTemplate): string | undefined => item.key
       const order = state.settings.menuOrder
       const list: Template = [
@@ -4271,9 +4279,12 @@ export class Menus {
     const { pageControls, state } = this.browser
     const web = Boolean(active) && siteKey(active!.url) !== null
     const items: Template = []
+    // The two rows are present on their own conditions, so each names its own order key (the
+    // phone's `keyed` keeps a key an item brings) rather than taking a place in the group.
     if (state.capabilities.pageControls) {
       items.push({
         label: 'Desktop Site',
+        key: 'row.desktopSite',
         type: 'checkbox',
         enabled: web,
         checked: web && pageControls.isDesktop(active!),
@@ -4285,6 +4296,7 @@ export class Menus {
     if (state.capabilities.darkenSites && pageControls.settings.darkenSites) {
       items.push({
         label: 'Dark Theme for This Site',
+        key: 'row.darkenSite',
         type: 'checkbox',
         enabled: web,
         checked: web && pageControls.isDarkened(active!),

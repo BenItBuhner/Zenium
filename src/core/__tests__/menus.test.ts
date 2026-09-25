@@ -1796,6 +1796,14 @@ describe('the app menu', () => {
       expect(shown.at(-1)!.click).toBeUndefined()
       // Reload and Stop share the row's last slot and its key.
       expect(item(shown, 'Reload').key).toBe('icon.reload')
+      // A row that comes and goes on a condition of its own is named where it is built, not by
+      // its place in a group: Close Private Tabs is not the private-tab row's second, Dark Theme
+      // for This Site not Desktop Site's, so a saved key still names the same row when the
+      // other is absent.
+      expect(item(shown, 'New Private Tab').key).toBe('row.newPrivateTab')
+      expect(item(shown, 'Close Private Tabs').key).toBe('row.closePrivateTabs')
+      expect(item(shown, 'Desktop Site').key).toBe('row.desktopSite')
+      expect(named.some((k) => /\.\d+$/.test(k) && !k.startsWith('sep.'))).toBe(false)
       // The desktop's and the tablet's menus carry no keys: the order is the phone's.
       for (const other of [harness(DESKTOP), harness(DESKTOP, 'tablet')]) {
         appMenu(other)
