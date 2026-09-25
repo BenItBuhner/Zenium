@@ -59,6 +59,8 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
     private lateinit var findings: File
     private val failures = ArrayList<String>()
     private val table = ArrayList<MemoryRow>()
+    /** When the driver paused the audio page (the core's `quietAt` for it, which the state does not carry). */
+    private var pausedAudioAt: Long? = null
 
     private val mainActivity: MainActivity get() = activity as MainActivity
     private val host: Host get() = mainActivity.host
@@ -303,6 +305,7 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
 
         // The audio stops: the hold lifts, the chrome waives with the window.
         pageJs(TAB_AUDIO, "(function(){var a=document.querySelector('audio');if(a)a.pause();return 'paused'})()")
+        pausedAudioAt = System.currentTimeMillis()
         val quiet = awaitTrue(10_000) { coreTab(TAB_AUDIO)?.optBoolean("audible") == false && !onMain { host.rendererHeld() } }
         chrome = onMain { host.chrome.rendererRequestedPriority to host.chrome.rendererPriorityWaivedWhenNotVisible }
         held = onMain { host.rendererHeld() }
@@ -331,27 +334,34 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         finding("process list, window away: ${processStanding()}")
         val asleepBefore = discardedIds()
 
-        // What may sleep now: the reloaded pages the platform's own trim at Home (if any) left.
+        // What may sleep now, as the policy reads the state: the reloaded pages the platform's
+        // own trim at Home (if any) left, and any other page past both of its minutes.
         val reloaded = (1..BACKGROUND_TABS).map { tabId(it) }.toSet()
-        val awake = reloaded - asleepBefore
-        finding("${awake.size} of the $BACKGROUND_TABS reloaded pages still awake behind Home (${(reloaded - awake).size} slept at Home itself)")
+        finding("${(reloaded - asleepBefore).size} of the $BACKGROUND_TABS reloaded pages still awake behind Home (${(reloaded intersect asleepBefore).size} slept at Home itself)")
+        val lastActive = coreTabsLastActive()
+        val eligible = mayBeSlept()
+        finding("${eligible.size} page(s) the policy may sleep now (${describeIds(eligible)}); exempt: ${exemptions()}")
         val delivered = trim("BACKGROUND")
         claim(delivered, "BACKGROUND reached the host with the window away")
         val graded = onMain { host.memoryPressure.trims.lastOrNull()?.graded }
         val expected = when (graded) {
-            MemoryPressure.Level.MODERATE -> (awake.size + 3) / 4
-            MemoryPressure.Level.LOW -> (awake.size + 1) / 2
-            MemoryPressure.Level.CRITICAL -> awake.size
+            MemoryPressure.Level.MODERATE -> (eligible.size + 3) / 4
+            MemoryPressure.Level.LOW -> (eligible.size + 1) / 2
+            MemoryPressure.Level.CRITICAL -> eligible.size
             null -> 0
         }
+        val expectedIds = eligible.sortedBy { lastActive[it] ?: 0L }.take(expected).toSet()
         // One pass, no batches: the plan is in the state as soon as the core answers.
         val settled = awaitTrue(10_000) { (discardedIds() - asleepBefore).size >= expected }
         SystemClock.sleep(1_000)
         val slept = discardedIds() - asleepBefore
-        finding("BACKGROUND graded ${graded?.wire ?: "none"} (${memoryInfo()}): $expected of ${awake.size} expected, ${slept.size} slept: ${describeIds(slept)}")
+        finding("BACKGROUND graded ${graded?.wire ?: "none"} (${memoryInfo()}): $expected of ${eligible.size} expected, ${slept.size} slept: ${describeIds(slept)}")
         claim(graded != null, "BACKGROUND was graded (${graded?.wire})")
         claim(settled && slept.size == expected, "the background trim slept its share in one pass ($expected expected, ${slept.size} slept)")
-        claim(slept.none { it == TAB_SCROLL || it == TAB_FRONT || it == TAB_AUDIO }, "the page in front, the page just left and the page just quiet stood")
+        claim(slept == expectedIds, "the pages shown longest ago went (${describeIds(slept - expectedIds)} unexpected, ${describeIds(expectedIds - slept)} missing)")
+        val three = setOf(TAB_SCROLL, TAB_FRONT, TAB_AUDIO)
+        val kept = three - eligible
+        claim(slept.none { it in kept }, "the page in front, the page just left and the page just quiet stood (${describeIds(kept)} exempt${if ((three intersect eligible).isNotEmpty()) "; ${describeIds(three intersect eligible)} past the minute, fair game" else ""})")
         row("after BACKGROUND, window away")
         finding("process list after the trim: ${processStanding()}")
 
@@ -397,14 +407,22 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
 
     private class MemoryRow(val label: String, val appPss: Int, val appRss: Int, val rendererPss: Int, val rendererRss: Int, val renderers: Int, val info: String, val loaded: Int, val asleep: Int)
 
-    /** One row of the table: the app's and the renderer's PSS / RSS (kB) from `dumpsys meminfo`, the system's word beside them. */
+    /**
+     * One row of the table: the app's and the renderer's PSS / RSS (kB) from `dumpsys meminfo`'s
+     * per-process totals, the system's word beside them. The totals are the activity manager's own
+     * reading of `/proc/<pid>/smaps` – no call into either process. (`dumpsys meminfo <pid>` runs
+     * `dumpMemInfo` inside the named process; in the WebView's sandboxed renderer that allocation
+     * trips the renderer's seccomp sandbox and kills it, taking every page and the chrome with it:
+     * run 1 of this driver.)
+     */
     private fun row(label: String) {
-        val app = meminfo(Process.myPid())
         val renderers = rendererPids()
+        val byProcess = memoryByProcess()
+        val app = byProcess[Process.myPid()] ?: (0 to vmRss(Process.myPid()))
         var rendererPss = 0
         var rendererRss = 0
         for (pid in renderers) {
-            val (pss, rss) = meminfo(pid)
+            val (pss, rss) = byProcess[pid] ?: (0 to vmRss(pid))
             rendererPss += pss
             rendererRss += rss
         }
@@ -413,13 +431,39 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         finding("memory [$label]: app PSS ${row.appPss} kB RSS ${row.appRss} kB; renderer PSS ${row.rendererPss} kB RSS ${row.rendererRss} kB (${row.renderers} process(es)); ${row.info}; ${row.loaded} pages loaded, ${row.asleep} asleep")
     }
 
-    /** `TOTAL PSS` and `TOTAL RSS` in kB from `dumpsys meminfo -s <pid>`; 0 when unreadable. */
-    private fun meminfo(pid: Int): Pair<Int, Int> {
-        val dump = shell("dumpsys meminfo -s $pid")
-        val pss = Regex("""TOTAL PSS:\s+(\d+)""").find(dump)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        val rss = Regex("""TOTAL RSS:\s+(\d+)""").find(dump)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        return pss to rss
+    /**
+     * pid → (PSS kB, RSS kB) from `dumpsys meminfo`'s "Total PSS by process" and "Total RSS by
+     * process" sections; a process the RSS section lacks gets `VmRSS` from its `/proc` status.
+     */
+    private fun memoryByProcess(): Map<Int, Pair<Int, Int>> {
+        val dump = shell("dumpsys meminfo")
+        val pss = totalsByProcess(dump, "Total PSS by process:")
+        val rss = totalsByProcess(dump, "Total RSS by process:")
+        val out = HashMap<Int, Pair<Int, Int>>()
+        for ((pid, kb) in pss) out[pid] = kb to (rss[pid] ?: vmRss(pid))
+        return out
     }
+
+    /** The `   247,257K: <process name> (pid 5855[ / activities])` lines under `header`, up to the section's blank line. */
+    private fun totalsByProcess(dump: String, header: String): Map<Int, Int> {
+        val out = HashMap<Int, Int>()
+        var inSection = false
+        for (raw in dump.lineSequence()) {
+            val line = raw.trim()
+            if (!inSection) {
+                inSection = line == header
+                continue
+            }
+            if (line.isEmpty()) break
+            val match = Regex("""^([\d,]+)K: .* \(pid (\d+)""").find(line) ?: continue
+            out[match.groupValues[2].toInt()] = match.groupValues[1].replace(",", "").toInt()
+        }
+        return out
+    }
+
+    /** `VmRSS` (kB) from `/proc/<pid>/status` – the shell may read it for any process it sees; 0 when it cannot. */
+    private fun vmRss(pid: Int): Int =
+        Regex("""VmRSS:\s+(\d+)\s+kB""").find(shell("cat /proc/$pid/status"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
     /** The WebView's sandboxed renderer processes (`ps`): the one process every page and the chrome share, as a rule. */
     private fun rendererPids(): List<Int> =
@@ -441,7 +485,7 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
     }
 
     private fun writeTable() {
-        val sb = StringBuilder("\nMEMORY TABLE (kB; dumpsys meminfo -s; the renderer is the WebView's sandboxed process)\n")
+        val sb = StringBuilder("\nMEMORY TABLE (kB; dumpsys meminfo, the per-process totals; the renderer is the WebView's sandboxed process)\n")
         sb.append(String.format("%-32s %10s %10s %13s %13s %7s %7s\n", "row", "app PSS", "app RSS", "renderer PSS", "renderer RSS", "loaded", "asleep"))
         for (r in table) sb.append(String.format("%-32s %10d %10d %13d %13d %7d %7d\n", r.label, r.appPss, r.appRss, r.rendererPss, r.rendererRss, r.loaded, r.asleep))
         val first = table.firstOrNull()
@@ -468,6 +512,43 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         val tabs = coreState().getJSONObject("tabs")
         val out = HashMap<String, Long>()
         for (key in tabs.keys()) out[key] = tabs.getJSONObject(key).optLong("lastActiveAt")
+        return out
+    }
+
+    /**
+     * The pages a pressure signal may sleep right now, read off the core's state the way
+     * `sleepExemption` (`src/core/memoryPressure.ts`) reads them: a page with a view, not the one
+     * in front, not audible and not quiet within the minute (the audio page's `quietAt` is the
+     * core's own; the driver knows when it paused the page), done loading, not shown within the
+     * minute. Nothing here types into a form, captures, or is on the never-sleep list.
+     */
+    private fun mayBeSlept(): Set<String> = sleepStanding().filterValues { it == null }.keys
+
+    /** The reasons the three named pages stand, for the findings. */
+    private fun exemptions(): String =
+        sleepStanding().filterKeys { it == TAB_SCROLL || it == TAB_FRONT || it == TAB_AUDIO }
+            .entries.sortedBy { it.key }.joinToString(", ") { "${it.key}=${it.value ?: "may sleep"}" }
+
+    /** Every page with a view → its exemption, or null when it may sleep. */
+    private fun sleepStanding(): Map<String, String?> {
+        val state = coreState()
+        val active = activeCoreTab(state)?.optString("id")
+        val tabs = state.getJSONObject("tabs")
+        val views = onMain { host.tabs.all().map { it.tabId }.toSet() }
+        val now = System.currentTimeMillis()
+        val out = HashMap<String, String?>()
+        for (key in tabs.keys()) {
+            if (key !in views) continue
+            val tab = tabs.getJSONObject(key)
+            out[key] = when {
+                key == active -> "visible"
+                tab.optBoolean("audible") -> "audible"
+                key == TAB_AUDIO && pausedAudioAt?.let { now - it < RECENTLY_AUDIBLE_MS } == true -> "recently-audible"
+                tab.optBoolean("loading") -> "loading"
+                now - tab.optLong("lastActiveAt") < RECENTLY_SHOWN_MS -> "recently-shown"
+                else -> null
+            }
+        }
         return out
     }
 
@@ -671,8 +752,9 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         /** The long page's document held back by the server, so the return's picture stands to be seen. */
         private const val SCROLL_DELAY_MS = 1_200L
         private const val RETURN_WATCH_MS = 12_000L
-        /** `RECENTLY_SHOWN_MS` in `src/core/memoryPressure.ts`. */
+        /** `RECENTLY_SHOWN_MS` and `RECENTLY_AUDIBLE_MS` in `src/core/memoryPressure.ts`. */
         private const val RECENTLY_SHOWN_MS = 60_000L
+        private const val RECENTLY_AUDIBLE_MS = 60_000L
         /** `am send-trim-memory`'s names for `ComponentCallbacks2`'s levels. */
         private val TRIM_LEVELS = mapOf(
             "HIDDEN" to HostLifecycle.TRIM_MEMORY_UI_HIDDEN,
