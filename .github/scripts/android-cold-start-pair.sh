@@ -19,12 +19,20 @@
 # Each build is installed over the other (`adb install -r -d`: the same applicationId, so the
 # profile stays and both boot the same state; -d since the base may carry the newer version code
 # when main has moved past the branch), started once to settle, then force-stopped and started
-# P0_RUNS times. The table is written to the job summary too.
+# P0_RUNS times. Every run keeps one clock for both builds (a build without the READY mark must
+# not read its frame statistics later, nor start its next run later, than one with it): the mark
+# is waited for up to READY_WAIT_S from the start request, the statistics are read STATS_AT_S
+# after it whatever the wait found, and the next start comes NEXT_AT_S after it, the device quiet
+# and the boot – the chrome and the core boot on after the first frame – long over on either.
+# The table is written to the job summary too.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
 activity=app.zen.chromium.MainActivity
 runs=${P0_RUNS:-5}
+READY_WAIT_S=12
+STATS_AT_S=15
+NEXT_AT_S=22
 out=${DEMO_OUT:-artifacts/android-cold-start-pair}
 base_apk=${P0_BASE_APK:?P0_BASE_APK must name the APK of the base build}
 head_apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
@@ -65,13 +73,21 @@ adb shell am kill-all || true
 echo "letting the system settle"
 sleep 45
 
-# One cold start: the process gone, the launcher in front, then the start with -W; the lines of
-# its answer (Status, LaunchState, TotalTime, WaitTime).
-cold_start() {
+# Where every cold start begins: the process gone, the launcher in front and settled.
+to_launcher() {
   adb shell am force-stop "$app_id"
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.HOME > /dev/null 2>&1 || true
   sleep 3
+}
+# The start with -W; the lines of its answer (Status, LaunchState, TotalTime, WaitTime).
+start_app() {
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$app_id/$activity" | tr -d '\r'
+}
+# Sleep until the shell's clock (`date +%s`) reads $1; nothing when it already does.
+sleep_until() {
+  local now
+  now=$(date +%s)
+  if [ "$now" -lt "$1" ]; then sleep $(($1 - now)); fi
 }
 
 # The chrome's first real frame: `reportFullyDrawn()` at the chrome's READY (MainActivity.onChromeReady,
@@ -113,7 +129,7 @@ boot_marks() {
   adb logcat -d -s ZenStartup:I 2> /dev/null | tr -d '\r' | grep -o 'boot marks: .*' | tail -n 1 | sed 's/^boot marks: //' || true
 }
 # Ruling 5: the process's frame statistics since its start (`dumpsys gfxinfo`, the render thread's
-# own count), read at the same point of every run – after the READY wait – as `name=value` words:
+# own count), read at the same point of every run – STATS_AT_S after the start request – as `name=value` words:
 # frames rendered, janky, the UI thread slow (the main thread's long tasks during the boot), the
 # frame deadline missed, the 90th and 99th percentile frame times (ms). Empty when the process is gone.
 frame_stats() {
@@ -143,7 +159,8 @@ measure() {
   echo "== $name ($label): $apk"
   adb install -r -d -g "$apk"
   : > "$out/$name-am-start.txt"
-  cold_start > /dev/null
+  to_launcher
+  start_app > /dev/null
   sleep 8
   adb shell am force-stop "$app_id"
   totals=()
@@ -154,13 +171,16 @@ measure() {
   marks=()
   fstats=()
   for i in $(seq 1 "$runs"); do
+    to_launcher
     adb logcat -c > /dev/null 2>&1 || true
     seen=$(fully_drawn_count)
-    answer=$(cold_start)
-    # The chrome and the core boot on after the first frame: wait for their mark (the boot's
-    # length, and a bound for a build without it), then let the device go quiet, so the next
-    # start is cold from a quiet device rather than from a boot still in flight.
-    fully=$(fully_drawn_wait 15 "$seen")
+    started=$(date +%s)
+    answer=$(start_app)
+    # One clock for both builds: the READY mark waited for (the boot's length where a build has
+    # it), the log's lines and the frame statistics read STATS_AT_S after the start request
+    # whether the wait found the mark or not, the next start NEXT_AT_S after it.
+    fully=$(fully_drawn_wait "$READY_WAIT_S" "$seen")
+    sleep_until $((started + STATS_AT_S))
     held=$(splash_held)
     marks_=$(boot_marks)
     stats_=$(frame_stats)
@@ -176,7 +196,7 @@ measure() {
     helds+=("$held")
     marks+=("$marks_")
     fstats+=("$stats_")
-    sleep 6
+    sleep_until $((started + NEXT_AT_S))
   done
   adb shell am force-stop "$app_id"
 }
@@ -212,7 +232,7 @@ after_fully=$(median "${after_drawn[@]}")
   echo "MainActivity cold start, am start -W after am force-stop, $runs runs each on one emulator boot (medians in ms)"
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
-  echo "TotalTime: the window's first frame (the plain window, under the splash where there is one). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY; - for a build without the mark."
+  echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY; - for a build without the mark. Method: every start from the launcher with the process gone; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds."
   echo
   echo "| build | TotalTime median | Fully drawn median | WaitTime median | TotalTime runs | Fully drawn runs | LaunchState | splash held (by) |"
   echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
@@ -241,7 +261,7 @@ after_fully=$(median "${after_drawn[@]}")
   names=$(mark_names "${before_fstats[@]}" "${after_fstats[@]}")
   if [ -n "$names" ]; then
     echo
-    echo "frame statistics (dumpsys gfxinfo, the process since its start, read after the READY wait): frames rendered, janky, slowui the UI thread slow (the main thread's long tasks during the boot), missed the frame deadline missed, p90 / p99 the frame time percentiles in ms; medians over the runs."
+    echo "frame statistics (dumpsys gfxinfo, the process since its start, read $STATS_AT_S s after the start request on either build): frames rendered, janky, slowui the UI thread slow (the main thread's long tasks during the boot), missed the frame deadline missed, p90 / p99 the frame time percentiles in ms; medians over the runs."
     echo
     echo "| statistic | before median | after median | delta | before runs | after runs |"
     echo "| --- | --- | --- | --- | --- | --- |"

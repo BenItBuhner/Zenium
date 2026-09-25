@@ -19,6 +19,13 @@ on:
         required: false
         type: string
         default: main
+      api-level:
+        description: System image (34 is the phone shards' image, 35 is Android 15 with the current WebView)
+        type: choice
+        default: '34'
+        options:
+          - '34'
+          - '35'
 
 permissions:
   contents: read
@@ -33,6 +40,7 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-cold-start-pair.sh
+      api-level: ${{ inputs.api-level || '34' }}
       # The base APK: the base ref in a worktree, its web build, then assembleDebug -PskipWeb as the
       # head's own step ran it. The labels are the two commits, for the table.
       script-env: |

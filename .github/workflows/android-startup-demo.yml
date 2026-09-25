@@ -22,9 +22,9 @@ on:
         type: string
         default: light dark
       api-level:
-        description: System image (34 is the phone shards' image, 35 is Android 15)
+        description: System image (35 is Android 15 with the current WebView, the nightly's; 34 the phone shards' image)
         type: choice
-        default: '34'
+        default: '35'
         options:
           - '34'
           - '35'
@@ -45,7 +45,7 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-startup-demo.sh
-      api-level: ${{ inputs.api-level || '34' }}
+      api-level: ${{ inputs.api-level || '35' }}
       script-env: |
         STARTUP_ASSERT=${{ (github.event_name != 'workflow_dispatch' || inputs.assert) && 'true' || 'false' }}
         STARTUP_THEMES=${{ inputs.themes || 'light dark' }}
@@ -65,7 +65,7 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-startup-demo.sh
-      api-level: ${{ inputs.api-level || '34' }}
+      api-level: ${{ inputs.api-level || '35' }}
       script-env: |
         STARTUP_ASSERT=${{ (github.event_name != 'workflow_dispatch' || inputs.assert) && 'true' || 'false' }}
         STARTUP_THEMES=${{ inputs.themes || 'light dark' }}
