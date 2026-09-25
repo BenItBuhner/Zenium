@@ -8,7 +8,10 @@ import android.view.Choreographer
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.webkit.ProxyConfig
+import androidx.webkit.ProxyController
 import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -47,16 +50,13 @@ import java.util.concurrent.TimeUnit
  *
  * THE HOST MAPPING. The engine's verdict is on the registrable domain, so the sites must be
  * named `gogle.com`, `paypa1.com` and `amazom.com` – no loopback or `nip.io` name will do – and
- * the WebView must reach the loopback server under those names. The WebView reads
- * `/data/local/tmp/webview-command-line` on the emulator's userdebug images when it initialises,
- * which happens in `ZenApplication.onCreate` (`setWebContentsDebuggingEnabled`), before any test
- * code runs; so the file has to be in place before the process starts, written by the workflow's
- * driver script on the runner:
- *
- *   _ --host-resolver-rules="MAP gogle.com 127.0.0.1:18124,MAP paypa1.com 127.0.0.1:18124,MAP amazom.com 127.0.0.1:18124"
- *
- * The driver checks the mapping in its warm-up (a fetch of `http://gogle.com/probe` from the
- * loopback page, seen by the server) and records HOST_MAPPING_MISSING when the file was not read,
+ * the WebView must reach the loopback server under those names. The WebView's proxy override
+ * (`ProxyController`, androidx.webkit; WebView 68+) does that from inside the process: every
+ * `http://` request of the app's WebViews goes to the loopback server as a proxy request
+ * (`GET http://gogle.com/`, `Host: gogle.com` – no name is resolved), `https://` stays direct, the
+ * loopback address is bypassed. So the driver needs nothing from the runner and runs where any
+ * demo runs (the nightly's shared script). The warm-up checks it (a fetch of `http://gogle.com/probe`
+ * from the loopback page, seen by the server) and records PROXY_NOT_IN_EFFECT when it is not,
  * so the scene fails for that reason rather than on the site never loading. HTTPS-only mode is
  * turned off for the run: the omnibox spells a bare host `https://`, the loopback server speaks
  * plain HTTP only, and the upgrade's failure page would otherwise stand where the site should
@@ -80,6 +80,7 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         try {
             runDemo()
         } finally {
+            clearProxy()
             server.close()
         }
         if (failures.isNotEmpty()) throw AssertionError("${failures.size} claim(s) did not hold:\n" + failures.joinToString("\n"))
@@ -90,7 +91,7 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         findings.writeText("Zenium Android – the lookalike-domain question (PS-18) on the device\n\n")
         finding("device: API ${android.os.Build.VERSION.SDK_INT}, ${android.os.Build.MODEL}; WebView ${webViewVersion()}")
         finding("demo server: ${server.selfCheck()}")
-        finding("webview-command-line: ${shellCommand("cat $COMMAND_LINE_FILE").trim().ifEmpty { "(no file)" }}")
+        finding("proxy override: ${installProxy()}")
 
         // HTTPS-only off for the run (see the header); Safe Browsing on, which the check sits under.
         val privacy = coreState().getJSONObject("settings").getJSONObject("privacy")
@@ -109,7 +110,7 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         waitForTitle("Demo site", 25_000)
         val probe = mappingProbe()
         finding("host mapping: $probe")
-        if (!probe.startsWith("ok")) failures += "warm-up: HOST_MAPPING_MISSING – $probe"
+        if (!probe.startsWith("ok")) failures += "warm-up: PROXY_NOT_IN_EFFECT – $probe"
         server.mark()
         Log.i(tag, "warm-up done")
     }
@@ -305,7 +306,7 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
     private fun enter(text: String) {
         ensureForeground()
         Finger().tap(pillCenterX, pillY)
-        if (waitFor(CLEAR_LABEL, 6_000) == null) finding("  (the URL bar did not open for '$text')")
+        if (waitFor(CLEAR_LABEL, 6_000) == null && addressField() == null) finding("  (the URL bar did not open for '$text')")
         SystemClock.sleep(1_500)
         instrumentation.sendStringSync(text)
         SystemClock.sleep(900)
@@ -540,6 +541,36 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
     private fun webViewVersion(): String =
         runCatching { WebViewCompat.getCurrentWebViewPackage(app)?.let { "${it.packageName} ${it.versionName}" } }.getOrNull() ?: "(unknown)"
 
+    /**
+     * Route the app's `http://` traffic to the loopback server as a proxy (the header's host
+     * mapping): `https://` stays direct, the loopback address itself is bypassed. Waits for the
+     * WebView to say the override is in force before any page is loaded under it.
+     */
+    private fun installProxy(): String {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) return "not available: this WebView lacks PROXY_OVERRIDE"
+        val config = ProxyConfig.Builder()
+            .addProxyRule("$LOOPBACK:$PORT", ProxyConfig.MATCH_HTTP)
+            .addBypassRule(LOOPBACK)
+            .build()
+        val applied = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            ProxyController.getInstance().setProxyOverride(config, { it.run() }, { applied.countDown() })
+        }
+        return if (applied.await(10, TimeUnit.SECONDS)) "http:// → $LOOPBACK:$PORT (https:// direct, $LOOPBACK bypassed); in force"
+        else "http:// → $LOOPBACK:$PORT asked for, but the WebView did not confirm it within 10 s"
+    }
+
+    private fun clearProxy() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) return
+        val cleared = CountDownLatch(1)
+        runCatching {
+            instrumentation.runOnMainSync {
+                ProxyController.getInstance().clearProxyOverride({ it.run() }, { cleared.countDown() })
+            }
+            cleared.await(5, TimeUnit.SECONDS)
+        }
+    }
+
     /** The tables' one log line, off the chrome's console in logcat (`ZenChrome`, the chrome's `console.info`). */
     private fun awaitTablesLine(timeoutMs: Long): String? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -552,7 +583,7 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         return null
     }
 
-    /** A fetch of `http://gogle.com/probe` from the loopback page: seen by the server when the resolver rules are in. */
+    /** A fetch of `http://gogle.com/probe` from the loopback page: seen by the server when the proxy override is in force. */
     private fun mappingProbe(): String {
         val before = server.hits(GOGLE).size
         tabJs("window.__probe='';fetch('http://$GOGLE/probe',{mode:'no-cors',cache:'no-store'}).then(function(r){window.__probe='ok:'+r.type},function(e){window.__probe='err:'+e});'started'")
@@ -733,7 +764,11 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
                     val colon = line.indexOf(':')
                     if (colon > 0) headers[line.substring(0, colon).trim().lowercase()] = line.substring(colon + 1).trim()
                 }
-                val target = requestLine.split(' ').getOrNull(1) ?: "/"
+                // A proxy request names the whole URL (`GET http://gogle.com/ HTTP/1.1`); the path is what matters.
+                val target = (requestLine.split(' ').getOrNull(1) ?: "/").let { raw ->
+                    if (!raw.startsWith("http://") && !raw.startsWith("https://")) raw
+                    else raw.substringAfter("://").let { rest -> rest.indexOf('/').let { i -> if (i >= 0) rest.substring(i) else "/" } }
+                }
                 val path = target.substringBefore('?')
                 val query = target.substringAfter('?', "")
                 val host = headers["host"] ?: "127.0.0.1:$port"
@@ -828,7 +863,6 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         private const val AMAZON = "amazom.com"
         private const val ERROR_PREFIX = "zen://error"
         private const val CLEAR_LABEL = "Clear"
-        private const val COMMAND_LINE_FILE = "/data/local/tmp/webview-command-line"
         private const val FINDINGS_FILE = "services-pass-8-android-lookalike-findings.txt"
     }
 }
