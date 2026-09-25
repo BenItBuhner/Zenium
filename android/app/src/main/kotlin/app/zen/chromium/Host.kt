@@ -1,11 +1,13 @@
 package app.zen.chromium
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Rect
@@ -33,6 +35,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -52,6 +55,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
@@ -975,8 +979,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // Q1: asked after the placement batch; answered from the view's drawn frame ([PlacementAnswer]).
             "view.shown" -> placementAnswer.answer(args.str("tabId")) { shown -> reply(shown) }
             "view.bringToFront" -> { tabs.bringToFront(args.str("tabId")); reply(null) }
+            // `saveAs`: the menu's Save Link As… / Save Image As… – that one download asks where it
+            // goes, whatever the setting (HB-40; `Downloads.bind`).
             "view.download" -> {
-                if (tab != null) downloads.start(args.str("url"), tab.settings.userAgentString, null, null, -1, tab.tabId)
+                if (tab != null) downloads.start(args.str("url"), tab.settings.userAgentString, null, null, -1, tab.tabId, saveAs = args.bool("saveAs"))
                 reply(null)
             }
             "view.print" -> { tab?.let(::print); reply(null) }
@@ -1858,13 +1864,58 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         manager.print(name, adapter, PrintAttributes.Builder().build())
     }
 
+    /**
+     * Save Page As, the phone's Download Page (CT-27): the page as one MHTML archive – the format
+     * the WebView writes (`saveWebArchive`), whatever the core asked in; [SavePageLogic] names it –
+     * into the public Downloads, where the system's Files and Downloads apps list it beside the
+     * downloads and the core's list finds it again (`downloads.addCompleted` with the path this
+     * answers; `Downloads.open` opens the row from it). Until this the archive went into the
+     * app's own Downloads folder, which no other app lists.
+     *
+     * On Q+ a `MediaStore.Downloads` row ([insertDownload], the screenshots' way): the WebView
+     * writes to a path of the file system alone, so the archive goes to a scratch file in the
+     * cache first and is copied into the pending row off the main thread. Below Q the public
+     * folder itself, under the downloader's unique name, `WRITE_EXTERNAL_STORAGE` asked for the
+     * way the first download asks ([withStoragePermission]); refused, the app's own folder as before.
+     */
     private fun savePage(tab: TabWebView, name: String, reply: (Any?) -> Unit) {
-        val dir = File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.filesDir, "").apply { mkdirs() }
-        val base = name.removeSuffix(".html").removeSuffix(".htm")
-        var file = File(dir, "$base.mht")
-        var n = 1
-        while (file.exists()) file = File(dir, "$base(${n++}).mht")
-        tab.saveWebArchive(file.absolutePath, false) { path -> reply(path) }
+        val archive = SavePageLogic.archiveName(name)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val scratch = File(File(activity.cacheDir, "savepage").apply { mkdirs() }, "${System.nanoTime()}.${SavePageLogic.EXTENSION}")
+            tab.saveWebArchive(scratch.absolutePath, false) { written ->
+                if (written == null) {
+                    scratch.delete()
+                    reply(null)
+                    return@saveWebArchive
+                }
+                io.execute {
+                    val result = runCatching {
+                        insertDownload(archive, SavePageLogic.MIME_TYPE) { out -> scratch.inputStream().use { it.copyTo(out) } }
+                    }.getOrNull()
+                    scratch.delete()
+                    main.post { reply(result) }
+                }
+            }
+            return
+        }
+        withStoragePermission { granted ->
+            val dir = if (granted) DownloadSink.publicDownloads(activity)
+            else (activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.filesDir).apply { mkdirs() }
+            val file = File(dir, SavePageLogic.uniqueArchiveName(archive) { File(dir, it).exists() })
+            tab.saveWebArchive(file.absolutePath, false) { path -> reply(path) }
+        }
+    }
+
+    /**
+     * Below Q a file in a public folder wants `WRITE_EXTERNAL_STORAGE`, a runtime permission,
+     * asked for here as the first download asks (`Downloads.ensurePermissions`); Q+ writes through
+     * MediaStore with none. `then` hears whether the folder can be written.
+     */
+    private fun withStoragePermission(then: (Boolean) -> Unit) {
+        val permission = Manifest.permission.WRITE_EXTERNAL_STORAGE
+        val granted = { ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q || granted()) then(true)
+        else activity.requestRuntimePermissions(listOf(permission)) { then(granted()) }
     }
 
     /**
@@ -1881,18 +1932,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         io.execute {
             val result: String? = runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val values = ContentValues().apply {
-                        put(MediaStore.Downloads.DISPLAY_NAME, name)
-                        put(MediaStore.Downloads.MIME_TYPE, mimeType)
-                        put(MediaStore.Downloads.IS_PENDING, 1)
-                    }
-                    val resolver = activity.contentResolver
-                    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return@runCatching null
-                    resolver.openOutputStream(uri)?.use { it.write(bytes) }
-                    values.clear()
-                    values.put(MediaStore.Downloads.IS_PENDING, 0)
-                    resolver.update(uri, values, null, null)
-                    pathOf(uri) ?: uri.toString()
+                    insertDownload(name, mimeType) { it.write(bytes) }
                 } else {
                     val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.filesDir
                     val file = File(dir, name)
@@ -1902,6 +1942,28 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }.getOrNull()
             main.post { reply(result) }
         }
+    }
+
+    /**
+     * A file in the public Downloads collection from what `write` puts out: a `MediaStore.Downloads`
+     * row, pending while the bytes are written so no other app lists a half file, then published;
+     * the row's path (its URI when it names none – see [saveToDownloads]), or null when the row
+     * could not be made. Off the main thread; throws what the resolver throws.
+     */
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun insertDownload(name: String, mimeType: String, write: (OutputStream) -> Unit): String? {
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val resolver = activity.contentResolver
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        resolver.openOutputStream(uri)?.use(write)
+        values.clear()
+        values.put(MediaStore.Downloads.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+        return pathOf(uri) ?: uri.toString()
     }
 
     /**
