@@ -11,6 +11,7 @@ import {
   classesOf,
   driversOf,
   environmentOf,
+  imageOf,
   matrix,
   readManifest,
   readResults,
@@ -81,6 +82,45 @@ describe('the manifest against the sources', () => {
     expect(problems.join('\n')).toContain('ForgottenDemo (ForgottenDemo.kt) is neither a driver')
     expect(problems.join('\n')).toContain('gives no reason')
     expect(problems.join('\n')).toContain('LandedDemo has landed')
+    expect(problems.join('\n')).toContain("shard phone: image '' is not the recipe's")
+    expect(problems.join('\n')).toContain('shard phone: names no webview')
+  })
+
+  it('names the image the recipe boots and the WebView provider for every shard', () => {
+    for (const name of shardNames(manifest)) {
+      const shard = manifest.shards[name]
+      expect(shard.image, `${name}: image`).toBe(imageOf(shard))
+      expect(shard.webview, `${name}: webview`).toMatch(/^com\.(google\.)?android\.webview\b/)
+    }
+    expect(imageOf({ 'api-level': '34', target: 'default' })).toBe(
+      'system-images;android-34;default;x86_64'
+    )
+    const problems = checkManifest(
+      {
+        shards: {
+          phone: {
+            'api-level': '34',
+            target: 'google_apis',
+            image: 'system-images;android-35;google_apis;x86_64',
+            webview: ' ',
+            'budget-minutes': 10,
+            'timeout-minutes': 20
+          }
+        },
+        drivers: [],
+        skip: []
+      },
+      new Map()
+    )
+    expect(problems).toContain(
+      "shard phone: image 'system-images;android-35;google_apis;x86_64' is not the recipe's system-images;android-34;google_apis;x86_64"
+    )
+    expect(problems).toContain('shard phone: names no webview (the provider its drivers run on)')
+    // Printed in every run's header, the device's own word beside them.
+    expect(runner).toContain(
+      'echo "   image ${NIGHTLY_IMAGE:-unnamed}; webview ${NIGHTLY_WEBVIEW:-unnamed}"'
+    )
+    expect(runner).toContain('dumpsys webviewupdate')
   })
 
   it('keeps the shards the workflow offers as its shard choice in step with the manifest', () => {
@@ -157,7 +197,12 @@ describe('the plan', () => {
     const env = readFileSync(join(dir, '01-tablet.env'), 'utf8')
     expect(env).toContain('NIGHTLY_ID=tablet\n')
     expect(env).toContain('DEMO_CLASS=app.zen.chromium.TabletLayoutDemo\n')
-    expect(readFileSync(join(dir, 'shard.env'), 'utf8')).toContain('NIGHTLY_BUDGET_S=2700\n')
+    const shardEnv = readFileSync(join(dir, 'shard.env'), 'utf8')
+    expect(shardEnv).toContain('NIGHTLY_BUDGET_S=2700\n')
+    expect(shardEnv).toContain('NIGHTLY_IMAGE=system-images;android-34;google_apis;x86_64\n')
+    expect(shardEnv).toContain(
+      "NIGHTLY_WEBVIEW=com.google.android.webview 113.0.5672.136, the image's\n"
+    )
   })
 
   it('collects the setup steps a shard needs, each once', () => {

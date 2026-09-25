@@ -194,6 +194,8 @@ export function writePlan(manifest, shard, dir) {
     envLines({
       NIGHTLY_SHARD: shard,
       NIGHTLY_TITLE: shardDef.title,
+      NIGHTLY_IMAGE: shardDef.image,
+      NIGHTLY_WEBVIEW: shardDef.webview,
       NIGHTLY_BUDGET_S: String(shardDef['budget-minutes'] * 60),
       NIGHTLY_DISPLAY: shardDef.display
     })
@@ -271,6 +273,11 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
       problems.push(
         `shard ${name}: the budget (${shard['budget-minutes']} min) must be under the job timeout (${shard['timeout-minutes']} min)`
       )
+    const image = imageOf(shard)
+    if (shard.image !== image)
+      problems.push(`shard ${name}: image '${shard.image ?? ''}' is not the recipe's ${image}`)
+    if (typeof shard.webview !== 'string' || !shard.webview.trim())
+      problems.push(`shard ${name}: names no webview (the provider its drivers run on)`)
   }
   const skipped = new Map()
   for (const skip of manifest.skip) {
@@ -296,6 +303,11 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
       )
   }
   return problems
+}
+
+/** The SDK system image the recipe boots for a shard (android-emulator-demo.yml's arch is x86_64). */
+export function imageOf(shard) {
+  return `system-images;android-${shard['api-level']};${shard.target};x86_64`
 }
 
 /** The setup steps the runner script knows (android-nightly-drivers.sh `setup`). */
@@ -532,8 +544,8 @@ export function summarize(
 
 export function estimate(manifest) {
   const lines = [
-    '| shard | image | drivers | estimate (drivers) | job timeout |',
-    '| --- | --- | ---: | ---: | ---: |'
+    '| shard | image | webview | drivers | estimate (drivers) | job timeout |',
+    '| --- | --- | --- | ---: | ---: | ---: |'
   ]
   let total = 0
   for (const [name, shard] of Object.entries(manifest.shards)) {
@@ -541,10 +553,10 @@ export function estimate(manifest) {
     const minutes = drivers.reduce((sum, d) => sum + d.estimate, 0)
     total += minutes
     lines.push(
-      `| ${code(name)} | ${shard.title} | ${drivers.length} | ${minutes.toFixed(1)} min | ${shard['timeout-minutes']} min (budget ${shard['budget-minutes']}) |`
+      `| ${code(name)} | ${shard.title} (${code(shard.image)}) | ${shard.webview} | ${drivers.length} | ${minutes.toFixed(1)} min | ${shard['timeout-minutes']} min (budget ${shard['budget-minutes']}) |`
     )
   }
-  lines.push(`| **all** | | ${manifest.drivers.length} | ${total.toFixed(1)} min | |`, '')
+  lines.push(`| **all** | | | ${manifest.drivers.length} | ${total.toFixed(1)} min | |`, '')
   for (const [name] of Object.entries(manifest.shards)) {
     const drivers = driversOf(manifest, name)
     lines.push(`${code(name)}: ${drivers.map((d) => `${d.id} ${d.estimate}`).join(' · ')}`, '')

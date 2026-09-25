@@ -148,8 +148,14 @@ summary=$out/summary.txt
 : > "$results"
 : > "$summary"
 echo "== $NIGHTLY_TITLE ($shard): budget $((budget_s / 60)) min, display $display"
+echo "   image ${NIGHTLY_IMAGE:-unnamed}; webview ${NIGHTLY_WEBVIEW:-unnamed}"
 
 adb wait-for-device
+
+# The device's own word beside the manifest's: the build it booted and the WebView provider it
+# holds at the boot (a shard whose setup swaps or updates the provider does so in its first
+# driver's prepare step, and that driver's log carries the after).
+echo "   the device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); $(adb shell dumpsys webviewupdate 2> /dev/null | tr -d '\r' | grep -m1 -i 'current webview package' | sed 's/^ *//' || echo 'no webviewupdate word')"
 
 device_alive() { [ "$(adb get-state 2> /dev/null | tr -d '\r' || true)" = device ]; }
 
