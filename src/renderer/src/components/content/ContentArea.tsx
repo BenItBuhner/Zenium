@@ -13,6 +13,7 @@ import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
+import { readerCrossingOf, readerCrossingStore } from '@renderer/lib/readerTransition'
 import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
@@ -48,6 +49,7 @@ import { HistoryNavBubble } from './HistoryNavBubble'
 import { LoadProgress } from './LoadProgress'
 import { PullIndicator } from './PullIndicator'
 import { ReadAloudPanel } from './ReadAloudPanel'
+import { ReaderCrossing } from './ReaderCrossing'
 import { SplitChrome } from './SplitChrome'
 import { useLayoutReporter } from './useLayoutReporter'
 import { ZoomSheet } from './ZoomSheet'
@@ -136,6 +138,12 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
   const { formFactor, coarse } = useViewport()
   const phone = formFactor === 'phone'
   const tablet = formFactor === 'tablet'
+  // The reader crossing (MOT-36, `lib/readerTransition.ts`): the phone's way into Reader View
+  // and out, the page's picture under the reader's surface while the core crosses. The store
+  // is set only where the crossing runs (the phone on the Android chassis); the layer is the
+  // phone's, and the frame's load bar stays in view over it as the crossing's sign of life.
+  const crossing = readerCrossingStore.use((s) => readerCrossingOf(s, tab?.id))
+  const crossingHere = phone && crossing !== null
   // The empty panes of the split on screen (split-04): the chrome draws each where its blank
   // tab's view would be – the field, the "Choose a tab" button – and the URL bar opened for one
   // floats in that pane's box rather than over the frame.
@@ -359,6 +367,7 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                   )}
               </div>
             )}
+            {crossingHere && crossing && <ReaderCrossing crossing={crossing} fit={coverFit} />}
             {tab && !pageTab && (
               // Always mounted so a cover the lock released under lifts before it goes; it draws
               // nothing while not asked for. Over the phone's new tab page (chrome, no view to
@@ -424,7 +433,12 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
         <PickerStrip state={state} />
       </div>
       {/* The bar is the frame's edge: it recedes with the frame, and overlays cover both. */}
-      {loadBar && <LoadProgress tab={tab} hidden={contentHidden || glanceActive || foreign} />}
+      {loadBar && (
+        <LoadProgress
+          tab={tab}
+          hidden={(contentHidden && !crossingHere) || glanceActive || foreign}
+        />
+      )}
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
     </div>
   )

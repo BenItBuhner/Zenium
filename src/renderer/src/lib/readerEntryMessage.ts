@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { BookOpenText } from 'lucide-react'
 import type { Tab } from '@shared/types'
-import { run } from '@renderer/lib/api'
+import { crossReaderView } from '@renderer/lib/readerTransition'
 import { dismissBanner, showBanner } from '@renderer/lib/ui'
 import {
   READER_ENTRY_ACTION,
@@ -42,7 +42,8 @@ function documentOf(url: string): string {
  * probe said so at its dom-ready (`tab.readerable`) – puts "Show Reader View?" with its one
  * action on the banner stack at the frame's top, the same §9.33 host the connectivity and
  * default-browser banners use, on the phone and the tablet alike. The action opens Reader View
- * for the tab (`reader.toggle`, the core's entry); a swipe or the X refuses it; and a refusal
+ * for the tab – through the crossing where it runs, the core's plain `reader.toggle` elsewhere
+ * (`crossReaderView`, MOT-36); a swipe or the X refuses it; and a refusal
  * is remembered per SITE for the session, Chrome's `ReaderModeManager` rule read through the
  * host's dismiss reasons (`readerOfferEndEffect`): every end but the action mutes the host –
  * leaving the page with the offer standing included, Chrome's scope destroyed – and the action
@@ -77,7 +78,7 @@ export function useReaderEntryMessage(tab: Tab | null, enabled: boolean): void {
       duration: null,
       action: {
         label: READER_ENTRY_ACTION,
-        onPick: () => run('reader.toggle', { tabId })
+        onPick: () => void crossReaderView(tabId)
       },
       onDismiss: (reason) => {
         // The effect's own take-down (`program`) is judged above, where the shell knows why.

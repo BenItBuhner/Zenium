@@ -1,0 +1,36 @@
+/*
+ * The reader crossing's surface (MOT-36; `lib/readerTransition.ts`, `ReaderCrossing.tsx`): the
+ * reader document's ground colour laid over the page's picture, at 0 while the live page is
+ * still on its way off the screen, fading to 1 once the picture is what shows – v2 §11's 120 ms
+ * state change on `--zen-ease`, the outgoing half of the crossing (the incoming half is the
+ * destination's own first frame, on this ground, by the host's cut). Opacity only: nothing
+ * moves. Under reduced motion the fade stays an opacity fade at the same 120 ms (v2 §11.3),
+ * declared so the chassis's blanket reduced-motion rule does not cut it to nothing (the cut
+ * would show the ground as a flash rather than a settling). A frozen surface (the preview
+ * host's stills of the crossing mid-way, `freezeAt`) has its opacity inline and no transition.
+ */
+@layer components {
+  .zen-reader-crossing {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .zen-reader-crossing-surface {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-reader-crossing-surface {
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
+  }
+  .zen-reader-crossing-surface[data-shown] {
+    opacity: 1;
+  }
+  .zen-reader-crossing-surface[data-frozen] {
+    transition: none !important;
+  }
+}
