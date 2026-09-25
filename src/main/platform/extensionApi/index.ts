@@ -101,6 +101,7 @@ import { StorageApi } from './storage'
 import { TabGroupsApi } from './tabGroups'
 import { SystemDisplayApi } from './systemDisplay'
 import { electronDisplayScreen } from './systemDisplayBridge'
+import { electronSaveBlocker, PowerApi } from './power'
 import { SystemStorageApi } from './systemStorage'
 import { SystemInfoApi } from './systemInfo'
 import { TabCaptureApi } from './tabCapture'
@@ -218,6 +219,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly instanceId: InstanceIdApi
   readonly systemDisplay: SystemDisplayApi
   readonly systemStorage: SystemStorageApi
+  readonly power: PowerApi
   readonly systemInfo: SystemInfoApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
@@ -295,7 +297,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.activeTab = new ActiveTabGrants(this)
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
-    this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model, this.browser))
     this.offscreen = new OffscreenApi(electronOffscreenDocumentHost())
     this.tabCapture = new TabCaptureApi(this, this.activeTab, electronStreamRegistrar())
     this.debugger = new DebuggerApi(this)
@@ -326,6 +328,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.instanceId = new InstanceIdApi(this)
     this.systemDisplay = new SystemDisplayApi(this, electronDisplayScreen())
     this.systemStorage = new SystemStorageApi(this)
+    this.power = new PowerApi(this, electronSaveBlocker())
     this.systemInfo = new SystemInfoApi(this)
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
@@ -362,6 +365,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       instanceID: this.instanceId.handlers,
       'system.display': this.systemDisplay.handlers,
       'system.storage': this.systemStorage.handlers,
+      power: this.power.handlers,
       'system.cpu': this.systemInfo.cpuHandlers,
       'system.memory': this.systemInfo.memoryHandlers,
       tabGroups: this.tabGroups.handlers,
@@ -382,6 +386,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.activeTab.navigated(tabId, url)
       this.declarativeNetRequest.tabNavigated(tabId)
     }
+    // `tabs.onUpdated`'s `status` edges stand behind navigations, as Chrome's do.
+    this.webNavigation.onMainFrameNavigationStarted = (tabId) => this.tabs.navigationStarted(tabId)
+    this.webNavigation.onNavigationCommitted = (tabId) => this.tabs.navigationCommitted(tabId)
   }
 
   // ---------------------------------------------------------------------------
@@ -725,6 +732,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.tabCapture.unload(ext.id)
     this.debugger.unload(ext.id)
     this.systemDisplay.unload()
+    this.power.unload(ext.id)
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.searchProvider.unload(ext.id)
