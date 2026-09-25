@@ -59,7 +59,6 @@ import {
   errorPageCertificate,
   errorPageUrl,
   extensionPageOf,
-  getDomain,
   httpsOnlyPageUrl,
   interstitialKindOf,
   isBlankTabUrl,
@@ -74,6 +73,16 @@ import { resolveTheme, rgbToHex } from '../shared/theme'
 import { PRIVATE_ACCENT } from '../shared/newTabPageScript'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
+import {
+  DISCARD_BATCH,
+  DISCARD_BATCH_INTERVAL_MS,
+  type MemoryPressureLevel,
+  neverUnloaded,
+  planMemoryPressureDiscard,
+  protectedReason,
+  type SleepCandidate
+} from './memoryPressure'
+export { neverUnloaded } from './memoryPressure'
 import {
   BLOCKED_BY_CLIENT_CODE,
   CRASH_ERROR_CODE,
@@ -102,9 +111,6 @@ import {
 } from '../shared/captureState'
 
 export type { PageFlags } from './platform'
-
-/** Hidden pages kept awake when memory runs low (`unloadForMemoryPressure`): the recent few. */
-export const KEEP_UNDER_PRESSURE = 3
 
 /**
  * The favicon a new bookmark takes from the tab it is made from: none from a private tab. A
@@ -198,6 +204,11 @@ export class TabManager {
    * page's `hung` words, no toast for one unloaded in the background). Consumed by that report.
    */
   private readonly hungExits = new Set<string>()
+  /**
+   * When each page last stopped playing audio, for the sleep policies' grace (a page between
+   * two songs is not idle: `RECENTLY_AUDIBLE_MS`). A session's own; not persisted.
+   */
+  private readonly quietAt = new Map<string, number>()
   /**
    * Tabs whose close, while active, returns to the opener (tabs-30): a tab opened by another
    * (`Tab.openerTabId`) joins this set, and leaves it the moment the user switches away from it,
@@ -639,6 +650,8 @@ export class TabManager {
           update((t) => {
             t.waiting = false
             if (t.unresponsive) delete t.unresponsive
+            // The typed-into form was the old document's.
+            if (t.formEdited) delete t.formEdited
           }, true)
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
@@ -866,6 +879,8 @@ export class TabManager {
         )
       },
       onAudioStateChanged: (audible) => {
+        const was = this.tab(tabId)?.audible === true
+        if (was && !audible) this.quietAt.set(tabId, Date.now())
         update((t) => (t.audible = audible), true)
         this.browser.updateMedia()
       },
@@ -1512,6 +1527,7 @@ export class TabManager {
       this.leaveHtmlFullscreen(tabId)
     this.httpsUpgraded.delete(tabId)
     this.clearCaptureState(tabId)
+    this.quietAt.delete(tabId)
     this.browser.connectivity.forget(tabId)
     this.browser.protection.safeBrowsing.forgetTab(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
@@ -4251,51 +4267,76 @@ export class TabManager {
     if (!this.settings.unloadEnabled) return
     const timeout = this.settings.unloadTimeoutMinutes * 60_000
     const now = Date.now()
-    for (const tab of this.sleepCandidates(true)) {
-      if (now - tab.lastActiveAt < timeout) continue
-      this.discard(tab.id)
+    const excluded = this.settings.unloadExcludedDomains.map((d) => d.toLowerCase())
+    for (const page of this.loadedPages()) {
+      if (protectedReason(page, now) !== null) continue
+      if (neverUnloaded(page.url, excluded)) continue
+      if (now - page.lastActiveAt < timeout) continue
+      this.discard(page.id)
     }
   }
 
   /**
-   * The system is short of memory (Android's `onTrimMemory`): put hidden pages to sleep ahead of
-   * their timeout rather than have the whole process killed, and the sooner the more pressing.
-   * `low` (the device is running low; the process is not yet killable) sleeps the hidden pages
-   * idle longest and keeps the `KEEP_UNDER_PRESSURE` most recent ones, so the next switch is
-   * still quick, and honours the never-sleep list; `critical` (the process is about to be
-   * killed) sleeps every hidden page but the ones being heard – a killed process loses the
-   * never-sleep sites too, and their pages come back on focus like any other. Independent of
-   * the timer's switch: pressure is not a preference.
+   * The system is short of memory (Android's `onTrimMemory`, graded by the host): put hidden
+   * pages to sleep ahead of their timeout rather than have the whole process killed, and the
+   * more the more pressing – the plan is `planMemoryPressureDiscard`'s (least recently shown
+   * first; a quarter, a half or all of what may sleep; the never-sleep list held below
+   * `critical`). Independent of the timer's switch: pressure is not a preference. The pages go
+   * a few at a time (`DISCARD_BATCH` now, the rest every `DISCARD_BATCH_INTERVAL_MS`): each is
+   * a `WebView.destroy` on the main thread, and a signal that comes while a batch is pending
+   * replaces the queue with its own plan, read against the state of that moment.
    */
-  unloadForMemoryPressure(level: 'low' | 'critical'): void {
-    const candidates = this.sleepCandidates(level === 'low').sort(
-      (a, b) => a.lastActiveAt - b.lastActiveAt
+  unloadForMemoryPressure(level: MemoryPressureLevel): void {
+    this.pressureQueue = planMemoryPressureDiscard(
+      this.loadedPages(),
+      level,
+      this.settings.unloadExcludedDomains,
+      Date.now()
     )
-    const keep = level === 'low' ? KEEP_UNDER_PRESSURE : 0
-    const sleeping =
-      keep > 0 ? candidates.slice(0, Math.max(0, candidates.length - keep)) : candidates
-    for (const tab of sleeping) this.discard(tab.id)
+    if (this.pressureTimer !== null) {
+      clearTimeout(this.pressureTimer)
+      this.pressureTimer = null
+    }
+    this.discardNextBatch()
   }
 
-  /**
-   * The loaded pages that may be put to sleep right now: not shown in any window, not playing
-   * audio, not loading, not open in DevTools, not driven by an agent and – when `honourList` –
-   * not on the never-sleep list. An entry matches a page by its host, `www.` aside (the phone's
-   * Add sheet writes a host), or by the site's registrable domain (`getDomain`, the form the
-   * desktop's Add current site and the pill's Never unload this site write: `google.com` for a
-   * page of `mail.google.com`, so every page of the site stays loaded).
-   */
-  private sleepCandidates(honourList: boolean): Tab[] {
+  /** The ids a pressure signal has yet to sleep, oldest first, and the timer for the next batch. */
+  private pressureQueue: string[] = []
+  private pressureTimer: ReturnType<typeof setTimeout> | null = null
+
+  private discardNextBatch(): void {
+    this.pressureTimer = null
     const visible = this.allVisibleTabIds()
-    const excluded = this.settings.unloadExcludedDomains.map((d) => d.toLowerCase())
-    const out: Tab[] = []
+    for (const id of this.pressureQueue.splice(0, DISCARD_BATCH)) {
+      // Read again at its turn: the user may have gone back to the page since the plan.
+      const tab = this.tab(id)
+      if (!tab || !this.view(id) || visible.has(id) || tab.audible) continue
+      this.discard(id)
+    }
+    if (this.pressureQueue.length > 0)
+      this.pressureTimer = setTimeout(() => this.discardNextBatch(), DISCARD_BATCH_INTERVAL_MS)
+  }
+
+  /** Every loaded page as the sleep policies read it (`SleepCandidate`), shown or not. */
+  private loadedPages(): SleepCandidate[] {
+    const visible = this.allVisibleTabIds()
+    const out: SleepCandidate[] = []
     for (const [id] of this.views) {
       const tab = this.tab(id)
-      if (!tab || visible.has(id) || tab.audible || tab.loading) continue
-      if (honourList && neverUnloaded(tab.url, excluded)) continue
-      if (this.browser.state.devtoolsOpenFor.has(id)) continue
-      if (this.browser.agents.isDriving(id)) continue
-      out.push(tab)
+      if (!tab) continue
+      out.push({
+        id,
+        url: tab.url,
+        lastActiveAt: tab.lastActiveAt,
+        visible: visible.has(id),
+        audible: tab.audible,
+        quietAt: this.quietAt.get(id) ?? null,
+        capturing: tab.capture !== undefined && tab.capture !== null,
+        formEdited: tab.formEdited === true,
+        loading: tab.loading,
+        devtools: this.browser.state.devtoolsOpenFor.has(id),
+        driven: this.browser.agents.isDriving(id)
+      })
     }
     return out
   }
@@ -4336,27 +4377,6 @@ function safeParam(url: string, name: string): string | null {
 /** Whether `url` is the crash page (`zen://error?code=-1`, `crashPageUrl`), whichever variant. */
 function isCrashPageUrl(url: string): boolean {
   return url.startsWith(ERROR_URL_PREFIX) && safeParam(url, 'code') === String(CRASH_ERROR_CODE)
-}
-
-function domainOf(url: string): string {
-  try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, '')
-  } catch {
-    return ''
-  }
-}
-
-/**
- * Whether the never-sleep list (`settings.unloadExcludedDomains`, lower-cased) names the page
- * at `url`: by its host with `www.` aside, or by its registrable domain – the two forms the
- * list's writers use (`sleepCandidates`).
- */
-export function neverUnloaded(url: string, excluded: readonly string[]): boolean {
-  if (excluded.length === 0) return false
-  const host = domainOf(url)
-  if (!host) return false
-  const site = getDomain(url)
-  return excluded.some((d) => d === host || (site !== '' && d === site))
 }
 
 /**

@@ -4,7 +4,7 @@ import { Browser } from '../browser'
 import { closeBootTabs } from './bootTab'
 import { NoopGovernor, SLEEP_CHECK_MS } from '../hostDefaults'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
-import { KEEP_UNDER_PRESSURE, neverUnloaded } from '../tabs'
+import { DISCARD_BATCH_INTERVAL_MS, neverUnloaded } from '../memoryPressure'
 import type { ZenWindow } from '../window'
 
 function memoryIo(): StoreIO {
@@ -196,7 +196,7 @@ describe('sleeping tabs on a host without a resource governor', () => {
     expect(browser.state.settings.unloadTimeoutMinutes).toBe(20)
   })
 
-  it('sleeps the pages idle longest under low memory and keeps the recent few', () => {
+  it('sleeps the pages shown longest ago under pressure, a share per level, a few at a time', () => {
     const { browser, win } = start()
     browser.handleCommand(win, 'settings.update', {
       unloadEnabled: false,
@@ -204,28 +204,69 @@ describe('sleeping tabs on a host without a resource governor', () => {
     })
     browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
     const hidden: Tab[] = []
-    for (let i = 0; i < KEEP_UNDER_PRESSURE + 3; i++) {
+    for (let i = 0; i < 8; i++) {
       const tab = browser.tabs.createTab({ url: `https://h${i}.example/`, active: false }, win)
       browser.tabs.load(tab.id, win)
-      // Created in order: h0 has been idle the longest.
-      browser.tabs.tab(tab.id)!.lastActiveAt = Date.now() - (10 - i) * 60_000
+      // Created in order: h0 was shown the longest ago.
+      browser.tabs.tab(tab.id)!.lastActiveAt = Date.now() - (20 - i) * 60_000
       hidden.push(tab)
     }
     const kept = browser.tabs.createTab({ url: 'https://kept.example/', active: false }, win)
     browser.tabs.load(kept.id, win)
     browser.tabs.tab(kept.id)!.lastActiveAt = Date.now() - 60 * 60_000
+    // Left ten seconds ago: the user is likely on the way back to it.
+    const recent = browser.tabs.createTab({ url: 'https://recent.example/', active: false }, win)
+    browser.tabs.load(recent.id, win)
+    browser.tabs.tab(recent.id)!.lastActiveAt = Date.now() - 10_000
+    const asleep = (): string[] =>
+      hidden.filter((t) => browser.tabs.tab(t.id)!.discarded).map((t) => t.url)
 
+    // Low: half of the eight eligible pages, oldest first – two at once, the rest in batches.
     browser.tabs.unloadForMemoryPressure('low')
-    const asleep = hidden.filter((t) => browser.tabs.tab(t.id)!.discarded).map((t) => t.url)
-    expect(asleep).toEqual(['https://h0.example/', 'https://h1.example/', 'https://h2.example/'])
-    // The never-sleep list holds under low pressure, whatever the switch says.
+    expect(asleep()).toEqual(['https://h0.example/', 'https://h1.example/'])
+    vi.advanceTimersByTime(DISCARD_BATCH_INTERVAL_MS)
+    expect(asleep()).toEqual([
+      'https://h0.example/',
+      'https://h1.example/',
+      'https://h2.example/',
+      'https://h3.example/'
+    ])
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
+    expect(asleep()).toHaveLength(4)
+    // The never-sleep list and the page just left hold under low pressure, whatever the
+    // switch says.
     expect(browser.tabs.tab(kept.id)!.discarded).toBe(false)
+    expect(browser.tabs.tab(recent.id)!.discarded).toBe(false)
 
-    // Critical: every hidden page goes, the never-sleep list included; the shown page stays.
+    // Critical: every hidden page goes, the never-sleep list included; the shown page and the
+    // one just left stay.
     browser.tabs.unloadForMemoryPressure('critical')
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
     expect(hidden.every((t) => browser.tabs.tab(t.id)!.discarded)).toBe(true)
     expect(browser.tabs.tab(kept.id)!.discarded).toBe(true)
+    expect(browser.tabs.tab(recent.id)!.discarded).toBe(false)
     expect(browser.tabs.activeTabFor(win)!.discarded).toBe(false)
+  })
+
+  it('a newer signal replaces the pending batches, and a page gone back to is left alone', () => {
+    const { browser, win } = start()
+    browser.handleCommand(win, 'settings.update', { unloadEnabled: false })
+    browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const hidden: Tab[] = []
+    for (let i = 0; i < 6; i++) {
+      const tab = browser.tabs.createTab({ url: `https://h${i}.example/`, active: false }, win)
+      browser.tabs.load(tab.id, win)
+      browser.tabs.tab(tab.id)!.lastActiveAt = Date.now() - (20 - i) * 60_000
+      hidden.push(tab)
+    }
+    // Critical plans all six; the first two go now.
+    browser.tabs.unloadForMemoryPressure('critical')
+    expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(2)
+    // The user goes back to h2 before its batch: it is shown, and stays loaded.
+    browser.tabs.activateTab(hidden[2]!.id, win)
+    vi.advanceTimersByTime(10 * DISCARD_BATCH_INTERVAL_MS)
+    expect(browser.tabs.tab(hidden[2]!.id)!.discarded).toBe(false)
+    expect(hidden.filter((t) => browser.tabs.tab(t.id)!.discarded)).toHaveLength(5)
   })
 
   it('honours a never-sleep entry written as the registrable domain, not only as the host', () => {
