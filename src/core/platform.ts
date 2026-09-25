@@ -803,6 +803,15 @@ export interface TabView {
   focusEdge?(edge: FocusEdge): void
   /** Whether this page holds the keyboard right now. Hosts that cannot tell leave it out. */
   isFocused?(): boolean
+  /**
+   * Fetch the bytes of the page's icon at `url` through this page's own session – the site's
+   * cookies go with the request, as Chrome's favicon fetch sends them – for the favicon cache
+   * (HB-47, `core/favicons.ts`): the bytes and the response's type, or null when the icon
+   * cannot be had (a refusal, no image, a body over `maxBytes`). Hosts whose engine hands the
+   * icon over decoded already (the Android WebView's `onReceivedIcon`, a `data:` URL in the
+   * `favicon` event) leave this out.
+   */
+  fetchFavicon?(url: string, maxBytes: number): Promise<{ bytes: Uint8Array; mime: string } | null>
   isDestroyed(): boolean
   destroy(): void
   /**

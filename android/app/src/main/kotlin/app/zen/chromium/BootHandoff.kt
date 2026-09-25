@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
@@ -29,12 +30,30 @@ import java.security.SecureRandom
  *    token; the chrome fetches `/zen-net/<token>` ([spilled], which consumes the file) and
  *    releases what it never read ([release]). Files a chrome that went away never released are
  *    swept when the next chrome document boots and at process start ([sweep]).
+ *  - Cached favicons (HB-47). The core keeps a copy of every icon a page reports as a
+ *    `favicons/<hash>` document – a `data:` URL's text, named by the bytes' content hash
+ *    (`src/core/favicons.ts`) – and the chrome draws a history row's or a bookmark's icon from
+ *    `https://appassets.androidplatform.net/zen-favicon/<hash>` ([favicon]): the document decoded
+ *    to its bytes and served with its image type, cacheable for good since the name is the
+ *    content. (The desktop host serves the same documents as `zen://favicon/<hash>`; the Android
+ *    chrome runs on the app origin and has no `zen://` handler of its own.)
  *
  * Pure file work, so the JVM tests can exercise it; the WebView answers are built in `ChromeWebView`.
  */
 class BootHandoff(private val storage: Storage, private val spillDir: File) {
-    /** An answer for the WebView: the status, and for 200 the bytes with their type and version tag. */
-    class Answer(val status: Int, val mimeType: String, val etag: String?, val length: Long, val stream: InputStream?) {
+    /**
+     * An answer for the WebView: the status, and for 200 the bytes with their type and version tag.
+     * [cacheControl] is the response's caching rule: `no-store` for a document that changes under
+     * its name, immutable for a favicon named by its content.
+     */
+    class Answer(
+        val status: Int,
+        val mimeType: String,
+        val etag: String?,
+        val length: Long,
+        val stream: InputStream?,
+        val cacheControl: String = NO_STORE
+    ) {
         val ok: Boolean get() = status == 200
     }
 
@@ -116,6 +135,24 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
         spillFile(token)?.delete()
     }
 
+    /**
+     * `/zen-favicon/<hash>`: a cached favicon's bytes with their image type, from the core's
+     * `favicons/<hash>` document ([FAVICONS_DIR]; a `data:` URL's text, base64). 404 for a name
+     * that is no content hash, a document that is not there, or one that is not a base64 image
+     * – the chrome's `<img>` then falls back to the row's glyph. The name being the content, the
+     * answer is cacheable for good ([IMMUTABLE]).
+     */
+    fun favicon(path: String): Answer {
+        val hash = path.trim('/')
+        if (!TOKEN.matches(hash)) return NOT_FOUND
+        val text = storage.read("$FAVICONS_DIR/$hash") ?: return NOT_FOUND
+        val icon = decodeImageDataUrl(text) ?: return NOT_FOUND
+        return Answer(200, icon.mimeType, null, icon.bytes.size.toLong(), ByteArrayInputStream(icon.bytes), IMMUTABLE)
+    }
+
+    /** A decoded `data:` image: its type and bytes. */
+    class Icon(val mimeType: String, val bytes: ByteArray)
+
     /** Delete every spill file: nothing outlives the chrome document that asked for it. */
     fun sweep() {
         spillDir.listFiles()?.forEach { it.delete() }
@@ -157,8 +194,31 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
          */
         const val NET_BODY_LIMIT = 128L * 1024 * 1024
 
+        /** The cached favicons' path prefix (`ANDROID_FAVICON_PATH` in `src/shared/favicons.ts`). */
+        const val FAVICON_PATH = "/zen-favicon/"
+        /** The folder the core keeps the icons' documents under (`FAVICONS_DIR` in `src/core/favicons.ts`). */
+        const val FAVICONS_DIR = "favicons"
+        /** The caching rule of a document that changes under its name. */
+        const val NO_STORE = "no-store"
+        /** The caching rule of a favicon: named by its content, it never changes. */
+        const val IMMUTABLE = "public, max-age=31536000, immutable"
+
         private val NOT_FOUND = Answer(404, "text/plain", null, 0, null)
         private val TOKEN = Regex("^[0-9a-f]{32}$")
+        private val DATA_IMAGE =
+            Regex("^data:(image/[a-z0-9.+-]+)(?:;[^,]*)?;base64,(.*)$", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
         private val random = SecureRandom()
+
+        /**
+         * The type and bytes of a base64 `data:image/…` URL, as the core writes a favicon's
+         * document; null for any other text (a type that is no image's, no base64, bytes that do
+         * not decode).
+         */
+        fun decodeImageDataUrl(text: String): Icon? {
+            val match = DATA_IMAGE.matchEntire(text.trim()) ?: return null
+            val bytes = runCatching { java.util.Base64.getDecoder().decode(match.groupValues[2].trim()) }.getOrNull() ?: return null
+            if (bytes.isEmpty()) return null
+            return Icon(match.groupValues[1].lowercase(), bytes)
+        }
     }
 }

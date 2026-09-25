@@ -12,6 +12,7 @@ import { ChevronDown, ChevronRight, CircleAlert, ExternalLink, Search } from 'lu
 import { useEscape } from '@renderer/hooks/useEscape'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { useBackSurface } from '@renderer/lib/back'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { MenulistPopover } from '../../menus/MenulistPopover'
@@ -1032,7 +1033,11 @@ export function Secret({ value, className }: { value: string; className?: string
   return <span className={cn('zen-v2-pw-secret', className)}>{value}</span>
 }
 
-/** The site's favicon when history knows one, otherwise its initial on a text-alpha tile. */
+/**
+ * The site's favicon when history knows one, otherwise its initial on a text-alpha tile. The
+ * icon is the core's cached copy where it holds one (HB-47); an uncached icon is asked of the
+ * network only while the site is open in a tab – a row for a site that is not open is its letter.
+ */
 export function SiteIcon({
   domain,
   favicon,
@@ -1045,9 +1050,10 @@ export function SiteIcon({
   className?: string
 }): JSX.Element {
   const letter = (domain.replace(/^www\./, '')[0] ?? '?').toUpperCase()
+  const src = useFaviconSrc(favicon, domain ? `https://${domain}/` : null)
   return (
     <span className={cn('zen-v2-pw-site', className)} data-size={size} aria-hidden>
-      {favicon ? <img src={favicon} alt="" referrerPolicy="no-referrer" /> : letter}
+      {src ? <img src={src} alt="" referrerPolicy="no-referrer" /> : letter}
     </span>
   )
 }

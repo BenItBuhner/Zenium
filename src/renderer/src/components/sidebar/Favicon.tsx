@@ -6,6 +6,7 @@ import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { getHost, isEmptyTabUrl } from '@shared/url'
 import { CRASH_ERROR_CODE } from '@shared/zenPages'
 import { useExtensionPage } from '@renderer/lib/extensions/pages'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 import { cn } from '@renderer/lib/utils'
 import { ExtensionIcon } from '../extensions/ExtensionIcon'
@@ -60,7 +61,10 @@ export function Favicon({
   className?: string
 }): JSX.Element {
   const [broken, setBroken] = useState<string | null>(null)
-  const src = tab.favicon && broken !== tab.favicon ? tab.favicon : null
+  // A tab's own slot: the cached copy when the core holds one (HB-47), else the live address as
+  // always – the page is open, so its icon is reachable when the icon itself is.
+  const resolved = useFaviconSrc(tab.favicon)
+  const src = resolved && broken !== resolved ? resolved : null
   const extension = useExtensionPage(tab.url)
   const glyph = internalPageOf(tab.url)?.glyph
   const loading = tab.loading && !tab.discarded

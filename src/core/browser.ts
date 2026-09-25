@@ -30,6 +30,7 @@ import type {
 } from '../shared/types'
 import { CONTENT_SETTINGS } from '../shared/contentSettings'
 import { BrowserState, type PersistedWindow } from './state'
+import { FaviconService } from './favicons'
 import { HistoryService } from './history'
 import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
@@ -229,6 +230,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
 export class Browser {
   readonly state: BrowserState
   readonly history: HistoryService
+  /** The favicon cache (HB-47): the icons history rows, bookmarks and tabs draw offline. */
+  readonly favicons: FaviconService
   /** Typed text → chosen destination memory, the omnibox's shortcuts provider (omnibox-03). */
   readonly omniboxShortcuts: OmniboxShortcutsService
   /**
@@ -402,11 +405,15 @@ export class Browser {
       })
     }
     this.history = new HistoryService(platform.io)
+    this.favicons = new FaviconService(platform.io)
     this.omniboxShortcuts = new OmniboxShortcutsService(platform.io)
     // Clearing history clears what the omnibox learned from it (Chromium's ShortcutsBackend
-    // follows the history service's deletions).
+    // follows the history service's deletions), and the cached icons of the pages nobody keeps
+    // (Chrome expires the favicons no URL references; the bookmarks' and the open tabs' stay).
     this.history.onChange((kind) => {
-      if (kind === 'clear') this.omniboxShortcuts.clear()
+      if (kind !== 'clear') return
+      this.omniboxShortcuts.clear()
+      this.favicons.forget(this.referencedFavicons())
     })
     this.bookmarks = new BookmarkService(this.state)
     this.bookmarkUndo = new BookmarkUndoStack(this.bookmarks)
@@ -459,6 +466,11 @@ export class Browser {
       // The mac History menu lists the pages last visited: a visit, a deletion or a clear
       // redraws it (a no-op on hosts without a menu bar).
       this.menus.scheduleApplicationMenu()
+    })
+    // The chrome keeps its own copy of the favicon index (one read at start, then the deltas):
+    // the rows resolve their icons from it without a hop per row.
+    this.favicons.onChange((change) => {
+      for (const w of this.allWindows()) w.send('favicons.changed', change)
     })
     this.newTab = new NewTabService(this)
     this.governor = platform.createGovernor?.(this) ?? new NoopGovernor(this)
@@ -2275,10 +2287,22 @@ export class Browser {
     this.state.freeze()
   }
 
+  /**
+   * The icon addresses the profile still refers to besides history: the bookmarks' and the open
+   * tabs' – what a history clear keeps in the favicon cache.
+   */
+  private referencedFavicons(): Set<string> {
+    const keep = new Set<string>()
+    for (const node of this.state.bookmarks) if (node.favicon) keep.add(node.favicon)
+    for (const tab of Object.values(this.state.model.tabs)) if (tab.favicon) keep.add(tab.favicon)
+    return keep
+  }
+
   /** Persist everything now (mobile hosts call this when the app is backgrounded). */
   flushSync(): void {
     this.state.flushSync()
     this.history.flushSync()
+    this.favicons.flushSync()
     this.omniboxShortcuts.flushSync()
     this.downloads.flushSync()
     this.boosts.flushSync()
@@ -3190,6 +3214,7 @@ export class Browser {
         this.omniboxShortcuts.forgetUrl(url)
       },
       'history.clear': () => this.history.clear(),
+      'favicons.index': () => this.favicons.index(),
       'history.visits': ({ query }) => this.history.visits(query),
       'history.grouped': ({ query }) => this.history.groupedByDay(query),
       'history.topSites': ({ n, excludedHosts }) => this.history.topSites(n, excludedHosts ?? []),

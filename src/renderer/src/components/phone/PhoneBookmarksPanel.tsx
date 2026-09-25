@@ -411,6 +411,7 @@ function BookmarkNodeRow({
         ) : (
           <RowFavicon
             src={node.favicon}
+            page={node.url ?? null}
             fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
           />
         )

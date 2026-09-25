@@ -16,6 +16,7 @@ import {
 import type { Tab, TaskInfo, TaskList, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog'
 import { PageColumn, PageEmpty, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { usePageSearch } from '../usePageSearch'
@@ -392,6 +393,9 @@ function TaskRow({
   onSelect: () => void
   onOpen: () => void
 }): JSX.Element {
+  // A task's icon is an open tab's favicon: the core's cached copy where it holds one (HB-47),
+  // else the live address, the page being open.
+  const icon = useFaviconSrc(task.icon)
   const memoryTitle =
     task.privateBytes === null
       ? `Working set ${formatTaskMemory(task.memoryBytes)}`
@@ -408,8 +412,8 @@ function TaskRow({
     >
       <div className="zen-tasks-cell-task" role="gridcell">
         <span className="zen-page-row-lead" aria-hidden>
-          {task.icon ? (
-            <img className="zen-page-row-favicon" src={task.icon} alt="" draggable={false} />
+          {icon ? (
+            <img className="zen-page-row-favicon" src={icon} alt="" draggable={false} />
           ) : (
             <Activity className="zen-page-row-favicon zen-page-row-glyph" />
           )}

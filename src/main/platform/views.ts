@@ -192,6 +192,8 @@ type ChildWindowOptions = BrowserWindowConstructorOptions & { webContents?: WebC
 const HOST_NAVIGATION_TTL_MS = 30_000
 /** A `confirmUnload` whose page neither goes nor objects by then is treated as not objecting. */
 const UNLOAD_CHECK_TIMEOUT_MS = 5_000
+/** A favicon fetch for the cache (`fetchFavicon`) that has not answered by then is given up. */
+const FAVICON_FETCH_MS = 10_000
 /**
  * An entry's page state (scroll offset, form values) is kept up to this size; a larger one –
  * a page with a huge form – is left out rather than written into the profile on every commit.
@@ -1113,6 +1115,39 @@ export class ElectronTabView implements TabView {
 
   isFocused(): boolean {
     return !this.wc.isDestroyed() && this.wc.isFocused()
+  }
+
+  /**
+   * The page's icon for the favicon cache (HB-47): fetched through the page's own session
+   * (`ses.fetch`), so the site's cookies go with the request as they do with Chrome's favicon
+   * fetch; the body read up to `maxBytes` and refused past it. The response's type goes with the
+   * bytes; the core sniffs the image type itself (`favicon.ico` served as `text/plain` is common).
+   */
+  async fetchFavicon(
+    url: string,
+    maxBytes: number
+  ): Promise<{ bytes: Uint8Array; mime: string } | null> {
+    if (this.wc.isDestroyed()) return null
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FAVICON_FETCH_MS)
+    try {
+      const response = await this.wc.session.fetch(url, {
+        signal: controller.signal,
+        credentials: 'include',
+        cache: 'default',
+        redirect: 'follow'
+      })
+      if (!response.ok) return null
+      const declared = Number(response.headers.get('content-length') ?? '0')
+      if (declared > maxBytes) return null
+      const bytes = new Uint8Array(await response.arrayBuffer())
+      if (bytes.length === 0 || bytes.length > maxBytes) return null
+      return { bytes, mime: response.headers.get('content-type') ?? '' }
+    } catch {
+      return null
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   isDestroyed(): boolean {

@@ -85,6 +85,7 @@ import type { InterstitialAction } from '../shared/interstitial'
 import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
+import type { FaviconFetcher } from './favicons'
 import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
 import { permissionSite, safeOrigin } from './permissions'
 import { certificateSiteOf } from './security'
@@ -662,13 +663,32 @@ export class TabManager {
       onFaviconUpdated: (favicons) =>
         update((t) => {
           const icon = pickFavicon(favicons)
-          if (icon) {
-            t.favicon = icon
-            if (!this.isPrivate(t)) {
-              this.browser.history.updateFavicon(t.url, icon)
-              this.browser.bookmarks.updateFavicon(t.url, icon)
-            }
+          if (!icon) return
+          const inline = icon.startsWith('data:')
+          // An `http(s)` icon is the records' key: the tab, history and the bookmarks take the
+          // address now and the cache fetches its bytes behind it (`FaviconService.receive`).
+          // An inline `data:` icon (the Android WebView's decoded PNG) is the bytes themselves:
+          // the tab shows it at once, and the records take the cache's content address once
+          // the icon is kept, never the kilobytes of the data URL.
+          t.favicon = icon
+          if (this.isPrivate(t)) return
+          const pageUrl = t.url
+          if (!inline) {
+            this.browser.history.updateFavicon(pageUrl, icon)
+            this.browser.bookmarks.updateFavicon(pageUrl, icon)
           }
+          const v = view()
+          const fetcher: FaviconFetcher | null = v?.fetchFavicon
+            ? (url, maxBytes) => v.fetchFavicon!(url, maxBytes)
+            : null
+          void this.browser.favicons.receive(icon, fetcher).then((cached) => {
+            if (!cached || !inline) return
+            this.browser.history.updateFavicon(pageUrl, cached)
+            this.browser.bookmarks.updateFavicon(pageUrl, cached)
+            update((tab) => {
+              if (tab.favicon === icon) tab.favicon = cached
+            })
+          })
         }),
       onFailLoad: (code, description, url, details) => {
         const v = view()
