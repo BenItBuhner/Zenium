@@ -40,7 +40,7 @@ import {
   dockFromConsoleMessage,
   pageBoundsFromConsoleMessage
 } from './devtoolsFrontend'
-import { devtoolsKeyFromMessage, devtoolsQuitChordScript } from './devtoolsKeys'
+import { relayDevtoolsQuitChord } from './devtoolsKeys'
 import { isDockedInFrame } from '../../shared/devtoolsDock'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
@@ -1334,17 +1334,13 @@ export class ElectronTabView implements TabView {
     const frontend = this.wc.devToolsWebContents
     if (!frontend || frontend.isDestroyed() || this.dressedFrontends.has(frontend)) return
     this.dressedFrontends.add(frontend)
+    // The quit chord typed into the toolbox (session-08, review F3): the frontend's keys raise
+    // `before-input-event` on nothing – its delegate is Electron's `InspectableWebContents`,
+    // which hands only the keys the frontend left unhandled on, to the menu bar – so the
+    // frontend says the chord's key down and the key up after it on its console, and they go to
+    // the key table for this page's window as the page's own keys do (`devtoolsKeys.ts`).
+    relayDevtoolsQuitChord(frontend, this.owner.quitChord, (key) => void this.events?.onKey(key))
     frontend.on('console-message', (event) => {
-      // The quit chord typed into the toolbox (session-08, review F3): the frontend's keys raise
-      // `before-input-event` on nothing – its delegate is Electron's `InspectableWebContents`,
-      // which hands only the keys the frontend left unhandled on, to the menu bar – so the
-      // frontend says the chord's key down and the key up after it on its console, and they go
-      // to the key table for this page's window as the page's own keys do (`devtoolsKeys.ts`).
-      const key = devtoolsKeyFromMessage(event.message)
-      if (key) {
-        this.events?.onKey(key)
-        return
-      }
       const hole = pageBoundsFromConsoleMessage(event.message)
       if (hole) {
         this.devtoolsPageBounds = hole
@@ -1358,9 +1354,6 @@ export class ElectronTabView implements TabView {
     frontend.executeJavaScript(DEVTOOLS_DOCK_HOOK_SCRIPT, true).catch(() => undefined)
     frontend.executeJavaScript(DEVTOOLS_PAGE_BOUNDS_HOOK_SCRIPT, true).catch(() => undefined)
     frontend.executeJavaScript(DEVTOOLS_SEAM_SCRIPT, true).catch(() => undefined)
-    frontend
-      .executeJavaScript(devtoolsQuitChordScript(this.owner.quitChord()), true)
-      .catch(() => undefined)
   }
 
   downloadURL(url: string, options?: { saveAs?: boolean }): void {

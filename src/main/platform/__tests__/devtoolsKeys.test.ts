@@ -2,11 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QUIT_HOLD_MS } from '../../../core/quitHold'
 import { quitChord, settle, start } from '../../../core/__tests__/quitHoldFixture'
-import type { KeyBinding } from '../../../shared/types'
+import type { KeyEventInput } from '../../../core/platform'
+import type { KeyBinding, Shortcut } from '../../../shared/types'
 import {
   DEVTOOLS_KEY_MESSAGE_PREFIX,
+  type DevtoolsFrontendLike,
   devtoolsKeyFromMessage,
-  devtoolsQuitChordScript
+  devtoolsQuitChordScript,
+  quitChordOf,
+  relayDevtoolsQuitChord
 } from '../devtoolsKeys'
 
 /*
@@ -257,5 +261,82 @@ describe('the relayed chord through the inspected page’s key table', () => {
     expect(requestQuit).toHaveBeenCalledTimes(1)
     // The fixture's chord and the frontend's say the same key.
     expect(quitChord('darwin', 'keyDown')).toMatchObject({ key: 'q', meta: true, control: false })
+  })
+})
+
+describe('the relay on a toolbox', () => {
+  /** A frontend as the relay sees it: its console listeners and the scripts run in it. */
+  function fakeFrontend(): DevtoolsFrontendLike & {
+    listeners: ((event: { message: string }) => void)[]
+    scripts: string[]
+    say(message: string): void
+  } {
+    const listeners: ((event: { message: string }) => void)[] = []
+    const scripts: string[] = []
+    return {
+      listeners,
+      scripts,
+      on: (_event, listener) => listeners.push(listener),
+      executeJavaScript: (code) => {
+        scripts.push(code)
+        return Promise.resolve('hooked')
+      },
+      say: (message) => listeners.forEach((listener) => listener({ message }))
+    }
+  }
+
+  it('watches the console for the keys the script says, runs the script with the chord as bound now, and once per frontend', () => {
+    const frontend = fakeFrontend()
+    const keys: KeyEventInput[] = []
+    let chord: KeyBinding | null = MAC_QUIT
+    relayDevtoolsQuitChord(
+      frontend,
+      () => chord,
+      (key) => keys.push(key)
+    )
+    expect(frontend.listeners).toHaveLength(1)
+    expect(frontend.scripts).toHaveLength(1)
+    expect(frontend.scripts[0]).toContain(JSON.stringify(MAC_QUIT))
+    frontend.say('zenium-devtools-dock:bottom')
+    frontend.say(
+      `${DEVTOOLS_KEY_MESSAGE_PREFIX}{"type":"keyDown","key":"q","control":false,"alt":false,"shift":false,"meta":true,"isAutoRepeat":false}`
+    )
+    frontend.say(
+      `${DEVTOOLS_KEY_MESSAGE_PREFIX}{"type":"keyUp","key":"Meta","control":false,"alt":false,"shift":false,"meta":false,"isAutoRepeat":false}`
+    )
+    expect(keys.map((k) => `${k.type}:${k.key}`)).toEqual(['keyDown:q', 'keyUp:Meta'])
+    // The same frontend again (a second `devtools-opened` for one toolbox): nothing doubled.
+    chord = LINUX_QUIT
+    relayDevtoolsQuitChord(
+      frontend,
+      () => chord,
+      (key) => keys.push(key)
+    )
+    expect(frontend.listeners).toHaveLength(1)
+    expect(frontend.scripts).toHaveLength(1)
+    // A fresh frontend reads the chord as bound at its opening.
+    const next = fakeFrontend()
+    relayDevtoolsQuitChord(
+      next,
+      () => chord,
+      () => undefined
+    )
+    expect(next.scripts[0]).toContain(JSON.stringify(LINUX_QUIT))
+  })
+
+  it('reads the chord bound to app.quit from the key table’s shortcuts, null while unbound', () => {
+    const quit = {
+      id: 'key_quitApplication',
+      action: 'app.quit',
+      binding: MAC_QUIT
+    } as unknown as Shortcut
+    const other = {
+      id: 'key_newNavigatorTab',
+      action: 'tab.new',
+      binding: { ...MAC_QUIT, key: 't' }
+    } as unknown as Shortcut
+    expect(quitChordOf([other, quit])).toEqual(MAC_QUIT)
+    expect(quitChordOf([other, { ...quit, binding: null } as unknown as Shortcut])).toBeNull()
+    expect(quitChordOf([other])).toBeNull()
   })
 })

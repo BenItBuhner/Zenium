@@ -10,6 +10,7 @@ import {
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
+import { quitChordOf, relayDevtoolsQuitChord } from './devtoolsKeys'
 import { focusedDocumentOf } from './focusedDocument'
 import { ElectronShortcuts } from './shortcuts'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
@@ -267,6 +268,18 @@ export class ElectronWindow implements WindowHost {
         isAutoRepeat: input.isAutoRepeat
       }
       if (browser.keys.handle(key, null, zen)) event.preventDefault()
+    })
+    // The chrome's own toolbox (the Browser Console, `openChromeDevTools`): its keys raise no
+    // `before-input-event` either, so the quit chord typed there is relayed from the frontend's
+    // console into the table as a chrome key, as a page's toolbox relays it (`devtoolsKeys.ts`).
+    wc.on('devtools-opened', () => {
+      const frontend = wc.devToolsWebContents
+      if (!frontend || frontend.isDestroyed()) return
+      relayDevtoolsQuitChord(
+        frontend,
+        () => quitChordOf(browser.state.shortcuts),
+        (key) => void browser.keys.handle(key, null, zen)
+      )
     })
     wc.setWindowOpenHandler(({ url }) => {
       if (/^https?:/.test(url)) void shell.openExternal(url)

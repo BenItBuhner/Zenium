@@ -109,6 +109,7 @@ import {
   permissionRequestDetails
 } from './security'
 import { electronPerformanceHost } from './backgroundWork'
+import { quitChordOf } from './devtoolsKeys'
 import createBackgroundWorker from './backgroundWorker?nodeWorker'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
@@ -589,8 +590,7 @@ export class ElectronPlatform implements Platform {
     const browser = new Browser(this)
     this.browser = browser
     // A toolbox's quit-chord relay reads the chord the key table binds to `app.quit` (`devtoolsKeys.ts`).
-    this.views.quitChord = () =>
-      browser.state.shortcuts.find((shortcut) => shortcut.action === 'app.quit')?.binding ?? null
+    this.views.quitChord = () => quitChordOf(browser.state.shortcuts)
     this.windows.bind(browser)
     this.downloads.bind(browser.downloads, {
       tabIdFor: (source) => this.views.tabIdForWebContents(source) ?? null,

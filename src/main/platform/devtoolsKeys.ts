@@ -1,5 +1,5 @@
 import type { KeyEventInput } from '../../core/platform'
-import type { KeyBinding } from '../../shared/types'
+import type { KeyBinding, Shortcut } from '../../shared/types'
 
 /**
  * The quit chord typed into a DevTools toolbox (session-08, review F3's DevTools path).
@@ -28,10 +28,12 @@ import type { KeyBinding } from '../../shared/types'
  * key (the hold's own rule: Chrome's panel waits for any key up), is said the same way, and so
  * is the frontend's window losing the keyboard while the chord is down (a key up the frontend
  * would never see is a release the hold must hear – review F1's reading). The host reads each
- * line back into the key table for the inspected page's window, as the page's own keys go
- * (`ElectronTabView.dressDevtools`). The chord is the one bound to `app.quit` when the toolbox
- * opens; a rebinding reaches toolboxes opened after it. Nothing else of the toolbox's keys is
- * touched: DevTools keeps its own shortcuts, and the chords it leaves go on to the menu bar.
+ * line back into the key table – for the inspected page's window from a page's toolbox
+ * (`ElectronTabView.dressDevtools`), as chrome keys from the window's own (the Browser Console,
+ * `ElectronWindow`) – as the page's and the chrome's own keys go. The chord is the one bound to
+ * `app.quit` when the toolbox opens; a rebinding reaches toolboxes opened after it. Nothing else
+ * of the toolbox's keys is touched: DevTools keeps its own shortcuts, and the chords it leaves go
+ * on to the menu bar.
  */
 export const DEVTOOLS_KEY_MESSAGE_PREFIX = 'zenium-devtools-key:'
 
@@ -109,4 +111,36 @@ export function devtoolsKeyFromMessage(message: string): KeyEventInput | null {
     meta: record.meta as boolean,
     isAutoRepeat: record.isAutoRepeat as boolean
   }
+}
+
+/** The chord the key table binds to `app.quit` now, or null while it is unbound. */
+export function quitChordOf(shortcuts: readonly Shortcut[]): KeyBinding | null {
+  return shortcuts.find((shortcut) => shortcut.action === 'app.quit')?.binding ?? null
+}
+
+/** A toolbox's frontend as the relay needs it – its console and a script run in it (Electron's `WebContents`). */
+export interface DevtoolsFrontendLike {
+  on(event: 'console-message', listener: (event: { message: string }) => void): unknown
+  executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>
+}
+
+const relayed = new WeakSet<object>()
+
+/**
+ * The relay on one toolbox: its console watched for the keys the script says, the script run
+ * with the chord as bound at this moment. Once per frontend; `onKey` gets each key in the key
+ * table's shape, for the window the toolbox belongs to.
+ */
+export function relayDevtoolsQuitChord(
+  frontend: DevtoolsFrontendLike,
+  chord: () => KeyBinding | null,
+  onKey: (key: KeyEventInput) => void
+): void {
+  if (relayed.has(frontend)) return
+  relayed.add(frontend)
+  frontend.on('console-message', (event) => {
+    const key = devtoolsKeyFromMessage(event.message)
+    if (key) onKey(key)
+  })
+  frontend.executeJavaScript(devtoolsQuitChordScript(chord()), true).catch(() => undefined)
 }
