@@ -669,8 +669,18 @@ export class AndroidTabView implements TabView {
     // Android WebViews are inspected from desktop Chrome (chrome://inspect); nothing to open here.
   }
 
-  downloadURL(url: string): void {
-    this.bridge.send('view.download', { tabId: this.tabId, url })
+  /**
+   * A download the menu starts. `saveAs` (Save Link As… / Save Image As…, HB-40) crosses as the
+   * one flag: the host asks where that one file goes – its save dialog (`ACTION_CREATE_DOCUMENT`,
+   * the ask-where-to-save path of `Downloads.bind`) – whatever the downloads setting says, as
+   * Chrome's per-file dialog does; a plain download carries no flag and goes where the setting says.
+   */
+  downloadURL(url: string, options?: { saveAs?: boolean }): void {
+    this.bridge.send('view.download', {
+      tabId: this.tabId,
+      url,
+      ...(options?.saveAs ? { saveAs: true } : {})
+    })
   }
 
   print(): void {
