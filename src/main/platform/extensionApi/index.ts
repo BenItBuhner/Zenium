@@ -87,9 +87,9 @@ import { OffscreenApi } from './offscreen'
 import { electronOffscreenDocumentHost } from './offscreenBridge'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
+import { FontSettingsApi } from './fontSettings'
 import { PrivacyApi } from './privacy'
 import { ExtensionControls } from './controls'
-import { FontSettingsApi } from './fontSettings'
 import { ProxyApi } from './proxy'
 import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
@@ -210,8 +210,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly cookies: CookiesApi
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
   readonly webRequest: WebRequestApi
-  readonly privacy: PrivacyApi
   readonly fontSettings: FontSettingsApi
+  readonly privacy: PrivacyApi
   readonly proxy: ProxyApi
   readonly contentSettings: ContentSettingsApi
   readonly bookmarks: BookmarksApi
@@ -317,8 +317,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       join(userDataDir, 'zen', 'extension-dnr')
     )
     this.webRequest = new WebRequestApi(this)
-    this.privacy = new PrivacyApi(this)
     this.fontSettings = new FontSettingsApi(this)
+    this.privacy = new PrivacyApi(this)
     this.proxy = new ProxyApi(this, {
       configure: (hook) =>
         this.sessions.configure((ses, containerId) =>
@@ -360,8 +360,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       cookies: this.cookies.handlers,
       declarativeNetRequest: this.declarativeNetRequest.handlers,
       webRequest: this.webRequest.handlers,
-      privacy: this.privacy.handlers,
       fontSettings: this.fontSettings.handlers,
+      privacy: this.privacy.handlers,
       proxy: this.proxy.handlers,
       contentSettings: this.contentSettings.handlers,
       bookmarks: this.bookmarks.handlers,
@@ -446,6 +446,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     })
     this.history.attach()
     this.downloads.attach()
+    // Extensions' font values are laid over the user's page fonts setting; a change of the
+    // setting under them is re-layered.
+    this.fontSettings.attach()
     app.on('before-quit', () => this.flushSync())
   }
 
@@ -469,8 +472,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         // privacy values.
         this.declarativeNetRequest.installOrderChanged()
         this.privacy.installOrderChanged()
-        this.fontSettings.installOrderChanged()
         this.proxy.installOrderChanged()
+        this.fontSettings.installOrderChanged()
         this.contentSettings.installOrderChanged()
         return
       case 'enabled':
@@ -494,8 +497,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.privateAllowed.delete(event.id)
         this.runtime.openUninstallUrl(event.id)
         this.privacy.forget(event.id)
-        this.fontSettings.forget(event.id)
         this.proxy.forget(event.id)
+        this.fontSettings.forget(event.id)
         this.contentSettings.forget(event.id)
         this.userScripts.uninstalled(event.id)
         this.store.forget(event.id)
@@ -704,8 +707,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
-    this.fontSettings.load(ext.id)
     this.proxy.load(ext.id)
+    this.fontSettings.load(ext.id)
     this.contentSettings.load(ext.id)
     this.systemDisplay.load(loaded)
     this.userScripts.load(loaded, info?.allowUserScripts === true)
@@ -750,8 +753,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)
     this.privacy.unload(ext.id)
-    this.fontSettings.unload(ext.id)
     this.proxy.unload(ext.id)
+    this.fontSettings.unload(ext.id)
     this.contentSettings.unload(ext.id)
     this.userScripts.unload(ext.id)
     this.contextMenus.forget(ext.id)

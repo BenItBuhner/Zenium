@@ -294,41 +294,15 @@ describe('createEmulatedEngine', () => {
   })
 
   it('answers no-ops and stub results on the context side without a host round trip', async () => {
-    const h = harness({ permissions: ['downloads'] })
+    const h = harness({ permissions: ['fontSettings'] })
     const before = h.sent.length
     await expect(
       (h.chrome.runtime.setUninstallURL as Fn)('https://example.org/bye') as Promise<unknown>
     ).resolves.toBeUndefined()
-    await expect((h.chrome.downloads.search as Fn)({}) as Promise<unknown>).resolves.toEqual([])
+    await expect((h.chrome.fontSettings.getFontList as Fn)() as Promise<unknown>).resolves.toEqual(
+      []
+    )
     expect(h.sent.length).toBe(before)
-  })
-
-  it('routes every fontSettings member to the host and builds its four events', async () => {
-    // The desktop answers the whole namespace from its font layer; a context-side stub here
-    // (the empty font list of the stub days) would keep the real answer from every extension.
-    const h = harness({ permissions: ['fontSettings'] })
-    const ns = h.chrome.fontSettings as Ns
-    const promise = (ns.getFontList as Fn)() as Promise<unknown>
-    expect(h.last()).toMatchObject({ t: 'call', ns: 'fontSettings', method: 'getFontList' })
-    h.reply(h.last().id, [{ fontId: 'Arial', displayName: 'Arial' }])
-    await expect(promise).resolves.toEqual([{ fontId: 'Arial', displayName: 'Arial' }])
-    void (ns.setMinimumFontSize as Fn)({ pixelSize: 12 })
-    expect(h.last()).toMatchObject({
-      t: 'call',
-      ns: 'fontSettings',
-      method: 'setMinimumFontSize',
-      args: [{ pixelSize: 12 }]
-    })
-    for (const event of [
-      'onFontChanged',
-      'onDefaultFontSizeChanged',
-      'onDefaultFixedFontSizeChanged',
-      'onMinimumFontSizeChanged'
-    ]) {
-      expect(typeof (ns[event] as { addListener?: unknown })?.addListener, event).toBe('function')
-    }
-    expect((ns.ScriptCode as Record<string, string>).ZYYY).toBe('Zyyy')
-    expect((ns.GenericFamily as Record<string, string>).SANSSERIF).toBe('sansserif')
   })
 
   it('routes every storage area to the host with the area as the first argument', () => {
@@ -669,12 +643,7 @@ describe('createEmulatedEngine', () => {
     })
     expect(page.last().userScript).toBeUndefined()
     void (page.chrome.runtime.connect as Fn)(EXT, { name: 'yss' })
-    expect(page.last()).toMatchObject({
-      t: 'connect',
-      name: 'yss',
-      target: { extensionId: EXT },
-      external: true
-    })
+    expect(page.last()).toMatchObject({ t: 'connect', name: 'yss', target: { extensionId: EXT }, external: true })
 
     const bg = harness()
     const plain: unknown[] = []

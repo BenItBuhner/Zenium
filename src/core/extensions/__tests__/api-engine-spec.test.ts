@@ -73,9 +73,7 @@ describe('engineApiSpec', () => {
   it("defines chrome.power for the permission alone, routed, with Chrome's Level enum", () => {
     // Keep Awake (`"permissions": ["power"]`) reads `chrome.power.requestKeepAwake` in its
     // worker's click handler; without the table entry the namespace was a TypeError there.
-    expect(
-      Object.keys(engineApiSpec({ permissions: ['storage'], manifestVersion: 3, context: 'page' }))
-    ).not.toContain('power')
+    expect(Object.keys(engineApiSpec({ permissions: ['storage'], manifestVersion: 3, context: 'page' }))).not.toContain('power')
     const spec = engineApiSpec({ permissions: ['power'], manifestVersion: 3, context: 'page' })
     expect(spec.power.methods.requestKeepAwake).toEqual({
       params: [{ name: 'level', type: 'string', optional: false }]
@@ -218,55 +216,6 @@ describe('engineApiSpec', () => {
       expect(Object.prototype.hasOwnProperty.call(ENGINE_STUB_RESULTS, key), key).toBe(false)
     }
     expect(Object.keys(ENGINE_SPEC.sidePanel.events)).toEqual(['onOpened', 'onClosed'])
-  })
-
-  it('lets every fontSettings member reach the host, with its events and enums', () => {
-    // The desktop answers the whole namespace from its font layer over the user's settings
-    // (`platform/extensionApi/fontSettings.ts`); the stub answers of the engine's early days
-    // (an empty font list, `not_controllable`) would keep the real ones from every extension.
-    const methods = Object.keys(ENGINE_SPEC.fontSettings.methods)
-    expect(methods.sort()).toEqual(
-      [
-        'clearFont',
-        'getFont',
-        'setFont',
-        'getFontList',
-        'clearDefaultFontSize',
-        'getDefaultFontSize',
-        'setDefaultFontSize',
-        'clearDefaultFixedFontSize',
-        'getDefaultFixedFontSize',
-        'setDefaultFixedFontSize',
-        'clearMinimumFontSize',
-        'getMinimumFontSize',
-        'setMinimumFontSize'
-      ].sort()
-    )
-    for (const method of methods) {
-      const key = `fontSettings.${method}`
-      expect(ENGINE_NOOPS.has(key), key).toBe(false)
-      expect(Object.prototype.hasOwnProperty.call(ENGINE_STUB_RESULTS, key), key).toBe(false)
-      expect(ENGINE_SPEC.fontSettings.methods[method].keepNative, key).toBeUndefined()
-    }
-    expect(Object.keys(ENGINE_SPEC.fontSettings.events)).toEqual([
-      'onFontChanged',
-      'onDefaultFontSizeChanged',
-      'onDefaultFixedFontSizeChanged',
-      'onMinimumFontSizeChanged'
-    ])
-    const constants = ENGINE_SPEC.fontSettings.constants as Record<string, Record<string, string>>
-    expect(Object.keys(constants.ScriptCode)).toHaveLength(152)
-    expect(constants.ScriptCode.ZYYY).toBe('Zyyy')
-    expect(constants.GenericFamily.FIXED).toBe('fixed')
-    expect(constants.LevelOfControl.CONTROLLED_BY_THIS_EXTENSION).toBe(
-      'controlled_by_this_extension'
-    )
-    const merged = engineApiSpec({
-      permissions: ['fontSettings'],
-      manifestVersion: 3,
-      context: 'page'
-    })
-    expect(Object.keys(merged.fontSettings.methods).sort()).toEqual(methods.sort())
   })
 
   it('lets every declarativeNetRequest member reach the host', () => {

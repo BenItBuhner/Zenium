@@ -88,10 +88,16 @@ const { HistoryPage } = await import('../HistoryPage')
 const { faviconStore, startFaviconSync } = await import('@renderer/lib/favicons')
 const { browserStore } = await import('@renderer/lib/browserStore')
 
-/** The state the page and the favicon slots read: the platform, and the tabs open in this window. */
+/**
+ * The state the page and the favicon slots read: the platform, and the tabs open in this window.
+ * The chrome's back-state listener (`lib/back.ts`, wired as the page's prompt loads the portals)
+ * reads the active tab of whatever `browserStore` holds: one space with no active tab.
+ */
 function state(platform: 'linux' | 'android', openUrls: string[] = []): UIState {
   return {
     platform,
+    spaces: [{ id: 'space', activeTabId: null, tabIds: [] }],
+    activeSpaceId: 'space',
     capabilities: { sync: true },
     sync: {
       enabled: false,

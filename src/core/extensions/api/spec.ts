@@ -13,7 +13,7 @@ import {
   CONTENT_SETTING_TYPES,
   CONTENT_SETTING_TYPE_NAMES
 } from './contentSettings'
-import { fontSettingsConstants } from './fontSettings'
+import { CONSTANTS as FONT_SETTINGS_CONSTANTS, FONT_SETTINGS_PERMISSION } from './fontSettings'
 import { OFFSCREEN_PERMISSION, OFFSCREEN_REASON_CONSTANTS } from './offscreen'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
@@ -1078,11 +1078,11 @@ export const API_SPEC: ApiSpec = {
     permissions: ['webRequest', 'webRequestBlocking'],
     eventStyle: 'webRequest'
   },
-  // Absent from Electron altogether (Chrome's font prefs and their preference service are not
-  // part of the engine). The host keeps the extensions' fonts and sizes as a layer over the
-  // user's Settings → Fonts, resolved by install order as Chrome resolves them
-  // (`core/extensions/api/fontSettings.ts`), applies the effective fonts to pages the way the
-  // user's setting is applied, and answers the font list from the installed families.
+  // Absent from Electron (Chrome's font preferences are the browser's, not the engine's). The
+  // host lays extensions' values over the page fonts setting (Settings › Appearance › Customize
+  // fonts, CT-25) with Chrome's precedence, `core/extensions/api/fontSettings.ts` has the shape:
+  // the common script's family of the four slotted generic families and the two sizes are
+  // controllable, the rest answer `not_controllable`. The font list is the installed families.
   fontSettings: {
     methods: {
       getFontList: { params: [] },
@@ -1105,8 +1105,8 @@ export const API_SPEC: ApiSpec = {
       onDefaultFixedFontSizeChanged: {},
       onMinimumFontSizeChanged: {}
     },
-    constants: fontSettingsConstants(),
-    permissions: ['fontSettings']
+    constants: FONT_SETTINGS_CONSTANTS,
+    permissions: [FONT_SETTINGS_PERMISSION]
   },
   // Absent from Electron altogether (Chrome's preference service is not part of the engine),
   // and probed at start-up by uBlock Origin and Privacy Badger. The settings live in the host

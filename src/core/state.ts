@@ -83,6 +83,7 @@ import {
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
+import { sanitizeMenuOrder } from '../shared/menuOrder'
 import { sanitizeHomepage } from '../shared/homepage'
 import { sanitizeToolbarLayout } from '../shared/toolbarLayout'
 import { sanitizeToolbarPins } from '../shared/toolbarPins'
@@ -653,6 +654,11 @@ export class BrowserState {
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.settings.phoneBar = sanitizePhoneBar(data.settings?.phoneBar)
+    // The phone menu's order: a list as persisted, the empty list (a Reset) included; absent
+    // when the profile holds none or something that is no list (`shared/menuOrder.ts`).
+    const menuOrder = sanitizeMenuOrder(data.settings?.menuOrder)
+    if (menuOrder !== undefined) this.settings.menuOrder = menuOrder
+    else delete this.settings.menuOrder
     this.settings.homepage = sanitizeHomepage(data.settings?.homepage)
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
     this.settings.autofill = sanitizeAutofillSettings(data.settings?.autofill)

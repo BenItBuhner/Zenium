@@ -16,7 +16,6 @@
  * (`NAMESPACE_PERMISSIONS`), by manifest version, and content scripts only get the handful
  * Chrome exposes there (`CONTENT_SCRIPT_NAMESPACES`).
  */
-import { fontSettingsConstants } from './fontSettings'
 import { API_SPEC, type ApiSpec, type MethodSpec, type NamespaceSpec, type ParamSpec } from './spec'
 import { EXTRA_INFO_SPECS } from './webRequest'
 
@@ -531,9 +530,6 @@ export const ENGINE_SPEC: ApiSpec = {
       }
     }
   },
-  // Every member reaches the host: the desktop answers all of them from its font layer
-  // (`platform/extensionApi/fontSettings.ts`); the phone rejects the ones it has no WebView
-  // bridge for with the member's name, as it does for other routed members.
   fontSettings: {
     methods: {
       getFontList: routed(),
@@ -541,22 +537,27 @@ export const ENGINE_SPEC: ApiSpec = {
       setFont: routed(object('details')),
       clearFont: routed(object('details')),
       getDefaultFontSize: routed(object('details', true)),
-      setDefaultFontSize: routed(object('details')),
-      clearDefaultFontSize: routed(object('details', true)),
-      getDefaultFixedFontSize: routed(object('details', true)),
-      setDefaultFixedFontSize: routed(object('details')),
-      clearDefaultFixedFontSize: routed(object('details', true)),
-      getMinimumFontSize: routed(object('details', true)),
-      setMinimumFontSize: routed(object('details')),
-      clearMinimumFontSize: routed(object('details', true))
+      setDefaultFontSize: routed(object('details'))
     },
-    events: {
-      onFontChanged: {},
-      onDefaultFontSizeChanged: {},
-      onDefaultFixedFontSizeChanged: {},
-      onMinimumFontSizeChanged: {}
-    },
-    constants: fontSettingsConstants()
+    events: {},
+    constants: {
+      ScriptCode: {},
+      GenericFamily: {
+        STANDARD: 'standard',
+        SANSSERIF: 'sansserif',
+        SERIF: 'serif',
+        FIXED: 'fixed',
+        CURSIVE: 'cursive',
+        FANTASY: 'fantasy',
+        MATH: 'math'
+      },
+      LevelOfControl: {
+        NOT_CONTROLLABLE: 'not_controllable',
+        CONTROLLED_BY_OTHER_EXTENSIONS: 'controlled_by_other_extensions',
+        CONTROLLABLE_BY_THIS_EXTENSION: 'controllable_by_this_extension',
+        CONTROLLED_BY_THIS_EXTENSION: 'controlled_by_this_extension'
+      }
+    }
   },
   search: {
     methods: { query: routed(object('queryInfo')) },
@@ -751,6 +752,9 @@ export const CONTENT_SCRIPT_NAMESPACES: ReadonlySet<string> = new Set([
 export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
   'runtime.setUninstallURL',
   'tabs.setZoomSettings',
+  'fontSettings.setFont',
+  'fontSettings.clearFont',
+  'fontSettings.setDefaultFontSize',
   'extension.setUpdateUrlData',
   'webRequest.handlerBehaviorChanged',
   // No omnibox keyword on the phone; the setter is a start-up call (Raindrop.io, OneTab,
@@ -762,11 +766,12 @@ export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
 
 /**
  * What unimplemented getters resolve with instead of rejecting, for callers that cannot cope
- * with an error. JSON values. `fontSettings` sat here while the API was a stub (an empty font
- * list kept Dark Reader's settings page rendering); the desktop host answers it now, and a
- * context-side answer would keep the real list from every extension.
+ * with an error (an empty font list keeps Dark Reader's settings page rendering). JSON values.
  */
 export const ENGINE_STUB_RESULTS: Readonly<Record<string, unknown>> = {
+  'fontSettings.getFontList': [],
+  'fontSettings.getFont': { fontId: '', levelOfControl: 'not_controllable' },
+  'fontSettings.getDefaultFontSize': { pixelSize: 16, levelOfControl: 'not_controllable' },
   'downloads.search': [],
   'sessions.getRecentlyClosed': [],
   'sessions.getDevices': [],

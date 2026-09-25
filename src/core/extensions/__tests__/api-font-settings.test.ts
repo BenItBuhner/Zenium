@@ -1,231 +1,275 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_FONT_SETTINGS } from '../../../shared/fonts'
 import {
   COMMON_SCRIPT,
-  DEFAULT_FONT_SIZE_PREF,
-  FONT_SIZE_METHODS,
-  FONT_SIZE_PREFS,
-  GENERIC_FAMILIES,
-  INVALID_FONT_ID_ERROR,
-  MINIMUM_FONT_SIZE_PREF,
+  CONSTANTS,
+  FONT_PREFS,
   SCRIPT_CODES,
-  controllerOf,
-  effectivePref,
-  fontChangedDetails,
-  fontListOf,
-  fontPrefKey,
+  controllableSlot,
+  defaultFixedFontSizeResult,
+  defaultFontSizeResult,
+  familyList,
   fontResult,
-  fontSizeResult,
-  isValidFontId,
-  levelOfControlFor,
+  hasFontValues,
+  layerFonts,
+  minimumFontSizeResult,
   normalizeFontDetails,
-  normalizeFontPrefValues,
-  normalizePixelSize,
+  normalizeFontValues,
   normalizeSetFontDetails,
-  normalizeUnusedDetails,
-  parseFontPrefKey,
-  sameEffective,
-  type FontRank
+  normalizeSizeDetails,
+  sameLayered,
+  withFontValue,
+  type FontValues
 } from '../api/fontSettings'
+import { API_SPEC } from '../api/spec'
 
-const rankOf =
-  (order: string[]): FontRank =>
-  (id) => {
-    const i = order.indexOf(id)
-    return i === -1 ? undefined : i
-  }
+const OLD = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+const NEW = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 
-describe('fontSettings enums and pref keys', () => {
-  it("names Chrome's seven generic families and 152 script codes, Zyyy the common one", () => {
-    expect([...GENERIC_FAMILIES]).toEqual([
-      'standard',
-      'sansserif',
-      'serif',
-      'fixed',
-      'cursive',
-      'fantasy',
-      'math'
-    ])
-    expect(SCRIPT_CODES).toHaveLength(152)
-    expect(new Set(SCRIPT_CODES).size).toBe(152)
-    expect(COMMON_SCRIPT).toBe('Zyyy')
-    expect(SCRIPT_CODES).toContain('Jpan')
-    expect(SCRIPT_CODES).toContain('Cyrl')
-  })
+/** Installed most recently first: NEW outranks OLD. */
+const rank = (id: string): number | undefined => (id === NEW ? 0 : id === OLD ? 1 : undefined)
 
-  it("builds and parses Chrome's pref paths", () => {
-    expect(fontPrefKey('standard', 'Zyyy')).toBe('webkit.webprefs.fonts.standard.Zyyy')
-    expect(parseFontPrefKey('webkit.webprefs.fonts.fixed.Jpan')).toEqual({
-      genericFamily: 'fixed',
-      script: 'Jpan'
+describe('fontSettings details (Chrome\u2019s shapes)', () => {
+  it('reads getFont / clearFont details with the common script as the default', () => {
+    expect(normalizeFontDetails({ genericFamily: 'standard' })).toEqual({
+      script: COMMON_SCRIPT,
+      genericFamily: 'standard'
     })
-    expect(parseFontPrefKey('webkit.webprefs.fonts.bogus.Jpan')).toBeUndefined()
-    expect(parseFontPrefKey('webkit.webprefs.fonts.fixed.Zzzz')).toBeUndefined()
-    expect(parseFontPrefKey(DEFAULT_FONT_SIZE_PREF)).toBeUndefined()
-    expect(FONT_SIZE_PREFS).toEqual([
-      'webkit.webprefs.default_font_size',
-      'webkit.webprefs.default_fixed_font_size',
-      'webkit.webprefs.minimum_font_size'
-    ])
-    expect(FONT_SIZE_METHODS[MINIMUM_FONT_SIZE_PREF]).toEqual({
-      get: 'getMinimumFontSize',
-      set: 'setMinimumFontSize',
-      clear: 'clearMinimumFontSize',
-      event: 'onMinimumFontSizeChanged'
+    expect(normalizeFontDetails({ genericFamily: 'fixed', script: 'Arab' })).toEqual({
+      script: 'Arab',
+      genericFamily: 'fixed'
     })
-  })
-})
-
-describe('fontSettings argument shapes', () => {
-  it('takes genericFamily with an optional script that defaults to Zyyy', () => {
-    expect(normalizeFontDetails({ genericFamily: 'serif' })).toEqual({
-      genericFamily: 'serif',
-      script: 'Zyyy'
-    })
-    expect(normalizeFontDetails({ genericFamily: 'fixed', script: 'Hang' })).toEqual({
-      genericFamily: 'fixed',
-      script: 'Hang'
-    })
-    expect(() => normalizeFontDetails(undefined)).toThrow("Missing required argument 'details'.")
     expect(() => normalizeFontDetails({})).toThrow("Missing required property 'genericFamily'.")
     expect(() => normalizeFontDetails({ genericFamily: 'monospace' })).toThrow(
-      /Invalid value for 'genericFamily'/
+      "Invalid value for 'genericFamily': expected one of standard, sansserif, serif, fixed, cursive, fantasy, math."
     )
     expect(() => normalizeFontDetails({ genericFamily: 'serif', script: 'Latin' })).toThrow(
-      /Invalid value for 'script'/
+      "Invalid value for 'script'"
     )
+    expect(() => normalizeFontDetails('standard')).toThrow('Invalid details.')
   })
 
-  it("checks fontId as Chrome's IsValidFontName does", () => {
-    expect(isValidFontId('')).toBe(true)
-    expect(isValidFontId('Noto Sans CJK JP')).toBe(true)
-    expect(isValidFontId('Source-Code_Pro.v2+')).toBe(true)
-    expect(isValidFontId('游ゴシック')).toBe(true)
-    expect(isValidFontId('Arial;')).toBe(false)
-    expect(isValidFontId('"Arial"')).toBe(false)
-    expect(isValidFontId('Arial\n')).toBe(false)
-    expect(isValidFontId('a'.repeat(256))).toBe(true)
-    expect(isValidFontId('a'.repeat(257))).toBe(false)
-    expect(isValidFontId('游'.repeat(86))).toBe(false)
-    expect(normalizeSetFontDetails({ genericFamily: 'standard', fontId: 'Verdana' })).toEqual({
-      genericFamily: 'standard',
-      script: 'Zyyy',
-      fontId: 'Verdana'
+  it('requires a string fontId on setFont and trims it', () => {
+    expect(normalizeSetFontDetails({ genericFamily: 'serif', fontId: ' Georgia ' })).toEqual({
+      script: COMMON_SCRIPT,
+      genericFamily: 'serif',
+      fontId: 'Georgia'
     })
-    expect(normalizeSetFontDetails({ genericFamily: 'standard', fontId: '' }).fontId).toBe('')
-    expect(() => normalizeSetFontDetails({ genericFamily: 'standard' })).toThrow(
+    expect(() => normalizeSetFontDetails({ genericFamily: 'serif' })).toThrow(
       "Missing required property 'fontId'."
     )
-    expect(() => normalizeSetFontDetails({ genericFamily: 'standard', fontId: 12 })).toThrow(
-      "Invalid value for 'fontId': expected string."
-    )
-    expect(() => normalizeSetFontDetails({ genericFamily: 'standard', fontId: 'A,B' })).toThrow(
-      INVALID_FONT_ID_ERROR
+    expect(() => normalizeSetFontDetails({ genericFamily: 'serif', fontId: 3 })).toThrow(
+      "Invalid value for 'fontId': expected a string."
     )
   })
 
-  it("takes pixelSize as Chrome's schema does: a required integer, any sign", () => {
-    expect(normalizePixelSize({ pixelSize: 18 })).toBe(18)
-    expect(normalizePixelSize({ pixelSize: 0 })).toBe(0)
-    expect(() => normalizePixelSize({})).toThrow("Missing required property 'pixelSize'.")
-    expect(() => normalizePixelSize({ pixelSize: 16.5 })).toThrow(
-      "Invalid value for 'pixelSize': expected integer."
+  it('takes integer pixel sizes and brings them into the setting\u2019s range', () => {
+    expect(normalizeSizeDetails({ pixelSize: 20 }, 'size')).toBe(20)
+    expect(normalizeSizeDetails({ pixelSize: 3 }, 'size')).toBe(9)
+    expect(normalizeSizeDetails({ pixelSize: 300 }, 'size')).toBe(72)
+    expect(normalizeSizeDetails({ pixelSize: 0 }, 'minimumSize')).toBe(0)
+    expect(normalizeSizeDetails({ pixelSize: 4 }, 'minimumSize')).toBe(6)
+    expect(normalizeSizeDetails({ pixelSize: 40 }, 'minimumSize')).toBe(24)
+    expect(() => normalizeSizeDetails({}, 'size')).toThrow("Missing required property 'pixelSize'.")
+    expect(() => normalizeSizeDetails({ pixelSize: 12.5 }, 'size')).toThrow(
+      "Invalid value for 'pixelSize': expected an integer."
     )
-    expect(() => normalizePixelSize({ pixelSize: '16' })).toThrow(/expected integer/)
-    expect(() => normalizePixelSize(undefined)).toThrow("Missing required argument 'details'.")
   })
 
-  it('lets the unused details of the getters and clears be absent or an object', () => {
-    expect(() => normalizeUnusedDetails(undefined)).not.toThrow()
-    expect(() => normalizeUnusedDetails({})).not.toThrow()
-    expect(() => normalizeUnusedDetails([])).toThrow('Invalid details.')
-    expect(() => normalizeUnusedDetails('x')).toThrow('Invalid details.')
+  it('has Chrome\u2019s enums: 152 script codes with Zyyy, seven generic families, four levels', () => {
+    expect(SCRIPT_CODES).toHaveLength(152)
+    expect(SCRIPT_CODES.at(-1)).toBe('Zyyy')
+    expect(new Set(SCRIPT_CODES).size).toBe(152)
+    expect(CONSTANTS.ScriptCode.ARAB).toBe('Arab')
+    expect(CONSTANTS.ScriptCode.ZYYY).toBe('Zyyy')
+    expect(Object.keys(CONSTANTS.GenericFamily)).toEqual([
+      'STANDARD',
+      'SANSSERIF',
+      'SERIF',
+      'FIXED',
+      'CURSIVE',
+      'FANTASY',
+      'MATH'
+    ])
+    expect(CONSTANTS.LevelOfControl.CONTROLLED_BY_THIS_EXTENSION).toBe(
+      'controlled_by_this_extension'
+    )
+  })
+
+  it('is in the desktop table as a permission-gated namespace with the events and constants', () => {
+    const ns = API_SPEC.fontSettings
+    expect(ns.permissions).toEqual(['fontSettings'])
+    expect(Object.keys(ns.methods).sort()).toEqual(
+      [
+        'clearDefaultFixedFontSize',
+        'clearDefaultFontSize',
+        'clearFont',
+        'clearMinimumFontSize',
+        'getDefaultFixedFontSize',
+        'getDefaultFontSize',
+        'getFont',
+        'getFontList',
+        'getMinimumFontSize',
+        'setDefaultFixedFontSize',
+        'setDefaultFontSize',
+        'setFont',
+        'setMinimumFontSize'
+      ].sort()
+    )
+    expect(Object.keys(ns.events)).toEqual([
+      'onFontChanged',
+      'onDefaultFontSizeChanged',
+      'onDefaultFixedFontSizeChanged',
+      'onMinimumFontSizeChanged'
+    ])
+    expect(ns.constants).toBe(CONSTANTS)
   })
 })
 
-describe('fontSettings precedence and levelOfControl', () => {
-  const rank = rankOf(['newest', 'middle', 'oldest'])
+describe('fontSettings values', () => {
+  it('controls the common script of the four slotted families only', () => {
+    expect(controllableSlot({ script: 'Zyyy', genericFamily: 'standard' })).toBe('standard')
+    expect(controllableSlot({ script: 'Zyyy', genericFamily: 'sansserif' })).toBe('sansSerif')
+    expect(controllableSlot({ script: 'Zyyy', genericFamily: 'serif' })).toBe('serif')
+    expect(controllableSlot({ script: 'Zyyy', genericFamily: 'fixed' })).toBe('fixed')
+    expect(controllableSlot({ script: 'Zyyy', genericFamily: 'cursive' })).toBeNull()
+    expect(controllableSlot({ script: 'Latn', genericFamily: 'standard' })).toBeNull()
+  })
 
-  it('lets the most recently installed enabled extension control a pref', () => {
-    const values = new Map<string, string | number>([
-      ['oldest', 'Georgia'],
-      ['middle', 'Verdana']
+  it('sets, replaces and clears one extension\u2019s values, reporting whether anything moved', () => {
+    const values: FontValues = {}
+    expect(withFontValue(values, 'standard', 'Georgia')).toBe(true)
+    expect(withFontValue(values, 'standard', 'Georgia')).toBe(false)
+    expect(withFontValue(values, 'size', 20)).toBe(true)
+    expect(values).toEqual({ families: { standard: 'Georgia' }, size: 20 })
+    // Chrome's `setFont` with an empty name is a clear.
+    expect(withFontValue(values, 'standard', '')).toBe(true)
+    expect(withFontValue(values, 'standard', undefined)).toBe(false)
+    expect(values).toEqual({ size: 20 })
+    expect(hasFontValues(values)).toBe(true)
+    expect(withFontValue(values, 'size', undefined)).toBe(true)
+    expect(hasFontValues(values)).toBe(false)
+  })
+
+  it('brings a stored record into shape', () => {
+    expect(
+      normalizeFontValues({
+        families: { standard: ' Georgia ', fixed: '', cursive: 'Comic', serif: 7 },
+        size: 500,
+        minimumSize: 2.5,
+        extra: true
+      })
+    ).toEqual({ families: { standard: 'Georgia' }, size: 72 })
+    expect(normalizeFontValues(null)).toEqual({})
+    expect(normalizeFontValues({ minimumSize: 3 })).toEqual({ minimumSize: 6 })
+  })
+
+  it('lays the first-ranked extension\u2019s value over the user\u2019s, preference by preference', () => {
+    const user = { ...DEFAULT_FONT_SETTINGS, serif: 'Georgia', size: 18 }
+    const layers = new Map<string, FontValues>([
+      [OLD, { families: { standard: 'Arimo', serif: 'Tinos' }, size: 20, minimumSize: 12 }],
+      [NEW, { families: { standard: 'Cantarell' }, size: 24 }],
+      ['not-loaded', { families: { fixed: 'Cousine' } }]
     ])
-    expect(controllerOf(values, rank)).toEqual({ extensionId: 'middle', value: 'Verdana' })
-    values.set('newest', 'Arial')
-    expect(controllerOf(values, rank)).toEqual({ extensionId: 'newest', value: 'Arial' })
-    expect(controllerOf(values, rankOf(['oldest']))).toEqual({
-      extensionId: 'oldest',
-      value: 'Georgia'
+    const layered = layerFonts(user, layers, rank)
+    expect(layered.fonts).toEqual({
+      standard: 'Cantarell',
+      serif: 'Tinos',
+      sansSerif: null,
+      fixed: null,
+      size: 24,
+      minimumSize: 12
     })
-    expect(controllerOf(new Map(), rank)).toBeUndefined()
+    expect(layered.controllers).toEqual({
+      standard: NEW,
+      serif: OLD,
+      sansSerif: null,
+      fixed: null,
+      size: NEW,
+      minimumSize: OLD
+    })
+    expect(FONT_PREFS).toEqual(['standard', 'serif', 'sansSerif', 'fixed', 'size', 'minimumSize'])
+    // Nothing set: the user's setting stands, nobody controls anything.
+    const plain = layerFonts(user, new Map(), rank)
+    expect(plain.fonts).toEqual(user)
+    expect(Object.values(plain.controllers).every((c) => c === null)).toBe(true)
+    expect(sameLayered(plain, layerFonts(user, new Map(), rank))).toBe(true)
+    expect(sameLayered(plain, layered)).toBe(false)
   })
+})
 
-  it("answers Chrome's four levels: controlled, controllable when newer than the controller, else other", () => {
-    expect(levelOfControlFor(null, 'middle', rank)).toBe('controllable_by_this_extension')
-    expect(levelOfControlFor('middle', 'middle', rank)).toBe('controlled_by_this_extension')
-    expect(levelOfControlFor('middle', 'newest', rank)).toBe('controllable_by_this_extension')
-    expect(levelOfControlFor('middle', 'oldest', rank)).toBe('controlled_by_other_extensions')
-    expect(levelOfControlFor('middle', 'unknown', rank)).toBe('controlled_by_other_extensions')
-  })
+describe('fontSettings answers', () => {
+  const user = { ...DEFAULT_FONT_SETTINGS, serif: 'Georgia' }
+  const layered = layerFonts(
+    user,
+    new Map<string, FontValues>([[NEW, { families: { standard: 'Cantarell' }, size: 20 }]]),
+    rank
+  )
 
-  it('falls back to the browser value and reports it with the level per caller', () => {
-    const none = effectivePref<string>(new Map(), 'Times New Roman', rank)
-    expect(none).toEqual({ value: 'Times New Roman', controller: null })
-    expect(fontResult(none, 'oldest', rank)).toEqual({
-      fontId: 'Times New Roman',
+  it('answers getFont with the family the pages have and the caller\u2019s say over it', () => {
+    expect(
+      fontResult({ script: 'Zyyy', genericFamily: 'standard' }, layered, NEW, 'linux')
+    ).toEqual({
+      fontId: 'Cantarell',
+      levelOfControl: 'controlled_by_this_extension'
+    })
+    expect(
+      fontResult({ script: 'Zyyy', genericFamily: 'standard' }, layered, OLD, 'linux')
+    ).toEqual({
+      fontId: 'Cantarell',
+      levelOfControl: 'controlled_by_other_extensions'
+    })
+    expect(fontResult({ script: 'Zyyy', genericFamily: 'serif' }, layered, OLD, 'linux')).toEqual({
+      fontId: 'Georgia',
       levelOfControl: 'controllable_by_this_extension'
     })
-    const set = effectivePref<string>(new Map([['oldest', 'Georgia']]), 'Times New Roman', rank)
-    expect(set).toEqual({ value: 'Georgia', controller: 'oldest' })
-    expect(fontResult(set, 'oldest', rank).levelOfControl).toBe('controlled_by_this_extension')
-    expect(fontResult(set, 'newest', rank).levelOfControl).toBe('controllable_by_this_extension')
-    expect(sameEffective(set, { value: 'Georgia', controller: 'oldest' })).toBe(true)
-    expect(sameEffective(set, { value: 'Georgia', controller: null })).toBe(false)
-    const size = effectivePref<number>(new Map([['middle', 20]]), 16, rank)
-    expect(fontSizeResult(size, 'oldest', rank)).toEqual({
+    // A slot the user left to the platform reads as the engine's default for it.
+    expect(fontResult({ script: 'Zyyy', genericFamily: 'fixed' }, layered, OLD, 'darwin')).toEqual({
+      fontId: 'Menlo',
+      levelOfControl: 'controllable_by_this_extension'
+    })
+    expect(
+      fontResult({ script: 'Zyyy', genericFamily: 'sansserif' }, layered, OLD, 'win32')
+    ).toEqual({ fontId: 'Arial', levelOfControl: 'controllable_by_this_extension' })
+  })
+
+  it('answers not_controllable, with the empty name, for per-script and slotless families', () => {
+    expect(
+      fontResult({ script: 'Arab', genericFamily: 'standard' }, layered, NEW, 'linux')
+    ).toEqual({ fontId: '', levelOfControl: 'not_controllable' })
+    expect(fontResult({ script: 'Zyyy', genericFamily: 'cursive' }, layered, NEW, 'linux')).toEqual(
+      {
+        fontId: '',
+        levelOfControl: 'not_controllable'
+      }
+    )
+  })
+
+  it('answers the sizes: the size and the minimum controllable, the fixed size derived', () => {
+    expect(defaultFontSizeResult(layered, NEW)).toEqual({
+      pixelSize: 20,
+      levelOfControl: 'controlled_by_this_extension'
+    })
+    expect(defaultFontSizeResult(layered, OLD)).toEqual({
       pixelSize: 20,
       levelOfControl: 'controlled_by_other_extensions'
     })
-  })
-
-  it('builds onFontChanged details with the script always named', () => {
-    const effective = effectivePref<string>(new Map([['newest', 'Arial']]), 'Times', rank)
-    expect(
-      fontChangedDetails({ genericFamily: 'standard', script: 'Zyyy' }, effective, 'middle', rank)
-    ).toEqual({
-      fontId: 'Arial',
-      levelOfControl: 'controlled_by_other_extensions',
-      script: 'Zyyy',
-      genericFamily: 'standard'
+    expect(defaultFixedFontSizeResult(layered)).toEqual({
+      pixelSize: 16,
+      levelOfControl: 'not_controllable'
+    })
+    expect(minimumFontSizeResult(layered, OLD)).toEqual({
+      pixelSize: 0,
+      levelOfControl: 'controllable_by_this_extension'
     })
   })
-})
 
-describe('fontSettings font list and persistence', () => {
-  it('lists distinct trimmed families in code point order, hidden ones left out', () => {
-    expect(fontListOf(['Verdana', ' Arial ', 'arial', '.SF NS', '', 'Arial', 'Ébène'])).toEqual([
-      { fontId: 'Arial', displayName: 'Arial' },
-      { fontId: 'Verdana', displayName: 'Verdana' },
-      { fontId: 'arial', displayName: 'arial' },
-      { fontId: 'Ébène', displayName: 'Ébène' }
+  it('lists the installed families once each, sorted by name', () => {
+    expect(familyList(['Tinos', ' Arimo', 'cantarell', 'Arimo', '', 'DejaVu Sans'])).toEqual([
+      { fontId: 'Arimo', displayName: 'Arimo' },
+      { fontId: 'cantarell', displayName: 'cantarell' },
+      { fontId: 'DejaVu Sans', displayName: 'DejaVu Sans' },
+      { fontId: 'Tinos', displayName: 'Tinos' }
     ])
-  })
-
-  it('reads persisted values back, dropping keys and values that do not fit', () => {
-    expect(
-      normalizeFontPrefValues({
-        'webkit.webprefs.fonts.standard.Zyyy': 'Verdana',
-        'webkit.webprefs.fonts.serif.Jpan': 'Bad;Name',
-        'webkit.webprefs.fonts.serif.Zzzz': 'Georgia',
-        'webkit.webprefs.default_font_size': 18,
-        'webkit.webprefs.minimum_font_size': 12.5,
-        other: 'x'
-      })
-    ).toEqual({
-      'webkit.webprefs.fonts.standard.Zyyy': 'Verdana',
-      'webkit.webprefs.default_font_size': 18
-    })
-    expect(normalizeFontPrefValues(null)).toEqual({})
-    expect(normalizeFontPrefValues([1])).toEqual({})
   })
 })

@@ -4137,6 +4137,20 @@
     right: 2px;
   }
   /*
+   * A header control that is a word rather than a glyph (the app menu's edit pose's Done, TB-22):
+   * the same 44 box and press fill, as wide as its word at 12 of padding, in the accent ink at
+   * the button weight – the sheet's one text control, where a check glyph would read as a
+   * checked state.
+   */
+  .zen-sheet-header-control[data-text] {
+    width: auto;
+    padding: 0 12px;
+    color: var(--v2-accent);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-button);
+    line-height: var(--v2-line-body);
+  }
+  /*
    * A link's or an image's menu opens on what was held (PUI-18; Chrome for Android's header):
    * a §10.3 two-line row in the header's place, left-aligned in the 16 gutter – the favicon's
    * 20 box (or the image itself at 40, the card radius) at a 12 gap, the title 15/600 over the
@@ -4373,6 +4387,61 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     stroke-width: var(--v2-icon-stroke);
+  }
+  /*
+   * The app menu's edit pose (Edge's Change menu, TB-22; MOT-23; `MenuEditor.tsx`): the same
+   * row and rows, held and dragged. The one in the hand stands over its neighbours on its cell
+   * (the z-index) and lifts as v2 §9.4's card does – on the panel colour, so the rows it passes
+   * do not show through, at level 2's shadow and 90 % opacity; the 1.02 scale is the drag's own
+   * transform (`menuReorder.ts`), eased over 120 ms at the hold – with the row's corners
+   * rounded to the control radius while it is up. The neighbours glide on the FLIP tracker's
+   * transforms. A row carries a trailing grip in the deemphasised ink, as the bar editor's rows
+   * do. The card in the hand is ONE look from the hold on: the press fill – the sign the
+   * finger's press registered – goes at the lift (the icon card's unlayered press rule beside
+   * `.zen-v2-icon-button` yields to the panel there). A hairline the draft leaves beside another
+   * or at an end collapses to a slot of no height, the way the core tidies the same hairline
+   * away when it composes the menu.
+   *
+   * The list row's card is the row's full width, and 1.02 of the sheet's width overhangs the
+   * body's scroll box by 4 on each side, where the box clips it: so the row's card is painted on
+   * a pseudo-element inset 4 each side – at the scale its edges land on the row's edges – and the
+   * row's own box stays clear. The icon card is 44 wide inside the row's 16 gutter: its 1.02
+   * paints on the button itself.
+   */
+  .zen-menu-edit li {
+    position: relative;
+  }
+  .zen-menu-edit li[data-held] {
+    z-index: 1;
+  }
+  .zen-menu-edit li[data-held] > .zen-menu-edit-item {
+    position: relative;
+    border-radius: 8px;
+    background: var(--v2-panel);
+    box-shadow: var(--zen-shadow-2);
+    opacity: 0.9;
+  }
+  .zen-menu-edit li[data-held] > .zen-sheet-item.zen-menu-edit-item {
+    background: transparent;
+    box-shadow: none;
+  }
+  .zen-menu-edit li[data-held] > .zen-sheet-item.zen-menu-edit-item::before {
+    content: '';
+    position: absolute;
+    inset: 0 4px;
+    z-index: -1;
+    border-radius: 8px;
+    background: var(--v2-panel);
+    box-shadow: var(--zen-shadow-2);
+  }
+  .zen-menu-edit-grip {
+    color: var(--v2-text-deemphasized);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  .zen-menu-edit .zen-sheet-sep[data-collapsed] {
+    height: 0;
+    margin-top: 0;
+    margin-bottom: 0;
   }
   /*
    * The stateful bookmark star (`BarGlyphs.tsx`), the menu row's and the bar's optional Bookmark
@@ -9466,6 +9535,16 @@
     background: var(--v2-fill);
   }
 }
+/*
+ * The app menu's edit pose (§9.34 modifier; `MenuEditor.tsx`, `.zen-menu-edit` in the components
+ * layer): the icon card in the hand is one look from the hold on – the panel ground under the
+ * level 2 shadow – so the press fill above, which the still finger would otherwise keep on the
+ * lifted card until its first move, yields to the panel while the card's cell is held. Unlayered
+ * as the press rule is, else the layer order would let the fill through.
+ */
+.zen-menu-edit li[data-held] > .zen-v2-icon-button.zen-menu-edit-item:active:not(:disabled) {
+  background: var(--v2-panel);
+}
 /* The print preview's paging pill steps (§9.34 modifier): 28 inside a 32 pill with 2 of
    padding, so their fill is the pill's radius less the padding – round (§10, inner = outer −
    padding). */
@@ -12321,7 +12400,10 @@
  * pointer over any of it. Selection is a mode (§9.6, §10.1): no slot is held for a checkbox at
  * rest; while anything is picked every row leads with the checkbox column (`.zen-page-row-check`,
  * the favicons moving once), and a picked row (`data-selected`) sits on `--v2-selected`, under
- * the pointer too, its checkbox filled in the accent by the primitive.
+ * the pointer too, its checkbox filled in the accent by the primitive. A pick is a class flip
+ * on the row that stands (`data-selected`, `checked`): no box of the row moves. The row's parts
+ * are `gridcell`s for the reader (§9.22) on wrappers that draw no box of their own
+ * (`.zen-page-row-cell`), so the geometry is the row's alone.
  */
 .zen-page-row {
   gap: 12px;
@@ -12329,6 +12411,9 @@
 .zen-page-row[data-selected],
 .zen-page-row[data-selected]:hover {
   background: var(--v2-selected);
+}
+.zen-page-row-cell {
+  display: contents;
 }
 .zen-page-row-check {
   width: var(--v2-checkbox);

@@ -1,24 +1,22 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import {
-  ArrowRight,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  Globe,
-  House,
-  Info,
-  Mail,
-  Phone
-} from 'lucide-react'
-import type { MenuDescriptor, MenuGlyph, MenuHeader, MenuItemDescriptor } from '@shared/types'
+import { Check, ChevronLeft, ChevronRight, Globe, Mail, Phone } from 'lucide-react'
+import { applyMenuOrder, isDefaultMenuOrder } from '@shared/menuOrder'
+import type { MenuDescriptor, MenuHeader, MenuItemDescriptor } from '@shared/types'
 import { useMenuAsList } from '@renderer/lib/accessibilityState'
 import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { APP_MENU_BUTTON } from '@renderer/lib/mediaHub'
+import {
+  isChangeMenuItem,
+  joinMenuSections,
+  menuSectionsOrder,
+  sameMenuOrder,
+  splitMenuSections,
+  type MenuSections
+} from '@renderer/lib/menuEdit'
 import { isIconRow } from '@renderer/lib/menuIconRow'
 import { handleMenuKey } from '@renderer/lib/menuKeys'
 import {
@@ -48,11 +46,12 @@ import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { DeviceGlyph, anyDeviceKind } from '../DeviceGlyph'
 import { GroupGlyph } from '../GroupGlyph'
-import { ReloadStopGlyph, StarGlyph } from '../phone/BarGlyphs'
 import { RowFavicon } from '../phone/PhoneList'
 import { useLongPress } from '../phone/useLongPress'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { TabletMenu } from '../tablet/TabletMenu'
+import { MenuEditor } from './MenuEditor'
+import { MenuItemGlyph } from './MenuGlyphView'
 
 /**
  * Renders a `menu.show` descriptor for hosts without native popup menus. A phone gets a bottom
@@ -113,41 +112,120 @@ interface MenuNav {
  * list of §10.3 rows, the glyph leading and the label the visible text, so every action is
  * one full-width stop with its name under the finger and its label in the enlarged type. The
  * pose follows the state live while the sheet stands.
+ *
+ * The app menu's root has a third pose, the edit mode (Edge's Change menu, TB-22): its last row,
+ * Change Menu, swaps the body for `MenuEditor` in place – the same items, held and dragged into
+ * the user's order, a Reset row – under the title "Change Menu" and a Done control. The order
+ * edited is a draft here (`MenuDraft`); the pose ending saves it – Done, the back gesture or
+ * Escape, and the sheet's own dismissal alike, so no way out loses a reorder – as
+ * `settings.menuOrder` (the default order saves as the empty list, which the core keeps as the
+ * setting's value and the peers read as the reset), and the normal pose shows the draft's order
+ * from then on, ahead of the core's next composition. A pose that ends on the order last saved
+ * writes nothing (`sameMenuOrder`), so the empty list and an absent setting never trade places
+ * over an opening that changed nothing.
  */
 function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const [nav, setNav] = useState<MenuNav>({ path: [], direction: 0 })
   const { path } = nav
-  const title = path.length ? path[path.length - 1].label : (menu.title ?? sourceTitle(menu.source))
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<MenuDraft | null>(null)
+  // The root as the sheet shows it: the draft's order once there is one for these items.
+  const sections = useMemo(
+    () => (draft?.source === menu.items ? draft.sections : splitMenuSections(menu.items)),
+    [draft, menu.items]
+  )
+  const items = useMemo(
+    () => (draft?.source === menu.items ? joinMenuSections(sections) : menu.items),
+    [draft, menu.items, sections]
+  )
+  const title = editing
+    ? 'Change Menu'
+    : path.length
+      ? path[path.length - 1].label
+      : (menu.title ?? sourceTitle(menu.source))
   const groups = useMemo(
-    () => groupItems(path.length ? (path[path.length - 1].submenu ?? []) : menu.items),
-    [path, menu.items]
+    () => groupItems(path.length ? (path[path.length - 1].submenu ?? []) : items),
+    [path, items]
   )
   const iconsAsList = useMenuAsList()
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
 
+  const keyOf = (item: MenuItemDescriptor): string | undefined => item.key
+  const defaultOrder = menu.defaultOrder
+  const atDefault = (s: MenuSections): boolean =>
+    defaultOrder !== undefined &&
+    isDefaultMenuOrder(s.row, keyOf, defaultOrder) &&
+    isDefaultMenuOrder(s.list, keyOf, defaultOrder)
+  const beginEditing = (): void => {
+    setDraft((d) => d ?? { source: menu.items, sections, saved: menu.items })
+    setEditing(true)
+  }
+  const changeDraft = (next: MenuSections): void =>
+    setDraft((d) => ({ source: menu.items, saved: d?.saved ?? menu.items, sections: next }))
+  const resetDraft = (): void => {
+    if (!defaultOrder) return
+    changeDraft({
+      ...sections,
+      row: applyMenuOrder(sections.row, keyOf, defaultOrder),
+      list: applyMenuOrder(sections.list, keyOf, defaultOrder)
+    })
+  }
+  /** The pose ends: what the draft says is saved, once, if it differs from what was saved last. */
+  const saveDraft = (): void => {
+    if (!draft) return
+    const shown = joinMenuSections(draft.sections)
+    if (sameMenuOrder(shown, draft.saved)) return
+    setDraft({ ...draft, saved: shown })
+    run('settings.update', {
+      menuOrder: atDefault(draft.sections) ? [] : menuSectionsOrder(draft.sections)
+    })
+  }
+  const finishEditing = (): void => {
+    saveDraft()
+    setEditing(false)
+  }
+  const latest = useRef({ saveDraft })
+  useLayoutEffect(() => {
+    latest.current = { saveDraft }
+  })
+
   // The system back gesture drives the sheet's own dismissal: the finger pulls it down, commit
   // slides it away, cancel springs it back; the back button and Escape slide it away too. On
   // its way out with its request gone (the chassis's leave) the sheet absorbs the gesture and
-  // the menu lets Escape by.
+  // the menu lets Escape by. In the edit pose the gesture ends the pose instead (the sheet stays
+  // where it is while the finger is down), as Escape does.
   useBackSurface({
     name: 'menu',
-    onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
-    onCancel: () => sheet.current?.cancelBack()
+    onProgress: (progress) => {
+      if (!editing) sheet.current?.backProgress(progress)
+    },
+    onCommit: () => {
+      if (editing) finishEditing()
+      else sheet.current?.commitBack()
+    },
+    onCancel: () => {
+      if (!editing) sheet.current?.cancelBack()
+    }
   })
-  useEscape(() => sheet.current?.dismiss(), useSheetLeave()?.leaving)
+  useEscape(() => {
+    if (editing) finishEditing()
+    else sheet.current?.dismiss()
+  }, useSheetLeave()?.leaving)
 
   return (
     <BottomSheet
       ref={sheet}
-      onDismissed={() => closeMenu()}
-      contentKey={`${menu.id}:${path.map((item) => item.id).join('/')}`}
+      onDismissed={() => {
+        latest.current.saveDraft()
+        closeMenu()
+      }}
+      contentKey={`${menu.id}:${editing ? 'edit' : path.map((item) => item.id).join('/')}`}
       handleLabel="Resize menu"
       labelledBy={titleId}
       header={
         <>
-          {path.length > 0 && (
+          {path.length > 0 && !editing && (
             <button
               type="button"
               className="zen-sheet-header-control"
@@ -158,92 +236,133 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
               <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden />
             </button>
           )}
-          {menu.header && path.length === 0 ? (
+          {menu.header && path.length === 0 && !editing ? (
             <LinkHeader header={menu.header} titleId={titleId} />
           ) : (
             <h2 id={titleId} className="zen-sheet-title">
               {title}
             </h2>
           )}
+          {editing && (
+            <button
+              type="button"
+              className="zen-sheet-header-control"
+              data-side="trailing"
+              data-text
+              data-menu-done
+              onClick={finishEditing}
+            >
+              Done
+            </button>
+          )}
         </>
       }
     >
-      <div
-        key={path.length}
-        className={cn(
-          'flex flex-col pb-2',
-          nav.direction > 0 && 'zen-drawer-right',
-          nav.direction < 0 && 'zen-drawer-left'
-        )}
-      >
-        {groups.map((group, index) =>
-          isIconRow(group) ? (
-            <ul
-              key={index}
-              className={iconsAsList ? 'zen-menu-icon-list' : 'zen-menu-icon-row'}
-              aria-label="Page actions"
-            >
-              {group.map((item) => (
-                <li key={item.id} className={iconsAsList ? undefined : 'flex'}>
-                  <IconRowButton
-                    item={item}
-                    list={iconsAsList}
-                    onPick={() => sheet.current?.dismiss(() => pickMenuItem(item.id))}
-                  />
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <ul key={index} className="flex flex-col">
-              {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
-              {group.map((item) => (
-                <li key={item.id}>
-                  {item.note ? (
-                    // An empty state's sentence (§9.17): a row of the group, not a command.
-                    <p className="zen-sheet-note">{item.label}</p>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={!item.enabled}
-                      className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
-                      // A checked row draws a check; the tree carries the state (A11Y-01), as the
-                      // extensions sheet's rows do.
-                      role={
-                        item.type === 'checkbox'
-                          ? 'menuitemcheckbox'
-                          : item.type === 'radio'
-                            ? 'menuitemradio'
+      {editing ? (
+        <div key="edit" className="zen-animate-fade">
+          <MenuEditor
+            sections={sections}
+            onChange={changeDraft}
+            onReset={resetDraft}
+            canReset={defaultOrder !== undefined && !atDefault(sections)}
+          />
+        </div>
+      ) : (
+        <div
+          key={path.length}
+          className={cn(
+            'flex flex-col pb-2',
+            nav.direction > 0 && 'zen-drawer-right',
+            nav.direction < 0 && 'zen-drawer-left',
+            nav.direction === 0 && draft !== null && 'zen-animate-fade'
+          )}
+        >
+          {groups.map((group, index) =>
+            isIconRow(group) ? (
+              <ul
+                key={index}
+                className={iconsAsList ? 'zen-menu-icon-list' : 'zen-menu-icon-row'}
+                aria-label="Page actions"
+              >
+                {group.map((item) => (
+                  <li key={item.id} className={iconsAsList ? undefined : 'flex'}>
+                    <IconRowButton
+                      item={item}
+                      list={iconsAsList}
+                      onPick={() => sheet.current?.dismiss(() => pickMenuItem(item.id))}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <ul key={index} className="flex flex-col">
+                {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
+                {group.map((item) => (
+                  <li key={item.id}>
+                    {item.note ? (
+                      // An empty state's sentence (§9.17): a row of the group, not a command.
+                      <p className="zen-sheet-note">{item.label}</p>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={!item.enabled}
+                        className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
+                        // A checked row draws a check; the tree carries the state (A11Y-01), as the
+                        // extensions sheet's rows do.
+                        role={
+                          item.type === 'checkbox'
+                            ? 'menuitemcheckbox'
+                            : item.type === 'radio'
+                              ? 'menuitemradio'
+                              : undefined
+                        }
+                        aria-checked={
+                          item.type === 'checkbox' || item.type === 'radio'
+                            ? item.checked
                             : undefined
-                      }
-                      aria-checked={
-                        item.type === 'checkbox' || item.type === 'radio' ? item.checked : undefined
-                      }
-                      onClick={() => {
-                        if (item.submenu) setNav((n) => ({ path: [...n.path, item], direction: 1 }))
-                        else sheet.current?.dismiss(() => pickMenuItem(item.id))
-                      }}
-                    >
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                        <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
-                      )}
-                      {item.submenu && (
-                        <ChevronRight
-                          className="zen-sheet-item-secondary h-5 w-5 shrink-0"
-                          strokeWidth={1.75}
-                          aria-hidden
-                        />
-                      )}
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )
-        )}
-      </div>
+                        }
+                        onClick={() => {
+                          // The Change Menu row opens the edit pose in place: the sheet stays.
+                          if (isChangeMenuItem(item)) beginEditing()
+                          else if (item.submenu)
+                            setNav((n) => ({ path: [...n.path, item], direction: 1 }))
+                          else sheet.current?.dismiss(() => pickMenuItem(item.id))
+                        }}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                        {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
+                          <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+                        )}
+                        {item.submenu && (
+                          <ChevronRight
+                            className="zen-sheet-item-secondary h-5 w-5 shrink-0"
+                            strokeWidth={1.75}
+                            aria-hidden
+                          />
+                        )}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )
+          )}
+        </div>
+      )}
     </BottomSheet>
   )
+}
+
+/**
+ * The order the edit pose works on: the sections cut from `source` (the descriptor's items the
+ * draft belongs to – a fresh descriptor starts afresh), and the root as it stood at the last
+ * save (the descriptor's own to begin with), which a pose ending on the same order writes
+ * nothing over.
+ */
+interface MenuDraft {
+  source: MenuItemDescriptor[]
+  sections: MenuSections
+  saved: MenuItemDescriptor[]
 }
 
 // ---------------------------------------------------------------------------
@@ -341,12 +460,7 @@ function IconRowButton({
 }): JSX.Element {
   const star = item.glyph === 'star'
   const [filled, setFilled] = useState(item.checked)
-  const glyph =
-    item.glyph === 'star' ? (
-      <StarGlyph filled={filled} />
-    ) : (
-      <MenuGlyphView glyph={item.glyph ?? 'info'} />
-    )
+  const glyph = <MenuItemGlyph glyph={item.glyph} filled={filled} />
   const pick = (): void => {
     if (star && !filled) setFilled(true)
     onPick()
@@ -380,23 +494,6 @@ function IconRowButton({
       {glyph}
     </button>
   )
-}
-
-/** The row's still glyphs, the bar's own drawings for the same actions (`barItems.tsx`). */
-function MenuGlyphView({ glyph }: { glyph: Exclude<MenuGlyph, 'star'> }): JSX.Element {
-  switch (glyph) {
-    case 'forward':
-      return <ArrowRight aria-hidden />
-    case 'home':
-      return <House aria-hidden />
-    case 'download':
-      return <Download aria-hidden />
-    case 'info':
-      return <Info aria-hidden />
-    case 'reload':
-    case 'stop':
-      return <ReloadStopGlyph loading={glyph === 'stop'} />
-  }
 }
 
 /** Rows between separators form a group; the separators themselves are not drawn. */

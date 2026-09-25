@@ -1,23 +1,55 @@
 /**
- * `chrome.fontSettings` without the engine: the generic families and script codes it names,
- * what each method accepts (Chrome's own checks and error strings), how the fonts and sizes
- * several extensions set layer over the user's settings, and the `levelOfControl` each
- * extension sees. The host owns the values' persistence, the user's settings, the platform
- * defaults and the application to pages; everything here is pure.
+ * `chrome.fontSettings`, the pure part: Chrome's shape (the `ScriptCode` and `GenericFamily`
+ * enums, the `details` of every member, the `levelOfControl` answers) laid over Zenium's page
+ * fonts (`shared/fonts.ts`, CT-25). Chrome keeps one font preference per generic family and
+ * script (`webkit.webprefs.fonts.<family>.<script>`) plus three sizes; the extension layer of
+ * each preference (`ExtensionPrefValueMap`) sits over the user's value, the most recently
+ * installed extension first. Zenium's setting has one family per slot for every script
+ * (`standard`, `serif`, `sansSerif`, `fixed`), one size and one minimum size; the fixed-width
+ * size follows the size (`monospaceFontSize`), and `cursive`, `fantasy` and `math` have no slot.
  *
- * Chrome's model (`font_settings_api.cc`): every extension holding `fontSettings` may set every
- * pref; the prefs are `webkit.webprefs.fonts.<genericFamily>.<script>` (the script `Zyyy`, the
- * common script, when a call names none), `webkit.webprefs.default_font_size`,
- * `webkit.webprefs.default_fixed_font_size` and `webkit.webprefs.minimum_font_size`. When
- * several extensions set one pref, the most recently installed enabled extension's value wins
- * (`ExtensionPrefValueMap`); the user's own setting stays untouched underneath and returns
- * when the last extension's value is cleared or the extension goes.
+ * So the layer is honest about what it holds: the common script's (`Zyyy`, Chrome's "Default")
+ * family of the four slotted generic families and the two sizes are controllable and take an
+ * extension's value; a per-script family, the three slotless families and the fixed-width size
+ * answer with what the page has and `not_controllable`, and a `set` or `clear` on them is
+ * accepted without effect (the way Chrome answers a preference it will not hand over). The host
+ * (`main/platform/extensionApi/fontSettings.ts`) keeps the values, ranks them, and hands the
+ * layered setting to the pages.
  */
+import {
+  electronFontDefaults,
+  FONT_FAMILY_SLOTS,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  MINIMUM_FONT_SIZE_MAX,
+  monospaceFontSize,
+  type FontFamilySlot,
+  type PageFontSettings
+} from '../../../shared/fonts'
+import { levelOfControlFor, type LevelOfControl } from './privacy'
 
-import type { LevelOfControl } from './privacy'
+export const FONT_SETTINGS_PERMISSION = 'fontSettings'
+export const FONT_SETTINGS_PERMISSION_ERROR =
+  "You do not have permission to access the font settings. Be sure to declare the 'fontSettings' permission in your manifest."
 
-export type { LevelOfControl }
+/** Chrome's `ScriptCode` for text of no particular script: its "Default" font. */
+export const COMMON_SCRIPT = 'Zyyy'
 
+/** Chrome's `fontSettings.ScriptCode` enum (font_settings.json): ISO 15924 codes, `Zyyy` last. */
+export const SCRIPT_CODES: readonly string[] = (
+  'Afak Arab Armi Armn Avst Bali Bamu Bass Batk Beng Blis Bopo Brah Brai Bugi Buhd Cakm Cans ' +
+  'Cari Cham Cher Cirt Copt Cprt Cyrl Cyrs Deva Dsrt Dupl Egyd Egyh Egyp Elba Ethi Geok Geor ' +
+  'Glag Goth Gran Grek Gujr Guru Hang Hani Hano Hans Hant Hebr Hluw Hmng Hung Inds Ital Java ' +
+  'Jpan Jurc Kali Khar Khmr Khoj Knda Kpel Kthi Lana Laoo Latf Latg Latn Lepc Limb Lina Linb ' +
+  'Lisu Loma Lyci Lydi Mand Mani Maya Mend Merc Mero Mlym Mong Moon Mroo Mtei Mymr Narb Nbat ' +
+  'Nkgb Nkoo Nshu Ogam Olck Orkh Orya Osma Palm Perm Phag Phli Phlp Phlv Phnx Plrd Prti Rjng ' +
+  'Roro Runr Samr Sara Sarb Saur Sgnw Shaw Shrd Sind Sinh Sora Sund Sylo Syrc Syre Syrj Syrn ' +
+  'Tagb Takr Tale Talu Taml Tang Tavt Telu Teng Tfng Tglg Thaa Thai Tibt Tirh Ugar Vaii Visp ' +
+  'Wara Wole Xpeo Xsux Yiii Zmth Zsym ' +
+  COMMON_SCRIPT
+).split(' ')
+
+/** Chrome's `fontSettings.GenericFamily` enum. */
 export const GENERIC_FAMILIES = [
   'standard',
   'sansserif',
@@ -27,570 +59,307 @@ export const GENERIC_FAMILIES = [
   'fantasy',
   'math'
 ] as const
-
 export type GenericFamily = (typeof GENERIC_FAMILIES)[number]
 
-/** Chrome's `ScriptCode` enum, in its schema's order; `Zyyy` is the common (global) script. */
-export const SCRIPT_CODES = [
-  'Afak',
-  'Arab',
-  'Armi',
-  'Armn',
-  'Avst',
-  'Bali',
-  'Bamu',
-  'Bass',
-  'Batk',
-  'Beng',
-  'Blis',
-  'Bopo',
-  'Brah',
-  'Brai',
-  'Bugi',
-  'Buhd',
-  'Cakm',
-  'Cans',
-  'Cari',
-  'Cham',
-  'Cher',
-  'Cirt',
-  'Copt',
-  'Cprt',
-  'Cyrl',
-  'Cyrs',
-  'Deva',
-  'Dsrt',
-  'Dupl',
-  'Egyd',
-  'Egyh',
-  'Egyp',
-  'Elba',
-  'Ethi',
-  'Geor',
-  'Geok',
-  'Glag',
-  'Goth',
-  'Gran',
-  'Grek',
-  'Gujr',
-  'Guru',
-  'Hang',
-  'Hani',
-  'Hano',
-  'Hans',
-  'Hant',
-  'Hebr',
-  'Hluw',
-  'Hmng',
-  'Hung',
-  'Inds',
-  'Ital',
-  'Java',
-  'Jpan',
-  'Jurc',
-  'Kali',
-  'Khar',
-  'Khmr',
-  'Khoj',
-  'Knda',
-  'Kpel',
-  'Kthi',
-  'Lana',
-  'Laoo',
-  'Latf',
-  'Latg',
-  'Latn',
-  'Lepc',
-  'Limb',
-  'Lina',
-  'Linb',
-  'Lisu',
-  'Loma',
-  'Lyci',
-  'Lydi',
-  'Mand',
-  'Mani',
-  'Maya',
-  'Mend',
-  'Merc',
-  'Mero',
-  'Mlym',
-  'Moon',
-  'Mong',
-  'Mroo',
-  'Mtei',
-  'Mymr',
-  'Narb',
-  'Nbat',
-  'Nkgb',
-  'Nkoo',
-  'Nshu',
-  'Ogam',
-  'Olck',
-  'Orkh',
-  'Orya',
-  'Osma',
-  'Palm',
-  'Perm',
-  'Phag',
-  'Phli',
-  'Phlp',
-  'Phlv',
-  'Phnx',
-  'Plrd',
-  'Prti',
-  'Rjng',
-  'Roro',
-  'Runr',
-  'Samr',
-  'Sara',
-  'Sarb',
-  'Saur',
-  'Sgnw',
-  'Shaw',
-  'Shrd',
-  'Sind',
-  'Sinh',
-  'Sora',
-  'Sund',
-  'Sylo',
-  'Syrc',
-  'Syre',
-  'Syrj',
-  'Syrn',
-  'Tagb',
-  'Takr',
-  'Tale',
-  'Talu',
-  'Taml',
-  'Tang',
-  'Tavt',
-  'Telu',
-  'Teng',
-  'Tfng',
-  'Tglg',
-  'Thaa',
-  'Thai',
-  'Tibt',
-  'Tirh',
-  'Ugar',
-  'Vaii',
-  'Visp',
-  'Wara',
-  'Wole',
-  'Xpeo',
-  'Xsux',
-  'Yiii',
-  'Zmth',
-  'Zsym',
-  'Zyyy'
-] as const
-
-export type ScriptCode = (typeof SCRIPT_CODES)[number]
-
-export const COMMON_SCRIPT: ScriptCode = 'Zyyy'
-
-export const LEVELS_OF_CONTROL: readonly LevelOfControl[] = [
-  'not_controllable',
-  'controlled_by_other_extensions',
-  'controllable_by_this_extension',
-  'controlled_by_this_extension'
-]
-
-/** Every method of the namespace, in Chrome's schema order. */
-export const FONT_SETTINGS_METHODS = [
-  'clearFont',
-  'getFont',
-  'setFont',
-  'getFontList',
-  'clearDefaultFontSize',
-  'getDefaultFontSize',
-  'setDefaultFontSize',
-  'clearDefaultFixedFontSize',
-  'getDefaultFixedFontSize',
-  'setDefaultFixedFontSize',
-  'clearMinimumFontSize',
-  'getMinimumFontSize',
-  'setMinimumFontSize'
-] as const
-
-export const FONT_SETTINGS_EVENTS = [
-  'onFontChanged',
-  'onDefaultFontSizeChanged',
-  'onDefaultFixedFontSizeChanged',
-  'onMinimumFontSizeChanged'
-] as const
-
-/** The namespace's enum objects as Chrome exposes them (`chrome.fontSettings.ScriptCode.ZYYY`). */
-export function fontSettingsConstants(): Record<string, Record<string, string>> {
-  const upper = (values: readonly string[]): Record<string, string> =>
-    Object.fromEntries(values.map((v) => [v.toUpperCase(), v]))
-  return {
-    ScriptCode: upper(SCRIPT_CODES),
-    GenericFamily: upper(GENERIC_FAMILIES),
-    LevelOfControl: upper(LEVELS_OF_CONTROL)
-  }
+/** The setting's slot behind a generic family; the slotless three are the engine's own. */
+export const FAMILY_SLOTS: Readonly<Partial<Record<GenericFamily, FontFamilySlot>>> = {
+  standard: 'standard',
+  sansserif: 'sansSerif',
+  serif: 'serif',
+  fixed: 'fixed'
 }
 
-export function isGenericFamily(value: unknown): value is GenericFamily {
-  return typeof value === 'string' && (GENERIC_FAMILIES as readonly string[]).includes(value)
+/** The generic family a slot answers for (`onFontChanged` names the family, not the slot). */
+export const SLOT_FAMILIES: Readonly<Record<FontFamilySlot, GenericFamily>> = {
+  standard: 'standard',
+  sansSerif: 'sansserif',
+  serif: 'serif',
+  fixed: 'fixed'
 }
 
-export function isScriptCode(value: unknown): value is ScriptCode {
-  return typeof value === 'string' && (SCRIPT_CODES as readonly string[]).includes(value)
+/** The preferences an extension may control: the four slotted families and the two sizes. */
+export type FontPref = FontFamilySlot | 'size' | 'minimumSize'
+export const FONT_PREFS: readonly FontPref[] = [...FONT_FAMILY_SLOTS, 'size', 'minimumSize']
+
+/** One extension's values (the regular scope; persisted). */
+export interface FontValues {
+  families?: Partial<Record<FontFamilySlot, string>>
+  size?: number
+  minimumSize?: number
 }
 
-// ---------------------------------------------------------------------------
-// Pref keys
-// ---------------------------------------------------------------------------
-
-export const FONT_PREF_PREFIX = 'webkit.webprefs.fonts.'
-export const DEFAULT_FONT_SIZE_PREF = 'webkit.webprefs.default_font_size'
-export const DEFAULT_FIXED_FONT_SIZE_PREF = 'webkit.webprefs.default_fixed_font_size'
-export const MINIMUM_FONT_SIZE_PREF = 'webkit.webprefs.minimum_font_size'
-
-export type FontSizePref =
-  | typeof DEFAULT_FONT_SIZE_PREF
-  | typeof DEFAULT_FIXED_FONT_SIZE_PREF
-  | typeof MINIMUM_FONT_SIZE_PREF
-
-export const FONT_SIZE_PREFS: readonly FontSizePref[] = [
-  DEFAULT_FONT_SIZE_PREF,
-  DEFAULT_FIXED_FONT_SIZE_PREF,
-  MINIMUM_FONT_SIZE_PREF
-]
-
-/** The three size prefs' methods and events, by the pref they act on. */
-export const FONT_SIZE_METHODS: Readonly<
-  Record<FontSizePref, { get: string; set: string; clear: string; event: string }>
-> = {
-  [DEFAULT_FONT_SIZE_PREF]: {
-    get: 'getDefaultFontSize',
-    set: 'setDefaultFontSize',
-    clear: 'clearDefaultFontSize',
-    event: 'onDefaultFontSizeChanged'
-  },
-  [DEFAULT_FIXED_FONT_SIZE_PREF]: {
-    get: 'getDefaultFixedFontSize',
-    set: 'setDefaultFixedFontSize',
-    clear: 'clearDefaultFixedFontSize',
-    event: 'onDefaultFixedFontSizeChanged'
-  },
-  [MINIMUM_FONT_SIZE_PREF]: {
-    get: 'getMinimumFontSize',
-    set: 'setMinimumFontSize',
-    clear: 'clearMinimumFontSize',
-    event: 'onMinimumFontSizeChanged'
-  }
+/** The setting the pages get and, per preference, the extension whose value it is (null: the user's). */
+export interface LayeredFonts {
+  fonts: PageFontSettings
+  controllers: Record<FontPref, string | null>
 }
 
-export function isFontSizePref(key: string): key is FontSizePref {
-  return (FONT_SIZE_PREFS as readonly string[]).includes(key)
-}
-
-export function fontPrefKey(genericFamily: GenericFamily, script: ScriptCode): string {
-  return `${FONT_PREF_PREFIX}${genericFamily}.${script}`
-}
-
-/** The family and script a font pref key names, or undefined for any other key. */
-export function parseFontPrefKey(
-  key: string
-): { genericFamily: GenericFamily; script: ScriptCode } | undefined {
-  if (!key.startsWith(FONT_PREF_PREFIX)) return undefined
-  const rest = key.slice(FONT_PREF_PREFIX.length).split('.')
-  if (rest.length !== 2) return undefined
-  const [genericFamily, script] = rest
-  if (!isGenericFamily(genericFamily) || !isScriptCode(script)) return undefined
-  return { genericFamily, script }
-}
-
-// ---------------------------------------------------------------------------
-// Argument shapes
-// ---------------------------------------------------------------------------
-
-export const INVALID_FONT_ID_ERROR = 'Invalid font ID.'
-
-/** The longest font id `setFont` takes, in UTF-8 bytes (Chrome's `kMaxFontNameLength`). */
-export const MAX_FONT_ID_BYTES = 256
-
-const utf8 = new TextEncoder()
-
-/**
- * Chrome's `IsValidFontName`: the empty string is valid (it means "fall back to the global
- * script's setting"); otherwise the id is at most 256 bytes of UTF-8, and every ASCII character
- * in it is alphanumeric, a space, `-`, `_`, `.` or `+`. Non-ASCII characters pass.
- */
-export function isValidFontId(fontId: string): boolean {
-  if (fontId.length === 0) return true
-  if (utf8.encode(fontId).length > MAX_FONT_ID_BYTES) return false
-  for (const ch of fontId) {
-    const code = ch.codePointAt(0) ?? 0
-    if (code >= 0x80) continue
-    if (
-      (code >= 0x30 && code <= 0x39) ||
-      (code >= 0x41 && code <= 0x5a) ||
-      (code >= 0x61 && code <= 0x7a) ||
-      ch === ' ' ||
-      ch === '-' ||
-      ch === '_' ||
-      ch === '.' ||
-      ch === '+'
-    ) {
-      continue
-    }
-    return false
-  }
-  return true
-}
-
-export interface FontDetails {
-  genericFamily: GenericFamily
-  /** `Zyyy` when the call named none. */
-  script: ScriptCode
-}
-
-export interface SetFontDetails extends FontDetails {
-  fontId: string
-}
-
-function record(raw: unknown, required: boolean): Record<string, unknown> {
-  if (raw === undefined || raw === null) {
-    if (required) throw new Error("Missing required argument 'details'.")
-    return {}
-  }
-  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid details.')
-  return raw as Record<string, unknown>
-}
-
-function enumError(property: string, values: readonly string[]): Error {
-  return new Error(
-    `Invalid value for '${property}': expected one of ${values.map((v) => `'${v}'`).join(', ')}.`
-  )
-}
-
-/** `getFont` / `clearFont`: `genericFamily` required, `script` optional (`Zyyy` when absent). */
-export function normalizeFontDetails(raw: unknown): FontDetails {
-  const details = record(raw, true)
-  const genericFamily = details.genericFamily
-  if (genericFamily === undefined) throw new Error("Missing required property 'genericFamily'.")
-  if (!isGenericFamily(genericFamily)) throw enumError('genericFamily', GENERIC_FAMILIES)
-  const script = details.script
-  if (script === undefined || script === null) return { genericFamily, script: COMMON_SCRIPT }
-  if (!isScriptCode(script)) throw enumError('script', SCRIPT_CODES)
-  return { genericFamily, script }
-}
-
-/** `setFont`: the font details plus a required `fontId` that passes Chrome's `IsValidFontName`. */
-export function normalizeSetFontDetails(raw: unknown): SetFontDetails {
-  const base = normalizeFontDetails(raw)
-  const fontId = record(raw, true).fontId
-  if (fontId === undefined) throw new Error("Missing required property 'fontId'.")
-  if (typeof fontId !== 'string') throw new Error("Invalid value for 'fontId': expected string.")
-  if (!isValidFontId(fontId)) throw new Error(INVALID_FONT_ID_ERROR)
-  return { ...base, fontId }
-}
-
-/**
- * `setDefaultFontSize` and its siblings: `pixelSize` required, an integer as Chrome's schema
- * has it (Chrome sets whatever integer it is given; the renderer treats sizes under one pixel
- * as none).
- */
-export function normalizePixelSize(raw: unknown): number {
-  const details = record(raw, true)
-  const pixelSize = details.pixelSize
-  if (pixelSize === undefined) throw new Error("Missing required property 'pixelSize'.")
-  if (typeof pixelSize !== 'number' || !Number.isInteger(pixelSize)) {
-    throw new Error("Invalid value for 'pixelSize': expected integer.")
-  }
-  return pixelSize
-}
-
-/** The `get*` / `clear*` size methods take an optional, unused details object. */
-export function normalizeUnusedDetails(raw: unknown): void {
-  record(raw, false)
-}
-
-// ---------------------------------------------------------------------------
-// Values and precedence
-// ---------------------------------------------------------------------------
-
-/** One extension's values, by pref key: a font id (fonts) or an integer (sizes). */
-export type FontPrefValues = Record<string, string | number>
-
-/** Every extension's values for one pref, by extension id. */
-export type PrefValues = ReadonlyMap<string, string | number>
-
-/**
- * An extension's position in the install order, newest first (a lower number wins), or
- * undefined when its values do not count because it is not enabled.
- */
+/** Chrome's precedence: the rank of a loaded extension (lower first), undefined for one that does not count. */
 export type FontRank = (extensionId: string) => number | undefined
-
-export interface PrefController {
-  extensionId: string
-  value: string | number
-}
-
-/**
- * Who controls a pref: among the enabled extensions that set it, the most recently installed.
- * Equal ranks (ids the ranking does not order) settle by id.
- */
-export function controllerOf(values: PrefValues, rank: FontRank): PrefController | undefined {
-  let best: { extensionId: string; value: string | number; rank: number } | undefined
-  for (const [extensionId, value] of values) {
-    const r = rank(extensionId)
-    if (r === undefined) continue
-    if (!best || r < best.rank || (r === best.rank && extensionId < best.extensionId)) {
-      best = { extensionId, value, rank: r }
-    }
-  }
-  return best && { extensionId: best.extensionId, value: best.value }
-}
-
-/**
- * Chrome's `ExtensionPrefValueMap::GetLevelOfControl` for a pref every extension may modify:
- * the controlling extension sees `controlled_by_this_extension`; an extension sees
- * `controllable_by_this_extension` when no extension controls the pref or when the controller
- * was installed before it (its own value would win); otherwise
- * `controlled_by_other_extensions`. `not_controllable` is for prefs extensions cannot modify,
- * which none of these are.
- */
-export function levelOfControlFor(
-  controller: string | null,
-  extensionId: string,
-  rank: FontRank
-): LevelOfControl {
-  if (controller === null) return 'controllable_by_this_extension'
-  if (controller === extensionId) return 'controlled_by_this_extension'
-  const own = rank(extensionId)
-  const theirs = rank(controller)
-  if (own !== undefined && (theirs === undefined || own <= theirs)) {
-    return 'controllable_by_this_extension'
-  }
-  return 'controlled_by_other_extensions'
-}
-
-/** The value in effect for a pref and who set it (null: the browser's own value applies). */
-export interface EffectivePref<V extends string | number> {
-  value: V
-  controller: string | null
-}
-
-export function effectivePref<V extends string | number>(
-  values: PrefValues,
-  browserValue: V,
-  rank: FontRank
-): EffectivePref<V> {
-  const controller = controllerOf(values, rank)
-  return controller
-    ? { value: controller.value as V, controller: controller.extensionId }
-    : { value: browserValue, controller: null }
-}
-
-export function sameEffective<V extends string | number>(
-  a: EffectivePref<V>,
-  b: EffectivePref<V>
-): boolean {
-  return a.value === b.value && a.controller === b.controller
-}
-
-// ---------------------------------------------------------------------------
-// Results and event details
-// ---------------------------------------------------------------------------
-
-export interface FontResult {
-  fontId: string
-  levelOfControl: LevelOfControl
-}
-
-export interface FontSizeResult {
-  pixelSize: number
-  levelOfControl: LevelOfControl
-}
-
-/** `onFontChanged`'s argument: Chrome always names the script, `Zyyy` for the global setting. */
-export interface FontChangedDetails extends FontResult {
-  script: ScriptCode
-  genericFamily: GenericFamily
-}
-
-export function fontResult(
-  effective: EffectivePref<string>,
-  extensionId: string,
-  rank: FontRank
-): FontResult {
-  return {
-    fontId: effective.value,
-    levelOfControl: levelOfControlFor(effective.controller, extensionId, rank)
-  }
-}
-
-export function fontSizeResult(
-  effective: EffectivePref<number>,
-  extensionId: string,
-  rank: FontRank
-): FontSizeResult {
-  return {
-    pixelSize: effective.value,
-    levelOfControl: levelOfControlFor(effective.controller, extensionId, rank)
-  }
-}
-
-export function fontChangedDetails(
-  details: FontDetails,
-  effective: EffectivePref<string>,
-  extensionId: string,
-  rank: FontRank
-): FontChangedDetails {
-  return {
-    ...fontResult(effective, extensionId, rank),
-    script: details.script,
-    genericFamily: details.genericFamily
-  }
-}
-
-// ---------------------------------------------------------------------------
-// The font list
-// ---------------------------------------------------------------------------
 
 export interface FontName {
   fontId: string
   displayName: string
 }
 
-/**
- * `getFontList`'s answer from the installed family names: one entry per distinct family, the
- * id and the display name both the family name (Chrome's `content::GetFontList` gives the
- * same string for both on every platform Zenium's desktop runs on), sorted by code point as
- * Chrome's list is. Empty names and names starting with `.` (macOS's hidden system fonts,
- * which the Settings page hides too) are left out.
- */
-export function fontListOf(families: Iterable<string>): FontName[] {
-  const seen = new Set<string>()
-  for (const raw of families) {
-    const family = raw.trim()
-    if (family.length === 0 || family.startsWith('.')) continue
-    seen.add(family)
-  }
-  return [...seen]
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-    .map((family) => ({ fontId: family, displayName: family }))
+export interface FontDetails {
+  script: string
+  genericFamily: GenericFamily
 }
 
-// ---------------------------------------------------------------------------
-// Persistence
-// ---------------------------------------------------------------------------
+export interface FontResult {
+  fontId: string
+  levelOfControl: LevelOfControl
+}
 
-/** Read an extension's values back from persistence, keeping only keys and values that fit. */
-export function normalizeFontPrefValues(raw: unknown): FontPrefValues {
-  const out: FontPrefValues = {}
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return out
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (isFontSizePref(key)) {
-      if (typeof value === 'number' && Number.isInteger(value)) out[key] = value
-    } else if (parseFontPrefKey(key)) {
-      if (typeof value === 'string' && isValidFontId(value)) out[key] = value
+export interface SizeResult {
+  pixelSize: number
+  levelOfControl: LevelOfControl
+}
+
+export const CONSTANTS = {
+  ScriptCode: Object.fromEntries(SCRIPT_CODES.map((code) => [code.toUpperCase(), code])),
+  GenericFamily: Object.fromEntries(
+    GENERIC_FAMILIES.map((family) => [family.toUpperCase(), family])
+  ),
+  LevelOfControl: {
+    NOT_CONTROLLABLE: 'not_controllable',
+    CONTROLLED_BY_OTHER_EXTENSIONS: 'controlled_by_other_extensions',
+    CONTROLLABLE_BY_THIS_EXTENSION: 'controllable_by_this_extension',
+    CONTROLLED_BY_THIS_EXTENSION: 'controlled_by_this_extension'
+  }
+} as const
+
+// ---------------------------------------------------------------------------------------------
+// Details
+// ---------------------------------------------------------------------------------------------
+
+function record(raw: unknown): Record<string, unknown> {
+  if (raw === undefined || raw === null) return {}
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid details.')
+  return raw as Record<string, unknown>
+}
+
+function isGenericFamily(value: unknown): value is GenericFamily {
+  return typeof value === 'string' && (GENERIC_FAMILIES as readonly string[]).includes(value)
+}
+
+/** `getFont` / `clearFont` details: `genericFamily` required, `script` one of the codes (`Zyyy` when absent). */
+export function normalizeFontDetails(raw: unknown): FontDetails {
+  const details = record(raw)
+  if (!('genericFamily' in details)) throw new Error("Missing required property 'genericFamily'.")
+  if (!isGenericFamily(details.genericFamily)) {
+    throw new Error(
+      `Invalid value for 'genericFamily': expected one of ${GENERIC_FAMILIES.join(', ')}.`
+    )
+  }
+  const script = details.script
+  if (script === undefined || script === null) {
+    return { script: COMMON_SCRIPT, genericFamily: details.genericFamily }
+  }
+  if (typeof script !== 'string' || !SCRIPT_CODES.includes(script)) {
+    throw new Error(`Invalid value for 'script': expected a fontSettings.ScriptCode.`)
+  }
+  return { script, genericFamily: details.genericFamily }
+}
+
+/** `setFont` details: the font details plus the family name, which may be empty (the engine's own). */
+export function normalizeSetFontDetails(raw: unknown): FontDetails & { fontId: string } {
+  const details = normalizeFontDetails(raw)
+  const fontId = record(raw).fontId
+  if (fontId === undefined) throw new Error("Missing required property 'fontId'.")
+  if (typeof fontId !== 'string') throw new Error("Invalid value for 'fontId': expected a string.")
+  return { ...details, fontId: fontId.trim() }
+}
+
+/**
+ * A size setter's `pixelSize`: an integer, brought into the setting's range (Chrome's slider
+ * offers 9–72 for the size, 0–24 for the minimum; a floor of 1–5 px is not on its slider and
+ * `sanitizeFontSettings` reads it as 6).
+ */
+export function normalizeSizeDetails(raw: unknown, pref: 'size' | 'minimumSize'): number {
+  const details = record(raw)
+  if (!('pixelSize' in details)) throw new Error("Missing required property 'pixelSize'.")
+  const value = details.pixelSize
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new Error("Invalid value for 'pixelSize': expected an integer.")
+  }
+  if (pref === 'size') return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, value))
+  const floor = Math.min(MINIMUM_FONT_SIZE_MAX, Math.max(0, value))
+  return floor > 0 && floor < 6 ? 6 : floor
+}
+
+/** The optional `details` of a getter or clearer: anything but a non-object. */
+export function checkDetails(raw: unknown): void {
+  record(raw)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Values
+// ---------------------------------------------------------------------------------------------
+
+/** Whether the details name a preference the layer controls (the common script of a slotted family). */
+export function controllableSlot(details: FontDetails): FontFamilySlot | null {
+  if (details.script !== COMMON_SCRIPT) return null
+  return FAMILY_SLOTS[details.genericFamily] ?? null
+}
+
+/** A stored record brought into shape: known slots with non-empty names, sizes in range. */
+export function normalizeFontValues(raw: unknown): FontValues {
+  const out: FontValues = {}
+  if (!raw || typeof raw !== 'object') return out
+  const source = raw as Record<string, unknown>
+  if (source.families && typeof source.families === 'object') {
+    const families = source.families as Record<string, unknown>
+    for (const slot of FONT_FAMILY_SLOTS) {
+      const name = families[slot]
+      if (typeof name === 'string' && name.trim() !== '') {
+        ;(out.families ??= {})[slot] = name.trim()
+      }
     }
   }
+  if (typeof source.size === 'number' && Number.isInteger(source.size)) {
+    out.size = normalizeSizeDetails({ pixelSize: source.size }, 'size')
+  }
+  if (typeof source.minimumSize === 'number' && Number.isInteger(source.minimumSize)) {
+    out.minimumSize = normalizeSizeDetails({ pixelSize: source.minimumSize }, 'minimumSize')
+  }
   return out
+}
+
+export function hasFontValues(values: FontValues): boolean {
+  return (
+    values.size !== undefined ||
+    values.minimumSize !== undefined ||
+    Object.keys(values.families ?? {}).length > 0
+  )
+}
+
+/** An extension's value for one preference, if it set one. */
+export function valueOf(values: FontValues, pref: FontPref): string | number | undefined {
+  if (pref === 'size') return values.size
+  if (pref === 'minimumSize') return values.minimumSize
+  return values.families?.[pref]
+}
+
+/** Set `pref` in `values` (an empty family name clears the slot, as Chrome's `setFont('')` does); whether anything moved. */
+export function withFontValue(
+  values: FontValues,
+  pref: FontPref,
+  value: string | number | undefined
+): boolean {
+  if (typeof value === 'string' && value === '') value = undefined
+  if (valueOf(values, pref) === value) return false
+  if (pref === 'size' || pref === 'minimumSize') {
+    if (value === undefined) delete values[pref]
+    else values[pref] = value as number
+    return true
+  }
+  if (value === undefined) {
+    if (values.families) delete values.families[pref]
+    if (values.families && Object.keys(values.families).length === 0) delete values.families
+  } else {
+    ;(values.families ??= {})[pref] = value as string
+  }
+  return true
+}
+
+/**
+ * The setting the pages get: the user's, with every controllable preference an extension set
+ * taken from the first-ranked extension that set it.
+ */
+export function layerFonts(
+  user: PageFontSettings,
+  layers: ReadonlyMap<string, FontValues>,
+  rank: FontRank
+): LayeredFonts {
+  const fonts: PageFontSettings = { ...user }
+  const controllers = {} as Record<FontPref, string | null>
+  for (const pref of FONT_PREFS) {
+    let best: { extensionId: string; value: string | number; rank: number } | null = null
+    for (const [extensionId, values] of layers) {
+      const value = valueOf(values, pref)
+      if (value === undefined) continue
+      const r = rank(extensionId)
+      if (r === undefined) continue
+      if (!best || r < best.rank || (r === best.rank && extensionId < best.extensionId)) {
+        best = { extensionId, value, rank: r }
+      }
+    }
+    controllers[pref] = best ? best.extensionId : null
+    if (!best) continue
+    if (pref === 'size' || pref === 'minimumSize') fonts[pref] = best.value as number
+    else fonts[pref] = best.value as string
+  }
+  return { fonts, controllers }
+}
+
+export function sameLayered(a: LayeredFonts, b: LayeredFonts): boolean {
+  return (
+    JSON.stringify(a.fonts) === JSON.stringify(b.fonts) &&
+    FONT_PREFS.every((pref) => a.controllers[pref] === b.controllers[pref])
+  )
+}
+
+// ---------------------------------------------------------------------------------------------
+// Answers
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `getFont`'s answer: for the common script of a slotted family, the family the pages have (the
+ * user's or the layer's choice, else the engine's default for the platform) and the caller's
+ * say over it; for anything else, what Chrome answers for a preference outside the caller's
+ * reach – the name the engine holds is not the layer's to read, so the empty name (Chrome's
+ * own value for a script the user never set, which the callers read as "the Default font").
+ */
+export function fontResult(
+  details: FontDetails,
+  layered: LayeredFonts,
+  extensionId: string,
+  platform: string
+): FontResult {
+  const slot = controllableSlot(details)
+  if (!slot) return { fontId: '', levelOfControl: 'not_controllable' }
+  return {
+    fontId: layered.fonts[slot] ?? electronFontDefaults(platform)[slot],
+    levelOfControl: levelOfControlFor(layered.controllers[slot], extensionId)
+  }
+}
+
+export function defaultFontSizeResult(layered: LayeredFonts, extensionId: string): SizeResult {
+  return {
+    pixelSize: layered.fonts.size,
+    levelOfControl: levelOfControlFor(layered.controllers.size, extensionId)
+  }
+}
+
+/** The fixed-width size is the setting's ratio of the size: read back, never handed over. */
+export function defaultFixedFontSizeResult(layered: LayeredFonts): SizeResult {
+  return { pixelSize: monospaceFontSize(layered.fonts.size), levelOfControl: 'not_controllable' }
+}
+
+export function minimumFontSizeResult(layered: LayeredFonts, extensionId: string): SizeResult {
+  return {
+    pixelSize: layered.fonts.minimumSize,
+    levelOfControl: levelOfControlFor(layered.controllers.minimumSize, extensionId)
+  }
+}
+
+/**
+ * The `getFontList` answer from the installed families' names: Chrome's `{ fontId,
+ * displayName }` pairs (the same name twice here; Chrome's `fontId` is the family name too),
+ * each family once, sorted by name as Chrome's picker shows them.
+ */
+export function familyList(names: Iterable<string>): FontName[] {
+  const seen = new Set<string>()
+  const out: FontName[] = []
+  for (const raw of names) {
+    const name = raw.trim()
+    if (name === '' || seen.has(name)) continue
+    seen.add(name)
+    out.push({ fontId: name, displayName: name })
+  }
+  return out.sort((a, b) =>
+    a.displayName.localeCompare(b.displayName, 'en', { sensitivity: 'base' })
+  )
 }

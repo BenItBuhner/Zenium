@@ -1,6 +1,7 @@
-import type { Boost, Container, Space } from '../../shared/types'
+import type { Boost, Container, Settings, Space } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { sanitizePhoneBar } from '../../shared/phoneBar'
+import { sanitizeMenuOrder } from '../../shared/menuOrder'
 import { sanitizeHomepage } from '../../shared/homepage'
 import { migrateNewTabSettings, sanitizeNewTabSettings } from '../../shared/newTab'
 import { sanitizeSearchEngines } from '../../shared/search'
@@ -26,10 +27,10 @@ import {
   readCredentialData,
   readFolderAgentMark,
   readSpaceAgentMark,
+  withoutDeviceLocalSettings,
   type ContainerData,
   type FolderData,
   type OrderData,
-  type SettingsData,
   type ShortcutsData,
   type SpaceData,
   type SyncRecord,
@@ -231,7 +232,11 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
       }
       case 'settings': {
         if (r.deleted || r.id !== SETTINGS_RECORD_ID) break
-        const data = r.data as Partial<SettingsData> & { newTabPhone?: unknown }
+        // A peer on an older build still sends the device-local keys (`DEVICE_LOCAL_SETTINGS`):
+        // they are this device's own and never land, whatever the record says.
+        const data = withoutDeviceLocalSettings(
+          r.data as Partial<Settings> & { newTabPhone?: unknown }
+        )
         // A peer on a 0.3.x build still sends the phone's frozen `newTabPhone` key: it is folded
         // into `newTab` and never lands on the settings (else every sync would recreate it).
         const { compactMode, newTabPhone, ...rest } = data
@@ -240,6 +245,16 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
         // Another device's build may know bar items this one does not (or the other way round).
         if ('phoneBar' in rest) state.settings.phoneBar = sanitizePhoneBar(rest.phoneBar)
+        // A peer's menu order names its build's items; the reading drops what this one lacks. A
+        // list is kept as a list, the empty one included – a peer's Reset, carried forward in
+        // this device's own records from now on, so a peer that held the old order offline
+        // takes the reset when it returns; only a value that is no list deletes the key. A
+        // record without the key (a peer that never touched the menu) says nothing about it.
+        if ('menuOrder' in rest) {
+          const menuOrder = sanitizeMenuOrder(rest.menuOrder)
+          if (menuOrder !== undefined) state.settings.menuOrder = menuOrder
+          else delete state.settings.menuOrder
+        }
         // A peer's homepage is read like a profile's own: a known mode, a web address or none.
         if ('homepage' in rest) state.settings.homepage = sanitizeHomepage(rest.homepage)
         // A peer's engines (added by hand, discovered on its pages) are read like a profile's

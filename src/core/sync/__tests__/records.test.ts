@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEVICE_LOCAL_SETTINGS,
   ORDER_SPACES,
   applyOrder,
   collectLocal,
@@ -16,6 +17,7 @@ import {
   readSpaceAgentMark,
   stableStringify,
   winningRemote,
+  withoutDeviceLocalSettings,
   type BookmarkData,
   type MetaMap,
   type OrderData,
@@ -186,6 +188,46 @@ describe('collectLocal', () => {
     const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
     expect(data).not.toHaveProperty('onboardingDone')
     expect(data).toHaveProperty('searchEngineId')
+  })
+
+  it('sends the phone menu’s order as the settings hold it – no key while none is saved, the empty list after a Reset – never a key the settings lack', () => {
+    const src = sources()
+    const record = (): { type: string; data: unknown } =>
+      collectLocal(src, defaultScope()).get('settings')!
+    const settings = (): Record<string, unknown> => record().data as Record<string, unknown>
+    // A device that never touched the menu sends the record the build before this one sent: the
+    // same keys, the same hash, so its first sync after the upgrade manufactures no edit.
+    expect('menuOrder' in src.settings).toBe(false)
+    expect(settings()).not.toHaveProperty('menuOrder')
+    const untouched = hashData(settings())
+    src.settings.menuOrder = ['row.settings', 'row.newTab']
+    expect(settings().menuOrder).toEqual(['row.settings', 'row.newTab'])
+    // A Reset stores the empty list: a value the record carries and a peer reads as the reset.
+    src.settings.menuOrder = []
+    expect(settings().menuOrder).toEqual([])
+    expect(hashData(settings())).not.toBe(untouched)
+    delete src.settings.menuOrder
+    expect(settings()).not.toHaveProperty('menuOrder')
+    expect(hashData(settings())).toBe(untouched)
+  })
+
+  it('keeps the device-local settings out of the settings record, every other key in (W5-F3)', () => {
+    const src = sources()
+    // A device that chose both ways: the record carries neither choice.
+    src.settings.sidebarExpandOnHover = false
+    src.settings.onboardingDone = true
+    const data = collectLocal(src, defaultScope()).get('settings')?.data as Record<string, unknown>
+    expect(DEVICE_LOCAL_SETTINGS).toEqual(['onboardingDone', 'sidebarExpandOnHover'])
+    expect(data).not.toHaveProperty('sidebarExpandOnHover')
+    expect(data).not.toHaveProperty('onboardingDone')
+    const local = new Set<string>(DEVICE_LOCAL_SETTINGS)
+    expect(Object.keys(data)).toEqual(
+      Object.keys(DEFAULT_SETTINGS).filter((key) => !local.has(key))
+    )
+    // The helper copies: the device's own settings keep their values.
+    expect(withoutDeviceLocalSettings(src.settings)).not.toBe(src.settings)
+    expect(src.settings.sidebarExpandOnHover).toBe(false)
+    expect(src.settings.onboardingDone).toBe(true)
   })
 })
 
@@ -719,26 +761,20 @@ describe('credential records (ID-09)', () => {
     expect(on.meta.cred_login1).toBeDefined()
 
     const off = { ...defaultScope(), passwords: false }
-    const held = diffLocal(
-      on.meta,
-      collectLocal(src, off),
-      2000,
-      undefined,
-      frozenRecords(src, off, on.meta)
-    )
+    const held = diffLocal(on.meta, collectLocal(src, off), 2000, {
+      stamp: 2000,
+      frozen: frozenRecords(src, off, on.meta)
+    })
     expect(held.changed).toBe(false)
     expect(held.meta.cred_login1).toEqual(on.meta.cred_login1)
     expect(held.meta.passkey_1).toEqual(on.meta.passkey_1)
     expect(held.records.some((r) => r.type === 'credential')).toBe(false)
 
     src.credentials = null
-    const locked = diffLocal(
-      on.meta,
-      collectLocal(src, defaultScope()),
-      3000,
-      undefined,
-      frozenRecords(src, defaultScope(), on.meta)
-    )
+    const locked = diffLocal(on.meta, collectLocal(src, defaultScope()), 3000, {
+      stamp: 3000,
+      frozen: frozenRecords(src, defaultScope(), on.meta)
+    })
     expect(locked.changed).toBe(false)
     expect(locked.meta.cred_login1).toEqual(on.meta.cred_login1)
     expect(locked.records.some((r) => r.type === 'credential')).toBe(false)

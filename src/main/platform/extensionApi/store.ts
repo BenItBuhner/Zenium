@@ -5,6 +5,7 @@ import { JsonStore } from '../../../core/store/JsonStore'
 import type { Alarm } from '../../../core/extensions/api/alarms'
 import type { ContentSettingRule } from '../../../core/extensions/api/contentSettings'
 import type { PersistedMenuItem } from '../../../core/extensions/api/contextMenus'
+import type { FontValues } from '../../../core/extensions/api/fontSettings'
 import type { InstanceIdRecord } from '../../../core/extensions/api/instanceId'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { ScopedValues } from '../../../core/extensions/api/privacy'
@@ -25,10 +26,10 @@ interface PersistedApi {
   sidePanelOnActionClick?: Record<string, boolean>
   /** `chrome.privacy` values per extension, by `category.setting`, then scope. */
   privacy?: Record<string, Record<string, ScopedValues>>
-  /** `chrome.fontSettings` values per extension, by Chrome's pref key (a font id or a size). */
-  fontSettings?: Record<string, Record<string, string | number>>
   /** `chrome.proxy.settings` values per extension (canonical configs as JSON text), by scope. */
   proxy?: Record<string, ScopedValues>
+  /** `chrome.fontSettings` values per extension (the slotted families and the two sizes). */
+  fontSettings?: Record<string, FontValues>
   /** `chrome.contentSettings` rules per extension, by type name (regular scope only). */
   contentSettings?: Record<string, Record<string, ContentSettingRule[]>>
   /**
@@ -50,8 +51,8 @@ function emptyPersisted(): PersistedApi {
     workerEvents: {},
     sidePanelOnActionClick: {},
     privacy: {},
-    fontSettings: {},
     proxy: {},
+    fontSettings: {},
     contentSettings: {},
     contextMenus: {},
     instanceIds: {}
@@ -159,17 +160,6 @@ export class ApiStore {
     this.save()
   }
 
-  fontSettingsValues(extensionId: string): Record<string, string | number> {
-    return this.data.fontSettings?.[extensionId] ?? {}
-  }
-
-  setFontSettingsValues(extensionId: string, values: Record<string, string | number>): void {
-    const fontSettings = this.data.fontSettings ?? (this.data.fontSettings = {})
-    if (Object.keys(values).length === 0) delete fontSettings[extensionId]
-    else fontSettings[extensionId] = { ...values }
-    this.save()
-  }
-
   proxyValues(extensionId: string): ScopedValues {
     return this.data.proxy?.[extensionId] ?? {}
   }
@@ -178,6 +168,17 @@ export class ApiStore {
     const proxy = this.data.proxy ?? (this.data.proxy = {})
     if (Object.keys(values).length === 0) delete proxy[extensionId]
     else proxy[extensionId] = values
+    this.save()
+  }
+
+  fontSettingsValues(extensionId: string): FontValues {
+    return this.data.fontSettings?.[extensionId] ?? {}
+  }
+
+  setFontSettingsValues(extensionId: string, values: FontValues): void {
+    const fontSettings = this.data.fontSettings ?? (this.data.fontSettings = {})
+    if (Object.keys(values).length === 0) delete fontSettings[extensionId]
+    else fontSettings[extensionId] = values
     this.save()
   }
 
@@ -225,8 +226,8 @@ export class ApiStore {
     delete this.data.workerEvents[extensionId]
     delete this.data.sidePanelOnActionClick?.[extensionId]
     delete this.data.privacy?.[extensionId]
-    delete this.data.fontSettings?.[extensionId]
     delete this.data.proxy?.[extensionId]
+    delete this.data.fontSettings?.[extensionId]
     delete this.data.contentSettings?.[extensionId]
     delete this.data.contextMenus?.[extensionId]
     delete this.data.instanceIds?.[extensionId]
