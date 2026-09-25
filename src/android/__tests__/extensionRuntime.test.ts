@@ -3261,6 +3261,63 @@ describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: a call reply carries the runtime stamps for the host trace', () => {
+  /** The `ext.send` posts that carried the reply to call `id`, with their arguments as Kotlin sees them. */
+  const sendsOf = (h: ReturnType<typeof harness>, id: unknown): Record<string, unknown>[] =>
+    h.kt
+      .calledWith('ext.send')
+      .filter((args) => (JSON.parse(String(args.message)) as { id?: unknown }).id === id)
+
+  it('stamps when the runtime saw the call and when it posted the reply (ext.send `at`), the frame envelope untouched', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    const before = Date.now()
+    const reply = await call(h, 'bg1', 'storage', 'get', ['local', null])
+    const after = Date.now()
+    const sends = sendsOf(h, reply.id)
+    expect(sends).toHaveLength(1)
+    const at = sends[0].at as [number, number]
+    expect(at).toHaveLength(2)
+    expect(at[0]).toBeGreaterThanOrEqual(before)
+    expect(at[1]).toBeGreaterThanOrEqual(at[0])
+    expect(at[1]).toBeLessThanOrEqual(after)
+    // The stamps ride in `ext.send`'s arguments for the host's trace line; the reply the frame
+    // gets is the same as ever.
+    expect(Object.keys(reply).sort()).toEqual(['ep', 'id', 'ok', 'result', 't'])
+    // A failed call's reply carries them too.
+    const failed = await call(h, 'bg1', 'storage', 'get', ['nowhere', null])
+    expect(failed.ok).toBe(false)
+    expect((sendsOf(h, failed.id)[0].at as number[]).length).toBe(2)
+    // An event to the endpoint is not a reply: no stamps on it.
+    h.runtime.onMessage({
+      ep: 'bg1',
+      tabId: null,
+      top: true,
+      origin: `https://${ID}.ext.zenium.invalid`,
+      message: { t: 'listen', event: 'storage.onChanged', on: true }
+    })
+    await call(h, 'bg1', 'storage', 'set', ['local', { k: 1 }])
+    const eventSends = h.kt
+      .calledWith('ext.send')
+      .filter((args) => (JSON.parse(String(args.message)) as { t?: unknown }).t === 'event')
+    expect(eventSends.length).toBeGreaterThan(0)
+    expect(eventSends.every((args) => args.at === undefined)).toBe(true)
+  })
+
+  it('stamps nothing while debug is off', async () => {
+    const h = harness({ debug: false })
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    const reply = await call(h, 'bg1', 'storage', 'get', ['local', null])
+    expect(reply.ok).toBe(true)
+    const sends = sendsOf(h, reply.id)
+    expect(sends).toHaveLength(1)
+    expect(sends[0].at).toBeUndefined()
+    expect(Object.keys(sends[0]).sort()).toEqual(['ep', 'message'])
+  })
+})
+
 describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
   it('routes the ChromeSetting calls to the proxy module: system by default, fixed servers applied, a PAC script refused', async () => {
     const h = harness()

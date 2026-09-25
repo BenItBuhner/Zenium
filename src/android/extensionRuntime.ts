@@ -223,6 +223,12 @@ export interface ExtMessageEvent {
 }
 
 /**
+ * A call reply's two wall-clock stamps for the host's trace while `debug` (`ext.send`'s `at`):
+ * `[seen, replied]` – when the runtime saw the call, when it posted the reply (`Date.now()`).
+ */
+export type ReplyStamps = [seen: number, replied: number]
+
+/**
  * The engine's decision on one request of a tab, as Kotlin's `DecisionObserver` reports it
  * (`ext.request`): every decision that named a rule, and – while `ext.observeRequests` is on –
  * every decision at all, for the observational `webRequest` events.
@@ -1926,13 +1932,33 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * Frames host several endpoints (one per extension and world) on one transport, so the
    * message carries the endpoint id; the bootstrap routes on it.
    */
-  private sendTo(endpointId: string, message: Record<string, unknown>): void {
-    const args = { ep: endpointId, message: JSON.stringify({ ...message, ep: endpointId }) }
+  private sendTo(endpointId: string, message: Record<string, unknown>, at?: ReplyStamps): void {
+    const args: { ep: string; message: string; at?: ReplyStamps } = {
+      ep: endpointId,
+      message: JSON.stringify({ ...message, ep: endpointId })
+    }
+    if (at) args.at = at
     // Kotlin answers `ext.send` with nothing (a dead frame comes back as `ext.gone`): one way,
     // so a port's state broadcast at several messages a second costs the chrome no `resolve`
     // task per message.
     if (this.bridge.post) this.bridge.post('ext.send', args)
     else this.bridge.send('ext.send', args)
+  }
+
+  /**
+   * The stamps a call's reply carries to the host while `debug` (`ext.send`'s `at`, never the
+   * frame's envelope): the wall-clock moment this runtime saw the call and the moment it posts
+   * the reply, `Date.now()` both – the host reads its own `System.currentTimeMillis()` at the
+   * call's receipt and at the reply's send, and its trace line places the round trip's time in
+   * one of three legs (`hop`: the host's receipt to this runtime's – the `evaluateJavascript`
+   * that carries the call and the renderer's queue ahead of it; `run`: this runtime's own work;
+   * `back`: this post to the host's send – the port's delivery and dispatch on the app's
+   * threads). Compat round 18 read `storage.set` at a median 161 ms through the host and back
+   * against Chrome's ~1-5 ms, and round 19 reads seconds on the AOSP image: the legs say which
+   * queue it is. Nothing while `debug` is off: the call is not stamped and the reply carries no `at`.
+   */
+  private replyStamps(seen: number): ReplyStamps | undefined {
+    return seen > 0 ? [seen, Date.now()] : undefined
   }
 
   /** A bridge message from a content-script frame or an extension page. */
@@ -1956,15 +1982,25 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         const ns = String(message.ns)
         const method = String(message.method)
         const args = Array.isArray(message.args) ? (message.args as unknown[]) : []
+        const seen = this.debug ? Date.now() : 0
         this.call(endpoint, ns, method, args).then(
-          (result) => this.sendTo(ep, { t: 'reply', id: callId, ok: true, result: result ?? null }),
+          (result) =>
+            this.sendTo(
+              ep,
+              { t: 'reply', id: callId, ok: true, result: result ?? null },
+              this.replyStamps(seen)
+            ),
           (error: unknown) =>
-            this.sendTo(ep, {
-              t: 'reply',
-              id: callId,
-              ok: false,
-              error: error instanceof Error ? error.message : String(error)
-            })
+            this.sendTo(
+              ep,
+              {
+                t: 'reply',
+                id: callId,
+                ok: false,
+                error: error instanceof Error ? error.message : String(error)
+              },
+              this.replyStamps(seen)
+            )
         )
         return
       }

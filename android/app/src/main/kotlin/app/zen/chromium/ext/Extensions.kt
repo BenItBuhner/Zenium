@@ -287,6 +287,8 @@ class Extensions(private val host: Host) {
      */
     val callStats = HashMap<String, IntArray>()
     private val pendingCalls = HashMap<String, String>()
+    /** While `debug`: the wall clock at each pending call's receipt (`"<ep>:<id>"`), for its reply's legs ([ReplyTiming]). */
+    private val pendingWall = HashMap<String, Long>()
     /** While `debug`: the last few hundred bridge messages, one line each (see [trace]). */
     private val bridgeTrace = ArrayDeque<String>()
     /**
@@ -443,7 +445,7 @@ class Extensions(private val host: Host) {
             // The pages' observer of their own fetch / XHR responses (7.10) follows the same
             // word: every live document is told now, a new one learns it at its hello.
             "ext.observeResponses" -> { setObserveResponses(args.bool("on")); reply(null) }
-            "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
+            "ext.send" -> { send(args.str("ep"), args.str("message"), args.optJSONArray("at")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
             "ext.popup.open" -> { openPopup(args.str("id"), args.str("url"), args.str("context", "popup"), args.str("title", "")); reply(null) }
@@ -783,11 +785,16 @@ class Extensions(private val host: Host) {
         for (view in host.tabs.all()) view.setExtObserve(on)
     }
 
-    /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
-    private fun send(ep: String, message: String) {
+    /**
+     * Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports
+     * `ext.gone`. [at] is a call reply's two runtime stamps while `debug` (`ext.send`'s `at`:
+     * when the runtime saw the call, when it posted the reply), for the trace line's legs
+     * ([ReplyTiming]); null for everything else.
+     */
+    private fun send(ep: String, message: String, at: JSONArray? = null) {
         val endpoint = endpoints[ep] ?: return
         bridgeCounters[2]++
-        if (debug) recordReply(ep, message)
+        if (debug) recordReply(ep, message, at)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
         if (!ok) gone(listOf(ep))
     }
@@ -811,17 +818,32 @@ class Extensions(private val host: Host) {
         }
         synchronized(callStats) {
             callStats.getOrPut(key) { IntArray(3) }[0]++
-            if (message.has("id")) pendingCalls["$ep:${message.opt("id")}"] = key
-            if (pendingCalls.size > 4000) pendingCalls.clear()
+            if (message.has("id")) {
+                val slot = "$ep:${message.opt("id")}"
+                pendingCalls[slot] = key
+                pendingWall[slot] = System.currentTimeMillis()
+            }
+            if (pendingCalls.size > 4000) {
+                pendingCalls.clear()
+                pendingWall.clear()
+            }
         }
     }
 
-    private fun recordReply(ep: String, message: String) {
+    /**
+     * A message to a frame while `debug`: its trace line, and a reply's account in the call
+     * statistics. [at] is the runtime's two stamps for a call reply ([send]); with the wall
+     * clock at the call's receipt ([recordCall]) and now, the trace line places the round
+     * trip's time in its legs ([ReplyTiming.legs]).
+     */
+    private fun recordReply(ep: String, message: String, at: JSONArray? = null) {
         val reply = BridgeEnvelope.read(message) ?: return
-        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply, message.length)
-        if (reply.optString("t") != "reply") return
+        val slot = if (reply.optString("t") == "reply") "$ep:${reply.opt("id")}" else null
+        val legs = if (slot == null) "" else synchronized(callStats) { ReplyTiming.legs(pendingWall.remove(slot), at, System.currentTimeMillis()) }
+        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply, message.length, legs)
+        if (slot == null) return
         synchronized(callStats) {
-            val key = pendingCalls.remove("$ep:${reply.opt("id")}") ?: return
+            val key = pendingCalls.remove(slot) ?: return
             if (!reply.optBoolean("ok", true)) {
                 val counts = callStats.getOrPut(key) { IntArray(3) }
                 // The two outcomes Chrome itself reports through runtime.lastError in normal
@@ -835,13 +857,16 @@ class Extensions(private val host: Host) {
     /**
      * One line per bridge message while `debug`: direction, extension, endpoint context, message
      * type and the little that tells messages apart (a call's method, a message's `type` field,
-     * a reply's outcome). Instrumentation reads it to see where a handshake stopped.
+     * a reply's outcome), then `id=<n>` on a call and its reply (the sweep's storage round-trip
+     * reading pairs the two by it, `ext-compat-storage-latency.mjs`) and a call reply's legs
+     * ([legs], `hop= run= back=`). Instrumentation reads it to see where a handshake stopped.
      */
-    private fun trace(direction: String, ep: String, ext: String, message: JSONObject, chars: Int = 0) {
+    private fun trace(direction: String, ep: String, ext: String, message: JSONObject, chars: Int = 0, legs: String = "") {
         val context = endpoints[ep]?.context ?: message.str("ctx", "?")
         val t = message.str("t")
         // A big message is an envelope here (its nested values unread): its size stands in for them.
         val size = if (chars >= BridgeEnvelope.BIG_MESSAGE) " chars=$chars" else ""
+        val id = if ((t == "call" || t == "reply") && message.has("id")) " id=${message.opt("id")}" else ""
         val detail = when (t) {
             "call" -> "${message.str("ns")}.${message.str("method")}"
             "msg", "deliver" -> {
@@ -878,7 +903,7 @@ class Extensions(private val host: Host) {
         }
         synchronized(bridgeTrace) {
             if (bridgeTrace.size >= TRACE_LINES) bridgeTrace.removeFirst()
-            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail$size".trimEnd())
+            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail$id$legs$size".trimEnd())
         }
     }
 
