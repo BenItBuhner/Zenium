@@ -1899,8 +1899,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             return
         }
         withStoragePermission { granted ->
+            // Refused (or no external storage at all): the app's own folder, under a directory the
+            // FileProvider exports (`file_paths.xml`), so the listed row still opens from the sheet.
             val dir = if (granted) DownloadSink.publicDownloads(activity)
-            else (activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.filesDir).apply { mkdirs() }
+            else (activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: File(activity.filesDir, "Download")).apply { mkdirs() }
             val file = File(dir, SavePageLogic.uniqueArchiveName(archive) { File(dir, it).exists() })
             tab.saveWebArchive(file.absolutePath, false) { path -> reply(path) }
         }
