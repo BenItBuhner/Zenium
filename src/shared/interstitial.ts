@@ -12,12 +12,7 @@
  * its `proceed` continues to the address asked for and remembers the host.
  */
 export type InterstitialAction =
-  | 'back'
-  | 'proceed'
-  | 'continue'
-  | 'continue-always'
-  | 'show-tabs'
-  | 'suggested'
+  'back' | 'proceed' | 'continue' | 'continue-always' | 'show-tabs' | 'suggested'
 
 export const INTERSTITIAL_ACTIONS: readonly InterstitialAction[] = [
   'back',
