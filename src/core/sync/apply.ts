@@ -1,4 +1,4 @@
-import type { Boost, Container, Space } from '../../shared/types'
+import type { Boost, Container, Settings, Space } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { sanitizePhoneBar } from '../../shared/phoneBar'
 import { sanitizeMenuOrder } from '../../shared/menuOrder'
@@ -27,10 +27,10 @@ import {
   readCredentialData,
   readFolderAgentMark,
   readSpaceAgentMark,
+  withoutDeviceLocalSettings,
   type ContainerData,
   type FolderData,
   type OrderData,
-  type SettingsData,
   type ShortcutsData,
   type SpaceData,
   type SyncRecord,
@@ -232,7 +232,11 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
       }
       case 'settings': {
         if (r.deleted || r.id !== SETTINGS_RECORD_ID) break
-        const data = r.data as Partial<SettingsData> & { newTabPhone?: unknown }
+        // A peer on an older build still sends the device-local keys (`DEVICE_LOCAL_SETTINGS`):
+        // they are this device's own and never land, whatever the record says.
+        const data = withoutDeviceLocalSettings(
+          r.data as Partial<Settings> & { newTabPhone?: unknown }
+        )
         // A peer on a 0.3.x build still sends the phone's frozen `newTabPhone` key: it is folded
         // into `newTab` and never lands on the settings (else every sync would recreate it).
         const { compactMode, newTabPhone, ...rest } = data

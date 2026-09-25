@@ -216,12 +216,33 @@ export function readBookmarkData(data: unknown): BookmarkData | null {
 }
 
 /**
- * The whole `Settings` object but the one-time flag. The new tab page's device-local sets
+ * The settings that are one device's own and travel in neither direction: this device's record
+ * carries none of them, and a peer's record carrying one (a build from before a key joined the
+ * list still sends it) leaves this device's value standing – the settings record is otherwise
+ * taken whole, last writer wins, so a stray key would land as a choice made here.
+ * - `onboardingDone`: the one-time flag.
+ * - `sidebarExpandOnHover`: a pointer's hover preference for the rail (tabs-03), on by default
+ *   since profile v6; a peer on v5 still stores that build's default `false`, no choice.
+ */
+export const DEVICE_LOCAL_SETTINGS = ['onboardingDone', 'sidebarExpandOnHover'] as const
+export type DeviceLocalSetting = (typeof DEVICE_LOCAL_SETTINGS)[number]
+
+/** A copy of `settings` without the device-local keys, the other keys in their order. */
+export function withoutDeviceLocalSettings<T extends object>(
+  settings: T
+): Omit<T, DeviceLocalSetting> {
+  const out = { ...settings } as Record<string, unknown>
+  for (const key of DEVICE_LOCAL_SETTINGS) delete out[key]
+  return out as Omit<T, DeviceLocalSetting>
+}
+
+/**
+ * The whole `Settings` object but the device-local keys. The new tab page's device-local sets
  * (`BrowserState.newTabDevice`: this device's shortcuts and removed hosts) are not settings and
  * never travel; a peer on an older build may add the phone's frozen `newTabPhone` key, which the
  * apply path folds into `newTab`.
  */
-export type SettingsData = Omit<Settings, 'onboardingDone'>
+export type SettingsData = Omit<Settings, DeviceLocalSetting>
 export interface ShortcutsData {
   overrides: Record<string, KeyBinding | null>
 }
@@ -558,8 +579,6 @@ export function collectLocal(
     }
   }
   if (scope.settings) {
-    const { onboardingDone: _o, ...rest } = src.settings
-    void _o
     // The record carries the settings as they are and never a key they lack: a key invented here
     // would change every device's record – its hash, so `diffLocal` stamps it `now` at the first
     // sync after the upgrade, a whole-record edit no one made that beats and reverts a peer's
@@ -567,6 +586,7 @@ export function collectLocal(
     // along only once the settings hold it: the empty list after a Reset (`shared/menuOrder.ts`),
     // so the reset reaches the peers as an edit of the key, where a key the record lacks says
     // nothing to `apply`.
+    const rest = withoutDeviceLocalSettings(src.settings)
     const data: SettingsData = {
       ...rest,
       compactMode: { ...rest.compactMode, sidebarPersistent: false }
