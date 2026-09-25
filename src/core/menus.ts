@@ -619,12 +619,22 @@ export class Menus {
     // item, whose tab joins the group as it always has.
     const group =
       win.formFactor !== 'desktop' && tab.folderId ? state.model.folders[tab.folderId] : undefined
+    // On a tab in no group Chrome for Android keeps the row and MAKES the group (PUI-17): the
+    // opener and the link's tab become a group of two. Not for a tab the groups skip – an
+    // essential, a pinned or a private one – nor in a window with no space of its own (a
+    // private or blank window), where there is no group to make. The desktop menu is untouched.
+    const groupable =
+      win.formFactor !== 'desktop' &&
+      !win.localSpace &&
+      !tab.essential &&
+      !tab.pinned &&
+      !tabs.isPrivate(tab)
     // `mailto:` and `tel:` links have nowhere to open in a tab: only their copy items (Chrome).
     // The phone hands them to the device's own apps as Chrome for Android does (PUI-22): a
     // number to the dialer, the messaging app and the contacts form, an address to the mail app.
     if (win.formFactor === 'phone') open.push(...this.contactLinkItems(url))
     if (navigable) {
-      if (group) {
+      if (group || groupable) {
         open.push({
           label: 'Open Link in New Tab in Group',
           click: () =>
@@ -635,7 +645,7 @@ export class Menus {
                 afterTabId: tab.id,
                 containerId: tab.containerId,
                 openerTabId: tab.id,
-                folderId: group.id
+                folderId: group ? group.id : this.groupAround(tab, win)
               },
               win
             )
@@ -730,6 +740,25 @@ export class Menus {
       })
     }
     return [open, transfer]
+  }
+
+  /**
+   * The group Chrome for Android's "Open in new tab in group" makes around a tab in none: a new
+   * folder of the tab's space with the tab moved in, named and coloured as the tab menu's "Add
+   * Tab to New Folder" names its own, with no editor opened – the row is the gesture, and the
+   * group's header is where its name is changed. The link's tab then joins behind the opener.
+   * Resolves to the folder's id.
+   */
+  private groupAround(tab: Tab, win: ZenWindow): string {
+    const folder = this.browser.createFolder(
+      tab.spaceId ?? win.activeSpaceId,
+      'New Folder',
+      '📁',
+      win,
+      { rename: false }
+    )
+    this.browser.tabs.moveToFolder(tab.id, folder.id)
+    return folder.id
   }
 
   /**

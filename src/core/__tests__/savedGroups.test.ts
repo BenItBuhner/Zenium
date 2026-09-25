@@ -512,13 +512,120 @@ describe('the link menu’s group item (TAB-15)', () => {
       'https://loose.test/'
     ])
 
-    // A loose tab has no group to open into: the plain item alone, joining nothing.
+    // A loose tab keeps the pair – its group row makes the group (PUI-17, below) – and the
+    // plain item joins nothing.
     h.browser.menus.showPageContextMenu(loose, linkParams('https://from-loose.test/'), h.win)
-    expect(labels(h.shown())).not.toContain('Open Link in New Tab in Group')
+    expect(labels(h.shown()).slice(0, 2)).toEqual([
+      'Open Link in New Tab in Group',
+      'Open Link in New Tab'
+    ])
     click(h.shown(), 'Open Link in New Tab')
     expect(
       Object.values(m.tabs).find((t) => t.url === 'https://from-loose.test/')?.folderId
     ).toBeNull()
+    expect(m.tabs[loose].folderId).toBeNull()
+  })
+
+  it('makes the group for a tab in none: the opener and the new tab, a group of two (PUI-17)', () => {
+    const h = harness('phone')
+    const m = h.browser.state.model
+    const other = h.open('https://other.test/')
+    const loose = h.open('https://loose.test/')
+    const before = Object.keys(m.folders)
+    h.browser.menus.showPageContextMenu(loose, linkParams(url), h.win)
+    expect(labels(h.shown()).indexOf('Open Link in New Tab in Group')).toBe(0)
+
+    click(h.shown(), 'Open Link in New Tab in Group')
+    const made = Object.keys(m.folders).filter((id) => !before.includes(id))
+    expect(made).toHaveLength(1)
+    const folder = m.folders[made[0]]
+    // Named and coloured as the tab menu's Add Tab to New Folder names its own, open, and
+    // with no editor over it: the row is the gesture.
+    expect(folder).toMatchObject({
+      name: 'New Folder',
+      icon: '📁',
+      spaceId: h.win.activeSpaceId,
+      collapsed: false
+    })
+    expect(FOLDER_COLOR_ORDER).toContain(folder.color)
+    expect(h.sent.map((e) => e.name)).not.toContain('folder.edit')
+    // Both in it – the opener kept its slot, the new tab behind it in the background – and
+    // the tab beside them left out.
+    const opened = Object.values(m.tabs).find((t) => t.url === url)!
+    expect(m.tabs[loose].folderId).toBe(folder.id)
+    expect(opened.folderId).toBe(folder.id)
+    expect(opened.openerTabId).toBe(loose)
+    expect(m.tabs[other].folderId).toBeNull()
+    expect(h.urls()).toEqual(['https://other.test/', 'https://loose.test/', url])
+    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(loose)
+
+    // The opener is in a group now: the row's next open joins that group (TAB-15), makes none.
+    h.browser.menus.showPageContextMenu(loose, linkParams('https://third.test/'), h.win)
+    click(h.shown(), 'Open Link in New Tab in Group')
+    expect(Object.keys(m.folders)).toHaveLength(before.length + 1)
+    expect(Object.values(m.tabs).find((t) => t.url === 'https://third.test/')?.folderId).toBe(
+      folder.id
+    )
+    // Behind the first, as consecutive background opens from one page keep their order.
+    expect(h.urls()).toEqual([
+      'https://other.test/',
+      'https://loose.test/',
+      url,
+      'https://third.test/'
+    ])
+  })
+
+  it('offers no group to make for a tab the groups skip: an essential, a pinned or a private one', () => {
+    const h = harness('phone')
+    const m = h.browser.state.model
+    const { tabs } = h.browser
+    const essential = tabs.createTab({ url: 'https://e.test/', essential: true }, h.win).id
+    const pinned = tabs.createTab({ url: 'https://p.test/', pinned: true }, h.win).id
+    const priv = tabs.newPrivateTab('https://priv.test/', h.win)!
+    expect(tabs.isPrivate(m.tabs[priv])).toBe(true)
+    const folders = Object.keys(m.folders).length
+    for (const id of [essential, pinned, priv]) {
+      h.browser.menus.showPageContextMenu(id, linkParams(url), h.win)
+      const menu = labels(h.shown())
+      expect(menu).not.toContain('Open Link in New Tab in Group')
+      expect(menu.indexOf('Open Link in New Tab')).toBe(0)
+    }
+    expect(Object.keys(m.folders)).toHaveLength(folders)
+  })
+
+  it('is the tablet’s too, a touch host', () => {
+    const t = harness('tablet')
+    const onTablet = t.open('https://loose.test/')
+    t.browser.menus.showPageContextMenu(onTablet, linkParams(url), t.win)
+    expect(labels(t.shown()).slice(0, 2)).toEqual([
+      'Open Link in New Tab in Group',
+      'Open Link in New Tab'
+    ])
+  })
+
+  it('leaves the desktop menu for a tab in no group as it was: Chrome desktop’s one item, byte for byte', () => {
+    const d = harness('desktop', false)
+    const m = d.browser.state.model
+    const onDesktop = d.open('https://loose.test/')
+    d.browser.menus.showPageContextMenu(onDesktop, linkParams(url), d.win)
+    expect(labels(d.shown())).toEqual([
+      'Open Link in New Tab',
+      'Open Link in New Window',
+      'Open Link in New Private Window',
+      'Open Link in Glance',
+      'Open Link in Split View',
+      'Open Link in New Container Tab',
+      '-',
+      'Save Link As…',
+      'Copy Link Address',
+      'Share Link…',
+      '-',
+      'Boosts',
+      'Inspect Element'
+    ])
+    click(d.shown(), 'Open Link in New Tab')
+    expect(Object.values(m.tabs).find((t) => t.url === url)?.folderId).toBeNull()
+    expect(Object.keys(m.folders)).toHaveLength(0)
   })
 
   it('stays off the desktop menu, whose one item keeps joining the group', () => {
