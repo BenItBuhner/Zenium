@@ -315,7 +315,8 @@ describe("the window's owner: one grid at a time, by token", () => {
   })
 
   it("a release by a grid that no longer owns the window does nothing: the shell swap's old grid", () => {
-    // The new grid claims in its layout effect; the old grid's cleanup releases after it.
+    // A release landing after a newer grid's claim – a cleanup deferred past the new grid's
+    // layout effects – must leave that grid's window alone.
     const old = newOverviewWindowToken()
     claimOverviewWindow(old)
     fillCards(['t0', 't1'])

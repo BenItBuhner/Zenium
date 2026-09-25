@@ -525,9 +525,10 @@ describe('the grid windowed at the mount', () => {
 
 describe("the window through the grid's life", () => {
   it('a grid unmounted and another mounted in one commit: the new grid keeps what it built (the shell swap)', () => {
-    // The first-line review's probe (TABLET-08): the new grid's layout effects – its claim,
-    // its read – run before the old grid's cleanup; a plain reset from that cleanup wiped the
-    // rows the new grid had built beyond its guess for a frame.
+    // The first-line review's probe (TABLET-08). The first version reset from a passive cleanup,
+    // which React runs after the new grid's layout effects – its claim, its read – and it wiped
+    // the rows the new grid had built beyond its guess for a frame. The release is a layout
+    // cleanup now, run before the new grid's effects, and touches only a window still its own.
     const state = stateOf(thirty())
     act(() => browserStore.set({ state }))
     render(state, OPEN, 'A')

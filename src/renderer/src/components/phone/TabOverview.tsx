@@ -690,15 +690,16 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
   )
   // The window is THIS grid's (`lib/overviewWindow.ts`): a token minted at the render, so the
   // cells read the store under it from their first render, claimed in the grid's first layout
-  // effect – the store starts afresh – and released with the grid. Two grids stand in one commit
-  // when the shell swaps with the overview open (a phone window widened into the tablet layout,
-  // or a tablet's narrowed, TABLET-08: `App.tsx` mounts the other shell's `TabOverview` in the
-  // commit that unmounts this one's), and React runs the new grid's layout effects – its claim,
-  // its first read – before the old grid's cleanup: the old grid's release finds the token no
-  // longer its and leaves the new grid's window alone (a plain reset there wiped the rows the new
-  // grid had built beyond its guess – placeholders in view for a frame). The close keeps the
-  // overview mounted while the landing is held (`PhoneStage`, `landOverview`), its hero at the
-  // page's frame: the window stands until the grid goes, and not before.
+  // effect – the store starts afresh – and released as that effect's cleanup. Two grids stand in
+  // one commit when the shell swaps with the overview open (a phone window widened into the
+  // tablet layout, or a tablet's narrowed, TABLET-08: `App.tsx` mounts the other shell's
+  // `TabOverview` in the commit that unmounts this one's): React runs the old grid's layout
+  // cleanup before the new grid's layout effects, so the release goes before the claim, and a
+  // passive cleanup after them – a plain reset from one wiped the rows the new grid had just
+  // built beyond its guess, placeholders in view for a frame. The release touches only a window
+  // still this grid's, whatever the order. The close keeps the overview mounted while the
+  // landing is held (`PhoneStage`, `landOverview`), its hero at the page's frame: the window
+  // stands until the grid goes, and not before.
   const [windowToken] = useState(newOverviewWindowToken)
   useLayoutEffect(() => {
     claimOverviewWindow(windowToken)

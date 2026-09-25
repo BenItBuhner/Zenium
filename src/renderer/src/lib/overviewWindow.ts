@@ -29,16 +29,18 @@ import { createStore } from './store'
  * the grid, whose FLIP set and hero measure stay where the commit left them.
  *
  * The window is ONE grid's – the store's `owner`, a token the grid mints at its render
- * (`newOverviewWindowToken`) and claims in its first layout effect (`claimOverviewWindow`), and
- * releases with the grid (`releaseOverviewWindow`). Two grids stand in one commit when the shell
- * swaps (a phone window widened into the tablet layout, or a tablet's narrowed, TABLET-08): the
- * new grid's cells render while the old grid's window is still the store's, and React runs the
- * new grid's layout effects before the old grid's passive cleanup. A cell reads the store under
- * its own grid's token, so the new grid's first render builds its guess and nothing the old grid
- * had built (a fully filled old grid would otherwise mount every card again, the very task the
- * window splits); the claim starts the store afresh for the new grid; and the old grid's release
- * finds the token no longer its and does nothing – a plain reset there wiped the rows the new
- * grid had just built beyond its guess, placeholders in view for a frame.
+ * (`newOverviewWindowToken`), claims in its first layout effect (`claimOverviewWindow`) and
+ * releases as that effect's cleanup (`releaseOverviewWindow`). Two grids stand in one commit when
+ * the shell swaps (a phone window widened into the tablet layout, or a tablet's narrowed,
+ * TABLET-08): the new grid's cells RENDER while the old grid's window is still the store's, and
+ * a cell reads the store under its own grid's token, so that first render builds the new grid's
+ * guess and nothing the old grid had built (a fully filled old grid would otherwise mount every
+ * card again, the very task the window splits). React runs the old grid's layout cleanup before
+ * the new grid's layout effects, so the release hands the store over before the claim starts it
+ * afresh; and a release touches only a window still its own, so one landing after a newer grid's
+ * claim leaves that grid's window alone – the first version reset from a passive cleanup, which
+ * React runs AFTER the new grid's layout effects, and it wiped the rows the new grid had just
+ * built beyond its guess: placeholders in view for a frame.
  */
 
 /**
