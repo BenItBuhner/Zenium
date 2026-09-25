@@ -24,12 +24,15 @@
 # record's `VERDICT delta (paired …)` lines are followed by the judgement, `P0 VERDICT: PASS` or
 # `P0 VERDICT: FAIL — <measure> paired median +N ms on the <direct|alias> way, over the +T ms
 # threshold` (a `::error::` with it and EXIT 1: the workflow goes red). TotalTime's paired median
-# over +TOTAL_THRESHOLD_MS on EITHER way fails; Fully drawn – the chrome's READY, the boot.ts
-# side of the boot path a TotalTime gate cannot see – is judged the same against
-# FULLY_DRAWN_THRESHOLD_MS, its own number from the same null runs (see there); WaitTime is
-# reported, not judged. A pair with a dash on either side is left out; a judged row with FEWER
-# THAN half its pairs valid is INCONCLUSIVE, which fails too. The per-arm medians and the
-# `delta (… the medians)` lines stand as before, byte for byte; only the paired delta is judged.
+# over the way's threshold fails – +TOTAL_THRESHOLD_MS on the direct way, the ruling's number;
+# +ALIAS_THRESHOLD_MS on the alias way, its own where the null runs made it so (see the
+# calibration below); Fully drawn – the chrome's READY, the boot.ts side of the boot path a
+# TotalTime gate cannot see, and the noisier mark – is judged the same against
+# FULLY_DRAWN_THRESHOLD_MS (direct) and FULLY_DRAWN_ALIAS_THRESHOLD_MS (alias), its own numbers
+# from the same null runs; WaitTime is reported, not judged. A pair with a dash on either side is
+# left out; a judged row with FEWER THAN half its pairs valid is INCONCLUSIVE, which fails too.
+# The per-arm medians and the `delta (… the medians)` lines stand as round 1 left them, byte
+# for byte; only the paired delta is judged.
 #
 # THE DESIGN, and why. A paired difference's median has a standard error near 1.25·σ/√N, and
 # at the raw spread of one pair per install (σ ≈ 210 ms direct, ≈ 320 ms alias with heavy
@@ -37,61 +40,86 @@
 # variance goes down first, then N goes up. (a) THE ARMS' ART STATE is read after every install
 # (`dumpsys package`, the dexopt status of the code) and must agree from one install to the
 # next, or the run fails. The ruling asked for both arms compiled ahead of time (`cmd package
-# compile -m speed -f`), but ART Service compiles a DEBUGGABLE package at `verify` whatever
-# filter is asked, the shell's command included (Dexopter.java, adjustCompilerFilter: "we force
-# vmSafeMode on debuggable apps as well … applies to all compilations (even if they are done via
-# adb shell commands)" – android14-release and android15-release alike, the recipe's two images),
-# and the pair measures the debug APK, which is debuggable. So no AOT step exists for it – and
-# none is needed for the ruling's purpose: `verify` is the only state a debuggable package can
-# be in, so no dexopt can land mid-measurement on either arm, and the JIT is per process and the
-# same on both. The check makes that a recorded fact per install instead of an assumption; the
-# absolute numbers stay comparable with pairs 1–8 of #454 (the same `verify`). AOT arms would
-# take a non-debuggable build for the pair, which is not this tool's to make. (b) each install
-# is measured P0_STARTS times by each way, not once: the run is P0_RUNS BLOCKS A(k) B(k) A(k)
-# B(k) …, k = P0_STARTS, the i-th start of a block paired with the i-th start of the other arm's
-# block, N = P0_RUNS × P0_STARTS pairs – the install and the settle start are paid once per k
-# pairs (the k pairs of a block share an install, so N counts a little less than N independent
-# pairs would; the null runs measure the band as it is). (c) the median stays (robust to the
-# alias's tails; no trimming). N is CALIBRATED on null pairs (the same tree in both arms): the
-# TotalTime paired median inside ±50 ms on both ways on two consecutive null runs at one N is
-# the stopping rule; the numbers are in the PR body of #482 (H4, round 2) and in the workflow's
-# defaults.
+# compile -m speed -f`), but ART Service downgrades whatever filter is asked for a DEBUGGABLE
+# package to `verify` – no compiled code – the shell's command included (Dexopter.java,
+# adjustCompilerFilter: "we force vmSafeMode on debuggable apps as well … applies to all
+# compilations (even if they are done via adb shell commands)" – android14-release and
+# android15-release alike, the recipe's two images), and the pair measures the debug APK, which
+# is debuggable; on the recipe's image the install leaves it at `run-from-apk` (the dex loaded
+# from the APK, no odex at all), as the null runs read on every install. So no AOT step exists
+# for it – and none is needed for the ruling's purpose: a debuggable package has one state, so
+# no dexopt can land mid-measurement on either arm, and the JIT is per process and the same on
+# both. The check makes that a recorded fact per install instead of an assumption; the absolute
+# numbers stay comparable with pairs 1–8 of #454 (the same state). AOT arms would take a
+# non-debuggable build for the pair, which is not this tool's to make. (b) each install is
+# measured P0_STARTS times by each way, not once: the run is P0_RUNS BLOCKS of two arms, k =
+# P0_STARTS starts by each way per arm, the i-th start of a block's one arm paired with the i-th
+# of its other, N = P0_RUNS × P0_STARTS pairs – the install and the settle start are paid once
+# per k pairs (the k pairs of a block share an install, so N counts a little less than N
+# independent pairs would; the null runs measure the band as it is). (c) THE ORDER ALTERNATES:
+# odd blocks install the base first and the head second, even blocks the head first (A B / B A
+# …). The first two null runs at N = 30 (36168310688, base first in every block) read the direct
+# way at +1 / +15.5 ms and the alias way at +100 / +96 ms – a same-tree pair positive twice on
+# the alias alone smells of a POSITION effect (the second-installed arm paying for something in
+# the trampoline's path: the launcher's icon and intent cache after the reinstall, the second
+# install's residue, the WebView provider's state), not noise; alternated, such an effect falls
+# on both arms alike over the run and cancels in the paired median, and the POSITION READING in
+# the record – the medians by the arm's position in its block, first-installed or
+# second-installed, whatever the build, and the paired median second − first – measures it. (d)
+# the median stays (robust to the alias's tails; no trimming). Beside the numbers, each start
+# records whether the launcher's process (com.google.android.apps.nexuslauncher) was alive
+# before it and its pid (a launcher restarting on the intent is a plausible cost on the alias
+# way), and the frames rendered when probed FRAMES_AT_S after the start request, beside the
+# STATS_AT_S statistics – the clock's evidence: a count still growing between the probes and the
+# statistics means the boot's frames were not over, and a count that is not says the clock can
+# shorten. N is CALIBRATED on null pairs (the same tree in both arms): the TotalTime paired
+# median inside ±50 ms on both ways on two consecutive null runs at one N is the stopping rule;
+# a way that stays outside it with the order alternated is gated at twice its null half-width
+# rounded up to the next 50 ms. The numbers are in the PR body of #482 (H4, round 2) and in the
+# workflow's defaults.
 #
 #   P0_BASE_APK   – the base build's debug APK (the caller's setup-script built it from the base ref)
 #   P0_BASE_LABEL – how the base is named in the table (its commit), `base` by default
 #   P0_HEAD_LABEL – how the head is named, `head` by default
-#   P0_RUNS       – blocks, 15 by default: each installs the base, reads its ART state, settles it
-#                   (one discarded start) and measures it, then the head the same
+#   P0_RUNS       – blocks, 15 by default: each installs one arm, reads its ART state, settles it
+#                   (one discarded start) and measures it, then the other arm the same
 #   P0_STARTS     – measured cold starts by each way per install, 2 by default; N = P0_RUNS × P0_STARTS
-#   P0_TOTAL_THRESHOLD_MS, P0_FULLY_DRAWN_THRESHOLD_MS – the gate's thresholds, for a calibration
-#                   run only; the defaults below are the gate
+#   P0_TOTAL_THRESHOLD_MS, P0_ALIAS_THRESHOLD_MS, P0_FULLY_DRAWN_THRESHOLD_MS,
+#   P0_FULLY_DRAWN_ALIAS_THRESHOLD_MS – the gate's thresholds, for a calibration run only; the
+#                   defaults below are the gate
 #   DEMO_OUT      – where the record goes (cold-start-pair.txt and the raw am start output)
 #
 # The arms are interleaved (seed 71): `adb install -r -d` of one build over the other (the same
 # applicationId, so the profile stays and both boot the same state; -d since the base may carry
-# the newer version code when main has moved past the branch), A B A B … on the one boot, so
-# the boot's drift (627 ms across one pair's twenty starts measured arm after arm) falls on both
-# arms of a pair alike. Every run keeps one clock for both builds (a build without the READY
-# mark must not read its frame statistics later, nor start its next run later, than one with
-# it): the mark is waited for up to READY_WAIT_S from the start request, the statistics are read
-# STATS_AT_S after it whatever the wait found, and the next start comes NEXT_AT_S after it, the
-# device quiet and the boot – the chrome and the core boot on after the first frame – long over
-# on either. The table is written to the job summary too.
+# the newer version code when main has moved past the branch), block after block on the one
+# boot, so the boot's drift (627 ms across one pair's twenty starts measured arm after arm)
+# falls on both arms of a pair alike. Every run keeps one clock for both builds (a build without
+# the READY mark must not read its frame statistics later, nor start its next run later, than
+# one with it): the mark is waited for up to READY_WAIT_S from the start request, the frames
+# probed at FRAMES_AT_S, the statistics read STATS_AT_S after it whatever the wait found, and
+# the next start comes NEXT_AT_S after it, the device quiet and the boot – the chrome and the
+# core boot on after the first frame – long over on either. The table is written to the job
+# summary too.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
 activity=app.zen.chromium.MainActivity
 alias=app.zen.chromium.icon.Indigo
+launcher_id=com.google.android.apps.nexuslauncher
 tap_flags=0x10200000
 runs=${P0_RUNS:-15}
 starts=${P0_STARTS:-2}
 pairs=$((runs * starts))
-# The gate's thresholds (ms, on the paired median; over = FAIL). TotalTime's is the ruling's;
-# Fully drawn's is calibrated on the same null runs (twice its null half-width rounded up to
-# the next 50 ms when that band is wider than ±50 ms, else the same +100).
+# The gate's thresholds (ms, on the paired median; over = FAIL), per measure and way. The direct
+# way's TotalTime is the ruling's +100; the others are calibrated on the null runs (twice the
+# way's null half-width rounded up to the next 50 ms where that band is wider than ±50 ms, else
+# the same +100) – the PR body of #482 has the runs.
 TOTAL_THRESHOLD_MS=${P0_TOTAL_THRESHOLD_MS:-100}
+ALIAS_THRESHOLD_MS=${P0_ALIAS_THRESHOLD_MS:-$TOTAL_THRESHOLD_MS}
 FULLY_DRAWN_THRESHOLD_MS=${P0_FULLY_DRAWN_THRESHOLD_MS:-100}
+FULLY_DRAWN_ALIAS_THRESHOLD_MS=${P0_FULLY_DRAWN_ALIAS_THRESHOLD_MS:-$FULLY_DRAWN_THRESHOLD_MS}
 READY_WAIT_S=12
+FRAMES_AT_S="8 12"
 STATS_AT_S=15
 NEXT_AT_S=22
 out=${DEMO_OUT:-artifacts/android-cold-start-pair}
@@ -211,6 +239,18 @@ frame_stats() {
     /^90th percentile:/ { sub(/ms/, "", $2); printf "p90=%s ", $2 }
     /^99th percentile:/ { sub(/ms/, "", $2); printf "p99=%s ", $2 }' || true
 }
+# The frames the process has rendered since its start (`dumpsys gfxinfo`'s `Total frames rendered`),
+# the one number the probes read; `-` when the process is gone.
+frames_rendered() {
+  adb shell dumpsys gfxinfo "$app_id" 2> /dev/null | tr -d '\r' | awk -F': ' '/^Total frames rendered:/ { print $2; found = 1 } END { if (!found) print "-" }'
+}
+# The launcher's process before a start: `alive <pid>` or `dead` (a launcher restarting on the intent
+# would be a cost on the alias way, whose intent is the launcher's).
+launcher_state() {
+  local pid
+  pid=$(adb shell pidof "$launcher_id" 2> /dev/null | tr -d '\r' | awk '{ print $1 }')
+  if [ -n "$pid" ]; then echo "alive $pid"; else echo "dead"; fi
+}
 # The names in the given marks lines, in order of first appearance, one per line.
 mark_names() {
   printf '%s\n' "$@" | tr ' ' '\n' | sed -n 's/=.*//p' | awk 'NF && !seen[$0]++'
@@ -251,32 +291,45 @@ install_build() {
   adb shell am force-stop "$app_id"
 }
 # One measured cold start of the installed build by way $2 (direct | alias) as run $3 under name
-# $1, appended to the name's arrays (`<name>_totals` and the rest, `-` for a dash in the table)
-# and to `<name>-am-start.txt` (the am start answer, the mark, the hold, the boot's marks, the
-# frame statistics).
+# $1, the arm in position $4 of its block (1 installed first, 2 second), appended to the name's
+# arrays (`<name>_totals` and the rest, `-` for a dash in the table), to the position's
+# (`pos<n>_<way>_totals`, `_drawn`, `_waits`: the position reading) and to `<name>-am-start.txt`
+# (the am start answer, the launcher's state before it, the mark, the hold, the boot's marks, the
+# frame statistics with the probes).
 measure_one() {
-  local name=$1 way=$2 i=$3
+  local name=$1 way=$2 i=$3 pos=$4
   local -n m_totals=${name}_totals m_waits=${name}_waits m_states=${name}_states m_drawn=${name}_drawn
-  local -n m_helds=${name}_helds m_marks=${name}_marks m_fstats=${name}_fstats
-  local seen started answer fully held marks_ stats_ total wait_ state
+  local -n m_helds=${name}_helds m_marks=${name}_marks m_fstats=${name}_fstats m_launchers=${name}_launchers
+  local -n p_totals=pos${pos}_${way}_totals p_drawn=pos${pos}_${way}_drawn p_waits=pos${pos}_${way}_waits
+  local seen started answer fully held marks_ stats_ total wait_ state launcher probes t
   to_launcher
   adb logcat -c > /dev/null 2>&1 || true
   seen=$(fully_drawn_count)
+  launcher=$(launcher_state)
   started=$(date +%s)
   answer=$(start_app "$way")
   # One clock for both builds: the READY mark waited for (the boot's length where a build has
-  # it), the log's lines and the frame statistics read STATS_AT_S after the start request
-  # whether the wait found the mark or not, the next start NEXT_AT_S after it.
+  # it), the frames probed FRAMES_AT_S after the start request (each probe records the second it
+  # was read at – a wait that ran to its limit puts the earlier probes off their time), the log's
+  # lines and the frame statistics read STATS_AT_S after it whether the wait found the mark or
+  # not, the next start NEXT_AT_S after it.
   fully=$(fully_drawn_wait "$READY_WAIT_S" "$seen")
+  probes=
+  for t in $FRAMES_AT_S; do
+    sleep_until $((started + t))
+    probes+="${probes:+ }at${t}s=$(frames_rendered) read${t}=$(( $(date +%s) - started ))"
+  done
   sleep_until $((started + STATS_AT_S))
   held=$(splash_held)
   marks_=$(boot_marks)
   stats_=$(frame_stats)
-  printf 'run %s\n%s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\nFrameStats: %s\n\n' "$i" "$answer" "$fully" "$held" "$marks_" "$stats_" >> "$out/${name//_/-}-am-start.txt"
+  stats_="${stats_% }"
+  stats_="${stats_:+$stats_ }$probes"
+  printf 'run %s\n%s\nLauncher: %s\nFullyDrawn: %s\nSplashHeld: %s\nBootMarks: %s\nFrameStats: %s\n\n' "$i" "$answer" "$launcher" "$fully" "$held" "$marks_" "$stats_" >> "$out/${name//_/-}-am-start.txt"
   total=$(printf '%s\n' "$answer" | sed -n 's/^TotalTime: *//p' | head -n 1)
   wait_=$(printf '%s\n' "$answer" | sed -n 's/^WaitTime: *//p' | head -n 1)
   state=$(printf '%s\n' "$answer" | sed -n 's/^LaunchState: *//p' | head -n 1)
-  echo "  $name run $i ($way): TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} splash held $held${marks_:+; marks $marks_}${stats_:+; frames $stats_}"
+  echo "  $name run $i ($way, position $pos): TotalTime ${total:-?} FullyDrawn $fully WaitTime ${wait_:-?} ${state:-?} launcher $launcher splash held $held${marks_:+; marks $marks_}${stats_:+; frames $stats_}"
   # A start the platform answered without a time (a build without the alias: `Error: Activity
   # class does not exist`) reads `-`, and the median leaves it out.
   m_totals+=("${total:--}")
@@ -286,6 +339,10 @@ measure_one() {
   m_helds+=("$held")
   m_marks+=("$marks_")
   m_fstats+=("$stats_")
+  m_launchers+=("$launcher")
+  p_totals+=("${total:--}")
+  p_drawn+=("$fully")
+  p_waits+=("${wait_:--}")
   sleep_until $((started + NEXT_AT_S))
   adb shell am force-stop "$app_id"
 }
@@ -321,6 +378,28 @@ paired_median() {
   # shellcheck disable=SC2086
   echo "$(median $diffs) ms (pairs $(join $diffs))"
 }
+# The position reading of one measure and way: the medians of the first-installed ($1) and the
+# second-installed ($2) arm's arrays, second - first of them, and the paired median of second -
+# first (the arrays are in the pairs' order, so paired() reads them as it reads the arms').
+position_reading() {
+  local -n pr_first=$1 pr_second=$2
+  local first second diffs
+  first=$(median "${pr_first[@]}")
+  second=$(median "${pr_second[@]}")
+  diffs=$(paired "$1" "$2")
+  # shellcheck disable=SC2086
+  echo "first $first, second $second, second - first $(delta "$second" "$first") ms (paired $(median $diffs) ms)"
+}
+# `alive N of M` for the launcher states given.
+alive_count() {
+  local s alive=0
+  for s in "$@"; do case "$s" in alive*) alive=$((alive + 1)) ;; esac; done
+  echo "$alive of $#"
+}
+# How many distinct pids the launcher states given carry.
+distinct_pids() {
+  printf '%s\n' "$@" | sed -n 's/^alive //p' | sort -u | grep -c . || true
+}
 # The arguments after the first joined by the first (`; `).
 join_with() {
   local sep=$1 x joined=
@@ -355,42 +434,64 @@ judge() {
   fi
 }
 
+# The arms' arrays (measure_one appends by nameref: `<name>_<measure>`), one set per arm and way,
+# and the positions' (`pos<1|2>_<way>_<measure>`); declared by name so the readers below are known.
+before_totals=() before_waits=() before_states=() before_drawn=() before_helds=() before_marks=() before_fstats=() before_launchers=()
+before_alias_totals=() before_alias_waits=() before_alias_states=() before_alias_drawn=() before_alias_helds=() before_alias_marks=() before_alias_fstats=() before_alias_launchers=()
+after_totals=() after_waits=() after_states=() after_drawn=() after_helds=() after_marks=() after_fstats=() after_launchers=()
+after_alias_totals=() after_alias_waits=() after_alias_states=() after_alias_drawn=() after_alias_helds=() after_alias_marks=() after_alias_fstats=() after_alias_launchers=()
+# The positions' arrays are reached by name alone (measure_one's namerefs, position_reading's).
+# shellcheck disable=SC2034
+pos1_direct_totals=() pos1_direct_drawn=() pos1_direct_waits=() pos1_alias_totals=() pos1_alias_drawn=() pos1_alias_waits=()
+# shellcheck disable=SC2034
+pos2_direct_totals=() pos2_direct_drawn=() pos2_direct_waits=() pos2_alias_totals=() pos2_alias_drawn=() pos2_alias_waits=()
 for name in before before_alias after after_alias; do
   : > "$out/${name//_/-}-am-start.txt"
-  eval "${name}_totals=(); ${name}_waits=(); ${name}_states=(); ${name}_drawn=(); ${name}_helds=(); ${name}_marks=(); ${name}_fstats=()"
 done
 
-# The arms interleaved in blocks, A(k) B(k) A(k) B(k) … over $runs blocks on the one boot (seed
-# 71: the boot drifts – 627 ms across one pair's twenty starts – and two arms measured back to
-# back read the drift as a difference; a pair's two arms measured minutes apart at most do not).
-# Each block installs the base, reads its ART state, starts it once to settle, measures it k =
-# $starts times by each way (direct, alias, direct, alias …), then the same for the head; the
-# i-th start of a block by a way is pair (block − 1)·k + i, with the head's i-th – the arrays'
-# order, which paired() reads. The medians per arm and way stand as before; the verdict is the
-# median of the paired differences. Each block's wall clock is logged (the workflow's timeout).
+# One arm of a block: install the build (its ART state read), settle it, measure it k = $starts
+# times by each way (direct, alias, direct, alias …) as pairs (block − 1)·k + 1 … block·k, in
+# position $4 of the block. $1 the arm's name (before | after), $2 its APK, $3 its label, $5 the block.
+measure_arm() {
+  local arm=$1 apk=$2 label=$3 pos=$4 b=$5 s j
+  install_build "$arm" "$apk" "$label"
+  for s in $(seq 1 "$starts"); do
+    j=$(( (b - 1) * starts + s ))
+    measure_one "$arm" direct "$j" "$pos"
+    measure_one "${arm}_alias" alias "$j" "$pos"
+  done
+}
+
+# The arms interleaved in blocks over $runs blocks on the one boot (seed 71: the boot drifts –
+# 627 ms across one pair's twenty starts – and two arms measured back to back read the drift as
+# a difference; a pair's two arms measured minutes apart at most do not). Each block installs
+# one arm, reads its ART state, starts it once to settle, measures it k = $starts times by each
+# way, then the other arm the same; the i-th start of a block by a way is pair (block − 1)·k + i
+# with the other arm's i-th – the arrays' order, which paired() reads. THE ORDER ALTERNATES: odd
+# blocks base then head (A B), even blocks head then base (B A), so an effect of the position in
+# the block – whatever the second-installed arm pays that the first did not – falls on both arms
+# alike over the run and cancels in the paired median (the position reading measures it; the
+# pairing by index is unchanged). The medians per arm and way stand as before; the verdict is
+# the median of the paired differences. Each block's wall clock is logged (the workflow's timeout).
 for b in $(seq 1 "$runs"); do
   block_started=$(date +%s)
-  echo "== block $b of $runs (pairs $(( (b - 1) * starts + 1 ))–$((b * starts)) of $pairs)"
-  install_build before "$base_apk" "${P0_BASE_LABEL:-base}"
-  for s in $(seq 1 "$starts"); do
-    j=$(( (b - 1) * starts + s ))
-    measure_one before direct "$j"
-    measure_one before_alias alias "$j"
-  done
-  install_build after "$head_apk" "${P0_HEAD_LABEL:-head}"
-  for s in $(seq 1 "$starts"); do
-    j=$(( (b - 1) * starts + s ))
-    measure_one after direct "$j"
-    measure_one after_alias alias "$j"
-  done
+  if [ $((b % 2)) -eq 1 ]; then
+    echo "== block $b of $runs (pairs $(( (b - 1) * starts + 1 ))–$((b * starts)) of $pairs; base first, head second)"
+    measure_arm before "$base_apk" "${P0_BASE_LABEL:-base}" 1 "$b"
+    measure_arm after "$head_apk" "${P0_HEAD_LABEL:-head}" 2 "$b"
+  else
+    echo "== block $b of $runs (pairs $(( (b - 1) * starts + 1 ))–$((b * starts)) of $pairs; head first, base second)"
+    measure_arm after "$head_apk" "${P0_HEAD_LABEL:-head}" 1 "$b"
+    measure_arm before "$base_apk" "${P0_BASE_LABEL:-base}" 2 "$b"
+  fi
   echo "== block $b done in $(( $(date +%s) - block_started )) s"
 done
 
 # The gate, judged before the record is written (the exit status follows it).
 judge TotalTime direct before_totals after_totals "$TOTAL_THRESHOLD_MS"
-judge TotalTime alias before_alias_totals after_alias_totals "$TOTAL_THRESHOLD_MS"
+judge TotalTime alias before_alias_totals after_alias_totals "$ALIAS_THRESHOLD_MS"
 judge "Fully drawn" direct before_drawn after_drawn "$FULLY_DRAWN_THRESHOLD_MS"
-judge "Fully drawn" alias before_alias_drawn after_alias_drawn "$FULLY_DRAWN_THRESHOLD_MS"
+judge "Fully drawn" alias before_alias_drawn after_alias_drawn "$FULLY_DRAWN_ALIAS_THRESHOLD_MS"
 if [ ${#failures[@]} -eq 0 ]; then
   verdict="P0 VERDICT: PASS"
 else
@@ -433,7 +534,7 @@ values_table() {
 }
 
 {
-  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $pairs starts per build and way on one emulator boot in $runs blocks of $starts, the arms interleaved (A B A B …: each block installs the base, reads its ART state (dexopt ${dexopt_ref:-?}: a debuggable package is compiled at \`verify\` whatever is asked, so both arms boot in the one state the install leaves), starts it once to settle, measures it $starts times by each way, then the same for the head; the i-th start of a block pairs with the head's i-th; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. THE GATE is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter: TotalTime's paired median over +$TOTAL_THRESHOLD_MS ms on either way fails, Fully drawn's over +$FULLY_DRAWN_THRESHOLD_MS ms fails, a row with fewer than half its pairs valid is INCONCLUSIVE and fails; WaitTime is reported, not judged. The per-arm medians and their deltas are the record beside it."
+  echo "MainActivity's cold start, \`am start -W\` after \`am force-stop\`, $pairs starts per build and way on one emulator boot in $runs blocks of $starts, the arms interleaved and the order alternated (odd blocks base then head, even blocks head then base: each block installs one arm, reads its ART state (dexopt ${dexopt_ref:-?}: ART Service leaves a debuggable package no compiled code whatever is asked, so both arms boot in the one state the install leaves), starts it once to settle, measures it $starts times by each way, then the other arm the same; the i-th start of a block's one arm pairs with the i-th of its other; medians in ms): direct, the shell's start of MainActivity (the pair as it was, a start no user makes), and through the icon alias, the launcher's tap. THE GATE is the median of the paired differences (after − before within each pair), which the boot's drift across the run does not enter: TotalTime's paired median over +$TOTAL_THRESHOLD_MS ms on the direct way or +$ALIAS_THRESHOLD_MS ms on the alias way fails, Fully drawn's over +$FULLY_DRAWN_THRESHOLD_MS ms (direct) or +$FULLY_DRAWN_ALIAS_THRESHOLD_MS ms (alias) fails, a row with fewer than half its pairs valid is INCONCLUSIVE and fails; WaitTime is reported, not judged. The per-arm medians and their deltas are the record beside it; the position reading (the arm installed first in its block against the arm installed second, whatever the build) says what the order alone costs."
   # wm size / density answer two lines once overridden (Physical, Override): the last is the one in force.
   echo "device: $(adb shell getprop ro.build.fingerprint | tr -d '\r'); display $(adb shell wm size | tr -d '\r' | tail -n 1 | sed 's/.*: //') at $(adb shell wm density | tr -d '\r' | tail -n 1 | sed 's/.*: //') dpi"
   echo "TotalTime: the app window's first frame under the splash (a plain window on a build before the boot theme, the splash's colour with it); on the alias rows from the alias's start to MainActivity's first frame – the trampoline's run in between (one launch to the platform). Fully drawn: the chrome's first real frame, reportFullyDrawn() at READY, from the same start; - for a build without the mark. Method: every start with the process gone (\`am force-stop\`) and the launcher in front, by \`am start -W\` from the shell – the direct rows at MainActivity with MAIN/LAUNCHER, the alias rows with the launcher's own intent (MAIN/LAUNCHER, NEW_TASK | RESET_TASK_IF_NEEDED) at the enabled icon alias, whose target (the shortcuts' NoDisplay trampoline on a build before round 4, IconTapActivity under the splash theme from it) forwards to MainActivity; READY waited for up to $READY_WAIT_S s, the log's lines and the frame statistics read $STATS_AT_S s after the start request, the next start $NEXT_AT_S s after it – one clock for both builds and ways."
@@ -452,6 +553,8 @@ values_table() {
   echo "P0 gate (the paired medians against the thresholds, $pairs pairs): $(join_with '; ' "${judged[@]}")"
   echo "$verdict"
   echo "the trampoline's cost (alias - direct, the same build): before TotalTime $(delta "$before_alias_total" "$before_total") ms, Fully drawn $(delta "$before_alias_fully" "$before_fully") ms; after TotalTime $(delta "$after_alias_total" "$after_total") ms, Fully drawn $(delta "$after_alias_fully" "$after_fully") ms"
+  echo "position (the arm installed FIRST in its block against the arm installed SECOND, whatever the build – the base in the odd blocks, the head in the even – the medians over $pairs starts each, second - first of the medians, and in brackets the median of second - first within each pair): direct TotalTime $(position_reading pos1_direct_totals pos2_direct_totals), Fully drawn $(position_reading pos1_direct_drawn pos2_direct_drawn), WaitTime $(position_reading pos1_direct_waits pos2_direct_waits); alias TotalTime $(position_reading pos1_alias_totals pos2_alias_totals), Fully drawn $(position_reading pos1_alias_drawn pos2_alias_drawn), WaitTime $(position_reading pos1_alias_waits pos2_alias_waits)"
+  echo "launcher ($launcher_id) before the start, alive of the starts: before direct $(alive_count "${before_launchers[@]}"), alias $(alive_count "${before_alias_launchers[@]}"); after direct $(alive_count "${after_launchers[@]}"), alias $(alive_count "${after_alias_launchers[@]}"); $(distinct_pids "${before_launchers[@]}" "${before_alias_launchers[@]}" "${after_launchers[@]}" "${after_alias_launchers[@]}") distinct launcher pid(s) over the run (a second one is a restart)"
   # The boot's marks, where a build logs them: one row per name, the medians over the runs, each way.
   if [ -n "$(mark_names "${before_marks[@]}" "${after_marks[@]}" "${before_alias_marks[@]}" "${after_alias_marks[@]}")" ]; then
     echo
@@ -462,7 +565,7 @@ values_table() {
   # Ruling 5: the boot's frame statistics, the medians over the runs, the same helpers (name=value words), each way.
   if [ -n "$(mark_names "${before_fstats[@]}" "${after_fstats[@]}" "${before_alias_fstats[@]}" "${after_alias_fstats[@]}")" ]; then
     echo
-    echo "frame statistics (dumpsys gfxinfo, the process since its start, read $STATS_AT_S s after the start request on either build): frames rendered, janky, slowui the UI thread slow (the main thread's long tasks during the boot), missed the frame deadline missed, p90 / p99 the frame time percentiles in ms; medians over the runs."
+    echo "frame statistics (dumpsys gfxinfo, the process since its start, read $STATS_AT_S s after the start request on either build): frames rendered, janky, slowui the UI thread slow (the main thread's long tasks during the boot), missed the frame deadline missed, p90 / p99 the frame time percentiles in ms; medians over the runs. at<N>s: the frames rendered when probed N s after the start request (read<N>: the second the probe was read at – a READY wait that ran to its limit puts it later) – the clock's evidence: a count still growing from the probes to frames means the boot's frames were not over at the probe."
     values_table "statistic, direct" before_fstats after_fstats
     values_table "statistic, alias" before_alias_fstats after_alias_fstats
   fi
