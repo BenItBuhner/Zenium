@@ -368,4 +368,32 @@ describe('HistoryApi over the history service', () => {
     vi.advanceTimersByTime(600)
     expect(h.out).toHaveLength(2)
   })
+
+  it('sees a redirect chain as Chrome does (history-23): search lists the landing, getVisits and onVisited every hop', () => {
+    const h = harness({ ext: ['history'] }, now)
+    const ctx = h.ctx('ext')
+    h.api.attach()
+    h.service.visit('https://a.example/', 'A', null, {
+      transition: 'typed',
+      redirectedFrom: ['https://sho.rt/x', 'http://a.example/']
+    })
+    vi.advanceTimersByTime(600)
+    // `chrome.history.search` reads the visits with CHAIN_END only.
+    expect(h.api.handlers.search(ctx, { text: '', startTime: 0 })).toMatchObject([
+      { url: 'https://a.example/' }
+    ])
+    // `getVisits` is every visit of the URL, a hop's included; the hop reads as the typed one.
+    expect(
+      (
+        h.api.handlers.getVisits(ctx, { url: 'https://sho.rt/x' }) as Array<{ transition: string }>
+      ).map((v) => v.transition)
+    ).toEqual(['typed'])
+    expect(h.api.handlers.getVisits(ctx, { url: 'http://a.example/' })).toHaveLength(1)
+    // `onVisited` fired for each visit added, hops first (Chrome notifies every `AddPageVisit`).
+    expect(h.out.map((d) => (d.args[0] as { url: string }).url)).toEqual([
+      'https://sho.rt/x',
+      'http://a.example/',
+      'https://a.example/'
+    ])
+  })
 })

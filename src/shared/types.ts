@@ -62,6 +62,34 @@ export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 export type FormFactor = 'phone' | 'tablet' | 'desktop'
 
 /**
+ * A foldable's posture as the Android host reports it (`androidx.window`'s `FoldingFeature` of
+ * the window's layout, `Posture.kt`; OS-11): the device is `flat` (or has no fold in this
+ * window), or `halfOpened` with the hinge across the window – a laptop / tabletop or a book
+ * pose. The chrome lays itself out by the window's width, not the posture (`FormFactor`; no
+ * tabletop layout): the pose is logged and marked on the root (`lib/posture.ts`) for what reads
+ * it – a driver, a later surface that keeps clear of the hinge.
+ */
+export type PostureKind = 'flat' | 'halfOpened'
+
+export interface FoldHinge {
+  /** The hinge's bounds in CSS px, in the window's coordinates. */
+  left: number
+  top: number
+  right: number
+  bottom: number
+  /** A `horizontal` hinge splits the window top / bottom (tabletop); a `vertical` one left / right (book). */
+  orientation: 'horizontal' | 'vertical'
+  /** A hinge with a width or height (`FoldingFeature.isSeparating`): the two halves are separate. */
+  separating: boolean
+}
+
+export interface DevicePosture {
+  kind: PostureKind
+  /** The fold, when the window has one; a slab or a window off the fold has none. */
+  hinge: FoldHinge | null
+}
+
+/**
  * A surface of the chrome that answers a page's request the core would otherwise hold open for
  * it: the install prompt (`webapp.install`), the screen picker (`screenCaptureRequests`), the
  * share sheet (`shareRequests`). The renderer registers each as its component mounts
@@ -125,6 +153,12 @@ export interface HostCapabilities {
   pdfViewer: boolean
   /** The host can run the MCP server that lets AI agents control the browser. */
   agents: boolean
+  /**
+   * The host can install the `zenium-browser` Agent Skill into the coding harnesses' global
+   * skills directories on this machine (Settings › AI Agents › Agent skill): the desktop, where
+   * Claude Code, Cursor and Codex run beside the browser. A phone has no harness to install into.
+   */
+  agentSkills: boolean
   /** The host checks GitHub Releases for new versions and can fetch / apply them. */
   updates: boolean
   /** The host has a system share sheet (`app.share`); menus offer Share items when true. */
@@ -402,6 +436,15 @@ export interface SpaceTheme {
    * under a light scheme, the way an Incognito window does, so its light ink keeps reading on it.
    */
   scheme?: 'light' | 'dark'
+  /**
+   * The colours follow the new tab page's background picture (NTP-14; Settings' "Use the
+   * picture's colour" switch): seeded from the picture's colour when the switch went on, and
+   * again from each new picture picked on a device while it stays on. The switch's own state –
+   * the space's, kept with its theme wherever the space goes; absent reads off. Colours the user
+   * picks on the theme editor's wheel end the following (`editedTheme`): a picture does not
+   * overrule the user's colour unasked.
+   */
+  fromImage?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +605,25 @@ export interface SavedGroupTab {
   favicon?: string | null
 }
 
+/**
+ * The mark an MCP agent's group carries (`Folder.agent`): whose it is, and since when. `name` is
+ * the display name of the session that made the group, kept current while that session lives
+ * (`zen_session rename`) and replaced when another session adopts the group; an empty string
+ * says the maker is unknown (a group stamped by the one-time upgrade of state written before
+ * the mark existed, when its name did not carry the agent's). `createdAt` is ms since the epoch.
+ */
+export interface FolderAgentMark {
+  name: string
+  createdAt: number
+}
+
+/**
+ * The mark a space of the agents' carries (`Space.agent`): the one shared `Agents` space every
+ * agent's home group is made in (`shared`), or a space one agent made for itself (`own`, with
+ * that session's display name at the time and when).
+ */
+export type SpaceAgentMark = { kind: 'shared' } | { kind: 'own'; name: string; createdAt: number }
+
 export interface Folder {
   id: string
   spaceId: string
@@ -570,6 +632,14 @@ export interface Folder {
   collapsed: boolean
   /** Group colour; folders made before groups had colours (or on desktop) carry none. */
   color?: FolderColor | null
+  /**
+   * The group is an MCP agent's (S3 of the MCP program): stamped when the agent service makes
+   * or adopts it, so the group stays recognisable as an agent's – and, without a live owner
+   * session, as orphaned and adoptable – across restarts, wherever it sits. Read by the agent
+   * service alone; the chrome draws nothing for it. Additive: a folder without it is the user's,
+   * as every folder was before the field. Travels with the folder's sync record when set.
+   */
+  agent?: FolderAgentMark | null
   /**
    * Chrome's saved tab groups (Android's Tab groups pane, TAB-16): the group's pages as they
    * were when its last live member closed – the whole group on "Close group" (`folder.close`),
@@ -601,6 +671,14 @@ export interface Space {
   pinnedCollapsed: boolean
   /** Set for the private space of a blank / private window (never persisted). */
   windowId?: string
+  /**
+   * The space is the agents' (S3 of the MCP program): the shared `Agents` space, found by this
+   * mark and never by its name – a space the user calls "Agents" is theirs – or a space one
+   * agent made for itself. Stamped by the agent service when it makes the space; read by it
+   * alone. Additive: a space without it is the user's. Travels with the space's sync record
+   * when set.
+   */
+  agent?: SpaceAgentMark | null
 }
 
 export type SplitLayout = 'grid' | 'vertical' | 'horizontal'
@@ -612,6 +690,17 @@ export interface SplitGroup {
   layout: SplitLayout
   /** Normalised sizes (fractions summing to 1) for the panes – one per tab. */
   sizes: number[]
+  /**
+   * This split's link rule (split-13, Edge's "Open links from the left pane in the right
+   * pane"; v2 §9.35): true, a plain click on a link in the first pane of a side-by-side split
+   * (vertical or grid) loads the link in the pane to its right, the left pane staying where it
+   * is – search results on the left, the article on the right. The rule is the arrangement's,
+   * not a habit of the browser's: the pane header's ⋯ menu writes it for this split alone, a new
+   * split starts without it, and it is kept with the split – layout and sizes alike – so a
+   * restored session keeps it. Absent reads off; a stacked (horizontal) split has no left and
+   * right and keeps its links whatever this says.
+   */
+  linksToRight?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -917,10 +1006,31 @@ export interface SyncRemoteTab {
   windowId: string | null
 }
 
+/**
+ * What a synced device is, as its own platform reports it – Chrome's `DeviceFormFactor`
+ * (`sync_enums.proto`: desktop, phone, tablet; the older `DeviceType` names an OS, and every
+ * desktop OS draws one computer glyph). Android tells a phone from a tablet by its form factor
+ * (the 600 dp line); a desktop reports `desktop` unless its platform has a reliable signal that
+ * it is a laptop – Electron has none, so today no desktop says `laptop`, and the two kinds draw
+ * one glyph (`DeviceGlyph`). Absent from an older device's announcement: its rows show a
+ * stand-in glyph beside devices that announced one, and none where no device did.
+ */
+export type SyncDeviceKind = 'desktop' | 'laptop' | 'phone' | 'tablet'
+
+/** Another device seen in the sync folder, as its announcement names it. */
+export interface SyncDevice {
+  id: string
+  name: string
+  lastSeen: number
+  kind?: SyncDeviceKind
+}
+
 /** Another device's open tabs, newest activity first ("Tabs from other devices"). */
 export interface SyncDeviceTabs {
   deviceId: string
   deviceName: string
+  /** The device's kind, when its announcement carried one. */
+  deviceKind?: SyncDeviceKind
   /** When the device last published its list (epoch ms). */
   updatedAt: number
   tabs: SyncRemoteTab[]
@@ -948,7 +1058,7 @@ export interface SyncStatus {
   lastError: string | null
   syncing: boolean
   /** Other devices seen in the sync folder. */
-  devices: Array<{ id: string; name: string; lastSeen: number }>
+  devices: SyncDevice[]
   /** Set while the first sync waits for the user to confirm merging with existing cloud data. */
   pendingMerge: boolean
   /**
@@ -1495,6 +1605,18 @@ export interface HistoryVisit {
   visitTime: number
   transition: HistoryTransition
   tabId?: string
+  /**
+   * A hop of a redirect chain the navigation passed through, not the page it landed on (Chrome's
+   * visit without `PAGE_TRANSITION_CHAIN_END`, history-23): recorded at the landing's time,
+   * counted as visited, hidden from the history page's lists and searches. Absent on a landing
+   * and on every visit an older store wrote.
+   */
+  redirectSource?: true
+  /**
+   * On a landing reached through redirects: the chain's earlier addresses, first hop to last
+   * (each stored as a `redirectSource` visit at the same time) – where the user landed from.
+   */
+  redirectedFrom?: string[]
 }
 
 export interface HistoryQuery {
@@ -1509,6 +1631,12 @@ export interface HistoryQuery {
   toMs?: number
   /** Only visits of this host (or its subdomains). */
   host?: string
+  /**
+   * List the redirect chains' hops too (`HistoryVisit.redirectSource`). Off by default: the
+   * history page shows where the user landed, as Chrome's `QueryHistory` does; `chrome.history`'s
+   * `getVisits` and `onVisited` read every visit of a page, as Chrome's do.
+   */
+  includeRedirectSources?: boolean
   limit: number
   offset?: number
 }
@@ -1970,6 +2098,7 @@ export type ShortcutAction =
   | 'split.newEmpty'
   | 'split.nextPane'
   | 'split.prevPane'
+  | 'split.swap'
   | 'tab.copyUrl'
   | 'tab.copyUrlMarkdown'
   | 'tab.togglePin'
@@ -2312,6 +2441,12 @@ export interface NewTabPageState {
   /** The host can open an image file picker. */
   canPickImage: boolean
   /**
+   * The default search engine's favicon (`engineFieldFavicon` of `defaultSearchEngine()`, the
+   * source the pill's empty tab reads): the field's leading glyph at 16 (design language v2 §6,
+   * §9.29); null for an engine without one, and the field keeps its magnifier.
+   */
+  engineFavicon: string | null
+  /**
    * A private window's page only: the "Block third-party cookies" switch (Chrome's Incognito
    * new-tab toggle), `PrivacyStatus.privateThirdPartyCookies` – `blocked` is its position,
    * `locked` that Settings blocks them in every window, so it is on and disabled. Absent on a
@@ -2338,6 +2473,13 @@ export type NewTabPageAction =
   /** "Most visited": remove a site's tile (its host goes on a local block list) and undo that. */
   | { type: 'hide-site'; url: string }
   | { type: 'unhide-site'; url: string }
+  /**
+   * The Undo of the page menu's "Restore Default Shortcuts" (`defaults-restored`, NTP-22): the
+   * pinned shortcuts, the removed sites and the mode back as they were before the restore.
+   */
+  | { type: 'undo-restore-default-shortcuts' }
+  /** The Undo of a section the chrome's menu hid (`section-hidden`): it comes back as it was. */
+  | { type: 'show-section'; section: NewTabHideableSection }
   /** Open the chrome's add (`id` null) or edit shortcut dialog over the page. */
   | { type: 'edit-shortcut'; id: string | null }
   /**
@@ -2363,9 +2505,21 @@ export type NewTabPageAction =
 
 /**
  * What the browser tells a new tab page besides its state: a menu item picked in the chrome
- * that the page carries out itself, so its Undo toast works the same as for the Delete key.
+ * that the page carries out itself, so its Undo toast works the same as for the Delete key;
+ * a section the chrome's menu hid (NTP-18) – the state push takes it off the page, and the
+ * command raises the page's toast ("Greeting hidden" / "Shortcuts hidden") with Undo, which
+ * asks for `show-section`; and the grid put back to its defaults by the menu's "Restore Default
+ * Shortcuts" (NTP-22) – the push already redrew the grid, the command raises "Default shortcuts
+ * restored" with Undo, which asks for `undo-restore-default-shortcuts`. Every toast carries
+ * Undo alone (v2 §9.33: one action).
  */
-export type NewTabPageCommand = { type: 'remove-tile'; id: string }
+export type NewTabPageCommand =
+  | { type: 'remove-tile'; id: string }
+  | { type: 'section-hidden'; section: NewTabHideableSection }
+  | { type: 'defaults-restored' }
+
+/** The sections the page's menu hides with Undo (NTP-18): the greeting and the tile grid. */
+export type NewTabHideableSection = 'greeting' | 'shortcuts'
 
 export interface Settings {
   colorScheme: ColorScheme
@@ -2615,6 +2769,55 @@ export interface ShareAction {
   tabId: string | null
 }
 
+/**
+ * One app in the browser's own share panel (Android below 14, SH-03): the host's row of where
+ * the user shares, ranked by Zenium's own record of past shares.
+ */
+export interface SharePanelTarget {
+  /** The activity's flattened `ComponentName`: the row's key, and where a tap sends the share. */
+  component: string
+  label: string
+  /** The app's launcher icon at the row's 40 dp, a `data:` URL. */
+  icon: string
+}
+
+/**
+ * The browser's own share panel (Android below 14, where the system sheet has no row for the
+ * sharing app's actions; SH-03): what is being shared, for the preview and the chips, and the
+ * apps the host found for it. The host holds the share's intent under `id` until the chrome
+ * answers with `share.panelAction`. Hosts whose share sheet is the system's alone never send it.
+ */
+export interface SharePanelRequest {
+  id: string
+  /** A page or a link (`link`), a selection's text (`text`), or an image shared as a file (`image`). */
+  kind: 'link' | 'text' | 'image'
+  /** The page's title (or the link's text) for the preview's first line; null when the share has none. */
+  title: string | null
+  url: string | null
+  text: string | null
+  /** The page's favicon for the preview (a `data:` or `http(s)` URL); null for an image or a bare link. */
+  favicon: string | null
+  /** The shared image, small, for the preview (a `data:` URL); null unless `kind` is `image`. */
+  image: string | null
+  /** The tab the share started from (Long screenshot and Print work on it); null for none. */
+  tabId: string | null
+  /** A private tab's share: the host records nothing of where it went. */
+  private: boolean
+  targets: SharePanelTarget[]
+}
+
+/** How the share panel was answered, for the host holding the share's intent (`share.panelAction`). */
+export interface SharePanelAction {
+  id: string
+  /**
+   * `target`: send to `component`; `more`: the system sheet; `qr`: the link as a QR code;
+   * `copyImage`: the image onto the clipboard; `dismiss`: nothing more – the intent is released
+   * (the chrome's own chips – Copy link, Long screenshot, Print – ran in the chrome and end so).
+   */
+  kind: 'target' | 'more' | 'qr' | 'copyImage' | 'dismiss'
+  component?: string
+}
+
 // ---------------------------------------------------------------------------
 // Screenshots to the gallery (Android; SH-07, SH-08)
 // ---------------------------------------------------------------------------
@@ -2830,10 +3033,10 @@ export interface AgentInfo {
   transport: 'http' | 'stdio'
   connectedAt: number
   lastActiveAt: number
-  /** Tabs this agent drives (indicated in the sidebar). */
+  /** Tabs this agent drives (indicated in the sidebar): the members of its groups. */
   tabIds: string[]
-  /** The tab its page tools act on when no `tabId` is given. */
-  currentTabId: string | null
+  /** Tab groups (folders) this agent owns; a tab belongs to the agent whose group holds it. */
+  groupIds: string[]
   /** Waiting for the user to allow it. */
   pending: boolean
   /** Tool calls handled so far. */
@@ -2848,6 +3051,39 @@ export interface AgentServerStatus {
   lanUrls: string[]
   /** Bearer token that lets an agent skip the approval prompt. */
   token: string
+  error: string | null
+}
+
+/**
+ * One coding harness the `zenium-browser` Agent Skill can be installed for (Settings › AI
+ * Agents › Agent skill): its user-level skills directory and whether Zenium's copy is in it.
+ */
+export interface AgentSkillTarget {
+  /** `claude`, `cursor`, `codex` or `agents` (the shared `~/.agents/skills` folder). */
+  id: string
+  /** The harness's name as the row's label ("Claude Code"). */
+  label: string
+  /** The skill's directory as the row shows it (`~/.claude/skills/zenium-browser`). */
+  dir: string
+  /** The harness's configuration directory exists on this machine. */
+  detected: boolean
+  /** Zenium's copy is there (recorded in the manifest and present on disk). */
+  installed: boolean
+  /** The `metadata.version` of the installed copy; null when not installed. */
+  installedVersion: string | null
+  /** What the last operation left to say about this target (an edited copy kept, an error). */
+  note: string | null
+}
+
+/** The Agent Skill's install state across the harnesses (`Platform.agentSkills`). */
+export interface AgentSkillStatus {
+  /** The skill version this app installs (the app's version). */
+  version: string
+  targets: AgentSkillTarget[]
+  /**
+   * The last operation's first failure – a target's (the same sentence as its `note`) or the
+   * whole operation's (its record could not be saved) – as the status line shows it.
+   */
   error: string | null
 }
 
@@ -3553,15 +3789,16 @@ export interface PageDialogResponse {
 
 /**
  * A question the chrome asks about a window as a whole (window-modal): whether to close the
- * window with its tabs, or to quit Zenium with every open tab.
+ * window with its tabs, to quit Zenium with every open tab, or to open a bookmark folder's many
+ * pages at once (`open-bookmarks`: the desktop's form of Chrome's "Open all bookmarks?").
  */
 export interface WindowPrompt {
   id: string
-  kind: 'close-tabs' | 'quit'
+  kind: 'close-tabs' | 'quit' | 'open-bookmarks'
   /**
    * How many tabs close, for the warning about them ("You are about to quit with N tabs open");
    * 0 when that warning is not part of the question – a single tab, or the setting off – and the
-   * downloads alone are asked about.
+   * downloads alone are asked about. For `open-bookmarks`, how many tabs would open.
    */
   count: number
   /**
@@ -3646,9 +3883,12 @@ export interface UIState {
   privateLockOnLeave: boolean
   /**
    * The new tab page's custom background: whether one is set, whether the host can open a file
-   * picker for one (the phone's page reads the file itself and stores it through `set`).
+   * picker for one (the phone's page reads the file itself and stores it through `set`), and
+   * the colour the picture suggests for the space's accent (NTP-14; `#rrggbb`, fitted to read on
+   * both panels) – null with no image, while it is still being read, or on a host that cannot
+   * decode the file. Settings' "Use the picture's colour" switch arms on it.
    */
-  newTabBackground: { image: boolean; canPick: boolean }
+  newTabBackground: { image: boolean; canPick: boolean; accent: string | null }
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
   recentlyClosed: ClosedEntrySummary[]
@@ -3689,6 +3929,8 @@ export interface UIState {
   /** Connected AI agents (MCP sessions) and the tabs they drive. */
   agents: AgentInfo[]
   agentServer: AgentServerStatus
+  /** The `zenium-browser` Agent Skill's install state per harness (`capabilities.agentSkills`). */
+  agentSkills: AgentSkillStatus
   /** Automatic updates: what the browser knows about the latest release and how far it got. */
   updates: UpdateStatus
   /** The password vault: lock state, protection, counts and the last checkup (never secrets). */
@@ -3880,6 +4122,20 @@ export interface MenuGroupMark {
   saved: boolean
 }
 
+/**
+ * Another device's mark before a row's label (the app menu's Send to Your Devices submenu;
+ * services pass 4): the device's kind glyph (`DeviceGlyph`, the one every device row draws) –
+ * the kind its announcement carried, or `null` for a device whose build announced none, drawn
+ * as the 69 % stand-in – so every row of the submenu has the glyph and the labels share one
+ * edge while any device of the submenu announced a kind; a submenu in which none did draws no
+ * glyph column at all (the renderer's `anyDeviceKind`, §10.4's condition – the mark carries the
+ * fact, the renderer the rule). A native menu host has no glyph in the platform's menu ink and
+ * draws the row as text.
+ */
+export interface MenuDeviceMark {
+  kind: SyncDeviceKind | null
+}
+
 export interface MenuItemDescriptor {
   id: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -3890,6 +4146,8 @@ export interface MenuItemDescriptor {
   icon?: string | null
   /** A tab group's mark in the glyph slot (the Tab Folders submenu's rows). */
   group?: MenuGroupMark
+  /** Another device's kind in the glyph slot (the Send to Your Devices submenu's rows). */
+  device?: MenuDeviceMark
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */
   danger?: boolean
@@ -4033,6 +4291,11 @@ export interface Commands {
   'app.quit': { args: void; result: void }
   /** System share sheet (`capabilities.share`); hosts without one copy the link and toast. */
   'app.share': { args: SharePayload; result: void }
+  /**
+   * The chrome's answer to the host's share panel (Android below 14, SH-03; after a
+   * `share.panel` event): where the held share goes. Nothing on hosts without the panel.
+   */
+  'share.panelAction': { args: SharePanelAction; result: void }
   /** Android's "Open by default" screen for this app (`capabilities.appLinkSettings`). */
   'app.openAppLinkSettings': { args: void; result: void }
   /**
@@ -4409,6 +4672,14 @@ export interface Commands {
   'split.resize': { args: { groupId: string; sizes: number[] }; result: void }
   'split.newEmpty': { args: void; result: void }
   'split.addTab': { args: { groupId: string; tabId: string }; result: void }
+  /**
+   * Swap Panes (split-07): the pane of `tabId` – the active pane when omitted – trades places
+   * with the pane after it in the split's order (the last with the one before it), so a
+   * two-pane split reverses as Chrome's "Reverse position" does. Each tab keeps its size.
+   */
+  'split.swap': { args: { tabId?: string }; result: void }
+  /** The ⋯ menu of a pane's header: Swap Panes, the left pane's link rule, Un-split Tab. */
+  'split.paneMenu': { args: { tabId: string } & MenuAnchor; result: void }
   /**
    * "Choose a tab" in an empty pane (split-04): `tabId` takes the pane over from the blank tab
    * `paneTabId` shown there, which closes. False when nothing changed.
@@ -4794,6 +5065,26 @@ export interface Commands {
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }
   /**
+   * Settings › New Tab's "Reset to default" for the background alone (NTP-12): the space
+   * gradient, the device's picked image let go. One row's reset asks nothing (v2 §10.5).
+   */
+  'newtab.resetBackground': { args: void; result: void }
+  /**
+   * The whole page back to its defaults (NTP-22, a bulk action behind the row's §9.23
+   * confirmation): layout, shortcuts mode, background, greeting, the pinned shortcuts, the
+   * removed sites and the picked image. Whether the page opens at all (`enabled`) is kept.
+   */
+  'newtab.reset': { args: void; result: void }
+  /**
+   * Settings › New Tab's "Use the picture's colour" switch (NTP-14). On: the window's active
+   * space takes the background picture's colour (`UIState.newTabBackground.accent`) as its
+   * theme's primary, the rest of the theme kept, and follows each new picture from then on
+   * (`SpaceTheme.fromImage`). Off: the following ends; the colours stay. False when nothing
+   * changed – no picture or its colour not known yet, a private window (v2 §9.19), or off
+   * already.
+   */
+  'newtab.useImageColor': { args: { on: boolean }; result: boolean }
+  /**
    * The background image's address for a chrome that paints the page itself (the phone's; a data
    * URL there), or null when none is set.
    */
@@ -4841,6 +5132,20 @@ export interface Commands {
    */
   'bookmark.undo': {
     args: { token?: number }
+    result: {
+      kind: 'remove' | 'move' | 'update'
+      token: number
+      ids: string[]
+      parentId: string | null
+    } | null
+  }
+  /**
+   * Do the newest undone edit again (the bar menu's Redo, the manager's Ctrl+Shift+Z / Ctrl+Y):
+   * the same word as `bookmark.undo`'s, the token the edit's new one on the undo stack; null for
+   * nothing. A delete done again tells the window `bookmark.deleted` as the first one did.
+   */
+  'bookmark.redo': {
+    args: void
     result: {
       kind: 'remove' | 'move' | 'update'
       token: number
@@ -5354,6 +5659,15 @@ export interface Commands {
   'agent.forget': { args: { name: string }; result: void }
   /** Issue a new token (existing HTTP sessions stay valid until they end). */
   'agent.regenerateToken': { args: void; result: string }
+  /**
+   * Install the `zenium-browser` Agent Skill into the named harnesses' skills directories
+   * (`AgentSkillTarget.id`s), or into every detected one when none are named.
+   */
+  'agent.installSkill': { args: { targets?: string[] }; result: void }
+  /** Remove Zenium's copies from the named harnesses (every installed one when none are named). */
+  'agent.uninstallSkill': { args: { targets?: string[] }; result: void }
+  /** Detect the harnesses again and re-read the installed copies. */
+  'agent.refreshSkill': { args: void; result: void }
 
   /** Look for a newer release now (Settings → Updates → "Check now"). */
   'updates.check': { args: void; result: void }
@@ -5813,12 +6127,24 @@ export interface Events {
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
   'qr.event': QrEvent
+  /**
+   * The host put up the browser's own share panel for a share (Android below 14, SH-03): the
+   * chrome draws it and answers with `share.panelAction`.
+   */
+  'share.panel': SharePanelRequest
   toast: { message: string; kind?: 'info' | 'error' }
   /**
    * Take Screenshot put the visible page in the gallery (SH-07): the chrome shows the preview
    * card in the toast's slot – the thumbnail, Share | Delete, Capture more – for `tabId`'s page.
    */
   'screenshot.saved': ScreenshotSaved & { tabId: string }
+  /**
+   * The long-screenshot editor asked for over `tabId`'s page from outside the chrome: Zenium's
+   * Long screenshot in Android 14's share sheet (SH-02, `Share.kt`'s action row), relayed by the
+   * host once the sheet has closed. The chrome stitches the page and opens the editor (SH-08),
+   * as its own Long screenshot chips do. Hosts whose share sheet has no row of Zenium's never send it.
+   */
+  'screenshot.openLong': { tabId: string }
   /**
    * Web capture asked for its overlay over `tabId`'s page (Ctrl+Shift+S in the Chrome preset,
    * the app menu's "Web Capture…", the palette): the desktop chrome dims the page's frame over
@@ -5911,6 +6237,12 @@ export interface Events {
    * (`lib/fullscreenLanding.ts`). A host without the word leaves it out.
    */
   insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
+  /**
+   * A foldable's posture from the Android host (`Posture.kt`, OS-11): the pose and the hinge's
+   * bounds in CSS px, at boot and whenever the window's layout says they changed. A host without
+   * the word never sends it; the chrome stands flat.
+   */
+  posture: DevicePosture
   /**
    * The core placed the page views as a `layout.report` asked: `hid` and `shown` name the tabs
    * whose views it took down or brought back under that report (a tab without a view, or one

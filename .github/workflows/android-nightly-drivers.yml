@@ -55,6 +55,7 @@ on:
           - phone-d
           - phone-e
           - api35
+          - api33
           - webview
           - tablet
           - tablet-webview

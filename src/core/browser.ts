@@ -48,7 +48,7 @@ import { SecurityPromptService } from './security'
 import { DeviceChooserService } from './deviceChooser'
 import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
-import { TabManager, isTabSection } from './tabs'
+import { TabManager, bookmarkFaviconOf, isTabSection } from './tabs'
 import { TabDragController, parseDropKey } from './tabDrag'
 import { surfaceMounted, ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
@@ -150,7 +150,7 @@ import {
 import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeHomepage } from '../shared/homepage'
-import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
+import { PRIVATE_THEME, captionColors, editedTheme, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
@@ -516,6 +516,7 @@ export class Browser {
       sync: this.sync.status(),
       agents: this.agents.list(),
       agentServer: this.agents.serverStatus(),
+      agentSkills: this.agents.skillStatus(),
       updates: this.updates.status(),
       passwords: this.passwords.status(),
       defaultBrowser: this.defaultBrowser.status(),
@@ -1211,6 +1212,8 @@ export class Browser {
       this.menus.scheduleApplicationMenu()
       // Open new tab pages follow the model (shortcuts, most visited, theme) live.
       this.newTab.push()
+      // The left pane's link rule follows the splits (a swap, a pane joining or leaving).
+      this.tabs.syncSplitLinkFlags()
     })
     // Rule sets load synchronously so the first page is protected.
     this.blocking.start()
@@ -1453,7 +1456,7 @@ export class Browser {
     const node = this.bookmarks.create({
       title: tab.customTitle ?? tab.title,
       url: tab.url,
-      favicon: tab.favicon
+      favicon: bookmarkFaviconOf(tab, this.tabs.isPrivate(tab))
     })
     if (node) this.toast(`Bookmark added to ${this.bookmarks.pathLabel(node.id)}`, 'info', win)
   }
@@ -1480,7 +1483,7 @@ export class Browser {
       node = this.bookmarks.create({
         title: tab.customTitle ?? tab.title,
         url: tab.url,
-        favicon: tab.favicon
+        favicon: bookmarkFaviconOf(tab, this.tabs.isPrivate(tab))
       })
     }
     if (!node) return
@@ -1604,6 +1607,19 @@ export class Browser {
     return undone
   }
 
+  /**
+   * Do the newest undone bookmark edit again (the bar menu's Redo, the manager's Ctrl+Shift+Z /
+   * Ctrl+Y; context-menus-109). A delete done again is a delete: the window that asked gets its
+   * toast with Undo, as for the first one.
+   */
+  redoBookmarkEdit(win: ZenWindow): BookmarkUndone | null {
+    const redone = this.bookmarkUndo.redo()
+    if (!redone) return null
+    if (redone.removal) this.emit('bookmark.deleted', redone.removal, win)
+    const { kind, token, ids, parentId } = redone
+    return { kind, token, ids, parentId }
+  }
+
   /** Open the bookmarks below the given nodes in a new window (private when asked). */
   async openBookmarksInWindow(
     ids: readonly string[],
@@ -1618,8 +1634,10 @@ export class Browser {
   }
 
   /**
-   * The pages below the given nodes, each once; 15 or more ask first (Chrome), and only pages
-   * that do open count as used.
+   * The pages below the given nodes, each once; 15 or more ask first (Chrome's
+   * `OPEN_ALL_PROMPT_AT`), and only pages that do open count as used. The desktop asks with its
+   * §9.23 confirmation over the window (`WindowPrompts`, as "Close N tabs?" is asked); the
+   * phone and the tablet keep the host's own dialog.
    */
   private async bookmarkUrlsToOpen(ids: readonly string[], win: ZenWindow): Promise<string[]> {
     const seen = new Set<string>()
@@ -1632,7 +1650,13 @@ export class Browser {
       }
     }
     const prompt = openAllPrompt(nodes.length)
-    if (prompt && !(await this.platform.dialogs.confirm(prompt, win))) return []
+    if (prompt) {
+      const agreed =
+        win.formFactor === 'desktop'
+          ? await this.windowPrompts.ask(win, 'open-bookmarks', nodes.length)
+          : await this.platform.dialogs.confirm(prompt, win)
+      if (!agreed) return []
+    }
     nodes.forEach((node) => this.bookmarks.touch(node.id))
     return nodes.map((node) => node.url ?? '')
   }
@@ -1667,6 +1691,36 @@ export class Browser {
   async openBookmarks(ids: readonly string[], win: ZenWindow): Promise<void> {
     const urls = await this.bookmarkUrlsToOpen(ids, win)
     urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, win))
+  }
+
+  /**
+   * Chrome's "Open all in new tab group" (bookmarks-41): the bookmark folder's pages open as
+   * the tabs of a new tab folder named after it, in the window's space (a private window's own
+   * space: a private group there, as any folder its tabs make), wearing the next free colour as
+   * every new group. The folder model has no saved-or-plain choice to make at birth – a folder
+   * is open while it holds live regular tabs and becomes a saved one, its pages kept, when the
+   * last of them closes (`saveFolderOnLastClose`) – so this makes an open folder that lives on
+   * like any other. The name is given, so no editor opens (unlike "Add tab to new group"); the
+   * threshold's question is asked before anything is made, and a "no" makes no folder.
+   */
+  async openBookmarksInFolder(id: string, win: ZenWindow): Promise<void> {
+    const node = this.bookmarks.get(id)
+    if (!node || node.type !== 'folder') return
+    const urls = await this.bookmarkUrlsToOpen([id], win)
+    if (urls.length === 0) return
+    // A blank or private window's own space when it has one, as `createTab` places its tabs.
+    const space = win.activeSpace()
+    const folder = createFolder(
+      this.state.model,
+      space.id,
+      node.title || 'New Folder',
+      '📁',
+      nextFolderColor(this.state.model, space.id)
+    )
+    urls.forEach((url, i) =>
+      this.tabs.createTab({ url, active: i === 0, spaceId: space.id, folderId: folder.id }, win)
+    )
+    this.state.commit()
   }
 
   /**
@@ -2711,6 +2765,9 @@ export class Browser {
       case 'navigate':
         this.tabs.navigate(tabId, message.url)
         return
+      case 'split-link':
+        this.tabs.openInSplitPane(tabId, message.url)
+        return
     }
   }
 
@@ -2785,6 +2842,9 @@ export class Browser {
       },
       'app.quit': () => void this.requestQuit(),
       'app.share': (payload, win) => this.share(payload, win),
+      // The host's own share panel (Android below 14, SH-03): the chrome's answer goes straight
+      // to the host holding the share; nothing on a host without the panel.
+      'share.panelAction': (action) => void platform.shell.sharePanelAction?.(action),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
       'app.openNotificationSettings': (_a, win) => this.openNotificationSettings(win),
       // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
@@ -2909,7 +2969,8 @@ export class Browser {
         if (!space) return
         if (patch.name !== undefined) space.name = patch.name.trim() || space.name
         if (patch.icon !== undefined) space.icon = patch.icon
-        if (patch.theme !== undefined) space.theme = patch.theme
+        // The editor's colours are the user's: they end a theme's following of the picture.
+        if (patch.theme !== undefined) space.theme = editedTheme(space.theme, patch.theme)
         if (
           patch.containerId !== undefined &&
           !space.windowId &&
@@ -3015,6 +3076,9 @@ export class Browser {
       'split.resize': ({ groupId, sizes }) => tabs.resizeSplit(groupId, sizes),
       'split.newEmpty': (_a, win) => tabs.newEmptySplit(win),
       'split.addTab': ({ groupId, tabId }) => tabs.addToSplit(groupId, tabId),
+      'split.swap': ({ tabId }, win) => tabs.swapPanes(tabId, win),
+      'split.paneMenu': ({ tabId, ...anchor }, win) =>
+        this.menus.showSplitPaneMenu(tabId, win, anchor),
       'split.pickTab': ({ paneTabId, tabId }, win) => tabs.pickTabForPane(paneTabId, tabId, win),
 
       'glance.open': ({ url, parentTabId, originX, originY }, win) =>
@@ -3189,6 +3253,9 @@ export class Browser {
       'newtab.reorderShortcuts': ({ ids }) => this.newTab.reorderShortcuts(ids),
       'newtab.pickBackgroundImage': (_a, win) => this.newTab.pickBackgroundImage(win),
       'newtab.clearBackgroundImage': () => this.newTab.clearBackgroundImage(),
+      'newtab.resetBackground': () => this.newTab.resetBackground(),
+      'newtab.reset': () => this.newTab.reset(),
+      'newtab.useImageColor': ({ on }, win) => this.newTab.useImageColor(on, win),
       'newtab.backgroundImage': () => this.newTab.backgroundImage(),
       'newtab.setBackgroundImage': ({ dataUrl }) => this.newTab.setBackgroundImage(dataUrl),
 
@@ -3201,6 +3268,7 @@ export class Browser {
         void this.bookmarkUndo.move(ids, parentId, index),
       'bookmark.remove': ({ ids, quiet }, win) => this.deleteBookmarks(ids, win, quiet),
       'bookmark.undo': ({ token }) => this.undoBookmarkEdit(token),
+      'bookmark.redo': (_a, win) => this.redoBookmarkEdit(win),
       'bookmark.open': ({ id, newTab, tabId, background }, win) =>
         this.openBookmark(id, newTab, tabId, win, Boolean(background)),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),
@@ -3489,6 +3557,9 @@ export class Browser {
       'agent.releaseTab': ({ tabId }) => this.agents.releaseTab(tabId),
       'agent.forget': ({ name }) => this.agents.forget(name),
       'agent.regenerateToken': () => this.agents.regenerateToken(),
+      'agent.installSkill': ({ targets }) => this.agents.installSkill(targets),
+      'agent.uninstallSkill': ({ targets }) => this.agents.uninstallSkill(targets),
+      'agent.refreshSkill': () => this.agents.refreshSkill(),
 
       'updates.check': () => this.updates.check({ manual: true }),
       'updates.download': () => this.updates.download(),

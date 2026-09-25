@@ -572,3 +572,253 @@ describe('a control never leaves its row’s box (the lead’s #391 ruling 4)', 
     }
   })
 })
+
+/*
+ * The stacked field row (`FieldRow.form: 'stacked'`, §9.12's form in a row): the desktop puts
+ * the field UNDER the label and description across the row's content width, 32 tall, and a
+ * refused commit's validation line under the field spanning the field's box. The row's height
+ * is its padding + the label's line + the description's lines + the block's 4 + the field's 32
+ * + its padding: 6 + 20 + 20 n + 4 + 32 + 6 = 68 + 20 n on the desktop (108 with two lines of
+ * description), a line of validation +4 + 20. The inline form (`form` absent or `'inline'`) and
+ * the phone's field row are as before.
+ */
+const STACKED_ROW = '.zen-settings-stacked-row'
+const STACKED_TEXT = `${STACKED_ROW} .zen-settings-row-text`
+const STACKED_FIELD = '.zen-settings-stacked-field'
+const STACKED_INPUT = `${STACKED_FIELD} > .zen-settings-input`
+const STACKED_ERROR = `${STACKED_FIELD} > .zen-settings-inline-error`
+
+/** The desktop's row tokens and every rule the stacked row is drawn by, as main.css has them. */
+function stackedSheet(): HTMLStyleElement {
+  const css = stylesheet()
+  const sheet = document.createElement('style')
+  const rules = [
+    ['.zen-v2-row'],
+    ['.zen-settings-control-row'],
+    ['.zen-settings-row-text'],
+    ['.zen-settings-field-block'],
+    ['.zen-settings-inline-field'],
+    ['.zen-settings-field-text'],
+    ['.zen-settings-inline-error'],
+    [STACKED_ROW],
+    [STACKED_TEXT],
+    [STACKED_FIELD],
+    [STACKED_INPUT],
+    [STACKED_ERROR]
+  ]
+  sheet.textContent = [
+    `:root { ${TOKENS.desktop} --v2-row: calc(var(--v2-line-body-box) + 12px); --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body-box)) / 2); }`,
+    ...rules.map((selectors) => `${selectors.join(', ')} { ${declarations(css, selectors)} }`)
+  ].join('\n')
+  document.head.appendChild(sheet)
+  return sheet
+}
+
+/** The API key row in the stacked form – the Safe Browsing row as `protectionRows.tsx` builds it. */
+const stackedKey: FieldRow = { ...apiKey, form: 'stacked' }
+
+describe('a stacked field row puts the field under its text (§9.12, FieldRow.form: stacked)', () => {
+  it('the desktop renders a column: the text block on its lines, the field under it across the row, no trailing seat', () => {
+    // The description wraps to two lines here as on the Protection page; the row measures
+    // nothing, since no control trails the text to be seated.
+    laidOut(3)
+    const h = render(<RowView row={stackedKey} ctx={ctx} variant="desktop" />)
+    const row = h.querySelector<HTMLElement>('[data-row="safe-browsing-api-key"]')!
+    expect(row.classList.contains('zen-settings-row')).toBe(true)
+    expect(row.classList.contains('zen-v2-row')).toBe(true)
+    expect(row.classList.contains('zen-settings-stacked-row')).toBe(true)
+    expect(row.classList.contains('zen-settings-control-row')).toBe(false)
+    expect(row.hasAttribute('data-lines')).toBe(false)
+    expect(row.style.getPropertyValue('--zen-settings-label-top')).toBe('')
+    // Static as the control row is: the field is the target, not the row.
+    expect(row.hasAttribute('data-static')).toBe(true)
+    expect(row.querySelector('.zen-settings-trailing')).toBeNull()
+    // One block, the form's own: the text first, the field's column under it.
+    expect(row.children.length).toBe(1)
+    const block = row.children[0]!
+    expect(block.classList.contains('zen-settings-field-block')).toBe(true)
+    expect(block.children.length).toBe(2)
+    const text = block.children[0]!
+    expect(text.classList.contains('zen-settings-row-text')).toBe(true)
+    expect(text.querySelector('.zen-settings-label')!.textContent).toBe(
+      'Google Safe Browsing API key'
+    )
+    expect(text.querySelector('.zen-settings-description')!.textContent).toBe(apiKey.description)
+    const column = block.children[1]!
+    expect(column.classList.contains('zen-settings-inline-field')).toBe(true)
+    expect(column.classList.contains('zen-settings-stacked-field')).toBe(true)
+    // The field is the shared v2 field at its 32 (`.zen-v2-field`), secret as the row says.
+    const input = column.querySelector<HTMLInputElement>('input')!
+    expect(column.children[0]).toBe(input)
+    expect(input.classList.contains('zen-v2-field')).toBe(true)
+    expect(input.classList.contains('zen-settings-field-secret')).toBe(true)
+    expect(column.querySelector('.zen-settings-inline-error')).toBeNull()
+    // §9.12's association for the label-above form (the #453 lead check): the visible label is
+    // the field's `<label for>`, so a click on it lands in the field and the label names the
+    // field – no `aria-label` to override the name it gives.
+    const label = text.querySelector<HTMLLabelElement>('.zen-settings-label')!
+    expect(label.tagName.toLowerCase()).toBe('label')
+    expect(input.id).not.toBe('')
+    expect(label.htmlFor).toBe(input.id)
+    expect(label.control).toBe(input)
+    expect(input.hasAttribute('aria-label')).toBe(false)
+  })
+
+  it('a refused commit puts §9.12’s validation line under the field, spanning the field’s box', () => {
+    laidOut(3)
+    const sheet = stackedSheet()
+    try {
+      const h = render(<RowView row={stackedKey} ctx={ctx} variant="desktop" />)
+      const row = h.querySelector<HTMLElement>('[data-row="safe-browsing-api-key"]')!
+      const column = row.querySelector<HTMLElement>(STACKED_FIELD)!
+      const input = column.querySelector<HTMLInputElement>('input')!
+      commit(row, 'not a valid key!!')
+      const message = column.querySelector<HTMLElement>('.zen-settings-inline-error')!
+      // The one validation line every form draws: role alert, the 16 glyph out of the reading,
+      // then the words; the field names it and is marked invalid.
+      expect(message.getAttribute('role')).toBe('alert')
+      expect(message.textContent).toBe('Keys start with AIza.')
+      expect(message.classList.contains('zen-settings-validation')).toBe(true)
+      const glyph = message.firstElementChild!
+      expect(glyph.tagName.toLowerCase()).toBe('svg')
+      expect(glyph.classList.contains('lucide-circle-alert')).toBe(true)
+      expect(glyph.getAttribute('aria-hidden')).toBe('true')
+      expect(message.id).not.toBe('')
+      expect(input.getAttribute('aria-describedby')).toBe(message.id)
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      // Under the field: the column's order is the field, then the message.
+      expect(column.children[0]).toBe(input)
+      expect(column.children[1]).toBe(message)
+      // Spanning the field's box: the column is stretched, the field the row's content width
+      // rather than the inline form's 160, the message uncapped rather than the inline 240.
+      expect(style(row).flexDirection).toBe('column')
+      expect(style(row).alignItems).toBe('stretch')
+      expect(style(column).flexDirection).toBe('column')
+      expect(style(column).alignItems).toBe('stretch')
+      expect(style(input).width).toBe('100%')
+      expect(style(message).maxWidth).toBe('none')
+      // Nothing is seated: the three-line seat keys on `data-lines`, which the row never sets.
+      expect(row.hasAttribute('data-lines')).toBe(false)
+      expect(h.querySelector(REFUSED)).toBeNull()
+      // An accepted commit takes the message away and the field keeps its span.
+      commit(row, 'AIzaSyExample')
+      expect(column.querySelector('.zen-settings-inline-error')).toBeNull()
+      expect(input.hasAttribute('aria-describedby')).toBe(false)
+      expect(input.hasAttribute('aria-invalid')).toBe(false)
+      expect(style(input).width).toBe('100%')
+    } finally {
+      sheet.remove()
+    }
+  })
+
+  it('the stylesheet: a column row, the form’s block and the inline field’s column stretched, sized by the tokens and the existing gaps alone', () => {
+    const css = stylesheet()
+    // The row: `.zen-v2-row` turned into a column, its own padding kept (no control row's 4).
+    expect(declarations(css, [STACKED_ROW])).toBe('flex-direction: column; align-items: stretch;')
+    expect(declarations(css, [STACKED_TEXT])).toBe('flex: none;')
+    expect(declarations(css, ['.zen-v2-row'])).toContain('padding: var(--v2-row-pad) 16px;')
+    expect(declarations(css, ['.zen-v2-row'])).toContain('min-height: var(--v2-row);')
+    // The block's gap is the form's (§9.12: label above, 4 px, the field), the column's the
+    // inline field's; the stacked rules add no gap of their own.
+    expect(declarations(css, ['.zen-settings-field-block'])).toBe(
+      'display: flex; flex-direction: column; gap: 4px;'
+    )
+    expect(declarations(css, ['.zen-settings-inline-field'])).toContain('gap: 4px;')
+    // The column stretched, the field the row's width, the message spanning the field's box.
+    expect(declarations(css, [STACKED_FIELD])).toBe('align-items: stretch;')
+    expect(declarations(css, [STACKED_INPUT])).toBe('width: 100%;')
+    expect(declarations(css, [STACKED_ERROR])).toBe('max-width: none;')
+    // Same specificity as the inline rules they override, later in the sheet.
+    expect(css.indexOf(`${STACKED_FIELD} {`)).toBeGreaterThan(
+      css.indexOf('.zen-settings-inline-field {')
+    )
+    expect(css.indexOf(`${STACKED_ERROR} {`)).toBeGreaterThan(
+      css.indexOf('.zen-settings-inline-error {')
+    )
+    expect(css.indexOf(`${STACKED_ROW} {`)).toBeGreaterThan(css.indexOf('.zen-v2-row {'))
+    // Tokens only: no literal px in any stacked rule – the field's 32 is `.zen-v2-field`'s
+    // `--v2-control`, the row's padding `--v2-row-pad`, the lines `--v2-line-body-box`.
+    for (const selectors of [
+      [STACKED_ROW],
+      [STACKED_TEXT],
+      [STACKED_FIELD],
+      [STACKED_INPUT],
+      [STACKED_ERROR]
+    ]) {
+      expect(declarations(css, selectors)).not.toMatch(/\d\s*px/)
+    }
+    expect(declarations(css, ['.zen-v2-field'])).toContain('height: var(--v2-control);')
+    expect(css).toContain('--v2-row: calc(var(--v2-line-body-box) + 12px);')
+    expect(css).toContain('--v2-row-pad: calc((var(--v2-row) - var(--v2-line-body-box)) / 2);')
+    expect(css).toContain('--v2-control: 32px;')
+    // The height rule at the desktop's tokens: the row's padding is (32 − 20) / 2 = 6 above and
+    // below; the label's line, the description's lines, the block's 4, the field's 32 – and the
+    // field never leaves the row's box (the lead's #391 ruling 4): its bottom is the padding
+    // above the row's edge. A line of validation follows the field after the column's 4.
+    const line = 20
+    const control = 32
+    const pad = (control - line) / 2
+    const gap = 4
+    const height = (descriptionLines: number): number =>
+      pad + line + descriptionLines * line + gap + control + pad
+    expect(pad).toBe(6)
+    expect(height(0)).toBe(68)
+    expect(height(1)).toBe(88)
+    expect(height(2)).toBe(108)
+    const fieldTop = pad + line + 2 * line + gap
+    expect(fieldTop).toBe(70)
+    expect(fieldTop + control + pad).toBe(height(2))
+    const messageTop = fieldTop + control + gap
+    expect(messageTop).toBeGreaterThan(fieldTop + control)
+    expect(messageTop + line + pad).toBe(height(2) + gap + line)
+    expect(height(2) + gap + line).toBe(132)
+  })
+
+  it('the inline form is unchanged in its geometry: `form` absent or inline trails the field on a control row, the label its `<label for>`', () => {
+    laidOut(3)
+    for (const form of [undefined, 'inline'] as const) {
+      const inline: FieldRow = form ? { ...apiKey, form } : apiKey
+      const h = render(<RowView row={inline} ctx={ctx} variant="desktop" />)
+      const row = h.querySelector<HTMLElement>('[data-row="safe-browsing-api-key"]')!
+      expect(row.classList.contains('zen-settings-control-row')).toBe(true)
+      expect(row.classList.contains('zen-settings-stacked-row')).toBe(false)
+      expect(row.getAttribute('data-lines')).toBe('3')
+      const field = row.querySelector<HTMLElement>(
+        ':scope > .zen-settings-trailing > .zen-settings-inline-field'
+      )!
+      expect(field).not.toBeNull()
+      expect(field.classList.contains('zen-settings-stacked-field')).toBe(false)
+      const input = field.querySelector<HTMLInputElement>('input')!
+      expect(input.classList.contains('zen-settings-field-text')).toBe(true)
+      expect(row.querySelector('.zen-settings-field-block')).toBeNull()
+      // The inline field is bound as the stacked one is (the `<label for>` sweep, the #453 lead
+      // check): the visible label is the field's `<label for>`, the same class on the same line,
+      // and no `aria-label` – the label names the field.
+      const label = row.querySelector<HTMLLabelElement>('.zen-settings-label')!
+      expect(label.tagName.toLowerCase()).toBe('label')
+      expect(input.id).not.toBe('')
+      expect(label.htmlFor).toBe(input.id)
+      expect(label.control).toBe(input)
+      expect(label.textContent).toBe('Google Safe Browsing API key')
+      expect(input.hasAttribute('aria-label')).toBe(false)
+      act(() => root?.unmount())
+    }
+  })
+
+  it('the phone is unchanged: the stacked row is the pressable value row that opens the field sheet', () => {
+    const open = vi.fn()
+    const phoneKey: FieldRow = { ...stackedKey, display: 'Not set · optional' }
+    const h = render(<RowView row={phoneKey} ctx={{ open }} variant="phone" />)
+    const row = h.querySelector<HTMLElement>('[data-row="safe-browsing-api-key"]')!
+    expect(row.tagName.toLowerCase()).toBe('button')
+    expect(row.classList.contains('zen-settings-row-pressable')).toBe(true)
+    expect(row.classList.contains('zen-settings-stacked-row')).toBe(false)
+    expect(row.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(row.querySelector('input')).toBeNull()
+    expect(row.querySelector('.zen-settings-field-block')).toBeNull()
+    // The row says the value's `display` (the key itself is never shown); a press opens the sheet.
+    expect(row.querySelector('.zen-settings-description')!.textContent).toBe('Not set · optional')
+    act(() => row.click())
+    expect(open).toHaveBeenCalledWith({ kind: 'field', rowId: 'safe-browsing-api-key' })
+  })
+})

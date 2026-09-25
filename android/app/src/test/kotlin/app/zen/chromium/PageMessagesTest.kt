@@ -78,6 +78,21 @@ class PageMessagesTest {
         assertTrue(capture is PageMessageRoute.Forward)
         assertTrue(capture.heardFrom(isMainFrame = false))
         assertTrue(capture.heardFrom(isMainFrame = true))
+        // A frame's request observation is heard (the extension runtime's webRequest emulation,
+        // blocking-rule-interface.md 7.10): an embedded player's fetch / XHR are its frame's own.
+        val observation = routePageMessage(
+            message(
+                "type" to "ext-observation", "seq" to "a1b2c3-1", "url" to "https://cdn.example/clip.mp4",
+                "method" to "GET", "range" to "bytes=0-", "crossOrigin" to true, "status" to 206,
+                "statusText" to "Partial Content", "headers" to org.json.JSONArray(), "at" to "headers"
+            ),
+            token
+        )
+        assertTrue(observation is PageMessageRoute.Forward)
+        assertTrue(observation.heardFrom(isMainFrame = false))
+        assertTrue(observation.heardFrom(isMainFrame = true))
+        assertEquals("ext-observation", (observation as PageMessageRoute.Forward).message.getString("type"))
+        assertFalse(observation.message.has("token"))
         // Everything else a frame says – its hello (the reply channel is the main document's), its
         // DOMContentLoaded, its forwarded messages – is not the page's.
         for (type in listOf("hello", "domReady", "media", "evalResult")) {

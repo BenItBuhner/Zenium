@@ -47,7 +47,7 @@ import kotlin.math.abs
  * browser directly), always in the task of whoever started it and never in the browser's own:
  * the manifest gives it its own (empty) affinity, so a `singleTask` browser cannot swallow it.
  */
-class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTabFindBar.Listener, CustomTabBottomBar.Listener, CustomTabSessions.Visuals {
+class CustomTabActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolbar.Listener, CustomTabFindBar.Listener, CustomTabBottomBar.Listener, CustomTabSessions.Visuals {
     lateinit var config: CustomTabConfig
         private set
     lateinit var host: CustomTabHost
@@ -105,7 +105,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
             setBackgroundColor(Color.BLACK)
             visibility = View.GONE
         }
-        host = CustomTabHost(this, pageContainer, fullscreenLayer, config.scheme.dark)
+        host = CustomTabHost(this, this, pageContainer, fullscreenLayer, config.scheme.dark)
         toolbar = CustomTabToolbar(this, config, this)
         statusStrip = View(this).apply { setBackgroundColor(config.scheme.toolbar) }
         bottomBar = CustomTabBottomBar(this, config.scheme, this)
@@ -168,7 +168,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
     }
 
     /** What the page reports through [CustomTabHost.viewEvent]. */
-    fun onPageEvent(name: String, payload: JSONObject?) {
+    override fun onPageEvent(name: String, payload: JSONObject?) {
         when (name) {
             "navigated" -> {
                 val url = payload?.strOrNull("url") ?: return
@@ -198,7 +198,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
         }
     }
 
-    fun onProgress(percent: Int) = toolbar.setProgress(percent)
+    override fun onProgress(percent: Int) = toolbar.setProgress(percent)
 
     // --- colours and bars (CCT-09) ---------------------------------------------------------------
 

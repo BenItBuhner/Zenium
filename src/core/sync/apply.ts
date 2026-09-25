@@ -24,6 +24,8 @@ import {
   applyOrder,
   readBookmarkData,
   readCredentialData,
+  readFolderAgentMark,
+  readSpaceAgentMark,
   type ContainerData,
   type FolderData,
   type OrderData,
@@ -92,6 +94,9 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         const containerId = m.containers.some((c) => c.id === data.containerId)
           ? data.containerId
           : DEFAULT_CONTAINER_ID
+        // The agents' mark travels when the record carries one; a record without the field
+        // (a peer older than the mark) leaves the local mark as it is.
+        const agent = readSpaceAgentMark(data)
         const existing = m.spaces.find((s) => s.id === r.id)
         if (existing) {
           existing.name = data.name
@@ -99,6 +104,7 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           existing.containerId = containerId
           existing.theme = data.theme
           existing.pinnedCollapsed = data.pinnedCollapsed
+          if (agent) existing.agent = agent
         } else {
           const space: Space = {
             id: r.id,
@@ -108,7 +114,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
             theme: data.theme,
             tabIds: [],
             activeTabId: null,
-            pinnedCollapsed: data.pinnedCollapsed
+            pinnedCollapsed: data.pinnedCollapsed,
+            ...(agent ? { agent } : {})
           }
           m.spaces.push(space)
         }
@@ -125,6 +132,7 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         }
         const data = r.data as FolderData
         if (!m.spaces.some((s) => s.id === data.spaceId)) break
+        const agent = readFolderAgentMark(data)
         const existing = m.folders[r.id]
         if (existing)
           Object.assign(existing, {
@@ -132,7 +140,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
             name: data.name,
             icon: data.icon,
             collapsed: data.collapsed,
-            color: data.color ?? null
+            color: data.color ?? null,
+            ...(agent ? { agent } : {})
           })
         else
           m.folders[r.id] = {
@@ -141,7 +150,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
             name: data.name,
             icon: data.icon,
             collapsed: data.collapsed,
-            ...(data.color ? { color: data.color } : {})
+            ...(data.color ? { color: data.color } : {}),
+            ...(agent ? { agent } : {})
           }
         break
       }

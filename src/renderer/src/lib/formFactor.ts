@@ -125,6 +125,16 @@ function refresh(): void {
   root.dataset.hover = next.hover ? 'hover' : 'none'
 }
 
+/**
+ * Re-derive the layout from the window as it stands now (the resize listener's own step): for
+ * a report that says the window changed shape another way – a fold's posture (`lib/posture.ts`)
+ * – so the class follows the width whether or not the resize was heard first. Nothing without
+ * a viewport.
+ */
+export function refreshViewport(): void {
+  if (hasViewport()) refresh()
+}
+
 const flags = globalThis as unknown as { __zenViewportWatched?: boolean }
 if (!flags.__zenViewportWatched && hasViewport()) {
   flags.__zenViewportWatched = true

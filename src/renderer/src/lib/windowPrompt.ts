@@ -38,6 +38,16 @@ export function downloadsSentence(downloads: WindowPromptDownloads): string {
 }
 
 export function windowPromptText(prompt: WindowPrompt): WindowPromptText {
+  // Chrome's "Open all bookmarks?" at its threshold (`OPEN_ALL_PROMPT_AT`): the count is the
+  // question, one sentence, the verb in the menu row's word (sentence case on a button, §9.1).
+  if (prompt.kind === 'open-bookmarks') {
+    return {
+      title: 'Open all bookmarks?',
+      description: `You are about to open ${prompt.count} tabs.`,
+      verb: 'Open all',
+      tabsWarning: false
+    }
+  }
   const quit = prompt.kind === 'quit'
   const tabsWarning = prompt.count > 1
   const tabs = `${prompt.count} tabs`

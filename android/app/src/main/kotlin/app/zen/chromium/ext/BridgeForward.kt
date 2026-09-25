@@ -41,7 +41,12 @@ import org.json.JSONObject
  *     (Trust Wallet's background, compat round 11b: its store broadcasts of 144 K chars filled
  *     the source's chars and its 200-char storage calls were refused in their shadow). The
  *     small ones a source can have waiting are bounded by [Limits.sourceCount] times
- *     [Limits.smallChars] on top of [Limits.sourceChars], so the heap's bound stands.
+ *     [Limits.smallChars] on top of [Limits.sourceChars], so the heap's bound stands. The chars
+ *     bounds are sized to hold a legitimate startup burst whole: an extension that writes a
+ *     growing object to storage in a loop (Translate for Chrome, compat round 15: 130
+ *     `storage.local.set` of its `localeNames` in one task, each a superset of the last, 5.3 M
+ *     chars in all) has Chrome take every write and keep the last; a bound under the burst
+ *     refused its biggest, most complete writes and left the stored object short.
  *
  * Plain Kotlin, main-thread only: the frame scheduler, the ready check and the sink are the
  * caller's ([Extensions] hands a Choreographer, the chrome's ready flag and the `ext.message`,
@@ -68,13 +73,15 @@ class BridgeForward(
         val iconsPerFrame: Int = 1,
         /**
          * Pending chars per source, checked when the source already has something waiting, for
-         * an arrival over [smallChars]; the small ones are held to [sourceCount] alone.
+         * an arrival over [smallChars]; the small ones are held to [sourceCount] alone. Above a
+         * synchronous startup burst of growing storage writes (Translate for Chrome's 5.3 M
+         * chars, compat round 15), which drains in under a hundred frames at [frameChars].
          */
-        val sourceChars: Int = 2 * 1024 * 1024,
+        val sourceChars: Int = 6 * 1024 * 1024,
         /** Pending messages per source (a small message's only bound; see [smallChars]). */
         val sourceCount: Int = 2048,
         /** Pending chars over every source, checked when something is already waiting, for an arrival over [smallChars]. */
-        val totalChars: Int = 6 * 1024 * 1024,
+        val totalChars: Int = 12 * 1024 * 1024,
         /** Pending messages over every source. */
         val totalCount: Int = 4096,
         /**

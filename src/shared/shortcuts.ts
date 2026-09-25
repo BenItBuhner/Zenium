@@ -476,6 +476,15 @@ const DEFS: Def[] = [
     zen: { key: 'ArrowLeft', mods: ACCEL_ALT_SHIFT },
     chrome: zenFeature('ArrowLeft', true)
   },
+  {
+    // Neither reference browser binds a key to it (Chrome's Reverse position and Edge's Swap
+    // are menu rows): unbound in both presets, the row here so the user can give it one.
+    id: 'zen-split-view-swap',
+    action: 'split.swap',
+    group: 'zen-split-view',
+    label: 'Swap Split Panes',
+    ...both(UNBOUND)
+  },
 
   // --- Zen: other ------------------------------------------------------------
   {

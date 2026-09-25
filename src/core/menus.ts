@@ -22,10 +22,12 @@ import {
   getHost,
   inputToUrl,
   isNavigableUrl,
+  isNewTabUrl,
   isWebPageUrl
 } from '../shared/url'
 import {
   DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
   type AppWindowInfo,
   type BookmarkNode,
   type BookmarksBarMode,
@@ -48,6 +50,7 @@ import {
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
 import { phoneBarHas } from '../shared/phoneBar'
+import { newTabSections } from '../shared/newTab'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
@@ -74,6 +77,7 @@ import {
   isPrivateFolder,
   isSavedFolder,
   regularFolderTabs,
+  splitLinksToRight,
   tabVisibleIn
 } from './model'
 
@@ -305,7 +309,11 @@ export class Menus {
    * other device yet, and there is no item: an action with nothing to send to is not drawn
    * disabled (§10.4). Only a web page travels (`isSendableUrl`, the engine's rule): an internal
    * or extension page keeps the item, disabled, so the page reads as the reason. The engine
-   * confirms the hand-over with its toast, "Sent to Laptop".
+   * confirms the hand-over with its toast, "Sent to Laptop". Each device's row carries the
+   * device's kind (`device`, services pass 4): the renderer-drawn app menu leads the row with
+   * the kind's glyph – Chrome's picker draws a laptop, a phone, a tablet per device – and the
+   * stand-in for a device that announced none; the tab strip's native context menu, which the
+   * host draws in the platform's menu ink, keeps the rows as text.
    */
   private sendToDevicesItems(tab: Tab | undefined, win: ZenWindow): Template {
     if (!tab) return []
@@ -332,7 +340,11 @@ export class Menus {
       {
         label: 'Send to Your Devices',
         enabled,
-        submenu: devices.map((device) => ({ label: device.name, click: () => send(device.id) }))
+        submenu: devices.map((device) => ({
+          label: device.name,
+          device: { kind: device.kind ?? null },
+          click: () => send(device.id)
+        }))
       }
     ]
   }
@@ -385,7 +397,13 @@ export class Menus {
     } else if (selection) {
       groups.push(this.selectionGroup(tab, selection, win, { x: params.x, y: params.y }))
     }
-    if (plainPage) groups.push(this.navigationGroup(tab, view, win), this.pageGroup(tab, win))
+    if (plainPage) {
+      // The new tab page's own rows lead its menu (NTP-18): what the page shows, hidden with
+      // the page's Undo toast, and the way to its customise surface.
+      const ownRows = isNewTabUrl(tab.url) ? this.newTabPageGroup(tab, win) : []
+      if (ownRows.length > 0) groups.push(ownRows)
+      groups.push(this.navigationGroup(tab, view, win), this.pageGroup(tab, win))
+    }
     // Extension items sit where Chrome puts them: after the browser's own entries, before the
     // developer group.
     const extensionItems = this.browser.extensions.pageContextMenuItems(tabId, params, win)
@@ -536,6 +554,39 @@ export class Menus {
   }
 
   /**
+   * The served new tab page's own rows (NTP-18, NTP-22), on a right-click on the page itself:
+   * "Hide Greeting" and "Hide Shortcuts" for the sections it shows – each hidden through the one
+   * settings model with the page's Undo toast (`NewTabService.hideSection`), so a slip costs one
+   * press and the customise surface keeps the switch either way; "Restore Default Shortcuts"
+   * while the grid is shown – Chrome's second link on the removal toast, which v2 §9.33 gives
+   * one action, so the restore lives here, greyed when the grid is a fresh profile's already,
+   * with the page's Undo toast in place of a confirmation (§10.5); and "Customise New Tab
+   * Page…", the Customise button's route. A private page has neither section (its explainer
+   * stands where the grid would) and gets no rows.
+   */
+  private newTabPageGroup(tab: Tab, win: ZenWindow): Template {
+    if (tab.containerId === PRIVATE_CONTAINER_ID) return []
+    const { newTab } = this.browser
+    const sections = newTabSections(this.browser.state.settings.newTab)
+    const rows: Template = []
+    if (sections.greeting)
+      rows.push({ label: 'Hide Greeting', click: () => newTab.hideSection(tab.id, 'greeting') })
+    if (sections.shortcuts) {
+      rows.push({ label: 'Hide Shortcuts', click: () => newTab.hideSection(tab.id, 'shortcuts') })
+      rows.push({
+        label: 'Restore Default Shortcuts',
+        enabled: newTab.canRestoreDefaultShortcuts(),
+        click: () => newTab.restoreDefaultShortcutsFromPage(tab.id)
+      })
+    }
+    rows.push({
+      label: 'Customise New Tab Page…',
+      click: () => this.browser.pages.open('settings', 'newtab', win, tab.id)
+    })
+    return rows
+  }
+
+  /**
    * Chrome's "Inspect": the inspector opens on the node under the click, not the document, at
    * the remembered dock (§9.29).
    */
@@ -626,21 +677,28 @@ export class Menus {
           click: () => tabs.newPrivateTab(url, win)
         })
       }
-      open.push(
-        {
-          label: 'Open Link in Glance',
-          enabled: glanceAllowed,
-          click: () => tabs.openGlance(url, tab.id, 0.5, 0.5, win)
-        },
-        { label: 'Open Link in Split View', click: () => this.splitLink(tab.id, url, win) },
-        {
-          label: 'Open Link in New Container Tab',
-          enabled: !win.isPrivate,
-          submenu: this.containerSubmenu((cid) =>
-            tabs.createTab({ url, active: true, containerId: cid }, win)
-          )
-        }
-      )
+      open.push({
+        label: 'Open Link in Glance',
+        enabled: glanceAllowed,
+        click: () => tabs.openGlance(url, tab.id, 0.5, 0.5, win)
+      })
+      // Split view is the desktop's and the tablet's (the phone draws no panes): the row is
+      // theirs (context-menus-24, Edge's "Open link in split screen"), greyed when the link has
+      // no pane to go to – this page cannot be split (a chrome page) or its split is full.
+      if (win.formFactor !== 'phone') {
+        open.push({
+          label: 'Open Link in Split View',
+          enabled: tabs.canSplitLink(tab),
+          click: () => this.splitLink(tab.id, url, win)
+        })
+      }
+      open.push({
+        label: 'Open Link in New Container Tab',
+        enabled: !win.isPrivate,
+        submenu: this.containerSubmenu((cid) =>
+          tabs.createTab({ url, active: true, containerId: cid }, win)
+        )
+      })
     }
     const transfer: Template = []
     if (isDownloadable(url)) {
@@ -1602,6 +1660,7 @@ export class Menus {
     const otherWindows = tabs.windowsForMove(tabId, win)
 
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
+    const panes = win.formFactor !== 'phone'
 
     // Firefox's tab menu in Firefox's groups (design language v2 §6 "Menus": a context menu that
     // runs long is regrouped to the app menu's counts – about eighteen rows, four separators at
@@ -1784,15 +1843,29 @@ export class Menus {
         click: () => this.browser.bookmarkTabs(win)
       },
       { label: 'Move Tab', submenu: moveTab },
-      {
-        label: 'Split with Current Tab',
-        enabled: canSplitWithActive,
-        click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
-      },
-      ...when(Boolean(tab.splitGroupId), {
-        label: 'Un-split Tab',
-        click: () => tabs.removeFromSplit(tabId, true, win)
-      }),
+      // The split rows are the desktop's and the tablet's (the phone draws no panes). Add Tab
+      // to Split View (context-menus-92, Vivaldi's row) is offered while a split is on screen
+      // and greyed when this tab cannot join it – it is one of its panes already, the split is
+      // full, its page cannot be split, or it is another window's own; without a split on
+      // screen Split with Current Tab is the way to one.
+      ...when(
+        panes,
+        {
+          label: 'Split with Current Tab',
+          enabled: canSplitWithActive,
+          click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
+        },
+        ...when(Boolean(active?.splitGroupId), {
+          label: 'Add Tab to Split View',
+          enabled: tabs.shownSplitFor(tab, win) !== null,
+          click: () => tabs.addToShownSplit(tabId, win)
+        }),
+        ...when(
+          Boolean(tab.splitGroupId),
+          { label: 'Swap Panes', click: () => tabs.swapPanes(tabId, win) },
+          { label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }
+        )
+      ),
       {
         label: 'Open in New Container Tab',
         enabled: !win.isPrivate,
@@ -1871,6 +1944,39 @@ export class Menus {
       closeGroup,
       [this.reopenClosedItem(win)]
     ])
+    this.popup(template, win, 'tab', anchor)
+  }
+
+  /**
+   * The ⋯ menu of a split pane's header (split-07, split-13; Edge's "More options" on the pane,
+   * Chrome's menu on the split's toolbar icon): Swap Panes – this pane trades places with the
+   * pane after it, the last with the one before it – then the left pane's link rule as a
+   * checkbox on this split's own state (`SplitGroup.linksToRight`, v2 §9.35: the rule is the
+   * arrangement's – a results-and-reader split wants it, two unrelated documents do not – so
+   * the pane's menu is its one home, as Edge keeps the toggle on the pane; off for a new split,
+   * kept with the split, greyed for a stacked split, which has no left and right), then Un-split
+   * Tab, which the header's own button also does. Title Case (design language v2 §9.1); nothing
+   * here for a tab outside a split.
+   */
+  showSplitPaneMenu(tabId: string, win: ZenWindow, anchor?: MenuAnchor): void {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    const group = tab?.splitGroupId ? state.model.splitGroups[tab.splitGroupId] : undefined
+    if (!tab || !group) return
+    const linksToRight = splitLinksToRight(group)
+    const template: Template = [
+      { label: 'Swap Panes', action: 'split.swap', click: () => tabs.swapPanes(tabId, win) },
+      { type: 'separator' },
+      {
+        label: 'Open Links from Left Pane in Right Pane',
+        type: 'checkbox',
+        checked: linksToRight,
+        enabled: group.layout !== 'horizontal',
+        click: () => tabs.setSplitLinksToRight(group.id, !linksToRight)
+      },
+      { type: 'separator' },
+      { label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }
+    ]
     this.popup(template, win, 'tab', anchor)
   }
 
@@ -2407,6 +2513,16 @@ export class Menus {
     const urls = bookmarkUrlCount(bookmarks.tree, ids)
     const editable = nodes.length > 0 && nodes.every((n) => !isBookmarkRoot(n.id))
     const bar = surface === 'bar'
+    /** The desktop's rows alone (W5-11): the phone's bookmark menu is untouched by them. */
+    const desktop = (...items: Template): Template => (win.formFactor === 'desktop' ? items : [])
+    /**
+     * A private window's bar reads and opens, never writes (bookmarks-43): its menus carry no
+     * row that edits the profile's store – Edit, Cut, Paste, Delete, Undo, Redo, Add, Sort –
+     * only the opening rows, Copy, the bar's setting and the manager. The manager's own menu is
+     * the manager's whatever the window.
+     */
+    const readOnly = bar && win.isPrivate
+    const edit = (...items: Template): Template => (readOnly ? [] : items)
     const template: Template = []
     if (single?.type === 'url') {
       template.push({
@@ -2424,6 +2540,23 @@ export class Menus {
             enabled: !win.isPrivate,
             click: () => this.browser.openBookmarksInWindow(ids, true, win)
           }
+        )
+      }
+      // Chrome's "Open in split view" (context-menus-109), the bar's: the page beside the
+      // window's active tab, as a link's row splits it (`splitLink`); the bookmark counts as used.
+      if (bar) {
+        const active = this.browser.tabs.activeTabFor(win)
+        const url = single.url ?? ''
+        template.push(
+          ...desktop({
+            label: 'Open in Split View',
+            enabled: Boolean(active && url),
+            click: () => {
+              if (!active) return
+              bookmarks.touch(single.id)
+              this.splitLink(active.id, url, win)
+            }
+          })
         )
       }
     } else if (nodes.length) {
@@ -2446,23 +2579,41 @@ export class Menus {
           }
         )
       }
+      // Chrome's "Open all (N) in new tab group" (bookmarks-41), under the desktop's noun for a
+      // group: a folder's pages as the tabs of a new tab folder named after it. A folder alone
+      // has a name to give the group; a mixed selection has none.
+      if (single?.type === 'folder') {
+        template.push(
+          ...desktop({
+            label: `Open All (${urls}) in New Tab Folder`,
+            enabled: urls > 0,
+            click: () => this.browser.openBookmarksInFolder(single.id, win)
+          })
+        )
+      }
     }
     if (nodes.length) {
       template.push(
+        ...edit(
+          { type: 'separator' },
+          {
+            label: single?.type === 'url' ? 'Edit…' : 'Rename…',
+            enabled: Boolean(single) && editable,
+            click: () =>
+              single &&
+              this.browser.emit(
+                'bookmark.edit',
+                { id: single.id, parentId: single.parentId ?? folderId, type: single.type },
+                win
+              )
+          }
+        ),
         { type: 'separator' },
-        {
-          label: single?.type === 'url' ? 'Edit…' : 'Rename…',
-          enabled: Boolean(single) && editable,
-          click: () =>
-            single &&
-            this.browser.emit(
-              'bookmark.edit',
-              { id: single.id, parentId: single.parentId ?? folderId, type: single.type },
-              win
-            )
-        },
-        { type: 'separator' },
-        { label: 'Cut', enabled: editable, click: () => this.browser.clipBookmarks(ids, 'cut') },
+        ...edit({
+          label: 'Cut',
+          enabled: editable,
+          click: () => this.browser.clipBookmarks(ids, 'cut')
+        }),
         { label: 'Copy', enabled: editable, click: () => this.browser.clipBookmarks(ids, 'copy') }
       )
       // Touch users have no drag and drop; the nested chooser moves the selection anywhere.
@@ -2471,43 +2622,80 @@ export class Menus {
     }
     // Pasting next to a chip lands right after it; on empty space it appends.
     const pasteIndex = bar && single && single.parentId === folderId ? single.index + 1 : undefined
-    template.push({
-      label: 'Paste',
-      enabled: bookmarks.canPaste(),
-      click: () => void bookmarks.paste(folderId, pasteIndex)
-    })
+    template.push(
+      ...edit({
+        label: 'Paste',
+        enabled: bookmarks.canPaste(),
+        click: () => void bookmarks.paste(folderId, pasteIndex)
+      })
+    )
     if (nodes.length) {
       template.push(
-        { type: 'separator' },
-        {
-          label: nodes.length > 1 ? `Delete ${nodes.length} Items` : 'Delete',
-          enabled: editable,
-          click: () => this.browser.deleteBookmarks(ids, win)
-        }
+        ...edit(
+          { type: 'separator' },
+          {
+            label: nodes.length > 1 ? `Delete ${nodes.length} Items` : 'Delete',
+            enabled: editable,
+            click: () => this.browser.deleteBookmarks(ids, win)
+          }
+        )
+      )
+    }
+    // Chrome's Undo / Redo of the last bookmark edit (context-menus-109), the bar's rows for
+    // #357's undo stack, on a chip's menu and on the empty strip's alike – once the bar's last
+    // chip is deleted, the strip is where its Undo is found; each enabled while it has a step
+    // to take.
+    if (bar) {
+      const { bookmarkUndo } = this.browser
+      template.push(
+        ...edit(
+          ...desktop(
+            { type: 'separator' },
+            {
+              label: 'Undo',
+              enabled: bookmarkUndo.depth > 0,
+              click: () => void this.browser.undoBookmarkEdit()
+            },
+            {
+              label: 'Redo',
+              enabled: bookmarkUndo.redoDepth > 0,
+              click: () => void this.browser.redoBookmarkEdit(win)
+            }
+          )
+        )
       )
     }
     template.push(
-      { type: 'separator' },
-      {
-        label: bar ? 'Add Page…' : 'Add New Bookmark…',
-        click: () =>
-          this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'url' }, win)
-      },
-      {
-        label: bar ? 'Add Folder…' : 'Add New Folder',
-        click: () =>
-          this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'folder' }, win)
-      }
+      ...edit(
+        { type: 'separator' },
+        {
+          label: bar ? 'Add Page…' : 'Add New Bookmark…',
+          click: () =>
+            this.browser.emit('bookmark.edit', { id: null, parentId: folderId, type: 'url' }, win)
+        },
+        {
+          label: bar ? 'Add Folder…' : 'Add New Folder',
+          click: () =>
+            this.browser.emit(
+              'bookmark.edit',
+              { id: null, parentId: folderId, type: 'folder' },
+              win
+            )
+        }
+      )
     )
     if (bar) {
       if (single?.type === 'folder') {
         template.push(
-          { type: 'separator' },
-          { label: 'Sort by Name', click: () => this.browser.sortBookmarkFolder(single.id) }
+          ...edit(
+            { type: 'separator' },
+            { label: 'Sort by Name', click: () => this.browser.sortBookmarkFolder(single.id) }
+          )
         )
       }
+      // The empty strip of a private window has nothing above this group: no separator to lead.
+      if (template.length) template.push({ type: 'separator' })
       template.push(
-        { type: 'separator' },
         { label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) },
         {
           label: 'Bookmark Manager',

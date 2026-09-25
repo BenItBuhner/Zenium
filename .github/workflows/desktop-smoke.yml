@@ -16,10 +16,16 @@ name: Desktop smoke (Windows, macOS, Linux installers)
 # (os-49: the RunOnce relaunch entry a window's session-end writes for the next sign-in, read off
 # the registry; no runner restarts), its private-taskbar scenario (os-56: the second
 # AppUserModelID, relaunch command and private icon a private window's frame carries, read off
-# its shell property store; the id's class key, which the uninstall check below sees gone) and macOS its
-# default-browser scenario (Make default's setAsDefaultProtocolClient('http') call – the OS's
-# dialog that follows is the user's, so LaunchServices' handlers are read for the record only;
-# .github/smoke/README.md says which half of each is OS-confirmed). The Linux job builds the two
+# its shell property store; the id's class key, which the uninstall check below sees gone) and,
+# last on each leg, the default-browser scenario's Windows steps (ci-08's registry read: the
+# registration read back before and after Make default's request – the installed build's intact
+# and pointing at its executable, the unpacked build's absent so the request resolves false
+# without opening Settings – the request opening the app's own Default apps page and claiming no
+# scheme, the per-user http/https classes never naming the executable, the state reading
+# not-default). macOS runs the same scenario's LaunchServices steps (Make default's
+# setAsDefaultProtocolClient('http') call – the OS's dialog that follows is the user's, so
+# LaunchServices' handlers are read for the record only; .github/smoke/README.md says which half
+# of each is OS-confirmed). The Linux job builds the two
 # installers the Release workflow ships, boots the AppImage, installs the .deb, boots what it
 # installed, checks the desktop entry and icon it put down and removes it again. Every JS error,
 # crash and blocking dialog fails the run unless .github/smoke/known-failures.json names it.
@@ -105,7 +111,11 @@ jobs:
           # meets the key as the leg starts: absent on the runner's first run, so the scenario
           # seeds a stale key and the build has to replace its values with its own (a launch
           # before it would already have written them, and the step would read "unchanged").
-          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark,restart-registration,private-taskbar
+          # default-browser (ci-08) runs last: the unpacked build is not registered with Windows
+          # (this leg runs before the install), so its request has to resolve false without
+          # opening Settings and without writing the per-user http/https classes – the registry
+          # read before and after through win-install.ps1 -Action registration.
+          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,scale,dark,restart-registration,private-taskbar,default-browser
       - name: Windows and processes left behind by the unpacked build
         if: always()
         run: |
@@ -142,7 +152,13 @@ jobs:
         # dist\win-unpacked; the silent install runs nothing) – and requires the installed build
         # to have replaced it with its own (under LOCALAPPDATA\Programs\zenium): W4-12's finding
         # 1, the refresh, recorded as the step's before → after.
-        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,restart-registration,private-taskbar
+        # default-browser (ci-08) runs last: the installer's registration read back before and
+        # after Make default's request (intact, pointing at the installed executable), the
+        # request opening the app's own Default apps page (ms-settings:defaultapps?registeredAppUser=Zenium
+        # – Settings resolves it through RegisteredApplications; the window is recorded and
+        # closed) and claiming no scheme, the per-user http/https classes never naming the
+        # executable, the state reading not-default.
+        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios notifications,boot,restore,restart-registration,private-taskbar,default-browser
       - name: Windows and processes left behind by the installed build
         if: always()
         run: |

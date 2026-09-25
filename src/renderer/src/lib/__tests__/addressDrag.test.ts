@@ -1,17 +1,35 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import type { Tab } from '@shared/types'
-import { addressDragOf, anchorMarkup, writeAddressDrag, type TransferWriter } from '../addressDrag'
+import type { BookmarkNode, Tab } from '@shared/types'
+import {
+  BOOKMARK_DRAG_TYPE,
+  addressDragOf,
+  anchorMarkup,
+  bookmarkDragOf,
+  carriesBookmark,
+  draggedBookmarkId,
+  writeAddressDrag,
+  writeBookmarkDrag,
+  type TransferWriter
+} from '../addressDrag'
 import { droppedBookmark, payloadKind, readInputs, type TransferLike } from '../dropIntent'
 
 /*
  * The address dragged out of the URL pill (omnibox-43, dnd-11): which tabs the slot lifts, what
  * the drag carries, and that the chrome's own drop code reads it back as the link it is – a
- * bookmark named for the page, a navigation for a tab row.
+ * bookmark named for the page, a navigation for a tab row. And a bookmark dragged off the bar
+ * (bookmarks-15, dnd-13): the same link with the chip's mark, which only the bar reads.
  */
 
 const tab = (url: string, patch: Partial<Tab> = {}): Tab =>
   ({ id: 't1', url, title: 'Example Domain', ...patch }) as Tab
+
+const bookmark = (
+  url: string | undefined,
+  title = 'Docs',
+  type: 'url' | 'folder' = 'url'
+): BookmarkNode =>
+  ({ id: 'b1', parentId: '1', index: 0, type, title, url, dateAdded: 0 }) as BookmarkNode
 
 /** A transfer written by the drag and read by a drop, as a `DataTransfer` would be. */
 function transfer(): TransferWriter & TransferLike {
@@ -86,5 +104,66 @@ describe('writeAddressDrag', () => {
       url: 'https://example.com/docs',
       title: 'Example docs'
     })
+    // No chip's mark on it: the bar files it as a new bookmark.
+    expect(carriesBookmark(dt.types)).toBe(false)
+    expect(draggedBookmarkId(dt)).toBeNull()
+  })
+})
+
+describe('bookmarkDragOf (bookmarks-15)', () => {
+  it('lifts a bookmark’s link with its name, the address standing in for a blank name', () => {
+    expect(bookmarkDragOf(bookmark('https://example.com/docs', 'Docs'))).toEqual({
+      url: 'https://example.com/docs',
+      title: 'Docs'
+    })
+    expect(bookmarkDragOf(bookmark('https://example.com/', '  '))).toEqual({
+      url: 'https://example.com/',
+      title: 'https://example.com/'
+    })
+    expect(bookmarkDragOf(bookmark('file:///home/me/notes.html', 'Notes'))?.url).toBe(
+      'file:///home/me/notes.html'
+    )
+  })
+
+  it('offers nothing for a folder, a bookmarklet or a Zenium page', () => {
+    expect(bookmarkDragOf(bookmark(undefined, 'Reading', 'folder'))).toBeNull()
+    expect(bookmarkDragOf(bookmark('javascript:alert(1)', 'Bookmarklet'))).toBeNull()
+    expect(bookmarkDragOf(bookmark('JavaScript:void(0)', 'Bookmarklet'))).toBeNull()
+    expect(bookmarkDragOf(bookmark('zen://settings', 'Settings'))).toBeNull()
+    expect(bookmarkDragOf(bookmark('zen://newtab', 'New tab'))).toBeNull()
+    expect(bookmarkDragOf(bookmark('', ''))).toBeNull()
+  })
+})
+
+describe('writeBookmarkDrag (bookmarks-15)', () => {
+  it('writes the address drag’s three forms and the chip’s mark, allowing copy, move and link', () => {
+    const dt = transfer()
+    const node = bookmark('https://example.com/docs', 'Docs & <more>')
+    writeBookmarkDrag(dt, node, bookmarkDragOf(node)!)
+    expect(dt.effectAllowed).toBe('all')
+    expect(dt.types).toEqual(['text/uri-list', 'text/plain', 'text/html', BOOKMARK_DRAG_TYPE])
+    expect(dt.getData('text/uri-list')).toBe('https://example.com/docs')
+    expect(dt.getData('text/plain')).toBe('https://example.com/docs')
+    expect(dt.getData('text/html')).toBe(
+      '<a href="https://example.com/docs">Docs &amp; &lt;more&gt;</a>'
+    )
+    expect(dt.getData(BOOKMARK_DRAG_TYPE)).toBe('b1')
+  })
+
+  it('reads as the link everywhere but the bar, which reads the chip’s id off the mark', () => {
+    const dt = transfer()
+    const node = bookmark('https://example.com/docs', 'Docs')
+    writeBookmarkDrag(dt, node, bookmarkDragOf(node)!)
+    // A tab row's drop: one input, the link; a page's drop: the same link (Blink's own reading).
+    expect(payloadKind(dt.types)).toBe('urls')
+    expect(readInputs(dt, () => null)).toEqual(['https://example.com/docs'])
+    // The bar's drop: the chip, from its types alone while the data is sealed, its id after.
+    expect(carriesBookmark(dt.types)).toBe(true)
+    expect(draggedBookmarkId(dt)).toBe('b1')
+    // The mark with nothing under it (a foreign drag under our type) names no chip.
+    const bare = transfer()
+    bare.setData(BOOKMARK_DRAG_TYPE, '')
+    expect(carriesBookmark(bare.types)).toBe(true)
+    expect(draggedBookmarkId(bare)).toBeNull()
   })
 })

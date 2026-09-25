@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TikTok pixel fixture</title>
+    <script>
+      // The TikTok pixel's loader as its snippet installs it: a `ttq` queue on the window and
+      // its `events.js` requested with the pixel id in the query. The id is not a live pixel,
+      // so nothing is reported anywhere; a pixel helper has a request to find here.
+      !(function (w, d, t) {
+        w.TiktokAnalyticsObject = t
+        var ttq = (w[t] = w[t] || [])
+        ttq.methods = ['page', 'track', 'identify', 'instances', 'debug', 'on', 'off', 'once', 'ready', 'alias', 'group', 'enableCookie', 'disableCookie']
+        ttq.setAndDefer = function (t, e) {
+          t[e] = function () {
+            t.push([e].concat(Array.prototype.slice.call(arguments, 0)))
+          }
+        }
+        for (var i = 0; i < ttq.methods.length; i++) ttq.setAndDefer(ttq, ttq.methods[i])
+        ttq.load = function (e) {
+          var i = 'https://analytics.tiktok.com/i18n/pixel/events.js'
+          ttq._i = ttq._i || {}
+          ttq._i[e] = []
+          ttq._i[e]._u = i
+          ttq._t = ttq._t || {}
+          ttq._t[e] = +new Date()
+          var o = d.createElement('script')
+          o.type = 'text/javascript'
+          o.async = true
+          o.src = i + '?sdkid=' + e + '&lib=' + t
+          o.onload = function () {
+            d.getElementById('state').textContent = 'events.js loaded'
+          }
+          o.onerror = function () {
+            d.getElementById('state').textContent = 'events.js request answered with an error (the id is no live pixel)'
+          }
+          var a = d.getElementsByTagName('script')[0]
+          a.parentNode.insertBefore(o, a)
+        }
+        ttq.load('ZENIUMFIX01')
+        ttq.page()
+      })(window, document, 'ttq')
+    </script>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>TikTok pixel fixture</h1>
+    <p>
+      This page installs the TikTok pixel loader for the pixel id <code>ZENIUMFIX01</code>: the
+      <code>ttq</code> queue on the window, a <code>page</code> call on it, and
+      <code>analytics.tiktok.com/i18n/pixel/events.js?sdkid=ZENIUMFIX01</code> requested as a
+      script. Pixel helpers (TikTok Pixel Helper) find the pixel by that request; the id is not a
+      live pixel, so nothing is reported anywhere.
+    </p>
+    <p>events.js: <span id="state">requested</span></p>
+  </body>
+</html>

@@ -421,7 +421,9 @@ class Extensions(private val host: Host) {
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
             // The engine's switch (contract 7.1): the process's engine relays media requests for
             // their response stage while it is on; this runtime hears them through [observer].
-            "ext.observeResponses" -> { host.blocking.observeResponses = args.bool("on"); reply(null) }
+            // The pages' observer of their own fetch / XHR responses (7.10) follows the same
+            // word: every live document is told now, a new one learns it at its hello.
+            "ext.observeResponses" -> { setObserveResponses(args.bool("on")); reply(null) }
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
             "ext.background.stop" -> { stopBackground(args.str("id")); reply(null) }
@@ -728,9 +730,22 @@ class Extensions(private val host: Host) {
         observeRequests = false
         // The engine's switch is the runtime's that set it: off with the runtime that goes, when
         // this one still owns the seams (a newer window's may have taken them over).
-        if (host.blocking.observer === observer) host.blocking.observeResponses = false
+        if (host.blocking.observer === observer) setObserveResponses(false)
         closeAuthSheets()
         releaseKeepAwake()
+    }
+
+    /**
+     * The response-stage switch (contract 7.1 / 7.10): the engine's relay of media-element
+     * requests and the pages' observer of their fetch / XHR responses turn together. Every live
+     * document hears a change at once ([TabWebView.setExtObserve]); a new document learns the
+     * current word at its hello (`TabWebView.sendFlags`).
+     */
+    private fun setObserveResponses(on: Boolean) {
+        val changed = host.blocking.observeResponses != on
+        host.blocking.observeResponses = on
+        if (!changed) return
+        for (view in host.tabs.all()) view.setExtObserve(on)
     }
 
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
@@ -1475,6 +1490,30 @@ class Extensions(private val host: Host) {
             )
             val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
             return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
+        }
+        // A module graph a page's policy refused at the extension's origin, asked for again from
+        // the page's own origin (`/.zenium-ext/<id>/<path>`, the bootstrap's retry in
+        // extensionScriptRecovery.ts; `script-src 'self'` admits it where the served origin was
+        // refused). Served as the extension's origin serves a foreign page – the web-accessible
+        // resources only – for a subresource of a tab's page, never a navigation (no document:
+        // a frame of the extension's under the page's origin would be a page of the page's) and
+        // never an extension view's request. The module bracket and the chunk stub go with it on
+        // the one-realm WebView (the graph evaluates on the page's real global there); in an
+        // isolated world the world's own `import()` asked, and the file is served as it is.
+        if (tab != null && extensionPage == null && !request.isForMainFrame && (request.method ?: "GET").equals("GET", ignoreCase = true)) {
+            val alias = ExtensionUrls.pageAlias(url.path ?: "")
+            if (alias != null) {
+                val (id, path) = alias
+                val ext = served[id] ?: return notFound()
+                if (tab.isPrivateTab && !ext.allowPrivate) return notFound()
+                if (path.isEmpty() || ExtensionScripts.mimeType(path) == "text/html") return notFound()
+                if (!ext.webAccessible.any { it.matches(path) }) return notFound()
+                // A same-origin module request carries no `Origin`, so the graph is told by the
+                // WebView alone; only a script is bracketed (a stylesheet or an image goes as it is).
+                val moduleGraph = !isolatedWorlds && ExtensionScripts.isScriptPath(path)
+                val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
+                return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
+            }
         }
         // A fetch or XHR of an extension page to a host its permissions cover: Chrome skips CORS
         // there, the proxy stands in (CorsProxy). The request's `Origin` names the extension, so

@@ -27,7 +27,11 @@ import java.util.concurrent.TimeUnit
  * carry and the two do not is Dark Reader's restyled page rastering, not the runtime's frame
  * work; and the emptied page scrolled again at the end (`ext-scroll-0-again`, reported against
  * the first): the recipe's own drift over the run, so a ratio can be told from the emulator
- * warming or tiring.
+ * warming or tiring. Two scenes at the end (compat round 15) scroll the fixture's fetch-heavy
+ * twin (`scroll.html?fetch`, a fetch every 50 ms) with nothing attached (`ext-scroll-fetch-0`,
+ * against the empty scroll) and with a response-stage listener probe attached
+ * (`ext-scroll-fetch-observer`, against the fetch scene: what the page-script observer of the
+ * page's own requests adds to a scroll frame).
  *
  * The six are laid out as store installs from what the workflow pushed (see [ExtensionSeed]) and
  * registered DISABLED; each scene turns its set on through `extension.setEnabled`, waits for the
@@ -58,6 +62,8 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
     private val attached = LinkedHashSet<String>()
     private var worlds = false
     private var shots = 0
+    /** The page the fixture tab is on: `scroll.html` until the fetch scenes send it to its fetch-heavy twin. */
+    private var fixtureUrl = FIXTURE
 
     @Test
     fun record() {
@@ -94,6 +100,15 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
             records.put(ExtensionSeed.record(id, versionDir, manifest, enabled = false))
             installed[id] = versionDir
         }
+        // Round 15: the response-stage listener probe, written here (no store has it), laid out
+        // and registered DISABLED like the six; the fetch scenes attach it.
+        val probeDir = File(root, OBSERVER_ID).apply { deleteRecursively(); mkdirs() }
+        File(probeDir, "manifest.json").writeText(OBSERVER_MANIFEST)
+        File(probeDir, "background.js").writeText(OBSERVER_BACKGROUND)
+        ExtensionSeed.layOutInstall(probeDir)?.let { versionDir ->
+            records.put(ExtensionSeed.record(OBSERVER_ID, versionDir, JSONObject(OBSERVER_MANIFEST), enabled = false))
+            installed[OBSERVER_ID] = versionDir
+        } ?: run { missing += OBSERVER_ID }
         File(zen, "extensions.json").writeText(ExtensionSeed.registry(records).toString())
     }
 
@@ -159,6 +174,49 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         scene(SCENE_3, THREE, baseline = SCENE_0)
         scene(SCENE_6, SIX, baseline = SCENE_0)
         scene(SCENE_0_AGAIN, emptySet(), baseline = SCENE_0)
+        // Round 15: the fetch-heavy twin of the fixture (`scroll.html?fetch`: the same document,
+        // its fetch stream – a same-origin fetch every 50 ms from load on – switched on by the
+        // query, so any server of the pages serves it), scrolled with no extension attached and
+        // then with the response-stage listener probe attached – one listener on every
+        // `webRequest` response-stage event with `responseHeaders`, which turns the runtime's
+        // page-script observer of the page's own requests on. The first scene against the empty
+        // scroll is the fetch stream's own cost; the second against the first is what the
+        // observer's accounting (a report per response from the page, the runtime's pairing and
+        // emission) adds to a scroll frame. The probe's counts of what it heard go into the record.
+        navigateFixture(FETCH_FIXTURE)
+        scene(SCENE_FETCH_0, emptySet(), baseline = SCENE_0)
+        scene(SCENE_FETCH_OBSERVER, setOf(OBSERVER_ID), baseline = SCENE_FETCH_0)
+    }
+
+    /** The fixture tab sent to `url` (the fetch-heavy twin), waited for; the scenes after this reload it. */
+    private fun navigateFixture(url: String) {
+        fixtureUrl = url
+        coreInvoke("tab.navigate", """{"tabId":${JSONObject.quote(TAB_ID)},"input":${JSONObject.quote(url)}}""")
+        SystemClock.sleep(600)
+        awaitLoaded(url)
+        waitFor(30_000) { if (pageJs("document.readyState") == "\"complete\"") true else null }
+        SystemClock.sleep(1_500)
+        finding("fixture now $url: page ${pageNumber("document.scrollingElement.scrollHeight")} CSS px tall")
+    }
+
+    /** What the response-stage listener probe's worker heard so far (its `__zenObserverCounts`), or why it could not be read. */
+    private fun observerCounts(): JSONObject {
+        var raw: String? = null
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = host.extensions.backgroundView(OBSERVER_ID)
+            if (view == null) {
+                latch.countDown()
+            } else {
+                view.evaluateJavascript("JSON.stringify(self.__zenObserverCounts||null)") { value ->
+                    raw = value
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        val text = raw ?: return JSONObject().put("error", "no background view for the probe")
+        return runCatching { JSONObject(unquote(text)) }.getOrElse { JSONObject().put("error", "unreadable: ${text.take(80)}") }
     }
 
     // --- one scene ---------------------------------------------------------------------------------
@@ -242,6 +300,16 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         entry.put("scrollTop", JSONObject().put("before", scrollBefore).put("after", scrollAfter))
         entry.put("frames", JSONObject(result.toJson()))
         entry.put("memoryKb", meminfo())
+        if (fixtureUrl == FETCH_FIXTURE) {
+            val fetches = runCatching { JSONObject(unquote(pageJs("JSON.stringify(window.__fetches||null)"))) }.getOrNull() ?: JSONObject()
+            entry.put("fetches", fetches)
+            finding("[$name] the page's fetch stream: ${fetches.optInt("sent")} sent, ${fetches.optInt("done")} read, ${fetches.optInt("failed")} failed since its load")
+            if (OBSERVER_ID in attached) {
+                val heard = observerCounts()
+                entry.put("observerHeard", heard)
+                finding("[$name] the response-stage listener probe heard: $heard")
+            }
+        }
         val s = result.summary
         finding(
             "[$name] frames ${s?.frames ?: 0}, janky ${s?.janky ?: 0} (${percent(s?.jankyShare ?: 0.0)}), p50/p95/p99 ${s?.p50Ms ?: 0}/${s?.p95Ms ?: 0}/${s?.p99Ms ?: 0} ms, " +
@@ -386,7 +454,7 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         val started = SystemClock.uptimeMillis()
         coreInvoke("tab.reload", """{"tabId":${JSONObject.quote(TAB_ID)}}""")
         SystemClock.sleep(600)
-        awaitLoaded(FIXTURE)
+        awaitLoaded(fixtureUrl)
         val complete = waitFor(30_000) { if (pageJs("document.readyState") == "\"complete\"") true else null }
         val images = pageNumber("Array.prototype.filter.call(document.images,function(i){return i.complete}).length")
         entry.put("reloadMs", SystemClock.uptimeMillis() - started)
@@ -613,6 +681,25 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         const val SCENE_3 = "ext-scroll-3"
         const val SCENE_6 = "ext-scroll-6"
         const val SCENE_0_AGAIN = "ext-scroll-0-again"
+        const val SCENE_FETCH_0 = "ext-scroll-fetch-0"
+        const val SCENE_FETCH_OBSERVER = "ext-scroll-fetch-observer"
+        /** The fixture's fetch-heavy twin: the same document, its `scroll-fetch.js` switched on by the query (a fetch every 50 ms from load on). */
+        private const val FETCH_FIXTURE = "$BASE/scroll.html?fetch"
+        /** The response-stage listener probe (round 15): an id of the store's shape that no store has. */
+        const val OBSERVER_ID = "hlpahlpahlpahlpahlpahlpahlpahlpa"
+        private const val OBSERVER_MANIFEST =
+            """{"manifest_version":3,"name":"Zenium response-stage listener probe","version":"1.0","description":"Frame-budget probe: one listener on every webRequest response-stage event with responseHeaders, counting what it hears.","permissions":["webRequest"],"host_permissions":["<all_urls>"],"background":{"service_worker":"background.js"}}"""
+        private const val OBSERVER_BACKGROUND =
+            "const counts = { onBeforeRequest: 0, onBeforeRedirect: 0, onHeadersReceived: 0, onResponseStarted: 0, onCompleted: 0, onErrorOccurred: 0, withResponseHeaders: 0 };\n" +
+                "const filter = { urls: ['<all_urls>'] };\n" +
+                "const headed = (name) => (d) => { counts[name]++; if (d && Array.isArray(d.responseHeaders)) counts.withResponseHeaders++; };\n" +
+                "chrome.webRequest.onBeforeRequest.addListener(() => { counts.onBeforeRequest++; }, filter);\n" +
+                "chrome.webRequest.onBeforeRedirect.addListener(headed('onBeforeRedirect'), filter, ['responseHeaders']);\n" +
+                "chrome.webRequest.onHeadersReceived.addListener(headed('onHeadersReceived'), filter, ['responseHeaders']);\n" +
+                "chrome.webRequest.onResponseStarted.addListener(headed('onResponseStarted'), filter, ['responseHeaders']);\n" +
+                "chrome.webRequest.onCompleted.addListener(headed('onCompleted'), filter, ['responseHeaders']);\n" +
+                "chrome.webRequest.onErrorOccurred.addListener(() => { counts.onErrorOccurred++; }, filter);\n" +
+                "self.__zenObserverCounts = counts;\n"
         const val UBOL = "ddkjiahejlhfcafbddmgiahcphecmpfh"
         const val DARK_READER = "eimadpbcbfnmbkopoojfekhnkhdbieeh"
         const val VIMIUM = "dbepggeogbaibhgnhhndojpepiihcmeb"
@@ -625,7 +712,8 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         val ALL = SIX
         val NAMES = mapOf(
             UBOL to "uBlock Origin Lite", DARK_READER to "Dark Reader", VIMIUM to "Vimium",
-            GRAMMARLY to "Grammarly", LANGUAGETOOL to "LanguageTool", BITWARDEN to "Bitwarden"
+            GRAMMARLY to "Grammarly", LANGUAGETOOL to "LanguageTool", BITWARDEN to "Bitwarden",
+            OBSERVER_ID to "response-stage listener probe"
         )
         /** The fixed motion, dp and ms: a fling's travel and speed, the slow drags' travel and time, the settles. */
         private const val FLING_DP = 300f

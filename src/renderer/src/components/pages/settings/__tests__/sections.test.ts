@@ -31,6 +31,7 @@ import {
   DEFAULT_SETTINGS,
   INACTIVE_TAB_AUTO_CLOSE_DAYS,
   emptyAgentServerStatus,
+  emptyAgentSkillStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
@@ -47,6 +48,7 @@ import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES, withDefaultSearchEngineActive } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
+import { makeTheme } from '@shared/theme'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { emptySiteDataStatus } from '@shared/siteData'
@@ -106,6 +108,7 @@ const ANDROID: HostCapabilities = {
   printPreview: false,
   pdfViewer: true,
   agents: true,
+  agentSkills: false,
   updates: true,
   share: true,
   clipboardChip: true,
@@ -278,6 +281,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     webApps: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
+    agentSkills: emptyAgentSkillStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
     passwords: emptyPasswordsStatus(),
     autofill: emptyAutofillUIState(),
@@ -291,7 +295,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
     siteData: emptySiteDataStatus(),
-    newTabBackground: { image: false, canPick: false },
+    newTabBackground: { image: false, canPick: false, accent: null },
     translate: TRANSLATE,
     spellcheck: UNAVAILABLE_SPELLCHECK,
     ...patch
@@ -1275,8 +1279,28 @@ describe('the section model', () => {
     const models = buildSections(availableSections(PAGE, c.ctx.state.capabilities, 'phone'), c.ctx)
     expect(models.map((m) => m.section.id).slice(0, 3)).toEqual(['look', 'newtab', 'tabs'])
     const newtab = models[1]
-    expect(newtab.groups.map((g) => g.heading)).toEqual(['New tab page', 'My shortcuts', null])
+    expect(newtab.groups.map((g) => g.heading)).toEqual([
+      'New tab page',
+      'My shortcuts',
+      null,
+      null
+    ])
     expect(newtab.groups.every(groupShows)).toBe(true)
+
+    // NTP-12 / NTP-22: the background's own reset is one row and asks nothing – disabled on the
+    // default already; the whole page's reset is bulk, behind the row's destructive confirmation.
+    const resetBackground = row(newtab, 'newtab-reset-background')
+    if (resetBackground.kind !== 'action') throw new Error('not an action')
+    expect(resetBackground.disabled).toBe(true)
+    expect(resetBackground.confirm).toBeUndefined()
+    resetBackground.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.resetBackground', undefined)
+    const reset = row(newtab, 'newtab-reset')
+    if (reset.kind !== 'action') throw new Error('not an action')
+    expect(reset.destructive).toBe(true)
+    expect(reset.confirm).toMatchObject({ title: 'Reset the new tab page?', action: 'Reset' })
+    reset.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('newtab.reset', undefined)
 
     // The page's preferences patch inside `newTab`, keeping the rest of it. The rows write the
     // one model's sections as the phone's sheet does: a background other than the space gradient
@@ -1351,6 +1375,70 @@ describe('the section model', () => {
     expect(row(synced, 'newtab-greeting')).toMatchObject({ checked: true })
     expect(row(synced, 'newtab-background')).toMatchObject({ value: 'space' })
     expect(row(synced, 'newtab-shortcuts')).toMatchObject({ value: 'most-visited' })
+    // A background other than the default – as the page shows it, so a solid colour under a
+    // layout with its wallpaper section on – arms its reset row.
+    const solid = section(
+      'newtab',
+      state({ capabilities: { ...ANDROID, newTabPage: true } } as Partial<UIState>, {
+        newTab: {
+          ...DEFAULT_SETTINGS.newTab,
+          preset: 'custom',
+          modules: { ...DEFAULT_SETTINGS.newTab.modules, wallpaper: true },
+          background: 'solid'
+        }
+      })
+    )
+    expect(row(solid, 'newtab-reset-background')).toMatchObject({ disabled: false })
+
+    // NTP-14: "Use the picture's colour" is a switch directly under the background – with the
+    // image rows, so only where a file can be picked – at rest (disabled) without an image and
+    // until its colour is read, on when the active space's theme follows the picture; flipping
+    // it is the command.
+    expect(findRow(newtab.groups, 'newtab-image-colour')).toBeNull()
+    const pickable = (accent: string | null, image = true, following = false): Model =>
+      section(
+        'newtab',
+        state({
+          capabilities: { ...ANDROID, newTabPage: true },
+          newTabBackground: { image, canPick: true, accent },
+          spaces: [
+            {
+              id: 'space',
+              name: 'Personal',
+              activeTabId: 'settings',
+              tabIds: ['site', 'settings'],
+              theme: following ? { ...makeTheme('#3b6fd6'), fromImage: true } : null
+            }
+          ]
+        } as unknown as Partial<UIState>)
+      )
+    expect(row(pickable(null, false), 'newtab-image-colour')).toMatchObject({
+      kind: 'switch',
+      checked: false,
+      disabled: true
+    })
+    expect(row(pickable(null), 'newtab-image-colour')).toMatchObject({ disabled: true })
+    const ids = pickable('#3b6fd6').groups[0].rows.map((r) => r.id)
+    expect(ids.indexOf('newtab-image-colour')).toBe(ids.indexOf('newtab-background') + 1)
+    const useColour = row(pickable('#3b6fd6'), 'newtab-image-colour')
+    if (useColour.kind !== 'switch') throw new Error('not a switch')
+    expect(useColour).toMatchObject({
+      label: "Use the picture's colour",
+      checked: false,
+      disabled: false
+    })
+    useColour.onChange(true)
+    expect(invoke).toHaveBeenCalledWith('newtab.useImageColor', { on: true })
+    const following = row(pickable('#3b6fd6', true, true), 'newtab-image-colour')
+    if (following.kind !== 'switch') throw new Error('not a switch')
+    expect(following).toMatchObject({ checked: true, disabled: false })
+    following.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('newtab.useImageColor', { on: false })
+    // The picture let go while on: the switch keeps the space's choice, at rest.
+    expect(row(pickable(null, false, true), 'newtab-image-colour')).toMatchObject({
+      checked: true,
+      disabled: true
+    })
 
     // A shortcut without a name is listed by its address; its sheet edits, moves and removes it.
     expect(row(newtab, 'shortcut:b').label).toBe('https://b.test/')
@@ -2483,6 +2571,14 @@ describe('the section model', () => {
     expect(c.patches).toEqual([{ splitEdgeZones: false }])
     // A finger scrolls the strip rather than dragging a tab: the touch host has no such row.
     expect(section('look').groups.map((g) => g.id)).not.toContain('split-view')
+  })
+
+  it('keeps the left pane’s link rule off the page: the split view group is the drag switch alone – the rule is each split’s own, on the pane’s ⋯ menu (split-13, §9.35)', () => {
+    const c = context(state(), true)
+    const look = buildSection(PAGE.sections[0], c.ctx)
+    const group = look.groups.find((g) => g.id === 'split-view')!
+    expect(group.rows.map((r) => r.id)).toEqual(['split-edge-zones'])
+    expect(searchRows([look], 'right pane').map((h) => h.row.id)).toEqual([])
   })
 
   it('tells a touch host its own gestures: no double-click, Glance from the link menu', () => {
@@ -4810,6 +4906,8 @@ describe('searching the rows', () => {
     const key = row(privacy, 'safe-browsing-api-key')
     if (key.kind !== 'field') throw new Error('not a field')
     expect(key.secret).toBe(true)
+    // A 39-character key: the desktop's field stands under the label (§9.12's stacked form).
+    expect(key.form).toBe('stacked')
     expect(key.display).toBe('Not set · optional, adds Google Safe Browsing lookups')
     expect(rowText(key)).not.toContain('AIza')
     // Update feeds now runs the service; each feed is an item whose sheet refreshes it alone.
@@ -5528,8 +5626,9 @@ describe('ID-08’s Sync category on a phone', () => {
       folderName: 'Zenium',
       lastSyncAt: Date.now() - 5 * 60_000,
       devices: [
+        // The laptop's build announced no kind; the desktop's did (services pass 4).
         { id: 'dev-2', name: 'Work laptop', lastSeen: Date.now() - 2 * 3_600_000 },
-        { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000 }
+        { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000, kind: 'desktop' }
       ],
       ...patch
     })
@@ -5699,6 +5798,50 @@ describe('ID-08’s Sync category on a phone', () => {
     for (const r of devices?.rows ?? []) {
       if (r.kind !== 'info') continue
       expect(r.trailing).toBeTruthy()
+    }
+    // Each device row leads with the device's kind glyph (services pass 4; §10.4's leading slot
+    // at the full ink): the desktop's laptop – Chrome's one computer glyph – and for the laptop
+    // – whose build announced no kind – the stand-in at 69 %. The kind is searchable with the
+    // row.
+    const glyphOf = (m: Model, id: string): { kind: string | null; standin: boolean } => {
+      const r = row(m, id)
+      if (r.kind !== 'info' || !isValidElement(r.leading)) throw new Error(`no glyph on ${id}`)
+      const markup = renderToStaticMarkup(r.leading)
+      return {
+        kind: /data-kind="([^"]+)"/.exec(markup)?.[1] ?? null,
+        standin: markup.includes('zen-list-standin')
+      }
+    }
+    expect(glyphOf(model, 'sync-device:dev-3')).toEqual({ kind: 'desktop', standin: false })
+    expect(glyphOf(model, 'sync-device:dev-2')).toEqual({ kind: 'none', standin: true })
+    expect(row(model, 'sync-device:dev-3').keywords).toContain('desktop')
+    // A list in which no device announced a kind – every peer an older build – has no glyph
+    // column at all (§10.4's condition, `anyDeviceKind`; the #453 lead check): no `leading` on
+    // any device row, so the names stand at the gutter rather than behind a column of stand-ins.
+    const bare = section(
+      'sync',
+      syncState(
+        connected({
+          devices: [
+            { id: 'dev-2', name: 'Work laptop', lastSeen: Date.now() - 2 * 3_600_000 },
+            { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000 }
+          ]
+        })
+      )
+    )
+    for (const id of ['sync-device:dev-3', 'sync-device:dev-2']) {
+      const r = row(bare, id)
+      if (r.kind !== 'info') throw new Error('not an info row')
+      expect(r.leading, id).toBeUndefined()
+      expect(r.trailing, id).toBeTruthy()
+    }
+    // The action row under the device run stands under the builder's hairline (the #453 lead
+    // check): the run's glyphs and the row's plain label part there, and the one `--v2-border`
+    // line closes the run – a separator, no glyph or empty slot drawn for alignment.
+    expect(row(model, 'sync-remote-tabs').hairline).toBe(true)
+    expect(row(bare, 'sync-remote-tabs').hairline).toBe(true)
+    for (const r of devices?.rows ?? []) {
+      if (r.kind === 'info') expect(r.hairline, r.id).toBeUndefined()
     }
 
     const off = model.groups.find((g) => g.id === 'sync-off')

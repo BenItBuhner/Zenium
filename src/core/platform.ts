@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AgentSkillStatus,
   AppLinkState,
   AppWindowInfo,
   CertificateDetails,
@@ -26,6 +27,7 @@ import type {
   KeyBinding,
   LongCapture,
   LongCaptureCrop,
+  MenuDeviceMark,
   MenuGlyph,
   MenuGroupMark,
   MenuHeader,
@@ -42,10 +44,12 @@ import type {
   ResourceSnapshot,
   ScreenCaptureSource,
   ScreenshotSaved,
+  SharePanelAction,
   SharePayload,
   ShortcutAction,
   SidePanelInfo,
   Suggestion,
+  SyncDeviceKind,
   SyncDeviceTabs,
   SyncScope,
   SyncStatus,
@@ -86,7 +90,7 @@ import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
 import type { TextFragmentHostMessage } from '../shared/textFragmentScript'
 import type { FocusEdge, FocusEdgeHostMessage } from '../shared/focusEdge'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
-import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
+import type { RawWebAppManifest, ShortcutIconKind, WebAppDisplay } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
@@ -154,6 +158,12 @@ export interface PageFlags {
   glanceTrigger: 'alt' | 'ctrl' | 'shift'
   /** How plain clicks on third-party links behave on pinned/essential tabs (null = normal tab). */
   thirdParty: 'new-tab' | 'glance' | 'same-tab' | null
+  /**
+   * The page is the left pane of a side-by-side split with the link rule on (split-13): a plain
+   * click on a link is sent back as `split-link` for the pane to its right to load, instead of
+   * navigating here. False for every other page.
+   */
+  linksToSplitPane: boolean
 }
 
 /**
@@ -176,6 +186,8 @@ export interface PageMessage {
     | 'glance'
     | 'open-tab'
     | 'navigate'
+    /** A link clicked in the left pane of a split with the link rule on: the right pane loads `url`. */
+    | 'split-link'
     | 'media'
     | 'zap'
     | 'activation'
@@ -569,6 +581,14 @@ export interface TabViewEvents {
    * it: the throbber then waits from `onStartLoading` to the commit.
    */
   onStartNavigation?(url: string, sameDocument: boolean): void
+  /**
+   * The main-frame navigation under way was redirected by the server from `fromUrl` to `toUrl`
+   * (Electron's `did-redirect-navigation`, Android's `shouldOverrideUrlLoading` with
+   * `isRedirect`), before it commits: the core keeps the hops and records them with the commit
+   * as one redirect chain (history-23). Hosts that cannot tell need not call it: the visit is
+   * then the landing alone.
+   */
+  onRedirected?(fromUrl: string, toUrl: string): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
   /**
@@ -973,6 +993,13 @@ export interface NewTabBackgroundHost {
    */
   set?(dataUrl: string | null): Promise<void>
   clear(): Promise<void>
+  /**
+   * The colour the current image suggests for the space's accent (NTP-14), as `#rrggbb` fitted
+   * by `shared/imageColor.ts`: the host decodes the picture (it holds the bytes) and hands the
+   * pixels of a small resample to `imageAccentHex`. Null with no image, or one the host cannot
+   * decode. Hosts without a decoder leave it out; the core then offers no suggestion.
+   */
+  accent?(): Promise<string | null>
 }
 
 // ---------------------------------------------------------------------------
@@ -1129,6 +1156,12 @@ export interface MenuItemTemplate {
    * colour and icon, the ring for a saved group. Native menu hosts draw the row as text.
    */
   group?: MenuGroupMark
+  /**
+   * Another device's mark before the label of a renderer-drawn menu's row (the app menu's Send
+   * to Your Devices submenu; services pass 4): the chrome draws the device's kind glyph, the
+   * stand-in for a kind it did not announce. Native menu hosts draw the row as text.
+   */
+  device?: MenuDeviceMark
   /**
    * An icon-row item of a renderer-drawn menu (the phone app menu's first group, design language
    * v2 §9.3): the chrome draws the glyph in a 44 px button named by `label`. Native menu hosts
@@ -1341,6 +1374,13 @@ export interface ShellHost {
    * without one leave it out and the core copies the link instead.
    */
   share?(payload: SharePayload): Promise<ShareOutcome | void>
+  /**
+   * The chrome's answer to the host's own share panel (Android below 14, SH-03; the host sent
+   * `share.panel` and holds the share's intent under the panel's id): send it to the chosen app,
+   * open the system sheet for More, or let it go. Absent on hosts whose share sheet is the
+   * system's alone (the desktop).
+   */
+  sharePanelAction?(action: SharePanelAction): Promise<void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
   /**
@@ -1975,6 +2015,14 @@ export interface SyncPlatformHost {
   folderName?(folder: string): Promise<string>
   /** What this device is called until the user renames it (the hostname; `Build.MODEL`). */
   deviceNameDefault(): string
+  /**
+   * What this device is, for the other devices' rows (`SyncDeviceKind`): Android tells a phone
+   * from a tablet by its form factor; a desktop says `desktop` unless the platform has a
+   * reliable signal that it is a laptop (Electron's `powerMonitor` only says whether the
+   * machine is on battery right now, so the Electron host never guesses `laptop`). A host
+   * without the method announces no kind, as builds before it did.
+   */
+  deviceKind?(): SyncDeviceKind
   createTransport(folder: string): SyncTransport
   /** Native scrypt, when the host has one; must equal the shared implementation bit for bit. */
   scrypt?: SyncScryptFn
@@ -1999,6 +2047,23 @@ export interface AgentTransport {
     onRequest: (request: AgentHttpRequest) => Promise<AgentHttpResponse>
   }): Promise<{ port: number; lanAddresses: string[] }>
   stop(): Promise<void>
+}
+
+/**
+ * The host that installs the `zenium-browser` Agent Skill into the coding harnesses' global
+ * skills directories (`capabilities.agentSkills`; the desktop's `main/agent/skills.ts`). Every
+ * call settles with the whole status; a failure is reported in it, never thrown.
+ */
+export interface AgentSkillsHost {
+  /**
+   * Detect the harnesses and read what is installed. `sync` also rewrites every installed copy
+   * whose recorded version is not this app's – the once-per-update refresh, run at start.
+   */
+  status(options?: { sync?: boolean }): Promise<AgentSkillStatus>
+  /** Install into the named targets, or into every detected one when none are named. */
+  install(targets?: readonly string[]): Promise<AgentSkillStatus>
+  /** Remove Zenium's copies from the named targets (every installed one when none are named). */
+  uninstall(targets?: readonly string[]): Promise<AgentSkillStatus>
 }
 
 /**
@@ -2223,6 +2288,18 @@ export interface ShortcutRequest {
   background: string
   /** The `any` icon's own background when the manifest names one (fills the safe zone edges). */
   iconBackground: string | null
+  /**
+   * The manifest's display mode; a host that opens `standalone` / `fullscreen` / `minimal-ui`
+   * apps in a window (activity) of their own reads it from here. Absent (and for `browser`)
+   * the shortcut opens a tab.
+   */
+  display?: WebAppDisplay
+  /** The manifest's absolute scope; navigations outside it leave the app's window. */
+  scope?: string
+  /** The manifest's `theme_color` as `#rrggbb`, for the window's system bars and Recents entry. */
+  themeColor?: string | null
+  /** The manifest's `background_color` as `#rrggbb`, the window's colour before the page paints. */
+  backgroundColor?: string | null
 }
 
 /**
@@ -2721,6 +2798,8 @@ export interface Platform {
   readonly connectivity?: ConnectivityHost
   /** The per-process list behind the task manager page (desktop); hosts without it list nothing. */
   readonly tasks?: TaskHost
+  /** The Agent Skill installer (`capabilities.agentSkills`); hosts without harnesses leave it out. */
+  readonly agentSkills?: AgentSkillsHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

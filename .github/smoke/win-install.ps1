@@ -8,20 +8,35 @@
 #   -Action uninstall -Out <dir> [-Label <name>]
 #       Runs the registered uninstaller with "/currentuser /S _?=<dir>" and reports what is left.
 #       Exits 1 when the uninstaller fails; exits 0 when there is nothing to uninstall.
+#   -Action registration -Exe <zenium.exe> -Out <dir> [-Label <name>] [-Stage <name>]
+#       Reads the registration as it stands for the executable under test and writes
+#       <Out>/<Label>-registration-<Stage>.json: "registered" (whether RegisteredApplications\Zenium
+#       names the Capabilities key – the one value the app's Make default path keys on,
+#       src/main/platform/defaultBrowser.ts windowsIsRegistered), "registrationProblems" against
+#       <Exe> as after the install, and with them what that path must leave alone (ci-08):
+#       "schemeClasses" – HKCU\Software\Classes\http and https with their shell\open\command, the
+#       per-user class Electron's app.setAsDefaultProtocolClient writes on Windows (the app does
+#       not call it there: the user's choice overrides the class and the uninstaller does not know
+#       it) – and "userChoice", the user's own http/https ProgId (Windows's own; read for the
+#       record, never written). Writes nothing to the registry and exits 0: the smoke's
+#       default-browser scenario judges the reading (default-browser-scenario.mjs).
 #
-# Both actions read the default-browser registration build/installer.nsh writes for the user
-# (ci-08) – the Chrome-style set Settings > Apps > Default apps lists a browser from – and judge
-# it: after the install every key and value has to be there and point at the installed executable
-# ("registrationProblems" in the JSON, exit 1 when any); after the uninstall every one of them has
-# to be gone and no document type may still name the ProgID ("registrationLeftovers", exit 1 when
-# any). The AppUserModelId class key the running app writes for its toasts
-# (HKCU\Software\Classes\AppUserModelId\<id>, src/main/platform/notifications.ts) is read along
-# for the record after the install (what the leg before left) and has to be gone after the
-# uninstall too (installer.nsh's customUnInstall deletes it). The user's own http/https choice
-# (UserChoice) is Windows's and is neither written nor read.
+# The install and uninstall actions read the default-browser registration build/installer.nsh
+# writes for the user (ci-08) – the Chrome-style set Settings > Apps > Default apps lists a browser
+# from – and judge it: after the install every key and value has to be there and point at the
+# installed executable ("registrationProblems" in the JSON, exit 1 when any); after the uninstall
+# every one of them has to be gone and no document type may still name the ProgID
+# ("registrationLeftovers", exit 1 when any). The AppUserModelId class key the running app writes
+# for its toasts (HKCU\Software\Classes\AppUserModelId\<id>, src/main/platform/notifications.ts)
+# is read along for the record after the install (what the leg before left) and has to be gone
+# after the uninstall too (installer.nsh's customUnInstall deletes it). The user's own http/https
+# choice (UserChoice) is Windows's and is never written; only the registration action reads it,
+# for the record.
 param(
   [Parameter(Mandatory = $true)][string]$Action,
   [string]$Installer = '',
+  [string]$Exe = '',
+  [string]$Stage = 'before',
   [string]$Out = '.',
   [string]$Label = 'installed',
   [string]$Match = 'zenium',
@@ -137,6 +152,37 @@ function Get-BrowserRegistration {
     }
   }
   return $reg
+}
+
+# The per-user http and https classes (HKCU\Software\Classes\<scheme>): the key's default value,
+# whether it carries "URL Protocol", and its shell\open\command – the class Electron's
+# app.setAsDefaultProtocolClient writes on Windows ("<exe>" "%1"). Read as they are; the
+# default-browser scenario judges whether a command names the executable under test.
+function Get-SchemeClasses {
+  $out = [ordered]@{}
+  foreach ($scheme in @('http', 'https')) {
+    $class = Read-UserKey "Software\Classes\$scheme" @('', 'URL Protocol')
+    $command = Read-UserKey "Software\Classes\$scheme\shell\open\command" @('')
+    $out[$scheme] = [ordered]@{
+      present = [bool]$class
+      default = if ($class) { $class['(default)'] } else { $null }
+      urlProtocol = [bool]($class -and ($class['(names)'] -contains 'URL Protocol'))
+      command = if ($command) { $command['(default)'] } else { $null }
+    }
+  }
+  return $out
+}
+
+# The user's own handler per scheme (HKCU\Software\Microsoft\Windows\Shell\Associations\
+# UrlAssociations\<scheme>\UserChoice, its ProgId): the choice Settings > Default apps writes and
+# the shell's association query honours. Windows's own – read for the record only.
+function Get-UserChoice {
+  $out = [ordered]@{}
+  foreach ($scheme in @('http', 'https')) {
+    $k = Read-UserKey "Software\Microsoft\Windows\Shell\Associations\UrlAssociations\$scheme\UserChoice" @('ProgId')
+    $out[$scheme] = if ($k) { $k['ProgId'] } else { $null }
+  }
+  return $out
 }
 
 # What is wrong with a registration that should be complete and point at `$exe`: one line per
@@ -305,6 +351,23 @@ switch ($Action) {
     $info | ConvertTo-Json -Depth 6 | Set-Content -Path $file -Encoding UTF8
     Write-Output ($info | ConvertTo-Json -Depth 6)
     if ($info.exitCode -ne 0 -or $info.registrationLeftovers.Count -gt 0) { exit 1 }
+  }
+  'registration' {
+    if (-not $Exe) { throw "-Action registration needs -Exe <path of the executable under test>" }
+    $reg = Get-BrowserRegistration
+    $info = [ordered]@{
+      exe = $Exe
+      stage = $Stage
+      at = (Get-Date).ToString('o')
+      # The value windowsIsRegistered keys on: RegisteredApplications\Zenium naming the Capabilities key.
+      registered = ($reg.registeredApplications -eq $CapabilitiesKey)
+      registration = $reg
+      registrationProblems = @(Test-BrowserRegistered $reg $Exe)
+      schemeClasses = Get-SchemeClasses
+      userChoice = Get-UserChoice
+    }
+    $info | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $Out "$Label-registration-$Stage.json") -Encoding UTF8
+    Write-Output ($info | ConvertTo-Json -Depth 6)
   }
   default { throw "unknown action $Action" }
 }
