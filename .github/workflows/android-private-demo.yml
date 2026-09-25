@@ -35,7 +35,11 @@ name: Android private tabs demo
 on:
   # TEMPORARY (W6-0, the overview's windowed grid: this surface's driver on the branch's head, the
   # proof its reads of the grid still hold – no token in the project can dispatch); removed before
-  # the PR is nod-ready.
+  # the PR is nod-ready. Third boot: runs 36159593141 and 36161428276 died in the snapshot WebView's
+  # own startup glue (java.lang.AssertionError at WV.f1.a, 48 ms after RESUMED, no page loaded)
+  # before the driver's handshake – the sample's shape, not the app's; PrivateLockDemo booted the
+  # same APK on the same recipe and snapshot to its checks, and main's nightly the same day passed
+  # this driver on the same snapshot.
   push:
     branches: [cursor/android-overview-windowed-grid-82b6]
   workflow_dispatch:
