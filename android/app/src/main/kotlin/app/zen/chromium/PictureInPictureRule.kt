@@ -48,8 +48,11 @@ object PictureInPictureRule {
         NAVIGATED("navigated")
     }
 
-    /** What the window's end – by the user's hand – asks of the tab. */
-    data class Exit(val dismissed: Boolean, val pause: Boolean, val exitFullscreen: Boolean)
+    /**
+     * What the window's end – by the user's hand – asks of the tab: `pauseTabId` is the tab whose
+     * video the X pauses (the window's own, never another's), null when nothing is to pause.
+     */
+    data class Exit(val dismissed: Boolean, val pauseTabId: String?, val exitFullscreen: Boolean)
 
     /** Chrome's `MIN_EXIT_DELAY_MILLIS`: a dismissal sooner than this after the entry is re-posted. */
     const val MIN_EXIT_DELAY_MS = 50L
@@ -79,12 +82,34 @@ object PictureInPictureRule {
         (enteredAtMs + MIN_EXIT_DELAY_MS - nowMs).coerceIn(0L, MIN_EXIT_DELAY_MS)
 
     /**
-     * The window left by the user's hand: `resumed` is whether the activity is on its way back to
-     * the screen (expanded) rather than stopping (closed with the X), `playing` whether the tab's
-     * video plays, `fullscreen` whether its element is fullscreen.
+     * The window left by the user's hand: `pipTabId` is the tab the window was pinned to,
+     * `pipPlaying` whether THAT tab's media plays by its own last report (Chrome's `mIsPlaying`, a
+     * `WebContentsObserver` on the PiP'd tab – not the session the OS controls show, which a
+     * background tab's audio may have taken since the window went up), `resumed` whether the
+     * activity is on its way back to the screen (expanded) rather than stopping (closed with the
+     * X), `fullscreen` whether its element is fullscreen. The X pauses the window's tab, as Chrome's
+     * `onStop` suspends the PiP'd WebContents' own session.
      */
-    fun onLeft(resumed: Boolean, playing: Boolean, fullscreen: Boolean): Exit {
+    fun onLeft(pipTabId: String, pipPlaying: Boolean, resumed: Boolean, fullscreen: Boolean): Exit {
         val dismissed = !resumed
-        return Exit(dismissed = dismissed, pause = dismissed && playing, exitFullscreen = dismissed && fullscreen)
+        return Exit(dismissed = dismissed, pauseTabId = pipTabId.takeIf { dismissed && pipPlaying }, exitFullscreen = dismissed && fullscreen)
     }
+
+    /**
+     * The window's tab's media by its own last word – Chrome's `mIsPlaying`, moved by a
+     * `WebContentsObserver` on the PiP'd tab alone (`mediaStartedPlaying` / `mediaStoppedPlaying`):
+     * a `media.update` for the window's tab is its word; one for another tab (a background tab's
+     * audio took the session – the core resolves the tab whose media started last) or for no
+     * session at all (a short video keeps no session of its own) leaves the last word standing.
+     */
+    fun pipPlaying(pipTabId: String, lastKnown: Boolean, sessionTabId: String?, sessionPlaying: Boolean): Boolean =
+        if (sessionTabId == pipTabId) sessionPlaying else lastKnown
+
+    /**
+     * The tab a control from the system acts on: the tab the button was shown for when it carries
+     * one (the picture-in-picture window's actions name the window's tab – the window keeps its
+     * tab's buttons while another tab's audio holds the session), else the session's tab (the
+     * notification's and the lock screen's buttons are the session's own). Null: nothing to act on.
+     */
+    fun controlTab(shownFor: String?, sessionTabId: String?): String? = shownFor ?: sessionTabId
 }

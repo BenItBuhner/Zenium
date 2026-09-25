@@ -64,7 +64,8 @@ import java.util.concurrent.Executor
  * [onUserLeaveHint] asks the same. The mode changes come back through
  * [onPictureInPictureModeChanged], which reports `media.pip` to the core (whose page lays the
  * video over the viewport for the small window); a window closed with its X rather than
- * expanded pauses the video and takes the tab out of fullscreen, as Chrome's does. The window
+ * expanded pauses its own tab's video – by that tab's word, whichever tab's audio holds the OS
+ * controls by then – and takes the tab out of fullscreen, as Chrome's does. The window
  * also ends by itself, as Chrome's controller ends its own (`FullscreenVideoPictureInPicture
  * Controller.dismissActivityIfNeeded`, [PictureInPictureRule]): when its tab closes, its
  * renderer goes, another tab comes on screen under it, the fullscreen it came from is left, or
@@ -95,10 +96,16 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     /** The tab whose page the window shows as picture-in-picture, once the system said it does. */
     var pictureInPictureTab: String? = null
         private set
+    /**
+     * Whether the window's tab's media plays by that tab's own last word (Chrome's `mIsPlaying`,
+     * [PictureInPictureRule.pipPlaying]) – not [current], which a background tab's audio may
+     * take while the window is up; what the X pauses.
+     */
+    private var pictureInPicturePlaying = false
     /** When the window went small (`elapsedRealtime`), for Chrome's exit delay ([PictureInPictureRule.exitDelayMs]). */
     private var pictureInPictureEnteredAt = 0L
-    /** The tab a `media.pip` (or an auto-enter) asked the window into picture-in-picture for, until the system answers. */
-    private var pictureInPictureRequested: String? = null
+    /** The session a `media.pip` (or an auto-enter) asked the window into picture-in-picture for – its tab's own word – until the system answers. */
+    private var pictureInPictureRequested: MediaSessionInfo? = null
     /** Why the host is ending the window itself ([endPictureInPicture]), for the `media.pip` the system's answer reports. */
     private var pictureInPictureEnding: PictureInPictureRule.End? = null
 
@@ -113,7 +120,9 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         override fun onReceive(c: Context, intent: Intent) {
             val name = intent.getStringExtra(EXTRA_CONTROL) ?: return
             val control = MediaControl.entries.firstOrNull { it.name == name } ?: return
-            act(control)
+            // The window's buttons name the window's tab; the notification's act on the session's.
+            val tabId = PictureInPictureRule.controlTab(intent.getStringExtra(EXTRA_TAB), current?.tabId) ?: return
+            act(tabId, control)
         }
     }
 
@@ -154,6 +163,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         }
         val before = current
         current = info
+        pictureInPictureTab?.let { pictureInPicturePlaying = PictureInPictureRule.pipPlaying(it, pictureInPicturePlaying, info.tabId, info.playing) }
         if (before?.tabId != info.tabId || info.private) {
             artwork = null
             artworkUrl = null
@@ -202,9 +212,17 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         runCatching { manager.notify(MediaPlaybackService.NOTIFICATION_ID, notification) }
     }
 
-    /** A control pressed (on the notification, the lock screen, a headset, the picture-in-picture window): the core's page carries it out. */
+    /** A control pressed on the session's own controls (the lock screen, a headset, the notification's callback): the session's page carries it out. */
     private fun act(control: MediaControl) {
-        val tabId = current?.tabId ?: return
+        act(current?.tabId ?: return, control)
+    }
+
+    /**
+     * `control` for `tabId`'s page, whichever tab holds the session: the core routes `media.action`
+     * by the tab it names (`MediaSessionService.act`), and the page script carries it out on its
+     * element. The picture-in-picture window's X and buttons go here for the window's tab.
+     */
+    private fun act(tabId: String, control: MediaControl) {
         host.hostEvent("media.action", MediaControls.payload(tabId, control))
     }
 
@@ -290,9 +308,19 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         MediaControl.STOP -> R.drawable.ic_media_close
     }
 
-    private fun controlIntent(control: MediaControl): PendingIntent {
+    /**
+     * A button's broadcast. The notification's buttons act on the session's tab; the
+     * picture-in-picture window's carry the window's tab (`tabId`), so they play and pause the
+     * video the window shows while another tab's audio holds the session – on request codes of
+     * their own ([PIP_CONTROL_REQUEST_BASE]): the system matches a `PendingIntent` without its
+     * extras, and `FLAG_UPDATE_CURRENT` on a record shared with the notification would hand the
+     * notification's buttons the window's tab, or the window's the notification's none.
+     */
+    private fun controlIntent(control: MediaControl, tabId: String? = null): PendingIntent {
         val intent = Intent(ACTION_CONTROL).setPackage(context.packageName).putExtra(EXTRA_CONTROL, control.name)
-        return PendingIntent.getBroadcast(context, CONTROL_REQUEST_BASE + control.ordinal, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        if (tabId != null) intent.putExtra(EXTRA_TAB, tabId)
+        val request = (if (tabId != null) PIP_CONTROL_REQUEST_BASE else CONTROL_REQUEST_BASE) + control.ordinal
+        return PendingIntent.getBroadcast(context, request, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     /** A tap on the notification (or the system's media player) brings the app to the session's tab. */
@@ -346,7 +374,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
             reply(pictureInPictureTab == info.tabId)
             return
         }
-        pictureInPictureRequested = info.tabId
+        pictureInPictureRequested = info
         val entered = runCatching { activity.enterPictureInPictureMode(paramsOf(info, autoEnter = false)) }
             .onFailure { Log.w(TAG, "picture-in-picture refused: $it") }
             .getOrDefault(false)
@@ -364,7 +392,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S || !pictureInPictureSupported || destroyed) return
         val info = current ?: return
         if (!autoEnter(info) || activity.isInPictureInPictureMode) return
-        pictureInPictureRequested = info.tabId
+        pictureInPictureRequested = info
         val entered = runCatching { activity.enterPictureInPictureMode(paramsOf(info, autoEnter = false)) }.getOrDefault(false)
         if (!entered) pictureInPictureRequested = null
     }
@@ -377,14 +405,19 @@ class MediaSessions(private val host: Host, private val io: Executor) {
      * viewport. Out: the view goes back to where the chrome puts it, and the core hears the same
      * – with `dismissed` for a window closed with its X rather than expanded (the activity is
      * stopping), and `reason` when the host ended it itself ([endPictureInPicture]). Expanded,
-     * the page resumes as it was; closed, the video pauses, as Chrome's does, and a tab whose
-     * element is fullscreen still leaves it ([PictureInPictureRule.onLeft]).
+     * the page resumes as it was; closed, the window's own tab's video pauses – as Chrome's
+     * `onStop` suspends the PiP'd WebContents' session, not the one the OS controls show, which a
+     * background tab's audio may hold by then – and a tab whose element is fullscreen still
+     * leaves it ([PictureInPictureRule.onLeft]).
      */
     fun onPictureInPictureModeChanged(active: Boolean) {
         if (active) {
-            val tabId = pictureInPictureRequested ?: current?.tabId ?: return
+            val requested = pictureInPictureRequested
+            val tabId = requested?.tabId ?: current?.tabId ?: return
             pictureInPictureRequested = null
             pictureInPictureTab = tabId
+            // The tab's own word: the session's when it is this tab's, else the request's (a `media.pip` carries its tab's state, whichever tab holds the controls).
+            pictureInPicturePlaying = PictureInPictureRule.pipPlaying(tabId, requested?.playing ?: true, current?.tabId, current?.playing == true)
             pictureInPictureEnteredAt = SystemClock.elapsedRealtime()
             pictureInPictureEnding = null
             if (host.fullscreenTab?.tabId != tabId) host.tabs.fillWindow(tabId)
@@ -401,14 +434,15 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         host.tabs.fillWindow(null)
         // A window the host ended goes with its task, whichever state the callback finds the activity in.
         val exit = PictureInPictureRule.onLeft(
+            pipTabId = tabId,
+            pipPlaying = pictureInPicturePlaying,
             resumed = ending == null && activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
-            playing = current?.tabId == tabId && current?.playing == true,
             fullscreen = host.fullscreenTab?.tabId == tabId
         )
         val event = json("tabId" to tabId, "active" to false, "dismissed" to exit.dismissed)
         if (ending != null) event.put("reason", ending.reason)
         host.hostEvent("media.pip", event)
-        if (exit.pause) act(MediaControl.PAUSE)
+        exit.pauseTabId?.let { act(it, MediaControl.PAUSE) }
         if (exit.exitFullscreen) host.tabs.get(tabId)?.let(host::exitFullscreen)
     }
 
@@ -516,7 +550,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         if (info != null) {
             val (width, height) = MediaControls.aspectRatio(info.width, info.height)
             builder.setAspectRatio(Rational(width, height))
-            builder.setActions(MediaControls.pictureInPictureControls(info).map(::remoteAction))
+            builder.setActions(MediaControls.pictureInPictureControls(info).map { remoteAction(info.tabId, it) })
             sourceRect(info.tabId)?.let(builder::setSourceRectHint)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -535,8 +569,9 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         return Rect(out[0], out[1], out[0] + view.width, out[1] + view.height)
     }
 
-    private fun remoteAction(control: MediaControl): RemoteAction =
-        RemoteAction(Icon.createWithResource(context, iconOf(control)), control.label, control.label, controlIntent(control))
+    /** A button of the window showing `tabId`'s video: its broadcast names that tab ([controlIntent]). */
+    private fun remoteAction(tabId: String, control: MediaControl): RemoteAction =
+        RemoteAction(Icon.createWithResource(context, iconOf(control)), control.label, control.label, controlIntent(control, tabId))
 
     fun destroy() {
         destroyed = true
@@ -555,8 +590,12 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         /** The notification's tap: `MainActivity.handleIntent` hands it to [onOpenIntent]. */
         const val ACTION_OPEN = "app.zen.chromium.MEDIA_OPEN"
         const val EXTRA_CONTROL = "control"
+        /** The tab a button acts on (the picture-in-picture window's buttons) or a tap reveals ([ACTION_OPEN]). */
         const val EXTRA_TAB = "tabId"
+        /** The notification's buttons' request codes, one per [MediaControl]. */
         private const val CONTROL_REQUEST_BASE = 700
+        /** The picture-in-picture window's buttons' request codes, one per [MediaControl], apart from the notification's. */
+        private const val PIP_CONTROL_REQUEST_BASE = 720
         private const val OPEN_REQUEST = 799
         /** The lock screen's background is the artwork; more pixels than this buy nothing. */
         private const val MAX_ART_PX = 512
