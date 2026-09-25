@@ -13,11 +13,13 @@ import android.graphics.PointF
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
 import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
@@ -42,6 +44,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -118,6 +121,13 @@ abstract class DemoHarness(
 
     /** A chance to prepare the device once the profile is seeded and before the app starts. */
     protected open fun beforeLaunch() {}
+
+    /**
+     * The `ActivityOptions` the app starts under, or null for the plain start: a driver that wants
+     * the activity in a FREEFORM WINDOW (the desktop windowing demo) hands over a bundle with the
+     * launch windowing mode and the window's bounds, and [launch] passes it on with the intent.
+     */
+    protected open fun launchOptions(): Bundle? = null
 
     /**
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
@@ -318,7 +328,12 @@ abstract class DemoHarness(
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         if (holdBackgroundWork) intent.putExtra(BackgroundWorkHold.EXTRA_HOLD, true)
         appLaunchedAt = SystemClock.uptimeMillis()
-        activity = instrumentation.startActivitySync(intent)
+        val options = launchOptions()
+        activity = if (options != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            instrumentation.startActivitySync(intent, options)
+        } else {
+            instrumentation.startActivitySync(intent)
+        }
         // The chrome is a WebView booting the browser core: wait for the address pill to show up
         // (by either of its names: a state whose active tab is the new tab page has no address).
         val deadline = SystemClock.uptimeMillis() + 30_000
@@ -2804,6 +2819,149 @@ abstract class DemoHarness(
                 event.recycle()
             }
         }
+    }
+
+    /**
+     * One mouse (`SOURCE_MOUSE`, `TOOL_TYPE_MOUSE`; the desktop windowing demo), injected through
+     * the system's input dispatcher in the stream a real one arrives in, so the dispatcher's own
+     * hover bookkeeping stays consistent (it turns the first hover move into the window's
+     * HOVER_ENTER, ends the hover under a button, and on API 34 a HOVER_ENTER for a pointer it
+     * already has hovering is an inconsistency it treats as fatal – so nothing here injects an
+     * ENTER or an EXIT of its own):
+     *
+     *  - a move with no button down is `ACTION_HOVER_MOVE`, interpolated in real time as
+     *    [Finger.moveBy] is, so the chrome sees an approach and not a jump;
+     *  - a click is the `CursorInputMapper`'s sequence: `ACTION_DOWN` with the button in
+     *    `buttonState`, `ACTION_BUTTON_PRESS` naming it as the action button, then
+     *    `ACTION_BUTTON_RELEASE` and `ACTION_UP`, and a hover move on the same spot afterwards.
+     *    The WebView reads a mouse's buttons off the BUTTON_PRESS / BUTTON_RELEASE pair (Chromium's
+     *    `EventForwarder` consumes a mouse's DOWN / UP and forwards the changed button from
+     *    `getActionButton()`), and the dispatcher refuses either without an action button
+     *    (`isValidMotionAction`). The action button is written through `MotionEvent.setActionButton`,
+     *    a test API reached by reflection, which is why the demo's workflow runs the instrumentation
+     *    with `--no-hidden-api-checks`; a device that keeps it hidden has no clicks, and [refused]
+     *    says so;
+     *  - a wheel notch is `ACTION_SCROLL` with `AXIS_VSCROLL` (positive away from the user, one per
+     *    notch), Ctrl as the event's meta state.
+     */
+    protected inner class Mouse {
+        private var x = 0f
+        private var y = 0f
+        /** Injections the dispatcher refused, or that could not be built, for a driver's claim. */
+        val refused = ArrayList<String>()
+
+        val position: PointF get() = PointF(x, y)
+
+        /** Hover to (`toX`, `toY`) over `durationMs` of real time, from where the pointer stands. */
+        fun moveTo(toX: Float, toY: Float, durationMs: Long = 160) {
+            if (!placed) {
+                // An entering pointer has no path before it: it appears where it is.
+                x = toX
+                y = toY
+                placed = true
+                inject(MotionEvent.ACTION_HOVER_MOVE, SystemClock.uptimeMillis())
+                return
+            }
+            val fromX = x
+            val fromY = y
+            val steps = max(1L, durationMs / STEP_MS)
+            val start = SystemClock.uptimeMillis()
+            for (i in 1..steps) {
+                val due = start + (durationMs * i) / steps
+                val now = SystemClock.uptimeMillis()
+                if (due > now) SystemClock.sleep(due - now)
+                val t = i.toFloat() / steps
+                x = fromX + (toX - fromX) * t
+                y = fromY + (toY - fromY) * t
+                inject(MotionEvent.ACTION_HOVER_MOVE, SystemClock.uptimeMillis())
+            }
+        }
+
+        /** A click of `button` ([MotionEvent.BUTTON_PRIMARY] by default) where the pointer stands, `holdMs` between press and release. */
+        fun click(button: Int = MotionEvent.BUTTON_PRIMARY, holdMs: Long = 60) {
+            val downTime = SystemClock.uptimeMillis()
+            inject(MotionEvent.ACTION_DOWN, downTime, downTime = downTime, buttonState = button)
+            inject(MotionEvent.ACTION_BUTTON_PRESS, SystemClock.uptimeMillis(), downTime = downTime, buttonState = button, actionButton = button)
+            SystemClock.sleep(holdMs)
+            inject(MotionEvent.ACTION_BUTTON_RELEASE, SystemClock.uptimeMillis(), downTime = downTime, buttonState = 0, actionButton = button)
+            inject(MotionEvent.ACTION_UP, SystemClock.uptimeMillis(), downTime = downTime, buttonState = 0)
+            // The pointer is still there: the hover the button ended is taken up again.
+            SystemClock.sleep(30)
+            inject(MotionEvent.ACTION_HOVER_MOVE, SystemClock.uptimeMillis())
+        }
+
+        /** Hover to the point and click there. */
+        fun click(toX: Float, toY: Float, button: Int = MotionEvent.BUTTON_PRIMARY) {
+            moveTo(toX, toY)
+            SystemClock.sleep(80)
+            click(button)
+        }
+
+        fun rightClick(toX: Float, toY: Float) = click(toX, toY, MotionEvent.BUTTON_SECONDARY)
+
+        /**
+         * `notches` of the wheel where the pointer stands: positive rolls away from the user
+         * (`AXIS_VSCROLL` positive, a page scrolls up, Ctrl zooms in), negative towards. One
+         * `ACTION_SCROLL` a notch, `gapMs` apart.
+         */
+        fun wheel(notches: Int, ctrl: Boolean = false, gapMs: Long = 120) {
+            val meta = if (ctrl) KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON else 0
+            val step = if (notches < 0) -1f else 1f
+            repeat(abs(notches)) { i ->
+                if (i > 0) SystemClock.sleep(gapMs)
+                inject(MotionEvent.ACTION_SCROLL, SystemClock.uptimeMillis(), metaState = meta, vscroll = step)
+            }
+        }
+
+        private var placed = false
+
+        private fun inject(
+            action: Int,
+            eventTime: Long,
+            downTime: Long = eventTime,
+            buttonState: Int = 0,
+            actionButton: Int = 0,
+            metaState: Int = 0,
+            vscroll: Float = 0f
+        ) {
+            val properties = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_MOUSE
+            }
+            val coords = MotionEvent.PointerCoords().apply {
+                x = this@Mouse.x
+                y = this@Mouse.y
+                pressure = if (buttonState != 0) 1f else 0f
+                size = 1f
+                if (vscroll != 0f) setAxisValue(MotionEvent.AXIS_VSCROLL, vscroll)
+            }
+            val event = MotionEvent.obtain(
+                downTime, eventTime, action, 1, arrayOf(properties), arrayOf(coords),
+                metaState, buttonState, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0
+            )
+            try {
+                if (actionButton != 0) {
+                    val setter = setActionButton
+                    if (setter == null) {
+                        refused += "${MotionEvent.actionToString(action)}: MotionEvent.setActionButton is not reachable"
+                        return
+                    }
+                    setter.invoke(event, actionButton)
+                }
+                if (!ui.injectInputEvent(event, true)) {
+                    refused += "${MotionEvent.actionToString(action)} at ${x.roundToInt()},${y.roundToInt()}"
+                }
+            } finally {
+                event.recycle()
+            }
+        }
+    }
+
+    /** `MotionEvent.setActionButton(int)`: a test API, reachable under `--no-hidden-api-checks`. */
+    private val setActionButton: java.lang.reflect.Method? by lazy {
+        runCatching { MotionEvent::class.java.getMethod("setActionButton", Int::class.javaPrimitiveType) }
+            .onFailure { Log.w(tag, "MotionEvent.setActionButton is not reachable (the instrumentation needs --no-hidden-api-checks): $it") }
+            .getOrNull()
     }
 
     companion object {
