@@ -33,8 +33,10 @@ import java.util.concurrent.TimeUnit
  * (no pre-request engine hold, `HostCapabilities.lookalikeHolds` false) puts the question page in
  * the address's place before any request goes out – the loopback server that answers as
  * `gogle.com` sees nothing while the question stands. Continue writes the `lookalike` allow to
- * `permissions.json` and loads the site; a second typed visit goes straight through; Back from a
- * fresh question returns to the page before it. The link / redirect path: a link on a loopback
+ * `permissions.json` and loads the site; a second typed visit goes straight through; the phone's
+ * Back (the page has no Back row of its own) from a fresh question returns to the page before
+ * it – and from the link-path question, where a committed lookalike entry sits behind the
+ * question, wherever it lands is recorded. The link / redirect path: a link on a loopback
  * page to `paypa1.com`, and a 302 to `amazom.com`, are navigations the core never saw ahead of the
  * request – the WebView commits them and the core replaces the committed page with the question
  * at `onNavigated`. That gap is measured here, from three instruments on the one device clock:
@@ -140,8 +142,11 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         still("question-details-light")
         beat()
 
-        finding("\n(3) BACK (Details → Back) from a fresh question returns to the page before")
-        pressInterstitial(f, "Back", "back", "https://gogle.com/")
+        // The page has no Back row of its own: the phone's Back is the way back (the system's
+        // back action, which the chrome routes to the tab's history).
+        finding("\n(3) BACK (the phone's Back key) from a fresh question returns to the page before")
+        expect("the page offers no Back of its own (no node labelled Back inside the page)", findNodes("Back").none { inPage(it) }, "3-no-back-row")
+        pressPhoneBack()
         tab = waitForTitle("Demo site", 25_000)
         finding("  ${describeTab(tab)}")
         expect("the tab is back on http://$LOOPBACK:$PORT/", tab.getJSONObject("tabs").getJSONObject(TAB).optString("url") == "http://$LOOPBACK:$PORT/", "3-back")
@@ -161,7 +166,7 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         if (tapPage(f, "Details", 8_000)) SystemClock.sleep(1_500) else finding("  (no Details node in the page)")
         still("question-details-dark")
         beat()
-        pressInterstitial(f, "Back", "back", "https://gogle.com/")
+        pressPhoneBack()
         waitForTitle("Demo site", 25_000)
         theme("light")
 
@@ -233,9 +238,47 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         still("link-replaced")
         beat()
         if (tapPage(f, "Details", 8_000)) SystemClock.sleep(1_000)
-        pressInterstitial(f, "Back", "back", "http://$PAYPAL/")
-        val after = waitForTitle("Demo site", 25_000)
-        finding("  Back from the link-path question: ${describeTab(after)} (the committed lookalike entry is skipped)")
+        // The phone's Back from a question that replaced a committed page: the committed
+        // lookalike entry sits behind the question in the WebView's list. Recorded, not claimed.
+        watchChrome()
+        pressPhoneBack()
+        val after = waitForSettled(25_000)
+        val afterUrl = after.getJSONObject("tabs").getJSONObject(TAB).optString("url")
+        val landed = when {
+            afterUrl == "http://$LOOPBACK:$PORT/link" -> "the page before the link (the committed lookalike entry was skipped)"
+            afterUrl.startsWith(ERROR_PREFIX) -> "the question again – Back landed on the committed lookalike entry, which onNavigated replaced once more (${server.hitsSinceMark(PAYPAL).count { it.path == "/" }} document request(s) for $PAYPAL since the mark)"
+            else -> "elsewhere"
+        }
+        finding("  the phone's Back from the link-path question: ${describeTab(after)} – $landed")
+        finding("  chrome events: ${chromeTimeline()}")
+        if (afterUrl.startsWith(ERROR_PREFIX)) {
+            // The family's `back` message (what a page button would post) steps over the committed
+            // entry through the core's leaveErrorPage: the way the buttons went before the row was dropped.
+            postInterstitial("back", "http://$PAYPAL/")
+            val viaMessage = waitForTitle("Demo site", 25_000)
+            finding("  the family's back message from the same question: ${describeTab(viaMessage)}")
+        }
+    }
+
+    /** The core's state once the tab has stopped loading and its URL has held for a moment, or the last seen. */
+    private fun waitForSettled(timeoutMs: Long): JSONObject {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var s = coreState()
+        var held: String? = null
+        var heldSince = 0L
+        while (SystemClock.uptimeMillis() < deadline) {
+            val tab = s.getJSONObject("tabs").optJSONObject(TAB)
+            val url = tab?.optString("url") ?: ""
+            if (tab != null && !tab.optBoolean("loading") && url.isNotEmpty()) {
+                if (url != held) {
+                    held = url
+                    heldSince = SystemClock.uptimeMillis()
+                } else if (SystemClock.uptimeMillis() - heldSince >= 2_500) return s
+            } else held = null
+            SystemClock.sleep(400)
+            s = coreState()
+        }
+        return s
     }
 
     private fun redirectScene() {
@@ -367,15 +410,25 @@ class LookalikeDemo : DemoHarness("safebrowsing-demo-state.json", "services-pass
         return rect
     }
 
+    /** Whether `node` sits inside the page WebView (not the chrome's bar, which carries a Back of its own). */
+    private fun inPage(node: AccessibilityNodeInfo, page: Rect? = pageRect()): Boolean {
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        return page == null || (bounds.centerX() in page.left..page.right && bounds.centerY() in page.top..page.bottom)
+    }
+
+    /** The phone's Back key (the system's back action; [DemoHarness.back]), timestamped for the scenes' timings. */
+    private fun pressPhoneBack() {
+        lastInputAt = System.currentTimeMillis()
+        back()
+        SystemClock.sleep(600)
+    }
+
     /** Tap the node labelled `label` inside the page, with a real finger; false when none showed in time. */
     private fun tapPage(f: Finger, label: String, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val page = pageRect()
-            val node = findNodes(label).firstOrNull { node ->
-                val bounds = Rect().also { node.getBoundsInScreen(it) }
-                page == null || (bounds.centerX() in page.left..page.right && bounds.centerY() in page.top..page.bottom)
-            }
+            val node = findNodes(label).firstOrNull { node -> inPage(node, page) }
             if (node != null) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
                 lastInputAt = System.currentTimeMillis()
