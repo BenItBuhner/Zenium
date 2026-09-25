@@ -217,17 +217,31 @@ export interface SessionEndApp {
   on(event: 'will-quit', listener: () => void): unknown
 }
 
-// The session is ending: a spawn that waited on the event loop would not run before Windows
-// ends the process. reg.exe answers in tens of milliseconds; the timeout keeps a stuck one from
-// eating the whole shutdown budget.
-const REGISTRY_TIMEOUT_MS = 3_000
+/**
+ * About how long Windows lets an app answer `WM_ENDSESSION` before it is treated as hung and
+ * ended regardless (the shell's `HungAppTimeout`, 5 s by default). A registration makes
+ * `SESSION_END_REGISTRY_CALLS` calls of `reg.exe` inside that handler – the toggle's query and
+ * the RunOnce write – so their caps together have to sit inside the budget with room to spare.
+ */
+export const WINDOWS_END_SESSION_BUDGET_MS = 5_000
+export const SESSION_END_REGISTRY_CALLS = 2
+/**
+ * The session is ending: a spawn that waited on the event loop would not run before Windows
+ * ends the process, so `reg.exe` runs to completion, and no longer than this. It answers in
+ * tens of milliseconds; the cap is for one that is stuck, and keeps the two calls' worst case
+ * (2 s) well inside the ~5 s budget.
+ */
+export const REGISTRY_TIMEOUT_MS = 1_000
+
+/** How `reg.exe` is run: no console window, to completion, no longer than the cap. */
+export const REGISTRY_SPAWN_OPTIONS = {
+  windowsHide: true,
+  timeout: REGISTRY_TIMEOUT_MS,
+  encoding: 'utf8'
+} as const
 
 const runRegistrySync: RunRegistrySync = (command) => {
-  const result = spawnSync(command.file, command.args, {
-    windowsHide: true,
-    timeout: REGISTRY_TIMEOUT_MS,
-    encoding: 'utf8'
-  })
+  const result = spawnSync(command.file, command.args, REGISTRY_SPAWN_OPTIONS)
   return { ok: !result.error && result.status === 0, stdout: String(result.stdout ?? '') }
 }
 

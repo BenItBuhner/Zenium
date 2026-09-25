@@ -1,10 +1,14 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import {
+  REGISTRY_SPAWN_OPTIONS,
+  REGISTRY_TIMEOUT_MS,
   RESTART_APPS_KEY,
   RESTART_APPS_QUERY,
   RESTART_APPS_VALUE,
   RUN_ONCE_KEY,
+  SESSION_END_REGISTRY_CALLS,
+  WINDOWS_END_SESSION_BUDGET_MS,
   installWindowsRestart,
   parseRegDword,
   relaunchAfter,
@@ -238,6 +242,20 @@ describe('windowsRestartRegistration – one run’s registration', () => {
     expect(registration.register(['shutdown'])).toBe('registered')
     expect(registration.register(['logoff'])).toBe('registered')
     expect(verbs(registry.ran)).toEqual(['query RestartApps', 'add Zenium'])
+    expect(registry.ran).toHaveLength(SESSION_END_REGISTRY_CALLS)
+  })
+
+  it('keeps the reg.exe calls inside Windows’ end-of-session budget: two calls, each capped at a second, well under the ~5 s a hung app gets', () => {
+    expect(REGISTRY_TIMEOUT_MS).toBe(1_000)
+    expect(REGISTRY_SPAWN_OPTIONS).toEqual({
+      windowsHide: true,
+      timeout: REGISTRY_TIMEOUT_MS,
+      encoding: 'utf8'
+    })
+    // The worst case – every call stuck to its cap – leaves more than half the budget unused.
+    expect(REGISTRY_TIMEOUT_MS * SESSION_END_REGISTRY_CALLS).toBeLessThan(
+      WINDOWS_END_SESSION_BUDGET_MS / 2
+    )
   })
 
   it('writes nothing with the toggle off, or absent on Windows 10', () => {
