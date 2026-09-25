@@ -1,10 +1,12 @@
 package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -19,11 +21,13 @@ import kotlin.math.abs
  *
  *  1. the clip playing fullscreen and Home: the window by itself (the auto-enter), the entry's
  *     frames traced (ruling 5: the chrome's long tasks across its hide), the window's bounds and
- *     ratio read, the tab's own view alone filling it over the chrome; the window's menu under a
+ *     ratio read, the tab's own view alone filling it over the chrome – and the window read as
+ *     TalkBack reads it: the page, none of the chrome's bar under it; the window's menu under a
  *     finger – Pause (read back from the page), Play, Next track (the page's own handler) – then
  *     the expand, traced too: the page back inline in the chrome with the clip playing in its
- *     place. The WebView engine ends the element's fullscreen as the window shrinks, where Chrome
- *     keeps its tab fullscreen with a persistent video ([PictureInPictureRule]);
+ *     place and the bar read again. The WebView engine ends the element's fullscreen as the
+ *     window shrinks, where Chrome keeps its tab fullscreen with a persistent video
+ *     ([PictureInPictureRule]);
  *  2. the window on request (`media.pictureInPicture`, the in-app button's path) and its X: the
  *     clip pauses, the app stands behind the launcher, and comes back inline with the clip paused;
  *  3. the endings by the host's hand (Chrome's dismissals, `moveTaskToBack`): a new document in
@@ -118,6 +122,9 @@ class PipDemo : MediaDemoBase("android-pip") {
         check("$scheme: the engine ended the element's fullscreen with the entry (the fill stands in for Chrome's persistent video)", host.fullscreenTab == null && field("fs") == "0")
         check("$scheme: the window's ratio is the clip's", ratioMatches(win, field("size")))
         check("$scheme: the clip keeps playing in the window", field("state") == "playing")
+        val read = appLabelsAsTalkBack()
+        note("  the window as TalkBack reads it: ${read.take(12)}")
+        check("$scheme: a screen reader finds the page in the small window and none of the chrome's bar under it", read.any { it.startsWith("Pause video") } && CHROME_LABELS.none { it in read })
         shot("02-window-$scheme")
         beat()
         if (win != null) {
@@ -139,6 +146,9 @@ class PipDemo : MediaDemoBase("android-pip") {
         }
         note("  expanded: pip=${inPip()} filling=${host.tabs.filling} fullscreenTab=${host.fullscreenTab?.tabId} pip tab=${host.media.pictureInPictureTab}; page fs=${field("fs")} state=${field("state")}; ${describeTab(TAB)}")
         check("$scheme: the expand brings the page back inline in the chrome, the clip playing in its place", !inPip() && host.tabs.filling == null && host.fullscreenTab == null && field("fs") == "0" && field("state") == "playing")
+        val readBack = appLabelsAsTalkBack()
+        note("  expanded, as TalkBack reads it: ${readBack.take(12)}")
+        check("$scheme: expanded, a screen reader finds the chrome's bar again", CHROME_LABELS.all { it in readBack })
         note("  ruling 5: enter ${longTasks(enter)}; expand ${longTasks(expand)} (the tables in frames.txt)")
         shot("05-expanded-$scheme")
         beat()
@@ -371,6 +381,56 @@ class PipDemo : MediaDemoBase("android-pip") {
         return z
     }
 
+    /**
+     * The labels a screen reader finds in the app's window, read as TalkBack reads the tree:
+     * UiAutomation's `FLAG_INCLUDE_NOT_IMPORTANT_VIEWS` (the harness's default) off for the read,
+     * so a view marked `NO_HIDE_DESCENDANTS` and everything under it is left out as the framework
+     * leaves it out for a service without the flag (`ChromeA11yDemo` reads the layers so); the
+     * flag back after, the client's node cache dropped at each change.
+     */
+    private fun appLabelsAsTalkBack(): List<String> {
+        val info = ui.serviceInfo
+        val had = info.flags and AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS != 0
+        info.flags = info.flags and AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS.inv()
+        ui.serviceInfo = info
+        dropTreeCache()
+        SystemClock.sleep(600)
+        try {
+            return appWindowLabels()
+        } finally {
+            if (had) {
+                val again = ui.serviceInfo
+                again.flags = again.flags or AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+                ui.serviceInfo = again
+                dropTreeCache()
+                SystemClock.sleep(400)
+            }
+        }
+    }
+
+    /** The labels (a content description, else the text) in the app's window, in tree order, at most sixty. */
+    private fun appWindowLabels(): List<String> {
+        // Right after a service-flag change the roots can be null for a moment while the connection re-registers.
+        var root: AccessibilityNodeInfo? = null
+        var waited = 0
+        while (root == null && waited++ < 15) {
+            root = ui.windows.firstNotNullOfOrNull { w -> w.root?.takeIf { it.packageName?.toString() == app.packageName } }
+            if (root == null) SystemClock.sleep(200)
+        }
+        val labels = ArrayList<String>()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        root?.let(queue::add)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 1_500 && labels.size < 60) {
+            val node = queue.removeFirst()
+            visited++
+            val text = (node.contentDescription ?: node.text)?.toString()?.trim()
+            if (!text.isNullOrEmpty()) labels += text.take(60)
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return labels
+    }
+
     /** Whether `view` is the size of `win` (within a few px: the window's own rounding). */
     private fun covers(view: Rect?, win: Rect?): Boolean =
         view != null && win != null && abs(view.width() - win.width()) <= 8 && abs(view.height() - win.height()) <= 8
@@ -401,5 +461,7 @@ class PipDemo : MediaDemoBase("android-pip") {
     companion object {
         /** The rest after a window's change of state before it is read: the system's animation and the chrome's relayout. */
         private const val SETTLE_MS = 2_500L
+        /** The bar's labels a reader finds in the chrome inline (the first run's window dump named them), and must not under the small window's page. */
+        private val CHROME_LABELS = listOf("New tab", "Menu", "Address")
     }
 }

@@ -140,6 +140,13 @@ interface PageHost {
     fun tabRemoved(tab: TabWebView) {}
 
     /**
+     * `tabId`'s view now fills the picture-in-picture window over the chrome ([TabHost.fillWindow]),
+     * or null: the one that did went back where the chrome has it. A host without a chrome has
+     * nothing under the view.
+     */
+    fun windowFillChanged(tabId: String?) {}
+
+    /**
      * Hear the renderer behind `view` stop and start answering again
      * (`WebViewRenderProcessClient`; the unresponsive-page prompt, ERR-16). A host without a
      * chrome leaves the platform to it.

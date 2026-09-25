@@ -610,6 +610,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     // A new document in the tab, or the tab going: a picture-in-picture window showing it ends (MOT-30, MediaSessions.kt).
     override fun documentStarted(tab: TabWebView) = media.onDocumentStarted(tab.tabId)
     override fun tabRemoved(tab: TabWebView) = media.onTabRemoved(tab.tabId)
+    // A page view over the chrome in the small window, or back: the chrome's tree follows ([readChrome]).
+    override fun windowFillChanged(tabId: String?) = readChrome()
 
     override fun watchRenderer(view: WebView) {
         val client = rendererClient ?: return
@@ -1448,8 +1450,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (fullscreenVideoTab === tab) clearFullscreenVideo()
         hintCue.exited(tab.tabId)
         if (!immersive) setSystemBarsHidden(false)
-        // Out of fullscreen while the window is the small one: the tab's own view takes it over,
-        // and a window that came in from this fullscreen ends, as Chrome's does (MOT-30).
+        // Out of fullscreen while the window is the small one: the tab's own view takes it over
+        // from the layer that is gone – the window's ordinary entry from a fullscreen video, the
+        // engine ending the element's fullscreen as the window shrinks (MOT-30, MediaSessions.kt).
         media.onFullscreenExited(tab)
         // A hint standing over the page (the exit hint, GN-20 / MED-03) leaves with the fullscreen.
         tab.postToPage(json("type" to "hint", "hint" to null).toString())
@@ -1653,7 +1656,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // under it is the frame before the lock – a private page's title in the bar, its card in
         // the overview – until the masked frame; the veil itself is no stop (A11Y-03). The
         // private page views went with the arming ([onPrivateLockArmed], [TabHost.setVisible]).
-        chrome.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        readChrome()
         Log.d(TAG, "private lock veil raised")
         if (lockVeil.windowVisible) main.postDelayed(veilDeadline, LockVeil.DEADLINE_MS)
     }
@@ -1670,8 +1673,21 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         main.removeCallbacks(veilDeadline)
         root.removeView(view)
         // The chrome under it is the masked one (or the released one) now: read again.
-        chrome.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        readChrome()
         Log.d(TAG, "private lock veil lowered: $why")
+    }
+
+    /**
+     * Whether a screen reader is handed the chrome's tree: not while the veil stands over it
+     * ([raiseVeil]; the view in `root` is what "up" means, as [lowerVeil] reads it), and not while
+     * a page view fills the picture-in-picture window over it ([TabHost.fillWindow]) – the small
+     * window shows nothing but the page and is to read as nothing but the page; its bar and what
+     * it had up are covered, not gone, and read again as the view goes back (MED-06, A11Y-03).
+     * One rule for both holds, so neither's end uncovers the other's.
+     */
+    private fun readChrome() {
+        val covered = veilView?.parent != null || tabs.filling != null
+        chrome.importantForAccessibility = if (covered) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
     }
 
     /** `private.masked`: the chrome's masked tree is committed; with the window on screen its frame is waited for now. */

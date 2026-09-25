@@ -414,7 +414,8 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
      * later, [setBounds]; the bar's frames too, [setBarHide]) – so the small window shows nothing
      * but the page, whose video the core lays over the viewport. `null` puts the view back where
      * the chrome has it by now, laid out for the bar as it stands ([place]). A view that is gone
-     * by then is simply not restored.
+     * by then is simply not restored. The host hears each change ([PageHost.windowFillChanged]):
+     * the chrome under a filling view is covered, and a screen reader is not to find its bar there.
      */
     fun fillWindow(tabId: String?) {
         val before = filled
@@ -428,15 +429,17 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
                 show(view, before.visible)
             }
         }
-        if (tabId == null) return
-        val view = views[tabId] ?: return
-        val lp = (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(0, 0)
-        filled = Filled(tabId, FrameLayout.LayoutParams(lp), view.visibility == View.VISIBLE, view.radiusPx, view.cover.topTarget, view.cover.bottomTarget)
-        view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        view.setRadius(0f)
-        view.cover.set(0f, 0f, snap = true)
-        view.setBarHideShift(0f, 0)
-        show(view, true)
-        view.bringToFront()
+        val view = tabId?.let { views[it] }
+        if (view != null) {
+            val lp = (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(0, 0)
+            filled = Filled(view.tabId, FrameLayout.LayoutParams(lp), view.visibility == View.VISIBLE, view.radiusPx, view.cover.topTarget, view.cover.bottomTarget)
+            view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            view.setRadius(0f)
+            view.cover.set(0f, 0f, snap = true)
+            view.setBarHideShift(0f, 0)
+            show(view, true)
+            view.bringToFront()
+        }
+        if (before != null || filled != null) host.windowFillChanged(filled?.tabId)
     }
 }
