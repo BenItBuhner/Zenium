@@ -435,6 +435,46 @@ describe('state.json v5 (new tab page)', () => {
     expect(state(fakeIo(legacyProfile(5, { settings: off }))).settings.splitEdgeZones).toBe(false)
   })
 
+  it('keeps a split’s link rule with the split (split-13, §9.35): a restored session reads it on only where the record says true; a record from before it, or garbage, reads off and is stored as absent', () => {
+    const session = (linksToRight: unknown): string => {
+      const space = createSpace('Work', '')
+      const a = createTabRecord({
+        spaceId: space.id,
+        containerId: 'default',
+        url: 'https://a.test/'
+      })
+      const b = createTabRecord({
+        spaceId: space.id,
+        containerId: 'default',
+        url: 'https://b.test/'
+      })
+      space.tabIds = [a.id, b.id]
+      const group: Record<string, unknown> = {
+        id: 'split_1',
+        spaceId: space.id,
+        tabIds: [a.id, b.id],
+        layout: 'vertical',
+        sizes: [0.5, 0.5]
+      }
+      if (linksToRight !== undefined) group.linksToRight = linksToRight
+      return legacyProfile(5, {
+        spaces: [space],
+        tabs: [a, b],
+        activeSpaceId: space.id,
+        splitGroups: [group as unknown as Persisted['splitGroups'][number]]
+      })
+    }
+    const kept = state(fakeIo(session(true)))
+    expect(kept.model.splitGroups.split_1).toMatchObject({ layout: 'vertical', linksToRight: true })
+    expect('linksToRight' in state(fakeIo(session(undefined))).model.splitGroups.split_1).toBe(
+      false
+    )
+    expect('linksToRight' in state(fakeIo(session('on'))).model.splitGroups.split_1).toBe(false)
+    expect('linksToRight' in state(fakeIo(session(false))).model.splitGroups.split_1).toBe(false)
+    // The browser has no such setting any more (one home for the switch: the pane's ⋯ menu).
+    expect('splitLinksToRight' in DEFAULT_SETTINGS).toBe(false)
+  })
+
   it('reads the developer tools dock, the bottom for profiles from before it and for garbage (§9.29)', () => {
     const without = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
     delete without.devtoolsDock

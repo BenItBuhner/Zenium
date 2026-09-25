@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_AGENT_SETTINGS } from '../../../shared/defaults'
-import type { AgentSettings } from '../../../shared/types'
+import type { AgentSettings, AgentSkillStatus } from '../../../shared/types'
 import { Bridge, type NativeBridge, type NativeCall } from '../../../android/bridge'
 import { AndroidStoreIO } from '../../../android/storeIo'
 import type { Browser } from '../../browser'
-import type { AgentTransport, StoreIO } from '../../platform'
+import { emptyModel } from '../../model'
+import type { AgentSkillsHost, AgentTransport, StoreIO } from '../../platform'
 import { AgentService } from '../service'
 
 const AGENT_FILE = 'agent.json'
@@ -110,7 +111,11 @@ function androidHost(initial: Record<string, string> = {}): Host {
   }
 }
 
-function fakeBrowser(io: StoreIO, settings: Partial<AgentSettings> = {}): Browser {
+function fakeBrowser(
+  io: StoreIO,
+  settings: Partial<AgentSettings> = {},
+  agentSkills?: AgentSkillsHost
+): Browser {
   const transport: AgentTransport = {
     start: async (options) => ({ port: options.port, lanAddresses: [] }),
     stop: async () => undefined
@@ -120,9 +125,12 @@ function fakeBrowser(io: StoreIO, settings: Partial<AgentSettings> = {}): Browse
       io,
       info: { version: '0.0.0-test' },
       createAgentTransport: () => transport,
-      dialogs: { confirm: async () => false }
+      dialogs: { confirm: async () => false },
+      agentSkills
     },
     state: {
+      // `start()` reads the model for the one-time upgrade of the agents' marks.
+      model: emptyModel([{ id: 'default', name: 'Default', color: '#888' } as never]),
       settings: {
         agents: { ...DEFAULT_AGENT_SETTINGS, enabled: true, port: PORT, ...settings }
       },
@@ -137,8 +145,12 @@ const parse = (text: string | null): Stored => JSON.parse(text ?? 'null') as Sto
 
 /** Services under test with their hosts: the stop's own write needs the host to land it. */
 const running: Array<{ service: AgentService; host: Host }> = []
-function create(host: Host, settings: Partial<AgentSettings> = {}): AgentService {
-  const service = new AgentService(fakeBrowser(host.io, settings))
+function create(
+  host: Host,
+  settings: Partial<AgentSettings> = {},
+  agentSkills?: AgentSkillsHost
+): AgentService {
+  const service = new AgentService(fakeBrowser(host.io, settings, agentSkills))
   running.push({ service, host })
   return service
 }
@@ -240,5 +252,62 @@ describe.each(hosts)('agent.json on %s', (_name, makeHost) => {
     await host.settle()
     expect(service.serverStatus().running).toBe(false)
     expect(parse(host.disk())).toEqual({ token: service.serverStatus().token, running: false })
+  })
+})
+
+/*
+ * The Agent Skill host (`Platform.agentSkills`): the contract has it report failures inside the
+ * status, so what it returns is the state as it is; anything it throws all the same is the last
+ * resort – logged whole, shown as a plain sentence with the code and never a message carrying
+ * paths.
+ */
+describe('the Agent Skill host', () => {
+  it('keeps what the host reports and turns what it throws into a sentence without paths', async () => {
+    const reported: AgentSkillStatus = {
+      version: '0.0.0-test',
+      targets: [],
+      error: 'Could not install: no permission to write ~/.codex/skills/zenium-browser'
+    }
+    let throwing: unknown = null
+    const skills: AgentSkillsHost = {
+      status: async () => reported,
+      install: async () => {
+        if (throwing) throw throwing
+        return reported
+      },
+      uninstall: async () => reported
+    }
+    const service = create(desktopHost(), { enabled: false }, skills)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await service.installSkill(['codex'])
+      expect(service.skillStatus()).toBe(reported)
+      expect(errors).not.toHaveBeenCalled()
+
+      const thrown: NodeJS.ErrnoException = new Error(
+        "EACCES: permission denied, open '/home/someone/.config/zenium/zen/skills.json.1.tmp'"
+      )
+      thrown.code = 'EACCES'
+      throwing = thrown
+      await service.installSkill()
+      expect(service.skillStatus()).toEqual({
+        ...reported,
+        error: 'The agent skill could not be updated (EACCES)'
+      })
+      expect(errors).toHaveBeenCalledWith('[zenium] agent skill host threw:', thrown)
+
+      throwing = new Error('no code on this one')
+      await service.installSkill()
+      expect(service.skillStatus().error).toBe('The agent skill could not be updated')
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('does nothing without a host, as on a phone', async () => {
+    const service = create(desktopHost(), { enabled: false })
+    await service.refreshSkill()
+    await service.installSkill()
+    expect(service.skillStatus()).toEqual({ version: '0.0.0-test', targets: [], error: null })
   })
 })

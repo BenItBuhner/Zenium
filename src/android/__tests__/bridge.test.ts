@@ -1,5 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
-import { Bridge, type NativeBridge } from '../bridge'
+import {
+  Bridge,
+  PORTED,
+  PORT_REQUEST,
+  STORAGE_CLASS,
+  THUMBNAIL_CLASS,
+  openBridgePort,
+  type BridgePort,
+  type NativeBridge,
+  type PortTarget
+} from '../bridge'
 
 /*
  * The one-way `post` of the JS ⇄ Kotlin bridge (the bar hide profile, #270): a command sent
@@ -201,5 +211,327 @@ describe('Bridge.batched', () => {
       [{ method: 'view.setVisible', args: { tabId: 't1', visible: false } }]
     ])
     warn.mockRestore()
+  })
+})
+
+/*
+ * The asynchronous channel (services perf pass 2, #455's finding): the storage calls – awaited
+ * `call`s whose answer arrives through `__zenHost` once the write has landed – paid a synchronous
+ * hop of 4–68 ms of the chrome's frame to hand their string over. Once the host has handed the
+ * page a `MessagePort`, EVERY call of the class goes through it (a pipe write, no wait) and none
+ * through `call`: one FIFO into the host's one storage thread, the order kept across the switch
+ * because the hop before it handed its string over before the JS thread went on. Every other
+ * call keeps the hop; a host without the channel says so and nothing changes.
+ */
+describe('Bridge port', () => {
+  /** A page end of the channel that records what was posted, into the shared `hops` too. */
+  function port(hops: string[]): { port: BridgePort; messages: string[]; closed: () => number } {
+    const messages: string[] = []
+    let closed = 0
+    return {
+      port: {
+        postMessage: (message) => {
+          messages.push(message)
+          hops.push(`port ${(JSON.parse(message) as { method: string }).method}`)
+        },
+        close: () => {
+          closed++
+        }
+      },
+      messages,
+      closed: () => closed
+    }
+  }
+
+  it('a storage call takes the hop before the port and the port after it; the others keep the hop', async () => {
+    const { native: n, calls, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    expect(bridge.ported).toBe(false)
+    const before = bridge.call('storage.write', { name: 'state.json', text: '{}', backup: true })
+    expect(hops).toEqual(['call storage.write'])
+
+    const page = port(hops)
+    bridge.adoptPort(page.port)
+    expect(bridge.ported).toBe(true)
+    const after = bridge.call<boolean>('storage.write', { name: 'state.json', text: '{"a":1}' })
+    void bridge.call('tab.activate', { tabId: 't1' })
+    bridge.post('chrome.setBarHide', { enabled: false })
+    expect(hops).toEqual([
+      'call storage.write',
+      'port storage.write',
+      'call tab.activate',
+      'post chrome.setBarHide'
+    ])
+    // The ported call is a `call` in every other way: the same envelope, with its id, and its
+    // answer comes back through `resolve` as before.
+    expect(calls).toHaveLength(2)
+    expect(JSON.parse(page.messages[0] ?? '{}')).toEqual({
+      id: 2,
+      method: 'storage.write',
+      args: { name: 'state.json', text: '{"a":1}' }
+    })
+    bridge.resolve(1, 'true')
+    bridge.resolve(2, 'true')
+    await expect(before).resolves.toBe(true)
+    await expect(after).resolves.toBe(true)
+  })
+
+  it('the whole storage class goes through the port, a send of one included, in one order', async () => {
+    const { native: n, calls, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    const page = port(hops)
+    bridge.adoptPort(page.port)
+    for (const method of STORAGE_CLASS) void bridge.call(method, { name: 'a.json' })
+    bridge.send('storage.writeAbort', { token: 3 })
+    await microtasks()
+    expect(hops).toEqual([...STORAGE_CLASS, 'storage.writeAbort'].map((m) => `port ${m}`))
+    expect(calls).toEqual([])
+    // A batch waiting leaves ahead of a ported call, as it leaves ahead of any other hop.
+    bridge.batched('view.setBounds', { tabId: 't1', rect: {} })
+    void bridge.call('storage.write', { name: 'b.json', text: '1' })
+    expect(hops.slice(-2)).toEqual(['batch view.setBounds', 'port storage.write'])
+  })
+
+  it('the thumbnail read is a class of one: it takes the port too, the thumbnail commands keep the hop, and the classes are what PORTED holds', async () => {
+    expect(THUMBNAIL_CLASS).toEqual(['thumbnail.load'])
+    expect([...PORTED]).toEqual([...STORAGE_CLASS, ...THUMBNAIL_CLASS])
+    const { native: n, calls, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    // Before the port: the hop, as ever.
+    const before = bridge.call<{ data: string } | null>('thumbnail.load', {
+      tabId: 't1',
+      url: 'https://a/'
+    })
+    expect(hops).toEqual(['call thumbnail.load'])
+
+    const page = port(hops)
+    bridge.adoptPort(page.port)
+    const after = bridge.call<{ data: string } | null>('thumbnail.load', {
+      tabId: 't2',
+      url: 'https://b/'
+    })
+    bridge.send('thumbnail.drop', { tabId: 't1' })
+    bridge.send('thumbnail.sweep', { keep: ['t2'] })
+    bridge.send('thumbnail.configure', { width: 320 })
+    void bridge.call('storage.write', { name: 'state.json', text: '{}' })
+    await microtasks()
+    expect(hops).toEqual([
+      'call thumbnail.load',
+      'port thumbnail.load',
+      'call thumbnail.drop',
+      'call thumbnail.sweep',
+      'call thumbnail.configure',
+      'port storage.write'
+    ])
+    // The same envelope through the port as through the hop, and the same reply path.
+    expect(calls).toHaveLength(4)
+    expect(JSON.parse(page.messages[0] ?? '{}')).toEqual({
+      id: 2,
+      method: 'thumbnail.load',
+      args: { tabId: 't2', url: 'https://b/' }
+    })
+    bridge.resolve(1, 'null')
+    bridge.resolve(2, '{"data":"data:image/jpeg;base64,AA=="}')
+    await expect(before).resolves.toBeNull()
+    await expect(after).resolves.toEqual({ data: 'data:image/jpeg;base64,AA==' })
+  })
+
+  it('a second port is closed, not taken', () => {
+    const { native: n, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    const first = port(hops)
+    const second = port(hops)
+    bridge.adoptPort(first.port)
+    bridge.adoptPort(second.port)
+    expect(second.closed()).toBe(1)
+    expect(first.closed()).toBe(0)
+    void bridge.call('storage.remove', { name: 'a.json' })
+    expect(first.messages).toHaveLength(1)
+    expect(second.messages).toEqual([])
+  })
+
+  it('a port that will not take a string is dropped for good; the call and every later one take the hop', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { native: n, calls, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    bridge.adoptPort({
+      postMessage: () => {
+        throw new Error('InvalidStateError: the port is closed')
+      },
+      close: () => {}
+    })
+    const pending = bridge.call<boolean>('storage.write', { name: 'state.json', text: '{}' })
+    void bridge.call('storage.remove', { name: 'old.json' })
+    expect(bridge.ported).toBe(false)
+    expect(hops).toEqual(['call storage.write', 'call storage.remove'])
+    expect(warn).toHaveBeenCalledWith(
+      '[zen] the bridge port failed; back to call',
+      expect.any(Error)
+    )
+    expect(warn).toHaveBeenCalledTimes(1)
+    // The call that fell back is still the same pending call.
+    expect(calls).toHaveLength(2)
+    bridge.resolve(1, 'true')
+    await expect(pending).resolves.toBe(true)
+    warn.mockRestore()
+  })
+
+  it('marks every hop by its channel and method as it leaves and as it returns when traced, and never otherwise', () => {
+    const mark = vi.spyOn(performance, 'mark').mockImplementation(() => ({}) as PerformanceMark)
+    const { native: n, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    void bridge.call('storage.write', { name: 'a.json' })
+    bridge.adoptPort(port(hops).port)
+    void bridge.call('storage.write', { name: 'a.json' })
+    expect(mark).not.toHaveBeenCalled()
+
+    const g = globalThis as { __zenBridgeTrace?: unknown }
+    g.__zenBridgeTrace = true
+    try {
+      void bridge.call('storage.write', { name: 'a.json' })
+      void bridge.call('tab.activate', { tabId: 't1' })
+      void bridge.call('thumbnail.load', { tabId: 't1', url: 'https://a/' })
+      bridge.post('chrome.setBarHide', { enabled: false })
+      // A batch is marked as it leaves – here ahead of the sync call – by its commands' methods.
+      bridge.batched('view.setBounds', { tabId: 't1', rect: {} })
+      bridge.batched('view.setVisible', { tabId: 't1', visible: true })
+      bridge.callSync('view.navigationEntries', { tabId: 't1' })
+    } finally {
+      delete g.__zenBridgeTrace
+    }
+    // Each hop's pair: the mark as it leaves, the same name with `:ret` as the entry point returns.
+    const leaves = [
+      'bridge:port:storage.write',
+      'bridge:call:tab.activate',
+      'bridge:port:thumbnail.load',
+      'bridge:post:chrome.setBarHide',
+      'bridge:batch:view.setBounds+view.setVisible',
+      'bridge:sync:view.navigationEntries'
+    ]
+    expect(mark.mock.calls.map((c) => c[0])).toEqual(leaves.flatMap((m) => [m, `${m}:ret`]))
+    void bridge.call('storage.write', { name: 'a.json' })
+    bridge.post('chrome.setBarHide', { enabled: true })
+    bridge.batched('view.setBounds', { tabId: 't1', rect: {} })
+    bridge.callSync('view.navigationEntries', { tabId: 't1' })
+    expect(mark).toHaveBeenCalledTimes(12)
+    mark.mockRestore()
+  })
+
+  it('a port that fails under a traced call marks the port hop it tried and the call hop it took, each returned once', () => {
+    const mark = vi.spyOn(performance, 'mark').mockImplementation(() => ({}) as PerformanceMark)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { native: n, hops } = native(true, true)
+    const bridge = new Bridge(n)
+    bridge.adoptPort({
+      postMessage: () => {
+        throw new Error('closed')
+      },
+      close: () => {}
+    })
+    const g = globalThis as { __zenBridgeTrace?: unknown }
+    g.__zenBridgeTrace = true
+    try {
+      void bridge.call('thumbnail.load', { tabId: 't1', url: 'https://a/' })
+    } finally {
+      delete g.__zenBridgeTrace
+    }
+    expect(mark.mock.calls.map((c) => c[0])).toEqual([
+      'bridge:port:thumbnail.load',
+      'bridge:call:thumbnail.load',
+      'bridge:call:thumbnail.load:ret'
+    ])
+    expect(hops).toEqual(['call thumbnail.load'])
+    expect(bridge.ported).toBe(false)
+    warn.mockRestore()
+    mark.mockRestore()
+  })
+
+  /** The window of the page: what `openBridgePort` listens on, and what the host's port arrives through. */
+  function target(): {
+    target: PortTarget
+    listeners: () => number
+    emit: (event: Partial<MessageEvent>) => void
+  } {
+    const listeners = new Set<(event: MessageEvent) => void>()
+    return {
+      target: {
+        addEventListener: (_type, listener) => listeners.add(listener),
+        removeEventListener: (_type, listener) => listeners.delete(listener)
+      },
+      listeners: () => listeners.size,
+      emit: (event) => {
+        for (const listener of [...listeners]) listener(event as MessageEvent)
+      }
+    }
+  }
+
+  /** The host's answer to the one `bridge.port` call, by id. */
+  function requestOf(calls: string[]): { id: number; token: string } {
+    const call = JSON.parse(calls[0] ?? '{}') as {
+      id: number
+      method: string
+      args: { token: string }
+    }
+    expect(call.method).toBe(PORT_REQUEST)
+    return { id: call.id, token: call.args.token }
+  }
+
+  it('asks the host once and takes the port that comes back with the token, whichever arrives first', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    for (const answerFirst of [true, false]) {
+      const { native: n, calls, hops } = native(true, true)
+      const bridge = new Bridge(n)
+      const win = target()
+      openBridgePort(bridge, win.target, 'tok-1')
+      expect(win.listeners()).toBe(1)
+      const { id, token } = requestOf(calls)
+      expect(token).toBe('tok-1')
+      const page = port(hops)
+      if (answerFirst) {
+        bridge.resolve(id, 'true')
+        await microtasks()
+        // The answer said a port is coming: the listener stays for it.
+        expect(win.listeners()).toBe(1)
+        expect(bridge.ported).toBe(false)
+      }
+      // A message that is not the host's is not a port: another token, or no port in it.
+      win.emit({ data: 'tok-other', ports: [page.port as unknown as MessagePort] })
+      win.emit({ data: 'tok-1', ports: [] })
+      expect(bridge.ported).toBe(false)
+      win.emit({ data: 'tok-1', ports: [page.port as unknown as MessagePort] })
+      expect(bridge.ported).toBe(true)
+      expect(win.listeners()).toBe(0)
+      if (!answerFirst) {
+        bridge.resolve(id, 'true')
+        await microtasks()
+      }
+      void bridge.call('storage.write', { name: 'state.json', text: '{}' })
+      expect(page.messages).toHaveLength(1)
+    }
+    debug.mockRestore()
+  })
+
+  it('a host without the channel says so, or knows no such call: the listener goes and the hop stays', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    for (const rejects of [false, true]) {
+      const { native: n, calls, hops } = native(true, true)
+      const bridge = new Bridge(n)
+      const win = target()
+      openBridgePort(bridge, win.target)
+      const { id, token } = requestOf(calls)
+      expect(token.length).toBeGreaterThan(8)
+      if (rejects) bridge.reject(id, 'unknown method bridge.port')
+      else bridge.resolve(id, 'false')
+      await microtasks()
+      expect(win.listeners()).toBe(0)
+      // A port arriving now is nobody's: nothing listens.
+      const page = port(hops)
+      win.emit({ data: token, ports: [page.port as unknown as MessagePort] })
+      expect(bridge.ported).toBe(false)
+      void bridge.call('storage.write', { name: 'state.json', text: '{}' })
+      expect(hops.slice(-1)).toEqual(['call storage.write'])
+      expect(page.messages).toEqual([])
+    }
+    debug.mockRestore()
   })
 })

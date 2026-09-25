@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import type {
   CertificateDetails,
+  ColorScheme,
   DevtoolsDock,
   NavigationSnapshot,
   NavigationSnapshotEntry,
@@ -69,6 +70,12 @@ import { defer } from '../../core/platform'
 import { standinScale } from '../../shared/pageStandin'
 import { clientSide, imageDimensions, type PageViewport } from '../../shared/capture'
 import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
+import { awaitFirstPaint, hasPainted } from './firstPaint'
+import {
+  emulatedColorScheme,
+  emulatedMediaParams,
+  type EmulatedColorScheme
+} from './pageColorScheme'
 import type { PdfRenderOptions } from '../../shared/print'
 import type {
   AgentCapture,
@@ -229,6 +236,35 @@ const FONT_DEFAULTS = electronFontDefaults(process.platform)
 /** One string per font setting, so a page knows whether it has the one that stands. */
 function fontsKey(fonts: PageFontSettings): string {
   return JSON.stringify(fonts)
+}
+
+/**
+ * The emulation overrides a page view keeps on the page's shared session
+ * (`ElectronTabView.setEmulation`): the dark theme for sites' auto dark mode, and the Appearance
+ * setting's `prefers-color-scheme` where the engine does not carry it to pages itself.
+ */
+type EmulationOverride = 'autoDark' | 'colorScheme'
+
+/** A DevTools protocol command as the view sends it. */
+interface CdpCommand {
+  method: string
+  params: Record<string, unknown>
+}
+
+const AUTO_DARK_MODE_ON: CdpCommand = {
+  method: 'Emulation.setAutoDarkModeOverride',
+  params: { enabled: true }
+}
+
+/** What takes each override off a session that stays. */
+const EMULATION_RELEASE: Record<EmulationOverride, CdpCommand> = {
+  autoDark: { method: 'Emulation.setAutoDarkModeOverride', params: {} },
+  colorScheme: { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(null) }
+}
+
+function sameCommand(a: CdpCommand | null, b: CdpCommand | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.method === b.method && JSON.stringify(a.params) === JSON.stringify(b.params)
 }
 
 /** The setting behind a page's `fontsKey` (what it has), for the restyle decision in `sendFonts`. */
@@ -731,12 +767,13 @@ export class ElectronTabView implements TabView {
    * address's, so the tab shows that address, back leads to the page before and a load of the
    * address asks for it again. The error document is complete by the time `did-fail-load`
    * reports, so the script runs at once; the page preload is in that document and relays the
-   * interstitial's controls like in any other.
+   * interstitial's controls like in any other. The document takes the app's colour scheme
+   * (`errorPageAttributesScript`), as the pages the protocol serves do.
    */
   showErrorPage(url: string): void {
     if (this.wc.isDestroyed()) return
     void this.wc
-      .executeJavaScript(inPlaceErrorPageScript(new URL(url)), true)
+      .executeJavaScript(inPlaceErrorPageScript(new URL(url), this.owner.colorScheme), true)
       .catch(() => undefined)
   }
 
@@ -1335,10 +1372,16 @@ export class ElectronTabView implements TabView {
    * frame. Coordinates are CSS pixels of the top viewport (CDP takes them as such at any zoom).
    * When the debugger cannot be attached the widget-level API is the fallback (in DIPs, main
    * frame only).
+   *
+   * Either way the event waits for the page's first paint (`awaitFirstPaint`): before it, the
+   * renderer drops every press and key – not moves – and acks them as handled, so a click
+   * sent to a loaded, placed page whose display compositor has not produced a frame yet would
+   * be lost with a success. The wait is bounded; past it the event goes anyway.
    */
   async sendInput(event: AgentInputEvent): Promise<void> {
     const wc = this.wc
     if (wc.isDestroyed()) return
+    if (event.type !== 'mouseMove' && (await awaitFirstPaint(wc)) === 'gone') return
     try {
       await this.withDebugger((dbg) => dispatchInputViaCdp(dbg, event))
       return
@@ -1396,26 +1439,12 @@ export class ElectronTabView implements TabView {
 
   /**
    * Whether the page's renderer takes real input yet: it has presented its first frame, or its
-   * document is one Chromium never holds back. A new http(s) HTML document's commits are
-   * deferred until its first contentful paint or 500 ms of frames (paint holding), and the
-   * renderer's compositor thread drops every press and key – not moves – while they are, acking
-   * them as handled; the 500 ms run only in frames, so a machine whose display compositor is
-   * still starting (a cold runner without a GPU: eight seconds) keeps a loaded, placed page deaf
-   * to clicks, with nothing to show for it. Asked of the isolated world with no user gesture: a
-   * probe must not arm what it probes for (`window.open` after it would pass the pop-up
-   * blocker). A page that does not answer within a second, or errors, counts as painted – the
+   * document is one Chromium never holds back (`firstPaint.ts`, the same reading `sendInput`
+   * waits on). A page that does not answer within a second, or errors, counts as painted – the
    * question is a guard on top of what worked before, not a new way to fail.
    */
-  async hasPainted(): Promise<boolean> {
-    const wc = this.wc
-    if (wc.isDestroyed()) return true
-    const state = await Promise.race([
-      wc
-        .executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: PAINT_STATE_SCRIPT }], false)
-        .catch(() => 'unknown'),
-      new Promise<string>((r) => setTimeout(() => r('unknown'), PAINT_PROBE_TIMEOUT_MS))
-    ])
-    return state !== 'holding' && state !== 'loading'
+  hasPainted(): Promise<boolean> {
+    return hasPainted(this.wc)
   }
 
   /** The preload's isolated world: pages cannot see the agent runtime or tamper with it. */
@@ -1600,7 +1629,7 @@ export class ElectronTabView implements TabView {
   /**
    * A fresh agent while an action holds the session (`withDebugger`): the governor drops the
    * session and puts its own overrides back on a new one (`recycleDebugger`); where it had none
-   * the page is left detached and the hold attaches again. The dark theme override is re-sent,
+   * the page is left detached and the hold attaches again. The emulation overrides are re-sent,
    * being the session's.
    */
   private async recycleSession(): Promise<void> {
@@ -1614,35 +1643,119 @@ export class ElectronTabView implements TabView {
     // Attached already: by this view's own `sessionDetached` (the hold's, `cdpAttachedHere`
     // stands) or by the governor putting an override back (its own; it detaches it when that
     // goes, and a hold of this view's attaches again then).
-    if (this.darkeningApplied)
-      await dbg.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true })
+    for (const command of this.emulationApplied.values())
+      await dbg.sendCommand(command.method, command.params)
   }
 
   /**
    * The page's shared session went from under a hold of this view's – the governor's CPU clamp
    * lifting as the page came in front (the clamp sits on background pages only, so a page in
-   * front keeps Chromium's hang monitor), a recycle, another client: the dark theme's override
-   * went with it, so the hold attaches again and puts it back. A page with no hold is left with
-   * no session, which is what the governor wants of a page in front. Electron emits `detach`
-   * after it has let go, so `attach` is free to take the page again here.
+   * front keeps Chromium's hang monitor), a recycle, another client: the emulation overrides
+   * went with it, so the hold attaches again and puts them back. A page with no hold is left
+   * with no session, which is what the governor wants of a page in front. Electron emits
+   * `detach` after it has let go, so `attach` is free to take the page again here.
    */
   private sessionDetached(): void {
     if (this.wc.isDestroyed()) return
-    if (!this.darkeningApplied && this.cdpPending === 0) return
+    if (this.emulationApplied.size === 0 && this.cdpPending === 0) return
     const dbg = this.wc.debugger
     if (dbg.isAttached()) return
     try {
       dbg.attach('1.3')
     } catch {
-      // Another client (DevTools, an extension) holds the page: the next change tries again.
-      this.darkeningApplied = false
+      // Another client (DevTools, an extension) holds the page: the overrides are off it, and
+      // the hold ends with them; the next change tries again.
+      this.emulationApplied.clear()
+      this.releaseEmulationHold()
       return
     }
     this.cdpAttachedHere = true
-    if (this.darkeningApplied) {
-      void dbg.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true }).catch(() => {
-        this.darkeningApplied = false
+    for (const [override, command] of this.emulationApplied) {
+      void dbg.sendCommand(command.method, command.params).catch(() => {
+        if (this.emulationApplied.get(override) === command) this.emulationApplied.delete(override)
+        this.releaseEmulationHold()
       })
+    }
+  }
+
+  // --- emulation overrides on the page's session ---------------------------------------
+
+  /**
+   * The emulation overrides this view keeps on the page's session – the dark theme for sites'
+   * auto dark mode (`refreshDarkening`) and, where the engine does not carry the Appearance
+   * setting to pages itself, its `prefers-color-scheme` (`refreshColorScheme`) – each as the
+   * command that puts it on, which is also what puts it back on a new session: an override
+   * belongs to the session and goes with it (`recycleSession`, `sessionDetached`). Between
+   * them they take one hold of the debugger (`cdpPending`) for as long as any is on;
+   * `withDebugger` shares the attachment with captures and input.
+   */
+  private readonly emulationApplied = new Map<EmulationOverride, CdpCommand>()
+  /** Whether the overrides count as one pending action in `cdpPending` (their hold). */
+  private emulationHold = false
+  /** Resolves once the send in flight is done (the next change waits for it). */
+  private emulationTurn: Promise<void> = Promise.resolve()
+
+  /** Intend `command` as the page's `override` (null: none); the page follows in turn. */
+  private setEmulation(override: EmulationOverride, command: CdpCommand | null): void {
+    if (this.wc.isDestroyed()) return
+    if (sameCommand(this.emulationApplied.get(override) ?? null, command)) return
+    if (command) this.emulationApplied.set(override, command)
+    else this.emulationApplied.delete(override)
+    this.emulationTurn = this.emulationTurn.then(() => this.sendEmulation(override)).catch(() => {})
+  }
+
+  /** Send the override as it is intended now (a change queued behind another reads the latest). */
+  private async sendEmulation(override: EmulationOverride): Promise<void> {
+    if (this.wc.isDestroyed()) return
+    const dbg = this.wc.debugger
+    const command = this.emulationApplied.get(override)
+    if (command) {
+      // Take a hold of the debugger for as long as any override is on.
+      if (!this.emulationHold) {
+        if (this.cdpPending === 0 && !dbg.isAttached()) {
+          try {
+            dbg.attach('1.3')
+            this.cdpAttachedHere = true
+          } catch {
+            this.emulationApplied.delete(override)
+            return
+          }
+        }
+        this.cdpPending++
+        this.emulationHold = true
+      }
+      try {
+        await dbg.sendCommand(command.method, command.params)
+      } catch {
+        /* the page went away, or the debugger is not ours: release the hold, retry on the next change */
+        if (this.emulationApplied.get(override) === command) this.emulationApplied.delete(override)
+      }
+    } else {
+      const release = EMULATION_RELEASE[override]
+      try {
+        if (dbg.isAttached()) await dbg.sendCommand(release.method, release.params)
+      } catch {
+        /* already gone */
+      }
+    }
+    this.releaseEmulationHold()
+  }
+
+  /** No override is on any more: the hold ends, and the session it opened goes with it. */
+  private releaseEmulationHold(): void {
+    if (!this.emulationHold || this.emulationApplied.size > 0) return
+    this.emulationHold = false
+    this.cdpPending--
+    if (this.cdpPending === 0 && this.cdpAttachedHere) {
+      this.cdpAttachedHere = false
+      const dbg = this.wc.debugger
+      if (!this.wc.isDestroyed() && dbg.isAttached()) {
+        try {
+          dbg.detach()
+        } catch {
+          /* already detached */
+        }
+      }
     }
   }
 
@@ -1650,10 +1763,6 @@ export class ElectronTabView implements TabView {
 
   /** The core's policy for this page's site ("Apply dark theme to sites" and its exceptions). */
   private darkening = false
-  /** What the page is rendered with right now (the policy while the chrome is dark). */
-  private darkeningApplied = false
-  /** Resolves once the override in flight has been sent (the next change waits for it). */
-  private darkeningTurn: Promise<void> = Promise.resolve()
 
   /**
    * Dark theme for sites: Chromium's auto dark mode over the DevTools protocol
@@ -1663,9 +1772,6 @@ export class ElectronTabView implements TabView {
    * darkening it acts only while the chrome is dark (`nativeTheme` follows the Appearance
    * setting; a flip re-applies through the host). Chromium's `WebContentsForceDark` feature
    * switch would darken Zenium's own chrome too, hence the per-page override.
-   *
-   * The debugger stays attached while the override is on: an emulation override belongs to the
-   * session and goes with it. `withDebugger` shares the attachment with captures and input.
    */
   setDarkening(on: boolean): void {
     this.darkening = on
@@ -1674,61 +1780,25 @@ export class ElectronTabView implements TabView {
 
   /** The chrome's scheme or the policy changed: bring the page in line. */
   refreshDarkening(): void {
-    if (this.wc.isDestroyed()) return
     const wanted = this.darkening && nativeTheme.shouldUseDarkColors
-    if (wanted === this.darkeningApplied) return
-    this.darkeningApplied = wanted
-    this.darkeningTurn = this.darkeningTurn.then(() => this.sendDarkening(wanted)).catch(() => {})
+    this.setEmulation('autoDark', wanted ? AUTO_DARK_MODE_ON : null)
   }
 
-  /** Whether the override counts as one pending action in `cdpPending` (its hold). */
-  private darkeningHold = false
+  // --- the Appearance setting's colour scheme -------------------------------------------
 
-  private async sendDarkening(on: boolean): Promise<void> {
-    if (this.wc.isDestroyed()) return
-    const dbg = this.wc.debugger
-    if (on) {
-      // Take a hold of the debugger for as long as the override is on.
-      if (!this.darkeningHold) {
-        if (this.cdpPending === 0 && !dbg.isAttached()) {
-          try {
-            dbg.attach('1.3')
-            this.cdpAttachedHere = true
-          } catch {
-            this.darkeningApplied = false
-            return
-          }
-        }
-        this.cdpPending++
-        this.darkeningHold = true
-      }
-      try {
-        await dbg.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true })
-        return
-      } catch {
-        /* the page went away, or the debugger is not ours: release the hold, retry on the next change */
-        this.darkeningApplied = false
-      }
-    } else {
-      try {
-        if (dbg.isAttached()) await dbg.sendCommand('Emulation.setAutoDarkModeOverride', {})
-      } catch {
-        /* already gone */
-      }
-    }
-    if (!this.darkeningHold) return
-    this.darkeningHold = false
-    this.cdpPending--
-    if (this.cdpPending === 0 && this.cdpAttachedHere) {
-      this.cdpAttachedHere = false
-      if (!this.wc.isDestroyed() && dbg.isAttached()) {
-        try {
-          dbg.detach()
-        } catch {
-          /* already detached */
-        }
-      }
-    }
+  /**
+   * The Appearance setting's Light or Dark for the page where the engine does not carry it to
+   * pages itself (`emulatedColorScheme`: Linux, where `nativeTheme.themeSource` flips the native
+   * UI and `shouldUseDarkColors` but no renderer's `prefers-color-scheme`): the setting's value
+   * as an emulated media feature on the page's session, released when the setting returns to
+   * System. Applied as the view is made and on every change of the setting.
+   */
+  refreshColorScheme(): void {
+    const scheme = this.owner.pageColorScheme
+    this.setEmulation(
+      'colorScheme',
+      scheme ? { method: 'Emulation.setEmulatedMedia', params: emulatedMediaParams(scheme) } : null
+    )
   }
 
   setBackgroundThrottling(allowed: boolean): void {
@@ -2057,24 +2127,6 @@ const VIEWPORT_TIMEOUT_MS = 1500
  * page) and the document's scrollable size (the larger of the root's and the body's, never
  * smaller than the viewport). One expression, so a single evaluation answers it.
  */
-/**
- * The page's readiness for real input (`hasPainted`), read from where Chromium records it:
- * `painted` – a `paint` performance entry exists, so a frame was presented, so a commit went
- * through and no first-paint deferral is holding the renderer's input back; `holding` – an
- * http(s) HTML document without one, the kind paint holding defers (`document_loader.cc`:
- * `kPaintHolding && IsA<HTMLDocument> && ProtocolIsInHttpFamily`), whose commits are or will be
- * deferred until its first contentful paint or 500 ms of frames; `loading` / `ready` – any other
- * document (`zen:`, `file:`, XML), never deferred beyond the main-frame-update hold that ends
- * with its render-blocking resources, which the parser reaching the end bounds.
- */
-const PAINT_STATE_SCRIPT = `(function () {
-  if (performance.getEntriesByType('paint').length > 0) return 'painted'
-  var held = /^https?:$/.test(location.protocol) && document instanceof HTMLDocument
-  return held ? 'holding' : document.readyState === 'loading' ? 'loading' : 'ready'
-})()`
-/** A renderer that takes longer than this to answer the paint probe is not waited for. */
-const PAINT_PROBE_TIMEOUT_MS = 1000
-
 const VIEWPORT_SCRIPT = `(function () {
   var d = document.documentElement, b = document.body, s = document.scrollingElement || d
   return {
@@ -2414,6 +2466,36 @@ export class ElectronTabViewHost implements TabViewHost {
     for (const view of this.byWebContentsId.values()) view.refreshFonts()
   }
 
+  /** The Appearance setting's colour scheme, as the core last handed it to the engine (`applyColorScheme`). */
+  private scheme: ColorScheme = 'system'
+  /** The `prefers-color-scheme` page views emulate for it, where the engine does not carry it (`emulatedColorScheme`). */
+  private emulatedScheme: EmulatedColorScheme | null = null
+
+  /** The Appearance setting's colour scheme: what Zenium's own documents in the pages paint. */
+  get colorScheme(): ColorScheme {
+    return this.scheme
+  }
+
+  /** The `prefers-color-scheme` every page view puts on its session right now; null leaves pages to the engine. */
+  get pageColorScheme(): EmulatedColorScheme | null {
+    return this.emulatedScheme
+  }
+
+  /**
+   * The Appearance setting's colour scheme (Light / Dark / System), handed over with
+   * `nativeTheme.themeSource` (`Platform.theme.setSource`): the `zen://` documents take it from
+   * here, and on `platform`s whose engine does not carry the source to pages
+   * (`emulatedColorScheme`) every page view, open now or to come, emulates it
+   * (`ElectronTabView.refreshColorScheme`).
+   */
+  applyColorScheme(scheme: ColorScheme, platform: NodeJS.Platform = process.platform): void {
+    this.scheme = scheme
+    const emulated = emulatedColorScheme(platform, scheme)
+    if (emulated === this.emulatedScheme) return
+    this.emulatedScheme = emulated
+    for (const view of this.byWebContentsId.values()) view.refreshColorScheme()
+  }
+
   /** The page fonts every new page view is made with right now (for the tests). */
   static currentFonts(): PageFontSettings {
     return pageFontSettings
@@ -2552,11 +2634,15 @@ export class ElectronTabViewHost implements TabViewHost {
     if (tabId !== undefined && this.byTabId.get(tabId) === view) this.byTabId.delete(tabId)
   }
 
-  /** Map the page to its tab, then let the followers (the extension API layer) see the view. */
+  /**
+   * Map the page to its tab, give it the Appearance setting's scheme where pages emulate it,
+   * then let the followers (the extension API layer) see the view.
+   */
   private track(view: ElectronTabView, tabId: string): void {
     this.byWebContentsId.set(view.webContentsId, view)
     this.byTabId.set(tabId, view)
     this.tabIds.set(view.webContentsId, tabId)
+    view.refreshColorScheme()
     for (const listener of this.viewListeners) listener(view)
   }
 

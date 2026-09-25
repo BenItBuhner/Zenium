@@ -84,6 +84,8 @@ export class Actions {
         return tabs.cyclePane(1, win)
       case 'split.prevPane':
         return tabs.cyclePane(-1, win)
+      case 'split.swap':
+        return tabs.swapPanes(undefined, win)
 
       // --- tabs ---
       case 'tab.new':

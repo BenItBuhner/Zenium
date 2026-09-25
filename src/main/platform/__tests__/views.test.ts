@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { WebPreferences } from 'electron'
 import type { Tab } from '../../../shared/types'
-import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
+import type {
+  AgentInputEvent,
+  TabViewEvents,
+  WindowHost,
+  WindowOpenTicket
+} from '../../../core/platform'
 import {
   DEFAULT_FONT_SETTINGS,
   electronFontDefaults,
@@ -161,6 +166,27 @@ vi.mock('electron', async () => {
     }
     sendInputEvent(event: Record<string, unknown>): void {
       this.widgetEvents.push(event)
+    }
+    /**
+     * What the main frame answers the first-paint probe (`firstPaint.ts`), one answer per
+     * probe, the last repeating: painted unless a test holds the page.
+     */
+    paintAnswers: string[] = ['painted']
+    /** Every paint probe run in the main frame. */
+    readonly paintProbes: string[] = []
+    readonly mainFrame = {
+      executeJavaScript: (code: string): Promise<unknown> => {
+        this.paintProbes.push(code)
+        const answer =
+          this.paintAnswers.length > 1 ? this.paintAnswers.shift()! : this.paintAnswers[0]!
+        return Promise.resolve(answer)
+      }
+    }
+    /** Scripts run in the page's main world (`showErrorPage`'s in-place document). */
+    readonly scripts: string[] = []
+    executeJavaScript(code: string): Promise<unknown> {
+      this.scripts.push(code)
+      return Promise.resolve(undefined)
     }
     /** Scripts run in the preload's isolated world, and when: a `restyle` entry in the session's log. */
     readonly isolatedScripts: Array<{ worldId: number; code: string }> = []
@@ -1098,16 +1124,42 @@ describe('ElectronTabView.sendInput and the DevTools session', () => {
     taken: boolean
     log: string[]
   }
-  const viewWithDebugger = (): { view: ElectronTabView; dbg: FakeDebug; widget: unknown[] } => {
+  /** The page as `sendInput` probes it: the frame's paint answers and how often it was asked. */
+  interface FakePaint {
+    paintAnswers: string[]
+    paintProbes: string[]
+    emit(event: string, ...args: unknown[]): boolean
+  }
+  const viewWithDebugger = (): {
+    view: ElectronTabView
+    dbg: FakeDebug
+    widget: unknown[]
+    page: FakePaint
+  } => {
     const host = new ElectronTabViewHost(sessions)
     const view = host.createView(
       { id: 'tab_agent', containerId: 'default' } as Tab,
       noEvents,
       detachedWindow
     ) as ElectronTabView
-    const wc = view.webContents as unknown as { debugger: FakeDebug; widgetEvents: unknown[] }
-    return { view, dbg: wc.debugger, widget: wc.widgetEvents }
+    const wc = view.webContents as unknown as {
+      debugger: FakeDebug
+      widgetEvents: unknown[]
+    } & FakePaint
+    return { view, dbg: wc.debugger, widget: wc.widgetEvents, page: wc }
   }
+  const CLICK: AgentInputEvent = {
+    type: 'click',
+    x: 10,
+    y: 20,
+    button: 'left',
+    clickCount: 1,
+    modifiers: []
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
   it('attaches for the action and detaches right after it, sending only Input commands', async () => {
     const { view, dbg, widget } = viewWithDebugger()
@@ -1181,6 +1233,121 @@ describe('ElectronTabView.sendInput and the DevTools session', () => {
     dbg.taken = false
     await view.sendInput({ type: 'mouseMove', x: 1, y: 1 })
     expect(dbg.log).toEqual(['attach', 'Input.dispatchMouseEvent', 'detach'])
+  })
+
+  /**
+   * Paint holding (in-house fix, row 3): before a new http(s) document's first paint the
+   * renderer drops presses and keys with a success ack. `sendInput` waits for the paint on
+   * both its paths – the DevTools protocol's and the widget fallback's – bounded, and moves
+   * go at once (they are never dropped).
+   */
+  it('holds a click on the CDP path until the page has painted, then sends it; the painted document is not asked again', async () => {
+    const { view, dbg, page } = viewWithDebugger()
+    page.paintAnswers = ['holding', 'holding', 'painted']
+    let sent = false
+    const click = view.sendInput(CLICK).then(() => {
+      sent = true
+    })
+    await new Promise((r) => setTimeout(r, 5))
+    // Asked, holding: nothing has gone to the page yet.
+    expect(page.paintProbes.length).toBeGreaterThanOrEqual(1)
+    expect(dbg.log).toEqual([])
+    expect(sent).toBe(false)
+    await click
+    expect(page.paintProbes).toHaveLength(3)
+    expect(dbg.log).toEqual([
+      'attach',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      'detach'
+    ])
+    // The next key on the same document costs no probe.
+    await view.sendInput({ type: 'key', key: 'Enter', modifiers: [] })
+    expect(page.paintProbes).toHaveLength(3)
+    expect(dbg.log.slice(5)).toEqual([
+      'attach',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+      'detach'
+    ])
+    // A new document is asked in its own right.
+    page.emit('did-start-navigation', {
+      url: 'https://b.example/',
+      isMainFrame: true,
+      isSameDocument: false
+    })
+    page.paintAnswers = ['painted']
+    await view.sendInput({ type: 'text', text: 'hi' })
+    expect(page.paintProbes).toHaveLength(4)
+  })
+
+  it('holds a click on the widget fallback the same way, and sends the sequence whole once painted', async () => {
+    const { view, dbg, widget, page } = viewWithDebugger()
+    dbg.taken = true
+    page.paintAnswers = ['holding', 'painted']
+    const click = view.sendInput(CLICK)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(widget).toEqual([])
+    await click
+    expect(page.paintProbes).toHaveLength(2)
+    expect(widget.map((e) => (e as { type: string }).type)).toEqual([
+      'mouseMove',
+      'mouseDown',
+      'mouseUp'
+    ])
+  })
+
+  it('lets a bare mouse move through without asking: moves are never dropped', async () => {
+    const { view, dbg, page } = viewWithDebugger()
+    page.paintAnswers = ['holding']
+    await view.sendInput({ type: 'mouseMove', x: 3, y: 4 })
+    expect(page.paintProbes).toEqual([])
+    expect(dbg.log).toEqual(['attach', 'Input.dispatchMouseEvent', 'detach'])
+  })
+
+  it('sends anyway after the deadline, with one warning, when the page never paints', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { view, dbg, page } = viewWithDebugger()
+      page.paintAnswers = ['holding']
+      let sent = false
+      void view.sendInput({ type: 'key', key: 'a', modifiers: [] }).then(() => {
+        sent = true
+      })
+      await vi.advanceTimersByTimeAsync(9_900)
+      expect(dbg.log).toEqual([])
+      expect(sent).toBe(false)
+      await vi.advanceTimersByTimeAsync(200)
+      expect(dbg.log).toEqual([
+        'attach',
+        'Input.dispatchKeyEvent',
+        'Input.dispatchKeyEvent',
+        'detach'
+      ])
+      expect(sent).toBe(true)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0]?.[0]).toContain('has not painted after 10 s')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('reads the paint state for hasPainted from the same place, and answers yes when unsure', async () => {
+    const { view, page } = viewWithDebugger()
+    page.paintAnswers = ['holding']
+    expect(await view.hasPainted()).toBe(false)
+    page.paintAnswers = ['loading']
+    expect(await view.hasPainted()).toBe(false)
+    page.paintAnswers = ['ready']
+    expect(await view.hasPainted()).toBe(true)
+    // Known now: a later ask costs no probe.
+    const probes = page.paintProbes.length
+    expect(await view.hasPainted()).toBe(true)
+    expect(page.paintProbes).toHaveLength(probes)
+    view.destroy()
+    expect(await view.hasPainted()).toBe(true)
   })
 })
 
@@ -1542,6 +1709,180 @@ describe('page web preferences', () => {
       nodeIntegration: false,
       webSecurity: true
     })
+  })
+})
+
+/**
+ * The Appearance setting's Light / Dark on page views where the engine does not carry
+ * `nativeTheme.themeSource` to pages (Linux): the setting's `prefers-color-scheme` as an
+ * emulated media feature on the page's shared session, held like the dark theme for sites'
+ * override, and released when the setting returns to System.
+ */
+describe('the Appearance setting’s colour scheme on page views', () => {
+  interface FakeDebug {
+    attached: boolean
+    taken: boolean
+    log: string[]
+    commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+    detach(): void
+    emit(event: string, ...args: unknown[]): boolean
+  }
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 2))
+  }
+  const page = (
+    host: ElectronTabViewHost,
+    id: string
+  ): { view: ElectronTabView; dbg: FakeDebug } => {
+    const view = host.createView(
+      { id, containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    return { view, dbg: (view.webContents as unknown as { debugger: FakeDebug }).debugger }
+  }
+  const media = (dbg: FakeDebug): Array<Record<string, unknown> | undefined> =>
+    dbg.commands.filter((c) => c.method === 'Emulation.setEmulatedMedia').map((c) => c.params)
+  const DARK = { features: [{ name: 'prefers-color-scheme', value: 'dark' }] }
+  const LIGHT = { features: [{ name: 'prefers-color-scheme', value: 'light' }] }
+
+  it('puts an explicit scheme on every open page and on every page made after, and moves it with the setting', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const open = page(host, 'tab_scheme_open')
+    expect(host.colorScheme).toBe('system')
+    expect(host.pageColorScheme).toBeNull()
+    host.applyColorScheme('dark', 'linux')
+    await settle()
+    expect(host.colorScheme).toBe('dark')
+    expect(host.pageColorScheme).toBe('dark')
+    expect(open.dbg.log).toEqual(['attach', 'Emulation.setEmulatedMedia'])
+    expect(media(open.dbg)).toEqual([DARK])
+    // A page made under the setting takes it as it is made, before any document.
+    const made = page(host, 'tab_scheme_made')
+    await settle()
+    expect(made.dbg.log).toEqual(['attach', 'Emulation.setEmulatedMedia'])
+    expect(media(made.dbg)).toEqual([DARK])
+    // Light: the feature moves on the session the hold keeps; no second attach.
+    host.applyColorScheme('light', 'linux')
+    await settle()
+    expect(open.dbg.log).toEqual([
+      'attach',
+      'Emulation.setEmulatedMedia',
+      'Emulation.setEmulatedMedia'
+    ])
+    expect(media(open.dbg).at(-1)).toEqual(LIGHT)
+    expect(media(made.dbg).at(-1)).toEqual(LIGHT)
+    // The same setting again says nothing.
+    host.applyColorScheme('light', 'linux')
+    await settle()
+    expect(open.dbg.log).toHaveLength(3)
+    // System: released with an empty feature list, and the hold ends with its session.
+    host.applyColorScheme('system', 'linux')
+    await settle()
+    expect(open.dbg.log.slice(3)).toEqual(['Emulation.setEmulatedMedia', 'detach'])
+    expect(media(open.dbg).at(-1)).toEqual({ features: [] })
+    expect(open.dbg.attached).toBe(false)
+    expect(made.dbg.attached).toBe(false)
+    expect(host.pageColorScheme).toBeNull()
+    // A page made afterwards is left to the engine.
+    const later = page(host, 'tab_scheme_later')
+    await settle()
+    expect(later.dbg.log).toEqual([])
+  })
+
+  it('leaves pages to the engine where it carries the setting itself, but still knows the setting for the zen:// documents', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { dbg } = page(host, 'tab_scheme_win')
+    for (const platform of ['win32', 'darwin'] as const) {
+      host.applyColorScheme('dark', platform)
+      await settle()
+      expect(host.colorScheme).toBe('dark')
+      expect(host.pageColorScheme).toBeNull()
+      expect(dbg.log).toEqual([])
+      host.applyColorScheme('system', platform)
+    }
+  })
+
+  it('puts the feature back when the shared session goes from under its hold, and re-sends it on a recycled session beside the dark theme’s override', async () => {
+    const { nativeTheme } = await import('electron')
+    const theme = nativeTheme as unknown as { shouldUseDarkColors: boolean }
+    theme.shouldUseDarkColors = true
+    try {
+      const host = new ElectronTabViewHost(sessions)
+      host.applyColorScheme('dark', 'linux')
+      const { view, dbg } = page(host, 'tab_scheme_hold')
+      await settle()
+      expect(dbg.log).toEqual(['attach', 'Emulation.setEmulatedMedia'])
+      // The governor lets the session go (the clamp lifting as the page comes in front).
+      dbg.detach()
+      dbg.emit('detach', {}, 'target closed')
+      await settle()
+      expect(dbg.log.slice(2)).toEqual(['detach', 'attach', 'Emulation.setEmulatedMedia'])
+      expect(media(dbg).at(-1)).toEqual(DARK)
+      expect(dbg.attached).toBe(true)
+      // The dark theme for sites joins the same hold: no second attach, both overrides on.
+      view.setDarkening(true)
+      await settle()
+      expect(dbg.log.slice(5)).toEqual(['Emulation.setAutoDarkModeOverride'])
+      // A recycle (the fonts' once-per-agent command) puts both back on the fresh session.
+      host.applyFonts({ ...DEFAULT_FONT_SETTINGS, standard: 'Georgia' })
+      await settle()
+      host.applyFonts({ ...DEFAULT_FONT_SETTINGS, standard: 'Palatino' })
+      await settle()
+      const recycled = dbg.log.indexOf('detach', 6)
+      expect(recycled).toBeGreaterThan(6)
+      expect(dbg.log.slice(recycled, recycled + 4)).toEqual([
+        'detach',
+        'attach',
+        'Emulation.setEmulatedMedia',
+        'Emulation.setAutoDarkModeOverride'
+      ])
+      // One override off keeps the session for the other; the last one off ends the hold.
+      view.setDarkening(false)
+      await settle()
+      expect(dbg.log.at(-1)).toBe('Emulation.setAutoDarkModeOverride')
+      expect(dbg.attached).toBe(true)
+      host.applyColorScheme('system', 'linux')
+      await settle()
+      expect(dbg.log.slice(-2)).toEqual(['Emulation.setEmulatedMedia', 'detach'])
+      expect(media(dbg).at(-1)).toEqual({ features: [] })
+      expect(dbg.attached).toBe(false)
+    } finally {
+      theme.shouldUseDarkColors = false
+      new ElectronTabViewHost(sessions).applyFonts(DEFAULT_FONT_SETTINGS)
+    }
+  })
+
+  it('leaves a page another client holds alone, and tries again on the next change', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { dbg } = page(host, 'tab_scheme_taken')
+    dbg.taken = true
+    host.applyColorScheme('dark', 'linux')
+    await settle()
+    expect(dbg.log).toEqual([])
+    expect(dbg.attached).toBe(false)
+    dbg.taken = false
+    host.applyColorScheme('light', 'linux')
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Emulation.setEmulatedMedia'])
+    expect(media(dbg).at(-1)).toEqual(LIGHT)
+    host.applyColorScheme('system', 'linux')
+    await settle()
+    expect(dbg.attached).toBe(false)
+  })
+
+  it('writes the in-place error page with the setting’s scheme', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view } = page(host, 'tab_scheme_error')
+    const wc = view.webContents as unknown as { scripts: string[] }
+    host.applyColorScheme('dark', 'win32')
+    view.showErrorPage('zen://error?code=-105&description=net%3A%3AERR_NAME_NOT_RESOLVED')
+    expect(wc.scripts).toHaveLength(1)
+    expect(wc.scripts[0]).toContain("d.dataset.theme='dark';")
+    expect(wc.scripts[0]).not.toContain('prefers-color-scheme')
+    host.applyColorScheme('system', 'win32')
+    view.showErrorPage('zen://error?code=-105&description=net%3A%3AERR_NAME_NOT_RESOLVED')
+    expect(wc.scripts[1]).toContain("q('(prefers-color-scheme: dark)')")
   })
 })
 

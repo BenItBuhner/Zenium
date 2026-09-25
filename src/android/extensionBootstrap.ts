@@ -55,6 +55,7 @@ import { installCorsProxy } from './extensionCorsProxy'
 import { createFetchRelay, type FetchRelay } from './extensionFetchRelay'
 import { installExtensionUrlRewrite } from './extensionFrameUrls'
 import { installPdfDocumentType } from './extensionPdfDocument'
+import { installExtensionPolyfills, type PolyfillRealm } from './extensionPolyfills'
 import { installSpeechSynthesis } from './extensionSpeechSynthesis'
 import { installUrlOrigin, scopedUrlClass } from './extensionUrlOrigin'
 
@@ -450,6 +451,9 @@ declare const __zenExtBoot: Boot
     const context = boot.config.context
     const frame = frameContext()
     const origin = extensionOrigin(ext.id)
+    // The engine builtins an older WebView lacks, in this realm of the extension's own before
+    // any script of its runs (extensionPolyfills.ts; the MV3 worker's page among them).
+    const polyfills = installExtensionPolyfills(realWindow as PolyfillRealm)
     // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
     // MV2 backgrounds are pages in Chrome too and get none of it.
     const background = ext.manifest.background as Record<string, unknown> | undefined
@@ -494,11 +498,14 @@ declare const __zenExtBoot: Boot
       // counters, for the compat sweep's reading of what a popup's burst met at the page.
       const flow: Record<string, FlowStats> = {}
       for (const [ep, running] of engines) flow[ep] = running.flow
-      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow'> & { page: EngineContextKind } = {
+      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow' | 'polyfills'> & {
+        page: EngineContextKind
+      } = {
         frame: frame.url,
         world: 'page',
         page: context,
-        flow
+        flow,
+        polyfills
       }
       Object.defineProperty(g, '__zenExtStats', {
         value: pageStats,
@@ -720,8 +727,9 @@ declare const __zenExtBoot: Boot
   // through the relay and adopted as a constructed sheet; a module graph a content script's
   // `import()` asked for, refused by the same policy, is fetched again under the page's own
   // nonce where the host's bracket gives it the extension's `chrome` on the real global (the
-  // `with` fallback), and recorded where a world would have evaluated it
-  // (`extensionScriptRecovery.ts`).
+  // `with` fallback), or from the page's own origin (`/.zenium-ext/<id>/…`, which the host
+  // serves and a `script-src 'self'` admits): a module `<script>` there, this world's own
+  // `import()` where the world would have evaluated it (`extensionScriptRecovery.ts`).
   scriptRecovery = createScriptRecovery({
     attachedIds: () => attached.map((e) => e.id),
     request: (id, extId, url) =>
@@ -739,7 +747,12 @@ declare const __zenExtBoot: Boot
     error: primordials.error,
     warn: primordials.warn,
     document,
-    pageModules: content.extension.isolation !== 'world'
+    pageModules: content.extension.isolation !== 'world',
+    // The page's own origin (an `about:blank` frame's is "null": no alias there).
+    pageOrigin: location.origin,
+    // The bundler leaves a computed specifier as the native `import()` (the bootstrap is a
+    // classic script; the world's `import()` is what the content script's own call was).
+    importModule: (url) => import(/* @vite-ignore */ url)
   })
   const recovery = scriptRecovery
   window.addEventListener('error', (event) => recovery.onError(event), true)
@@ -820,9 +833,13 @@ declare const __zenExtBoot: Boot
     // (extensionPdfDocument.ts); any other document is left as it is.
     installPdfDocumentType(window)
     let result: ShieldResult = { policy: false, patched: 0 }
-    if (isolation === 'world')
+    if (isolation === 'world') {
       result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`)
-    else if (pristine) {
+      // The world's own builtins are the extension's to complete (extensionPolyfills.ts); the
+      // `with` scope's are the page's and are left alone.
+      const polyfills = installExtensionPolyfills(realWindow as PolyfillRealm)
+      if (stats) stats.polyfills = polyfills
+    } else if (pristine) {
       /* a frame on an inherited origin keeps the page's sinks; its content scripts write under the page's policy */
     } else {
       const ownCaller = ownScriptMatcher(Error)

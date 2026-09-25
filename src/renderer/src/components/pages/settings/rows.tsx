@@ -408,22 +408,7 @@ function DesktopRowView({
 }): JSX.Element {
   switch (row.kind) {
     case 'value':
-      return (
-        <ControlRow
-          row={row}
-          caption={caption}
-          description={row.sheetDescription ?? row.description}
-        >
-          <V2Menulist
-            label={row.label}
-            value={row.value}
-            options={row.options}
-            onChange={row.onChange}
-            disabled={row.disabled}
-            className="zen-settings-menulist"
-          />
-        </ControlRow>
-      )
+      return <MenulistRow row={row} caption={caption} />
     case 'switch':
       return <CheckRow row={row} caption={caption} />
     case 'action':
@@ -458,18 +443,9 @@ function DesktopRowView({
       )
     case 'field':
       if (row.form === 'stacked') return <StackedFieldRow row={row} caption={caption} />
-      return (
-        <ControlRow row={row} caption={caption} description={row.description}>
-          <InlineField row={row} />
-        </ControlRow>
-      )
+      return <InlineFieldRow row={row} caption={caption} />
     case 'slider':
-      // The slider trails the text on the desktop (§9.21), the value as text at its end.
-      return (
-        <ControlRow row={row} caption={caption} description={row.description}>
-          <SliderControl row={row} />
-        </ControlRow>
-      )
+      return <DesktopSliderRow row={row} caption={caption} />
     case 'item':
       // A row that exists to be acted on carries its one action as the trailing 32 button on a
       // mouse and opens no dialog (§10.5); the button is named for the row it acts on, as the
@@ -535,6 +511,58 @@ function DesktopRowView({
   }
 }
 
+/*
+ * A control beside its text is bound to the row's visible label (§9.12's association, the
+ * #453 lead check's sweep): a native field by the label's `<label for>`, a control that is a
+ * button – the menulist, the slider's thumb – by `aria-labelledby` on the label's id. The
+ * control's name is the label's text as it was under its `aria-label`; what changes is that
+ * one element names it, so a reader reads one name and a click on a native field's label lands
+ * in the field. The rows below hold the ids (`useId`) the row and its control share.
+ */
+
+/** A value row on the desktop (§10.5): the text, then its 32 px menulist named by the label. */
+function MenulistRow({ row, caption }: { row: ValueRow; caption?: string }): JSX.Element {
+  const labelId = `${useId()}-label`
+  return (
+    <ControlRow
+      row={row}
+      caption={caption}
+      description={row.sheetDescription ?? row.description}
+      labelId={labelId}
+    >
+      <V2Menulist
+        label={row.label}
+        labelledBy={labelId}
+        value={row.value}
+        options={row.options}
+        onChange={row.onChange}
+        disabled={row.disabled}
+        className="zen-settings-menulist"
+      />
+    </ControlRow>
+  )
+}
+
+/** A field row in the inline form (§9.12, §10.5): the field trails the text as the label's `<label for>`. */
+function InlineFieldRow({ row, caption }: { row: FieldRow; caption?: string }): JSX.Element {
+  const fieldId = `${useId()}-field`
+  return (
+    <ControlRow row={row} caption={caption} description={row.description} labelFor={fieldId}>
+      <InlineField row={row} fieldId={fieldId} />
+    </ControlRow>
+  )
+}
+
+/** A slider row on the desktop: the slider trails the text (§9.21), the value as text at its end. */
+function DesktopSliderRow({ row, caption }: { row: SliderRow; caption?: string }): JSX.Element {
+  const labelId = `${useId()}-label`
+  return (
+    <ControlRow row={row} caption={caption} description={row.description} labelId={labelId}>
+      <SliderControl row={row} labelledBy={labelId} />
+    </ControlRow>
+  )
+}
+
 /** A held step button (§10.4) waits this long before it repeats, then steps at this interval. */
 const HOLD_REPEAT_DELAY_MS = 400
 const HOLD_REPEAT_INTERVAL_MS = 100
@@ -551,16 +579,24 @@ const HOLD_REPEAT_INTERVAL_MS = 100
  * – to another row's button, as a finger lands there – and its unmount, the sheet closing or
  * the drill-in leaving with it. A builder that coalesces the row's steps commits on either
  * (the fonts group's draft), so a close inside the quiet window loses no step.
+ *
+ * The slider's thumb (`role="slider"`) is named by the row's visible label through
+ * `aria-labelledby` (§9.12's association): `labelled`, the head's own label; on the desktop,
+ * the row's label by `labelledBy` (`DesktopSliderRow`). The name is the label's text either way.
  */
 function SliderControl({
   row,
   caption,
-  labelled = false
+  labelled = false,
+  labelledBy
 }: {
   row: SliderRow
   caption?: string
   labelled?: boolean
+  /** The id of the row's label, for the desktop's control in the row's trailing slot. */
+  labelledBy?: string
 }): JSX.Element {
+  const headLabelId = `${useId()}-label`
   const [local, setLocal] = useState(row.value)
   // The row's value moved under the slider (another window, a reset): follow it.
   const [seen, setSeen] = useState(row.value)
@@ -581,7 +617,7 @@ function SliderControl({
   const slider = (
     <Slider
       className={cn('zen-zoom-slider zen-settings-slider', labelled && 'min-w-0 flex-1')}
-      aria-label={row.label}
+      aria-labelledby={labelled ? headLabelId : labelledBy}
       aria-valuetext={row.format(local)}
       min={row.min}
       max={row.max}
@@ -604,7 +640,9 @@ function SliderControl({
     <span className="zen-settings-row-text zen-settings-slider-block" onBlur={onBlur}>
       {caption && <span className="zen-settings-caption">{caption}</span>}
       <span className="zen-settings-slider-head">
-        <span className="zen-settings-label">{row.label}</span>
+        <span id={headLabelId} className="zen-settings-label">
+          {row.label}
+        </span>
         <span className="zen-settings-slider-value">{row.format(local)}</span>
       </span>
       {row.description && <span className="zen-settings-description">{row.description}</span>}
@@ -760,17 +798,23 @@ function RowMenuButton({
  * and its control keeps `disabled` for what it does but not its own .4 on top
  * (`.zen-settings-row-disabled .zen-v2-button:disabled { opacity: 1 }` and its siblings in
  * main.css, the Radix slider's `[data-disabled]` among them), so a shortcut row's Up button or
- * the Share of installed RAM slider reads at .4, not .16.
+ * the Share of installed RAM slider reads at .4, not .16. The label binds the control where the
+ * control is a form control (§9.12): `labelFor` makes it the `<label for>` of a native field,
+ * `labelId` gives it the id a button-like control's `aria-labelledby` names (`RowText`).
  */
 function ControlRow({
   row,
   caption,
   description,
+  labelFor,
+  labelId,
   children
 }: {
   row: SettingsRow
   caption?: string
   description?: string
+  labelFor?: string
+  labelId?: string
   children: ReactNode
 }): JSX.Element {
   return (
@@ -784,7 +828,13 @@ function ControlRow({
         row.disabled && 'zen-settings-row-disabled'
       )}
     >
-      <RowText label={row.label} description={description} caption={caption} />
+      <RowText
+        label={row.label}
+        labelFor={labelFor}
+        labelId={labelId}
+        description={description}
+        caption={caption}
+      />
       <span className="zen-settings-trailing zen-settings-control">{children}</span>
     </div>
   )
@@ -845,6 +895,7 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
   return (
     <label
       data-row={row.id}
+      data-tone={row.tone}
       className="zen-settings-row zen-settings-check-row zen-v2-row zen-v2-check-row"
       aria-disabled={disabled || undefined}
     >
@@ -873,9 +924,9 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
  * (`aria-describedby`) so a reader on the field hears the error. Trailing the text (the inline
  * form) the column hugs the field's width, 160 or 96, the message capped near it; `stacked`
  * (`StackedFieldRow`) the column spans the row's content width and the field and its message
- * with it. The inline field is named by `aria-label` (the builder's convention for a control
- * beside its text); a `fieldId` says a visible `<label for>` names the field instead (the
- * stacked row's), so the input carries the id and no `aria-label` to override it.
+ * with it. In either form the row's visible label is the field's `<label for>` (§9.12's
+ * association; #453 for the stacked row, the sweep for the inline one): the input carries
+ * `fieldId`, the id the label names, and no `aria-label` to override the name it gives.
  */
 function InlineField({
   row,
@@ -884,7 +935,8 @@ function InlineField({
 }: {
   row: FieldRow
   stacked?: boolean
-  fieldId?: string
+  /** The id the row's `<label for>` names (`RowText`'s `labelFor`). */
+  fieldId: string
 }): JSX.Element {
   const errorId = `${useId()}-error`
   const [value, setValue] = useState(row.value)
@@ -929,7 +981,6 @@ function InlineField({
         min={row.min}
         max={row.max}
         placeholder={row.placeholder}
-        aria-label={fieldId ? undefined : row.label}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
         autoCapitalize="off"
@@ -1060,17 +1111,21 @@ function PressableRow({
  * Label on the first line, the description under it at 13/69 %, at most two lines (§9.2) – in
  * a §1 status ink when the row carries a `tone` (`data-tone` on the row, the primitive's one
  * attribute; the description's rule reads it through the row). With `labelFor` the label is a
- * `<label for>` of the control with that id (the stacked field row's, §9.12), the same class
- * and so the same line; every style hangs on the class, so the element makes no difference.
+ * `<label for>` of the control with that id (a field row's, §9.12), the same class and so the
+ * same line; every style hangs on the class, so the element makes no difference. With `labelId`
+ * the label carries that id, for a button-like control's `aria-labelledby` (a menulist, a
+ * slider's thumb) to name itself by the visible label.
  */
 export function RowText({
   label,
   labelFor,
+  labelId,
   description,
   caption
 }: {
   label: string
   labelFor?: string
+  labelId?: string
   description?: string
   caption?: string
 }): JSX.Element {
@@ -1078,11 +1133,13 @@ export function RowText({
     <span className="zen-settings-row-text">
       {caption && <span className="zen-settings-caption">{caption}</span>}
       {labelFor ? (
-        <label className="zen-settings-label" htmlFor={labelFor}>
+        <label id={labelId} className="zen-settings-label" htmlFor={labelFor}>
           {label}
         </label>
       ) : (
-        <span className="zen-settings-label">{label}</span>
+        <span id={labelId} className="zen-settings-label">
+          {label}
+        </span>
       )}
       {description && <span className="zen-settings-description">{description}</span>}
     </span>

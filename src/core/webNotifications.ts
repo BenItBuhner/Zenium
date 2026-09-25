@@ -129,10 +129,14 @@ export class WebNotificationService {
     // its channel go, and the pages of the site learn their new status. A rule changed by hand
     // is a fresh start for the site's question too: the quiet mark a dismissal left goes with
     // it, so a site reset in Settings asks aloud again, not quietly for the rest of the session.
+    // A private session's change (`change.container`: an answer given in private, or the
+    // session's end forgetting it) is not the regular profile's rule moving, so the regular
+    // profile's mark stays where it is – a private window closing must not make a site the user
+    // waved off ask aloud again (#421's delta read).
     browser.permissions.subscribe((change) => {
       if (change.permission !== 'notifications') return
       if (change.origin !== null) {
-        this.dismissedSites.delete(change.origin)
+        if (change.container === undefined) this.dismissedSites.delete(change.origin)
         const decision = browser.permissions.resolve('notifications', change.origin)
         if (decision !== 'allow') this.forgetOrigin(change.origin)
       }
