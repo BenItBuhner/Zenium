@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Simplify bridge fixture</title>
+    <script>
+      // The compat sweep's witness for Simplify Copilot's site bridge, installed by the document's
+      // first script: every message its content module posts to this window from the bridge's two
+      // sources, and the page's own uncaught errors and rejections. The module imports itself a
+      // few seconds into the page (its frame-gate reply or a 2.5 s timeout, then a 2 MB import), and
+      // a watcher the driver evaluates from outside can land after the announce on a busy emulator;
+      // this one cannot. The driver finds `window.__zenVillage` and reads it.
+      (function () {
+        var w = (window.__zenVillage = { msgs: [], errors: [], fixture: true });
+        window.addEventListener('message', function (e) {
+          var d = e.data;
+          if (d && (d.source === 'VillageBridge' || d.source === 'VillageExtension') && w.msgs.length < 20) {
+            w.msgs.push({
+              source: d.source,
+              type: String(d.type),
+              text: d.message && d.message.text ? String(d.message.text).slice(0, 80) : undefined,
+              at: Math.round(performance.now())
+            });
+          }
+        });
+        window.addEventListener('error', function (e) {
+          if (w.errors.length < 10) {
+            w.errors.push({
+              message: String(e.message).slice(0, 200),
+              filename: String(e.filename || '').slice(0, 120),
+              lineno: e.lineno,
+              stack: e.error && e.error.stack ? String(e.error.stack).slice(0, 600) : ''
+            });
+          }
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason;
+          if (w.errors.length < 10) {
+            w.errors.push({
+              rejection: true,
+              message: String((r && r.message) || r).slice(0, 200),
+              stack: r && r.stack ? String(r.stack).slice(0, 600) : ''
+            });
+          }
+        });
+      })();
+    </script>
+  </head>
+  <body style="background: #fafafa; color: #222; font: 18px system-ui; padding: 40px">
+    <h1>Simplify bridge fixture</h1>
+    <p>
+      A page on <code>localhost</code> for Simplify Copilot's content module, which announces its
+      site bridge to the page's window on that host; the page keeps what it posts.
+    </p>
+  </body>
+</html>

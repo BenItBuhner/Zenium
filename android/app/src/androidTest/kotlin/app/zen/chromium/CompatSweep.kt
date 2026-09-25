@@ -7038,6 +7038,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 item = findByLabel { it.contains("Save Image As PNG", ignoreCase = true) }
                 if (item != null) true else null
             }
+            // The item's row where the sheet has settled: round 17's 156 BEFORE read it while the
+            // sheet was still sliding in (bounds [0,1601][719,1601], no height, past the screen's
+            // bottom) and the tap at that point landed on nothing.
+            if (item != null) {
+                val screenHeight = app.resources.displayMetrics.heightPixels
+                var last: android.graphics.Rect? = null
+                val settled = poll(scaled(5_000, factor), 250) {
+                    val now = findByLabel { it.contains("Save Image As PNG", ignoreCase = true) } ?: return@poll null
+                    val steady = now.height() > 8 && now.bottom <= screenHeight && now == last
+                    last = now
+                    if (steady) now else null
+                }
+                extra.put("itemSettled", settled != null).put("itemFirstRead", item?.toShortString())
+                if (settled != null) item = settled
+            }
         }
         val menuItem = item
         extra.put("sheets", JSONArray(sheet)).put("item", menuItem?.toShortString() ?: JSONObject.NULL)
@@ -7153,10 +7168,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Boxel 3D (mjjgm…): its popup IS the game (`index.html`, a Vue app over three.js). The home
      * menu is HTML ("Skins Level Editor Multi-player Play … Audio Controls Graphics") and the
      * canvas has no box until a level plays, so round 16's read of [CANVAS_SHOWN] on the menu was
-     * the menu, not the game (§7.4). Here the home's Play (`setPage('level-picker')`) and the
-     * level picker's Play are pressed, and the canvas read after them; the menu's fixed width
-     * against the sheet is recorded, not failed on (the popup sheet's width is the program's phone
-     * shape, a settled line).
+     * the menu, not the game (§7.4). Here the home's Play (`setPage('level-picker')`) is pressed,
+     * then the level picker's first entry (round 17's BEFORE pressed the home Play and waited on a
+     * picker "Play" that is the page's heading, not a control: the picker lists its levels in
+     * `.list` as elements with a `title` attribute – "Slip & Slide 1-1" first – whose click is
+     * `app.playLevel`), and the canvas read after it; the menu's fixed width against the sheet is
+     * recorded, not failed on (the popup sheet's width is the program's phone shape, a settled
+     * line).
      */
     private fun boxel3d(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -7179,7 +7197,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             }
             if (reachLabel("/^play$/i", factor, steps, "home Play")) {
                 reached++
-                if (awaitLabel("/^play$/i", factor) && reachLabel("/^play$/i", factor, steps, "level Play")) reached++
+                // The picker's first level entry, once the list is drawn (its click is `app.playLevel`).
+                val entry = poll(scaled(12_000, factor), 500) {
+                    val live = popupView()?.takeIf { it.context == "popup" } ?: return@poll null
+                    json(tabEval(live, BOXEL_LEVEL_ENTRY)).takeIf { it.optBoolean("clicked") }
+                }
+                steps.put("level entry: ${(entry ?: popupView()?.takeIf { it.context == "popup" }?.let { json(tabEval(it, BOXEL_LEVEL_ENTRY)) })?.toString()?.take(160) ?: "no popup up"}")
+                if (entry != null) {
+                    reached++
+                    SystemClock.sleep(scaled(1_500, factor))
+                }
             }
             popupView()?.takeIf { it.context == "popup" }?.let { live ->
                 found = pollExpr(live, CANVAS_SHOWN, scaled(30_000, factor))
@@ -7194,10 +7221,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val overflow = extra.optJSONObject("layout")?.let { it.optInt("scrollWidth") > it.optInt("innerWidth") + 2 } == true
         val width = if (overflow) "; the menu overflows the sheet horizontally (scrollWidth ${extra.optJSONObject("layout")?.optInt("scrollWidth")} > ${extra.optJSONObject("layout")?.optInt("innerWidth")}), recorded" else ""
         return when {
-            found.optBoolean("pass") -> Grade("P", "Boxel 3D: the game canvas draws after Play (${reached} Play control(s) reached): ${found.toString().take(160)}$width", extra)
+            found.optBoolean("pass") -> Grade("P", "Boxel 3D: the game canvas draws after Play (${reached} of the 2 controls reached – the home Play, the first level entry): ${found.toString().take(160)}$width", extra)
             popup == null -> Grade("F", "Boxel 3D: popup did not render in the core check", extra)
             reached == 0 -> Grade("F", "Boxel 3D: no Play control reached in its menu (${steps.toString().take(160)}); menu \"${extra.optString("menu").take(80)}\"$width", extra)
-            else -> Grade("F", "Boxel 3D: $reached Play control(s) pressed and no sized canvas within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(160)}$width", extra)
+            reached == 1 -> Grade("F", "Boxel 3D: the home Play pressed and no level entry in its picker within ${scaled(12_000, factor) / 1000} s (${steps.toString().take(200)}); canvas ${found.toString().take(120)}$width", extra)
+            else -> Grade("F", "Boxel 3D: the home Play and a level entry pressed and no sized canvas within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(160)}$width", extra)
         }
     }
 
@@ -7212,11 +7240,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * "announce"}`. Round 16's fixture (`page-b.html?gate` on `10.0.2.2`) matched none of the
      * patterns, so the module mounted nothing there and the row had no observable of its
      * evaluation. Here the page keeps every message of the two sources (`window.postMessage` to
-     * the page's own window crosses worlds), the page's `error` / `unhandledrejection` lines with
-     * file, line and stack (on 113 the content world is the page's realm), and, on an
-     * isolated-worlds WebView, the extension's world keeps its own error lines (an `ErrorEvent`
-     * reaches the listeners of the world it was thrown in) and answers the shape of
-     * `chrome.storage`'s four areas (`null` / `object` per area, `.get` on each asked as the
+     * the page's own window crosses worlds) from its own first script (`simplify-bridge.html`:
+     * round 17's first 156 read of this row had the module announce at 2.7 s of the page – its
+     * frame-gate reply timed out at 2.5 s and the import followed – while the driver's watcher,
+     * evaluated from outside over a main thread in ~1 s frames, landed after it and read nothing;
+     * a witness in the document itself cannot lose that race), the page's `error` /
+     * `unhandledrejection` lines with file, line and stack (on 113 the content world is the page's
+     * realm), and, on an isolated-worlds WebView, the extension's world keeps its own error lines
+     * (an `ErrorEvent` reaches the listeners of the world it was thrown in) and answers the shape
+     * of `chrome.storage`'s four areas (`null` / `object` per area, `.get` on each asked as the
      * module asks it, `browser` against `chrome` and its prototype – webextension-polyfill takes
      * `globalThis.browser` as is when its prototype is `Object.prototype`), since the module
      * wraps `storage.sync` and `storage.local` at evaluation and round 16's 156 line (`Cannot
@@ -7228,11 +7260,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val since = StepEvidence(row)
-        val tab = createTab("$LOCALHOST_BASE/page-b.html?simplify")
+        val tab = createTab("$LOCALHOST_BASE/simplify-bridge.html?simplify")
         val view = waitForView(tab)
-        // The watchers as early as the document is this one: the module's fetch and evaluation
-        // take seconds on the emulator, and a watcher installed after them reads nothing.
-        poll(scaled(15_000, factor), 200) { if (tabEval(view, "String(location.href.indexOf('page-b.html') >= 0 && document.readyState !== 'loading')") == "true") true else null }
+        // The fixture's own first script is the witness; the driver's is the fallback for a page
+        // that is not the fixture (`kept` names the fixture's, `installed` the driver's late one).
+        poll(scaled(15_000, factor), 200) { if (tabEval(view, "String(location.href.indexOf('simplify-bridge.html') >= 0 && document.readyState !== 'loading')") == "true") true else null }
         extra.put("pageWatch", tabEval(view, SIMPLIFY_PAGE_WATCH))
         if (worlds) {
             val trapped = poll(scaled(10_000, factor), 250) { worldEval(view, row.id, SIMPLIFY_WORLD_TRAP, 3) }
@@ -7887,7 +7919,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * the site opened, the runtime's world stats read for the row's scripts applied there (the
      * handshake event fires before a listener could be placed; the applied script with the
      * runtime id it carries is the reading). The site not loading for the runner, or an error
-     * page in its place, is `n/m`, the site's.
+     * page in its place, is `n/m`, the site's; so is the site sending the runner to another host
+     * (GMass on `mail.google.com`, compat round 17: Gmail's signed-out redirect lands on
+     * `workspace.google.com`, where its content script's `matches` do not apply, as in Chrome).
      */
     private fun liveAttached(label: String, url: String, gate: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
@@ -7902,13 +7936,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (attachedIn(world, row)) true else null
         }
         val state = json(tabEval(view, PAGE_OR_ERROR))
-        extra.put("world", world).put("page", state).put("url", (tabUrls()[tab] ?: "").take(120)).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        val landed = tabUrls()[tab] ?: url
+        val wantedHost = runCatching { java.net.URI(url).host }.getOrNull() ?: ""
+        val landedHost = runCatching { java.net.URI(landed).host }.getOrNull() ?: ""
+        val sentElsewhere = wantedHost.isNotEmpty() && landedHost.isNotEmpty() && !landedHost.equals(wantedHost, ignoreCase = true)
+        extra.put("world", world).put("page", state).put("url", landed.take(120)).put("landedHost", landedHost).put("console", JSONArray(consoleOf(view).takeLast(10)))
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-live-attached")
         when {
-            attachedIn(world, row) -> Grade("P", "$label: its content script is in the site's page (${world.optJSONObject("stats")?.optInt("applied")} script group(s) applied, chrome.runtime.id ${if (world.optString("runtimeId").equals(row.id, ignoreCase = true)) "its own" else world.optString("runtimeId").take(40)}) on ${(tabUrls()[tab] ?: url).take(80)}", extra)
+            attachedIn(world, row) -> Grade("P", "$label: its content script is in the site's page (${world.optJSONObject("stats")?.optInt("applied")} script group(s) applied, chrome.runtime.id ${if (world.optString("runtimeId").equals(row.id, ignoreCase = true)) "its own" else world.optString("runtimeId").take(40)}) on ${landed.take(80)}", extra)
             state.optBoolean("errorPage") -> Grade("n/m", "$label: the site did not load for the runner (${state.optString("code").ifEmpty { state.optString("text").take(80) }}); the core needs $gate (not measurable here)", extra)
-            else -> Grade("F", "$label: its content script did not attach on ${(tabUrls()[tab] ?: url).take(80)} within ${scaled(15_000, factor) / 1000} s: ${world.toString().take(200)}", extra)
+            sentElsewhere -> Grade("n/m", "$label: the site sent the runner from $wantedHost to $landedHost (${landed.take(80)}), where its content script's matches do not apply; the core needs $gate (not measurable here)", extra)
+            else -> Grade("F", "$label: its content script did not attach on ${landed.take(80)} within ${scaled(15_000, factor) / 1000} s: ${world.toString().take(200)}", extra)
         }
     }
 
@@ -9726,11 +9765,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val READ_ALOUD_STATE =
             "(function(){var vis=function(id){var e=document.getElementById(id);return !!e&&e.offsetParent!==null};var hl=document.getElementById('highlight');var h=((hl&&hl.innerText)||'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:h.length>10,highlight:h.slice(0,140),status:(((document.getElementById('status')||{}).innerText)||'').trim().slice(0,80),play:vis('btnPlay'),pause:vis('btnPause'),stop:vis('btnStop'),loading:vis('imgLoading'),text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''})})()"
-        /** Custom Cursor's popup: a pack card (`.collection-cursors .cursor` with an image; a fallback on any drawn card with an image), clicked. */
+        /**
+         * A cursor pack's popup: a pack card, clicked – Custom Cursor's `.collection-cursors .cursor`
+         * with an image; Cursor Helper's Tailwind card (`div.select-none.cursor-pointer` around a
+         * pack image, compat round 17: the old fallback's `[class*="item"]` took the popup's
+         * notification divider through its `items-center`, an icon under `/assets/icons/` in it,
+         * and no pack was chosen); then any drawn card with an image that is not a UI icon.
+         */
         private const val CURSOR_PICK =
-            "(function(){var visible=function(n){var r=n.getBoundingClientRect();return r.width>20&&r.height>20};var packs=Array.prototype.slice.call(document.querySelectorAll('.collection-cursors .cursor, .collection-cursors > div')).filter(function(n){return visible(n)&&n.querySelector('img')});" +
-                "var cards=packs.length?packs:Array.prototype.slice.call(document.querySelectorAll('[class*=\"cursor\"], [class*=\"Cursor\"], [class*=\"item\"], [class*=\"card\"], li')).filter(function(n){return visible(n)&&n.querySelector('img')&&!/logo|header|footer|nav|btn|setting/i.test(n.className)});" +
-                "var imgs=Array.prototype.slice.call(document.querySelectorAll('img')).filter(function(i){return visible(i)&&/\\.(png|svg|cur|gif)/i.test(i.src)&&!/logo/i.test(i.src+i.alt+i.className)});var hit=cards[0]||imgs[1]||imgs[0];" +
+            "(function(){var visible=function(n){var r=n.getBoundingClientRect();return r.width>20&&r.height>20};var packImg=function(n){var i=n.querySelector('img');return !!i&&!/\\/assets\\/icons\\//i.test(i.getAttribute('src')||'')};var ui=/logo|header|footer|nav|btn|setting|divider|noti/i;" +
+                "var packs=Array.prototype.slice.call(document.querySelectorAll('.collection-cursors .cursor, .collection-cursors > div')).filter(function(n){return visible(n)&&n.querySelector('img')});" +
+                "var tailwind=Array.prototype.slice.call(document.querySelectorAll('div.select-none.cursor-pointer, div.cursor-pointer.aspect-square')).filter(function(n){return visible(n)&&packImg(n)&&!ui.test(n.className)});" +
+                "var cards=packs.length?packs:(tailwind.length?tailwind:Array.prototype.slice.call(document.querySelectorAll('[class*=\"cursor\"], [class*=\"Cursor\"], [class*=\"item\"], [class*=\"card\"], li')).filter(function(n){return visible(n)&&packImg(n)&&!ui.test(n.className)}));" +
+                "var imgs=Array.prototype.slice.call(document.querySelectorAll('img')).filter(function(i){return visible(i)&&/\\.(png|svg|cur|gif)/i.test(i.src)&&!/logo|\\/assets\\/icons\\//i.test(i.src+i.alt+i.className)});var hit=cards[0]||imgs[1]||imgs[0];" +
                 "if(!hit)return JSON.stringify({clicked:false,imgs:imgs.length,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):''});var r=hit.getBoundingClientRect();hit.click();" +
                 "return JSON.stringify({clicked:true,tag:hit.tagName,cls:String(hit.className).slice(0,50),x:r.left+r.width/2,y:r.top+r.height/2,imgs:imgs.length})})()"
         /**
@@ -10361,6 +10408,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val CANVAS_SHOWN =
             "(function(){var c=document.querySelector('#gameCanvas, canvas');var r=c?c.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
                 "return JSON.stringify({pass:!!c&&c.width>100&&c.height>100&&r.width>60,w:c?c.width:0,h:c?c.height:0,shown:Math.round(r.width)+'x'+Math.round(r.height),canvases:document.querySelectorAll('canvas').length,text:t.slice(0,80)})})()"
+        /**
+         * Boxel 3D's level picker ([boxel3d]): the first level entry in its `.list` (an element with
+         * a `title` attribute – the level's name – whose click is `app.playLevel`), clicked; nothing
+         * clicked while the list is not drawn.
+         */
+        private const val BOXEL_LEVEL_ENTRY =
+            "(function(){var list=document.querySelector('.level-picker .list, .levels .list, .list');var entries=list?Array.prototype.slice.call(list.querySelectorAll('[title]')).filter(function(n){var r=n.getBoundingClientRect();return r.width>20&&r.height>20&&!/exit|home|search|setting/i.test(n.getAttribute('title')||'')}):[];" +
+                "var hit=entries[0];if(!hit)return JSON.stringify({clicked:false,list:!!list,entries:entries.length,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)});var r=hit.getBoundingClientRect();hit.click();" +
+                "return JSON.stringify({clicked:true,title:String(hit.getAttribute('title')).slice(0,60),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2,entries:entries.length})})()"
 
         // --- compat round 17 ---
 
