@@ -17,8 +17,7 @@ name: Android cold start pair
 # emulator. The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   # TEMPORARY (H4 round 2, the gate's calibration): a push to the branch runs the NULL PAIR – the
-  # base is this commit's own tree – twice in parallel, at the candidate N. Removed before the
-  # round closes.
+  # base is this commit's own tree – at the candidate N. Removed before the round closes.
   push:
     branches:
       - cursor/android-harness-h4-2ae5
@@ -61,12 +60,12 @@ concurrency:
 
 jobs:
   pair:
-    # TEMPORARY (H4 round 2): two null runs at once, the base this commit itself; the artifact
-    # name carries the run's number (the recipe's concurrency group is keyed on it).
+    # TEMPORARY (H4 round 2): the third null run (the order alternated), the base this commit
+    # itself; the artifact name carries the run's number.
     strategy:
       fail-fast: false
       matrix:
-        run: [1, 2]
+        run: [3]
     name: Null pair ${{ matrix.run }} (before this commit / after this commit)
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
