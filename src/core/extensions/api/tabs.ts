@@ -81,7 +81,7 @@ export interface TabQueryContext {
   /** Window of the calling context (`WINDOW_ID_NONE` when it has none, e.g. a service worker). */
   currentWindowId: number
   lastFocusedWindowId: number
-  windowTypeOf(windowId: number): 'normal' | 'popup'
+  windowTypeOf(windowId: number): 'normal' | 'popup' | 'panel' | 'app' | 'devtools'
 }
 
 /** Chrome's `tabs.query` filter semantics, applied to one tab. */
