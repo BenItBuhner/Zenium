@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import app.zen.chromium.ext.ZipFixtures
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -297,5 +298,54 @@ class BootHandoffTest {
         // A sweep with no directory at all is fine too.
         spill.deleteRecursively()
         handoff.sweep()
+    }
+
+    // --- cached favicons (HB-47) --------------------------------------------------------------------
+
+    @Test
+    fun `a cached favicon is served from its document, decoded to its bytes, with its type and cached for good`() {
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4)
+        val hash = "0123456789abcdef0123456789abcdef"
+        // The document as the core writes it (`encodeDataUrl` in `src/core/favicons.ts`).
+        storage.writeSync("favicons/$hash", "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(png))
+
+        val answer = handoff.favicon(hash)
+        assertTrue(answer.ok)
+        assertEquals("image/png", answer.mimeType)
+        assertEquals(png.size.toLong(), answer.length)
+        assertNull(answer.etag)
+        assertEquals(BootHandoff.IMMUTABLE, answer.cacheControl)
+        assertArrayEquals(png, answer.stream!!.use { it.readBytes() })
+        // With a leading slash, as the path arrives.
+        assertTrue(handoff.favicon("/$hash").ok)
+
+        // A document's answer keeps `no-store`: it changes under its name.
+        storage.writeSync("state.json", """{"version":1}""")
+        assertEquals(BootHandoff.NO_STORE, handoff.document("state.json").cacheControl)
+    }
+
+    @Test
+    fun `a favicon that is not there, not a hash, or not an image is 404`() {
+        storage.writeSync("state.json", """{"version":1}""")
+        assertEquals(404, handoff.favicon("fedcba9876543210fedcba9876543210").status)
+        assertEquals(404, handoff.favicon("").status)
+        assertEquals(404, handoff.favicon("state.json").status)
+        assertEquals(404, handoff.favicon("../state.json").status)
+        assertEquals(404, handoff.favicon("FEDCBA9876543210FEDCBA9876543210").status)
+        // A document under the folder that is no base64 image.
+        storage.writeSync("favicons/fedcba9876543210fedcba9876543210", "data:text/html;base64,PGh0bWw+")
+        assertEquals(404, handoff.favicon("fedcba9876543210fedcba9876543210").status)
+        storage.writeSync("favicons/fedcba9876543210fedcba9876543210", "data:image/png,notbase64")
+        assertEquals(404, handoff.favicon("fedcba9876543210fedcba9876543210").status)
+        storage.writeSync("favicons/fedcba9876543210fedcba9876543210", "data:image/png;base64,@@@@")
+        assertEquals(404, handoff.favicon("fedcba9876543210fedcba9876543210").status)
+
+        // The decoder on its own: the type is lowercased, a charset parameter is tolerated.
+        val icon = BootHandoff.decodeImageDataUrl("data:image/SVG+xml;charset=utf-8;base64,PHN2Zy8+")
+        assertNotNull(icon)
+        assertEquals("image/svg+xml", icon!!.mimeType)
+        assertEquals("<svg/>", String(icon.bytes, Charsets.UTF_8))
+        assertNull(BootHandoff.decodeImageDataUrl("https://a.example/favicon.ico"))
+        assertNull(BootHandoff.decodeImageDataUrl("data:image/png;base64,"))
     }
 }

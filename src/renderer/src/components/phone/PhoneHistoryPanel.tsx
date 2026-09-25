@@ -432,6 +432,7 @@ function HistoryVisitRow({
       icon={
         <RowFavicon
           src={row.favicon}
+          page={row.url}
           fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
         />
       }
@@ -475,6 +476,7 @@ function RecentlyClosedRow({
         ) : (
           <RowFavicon
             src={entry.favicon}
+            page={entry.url ?? null}
             fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
           />
         )

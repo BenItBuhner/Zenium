@@ -70,6 +70,24 @@ describe('AndroidTabView.executeJavaScript', () => {
     })
   })
 
+  it('starts a download on Kotlin, the menu’s Save As… crossing as the one flag that makes that download ask where it goes (HB-40)', () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    view.downloadURL('https://example.com/report.pdf')
+    view.downloadURL('https://example.com/photo.jpg', { saveAs: true })
+    view.downloadURL('https://example.com/plain.zip', { saveAs: false })
+    view.downloadURL('https://example.com/other.zip', {})
+    expect(calls).toEqual([
+      { method: 'view.download', args: { tabId: 'tab_1', url: 'https://example.com/report.pdf' } },
+      {
+        method: 'view.download',
+        args: { tabId: 'tab_1', url: 'https://example.com/photo.jpg', saveAs: true }
+      },
+      { method: 'view.download', args: { tabId: 'tab_1', url: 'https://example.com/plain.zip' } },
+      { method: 'view.download', args: { tabId: 'tab_1', url: 'https://example.com/other.zip' } }
+    ])
+  })
+
   it('asks Kotlin for the page’s geometry and takes only a full answer', async () => {
     const { bridge, calls } = fakeBridge()
     const view = new AndroidTabView('tab_1', bridge)

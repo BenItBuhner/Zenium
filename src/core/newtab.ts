@@ -31,6 +31,7 @@ import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
 import { makeTheme, resolveTheme, themeCssVariables, unfollowedTheme } from '../shared/theme'
 import { engineFieldFavicon } from '../shared/search'
+import { openHosts } from '../shared/favicons'
 import { newId } from '../shared/ids'
 import {
   DEFAULT_NEW_TAB_SETTINGS,
@@ -257,6 +258,8 @@ export class NewTabService {
       this.historyVersion += 1
       this.push()
     })
+    // An icon arriving in the cache (or leaving it) changes what a tile loads (`tileFavicon`).
+    browser.favicons.onChange(() => this.push())
   }
 
   /** The page is on (setting) and the host can render it (capability). */
@@ -402,7 +405,12 @@ export class NewTabService {
     const background = newTabBackground(settings)
     // A private window's page has no tiles: neither what was browsed elsewhere nor the user's
     // own shortcuts – its explainer stands where the grid would (design language v2 §9.29).
-    const shortcuts = !isPrivate && shortcutsMode !== 'hidden' ? this.shortcuts() : []
+    // The tiles are history's rows (HB-47): each icon is the cache's copy, or live only while
+    // its site is open in a tab; a closed site the cache has nothing for shows its letter.
+    const open = openHosts(Object.values(this.browser.state.model.tabs))
+    const shortcuts = (!isPrivate && shortcutsMode !== 'hidden' ? this.shortcuts() : []).map(
+      (s) => ({ ...s, favicon: this.tileFavicon(s.favicon, s.url, open) })
+    )
     const state: NewTabPageState = {
       light: this.variant(theme, false),
       dark: this.variant(theme, true),
@@ -413,7 +421,13 @@ export class NewTabService {
       background: background === 'image' && !backgroundImage ? 'space' : background,
       greeting: sections.greeting,
       shortcuts,
-      topSites: shortcutsMode === 'most-visited' && !isPrivate ? this.topSites(shortcuts) : [],
+      topSites:
+        shortcutsMode === 'most-visited' && !isPrivate
+          ? this.topSites(shortcuts).map((s) => ({
+              ...s,
+              favicon: this.tileFavicon(s.favicon, s.url, open)
+            }))
+          : [],
       backgroundImage,
       canPickImage: Boolean(host?.pick),
       // The field leads with the engine's favicon (v2 §6), the pill's source: the extension's
@@ -452,6 +466,22 @@ export class NewTabService {
     const sites = this.browser.history.topSites(n, excluded)
     this.topSitesCache = { key, sites }
     return sites
+  }
+
+  /**
+   * The address a tile's `<img>` loads for the icon history knows (HB-47, the rule the chrome's
+   * page rows follow): the cache's copy (`zen://favicon/<hash>`, served on the tab's session);
+   * the live address only while the site is open in a tab – its icon is on its way into the
+   * cache; null, the tile's letter, for a closed site the cache has nothing for, so a new tab
+   * page makes no request to a site. An icon on a scheme that is no site's stands as it is.
+   */
+  private tileFavicon(icon: string | null, url: string, open: ReadonlySet<string>): string | null {
+    if (!icon) return null
+    const cached = this.browser.favicons.resolve(icon)
+    if (cached) return cached
+    if (!/^https?:/i.test(icon)) return icon
+    const host = siteHost(url)
+    return host !== '' && open.has(host) ? icon : null
   }
 
   /** The user's shortcuts with the favicons history knows. */

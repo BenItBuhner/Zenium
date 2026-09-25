@@ -5,6 +5,7 @@ import type { ScreenCaptureRequest, ScreenCaptureSource, UIState } from '@shared
 import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { run } from '@renderer/lib/api'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import {
   PICKER_ASKS,
@@ -382,7 +383,10 @@ function Host({ host }: { host: string }): JSX.Element {
  */
 function RequesterFavicon({ src }: { src: string | null }): JSX.Element {
   const [broken, setBroken] = useState<string | null>(null)
-  const icon = src && broken !== src ? src : null
+  // The core's cached copy where it holds one (HB-47); the requester is an open tab, so its
+  // live address stands where the cache has nothing.
+  const resolved = useFaviconSrc(src)
+  const icon = resolved && broken !== resolved ? resolved : null
   return icon ? (
     <img
       className="zen-scpick-requester"

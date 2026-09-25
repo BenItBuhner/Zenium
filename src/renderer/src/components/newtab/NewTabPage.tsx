@@ -20,6 +20,7 @@ import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
 import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { run } from '@renderer/lib/api'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import {
   fakeboxMorphStore,
   fakeboxScrolled,
@@ -600,7 +601,7 @@ function TopSiteTile({
       }}
     >
       <span className="zen-ntp-tile flex h-14 w-14 items-center justify-center">
-        <TileIcon favicon={site.favicon} label={label} />
+        <TileIcon favicon={site.favicon} url={site.url} label={label} />
       </span>
       <span className="zen-ntp-caption w-full truncate text-center">{label}</span>
     </button>
@@ -610,12 +611,24 @@ function TopSiteTile({
 /**
  * The site's icon at 24, fading in once it has loaded; a letter in the deemphasised ink when the
  * site has none (or it failed), and the globe when there is no letter to show either (the
- * fallbacks' type and ink are the shared `zen-ntp-*` rules', the desktop page's too).
+ * fallbacks' type and ink are the shared `zen-ntp-*` rules', the desktop page's too). The icon
+ * is the core's cached copy where it holds one (HB-47); a tile asks the network for an uncached
+ * icon only while its site is open in a tab, and is its letter otherwise – the new tab page
+ * makes no request to every top site each time it opens.
  */
-function TileIcon({ favicon, label }: { favicon: string | null; label: string }): JSX.Element {
+function TileIcon({
+  favicon,
+  url,
+  label
+}: {
+  favicon: string | null
+  url: string
+  label: string
+}): JSX.Element {
   const [loaded, setLoaded] = useState(false)
   const [broken, setBroken] = useState<string | null>(null)
-  const src = favicon && broken !== favicon ? favicon : null
+  const resolved = useFaviconSrc(favicon, url)
+  const src = resolved && broken !== resolved ? resolved : null
   if (src) {
     return (
       <img
@@ -626,7 +639,7 @@ function TileIcon({ favicon, label }: { favicon: string | null; label: string })
         draggable={false}
         className={cn('zen-ntp-icon h-6 w-6 object-contain', loaded && 'zen-ntp-icon-loaded')}
         onLoad={() => setLoaded(true)}
-        onError={() => setBroken(favicon)}
+        onError={() => setBroken(src)}
       />
     )
   }

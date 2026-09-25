@@ -1,6 +1,7 @@
 import type { JSX, MouseEvent, ReactNode, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { Search, Trash2, X } from 'lucide-react'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { swipeOutcome, swipeRestTarget, swipeReveal } from '@renderer/lib/gestures/swipeDelete'
 import { cn } from '@renderer/lib/utils'
@@ -214,25 +215,34 @@ export function PhoneEmptyNote({
   )
 }
 
-/** A favicon in the row's leading box, or the fallback glyph. */
+/**
+ * A favicon in the row's leading box, or the fallback glyph. The icon is drawn from the core's
+ * favicon cache when it holds a copy (HB-47, `useFaviconSrc`); a row that stands for a `page`
+ * (a history row, a bookmark, a recently closed tab) asks the network for an icon the cache
+ * lacks only while the page's site is open in a tab, and shows the fallback otherwise.
+ */
 export function RowFavicon({
   src,
+  page,
   fallback
 }: {
   src: string | null | undefined
+  /** The page the row stands for; left out for a slot that is no page's (the current page's own mark). */
+  page?: string | null
   fallback: ReactNode
 }): JSX.Element {
   // Remembering *which* address failed makes a new one try again without an effect.
   const [brokenSrc, setBrokenSrc] = useState<string | null>(null)
-  if (!src || brokenSrc === src) return <>{fallback}</>
+  const resolved = useFaviconSrc(src, page)
+  if (!resolved || brokenSrc === resolved) return <>{fallback}</>
   return (
     <img
-      src={src}
+      src={resolved}
       alt=""
       className="zen-list-favicon"
       referrerPolicy="no-referrer"
       draggable={false}
-      onError={() => setBrokenSrc(src)}
+      onError={() => setBrokenSrc(resolved)}
     />
   )
 }

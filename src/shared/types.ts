@@ -145,6 +145,13 @@ export interface HostCapabilities {
    */
   printPreview: boolean
   /**
+   * The host saves a page in Chrome's three formats – complete, HTML only, single file
+   * (Electron's `webContents.savePage`), so Save Page As is a submenu of the three and Ctrl+S
+   * saves in the last one used. Off, the host writes its one archive (Android's
+   * `WebView.saveWebArchive`, an MHTML file into Downloads) and the menu keeps one row.
+   */
+  savePageFormats: boolean
+  /**
    * The host shows PDF documents inline in a tab through Zenium's own viewer, the `zen://pdf`
    * page (Android, whose WebView cannot draw a PDF: a PDF the page navigates to is downloaded
    * and opened there instead of the system chooser). Desktop hosts draw PDFs with Chromium's
@@ -1977,7 +1984,21 @@ export interface DownloadSettings {
    * when nothing is downloading, like Chrome's pinned button or Edge's default.
    */
   alwaysShowButton: boolean
+  /**
+   * The format Save Page As used last, which Ctrl+S saves in again (Edge remembers the dialog's
+   * last format; Chrome's dialog opens on "Webpage, Complete" every time). Written by a pick in
+   * the Save Page As submenu on a host with `capabilities.savePageFormats`; a host with one
+   * archive format (Android) has no row that changes it and writes its archive whatever it says.
+   */
+  savePageFormat: SavePageFormat
 }
+
+/**
+ * Chrome's Save Page As formats (`shared/savePage.ts` names them): the page with its resources
+ * in a folder beside it (`complete`, Chrome's default), the document alone (`htmlOnly`), or one
+ * MHTML file (`singleFile`, Edge's default; Chrome's behind a flag).
+ */
+export type SavePageFormat = 'complete' | 'htmlOnly' | 'singleFile'
 
 // ---------------------------------------------------------------------------
 // Search
@@ -4936,6 +4957,11 @@ export interface Commands {
   'history.recent': { args: { limit: number }; result: HistoryEntry[] }
   'history.delete': { args: { url: string }; result: void }
   'history.clear': { args: void; result: void }
+  /**
+   * The favicon cache's index (HB-47): every cached icon address with its content hash, read
+   * once when the chrome starts; `favicons.changed` carries the deltas from then on.
+   */
+  'favicons.index': { args: void; result: Array<[url: string, hash: string]> }
   'history.visits': { args: { query: HistoryQuery }; result: HistoryVisit[] }
   'history.grouped': { args: { query: HistoryQuery }; result: HistoryDayGroup[] }
   'history.topSites': { args: { n: number; excludedHosts?: string[] }; result: TopSite[] }
@@ -6233,6 +6259,11 @@ export interface Events {
   'externalProtocol.cancel': { requestId: string }
   /** History changed: visits are throttled to twice a second, deletions arrive at once. */
   'history.changed': { kind: 'visit' | 'delete' | 'clear' }
+  /**
+   * The favicon cache's index changed (HB-47): icon addresses now cached, with their content
+   * hash, and addresses dropped (evicted, or forgotten with a history clear).
+   */
+  'favicons.changed': { added: Array<[url: string, hash: string]>; removed: string[] }
   /**
    * "Select" in a History page row's menu: the page picks the visit, entering its selection mode
    * (v2 §10.1 – the checkbox column shows on every row while anything is picked).

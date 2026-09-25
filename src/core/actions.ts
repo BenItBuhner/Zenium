@@ -1,6 +1,8 @@
-import type { ShortcutAction } from '../shared/types'
+import type { SavePageFormat, ShortcutAction } from '../shared/types'
 import { screenshotFileName } from '../shared/capture'
+import { resolveDownloadSettings } from '../shared/downloads'
 import { pathToFileUrl } from '../shared/launchArgs'
+import { savePageMimeType, suggestedSavePageName } from '../shared/savePage'
 import { BLANK_URL } from '../shared/url'
 import type { Browser } from './browser'
 import { selectionQuery } from './find'
@@ -459,15 +461,34 @@ export class Actions {
     return selectionQuery(raw)
   }
 
-  private async savePage(tabId: string, win: ZenWindow): Promise<void> {
+  /**
+   * Save Page As in one of Chrome's three formats (CT-27; the Save Page As submenu's rows on a
+   * host with `capabilities.savePageFormats`). A save that went through is remembered as the
+   * format Ctrl+S (`page.savePage`) saves in next, as Edge's dialog remembers its last format; a
+   * cancelled dialog remembers nothing.
+   */
+  savePageAs(tabId: string, win: ZenWindow, format: SavePageFormat): void {
+    void this.savePage(tabId, win, format)
+  }
+
+  /**
+   * The save itself. Without a format (the shortcut, the context menu's row on a host without
+   * formats, the phone's Download Page) the last-used one is asked for; a host with one archive
+   * format writes that whatever is asked and answers with the archive's path, so the downloads
+   * record's type comes from the saved file, not the request.
+   */
+  private async savePage(tabId: string, win: ZenWindow, format?: SavePageFormat): Promise<void> {
     const tab = this.browser.tabs.tab(tabId)
     const view = this.browser.tabs.view(tabId)
     if (!tab || !view) return
-    const safeName = (tab.title || 'page').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80)
+    const settings = resolveDownloadSettings(this.browser.state.settings)
+    const chosen = format ?? settings.savePageFormat
     try {
-      const path = await view.savePage(`${safeName}.html`)
+      const path = await view.savePage(suggestedSavePageName(tab.title, chosen), chosen)
       if (!path) return
-      this.browser.downloads.addCompleted(path, 'text/html', {
+      if (format && format !== settings.savePageFormat)
+        this.browser.updateSettings({ downloads: { savePageFormat: format } }, win)
+      this.browser.downloads.addCompleted(path, savePageMimeType(path), {
         containerId: tab.containerId,
         private: win.isPrivate
       })

@@ -327,10 +327,15 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         SystemClock.sleep(1_000)
     }
 
-    // 7. Download Page: the host saves an archive; the core toasts and files it.
+    // 7. Download Page: the host saves an archive; the core toasts and files it. The archive is
+    // the page's title under `.mhtml` in the public Downloads (CT-27; `Host.savePage` through
+    // `MediaStore.Downloads` on Q+): the core's row names the file, its type and a path under
+    // the public folder, MediaStore lists the row and its bytes open as MHTML, and the downloads
+    // sheet shows the row.
     private fun downloadPage() {
         finding("\n7. Download Page")
         val before = downloadCount()
+        val title = activeCoreTab()?.optString("title").orEmpty()
         watchToasts()
         record("the menu opened", openMenu())
         record(
@@ -341,8 +346,49 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         still("page-saved")
         val after = downloadCount()
         record("one download more ($before -> $after)", after == before + 1)
+        val row = coreState().optJSONArray("downloads")?.optJSONObject(0)
+        val archive = "$title.mhtml"
+        record(
+            "the row is the page's title as an MHTML archive ('${row?.optString("filename")}', '${row?.optString("mimeType")}')",
+            row?.optString("filename") == archive && row.optString("mimeType") == "multipart/related"
+        )
+        record(
+            "the archive is in the public Downloads folder (${row?.optString("savePath")})",
+            row?.optString("savePath")?.startsWith(PUBLIC_DOWNLOADS) == true
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val head = mediaStoreHead(archive)
+            record(
+                "MediaStore.Downloads lists '$archive' and its bytes open as MHTML (${head?.take(40)?.replace("\n", "\\n")})",
+                head != null && (head.startsWith("From:") || head.contains("MIME-Version") || head.contains("multipart/related"))
+            )
+        }
         awaitSurface(false)
-        SystemClock.sleep(3_500)
+        SystemClock.sleep(1_500)
+        // The downloads sheet: the archive's row at the top.
+        record("the menu's Downloads opened the sheet", openMenuItem(LABEL_DOWNLOADS) && waitFor(SHEET_DOWNLOADS, 8_000) != null)
+        record("the sheet lists '$archive'", waitFor({ it.startsWith(archive) }, 8_000) != null)
+        SystemClock.sleep(1_000)
+        still("page-saved-in-downloads")
+        back()
+        awaitSurface(false)
+        SystemClock.sleep(2_000)
+    }
+
+    /**
+     * The first bytes of the `MediaStore.Downloads` row named `name`, read through the resolver
+     * as any app would; null without such a row or when it cannot be opened.
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    private fun mediaStoreHead(name: String): String? {
+        val uri = app.contentResolver.query(
+            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, arrayOf(android.provider.MediaStore.MediaColumns._ID),
+            "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?", arrayOf(name), null
+        )?.use { c -> if (c.moveToFirst()) android.net.Uri.withAppendedPath(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0).toString()) else null }
+            ?: return null
+        return runCatching {
+            app.contentResolver.openInputStream(uri)?.use { input -> ByteArray(512).let { buffer -> String(buffer, 0, input.read(buffer).coerceAtLeast(0), Charsets.ISO_8859_1) } }
+        }.getOrNull()
     }
 
     // 8. Dark: the system and the chrome go dark (as `SelectionDemo`'s design record does), the row
@@ -507,6 +553,11 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         private const val TOAST_PAGE_SAVED = "Page saved"
         /** The site-info sheet's grip (`SiteInfoDemo`). */
         private const val SITE_INFO_GRIP = "Dismiss"
+        /** The menu's Downloads row and the sheet's header button (`DownloadsSheet.tsx`) that says the sheet is up. */
+        private const val LABEL_DOWNLOADS = "Downloads"
+        private const val SHEET_DOWNLOADS = "Downloads settings"
+        /** The public Downloads folder as `MediaStore` reports a row's `DATA` (`Host.savePage` on Q+, `DownloadSink.publicDownloads` below). */
+        private const val PUBLIC_DOWNLOADS = "/storage/emulated/0/Download/"
 
         /**
          * Installed in the chrome once: a frame-by-frame sampler of the star's fill layer between

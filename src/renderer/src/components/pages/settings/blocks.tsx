@@ -22,6 +22,7 @@ import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
 import { engineKeywordProblem, searchTemplateProblem } from '@shared/search'
 import { inputToUrl } from '@shared/url'
+import { useFaviconSrc } from '@renderer/lib/favicons'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import { ZoomStepper } from '../../ZoomStepper'
@@ -599,10 +600,13 @@ export function RadioOption({
  */
 export function EngineGlyph({ engine }: { engine: SearchEngine }): JSX.Element {
   const [broken, setBroken] = useState(false)
-  if (engine.favicon && !broken) {
+  // The cached copy where the core holds one (HB-47); the engine's mark is no page's row, so
+  // the live address stands where the cache has nothing, as it always did.
+  const favicon = useFaviconSrc(engine.favicon)
+  if (favicon && !broken) {
     return (
       <img
-        src={engine.favicon}
+        src={favicon}
         alt=""
         className="zen-settings-glyph zen-settings-engine-favicon"
         referrerPolicy="no-referrer"
@@ -616,19 +620,30 @@ export function EngineGlyph({ engine }: { engine: SearchEngine }): JSX.Element {
 /**
  * A page's favicon in a row's 16 px glyph slot (Tabs from other devices), the engine glyph's
  * frame; the globe the history rows fall back to when the page offered none or it failed to load.
- * Remembering *which* address failed makes a new one try again without an effect.
+ * Remembering *which* address failed makes a new one try again without an effect. The icon is
+ * the core's cached copy where it holds one (HB-47); a row that stands for a `page` asks the
+ * network for an uncached icon only while that page's site is open in a tab.
  */
-export function FaviconGlyph({ src }: { src: string | null | undefined }): JSX.Element {
+export function FaviconGlyph({
+  src,
+  page
+}: {
+  src: string | null | undefined
+  /** The page the row stands for; left out for a slot that is no page's. */
+  page?: string | null
+}): JSX.Element {
   const [brokenSrc, setBrokenSrc] = useState<string | null>(null)
-  if (!src || brokenSrc === src) return <Globe className="zen-settings-glyph" aria-hidden="true" />
+  const resolved = useFaviconSrc(src, page)
+  if (!resolved || brokenSrc === resolved)
+    return <Globe className="zen-settings-glyph" aria-hidden="true" />
   return (
     <img
-      src={src}
+      src={resolved}
       alt=""
       className="zen-settings-glyph zen-settings-engine-favicon"
       referrerPolicy="no-referrer"
       draggable={false}
-      onError={() => setBrokenSrc(src)}
+      onError={() => setBrokenSrc(resolved)}
     />
   )
 }
