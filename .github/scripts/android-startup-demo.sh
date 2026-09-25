@@ -54,6 +54,27 @@
 #   web app, tile     the pinned tile's own intent (the seed's `tile-start:` line, as root) –
 #                     WebAppLauncherActivity's path to the app's window
 #
+# The seed runs again before each cold start the reader judges on the restored PICTURE (the
+# alias and trampoline ways): the acts between (home on the hot start, the alias open) let
+# Host.onPause rewrite the tab's picture from the live page – with the runner's mark on it – so
+# the picture the next cold start restores would read as `page` (run 36099054999's four order
+# verdicts were the harness's own). `am force-stop` keeps the picture; HOME does not.
+#
+# The navigation bar's glyphs (round 4): the app asks white over its dark splash grounds
+# (SystemBarInk, both bars); the window manager forwards the request to SystemUI, whose
+# LightBarController decides the glyphs last – and it FORCES the tone while it counts the
+# shade's behind-scrim as standing (`mForceLightForScrim` under a light system theme: dark
+# glyphs for every app; `mForceDarkForScrim` under a dark one: white). So each scheme begins
+# with the clearing experiment – the controller dumped, the shade pulled and closed, dumped
+# again (lightbar-before-shade.txt / lightbar-after-shade.txt) – and every splash still comes
+# with the controller's state (<act>-lightbar-*.txt: `mAppearance=`, what the app asked as
+# SystemUI holds it; the force fields; its last `setScrimState()` calculation) and the raw
+# `dumpsys window windows` (<act>-bars-*-windows.txt). When the force is on at the still, the
+# reader is told (`--nav-forced`): a glyph tone against the ground is then a `NOTE:` line, not a
+# failed verdict – SystemUI's reading on this emulator, named, not the app's failure – and a
+# matching tone is a PASS that says the force agreed. The product's own verdict is the request:
+# `mAppearance` without LIGHT_NAVIGATION_BARS over the dressed web-app splash.
+#
 # The recordings are read frame by frame (android-startup-frames.mjs: splash, restored picture,
 # page, blank, in that order and never a blank slot after the splash; the hot start with no
 # splash and no blank; the web app's launch: the tile on the ground, never a bare window before
@@ -276,16 +297,28 @@ rows=()
 webapp_rows=()
 
 # The seed: the driver's one act, the handshake answered without a recorder. Leaves the notes
-# (the slot's rectangle, the web app's launch arguments) and the still in $1/; the process is
-# gone after it.
+# (the slot's rectangle, the web app's launch arguments) and the still in $2/; the process is
+# gone after it. With $3 (the re-seed before a reach act, judged on the picture), the driver
+# runs the same act again – one tab, the same fixture, the picture written afresh by HOME – and
+# its files land in $2/seed-$3/ so the round's own stay; the notes the acts read are the first's
+# (the slot is the same on the same display).
 seed() {
-  local theme=$1 dir=$2
-  echo "== seed ($theme)"
+  local theme=$1 dir=$2 again=${3:-}
+  local pull_dir=$dir label=""
+  if [ -n "$again" ]; then
+    pull_dir=$dir/seed-$again
+    mkdir -p "$pull_dir"
+    label=", again before the $again cold start"
+    echo "== seed again ($theme, before the $again cold start): the picture re-written before a cold start judged on it"
+    adb shell am force-stop "$app_id" || true
+  else
+    echo "== seed ($theme)"
+  fi
   rm -f "$hold_file"
   adb shell run-as "$app_id" rm -rf "files/$demo_dir" || true
   adb logcat -c || true
   adb shell am instrument -w -e class app.zen.chromium.StartupDemo -e theme "$theme" -e assert "$assert" \
-    -e fixture "http://10.0.2.2:$port/fixture" "$runner" > "$dir/seed-instrument.txt" 2>&1 &
+    -e fixture "http://10.0.2.2:$port/fixture" "$runner" > "$pull_dir/seed-instrument.txt" 2>&1 &
   local driver_pid=$!
   for _ in $(seq 1 480); do
     if adb shell run-as "$app_id" test -f "files/$demo_dir/record" 2> /dev/null; then
@@ -304,14 +337,14 @@ seed() {
   wait "$driver_pid" || status=$?
   for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" 2> /dev/null | tr -d '\r'); do
     case "$name" in
-      *.png | *.txt) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$dir/$name" || true ;;
+      *.png | *.txt) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$pull_dir/$name" || true ;;
     esac
   done
-  adb logcat -d -v time > "$dir/seed-logcat.txt" 2> /dev/null || true
-  echo "---- seed notes ($theme)"
-  cat "$dir/android-startup-notes.txt" 2> /dev/null || echo "(no notes)"
-  verdict "$([ "$status" -eq 0 ] && grep -q '^OK (' "$dir/seed-instrument.txt" && echo true || echo false)" \
-    "the seed act ran through ($theme)" "instrumentation status $status"
+  adb logcat -d -v time > "$pull_dir/seed-logcat.txt" 2> /dev/null || true
+  echo "---- seed notes ($theme$label)"
+  cat "$pull_dir/android-startup-notes.txt" 2> /dev/null || echo "(no notes)"
+  verdict "$([ "$status" -eq 0 ] && grep -q '^OK (' "$pull_dir/seed-instrument.txt" && echo true || echo false)" \
+    "the seed act ran through ($theme$label)" "instrumentation status $status"
   # The instrumentation's exit stops the process; said explicitly, and made sure of.
   adb shell am force-stop "$app_id" || true
   sleep 2
@@ -384,6 +417,9 @@ cold_start() {
   local splash_still=$dir/android-startup-design-splash-$theme.png
   [ "$way" = direct ] || splash_still=$dir/android-startup-$tag-splash-$theme.png
   adb exec-out screencap -p > "$splash_still" || true
+  # SystemUI's controller as the starting window stands (the light dump alone here: the window
+  # manager's full dump would sit on the start's own path; the web app's dress has both).
+  lightbar_dump "$dir/$tag-lightbar-splash.txt"
   wait "$am_pid" || true
   local answer
   answer=$(tr -d '\r' < "$dir/am-start-$tag.txt")
@@ -400,6 +436,12 @@ cold_start() {
   if [ "$way" = direct ]; then adb exec-out screencap -p > "$picture_still" || true; fi
   local splash_after
   splash_after=$(splash_windows)
+  # The controller again with the app's own window up and focused (the request as SystemUI
+  # holds it, and whether a force came on since the splash).
+  lightbar_dump "$dir/$tag-lightbar-ready.txt"
+  local nav_forced
+  nav_forced=$(nav_forced_reason "$dir/$tag-lightbar-splash.txt")
+  [ -n "$nav_forced" ] || nav_forced=$(nav_forced_reason "$dir/$tag-lightbar-ready.txt")
   wait_line "restored picture down for $tab: painted" $(( hold_ms / 1000 + 15 )) > /dev/null
   sleep 0.7
   if [ "$way" = direct ]; then adb exec-out screencap -p > "$page_still" || true; fi
@@ -432,9 +474,14 @@ cold_start() {
   down_ms=$(ms_between "$started" "$down_at")
   forward_ms=$(ms_between "$started" "$forward_at")
   [ "$way" = direct ] && forward_ms=0
+  local lightbar_splash lightbar_ready
+  lightbar_splash=$(force_fields "$dir/$tag-lightbar-splash.txt")
+  lightbar_ready=$(force_fields "$dir/$tag-lightbar-ready.txt")
   echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; Displayed $displayed_ms; Fully drawn $fully_ms; splash held $held; splash windows one second in: $splash_seen, after READY: $splash_after"
   echo "  forward to MainActivity +$forward_ms ms, picture up +$up_ms ms, READY frame +$frame_ms ms, page painted +$down_ms ms (from the start request); marks $marks"
   echo "  webview start-up: ${webview_path:-no line}; frames: $stats"
+  echo "  SystemUI LightBarController at the splash: $lightbar_splash"
+  echo "  SystemUI LightBarController after READY: $lightbar_ready"
   {
     echo "cold start ($theme, $way): $answer"
     echo "Displayed: $displayed_ms ms; Fully drawn: $fully_ms ms; splash held: $held; splash windows one second in: $splash_seen, after READY: $splash_after"
@@ -442,10 +489,14 @@ cold_start() {
     echo "boot marks: $marks"
     echo "webview start-up: ${webview_path:-no line}"
     echo "frame statistics: $stats"
+    echo "SystemUI LightBarController at the splash: $lightbar_splash"
+    echo "SystemUI LightBarController after READY: $lightbar_ready"
   } > "$dir/$tag-numbers.txt"
 
   local label
   label=$(way_label "$way")
+  echo "SystemUI LightBarController at the splash ($theme$label): $lightbar_splash" >> "$findings"
+  echo "SystemUI LightBarController after READY ($theme$label): $lightbar_ready" >> "$findings"
   verdict "$([ "${state:-}" = COLD ] && echo true || echo false)" "the start was cold ($theme$label)" "LaunchState ${state:-?}"
   verdict "$([ "$splash_seen" -gt 0 ] && echo true || echo false)" "the splash window was up one second into the cold start ($theme$label)" "$splash_seen splash window(s)"
   verdict "$([ -n "$ready_line" ] && echo true || echo false)" "the chrome's first real frame was reported (READY, Fully drawn) ($theme$label)" "Fully drawn $fully_ms ms; ${ready_line:-no chrome ready line}"
@@ -470,9 +521,11 @@ cold_start() {
     [ "$way" = direct ] && stills+=(--still "picture=$picture_still" --still "page=$page_still")
     local anchor=()
     [ "$frame_ms" != - ] && anchor=(--anchor "ready=$frame_ms")
+    local forced=()
+    [ -z "$nav_forced" ] || forced=(--nav-forced "$nav_forced")
     node .github/scripts/android-startup-frames.mjs cold "$dir/startup-$tag-$theme.mp4" "$slot" "${display%@*}" "$dir/$tag-frames.txt" \
-      "${stills[@]}" "${anchor[@]}" --tile "$dir/android-startup-frames-$tag-$theme.png" || status=$?
-    grep -E '^(PASS|FAIL):' "$dir/$tag-frames.txt" | sed "s/)$/; $theme$label recording)/" >> "$findings" || true
+      "${stills[@]}" "${anchor[@]}" "${forced[@]}" --tile "$dir/android-startup-frames-$tag-$theme.png" || status=$?
+    grep -E '^(PASS|FAIL|NOTE):' "$dir/$tag-frames.txt" | sed "s/)$/; $theme$label recording)/" >> "$findings" || true
     gap=$(gap_reading "$dir/$tag-frames.txt")
     lead=$(lead_reading "$dir/$tag-frames.txt")
     echo "hand-over gap ($theme$label): $gap" >> "$findings"
@@ -537,7 +590,7 @@ hot_start() {
     [ "$way" = direct ] || tile=$dir/android-startup-frames-$tag-$theme.png
     node .github/scripts/android-startup-frames.mjs hot "$dir/startup-$tag-$theme.mp4" "$slot" "${display%@*}" "$dir/$tag-frames.txt" \
       --still page="$dir/android-startup-$tag-$theme.png" --tile "$tile" || status=$?
-    grep -E '^(PASS|FAIL):' "$dir/$tag-frames.txt" | sed "s/)$/; $theme$label hot recording)/" >> "$findings" || true
+    grep -E '^(PASS|FAIL|NOTE):' "$dir/$tag-frames.txt" | sed "s/)$/; $theme$label hot recording)/" >> "$findings" || true
     failures=$((failures + $(frame_failures "$dir/$tag-frames.txt" "$status")))
   fi
   rows+=("| hot$label ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | - | - | - | $splash_seen / - | - | - | - | - | - | - | - |")
@@ -608,6 +661,9 @@ link_start() {
   local splash_seen
   splash_seen=$(splash_windows)
   adb exec-out screencap -p > "$dir/android-startup-link-splash-$theme.png" || true
+  lightbar_dump "$dir/link-lightbar-splash.txt"
+  local nav_forced
+  nav_forced=$(nav_forced_reason "$dir/link-lightbar-splash.txt")
   wait "$am_pid" || true
   local answer
   answer=$(tr -d '\r' < "$dir/am-start-link.txt")
@@ -633,12 +689,17 @@ link_start() {
   if [ -n "$slot" ] && command -v ffmpeg > /dev/null 2>&1; then
     local anchor=()
     [ "$frame_ms" != - ] && anchor=(--anchor "ready=$frame_ms")
+    local forced=() status=0
+    [ -z "$nav_forced" ] || forced=(--nav-forced "$nav_forced")
     node .github/scripts/android-startup-frames.mjs lead "$dir/startup-link-$theme.mp4" "$slot" "${display%@*}" "$dir/link-frames.txt" \
-      --still splash="$dir/android-startup-link-splash-$theme.png" "${anchor[@]}" --tile "$dir/android-startup-frames-link-$theme.png" > /dev/null || true
-    grep -E '^(PASS|FAIL):' "$dir/link-frames.txt" | sed "s/)$/; $theme link recording)/" >> "$findings" || true
+      --still splash="$dir/android-startup-link-splash-$theme.png" "${anchor[@]}" "${forced[@]}" --tile "$dir/android-startup-frames-link-$theme.png" > /dev/null || status=$?
+    # The lead kind judges its stills alone (the still shows the splash, its glyphs' tone); counted.
+    grep -E '^(PASS|FAIL|NOTE):' "$dir/link-frames.txt" | sed "s/)$/; $theme link recording)/" >> "$findings" || true
+    failures=$((failures + $(frame_failures "$dir/link-frames.txt" "$status")))
     lead=$(lead_reading "$dir/link-frames.txt")
     echo "lead ($theme, the link's path): $lead" >> "$findings"
   fi
+  echo "SystemUI LightBarController at the splash ($theme, the link's path): $(force_fields "$dir/link-lightbar-splash.txt")" >> "$findings"
   echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; forward to MainActivity +$forward_ms ms; READY +$frame_ms ms; lead: $lead"
   rows+=("| cold, the link's path ($theme) | ${state:-?} | ${total:-?} | ${wait_:-?} | - | - | - | $splash_seen / - | +$forward_ms | - | +$frame_ms | - | - | ${lead%%;*} | - |")
   adb shell am force-stop "$app_id" || true
@@ -693,19 +754,93 @@ dressed_still() {
   done
 }
 
-# The system bars' state at the dressed splash, from the window manager: each window's requested
-# appearance (`apr=`, the LIGHT_*_BARS bits the app asked for), the policy's last appearance and
-# the window it colours the navigation bar for – the read-back of SystemBarInk's write, into $1.
-bars_dump() {
+# SystemUI's LightBarController (API 35: the last hand on the bars' glyphs), its own dump into
+# $1: `mAppearance=` (the focused window's request as SystemUI holds it – empty is 0, no
+# LIGHT_*_BARS bit, white glyphs on both bars), `mNavigationLight=` (true = DARK glyphs drawn),
+# `mHasLightNavigationBar=`, the scrim forces `mForceDarkForScrim=` / `mForceLightForScrim=`,
+# and its last two calculations (`setScrimState() … scrimBehindAlpha=… scrimColorIsLight=…`,
+# `onNavigationBarAppearanceChanged() …`). The targeted dump first; the whole service's cut to
+# the section when the target is not answered.
+lightbar_dump() {
   local file=$1
+  adb shell dumpsys activity service com.android.systemui/.SystemUIService LightBarController 2>&1 | tr -d '\r' > "$file" || true
+  if ! grep -q 'mForceLightForScrim=' "$file"; then
+    adb shell dumpsys activity service com.android.systemui/.SystemUIService 2>&1 | tr -d '\r' \
+      | awk '/^LightBarController: *$/ { on=1 } on { print } on && /NavigationBarTransitionsController:/ { exit }' > "$file" || true
+  fi
+}
+# The controller's deciding fields from a dump ($1), on one line for the log and the findings:
+# the fields, then its last two calculations with their epoch-ms timestamps (the act's timeline
+# is on the same clock in the logcat).
+force_fields() {
+  local fields calc
+  fields=$(grep -E '^ *(mAppearance|mNavigationLight|mHasLightNavigationBar|mForceDarkForScrim|mForceLightForScrim)=' "$1" 2> /dev/null \
+    | sed 's/^ *//; s/mAppearance=$/mAppearance=0/' | tr '\n' ' ' | sed 's/ $//' || true)
+  calc=$(grep -oE '(setScrimState|onNavigationBarAppearanceChanged)\(\) .*' "$1" 2> /dev/null | tr '\n' ';' | sed 's/;$//; s/;/; /g' || true)
+  echo "${fields:-no LightBarController dump}${calc:+; $calc}"
+}
+# The reader's `--nav-forced` reason from a dump ($1): the scrim force that decides the glyphs'
+# tone whatever the app asked (dark glyphs under `mForceLightForScrim`, white under
+# `mForceDarkForScrim`), or nothing when neither is on.
+nav_forced_reason() {
+  local file=$1 force
+  force=$(grep -oE '^ *mForce(Dark|Light)ForScrim=true' "$file" 2> /dev/null | sed 's/^ *//; s/=true//' | tr '\n' '+' | sed 's/+$//' || true)
+  [ -n "$force" ] || return 0
+  echo "SystemUI's LightBarController $force=true on this emulator – $(grep -o 'setScrimState() .*' "$file" 2> /dev/null | head -n 1)"
+}
+# The system bars' state while a splash stands, into $1 (<act>-bars-<moment>.txt; the raw window
+# dump beside it as <act>-bars-<moment>-windows.txt, SystemUI's controller as
+# <act>-lightbar-<moment>.txt): SystemUI's LightBarController (lightbar_dump, the deciding
+# side), the window manager's policy (`mLastAppearance` / `mLastBehavior` are printed only when
+# not 0 – absent is 0, white glyphs asked on both bars; the window it colours the navigation bar
+# for; the focused window), and each window's requested appearance (`apr=` from its own
+# LayoutParams line; no line is appearance 0) – the read-back of SystemBarInk's write on every
+# side that holds it.
+bars_dump() {
+  local file=$1 windows=${1%.txt}-windows.txt lightbar=${1/-bars-/-lightbar-}
+  [ "$lightbar" != "$file" ] || lightbar=${file%.txt}-lightbar.txt
+  lightbar_dump "$lightbar"
+  adb shell dumpsys window windows 2> /dev/null | tr -d '\r' > "$windows" || true
   {
-    echo "# dumpsys window windows: each window's requested appearance"
-    adb shell dumpsys window windows 2> /dev/null | tr -d '\r' \
-      | awk '/^ *Window #/ { name=$0; sub(/^ *Window #[0-9]* /, "", name) } /apr=/ { match($0, /apr=[A-Z_|]*/); print name ": " substr($0, RSTART, RLENGTH) }'
+    echo "# SystemUI LightBarController ($lightbar): $(force_fields "$lightbar")"
     echo "# dumpsys window displays: the policy's bars"
     adb shell dumpsys window displays 2> /dev/null | tr -d '\r' \
-      | grep -E "mLastAppearance|mLastNavBarAppearance|mNavBarColorWindowCandidate|mLastStatusBarAppearanceRegions|mFocusedWindow=|mTopFullscreenOpaqueWindowState|mNavigationBarLetterboxDetails" | sed 's/^ *//'
+      | grep -E "mLastAppearance|mLastBehavior|mLastNavBarAppearance|mNavBarColorWindowCandidate|mNavBarBackgroundWindowCandidate|mLastStatusBarAppearanceRegions|AppearanceRegion|mFocusedWindow=|mTopFullscreenOpaqueWindowState|mNavigationBarLetterboxDetails" | sed 's/^ *//'
+    echo "# dumpsys window windows ($windows): each window's requested appearance"
+    awk '
+      function flush() { if (name != "") print name ": " (apr == "" ? "appearance 0 (no apr= line)" : apr) }
+      /^ *Window #[0-9]+ Window\{/ { flush(); name = $0; sub(/^ *Window #[0-9]+ Window\{[0-9a-f]+ u[0-9]+ /, "", name); sub(/\}.*$/, "", name); apr = "" }
+      / apr=/ { match($0, /apr=[A-Z_|]*/); apr = substr($0, RSTART, RLENGTH) }
+      END { flush() }' "$windows"
   } > "$file" 2>&1 || true
+}
+
+# The clearing experiment, once per scheme before its acts: LightBarController dumped, the shade
+# pulled and closed (`cmd statusbar`), dumped again. The controller forces the navigation glyphs'
+# tone while the scrim it was last told of stands at alpha 0.1 or more (LightBarController
+# .setScrimState); ScrimController.dispatchBackScrimState sends the behind scrim's own alpha –
+# 1.0 in ScrimState.UNLOCKED when the shade clips its QS scrim – unless the QS panel's bottom
+# is known (`mQsBottomVisible`, set from QuickSettingsControllerImpl.updateExpansion), when it
+# sends the notification scrim's 0. A boot whose shade was never pulled can therefore hold the
+# force for every app until the first pull. Recorded to the findings; the acts follow either way.
+shade_experiment() {
+  local theme=$1 dir=$2
+  echo "== the shade experiment ($theme): SystemUI's LightBarController before and after the shade"
+  lightbar_dump "$dir/lightbar-before-shade.txt"
+  {
+    adb shell cmd statusbar expand-notifications 2>&1 || true
+    sleep 2
+    adb shell cmd statusbar collapse 2>&1 || true
+    sleep 2
+  } | tr -d '\r' > "$dir/shade-commands.txt"
+  lightbar_dump "$dir/lightbar-after-shade.txt"
+  local before after
+  before=$(force_fields "$dir/lightbar-before-shade.txt")
+  after=$(force_fields "$dir/lightbar-after-shade.txt")
+  echo "  before the shade: $before"
+  echo "  after the shade: $after"
+  echo "SystemUI LightBarController before the shade ($theme): $before" >> "$findings"
+  echo "SystemUI LightBarController after the shade ($theme): $after" >> "$findings"
 }
 
 # The web app's cold launch (PWA-06): the process gone, the app's launch intent fired as root
@@ -755,8 +890,11 @@ webapp_launch() {
   local splash_still=$dir/android-startup-design-webapp-splash-$theme.png
   [ "$way" = direct ] || splash_still=$dir/android-startup-$tag-splash-$theme.png
   dressed_still "$splash_still"
-  # The bars as the window manager has them while the dressed splash stands.
+  # The bars as SystemUI and the window manager hold them while the dressed splash stands (the
+  # controller into $tag-lightbar-dressed.txt, the raw window dump into $tag-bars-dressed-windows.txt).
   bars_dump "$dir/$tag-bars-dressed.txt"
+  local nav_forced
+  nav_forced=$(nav_forced_reason "$dir/$tag-lightbar-dressed.txt")
   local painted_line
   painted_line=$(wait_line "web app page painted: first frame" $(( webapp_hold_ms / 1000 + 15 )))
   sleep 0.8
@@ -770,7 +908,7 @@ webapp_launch() {
   adb logcat -d -v time > "$dir/$tag-logcat.txt" 2> /dev/null || true
   rm -f "$hold_file"
 
-  local held started forward_at dressed_at painted_at forward_ms dressed_ms painted_ms fully_ms displayed_ms app_bars
+  local held started forward_at dressed_at painted_at forward_ms dressed_ms painted_ms fully_ms displayed_ms app_bars app_appearance win_apr lightbar_dressed
   held=$(held_by)
   fully_ms=$(duration_ms "$(startup_log | grep -m 1 "Fully drawn $app_id/" | sed -n 's/.*Fully drawn [^:]*: *+\([0-9smh]*\).*/\1/p' || true)")
   displayed_ms=$(duration_ms "$(startup_log | grep -m 1 "Displayed $app_id/" | sed -n 's/.*Displayed [^:]*: *+\([0-9smh]*\).*/\1/p' || true)")
@@ -782,17 +920,32 @@ webapp_launch() {
   [ "$way" = direct ] && forward_ms=0
   dressed_ms=$(ms_between "$started" "$dressed_at")
   painted_ms=$(ms_between "$started" "$painted_at")
-  app_bars=$(grep -m 1 "WebAppActivity" "$dir/$tag-bars-dressed.txt" 2> /dev/null | sed 's/.*: //' || true)
+  # The request as SystemUI holds it (`mAppearance=`, the deciding side's copy; empty is 0), the
+  # app window's own `apr=` line (none is 0), and the controller's state, for the table.
+  if grep -q '^ *mAppearance=' "$dir/$tag-lightbar-dressed.txt" 2> /dev/null; then
+    app_appearance=$(sed -n 's/^ *mAppearance=//p' "$dir/$tag-lightbar-dressed.txt" | head -n 1)
+    app_appearance="mAppearance=${app_appearance:-0}"
+  else
+    app_appearance=""
+  fi
+  win_apr=$(grep -m 1 "WebAppActivity: " "$dir/$tag-bars-dressed.txt" 2> /dev/null | sed 's/.*: //' || true)
+  lightbar_dressed=$(force_fields "$dir/$tag-lightbar-dressed.txt")
+  local force_note="no scrim force"
+  [ -z "$nav_forced" ] || force_note="forced: ${nav_forced%% –*}"
+  app_bars="SystemUI ${app_appearance:-no mAppearance line}; window ${win_apr:-not in the dump}; $force_note"
   echo "  TotalTime ${total:-?} WaitTime ${wait_:-?} ${state:-?}; Displayed $displayed_ms; Fully drawn $fully_ms; forward +$forward_ms ms, splash dressed +$dressed_ms ms, page painted +$painted_ms ms (from the start request); splash held $held"
   echo "  ${dressed_line:-no dressed line}"
-  echo "  bars at the dress: the app window asked ${app_bars:-nothing on record}"
+  echo "  bars at the dress: $app_bars"
+  echo "  SystemUI LightBarController at the dress: $lightbar_dressed"
   {
     echo "web app cold launch ($theme, $way): $answer"
     echo "Displayed: $displayed_ms ms; Fully drawn: $fully_ms ms; forward: +$forward_ms ms; splash dressed: +$dressed_ms ms; page painted: +$painted_ms ms; splash held: $held"
     echo "${dressed_line:-no dressed line}"
     echo "${painted_line:-no page painted line}"
-    echo "bars at the dress (dumpsys window): the app window asked ${app_bars:-nothing on record}"
+    echo "bars at the dress: $app_bars"
+    echo "SystemUI LightBarController at the dress: $lightbar_dressed"
   } > "$dir/$tag-numbers.txt"
+  echo "SystemUI LightBarController at the dress ($theme$label): $lightbar_dressed" >> "$findings"
 
   verdict "$([ "${state:-}" = COLD ] && echo true || echo false)" "the web app's launch was cold ($theme$label)" "LaunchState ${state:-?}"
   verdict "$(case "$dressed_line" in *"icon on"*) echo true ;; *) echo false ;; esac)" \
@@ -801,10 +954,12 @@ webapp_launch() {
   verdict "$(case "$held" in *"(ready)") echo true ;; *) echo false ;; esac)" "the page's first frame lifted the web app's splash, not the watchdog ($theme$label)" "splash held $held"
   verdict "$([ "$dressed_ms" != - ] && [ "$painted_ms" != - ] && [ "$dressed_ms" -lt "$painted_ms" ] && echo true || echo false)" \
     "the splash was dressed before the page's first frame ($theme$label)" "dressed +$dressed_ms ms, painted +$painted_ms ms"
-  # The written tone, as the window manager holds it for the app's window: both LIGHT bits
-  # controlled, neither set over the fixture's dark ground (white glyphs on both bars).
-  verdict "$(case "$app_bars" in *LIGHT_NAVIGATION_BARS*) echo false ;; "") echo false ;; *) echo true ;; esac)" \
-    "the app window's requested navigation glyphs are light over the dressed splash (dumpsys window) ($theme$label)" "the app window asked ${app_bars:-nothing on record}"
+  # The written tone as the deciding side received it: SystemUI's copy of the focused window's
+  # appearance (both LIGHT bits controlled by SystemBarInk, neither set over the fixture's dark
+  # ground – white glyphs asked on both bars). What SystemUI then draws is the reader's reading,
+  # judged unless its scrim force is on (then a NOTE, the force named).
+  verdict "$(case "$app_appearance" in "") echo false ;; *LIGHT_NAVIGATION_BARS*) echo false ;; *) echo true ;; esac)" \
+    "the app window's requested navigation glyphs are light over the dressed splash (SystemUI's LightBarController mAppearance) ($theme$label)" "$app_bars"
   local gap=- lead=-
   if command -v ffmpeg > /dev/null 2>&1; then
     # The whole display is the slot: the edges read the app's ground, the centre its tile, the
@@ -814,9 +969,11 @@ webapp_launch() {
     [ "$way" = direct ] && stills+=(--still "page=$page_still")
     local anchor=()
     [ "$painted_ms" != - ] && anchor=(--anchor "ready=$painted_ms")
+    local forced=()
+    [ -z "$nav_forced" ] || forced=(--nav-forced "$nav_forced")
     node .github/scripts/android-startup-frames.mjs webapp "$dir/startup-$tag-$theme.mp4" "0 0 ${size%x*} ${size#*x}" "$size" "$dir/$tag-frames.txt" \
-      "${stills[@]}" "${anchor[@]}" --tile "$dir/android-startup-frames-$tag-$theme.png" || status=$?
-    grep -E '^(PASS|FAIL):' "$dir/$tag-frames.txt" | sed "s/)$/; $theme$label web app recording)/" >> "$findings" || true
+      "${stills[@]}" "${anchor[@]}" "${forced[@]}" --tile "$dir/android-startup-frames-$tag-$theme.png" || status=$?
+    grep -E '^(PASS|FAIL|NOTE):' "$dir/$tag-frames.txt" | sed "s/)$/; $theme$label web app recording)/" >> "$findings" || true
     gap=$(gap_reading "$dir/$tag-frames.txt")
     lead=$(lead_reading "$dir/$tag-frames.txt")
     echo "web app gap to the tile ($theme$label): $gap" >> "$findings"
@@ -837,18 +994,25 @@ for theme in $themes; do
   mkdir -p "$dir"
   if [ "$theme" = dark ]; then adb shell cmd uimode night yes > /dev/null || true; else adb shell cmd uimode night no > /dev/null || true; fi
   sleep 2
+  # The system theme has just changed with the scheme (ScrimController.onThemeChanged re-sends
+  # the scrim's state); the controller's forces before and after the shade, then the acts.
+  shade_experiment "$theme" "$dir"
   seed "$theme" "$dir"
   cold_start "$theme" "$dir"
   hot_start "$theme" "$dir"
   if [ "$theme" = light ]; then warm_start "$theme" "$dir"; fi
   # The reach: the same session through the trampolines' paths, on this build and boot. The
   # link's start comes last of the browser's acts – it opens the fixture in a tab of its own and
-  # the seeded session (one tab, its picture) is what the cold starts before it restore.
+  # the seeded session (one tab, its picture) is what the cold starts before it restore. Each
+  # cold start judged on the restored picture gets the seed again first: the hot start's HOME
+  # and the alias open let Host.onPause rewrite the picture from the live, marked page.
   case " $reach " in
     *" $theme "*)
+      seed "$theme" "$dir" alias
       cold_start "$theme" "$dir" alias
       hot_start "$theme" "$dir" alias
       alias_open "$theme" "$dir"
+      seed "$theme" "$dir" trampoline
       cold_start "$theme" "$dir" trampoline
       link_start "$theme" "$dir"
       ;;
@@ -872,13 +1036,13 @@ adb shell cmd uimode night no > /dev/null || true
   echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
   for row in "${rows[@]}"; do echo "$row"; done
   echo
-  echo "The fixture web app's cold launch (PWA-06, WebAppActivity, the process gone, the page's answer held $webapp_hold_ms ms): the plain row fires the app's own launch intent (the harness's way); the tile's row fires the pinned tile's intent at WebAppLauncherActivity (NoDisplay, the tap on the home screen less the launcher), its forward the START of WebAppActivity ms after the request. TotalTime the platform's window (the fixed ground); Displayed / Fully drawn the platform's lines from the request; the moments are ms after the request on logcat's clock – the splash dressed in the app's colour and tile at the hand-over, the page's first frame (reportFullyDrawn, the splash lifting). Gap to the tile: the recording's frames from the first frame of the app's window (the platform's fixed ground) to the first frame of the dressed splash – plain (the fixed ground) and the hand-over's own (ground: the page view's background standing in for the splash's; bare: the page view white) – the whole of what stands before the tile. Lead: as above, the request to the first frame of the app's window (the page's first frame the anchor). App window bars: the LIGHT_*_BARS bits the app's window asked the window manager for while the dressed splash stood (\`dumpsys window\`, \`apr=\`; both bits absent = light glyphs on both bars over the fixture's dark ground)."
+  echo "The fixture web app's cold launch (PWA-06, WebAppActivity, the process gone, the page's answer held $webapp_hold_ms ms): the plain row fires the app's own launch intent (the harness's way); the tile's row fires the pinned tile's intent at WebAppLauncherActivity (NoDisplay, the tap on the home screen less the launcher), its forward the START of WebAppActivity ms after the request. TotalTime the platform's window (the fixed ground); Displayed / Fully drawn the platform's lines from the request; the moments are ms after the request on logcat's clock – the splash dressed in the app's colour and tile at the hand-over, the page's first frame (reportFullyDrawn, the splash lifting). Gap to the tile: the recording's frames from the first frame of the app's window (the platform's fixed ground) to the first frame of the dressed splash – plain (the fixed ground) and the hand-over's own (ground: the page view's background standing in for the splash's; bare: the page view white) – the whole of what stands before the tile. Lead: as above, the request to the first frame of the app's window (the page's first frame the anchor). App window bars, while the dressed splash stood: the request as SystemUI's LightBarController holds it (\`mAppearance=\`, the LIGHT_*_BARS bits; 0 = white glyphs asked on both bars over the fixture's dark ground), the app window's own \`apr=\` line in \`dumpsys window windows\` (none = appearance 0), and whether the controller's scrim force (\`mForceLightForScrim\` / \`mForceDarkForScrim\`) was deciding the glyphs' tone regardless – the findings carry the controller's fields and last calculations before and after the shade experiment and at every splash."
   echo
   echo "| launch | LaunchState | TotalTime | WaitTime | Displayed | Fully drawn | forward | splash dressed | page painted | splash held (by) | gap to the tile | lead | app window bars |"
   echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
   for row in "${webapp_rows[@]}"; do echo "$row"; done
   echo
-  echo "verdicts: $(grep -c '^PASS' "$findings" || true) held, $failures did not"
+  echo "verdicts: $(grep -c '^PASS' "$findings" || true) held, $failures did not, $(grep -c '^NOTE' "$findings" || true) not judged (SystemUI's scrim force on the navigation glyphs, named in the NOTE lines)"
 } | tee "$table"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   { echo "### Startup scene"; echo; cat "$table"; echo; echo '```'; cat "$findings"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

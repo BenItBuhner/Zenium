@@ -72,7 +72,12 @@
 // ink (the pixels far from that ground), light or dark by the ink's own luminance, `none` when
 // too little ink is there; at the dressed splash and on every splash still the glyphs must
 // take the tone the ground's luminance asks for (light on a dark ground, dark on a light one:
-// the platform's own rule for its starting window, the app's for its bars).
+// the platform's own rule for its starting window, the app's for its bars). SystemUI decides
+// the glyphs last, and its LightBarController forces their tone while it counts the shade's
+// scrim as standing (`mForceLightForScrim` / `mForceDarkForScrim`, API 35); when the scene's
+// dump of it says so, `--nav-forced <reason>` tells the reader: a tone against the ground is
+// then a `NOTE:` line naming the force, not a failed verdict (SystemUI's reading on the device,
+// not the app's failure), and a matching tone is a PASS that says the force agreed with it.
 //
 // The lead (`lead:`, with `--anchor ready=<ms>`): how long after the start request the splash
 // – or, for the web app, any window of the app's – first showed, and what showed until then.
@@ -85,11 +90,12 @@
 // recording was read.
 //
 //   node android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt>
-//        [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>]
+//        [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>]
 //
-// The findings carry the timeline (runs of frames), the verdicts and each still's reading; the
-// exit code is 1 when a rule failed, 2 for a usage error. `--tile` writes a contact sheet of the
-// recording (three rows of six frames from the start to a second past the page's paint).
+// The findings carry the timeline (runs of frames), the verdicts (and the NOTE lines) and each
+// still's reading; the exit code is 1 when a rule failed, 2 for a usage error. `--tile` writes a
+// contact sheet of the recording (three rows of six frames from the start to a second past the
+// page's paint).
 import { spawnSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 
@@ -131,6 +137,8 @@ const positional = []
 const stills = []
 let tile = null
 let anchorMs = null
+/** SystemUI's force on the navigation glyphs' tone at the scene, as the scene's dump named it; null when none. */
+let navForced = null
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--still') {
     const [cls, path] = (args[++i] ?? '').split('=')
@@ -142,6 +150,8 @@ for (let i = 0; i < args.length; i++) {
     const [what, ms] = (args[++i] ?? '').split('=')
     if (what !== 'ready' || !Number.isFinite(Number(ms))) usage()
     anchorMs = Number(ms)
+  } else if (args[i] === '--nav-forced') {
+    navForced = args[++i] || usage()
   } else positional.push(args[i])
 }
 const [kind, video, slotArg, displayArg, outPath] = positional
@@ -157,7 +167,7 @@ if (
 
 function usage() {
   console.error(
-    'usage: android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>]'
+    'usage: android-startup-frames.mjs <cold|hot|webapp|lead> <video|-> <slot "l t r b"> <display WxH> <findings.txt> [--still <class>=<png>]... [--tile <png>] [--anchor ready=<ms>] [--nav-forced <reason>]'
   )
   process.exit(2)
 }
@@ -189,6 +199,16 @@ const failures = []
 const verdict = (rule, holds, detail) => {
   say(`${holds ? 'PASS' : 'FAIL'}: ${rule} (${detail})`)
   if (!holds) failures.push(rule)
+}
+/**
+ * A verdict on the navigation glyphs' tone: judged as any other unless SystemUI's force on the
+ * tone was named (`--nav-forced`) – then a tone against the ground is a NOTE (the force's
+ * reading, not the app's failure) and a matching one a PASS that says so.
+ */
+const navVerdict = (rule, holds, detail) => {
+  if (!navForced) return verdict(rule, holds, detail)
+  if (holds) return verdict(rule, true, `${detail}; SystemUI's force agreed with it: ${navForced}`)
+  say(`NOTE: ${rule} – not judged, SystemUI forces the glyphs' tone here: ${navForced} (${detail})`)
 }
 
 /** Mean colour of the 5 x 5 block around (x, y) of a frame at `offset` in rgb24 `buffer`. */
@@ -463,7 +483,7 @@ if (frames.length) {
       `nav over the splash: ${tone} glyphs on ${hex(ground)} (${detail}; the ground's luminance ${luminance(ground).toFixed(3)} asks for ${expected})`
     )
     if (kind === 'webapp')
-      verdict(
+      navVerdict(
         "the navigation bar's glyphs take the tone the dressed splash's ground asks for",
         tone === expected,
         `${tone} glyphs on ${hex(ground)}, ${expected} asked for (${detail})`
@@ -636,7 +656,7 @@ for (const still of stills) {
     // The bars over the dressed splash (the material nit of round 3's light web-app still: dark
     // glyphs on the purple ground where the code asked for white).
     const expected = toneFor(frame.nav.ground)
-    verdict(
+    navVerdict(
       `the ${still.cls} still's navigation glyphs take the tone its ground asks for`,
       frame.nav.tone === expected,
       `${navReading(frame)}; the ground's luminance ${luminance(frame.nav.ground).toFixed(3)} asks for ${expected}`
