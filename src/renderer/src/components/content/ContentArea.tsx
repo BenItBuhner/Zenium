@@ -13,6 +13,7 @@ import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
+import { pageCanPaint } from '@renderer/lib/quitHoldRoute'
 import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
@@ -193,8 +194,16 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
   // (`shared/quitHoldPanel`; the view lies over the chrome, and hiding it would drop the key up
   // the hold waits for), so the chrome draws its own copy only where no live page is in the
   // frame – a chrome page, the empty frame, a page under its cover (the URL bar, a menu, a
-  // dialog), a page shown in another window, the phone's new tab page or its gesture stage.
-  const pageLive = tab !== null && !pageTab && !foreign && !newTabPage && !staged && !contentHidden
+  // dialog), a page shown in another window, the phone's new tab page or its gesture stage –
+  // or where the page cannot paint: its renderer gone or hung (`lib/quitHoldRoute.ts`).
+  const pageLive =
+    tab !== null &&
+    !pageTab &&
+    !foreign &&
+    !newTabPage &&
+    !staged &&
+    !contentHidden &&
+    pageCanPaint(tab)
   const dropKey = dropStore.use((s) => s.key)
   const dropOverPage = dropStore.use((s) => s.page)
   // The translate bar shares the frame with the live page, under the strips and directly above

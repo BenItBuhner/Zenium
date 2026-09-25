@@ -4,6 +4,8 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { QuitHoldState } from '@shared/types'
 import { QUIT_HOLD_PANEL } from '@shared/quitHoldPanel'
+import { CRASH_ERROR_CODE } from '@shared/zenPages'
+import { pageCanPaint } from '@renderer/lib/quitHoldRoute'
 import { QuitHoldNotice } from '../QuitHold'
 
 /*
@@ -91,6 +93,21 @@ describe('the chrome’s Hold ⌘Q to quit', () => {
     expect(notice()).toBeNull()
     render({ hold: hold(), show: false })
     expect(notice()).toBeNull()
+  })
+
+  it('draws over a page whose renderer is gone or hung – the page cannot paint, so the twin takes its position and the hold has its notice (C4)', () => {
+    const crashed = { url: 'https://example.com/a', errorCode: CRASH_ERROR_CODE }
+    const hung = { url: 'https://example.com/a', errorCode: null, unresponsive: true as const }
+    for (const tab of [crashed, hung]) {
+      // `ContentArea`: the page route holds only while the page can paint.
+      const pageLive = pageCanPaint(tab)
+      render({ hold: hold(), show: !pageLive })
+      expect(notice()).not.toBeNull()
+      expect(notice()!.getAttribute('aria-label')).toBe('Hold ⌘Q to quit')
+      render({ hold: null, show: !pageLive })
+      act(() => vi.advanceTimersByTime(QUIT_HOLD_PANEL.fadeMs))
+      expect(notice()).toBeNull()
+    }
   })
 
   it('is a status block with the ring and the chord as a key cap, stepped from the hold’s clock', () => {
