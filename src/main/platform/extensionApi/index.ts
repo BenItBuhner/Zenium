@@ -378,6 +378,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       this.activeTab.navigated(tabId, url)
       this.declarativeNetRequest.tabNavigated(tabId)
     }
+    // `tabs.onUpdated`'s `status` edges stand behind navigations, as Chrome's do.
+    this.webNavigation.onMainFrameNavigationStarted = (tabId) => this.tabs.navigationStarted(tabId)
+    this.webNavigation.onNavigationCommitted = (tabId) => this.tabs.navigationCommitted(tabId)
   }
 
   // ---------------------------------------------------------------------------

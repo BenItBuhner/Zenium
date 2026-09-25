@@ -176,6 +176,82 @@ export function tabChangeInfo(before: ChromeTab, after: ChromeTab): TabChangeInf
   return changed ? info : null
 }
 
+/**
+ * Chrome's `status` edges in `tabs.onUpdated` hang on navigations, not on the tab's loading flag:
+ * its TabsEventRouter reports `loading` when a navigation entry commits and `complete` on the
+ * first stop after it, and lets the flag go in and out of loading in between unheard ("for
+ * instance if iframes navigate"). A WebContents' flag rises for an iframe a settled page inserts,
+ * so an extension that resets itself on `status: 'loading'` (WAVE tears its sidebar down, whose
+ * own frame raised the flag) must not hear of those. The gate keeps the edges a navigation of the
+ * outermost frame (or a sub-frame's later navigation) stands behind and drops the rest; a commit
+ * carries `status` even when the flag did not move, as Chrome's does (a same-document navigation
+ * reports `{ status: 'complete', url }`).
+ */
+export class TabStatusEdges {
+  /** A navigation of the outermost frame started: the loading edge that follows is genuine. */
+  private readonly armed = new Set<number>()
+  /** A loading edge went out; the next complete edge answers it. */
+  private readonly awaitingComplete = new Set<number>()
+  /** A loading flip was dropped; the complete flip that follows it is dropped with it. */
+  private readonly suppressed = new Set<number>()
+  /** A navigation entry committed; the next diff carries `status` whatever the flag did. */
+  private readonly committed = new Set<number>()
+
+  navigationStarted(tabId: number): void {
+    this.armed.add(tabId)
+  }
+
+  navigationCommitted(tabId: number): void {
+    this.committed.add(tabId)
+  }
+
+  /** The tab's loading edge went out with its creation (`onCreated`, then `onUpdated`). */
+  reportedLoading(tabId: number): void {
+    this.armed.delete(tabId)
+    this.awaitingComplete.add(tabId)
+  }
+
+  forget(tabId: number): void {
+    this.armed.delete(tabId)
+    this.awaitingComplete.delete(tabId)
+    this.suppressed.delete(tabId)
+    this.committed.delete(tabId)
+  }
+
+  /** The `status` to report for a tab whose snapshot went `before` -> `after`, if any. */
+  statusFor(tabId: number, before: TabStatus, after: TabStatus): TabStatus | undefined {
+    const committed = this.committed.delete(tabId)
+    if (committed) {
+      this.armed.delete(tabId)
+      this.suppressed.delete(tabId)
+    }
+    if (before !== after) {
+      if (after === 'loading') {
+        // A tab coming back from `unloaded` is navigating by definition.
+        if (committed || before === 'unloaded' || this.armed.delete(tabId)) {
+          this.awaitingComplete.add(tabId)
+          return 'loading'
+        }
+        this.suppressed.add(tabId)
+        return undefined
+      }
+      if (after === 'complete' && before === 'loading') {
+        if (this.awaitingComplete.delete(tabId)) return 'complete'
+        if (this.suppressed.delete(tabId)) return undefined
+        // No record of this load (it was under way before the model followed the tab): report
+        // its end rather than leave the tab loading forever for its listeners.
+        return 'complete'
+      }
+      return after
+    }
+    if (committed && after !== 'unloaded' && !this.awaitingComplete.has(tabId)) {
+      if (after === 'loading') this.awaitingComplete.add(tabId)
+      return after
+    }
+    return undefined
+  }
+}
+
 export interface TabMove<Id = number> {
   tabId: Id
   fromIndex: number

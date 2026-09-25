@@ -16,6 +16,7 @@ import {
   type TabChangeInfo,
   type TabQueryInfo,
   FILE_URL_WITHOUT_ACCESS_ERROR,
+  TabStatusEdges,
   detectTabMoves,
   isFileNavigation,
   tabChangeInfo,
@@ -49,8 +50,20 @@ export class TabsApi {
   private readonly insertedCss = new Map<string, string>()
   /** `captureVisibleTab` calls per extension within the last second. */
   private readonly captureQuota = new CaptureQuota()
+  /** Which `status` flips of the snapshots a navigation stands behind (`onUpdated`). */
+  private readonly statusEdges = new TabStatusEdges()
 
   constructor(private readonly host: ApiHost) {}
+
+  /** A tab's outermost frame started a cross-document navigation. */
+  navigationStarted(tabId: number): void {
+    this.statusEdges.navigationStarted(tabId)
+  }
+
+  /** A navigation entry committed in a tab (its outermost frame's, or a sub-frame's later one). */
+  navigationCommitted(tabId: number): void {
+    this.statusEdges.navigationCommitted(tabId)
+  }
 
   readonly handlers: NamespaceHandlers = {
     create: (ctx, props) => this.create(ctx, props),
@@ -574,6 +587,7 @@ export class TabsApi {
       if (after.chrome.status === 'loading') {
         const info: TabChangeInfo = { status: 'loading' }
         if (after.chrome.url) info.url = after.chrome.url
+        this.statusEdges.reportedLoading(after.chrome.id)
         this.host.broadcast('tabs', 'onUpdated', (ext) => {
           const change = this.visibleChange(ext, info, after.url)
           return change ? [after.chrome.id, change, this.visibleTab(ext, after.chrome)] : null
@@ -587,6 +601,7 @@ export class TabsApi {
         before.chrome.id,
         { windowId: before.windowId, isWindowClosing }
       ])
+      this.statusEdges.forget(before.chrome.id)
       this.host.model.forgetTab(zenId)
     }
     for (const [zenId, after] of next.tabs) {
@@ -616,6 +631,7 @@ export class TabsApi {
     if (before.chrome.id !== after.chrome.id) {
       // The page was created or dropped: Chrome hands out a new id and reports a replacement.
       this.host.broadcast('tabs', 'onReplaced', () => [after.chrome.id, before.chrome.id])
+      this.statusEdges.forget(before.chrome.id)
     }
     if (before.windowId !== after.windowId && before.windowId >= 0 && after.windowId >= 0) {
       this.host.broadcast('tabs', 'onDetached', () => [
@@ -627,8 +643,17 @@ export class TabsApi {
         { newWindowId: after.windowId, newPosition: after.chrome.index }
       ])
     }
-    const info = tabChangeInfo(before.chrome, after.chrome)
-    if (info) {
+    const info: TabChangeInfo = tabChangeInfo(before.chrome, after.chrome) ?? {}
+    // The snapshots' `status` follows the page's loading flag; Chrome's edges follow its
+    // navigations (`TabStatusEdges`), so the flag's flips are gated and a commit adds its own.
+    const status = this.statusEdges.statusFor(
+      after.chrome.id,
+      before.chrome.status,
+      after.chrome.status
+    )
+    if (status === undefined) delete info.status
+    else info.status = status
+    if (Object.keys(info).length > 0) {
       this.host.broadcast('tabs', 'onUpdated', (ext) => {
         const change = this.visibleChange(ext, info, after.url)
         return change ? [after.chrome.id, change, this.visibleTab(ext, after.chrome)] : null
