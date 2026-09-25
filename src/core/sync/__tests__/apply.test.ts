@@ -3,6 +3,7 @@ import type { HostCapabilities, Platform as PlatformOs } from '../../../shared/t
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
 import { matchKeywordWord } from '../../../shared/search'
 import { Browser } from '../../../core/browser'
+import { createFolder, createSpace } from '../../../core/model'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../../../core/platform'
 import { applyRemote } from '../apply'
 import {
@@ -239,5 +240,98 @@ describe('applyRemote: the settings record and the new tab page', () => {
       defaultScope()
     ).get(SITE_DATA_RECORD_ID)
     expect(published?.data).toEqual(b.siteData.policy())
+  })
+})
+
+describe("applyRemote: the agents' mark on space and folder records", () => {
+  const space = (id: string, data: Record<string, unknown>, modified = 1000): SyncRecord => ({
+    id,
+    type: 'space',
+    data: {
+      name: 'Agents',
+      icon: '',
+      containerId: 'default',
+      theme: null,
+      pinnedCollapsed: false,
+      ...data
+    },
+    modified,
+    deleted: false
+  })
+  const folder = (
+    id: string,
+    spaceId: string,
+    data: Record<string, unknown>,
+    modified = 1000
+  ): SyncRecord => ({
+    id,
+    type: 'folder',
+    data: { spaceId, name: 'A · 3f9a', icon: '', collapsed: false, ...data },
+    modified,
+    deleted: false
+  })
+
+  it("lands a peer's marked space and group with their marks, and a later record re-stamps them", () => {
+    const b = browser()
+    applyRemote(b, [
+      space('space_shared', { agent: { kind: 'shared' } }),
+      space('space_own', {
+        name: 'Research bot',
+        agent: { kind: 'own', name: 'Research bot', createdAt: 7 }
+      }),
+      folder('folder_a', 'space_shared', { agent: { name: 'A', createdAt: 5 } }),
+      folder('folder_mine', 'space_shared', { name: 'Mine' })
+    ])
+    const m = b.state.model
+    expect(m.spaces.find((s) => s.id === 'space_shared')?.agent).toEqual({ kind: 'shared' })
+    expect(m.spaces.find((s) => s.id === 'space_own')?.agent).toEqual({
+      kind: 'own',
+      name: 'Research bot',
+      createdAt: 7
+    })
+    expect(m.folders.folder_a.agent).toEqual({ name: 'A', createdAt: 5 })
+    // The user's folder in the shared space lands as it came: no mark.
+    expect(m.folders.folder_mine).not.toHaveProperty('agent')
+    // The peer's agent adopted the group: the newer record carries the adopter's name.
+    applyRemote(b, [
+      folder('folder_a', 'space_shared', { agent: { name: 'B', createdAt: 5 } }, 2000)
+    ])
+    expect(m.folders.folder_a.agent).toEqual({ name: 'B', createdAt: 5 })
+    // Every device publishes the mark it holds, so the next peer gets it too.
+    const published = collectLocal(
+      { model: m, settings: b.state.settings, shortcutOverrides: {}, bookmarks: [], boosts: [] },
+      defaultScope()
+    )
+    expect(published.get('space_shared')?.data).toMatchObject({ agent: { kind: 'shared' } })
+    expect(published.get('folder_a')?.data).toMatchObject({ agent: { name: 'B', createdAt: 5 } })
+    expect(published.get('folder_mine')?.data).not.toHaveProperty('agent')
+  })
+
+  it('a record without the field (a peer older than the mark) keeps the local mark; a malformed one is ignored', () => {
+    const b = browser()
+    const m = b.state.model
+    const shared = createSpace('Agents', '')
+    shared.agent = { kind: 'shared' }
+    m.spaces.push(shared)
+    const group = createFolder(m, shared.id, 'A · 3f9a', '')
+    group.agent = { name: 'A', createdAt: 5 }
+    applyRemote(b, [
+      space(shared.id, { name: 'Agents (theirs)' }),
+      folder(group.id, shared.id, { name: 'Renamed on the phone' })
+    ])
+    expect(shared.name).toBe('Agents (theirs)')
+    expect(shared.agent).toEqual({ kind: 'shared' })
+    expect(group.name).toBe('Renamed on the phone')
+    expect(group.agent).toEqual({ name: 'A', createdAt: 5 })
+    applyRemote(b, [
+      space(shared.id, { agent: { kind: 'own' } }, 2000),
+      folder(group.id, shared.id, { agent: { name: 'B' } }, 2000),
+      space('space_odd', { agent: 'shared' }, 2000),
+      folder('folder_odd', shared.id, { agent: { createdAt: 5 } }, 2000)
+    ])
+    expect(shared.agent).toEqual({ kind: 'shared' })
+    expect(group.agent).toEqual({ name: 'A', createdAt: 5 })
+    expect(m.spaces.find((s) => s.id === 'space_odd')).not.toHaveProperty('agent')
+    expect(m.folders.folder_odd).not.toHaveProperty('agent')
   })
 })

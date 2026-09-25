@@ -1114,9 +1114,11 @@ export class AgentService implements SessionStore, McpHandlers {
 
   /**
    * The former owner's name of an orphaned group, when known: the session that left it this
-   * run, else the name its mark carries (null when the mark's maker is unknown).
+   * run, else the name its mark carries (null when the mark's maker is unknown, and for a group
+   * that is not orphaned at all).
    */
   orphanWas(folderId: string): string | null {
+    if (this.groupOwner(folderId)) return null
     const known = this.orphans.get(folderId)?.ownerName
     if (known) return known
     return this.browser.state.model.folders[folderId]?.agent?.name || null
