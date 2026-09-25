@@ -45,6 +45,16 @@ val copySafeBrowsingSnapshot = tasks.register<Copy>("copySafeBrowsingSnapshot") 
     into(projectDir.resolve("src/main/assets/safebrowsing"))
 }
 
+// The lookalike check's tables (resources/lookalikes, refreshed with `npm run lookalikes:snapshot`):
+// the Tranco top list and the Latin-target subset of Unicode's confusables, read by the core
+// through the asset loader (`fetchBundledLookalikeTable`); the asset merger inflates the `.gz`.
+val copyLookalikesSnapshot = tasks.register<Copy>("copyLookalikesSnapshot") {
+    group = "build"
+    description = "Copies the bundled lookalike tables into app/src/main/assets/lookalikes"
+    from(webRoot.resolve("resources/lookalikes"))
+    into(projectDir.resolve("src/main/assets/lookalikes"))
+}
+
 val versionProps = Properties().apply {
     // Mirror the npm package version so About shows the same number on every platform.
     val pkg = webRoot.resolve("package.json").readText()
@@ -266,7 +276,7 @@ base {
     archivesName.set("zenium-$appVersion")
 }
 
-tasks.named("preBuild") { dependsOn(buildWeb, copyBlockingSnapshot, copySafeBrowsingSnapshot) }
+tasks.named("preBuild") { dependsOn(buildWeb, copyBlockingSnapshot, copySafeBrowsingSnapshot, copyLookalikesSnapshot) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")

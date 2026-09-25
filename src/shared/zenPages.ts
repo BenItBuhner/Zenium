@@ -15,7 +15,12 @@
 import chromeStylesheet from '../renderer/src/assets/main.css?raw'
 import { PHONE_MAX_WIDTH } from './formFactor'
 import type { CertificateDetails, ColorScheme, Platform as PlatformOs } from './types'
-import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
+import {
+  SAFE_BROWSING_THREAT_LABELS,
+  isLookalikeReason,
+  type LookalikeReason,
+  type SafeBrowsingThreat
+} from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 import { isCertificateError } from './siteInfo'
 import {
@@ -713,6 +718,16 @@ export function errorPageHtml(url: URL, scheme: ColorScheme = 'system'): string 
   if (kind === 'safebrowsing')
     return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')), accent, scheme)
   if (kind === 'https-only') return httpsOnlyPageHtml(target, code, accent, scheme)
+  if (kind === 'lookalike') {
+    const reason = url.searchParams.get('reason')
+    return lookalikePageHtml(
+      target,
+      url.searchParams.get('target') ?? '',
+      isLookalikeReason(reason) ? reason : 'edit-distance',
+      accent,
+      scheme
+    )
+  }
   if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
   const content = errorPageContent(
     code,
@@ -806,6 +821,8 @@ const GLYPHS = {
     '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
   'lock-open':
     '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
+  'shield-question':
+    '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M9.1 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   'loader-circle': '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>'
 } as const
 
@@ -825,7 +842,7 @@ interface WarningButton {
 
 /** What a warning page says and offers; `warningPageHtml` lays it out. */
 interface WarningPage {
-  kind: 'safebrowsing' | 'https-only'
+  kind: 'safebrowsing' | 'https-only' | 'lookalike'
   /** The `<title>`. */
   name: string
   /** The status ink of the title's glyph. */
@@ -978,6 +995,52 @@ export function httpsOnlyPageHtml(
     <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and Security.</p>`,
       detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
       target: httpUrl
+    },
+    accent,
+    scheme
+  )
+}
+
+/** The lookalike page's Details paragraph, per test (`LookalikeReason`), in the page's words. */
+export const LOOKALIKE_REASON_LABELS: Record<LookalikeReason, string> = {
+  'edit-distance': 'is one character off',
+  embedding: 'contains the name of',
+  skeleton: 'is spelled with characters that look like those of'
+}
+
+/**
+ * The lookalike question (PS-18; Chrome's "Did you mean…?" interstitial, Edge's typo
+ * protection) on the family's surface: the address asked for looks like a well-known site's
+ * (one character off, containing its name, or spelled in look-alike characters). The primary
+ * goes to the site it looks like (`suggested`), "Continue to <lookalike>" beside it goes on to
+ * the address and remembers the host (`proceed`, the `lookalike` permission); Details names the
+ * test that matched, the address, and the way back.
+ */
+export function lookalikePageHtml(
+  lookalikeUrl: string,
+  target: string,
+  reason: LookalikeReason,
+  accent: ErrorPageAccent | null = null,
+  scheme: ColorScheme = 'system'
+): string {
+  const host = hostOf(lookalikeUrl)
+  const shownTarget = target || 'another site'
+  return warningPageHtml(
+    {
+      kind: 'lookalike',
+      name: `Did you mean ${shownTarget}?`,
+      tone: 'warn',
+      glyph: 'shield-question',
+      title: `Did you mean ${shownTarget}?`,
+      description: `The address <strong>${escapeHtml(host)}</strong> looks like <strong>${escapeHtml(shownTarget)}</strong>. Sites imitating well-known names are a common way to steal passwords.`,
+      actions: [
+        { action: 'proceed', label: `Continue to ${host}` },
+        { action: 'suggested', label: `Go to ${shownTarget}`, primary: true }
+      ],
+      details: `<p><strong>${escapeHtml(host)}</strong> ${LOOKALIKE_REASON_LABELS[reason]} <strong>${escapeHtml(shownTarget)}</strong>, a site many people visit. If you meant to open it, Continue takes you there and Zenium will not ask about this address again.</p>`,
+      detailActions: [{ action: 'back', label: 'Back' }],
+      target: lookalikeUrl,
+      data: { reason, target: shownTarget }
     },
     accent,
     scheme

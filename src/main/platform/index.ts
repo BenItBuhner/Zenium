@@ -166,6 +166,7 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   inactiveTabs: false,
   secureDns: true,
   quitsThroughCore: true,
+  lookalikeHolds: true,
   // `zen://newtab` is served by the zen protocol and bridged by the page preload.
   newTabPage: true,
   // Settings is a page tab in the content area (`pages/settings`, design language v2 §10.5).
@@ -341,7 +342,9 @@ export class ElectronPlatform implements Platform {
       undefined,
       undefined,
       // The jar's half of the per-site cookie policy: never-sites' cookies go as they land.
-      new CookiePolicyEnforcer(this.sessions)
+      new CookiePolicyEnforcer(this.sessions),
+      // The lookalike hold (PS-18): the core's verdict on a tab's main-frame request.
+      { check: (url) => (this.browser ? this.browser.protection.checkLookalike(url) : null) }
     )
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()

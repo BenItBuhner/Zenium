@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Decision, RequestContext } from '../../../core/blocking/rules'
-import type { PrivacyFlags, SafeBrowsingHit } from '../../../shared/privacy'
+import type { LookalikeVerdict, PrivacyFlags, SafeBrowsingHit } from '../../../shared/privacy'
 import { DEFAULT_SITE_DATA_POLICY } from '../../../shared/siteData'
 import type {
   ElectronPrivacy as PrivacyHostImpl,
@@ -70,12 +70,15 @@ function request(ctx: Partial<RequestContext> & { url: string }, tabId = 'tab-1'
 class FakeTabs {
   upgraded: Array<[string, string, string]> = []
   unsafe: Array<[string, string, SafeBrowsingHit]> = []
+  lookalikes: Array<[string, string, LookalikeVerdict]> = []
   viewForTab(tabId: string): RequestTab | undefined {
     if (tabId === 'gone') return undefined
     return {
       noteUpgraded: (from: string, to: string) => void this.upgraded.push([tabId, from, to]),
       noteUnsafeNavigation: (url: string, hit: SafeBrowsingHit) =>
-        void this.unsafe.push([tabId, url, hit])
+        void this.unsafe.push([tabId, url, hit]),
+      noteLookalikeNavigation: (url: string, verdict: LookalikeVerdict) =>
+        void this.lookalikes.push([tabId, url, verdict])
     }
   }
 }

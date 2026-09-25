@@ -522,6 +522,27 @@ export interface SafeBrowsingHit {
   remote: boolean
 }
 
+/** Which of the three lookalike tests matched (each named after Chrome's). */
+export type LookalikeReason = 'edit-distance' | 'embedding' | 'skeleton'
+
+/** Why a navigation was held as a lookalike: the site it imitates and the test that said so. */
+export interface LookalikeVerdict {
+  /** The registrable domain the address looks like (`google.com`). */
+  target: string
+  reason: LookalikeReason
+}
+
+export function isLookalikeReason(value: unknown): value is LookalikeReason {
+  return value === 'edit-distance' || value === 'embedding' || value === 'skeleton'
+}
+
+/**
+ * The permission a "Continue to <lookalike>" is stored under (`origin|lookalike` in
+ * `permissions.json`, `allow` = the host is the user's to visit without the question), beside
+ * the HTTPS-only exceptions and reset with the rest of a site's decisions.
+ */
+export const LOOKALIKE_PERMISSION = 'lookalike'
+
 export const SAFE_BROWSING_THREAT_LABELS: Record<
   SafeBrowsingThreat,
   { title: string; description: string }

@@ -1,0 +1,28 @@
+{
+  "builtAt": 1790338721053,
+  "tables": [
+    {
+      "id": "tranco-top",
+      "file": "tranco-top.txt.gz",
+      "entries": 2000,
+      "bytes": 11245,
+      "url": "https://tranco-list.eu/download/K9PXW/2000",
+      "name": "Tranco top 2000",
+      "homepage": "https://tranco-list.eu",
+      "licence": "Free with attribution (Tranco, Le Pochat et al., NDSS 2019); cite the list id",
+      "listId": "K9PXW",
+      "date": "2026-09-24"
+    },
+    {
+      "id": "confusables",
+      "file": "confusables.txt.gz",
+      "entries": 1814,
+      "bytes": 7348,
+      "url": "https://www.unicode.org/Public/security/latest/confusables.txt",
+      "name": "Unicode confusables.txt, Latin-target subset (Version: 18.0.0)",
+      "homepage": "https://www.unicode.org/reports/tr39/",
+      "licence": "Unicode Licence v3 (https://www.unicode.org/license.txt)",
+      "date": "2026-08-06"
+    }
+  ]
+}

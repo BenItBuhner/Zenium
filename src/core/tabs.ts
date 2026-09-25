@@ -75,6 +75,7 @@ import { PRIVATE_ACCENT } from '../shared/newTabPageScript'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import {
+  BLOCKED_BY_CLIENT_CODE,
   CRASH_ERROR_CODE,
   crashCodeName,
   describeNetError,
@@ -717,6 +718,15 @@ export class TabManager {
           v.loadURL(safeBrowsingPageUrl(url, unsafe.threat, this.errorPageAccent(tabId)))
           return
         }
+        // The host's request engine held the navigation on the lookalike verdict (PS-18): the
+        // question page, before anything of the address was fetched.
+        const lookalike = this.browser.protection.takePendingLookalike(tabId, url)
+        if (lookalike) {
+          this.httpsUpgraded.delete(tabId)
+          failed()
+          v.loadURL(this.browser.protection.lookalikePage(tabId, url, lookalike))
+          return
+        }
         const plaintext = this.httpsUpgraded.get(tabId)
         if (plaintext && url.startsWith('https://') && HTTP_FALLBACK_CODES.has(code)) {
           this.httpsUpgraded.delete(tabId)
@@ -753,6 +763,8 @@ export class TabManager {
       onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
       onUnsafeNavigation: (url, hit) =>
         this.browser.protection.safeBrowsing.notePendingBlock(tabId, url, hit),
+      onLookalikeNavigation: (url, verdict) =>
+        this.browser.protection.notePendingLookalike(tabId, url, verdict),
       // The page stopped answering (tabs-45, Chrome's "Page unresponsive"): the row is marked
       // and the chrome asks whether to wait or exit the page; the mark goes when the page answers
       // again, when the user waits (`waitUnresponsive` – the next report asks again), when a
@@ -2357,13 +2369,23 @@ export class TabManager {
     if (opts.upgradedFrom) this.httpsUpgraded.set(tabId, `http://${opts.upgradedFrom}`)
     else this.httpsUpgraded.delete(tabId)
     this.pendingTransition.set(tabId, opts.transition ?? 'typed')
+    // A host whose request engine cannot hold a navigation on the core's lookalike verdict
+    // (Android): the address the browser was asked for is checked here, before its request –
+    // the question page loads in its place (PS-18). Hosts with the hold leave it to their engine.
+    const lookalike = this.browser.state.capabilities.lookalikeHolds
+      ? null
+      : this.browser.protection.checkLookalike(url)
+    if (lookalike) {
+      tab.url = this.browser.protection.lookalikePage(tabId, url, lookalike)
+      tab.errorCode = BLOCKED_BY_CLIENT_CODE
+    }
     const hadView = this.view(tabId) !== undefined
     this.thawForNavigation(tabId)
     const view = this.ensureLoaded(tabId)
     if (!view) return
-    view.setBackgroundColor(this.backgroundFor(url))
+    view.setBackgroundColor(this.backgroundFor(tab.url))
     // ensureLoaded() already loads `tab.url` when it has to create the view.
-    if (hadView) view.loadURL(url)
+    if (hadView) view.loadURL(tab.url)
     this.browser.state.commit()
   }
 
