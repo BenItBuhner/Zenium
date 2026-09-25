@@ -154,13 +154,22 @@ class MemoryPressureDemo : DemoHarness("memory-pressure-demo-state.json", "andro
         var audible = awaitTrue(6_000) { coreTab(TAB_AUDIO)?.optBoolean("audible") == true }
         if (!audible) {
             // Run 3's dark act: the finger started the tone (audio focus taken, the stream up, the
-            // tone playing for the next 88 s) and the core never heard it – the page script's
-            // `media` report went missing between the page and the core, once in six acts. The
-            // media path's, not this row's, flagged in the PR; here the element is paused and
-            // played again from the page – allowed after the finger's activation – so its `pause`
-            // / `play` events send the report afresh, and the findings say the first was missed.
-            val playing = pageJs(TAB_AUDIO, "(function(){var a=document.querySelector('audio');return String(!!a&&!a.paused)})()")
-            finding("the core did not hear the audio page within 6 s of the tap (the element playing=$playing); the tone paused and played again from the page")
+            // tone playing for the next 88 s) and no `media` report from that document reached the
+            // core – the page script's word went missing between the page and the core, once in
+            // six acts. The media path's, not this row's, flagged in the PR; here the element is
+            // paused and played again from the page – allowed after the finger's activation – so
+            // its `pause` / `play` events send the report afresh, and the findings say the first
+            // was missed. The document's side is read first, so the line says which miss it was:
+            // the script installed with its bridge (`__zenPageInstalled` and `__zenPageBridge` both
+            // there – the report lost in flight) or deaf (installed without a bridge: the page
+            // script's `if (!bridge) return`, the one silencer of a whole document – or not
+            // installed at all).
+            val state = pageJs(
+                TAB_AUDIO,
+                "(function(){var a=document.querySelector('audio');return 'playing='+String(!!a&&!a.paused)+" +
+                    "' bridge='+String(!!window.__zenPageBridge)+' installed='+String(window.__zenPageInstalled)})()"
+            )
+            finding("the core did not hear the audio page within 6 s of the tap (the element $state); the tone paused and played again from the page")
             pageJs(TAB_AUDIO, "(function(){var a=document.querySelector('audio');if(a){a.pause();a.play()}return 'replayed'})()")
             audible = awaitTrue(8_000) { coreTab(TAB_AUDIO)?.optBoolean("audible") == true }
         }
