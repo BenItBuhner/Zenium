@@ -387,6 +387,36 @@ class StartupSplashTest {
         assertTrue(build.contains("androidx.core:core-splashscreen:"))
     }
 
+    /**
+     * The icon's tap (IconTapActivity): the platform draws the splash from the theme of the
+     * activity the launcher starts and transfers it within one task only, so the aliases' target
+     * wears the splash theme, shares the browser's affinity (none of its own) and relinquishes
+     * the task's identity to MainActivity – the shape that keeps an icon switch from removing the
+     * browser's task. The shortcuts keep the other trampoline, in a task of its own, unseen.
+     */
+    @Test
+    fun theIconsTapWearsTheSplashInTheBrowsersTaskAndHandsTheTasksIdentityOver() {
+        val manifest = read("src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml")
+        val tap = Regex("""<activity\s+android:name="\.IconTapActivity"([^>]*)/>""").find(manifest)
+        assertTrue(".IconTapActivity is declared", tap != null)
+        val shape = tap!!.value
+        assertTrue("the splash theme: the starting window from the tap", shape.contains("""android:theme="@style/Theme.Zen.Splash""""))
+        assertTrue("the identity handed to MainActivity the moment it joins", shape.contains("""android:relinquishTaskIdentity="true""""))
+        assertFalse("no affinity of its own: MainActivity joins this task, where the window is transferred", shape.contains("android:taskAffinity"))
+        assertFalse("the task stays in Recents", shape.contains("android:excludeFromRecents"))
+        assertTrue("not exported: the aliases are", shape.contains("""android:exported="false""""))
+        val aliases = Regex("""<activity-alias(.*?)</activity-alias>""", RegexOption.DOT_MATCHES_ALL).findAll(manifest).map { it.value }.toList()
+        assertTrue("the icon aliases are there", aliases.isNotEmpty())
+        for (alias in aliases) assertTrue("every icon alias targets the tap's trampoline", alias.contains("""android:targetActivity=".IconTapActivity""""))
+        val shortcuts = read("src/main/kotlin/app/zen/chromium/LauncherIconActivity.kt", "app/src/main/kotlin/app/zen/chromium/LauncherIconActivity.kt")
+        assertTrue("the tap's trampoline is the shortcuts' forward under another manifest shape", read("src/main/kotlin/app/zen/chromium/IconTapActivity.kt", "app/src/main/kotlin/app/zen/chromium/IconTapActivity.kt").contains("class IconTapActivity : LauncherIconActivity()"))
+        assertTrue("the forward precedes the finish (the task is found by affinity only while its top is not finishing)", shortcuts.indexOf("startActivity(forward)") in 0 until shortcuts.indexOf("finish()"))
+        val old = Regex("""<activity\s+android:name="\.LauncherIconActivity"([^>]*)/>""").find(manifest)
+        assertTrue("the shortcuts' trampoline keeps its own task and no window", old != null && old.value.contains("""android:taskAffinity=""""") && old.value.contains("Theme.NoDisplay"))
+        val xml = read("src/main/shortcuts/shortcuts.xml", "app/src/main/shortcuts/shortcuts.xml")
+        assertFalse("the shortcuts never take the tap's trampoline (their CLEAR_TASK would clear the browser's task)", xml.contains("IconTapActivity"))
+    }
+
     @Test
     fun theRestoredPictureIsForTheBootsRestoreOnlyOverAnUnpaintedViewOnce() {
         assertTrue(RestoredPictures.wanted(restoring = true, painted = false, shown = false))

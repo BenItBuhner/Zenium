@@ -18,6 +18,15 @@ import android.os.Bundle
  *
  * Not exported: the system starts pinned shortcuts under their creator's uid, so the tile reaches
  * it and another app's intent does not (Chrome's `SecureWebAppLauncher`).
+ *
+ * It keeps `Theme.NoDisplay` where the icon's trampoline ([IconTapActivity]) wears the splash:
+ * the platform transfers a starting window within one task only (`Task.startActivityLocked`
+ * looks for the window's holder in the started activity's own task), and the app's window lives
+ * in a document task of its own, found again by its URI, never in this trampoline's. A splash
+ * theme here would be a window in this task and then the app's own in the other – two splashes
+ * and a task switch between them. So the tile's tap shows the launcher until [WebAppActivity]
+ * starts and the platform draws its fixed ground (android-startup-demo.sh's tile act measures
+ * that lead), as Chrome's `WebappLauncherActivity`, `NoDisplay` too, does.
  */
 class WebAppLauncherActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {

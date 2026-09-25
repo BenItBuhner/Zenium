@@ -202,11 +202,18 @@ describe('planAppIcons', () => {
     const block = manifest.slice(begin, end)
     expect(block.match(/<activity-alias/g)).toHaveLength(APP_ICON_VARIANTS.length)
     expect(block.match(/android:enabled="true"/g)).toHaveLength(1)
-    expect(block.match(/android:targetActivity="\.LauncherIconActivity"/g)).toHaveLength(
+    expect(block.match(/android:targetActivity="\.IconTapActivity"/g)).toHaveLength(
       APP_ICON_VARIANTS.length
     )
-    // The trampoline itself is declared outside the generated block.
-    expect(manifest).toContain('android:name=".LauncherIconActivity"')
+    // The trampoline itself is declared outside the generated block: the splash theme (the
+    // tap's starting window), the identity relinquished (the task survives an icon switch), no
+    // affinity of its own (the browser joins its task, where the platform transfers the window).
+    const trampoline = manifest.match(/<activity\s+android:name="\.IconTapActivity"[^>]*\/>/)
+    expect(trampoline).not.toBeNull()
+    expect(trampoline![0]).toContain('android:theme="@style/Theme.Zen.Splash"')
+    expect(trampoline![0]).toContain('android:relinquishTaskIdentity="true"')
+    expect(trampoline![0]).not.toContain('android:taskAffinity')
+    expect(trampoline![0]).not.toContain('android:excludeFromRecents')
     expect(block.match(/android\.intent\.category\.LAUNCHER/g)).toHaveLength(
       APP_ICON_VARIANTS.length
     )

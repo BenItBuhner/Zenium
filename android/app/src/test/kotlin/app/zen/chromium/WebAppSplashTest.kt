@@ -70,8 +70,13 @@ class WebAppSplashTest {
         val activity = Regex("""<activity\s+android:name="\.WebAppActivity"(.*?)>""", RegexOption.DOT_MATCHES_ALL).find(manifest)
         assertTrue(".WebAppActivity is declared", activity != null)
         assertTrue("the splash theme is the window's", activity!!.value.contains("""android:theme="@style/Theme.Zen.WebApp.Splash""""))
+        // The tile's trampoline keeps NoDisplay where the icon's (IconTapActivity) wears the splash:
+        // the platform transfers a starting window within one task only, and the app's window
+        // lives in a document task of its own, never the trampoline's – a splash theme here would
+        // be two windows and a task switch between them.
         val trampoline = Regex("""<activity\s+android:name="\.WebAppLauncherActivity"(.*?)>""", RegexOption.DOT_MATCHES_ALL).find(manifest)
         assertTrue(".WebAppLauncherActivity is declared", trampoline != null)
-        assertTrue("the trampoline shows nothing of its own: the starting window is the app window's", trampoline!!.value.contains("""android:theme="@android:style/Theme.NoDisplay""""))
+        assertTrue("the trampoline shows nothing of its own: the starting window is the app window's, in the app's task", trampoline!!.value.contains("""android:theme="@android:style/Theme.NoDisplay""""))
+        assertTrue("in a task of its own, out of the app's", trampoline.value.contains("""android:taskAffinity="""""))
     }
 }
