@@ -451,13 +451,16 @@ export type PreviewState =
   | {
       /**
        * The reader entry on the stand-in site's article (PUI-14, MOT-36), the same page through
-       * its three frames: `offer` – the page reads as an article and the "Show Reader View?"
-       * strip stands over it; `crossing` – the crossing into Reader View held mid-way, the
-       * page's picture under the reader's surface at `at` of its fade (0 … 1), the load bar over
-       * both, the destination not yet drawn; `landed` – Reader View reached on that article.
+       * its frames: `offer` – the page reads as an article and the "Show Reader View?" strip
+       * stands over it; `article` – the page reads as an article and the offer has gone (the
+       * site muted for the session, as the clock's end or the X leaves it), the state the
+       * site-information sheet's Reader View row is the door in; `crossing` – the crossing
+       * into Reader View held mid-way, the page's picture under the reader's surface at `at` of
+       * its fade (0 … 1), the load bar over both, the destination not yet drawn; `landed` –
+       * Reader View reached on that article.
        */
       kind: 'readerEntry'
-      pose: 'offer' | 'crossing' | 'landed'
+      pose: 'offer' | 'article' | 'crossing' | 'landed'
       at: number
     }
   | {
@@ -740,7 +743,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `voices` opens the voice picker sheet over it), `reader=article` for the active
  * tab in Reader View on a stand-in article (`reader=preferences` opens its text preferences
  * sheet over it), `readerEntry=offer` for the stand-in site's article with the "Show Reader
- * View?" strip standing over it (`readerEntry=crossing` holds the crossing into Reader View at
+ * View?" strip standing over it (`readerEntry=article` is the same article with the offer
+ * gone – the site muted for the session – for the site-information sheet's Reader View row;
+ * `readerEntry=crossing` holds the crossing into Reader View at
  * its surface's full opacity, `readerEntry=crossing:<0…1>` at that fraction of the surface's
  * fade – the page's picture under the reader's ground, the load bar over both;
  * `readerEntry=landed` is Reader View reached on that same article),
@@ -955,6 +960,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const readerEntry = params.get('readerEntry')
   if (readerEntry !== null) {
     if (readerEntry === 'landed') return { kind: 'readerEntry', pose: 'landed', at: 1 }
+    if (readerEntry === 'article') return { kind: 'readerEntry', pose: 'article', at: 0 }
     if (!readerEntry.startsWith('crossing')) return { kind: 'readerEntry', pose: 'offer', at: 0 }
     const rest = readerEntry.slice('crossing'.length)
     const fraction = rest === '' ? 1 : rest.startsWith(':') ? Number(rest.slice(1)) : NaN

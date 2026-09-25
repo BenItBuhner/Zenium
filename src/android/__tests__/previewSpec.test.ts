@@ -221,6 +221,12 @@ describe('parsePreviewSpec', () => {
       pose: 'landed',
       at: 1
     })
+    // The article with the offer gone: the site-information sheet's row's state.
+    expect(parsePreviewSpec('readerEntry=article')).toEqual({
+      kind: 'readerEntry',
+      pose: 'article',
+      at: 0
+    })
     // Behind Reader View itself, ahead of the network states.
     expect(parsePreviewSpec('reader=article&readerEntry=offer')).toEqual({
       kind: 'reader',

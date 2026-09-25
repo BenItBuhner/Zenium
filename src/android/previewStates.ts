@@ -29,6 +29,7 @@ import { rememberThumbnail } from '@renderer/lib/thumbnails'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { barHideStore, dispatchBarScroll, resetBarHide } from '@renderer/lib/barHide'
 import { pageCovered } from '@renderer/lib/pageView'
+import { readerSiteOf } from '@renderer/lib/readerEntry'
 import { READER_BANNER_KEY, readerMutes } from '@renderer/lib/readerEntryMessage'
 import { readerCrossingStore, readerSurfaceColor } from '@renderer/lib/readerTransition'
 import {
@@ -575,20 +576,37 @@ let previewArticleReturn: { tabId: string; url: string } | null = null
 let previewArticleTabId: string | null = null
 
 /**
- * The page is an article to the chrome: the stand-in host cannot run the readability probe in
- * a site's frame, so the flag the probe would set is set here (and taken back at the next
- * state, as the probe's own answer goes with a navigation). The session's reader mutes are
- * forgotten first: a previous state's tab went back to its own page with the offer standing –
- * the harness's navigation, which the memory reads as the user's leaving
- * (`readerOfferEndEffect`) – and this state's offer is a first one.
+ * The page is an article to the chrome: where the probe's answer has not come with the load
+ * (the stand-in host's frames answer it for the stand-in site's pages, as a device's WebView
+ * does; another site's frame cannot), the flag the probe would set is set here (and taken back
+ * at the next state, as the probe's own answer goes with a navigation). The session's reader
+ * mutes are forgotten first: a previous state's tab went back to its own page with the offer
+ * standing – the harness's navigation, which the memory reads as the user's leaving
+ * (`readerOfferEndEffect`) – and this state's offer is a first one. `muted` is the article
+ * after the offer has gone – the site muted for the session, as the clock's end or the X
+ * leaves it – so no strip stands: the site-information sheet's Reader View row's state
+ * (`muteArticleSite` puts the mute in before the page comes up, since the probe's answer
+ * would raise the offer with the load; this keeps it over the clearing).
  */
-function markArticle(browser: Browser, tabId: string): void {
+function markArticle(browser: Browser, tabId: string, muted = false): void {
   readerMutes.clear()
   const live = browser.tabs.tab(tabId)
-  if (!live || live.readerable) return
+  if (!live) return
+  if (muted) readerMutes.mute(readerSiteOf(live.url))
+  if (live.readerable) return
   live.readerable = true
   browser.state.commitVolatile()
   previewArticleTabId = tabId
+}
+
+/**
+ * The stand-in site muted for the session before its article comes up, the mute record
+ * otherwise clean: the offer the probe's answer would raise with the load stays down, as after
+ * the clock's end or the X on the device.
+ */
+function muteArticleSite(): void {
+  readerMutes.clear()
+  readerMutes.mute(readerSiteOf(SAMPLE_ARTICLE_URL))
 }
 
 /** A held crossing goes at once, and a page marked an article by a state is a page again. */
@@ -1304,15 +1322,24 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         )
       })
   } else if (target.kind === 'readerEntry' && tab && state) {
-    // The three frames of the reader entry on one article (PUI-14, MOT-36): the stand-in site's
+    // The frames of the reader entry on one article (PUI-14, MOT-36): the stand-in site's
     // page, loaded and painted, then – `offer` – marked an article as the probe would, so the
-    // shell's hook puts the strip up; `crossing` – the crossing held mid-way over its picture
-    // (the strip answered: the page is not marked); `landed` – Reader View opened on the same
-    // article, as the crossing's end shows it.
+    // shell's hook puts the strip up; `article` – the site muted before the page comes up (the
+    // probe's answer comes with the load, and would raise the offer), the page an article to
+    // the chrome (the sheet's row) with no strip, as the clock's end leaves it; `crossing` –
+    // the crossing held mid-way over its picture (the strip answered: the page is not marked);
+    // `landed` – Reader View opened on the same article, as the crossing's end shows it.
+    if (target.pose === 'article') muteArticleSite()
     onSampleArticle(state, tab, (article) => {
       if (target.pose === 'offer') {
         markArticle(browser, article.id)
         whenBannerUp(READER_BANNER_KEY, finish)
+      } else if (target.pose === 'article') {
+        markArticle(browser, article.id, true)
+        untilState(
+          (s) => s.tabs[article.id]?.readerable === true,
+          () => afterFrames(2, finish)
+        )
       } else if (target.pose === 'crossing') {
         holdReaderCrossing(state, article, target.at, finish)
       } else {
