@@ -3,6 +3,7 @@ import type { HostCapabilities, Platform as PlatformOs } from '../../shared/type
 import { FOLDER_COLOR_ORDER } from '../../shared/defaults'
 import { isEmptyTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type {
   MenuHost,
   MenuItemTemplate,
@@ -92,6 +93,7 @@ function harness(capabilities: Partial<HostCapabilities> = {}): Harness {
   }
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   return {
     browser,

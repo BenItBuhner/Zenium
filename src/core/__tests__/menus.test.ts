@@ -18,6 +18,7 @@ import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
 import { Browser } from '../browser'
+import { closeBootTabs } from './bootTab'
 import type {
   AppHost,
   ClipboardHost,
@@ -368,6 +369,7 @@ function harness(
   }
   const browser = new Browser(platform)
   browser.start()
+  closeBootTabs(browser)
   const win = browser.allWindows()[0] as ZenWindow
   if (opts.formFactor)
     browser.handleCommand(win, 'window.formFactor', { formFactor: opts.formFactor })
