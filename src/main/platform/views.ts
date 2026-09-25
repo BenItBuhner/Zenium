@@ -47,6 +47,7 @@ import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
 import { inPlaceErrorPageScript } from '../../shared/zenPages'
 import { certificateSiteOf } from '../../core/security'
 import type { PageHint } from '../../shared/fullscreenHint'
+import { QUIT_HOLD_CHANNEL, type QuitHoldPanel } from '../../shared/quitHoldPanel'
 import {
   DISMISSED_ANSWER,
   LEAVE_SITE_CHANNEL,
@@ -1087,6 +1088,11 @@ export class ElectronTabView implements TabView {
 
   showHint(hint: PageHint | null): void {
     if (!this.wc.isDestroyed()) this.wc.send('zen:page-hint', hint)
+  }
+
+  /** "Hold ⌘Q to quit" over the page, or its way down (`preload/page.ts` listens on `zen:quit-hold`). */
+  showQuitHold(panel: QuitHoldPanel | null): void {
+    if (!this.wc.isDestroyed()) this.wc.send(QUIT_HOLD_CHANNEL, panel)
   }
 
   /** Fresh `NewTabPageState` for a `zen://newtab` page (its preload listens on this channel). */

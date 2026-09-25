@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+import type { QuitHoldPanel } from '../../shared/quitHoldPanel'
+import { resolveTheme, rgbToHex } from '../../shared/theme'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
 import { QUIT_HOLD_MS } from '../quitHold'
@@ -34,17 +36,30 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
   })
 }
 
+/** A page view of the fake host, with the panel's posting under the test's eye. */
+type FakeView = TabView & { showQuitHold: Mock<(panel: QuitHoldPanel | null) => void> }
+
 interface Host {
   quits: number
   os: PlatformOs
+  /** The page views made, in order. */
+  views: FakeView[]
+}
+
+interface HostOptions {
+  os: PlatformOs
+  /** The drives' flag (`AppHost.quitHoldEverywhere`). */
+  everywhere?: boolean
+  /** A host whose page views draw no panel (Android's `TabView` has no `showQuitHold`). */
+  pageless?: boolean
 }
 
 /** A desktop host on `os`, counting the quits the core asks of it; `everywhere` is the drives' flag. */
 function fakePlatform(
   io: StoreIO,
-  { os, everywhere = false }: { os: PlatformOs; everywhere?: boolean }
+  { os, everywhere = false, pageless = false }: HostOptions
 ): Platform & { host: Host } {
-  const host: Host = { quits: 0, os }
+  const host: Host = { quits: 0, os, views: [] }
   const capabilities = stub<HostCapabilities>({
     windows: true,
     updates: false,
@@ -71,14 +86,19 @@ function fakePlatform(
         })
     },
     views: stub<TabViewHost>({
-      createView: () =>
-        stub<TabView>({
+      createView: () => {
+        const view = stub<FakeView>({
           isDestroyed: () => false,
           isVisible: () => true,
           getZoom: () => 1,
           // No page objects to unloading: a quit's checks pass without a "Leave site?".
-          confirmUnload: undefined
+          confirmUnload: undefined,
+          // An explicit undefined stays undefined through the stub, as a host without the method.
+          showQuitHold: pageless ? undefined : vi.fn<(panel: QuitHoldPanel | null) => void>()
         })
+        host.views.push(view)
+        return view
+      }
     }),
     menus: stub(),
     dialogs: stub(),
@@ -95,7 +115,7 @@ function fakePlatform(
   }
 }
 
-function start(options: { os: PlatformOs; everywhere?: boolean }): {
+function start(options: HostOptions): {
   browser: Browser
   platform: ReturnType<typeof fakePlatform>
   win: ZenWindow
@@ -150,9 +170,59 @@ describe('the quit chord held quits (session-08)', () => {
     const requestQuit = vi.spyOn(browser, 'requestQuit')
     expect(browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)).toBe(true)
     expect(browser.quitHold.holding).toBe(true)
-    expect(win.quitHold).toEqual({ startedAt: Date.now(), durationMs: QUIT_HOLD_MS })
+    // The chord as the panel spells it: the platform's own spelling of the quit binding.
+    expect(win.quitHold).toEqual({ startedAt: Date.now(), durationMs: QUIT_HOLD_MS, chord: '⌘Q' })
     expect(win.windowState().quitHold).toEqual(win.quitHold)
     expect(requestQuit).not.toHaveBeenCalled()
+  })
+
+  it('posts the panel to the window’s active page with the chrome’s scheme and accent, and takes it down on the release', () => {
+    const { browser, platform, win } = start({ os: 'darwin' })
+    const tab = browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    browser.tabs.createTab({ url: 'https://example.com/b', active: false }, win)
+    const active = platform.host.views[0]!
+    const other = platform.host.views[1]!
+    expect(browser.tabs.activeTabFor(win)?.id).toBe(tab.id)
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    expect(active.showQuitHold).toHaveBeenCalledTimes(1)
+    const panel = active.showQuitHold.mock.calls[0]![0] as QuitHoldPanel
+    expect(panel).toEqual({
+      ...win.quitHold,
+      dark: browser.darkScheme(),
+      accent: expect.stringMatching(/^#[0-9a-f]{6}$/)
+    })
+    expect(panel.accent).toBe(
+      rgbToHex(resolveTheme(win.activeSpace().theme, browser.darkScheme()).accent)
+    )
+    expect(other.showQuitHold).not.toHaveBeenCalled()
+    // A key repeat posts nothing more: the page has the hold and steps its ring from the clock.
+    browser.keys.handle(quitChord('darwin', 'keyDown', true), null, win)
+    expect(active.showQuitHold).toHaveBeenCalledTimes(1)
+    browser.keys.handle(release('q'), null, win)
+    expect(active.showQuitHold).toHaveBeenCalledTimes(2)
+    expect(active.showQuitHold).toHaveBeenLastCalledWith(null)
+  })
+
+  it('takes the panel down before the held quit runs', () => {
+    const { browser, platform, win } = start({ os: 'darwin' })
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    const view = platform.host.views[0]!
+    const requestQuit = vi.spyOn(browser, 'requestQuit').mockResolvedValue(true)
+    browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)
+    vi.advanceTimersByTime(QUIT_HOLD_MS)
+    expect(view.showQuitHold).toHaveBeenLastCalledWith(null)
+    expect(view.showQuitHold.mock.invocationCallOrder[1]).toBeLessThan(
+      requestQuit.mock.invocationCallOrder[0]!
+    )
+  })
+
+  it('a page view without the panel (Android’s) leaves the hold to the chrome’s own copy', () => {
+    const { browser, win } = start({ os: 'darwin', pageless: true })
+    browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    expect(browser.keys.handle(quitChord('darwin', 'keyDown'), null, win)).toBe(true)
+    expect(win.quitHold).not.toBeNull()
+    browser.keys.handle(release('q'), null, win)
+    expect(win.quitHold).toBeNull()
   })
 
   it('quits once the keys were down for the whole hold, the overlay gone first; the hold is the confirmation', async () => {
@@ -264,7 +334,12 @@ describe('the quit chord held quits (session-08)', () => {
     const { browser, win } = start({ os: 'linux', everywhere: true })
     const requestQuit = vi.spyOn(browser, 'requestQuit')
     expect(browser.keys.handle(quitChord('linux', 'keyDown'), null, win)).toBe(true)
-    expect(win.quitHold).toEqual({ startedAt: Date.now(), durationMs: QUIT_HOLD_MS })
+    // The stand-in's panel names the Chrome preset's Linux chord, not a Mac's.
+    expect(win.quitHold).toEqual({
+      startedAt: Date.now(),
+      durationMs: QUIT_HOLD_MS,
+      chord: 'Ctrl + Shift + Q'
+    })
     expect(requestQuit).not.toHaveBeenCalled()
     // The setting still governs it there.
     browser.keys.handle(release('q'), null, win)

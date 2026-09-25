@@ -3352,13 +3352,15 @@ export type OverlayKind =
   | 'print'
 
 /**
- * A quit chord held down (`QuitHoldService`): when the hold began (the host's clock, epoch ms)
- * and how long it must last before the app quits. The chrome draws the hold's progress from
- * the two; the hold ends – the state goes null – when a key comes up or the time is reached.
+ * A quit chord held down (`QuitHoldService`): when the hold began (the host's clock, epoch ms),
+ * how long it must last before the app quits, and the chord as the platform spells it ("⌘Q";
+ * the key cap in "Hold ⌘Q to quit"). The panel draws the hold's progress from the first two;
+ * the hold ends – the state goes null – when a key comes up or the time is reached.
  */
 export interface QuitHoldState {
   startedAt: number
   durationMs: number
+  chord: string
 }
 
 export interface WindowState {

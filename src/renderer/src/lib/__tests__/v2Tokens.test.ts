@@ -47,6 +47,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
+  // "Hold ⌘Q to quit" (components/overlays/QuitHold.tsx; session-08, §9.23): the chrome's copy
+  // of the page-drawn notice, unlayered right before the confirmation it is kin to. Inside the
+  // button's span, so it is cut first.
+  ['.zen-quit-hold {', '/*\n * The confirmation prompt (components/dialogs/ConfirmDialog.tsx'],
   // The confirmation prompt (components/dialogs/ConfirmDialog.tsx; §9.23, §9.22): the notice's
   // body and footer on the card padding, unlayered beside the button so its check row can reach
   // past the gutter of the unlayered row primitive. Inside the button's span, so it is cut first.

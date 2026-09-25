@@ -66,6 +66,7 @@ import type { DisplayMode } from '../shared/displayMode'
 import type { PageFontSettings } from '../shared/fonts'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
 import type { PageHint } from '../shared/fullscreenHint'
+import type { QuitHoldPanel } from '../shared/quitHoldPanel'
 import type { CaptionColors } from '../shared/theme'
 import type { KeyInput } from '../shared/shortcuts'
 import type { SiteCertificate, SiteCookie } from '../shared/siteInfo'
@@ -793,6 +794,12 @@ export interface TabView {
    * this out and draw their own.
    */
   showHint?(hint: PageHint | null): void
+  /**
+   * The "Hold ⌘Q to quit" panel (session-08), drawn by the page script over the page while the
+   * quit chord is held – the page keeps the keyboard, so its key up ends the hold; null takes
+   * the panel down with its fade (`shared/quitHoldPanel`). Desktop hosts alone.
+   */
+  showQuitHold?(panel: QuitHoldPanel | null): void
   setBackgroundColor(color: string): void
   focus(): void
   /**

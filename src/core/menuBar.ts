@@ -160,7 +160,7 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Show All', role: 'unhide' },
       { type: 'separator' },
       // Chrome's checkbox (session-08), arming the hold: while it is set the quit chord shows
-      // "Hold ⌘Q to Quit" over the front window and quits once the keys were held
+      // "Hold ⌘Q to quit" over the front window and quits once the keys were held
       // (`QuitHoldService`); off, the chord quits at once. The chord in the label is Chrome's
       // wording. Its own setting – the tab-count warning stays `warnOnCloseWindow`'s.
       {

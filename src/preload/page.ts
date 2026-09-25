@@ -2,6 +2,11 @@ import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { PageHostMessage, PageMessage } from '../core/platform'
 import type { PageHint } from '../shared/fullscreenHint'
 import {
+  QUIT_HOLD_CHANNEL,
+  installQuitHoldPanel,
+  type QuitHoldPanel
+} from '../shared/quitHoldPanel'
+import {
   PAGE_HOST_CHANNEL,
   installActivationReporter,
   installPageScript,
@@ -209,6 +214,11 @@ if (process.isMainFrame) {
     // (the `zen://reader` page included, which the same code paints).
     onReadAloud: (listener) => onHost('readAloud', listener)
   })
+  // "Hold ⌘Q to quit" (session-08): the panel over the page while the quit chord is held, drawn
+  // here because the page keeps the keyboard through the hold (`shared/quitHoldPanel`).
+  installQuitHoldPanel((listener) =>
+    ipcRenderer.on(QUIT_HOLD_CHANNEL, (_event, panel: QuitHoldPanel | null) => listener(panel))
+  )
   installLeaveSite(send)
   // Whether a text field of this frame has the keyboard (history-14): the browser leaves the
   // caret's ⌘← / ⌘→ to it instead of going Back / Forward (`KeyboardHandler.setEditing`).

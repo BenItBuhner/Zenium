@@ -34,6 +34,7 @@ import { PickerStrip } from '../autofill/PickerStrip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
+import { QuitHoldNotice } from '../overlays/QuitHold'
 import { InternalPageHost } from '../pages/InternalPageHost'
 import { PdfViewerBar } from '../pdf/PdfViewerBar'
 import { PrivateLockCover } from '../phone/PrivateLockCover'
@@ -188,6 +189,12 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
     !(phone && ui.urlbar.open) &&
     !newTabPage &&
     !lockCover
+  // "Hold ⌘Q to quit" (session-08): over a live page the page script paints the notice itself
+  // (`shared/quitHoldPanel`; the view lies over the chrome, and hiding it would drop the key up
+  // the hold waits for), so the chrome draws its own copy only where no live page is in the
+  // frame – a chrome page, the empty frame, a page under its cover (the URL bar, a menu, a
+  // dialog), a page shown in another window, the phone's new tab page or its gesture stage.
+  const pageLive = tab !== null && !pageTab && !foreign && !newTabPage && !staged && !contentHidden
   const dropKey = dropStore.use((s) => s.key)
   const dropOverPage = dropStore.use((s) => s.page)
   // The translate bar shares the frame with the live page, under the strips and directly above
@@ -426,6 +433,8 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
       {/* The bar is the frame's edge: it recedes with the frame, and overlays cover both. */}
       {loadBar && <LoadProgress tab={tab} hidden={contentHidden || glanceActive || foreign} />}
       {ui.overlay !== 'none' && <OverlayHost state={state} ui={ui} />}
+      {/* Above the frame's overlays and dialogs, as the page-drawn one stands over the page. */}
+      <QuitHoldNotice hold={state.window.quitHold} show={!pageLive} />
     </div>
   )
 }
