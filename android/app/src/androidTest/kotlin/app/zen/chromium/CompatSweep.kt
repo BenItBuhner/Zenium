@@ -1533,8 +1533,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * A YouTube watch page: the phone WebView lands on m.youtube.com; `desktopSite` asks for the
      * desktop site instead (extensions whose scripts match `www.youtube.com` alone). The page's
      * upsell dialog is closed when it comes up; a consent interstitial makes the check `n/m`.
+     * `play` starts the video before the wait ([playVideo]): for a control drawn only on a playing
+     * page – Speak Subtitles' button waits for the player's caption fetch, which the paused page
+     * the WebView lands on never makes (round 18 §7: `where.video: paused` on both lanes).
      */
-    private fun youtube(row: Row, entry: JSONObject, expr: String, label: String, desktopSite: Boolean = false, settleMs: Long = 45_000): Grade {
+    private fun youtube(row: Row, entry: JSONObject, expr: String, label: String, desktopSite: Boolean = false, settleMs: Long = 45_000, play: Boolean = false): Grade {
         val tab = createTab(YOUTUBE_URL)
         if (desktopSite) {
             coreCall("tab.setDesktopSite", JSONObject().put("tabId", tab).put("on", true).toString())
@@ -1542,6 +1545,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         val view = waitForView(tab)
         var upsells = 0
+        val played = if (play) playVideo(view, label) else null
+        upsells += played?.optInt("upsellsClosed") ?: 0
         var found = JSONObject()
         val started = SystemClock.uptimeMillis()
         poll(settleMs, 1_500) {
@@ -1549,9 +1554,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             if (tabEval(view, YT_CLOSE_UPSELL) == "closed") upsells++
             if (found.optBoolean("pass")) true else null
         }
-        val where = json(tabEval(view, "JSON.stringify({url: location.href, title: document.title, readyState: document.readyState, video: (function(v){return v ? (v.paused ? 'paused' : 'playing') : 'none'})(document.querySelector('video'))})"))
+        val where = json(tabEval(view, YT_WHERE))
         val extra = JSONObject().put("page", found).put("where", where).put("upsellsClosed", upsells).put("desktopSite", desktopSite).put("tab", tab)
             .put("waitedMs", SystemClock.uptimeMillis() - started).put("console", JSONArray(consoleOf(view).takeLast(15)))
+        played?.let { extra.put("play", it) }
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
         val url = where.optString("url")
         val host = runCatching { android.net.Uri.parse(url).host ?: "" }.getOrDefault("")
@@ -1561,6 +1567,44 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             found.optBoolean("pass") -> Grade("P", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host", extra)
             else -> Grade("F", "$label${if (desktopSite) " (desktop site)" else ""}: ${found.toString().take(220)} on $host after ${(SystemClock.uptimeMillis() - started) / 1000} s (title ${JSONObject.quote(where.optString("title").take(40))}, video ${where.optString("video")})", extra)
         }
+    }
+
+    /**
+     * The watch page's video started as a viewer starts it: the player's `<video>` waited for, the
+     * upsell dialog closed when it stands over the player, a tap on the player's large play button
+     * (its centre when the button is not drawn) – the tab's WebView plays media on a gesture alone
+     * (`mediaPlaybackRequiresUserGesture`) – and the state read back; when the tap did not take
+     * (a touch-mode player shows its controls on the first tap), the player is asked from the page
+     * (`playVideo()` on `#movie_player`, then `video.play()`), which the tap's activation lets
+     * through. The reading: `by` (tap, script, already playing, none) with the state before and
+     * after each step.
+     */
+    private fun playVideo(view: TabWebView, label: String): JSONObject {
+        val report = JSONObject()
+        val before = pollExpr(view, YT_VIDEO_STATE, 25_000)
+        report.put("before", before)
+        if (!before.optBoolean("pass")) return report.put("by", "none").put("note", "no video element in the page")
+        if (before.optString("state") == "playing") return report.put("by", "already playing")
+        if (tabEval(view, YT_CLOSE_UPSELL) == "closed") report.put("upsellsClosed", 1)
+        var by = "none"
+        val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", ".ytp-large-play-button, #movie_player video, video")))
+        val point = screenPoint(view, centre)
+        if (point != null && onScreen("$label: the play tap")) {
+            tap(point.first, point.second)
+            val afterTap = pollExpr(view, YT_VIDEO_PLAYING, 8_000)
+            report.put("afterTap", afterTap)
+            if (afterTap.optBoolean("pass")) by = "tap"
+        } else {
+            report.put("tap", "no point for the player (${centre.toString().take(80)})")
+        }
+        if (by == "none") {
+            report.put("asked", tabEval(view, YT_PLAY_FROM_PAGE))
+            val afterScript = pollExpr(view, YT_VIDEO_PLAYING, 6_000)
+            report.put("afterScript", afterScript)
+            if (afterScript.optBoolean("pass")) by = "script"
+        }
+        Log.i(TAG, "$label: the video ${if (by == "none") "did not start" else "started by $by"} (${report.optJSONObject("afterScript") ?: report.optJSONObject("afterTap") ?: before})")
+        return report.put("by", by)
     }
 
     /** Enhancer for YouTube matches `www.youtube.com` alone: the mobile site first, then the desktop site of the same tab. */
@@ -6953,7 +6997,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("cdnapgfjopgaggbmfgbiinmmbdcglnam", "OpenDyslexic for Chrome", "opendyslexic", core = popupSwitch("OpenDyslexic", "page-a.html?opendyslexic", "input.toggle, input[type=checkbox]", OPENDYSLEXIC_APPLIED)),
         Row("ejecpjcajdpbjbmlcojcohgenjngflac", "Email Extract - Email Extractor Tool", "email-extract", core = popupMarker("Email Extract", EMAILS_FOUND, page = "emails.html?extract", settleMs = 25_000)),
         Row("gjjbmfigjpgnehjioicaalopaikcnheo", "Dark Theme - Dark mode for Chrome", "dark-theme", core = popupSwitch("Dark Theme", "styled-light.html?darktheme", "img[src*=\"power-icon\"]", DARK_FILTER_APPLIED)),
-        Row("fjoiihoancoimepbgfcmopaciegpigpa", "Speak Subtitles for YouTube", "speak-subtitles", core = { row, entry -> youtube(row, entry, injectedAny("yss-"), "Speak Subtitles' player control on a watch page", desktopSite = true) }),
+        Row("fjoiihoancoimepbgfcmopaciegpigpa", "Speak Subtitles for YouTube", "speak-subtitles", core = { row, entry -> youtube(row, entry, injectedAny("yss-"), "Speak Subtitles' player control on a watch page", desktopSite = true, play = true) }),
         Row("nkokmeaibnajheohncaamjggkanfbphi", "Save Image As PNG", "save-image-as-png", core = ::saveImageAsPng),
         Row("bldgenmjegcnjebiongilahhcjldgmlm", "Google Docs Quick Create", "docs-quick-create", core = popupOpens("Google Docs Quick Create", "/document/i", Regex("docs\\.google\\.com|accounts\\.google\\.com", RegexOption.IGNORE_CASE))),
         Row("iaigceaehdihlnolehbapjfbbfpnlngg", "Mirroring360 Sender for Chrome", "mirroring360", core = serviceBacked("Mirroring360 Sender", "it streams the screen or a tab to a Mirroring360 receiver found through its native host (`nativeMessaging`), the stream sourced by `desktopCapture` / `tabCapture`, none of which the phone gives", native = true)),
@@ -10408,6 +10452,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val YT_CLOSE_UPSELL =
             "(function(){var d=Array.prototype.find.call(document.querySelectorAll('dialog[open], [role=\"dialog\"]'),function(el){return /YouTube app|best experience/i.test(el.textContent||'')});" +
                 "if(!d)return 'none';var c=d.querySelector('button[aria-label*=\"lose\"], [role=\"button\"][aria-label*=\"lose\"], button[aria-label*=\"ismiss\"]');if(!c)return 'no close button';c.click();return 'closed'})()"
+        /** The watch page's video as one word: none, unstarted, playing, paused (with time on the clock), ended. */
+        private const val YT_VIDEO_WORD =
+            "(function(v){return v ? (v.ended ? 'ended' : v.paused ? (v.currentTime > 0 ? 'paused' : 'unstarted') : 'playing') : 'none'})"
+        /** Where the watch-page check ended: the address, the title, the document's state, the video's ([YT_VIDEO_WORD]) and its clock. */
+        private const val YT_WHERE =
+            "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({url: location.href, title: document.title, readyState: document.readyState, video: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null})})()"
+        /** The watch page's video present (`pass`), with its state, clock, readiness and whether it has a source. */
+        private const val YT_VIDEO_STATE =
+            "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({pass: !!v, state: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null, ready: v ? v.readyState : null, src: !!(v && (v.currentSrc || v.src))})})()"
+        /** The watch page's video playing (`pass`: present, not paused, not ended), the same fields. */
+        private const val YT_VIDEO_PLAYING =
+            "(function(){var v=document.querySelector('#movie_player video, video');return JSON.stringify({pass: !!v && !v.paused && !v.ended, state: $YT_VIDEO_WORD(v), t: v ? Math.round(v.currentTime * 10) / 10 : null, ready: v ? v.readyState : null, src: !!(v && (v.currentSrc || v.src))})})()"
+        /** The player asked to play from the page: its own API first (`#movie_player.playVideo()`), then the element's `play()`; what was asked. */
+        private const val YT_PLAY_FROM_PAGE =
+            "(function(){var mp=document.getElementById('movie_player');var v=document.querySelector('#movie_player video, video');var did=[];" +
+                "try{if(mp&&typeof mp.playVideo==='function'){mp.playVideo();did.push('playVideo')}}catch(e){did.push('playVideo threw '+e)}" +
+                "try{if(v){var p=v.play();did.push('play');if(p&&p.catch)p.catch(function(e){window.__zenPlayRefused=String(e)})}}catch(e){did.push('play threw '+e)}" +
+                "return did.length?did.join(', '):'no player'})()"
         /**
          * From the background of a row with the `nativeMessaging` permission: `sendNativeMessage`
          * and `connectNative` to a host that does not exist. Chrome answers both with "Specified
