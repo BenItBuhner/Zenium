@@ -3,12 +3,14 @@ package app.zen.chromium
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.Window
+import android.view.WindowInsetsController
 import android.view.animation.PathInterpolator
 import androidx.core.splashscreen.SplashScreen
 import androidx.core.splashscreen.SplashScreenViewProvider
@@ -330,15 +332,65 @@ class PlatformSplashSurface(private val provider: SplashScreenViewProvider) : Sp
     override fun remove() = provider.remove()
 }
 
-/** The window's bars through the insets controller: the status bar's tone read, both bars' written. */
+/** The window's bars through [SystemBarInk]: the status bar's tone read, both bars' written in one tone. */
 class WindowSplashBars(private val window: Window) : SplashBars {
     override var light: Boolean
-        get() = WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars
-        set(value) {
-            val controller = WindowInsetsControllerCompat(window, window.decorView)
-            controller.isAppearanceLightStatusBars = value
-            controller.isAppearanceLightNavigationBars = value
+        get() = SystemBarInk.lightStatus(window)
+        set(value) = SystemBarInk.write(window, lightStatus = value, lightNavigation = value)
+}
+
+/**
+ * The bars' ink – the status and navigation glyphs light or dark – written so that it holds.
+ *
+ * The platform keeps the tone twice (android15-release). `PhoneWindow.generateLayout`
+ * (`:2665-2680`) seeds the theme's `windowLightStatusBar` / `windowLightNavigationBar` as the
+ * decor's legacy `systemUiVisibility` flags AND as `setSystemBarsAppearanceFromResource` – bits
+ * the app has not taken control of (`InsetsController.java:2081-2087`) – and
+ * `ViewRootImpl.adjustLayoutParamsForCompatibility` (`:3055-3080`) recomputes every uncontrolled
+ * bit at each relayout from the OR of EVERY visible view's legacy flags (`collectViewAttributes`).
+ * androidx core's `WindowInsetsControllerCompat`, built with a `Window`, writes the decor's
+ * legacy flag alone (`Impl30.setAppearanceLight`), so its request holds only while no other
+ * visible view in the window carries the flag: the light web-app splash's still (#454, round 3)
+ * had the status glyphs white as asked and the navigation glyphs dark on the app's purple.
+ *
+ * Written through the platform's `WindowInsetsController` the two bits become CONTROLLED
+ * (`InsetsController.setSystemBarsAppearance`, `:2075-2078`: `mAppearanceControlled |= mask`),
+ * after which neither the legacy OR nor the theme's seeding moves them. The legacy flags are
+ * written too: they are the only mechanism on API 26–29 and what legacy readers see.
+ *
+ * The starting window itself, before the hand-over, is the shell's: its bars follow the splash
+ * GROUND's luminance (`SplashscreenWindowCreator.java:209-221`, `ContrastColorUtil.isColorLight`
+ * → both light bits), which is why the web-app splash theme's fixed light ground shows dark
+ * glyphs until the dress re-grounds the view and this writes the app's tone.
+ */
+object SystemBarInk {
+    /** Both bars' glyph tone: `true` for dark glyphs over a light ground. */
+    fun write(window: Window, lightStatus: Boolean, lightNavigation: Boolean) {
+        val decor = window.decorView
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val statusBit = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+            val navigationBit = WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            // The decor's controller: the platform's once attached, its pending stand-in before
+            // (replayed at the attach), never null once the decor exists.
+            decor.windowInsetsController?.setSystemBarsAppearance(
+                (if (lightStatus) statusBit else 0) or (if (lightNavigation) navigationBit else 0),
+                statusBit or navigationBit
+            )
         }
+        val compat = WindowInsetsControllerCompat(window, decor)
+        compat.isAppearanceLightStatusBars = lightStatus
+        compat.isAppearanceLightNavigationBars = lightNavigation
+    }
+
+    /** The status glyphs' requested tone: the controlled bit on API 30+ (the theme's until one is written), the decor's legacy flag below. */
+    fun lightStatus(window: Window): Boolean {
+        val decor = window.decorView
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val controller = decor.windowInsetsController
+            if (controller != null) return controller.systemBarsAppearance and WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS != 0
+        }
+        return WindowInsetsControllerCompat(window, decor).isAppearanceLightStatusBars
+    }
 }
 
 class HandlerSplashClock(private val handler: Handler) : SplashClock {

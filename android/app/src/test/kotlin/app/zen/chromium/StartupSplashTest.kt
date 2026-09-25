@@ -287,6 +287,31 @@ class StartupSplashTest {
     }
 
     @Test
+    fun theBarsInkIsWrittenThroughThePlatformsControllerSoItHolds() {
+        // The still of round 3 (the light web-app splash): status glyphs white as asked, navigation
+        // glyphs dark on the app's purple – the compat's legacy flag outvoted by another visible
+        // view's at the next relayout (ViewRootImpl.adjustLayoutParamsForCompatibility recomputes
+        // every uncontrolled bit from the OR of the tree's flags). Pinned from the source: every
+        // writer of the tone in the splash's reach goes through SystemBarInk, which takes control
+        // of both bits on API 30+ (setSystemBarsAppearance with both in the mask) and keeps the
+        // legacy flags in step for API 26–29.
+        val source = read("src/main/kotlin/app/zen/chromium/StartupSplash.kt", "app/src/main/kotlin/app/zen/chromium/StartupSplash.kt")
+        val ink = Regex("""object SystemBarInk \{(.*?)\n}\n""", RegexOption.DOT_MATCHES_ALL).find(source)
+        assertTrue("SystemBarInk is there", ink != null)
+        val body = ink!!.value
+        assertTrue("the platform's controller on API 30+", body.contains("Build.VERSION.SDK_INT >= Build.VERSION_CODES.R") && body.contains("windowInsetsController?.setSystemBarsAppearance("))
+        assertTrue("both bits in the mask, so both are controlled", body.contains("statusBit or navigationBit"))
+        assertTrue("the legacy flags in step", body.contains("compat.isAppearanceLightStatusBars = lightStatus") && body.contains("compat.isAppearanceLightNavigationBars = lightNavigation"))
+        val bars = Regex("""class WindowSplashBars\(.*?\n}\n""", RegexOption.DOT_MATCHES_ALL).find(source)
+        assertTrue("the splash's bars write through it", bars != null && bars.value.contains("SystemBarInk.write(window, lightStatus = value, lightNavigation = value)"))
+        val webApp = read("src/main/kotlin/app/zen/chromium/WebAppActivity.kt", "app/src/main/kotlin/app/zen/chromium/WebAppActivity.kt")
+        val scheme = Regex("""private fun applyScheme\(\) \{(.*?)\n    }\n""", RegexOption.DOT_MATCHES_ALL).find(webApp)
+        assertTrue("WebAppActivity.applyScheme is there", scheme != null)
+        assertTrue("the web app's scheme writes through it", scheme!!.value.contains("SystemBarInk.write(window, lightStatus = !scheme.lightToolbarForeground, lightNavigation = !scheme.lightNavigationForeground)"))
+        assertFalse("no legacy-only writer left in the web app's scheme", scheme.value.contains("isAppearanceLightNavigationBars ="))
+    }
+
+    @Test
     fun theSplashThemeIsTheLaunchersMarkOnTheBrandColourOverTheBrowserTheme() {
         val themes = read("src/main/res/values/themes.xml", "app/src/main/res/values/themes.xml")
         val splash = Regex("""<style name="Theme\.Zen\.Splash"[^>]*>(.*?)</style>""", RegexOption.DOT_MATCHES_ALL).find(themes)

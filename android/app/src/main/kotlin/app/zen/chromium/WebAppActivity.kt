@@ -206,9 +206,9 @@ class WebAppActivity : BrowserActivity(), CustomTabHost.Listener, CustomTabToolb
         shell.setBackgroundColor(scheme.navigationBar)
         pageContainer.setBackgroundColor(WebAppSplash.ground(record.backgroundColor, pageColor))
         window.decorView.setBackgroundColor(scheme.navigationBar)
-        val controller = WindowInsetsControllerCompat(window, shell)
-        controller.isAppearanceLightStatusBars = !scheme.lightToolbarForeground
-        controller.isAppearanceLightNavigationBars = !scheme.lightNavigationForeground
+        // Through the platform's controller, so the tone holds (SystemBarInk: the compat alone
+        // writes a legacy flag any other visible view's flag can outvote at the next relayout).
+        SystemBarInk.write(window, lightStatus = !scheme.lightToolbarForeground, lightNavigation = !scheme.lightNavigationForeground)
     }
 
     /**
