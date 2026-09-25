@@ -165,6 +165,7 @@ import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeFontSettings } from '../shared/fonts'
 import { sanitizeLanguages } from '../shared/languages'
 import { sanitizeToolbarPins } from '../shared/toolbarPins'
+import { formatWindowTitle } from '../shared/windowTitle'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -794,7 +795,9 @@ export class Browser {
       displayId: win.initialDisplayId,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
-      title: app ? app.name : win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
+      // The title the frame carries until its first tab titles it: the same formatter's, so a
+      // private window reads "Zenium (Private)" from its first frame, as its title bar will.
+      title: formatWindowTitle(null, win.isPrivate, app?.name),
       chrome,
       material: win.material,
       backgroundColor: rgbToHex(theme.averageColor),

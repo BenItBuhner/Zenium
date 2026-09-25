@@ -221,7 +221,8 @@ describe('Duplicate Window (session-19)', () => {
     expect(h.strip(dup)).toEqual(h.strip(priv))
     for (const id of dup.activeSpace().tabIds)
       expect(h.browser.tabs.tab(id)?.containerId).toBe(PRIVATE_CONTAINER_ID)
-    expect(h.created.at(-1)?.title).toBe('Zenium (Private Browsing)')
+    // The frame's first title carries the suffix the title bar will (`windowTitle.ts`'s one form).
+    expect(h.created.at(-1)?.title).toBe('Zenium (Private)')
   })
 
   it('a popup has no tab strip to duplicate, and a host with one window nothing to duplicate into', () => {
