@@ -677,6 +677,11 @@ export class AndroidTabView implements TabView {
     this.bridge.send('view.print', { tabId: this.tabId })
   }
 
+  /**
+   * The host writes the page as one MHTML archive into the public Downloads whatever `format`
+   * the core asks for (`capabilities.savePageFormats` is off, so the core asks in the last-used
+   * format's name only) and answers with the archive's path; the format does not cross.
+   */
   savePage(suggestedName: string): Promise<string | null> {
     return this.bridge.call<string | null>('view.savePage', {
       tabId: this.tabId,

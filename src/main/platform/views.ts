@@ -27,6 +27,7 @@ import type {
   NewTabPageState,
   PageDialogResponse,
   Rect,
+  SavePageFormat,
   Tab
 } from '../../shared/types'
 import {
@@ -101,6 +102,7 @@ import type {
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
 import { downloadDir } from './downloads'
+import { savePageDialogOptions, savePageTarget } from './savePage'
 import { uniquePath } from './uniquePath'
 import { frameById, frameIdOf } from './extensionApi/frames'
 import type { ElectronWindow } from './window'
@@ -1343,19 +1345,24 @@ export class ElectronTabView implements TabView {
     return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
   }
 
-  async savePage(suggestedName: string): Promise<string | null> {
-    const options = {
-      title: 'Save Page As',
-      defaultPath: join(downloadDir(), suggestedName),
-      filters: [{ name: 'Web Page, complete', extensions: ['html', 'htm'] }]
-    }
+  /**
+   * Save Page As in `format` (CT-27): the OS dialog on the format's one filter, then
+   * `webContents.savePage` with the matching type – HTMLComplete writes the document and its
+   * `_files` folder, HTMLOnly the document, MHTML one archive. The dialog answers a path and
+   * not the filter (Electron 44's `SaveDialogReturnValue`), which is why the format is picked in
+   * the menu before it opens; a name typed without an extension gets the format's (GTK's dialog
+   * leaves it off).
+   */
+  async savePage(suggestedName: string, format: SavePageFormat): Promise<string | null> {
+    const options = savePageDialogOptions(format, join(downloadDir(), suggestedName))
     const win = this.win
     const result = win
       ? await dialog.showSaveDialog(win, options)
       : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) return null
-    await this.wc.savePage(result.filePath, 'HTMLComplete')
-    return result.filePath
+    const target = savePageTarget(result.filePath, format)
+    await this.wc.savePage(target.path, target.saveType)
+    return target.path
   }
 
   /**

@@ -141,6 +141,8 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Pages render to PDF (`printToPDF`) and printers are listed (`getPrintersAsync`): Ctrl+P opens
   // Zenium's preview; Chromium's own preview is not part of Electron.
   printPreview: true,
+  // `webContents.savePage` writes HTMLComplete, HTMLOnly and MHTML: Save Page As is the submenu.
+  savePageFormats: true,
   // Chromium's PDF viewer draws PDFs in the page itself.
   pdfViewer: false,
   agents: true,

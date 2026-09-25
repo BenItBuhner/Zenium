@@ -80,6 +80,7 @@ const DESKTOP: HostCapabilities = {
   pageTabs: true,
   pinShortcuts: false,
   printPreview: true,
+  savePageFormats: true,
   pdfViewer: false,
   translate: true,
   voiceSearch: false,
