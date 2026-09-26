@@ -7374,7 +7374,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // merge): probe A's fixture under another name, the phone's Customise fonts rows held at
         // its values, the "Controlled by" row's press opening the probe's details, its Enabled
         // switch dropping the layer. A `[lane]` row (the trigger's SWEEP_ONLY names it).
-        Row(FONTS_PAGE_PROBE_ID, FONTS_PAGE_PROBE_NAME, "proof-fonts-page-probe", fixture = FONTS_PAGE_PROBE_FILES, core = ::fontsPageSeam)
+        Row(FONTS_PAGE_PROBE_ID, FONTS_PAGE_PROBE_NAME, "proof-fonts-page-probe", fixture = FONTS_PAGE_PROBE_FILES, core = ::fontsPageSeam),
+        // Round 21's storage order probe (R21-12, Zoom Video's lost update): a fixture of the
+        // sweep's own with Zoom Video's two producers – a popup and a content script
+        // read-modify-writing one `chrome.storage.local` key –, four legs (finger taps, script
+        // taps, the order leg across the storage call and `tabs.sendMessage`, a burst a side),
+        // the frames' clocks paired with the host's trace; every stale write attributed to the
+        // runtime (an inversion after receipt, a stale read after an acknowledged set) or to the
+        // extension's own race. A `[lane]` row (the trigger's SWEEP_ONLY names it).
+        Row(ORDER_PROBE_ID, ORDER_PROBE_NAME, "proof-storage-order-probe", fixture = ORDER_PROBE_FILES, core = ::storageOrderProbe)
     )
 
     // --- the core checks of compat round 21 (ranks 511-540 by installs) --------------------------
@@ -7655,6 +7663,403 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             opened != null -> Grade("PARTIAL", "Social Blade: the action opened ${opened.value.take(60)} but the watch page showed no line or ping of its script (console ${console.size} lines)", extra)
             else -> Grade("F", "Social Blade: no `[SB]` line and no ping on the watch page, and the action opened nothing", extra)
         }
+    }
+
+    /**
+     * The storage order probe (round 21's R21-12; Zoom Video's lost update the measure): the
+     * fixture [ORDER_PROBE_FILES] – Zoom Video's two producers, a popup and a content script,
+     * read-modify-writing one `chrome.storage.local` key – driven through four legs on the
+     * fixture page with the popup open over it. A: six taps BY FINGER on the popup's button, 1.3 s
+     * apart so they fall at different phases of the script's every-second write (Zoom Video's
+     * cadence, and the tap path round 20 saw the loss on). B: six taps by script
+     * (`__zenOrderRun('tap')`), the same write without the finger. C: the order leg, the script's
+     * tick off – twenty times the popup does `set({seq})` and in the SAME task
+     * `tabs.sendMessage(read)`, and the script's `get` answers what it saw: a `seq` behind the one
+     * just set is an inversion across the two paths (the storage call and the message). D: the
+     * burst – forty back-to-back read-modify-writes a side at once. Every call carries its frame's
+     * wall-clock stamps (issue, reply); the host's bridge trace gives each call's receipt and its
+     * reply's `hop/run/back` legs in uptime; the driver reads the wall↔uptime offset once and
+     * [orderAnalysis] pairs them. The store's commit history is the script's `onChanged` log (each
+     * value carries its writer's `set` time): a commit whose old value is not its writer's read is
+     * a STALE WRITE, and it is the runtime's when the host had received the intervening `set`
+     * before the writer's `get` (an inversion after receipt – from receipt on the path is one
+     * FIFO) or when the writer's `get` was issued after that `set` was acknowledged to its frame;
+     * otherwise it is the extension's own race (its `get` ran before the other side's `set` was
+     * acknowledged), which the note counts and names. `F` on any runtime-attributed stale write or
+     * order-leg inversion; `PARTIAL` when a leg did not run in full without one; `P` otherwise with
+     * the counts, the legs' medians and the cross-source receipt skews, recorded not graded.
+     */
+    private fun storageOrderProbe(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val slug = entry.optString("slug")
+        val extra = JSONObject()
+        val offset = System.currentTimeMillis() - SystemClock.uptimeMillis()
+        extra.put("wallMinusUptimeMs", offset)
+        val (_, view) = fixture("page-a.html?order", factor, 2_000)
+        val mounted = poll(scaled(15_000, factor), 400) { if (tabEval(view, ORDER_CS_MOUNTED) == "true") true else null } == true
+        extra.put("contentScriptMounted", mounted)
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        if (popup == null || !mounted) {
+            extra.put("page", json(tabEval(view, DOM_REPORT))).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            since.record(extra, "atEnd")
+            snap("$slug-core")
+            runCatching { coreCall("extension.closePopup", "null") }
+            return Grade("F", if (popup == null) "storage order probe: popup did not render in the core check" else "storage order probe: the content script did not mount on the fixture within ${scaled(15_000, factor) / 1000} s", extra)
+        }
+        val tabKnown = poll(scaled(10_000, factor), 300) { tabEval(popup, "String(!!(window.__zenOrderPopup&&window.__zenOrderPopup.tabId!==null))").takeIf { it == "true" } } != null
+        extra.put("popupKnowsTab", tabKnown)
+        fun tapLanded(before: Int): Boolean = poll(scaled(8_000, factor), 100) {
+            tabEval(popup, "String((function(p){var t=p&&p.taps[$before];return !!(t&&t.tSetReply>0)})(window.__zenOrderPopup))").takeIf { it == "true" }
+        } != null
+        // Leg A: the finger.
+        val button = poll(scaled(10_000, factor), 400) { json(tabEval(popup, ELEMENT_CENTRE.replace("%SELECTOR%", "#tap"))).takeIf { it.has("x") } }
+        extra.put("button", button ?: JSONObject.NULL)
+        var touched = 0
+        var touchAttempts = 0
+        if (button != null) {
+            val point = screenPoint(popup, button)
+            if (point != null) {
+                for (i in 1..6) {
+                    val before = tabEval(popup, ORDER_POPUP_TAPS).toIntOrNull() ?: 0
+                    touchAttempts++
+                    tap(point.first, point.second)
+                    if (tapLanded(before)) touched++
+                    SystemClock.sleep(1_300)
+                }
+            }
+        }
+        extra.put("touchedTaps", touched).put("touchAttempts", touchAttempts)
+        // Leg B: the script.
+        var evaluated = 0
+        for (i in 1..6) {
+            val before = tabEval(popup, ORDER_POPUP_TAPS).toIntOrNull() ?: 0
+            if (tabEval(popup, "window.__zenOrderRun('tap')") != "started") continue
+            if (tapLanded(before)) evaluated++
+            SystemClock.sleep(1_300)
+        }
+        extra.put("evaluatedTaps", evaluated)
+        // Leg C: the order leg, the script's tick off.
+        orderCommand(view, """{"cmd":"mode","mode":"off"}""")
+        SystemClock.sleep(400)
+        val orderStarted = tabKnown && tabEval(popup, "window.__zenOrderRun('order',20)") == "started"
+        val orderDone = orderStarted && poll(scaled(45_000, factor), 300) {
+            tabEval(popup, "String(!!(window.__zenOrderPopup&&!window.__zenOrderPopup.busy&&window.__zenOrderPopup.order.length>=20))").takeIf { it == "true" }
+        } != null
+        extra.put("orderLegStarted", orderStarted).put("orderLegDone", orderDone)
+        // Leg D: the burst, both sides at once.
+        orderCommand(view, """{"cmd":"burst","n":40}""")
+        val burstStarted = tabEval(popup, "window.__zenOrderRun('burst',40)") == "started"
+        val burstDone = burstStarted && poll(scaled(70_000, factor), 400) {
+            val popupIdle = tabEval(popup, "String(!!(window.__zenOrderPopup&&!window.__zenOrderPopup.busy&&window.__zenOrderPopup.burst.length>=40))") == "true"
+            val script = json(tabEval(view, ORDER_CS_LOG))
+            val scriptIdle = !script.optBoolean("bursting", true) && (script.optJSONArray("rmw")?.let { a -> (0 until a.length()).count { a.optJSONObject(it)?.optString("tag") == "burst" } } ?: 0) >= 40
+            if (popupIdle && scriptIdle) true else null
+        } != null
+        extra.put("burstLegStarted", burstStarted).put("burstLegDone", burstDone)
+        SystemClock.sleep(scaled(1_500, factor))
+        // The logs: the popup's, the script's (published into its node on request), the worker's, the host's trace.
+        val popupLog = json(tabEval(popup, "JSON.stringify(window.__zenOrderPopup||null)"))
+        orderCommand(view, """{"cmd":"publish"}""")
+        val csLog = json(tabEval(view, ORDER_CS_LOG))
+        val workerLog = backgroundView(row.id)?.let { bg -> runCatching { json(tabEval(bg, "JSON.stringify(window.__zenOrder||null)", 5)) }.getOrNull() } ?: JSONObject().put("error", "no background view")
+        val trace = since.trace()
+        val analysis = orderAnalysis(popupLog, csLog, workerLog, trace, offset)
+        extra.put("analysis", analysis).put("popupLog", popupLog).put("contentLog", csLog)
+            .put("workerLog", JSONObject().put("changes", workerLog.optJSONArray("changes")?.length() ?: -1).put("msgs", workerLog.optInt("msgs", -1)).put("err", workerLog.opt("err") ?: workerLog.opt("error") ?: JSONObject.NULL))
+            .put("traceLines", trace.size).put("popupConsole", JSONArray(consoleOf(popup).takeLast(8))).put("pageConsole", JSONArray(consoleOf(view).takeLast(8)))
+        since.record(extra, "atEnd")
+        snap("$slug-core")
+        runCatching { coreCall("extension.closePopup", "null") }
+        val runtimeFaults = analysis.optInt("postReceiptInversions") + analysis.optInt("ackedBeforeIssueStale") + analysis.optInt("orderStale")
+        val legsRan = touched >= 6 && evaluated >= 6 && orderDone && burstDone
+        val legs = "touched $touched/6 (attempts $touchAttempts), evaluated $evaluated/6, order ${if (orderDone) "done" else if (orderStarted) "NOT done" else "not started"}, burst ${if (burstDone) "done" else if (burstStarted) "NOT done" else "not started"}"
+        val note = analysis.optString("summary")
+        return when {
+            runtimeFaults > 0 -> Grade("F", "storage order probe: the runtime's order broke ($runtimeFaults runtime-attributed: ${analysis.optInt("postReceiptInversions")} inversion(s) after receipt, ${analysis.optInt("ackedBeforeIssueStale")} stale read(s) after an acknowledged set, ${analysis.optInt("orderStale")} order-leg inversion(s)); legs $legs: $note", extra)
+            !legsRan -> Grade("PARTIAL", "storage order probe: a leg did not run in full ($legs), no runtime-attributed fault in what ran: $note", extra)
+            else -> Grade("P", "storage order probe: no runtime-attributed fault over the four legs ($legs): $note", extra)
+        }
+    }
+
+    /** A command to the order probe's content script through the DOM both worlds share: the JSON on `data-zen-order`, a `zen-order` event to read it. */
+    private fun orderCommand(view: WebView, json: String): String =
+        tabEval(view, "(function(){document.documentElement.setAttribute('data-zen-order',${JSONObject.quote(json)});document.dispatchEvent(new Event('zen-order'));return 'sent'})()")
+
+    /** One storage call as its frame's clock saw it ([orderAnalysis]); the host's receipt and legs once paired with the trace. */
+    private class OrderCall(val context: String, val method: String, val issued: Long, val replied: Long, val tag: String) {
+        var receipt: Long = 0L
+        var hop: Long = -1L
+        var run: Long = -1L
+        var back: Long = -1L
+        var paired: Boolean = false
+    }
+
+    /** One storage call as the host's trace saw it: its receipt in wall ms (uptime + the offset), its reply's legs. */
+    private class HostCall(val context: String, val method: String, val id: String, val receipt: Long) {
+        var replied: Boolean = false
+        var hop: Long = -1L
+        var run: Long = -1L
+        var back: Long = -1L
+        var claimed: Boolean = false
+    }
+
+    /**
+     * The order probe's reading ([storageOrderProbe]): the frames' logs and the host's trace
+     * paired, the store's commit history read for stale writes and each one attributed – the
+     * runtime's or the extension's own race –, the order leg's inversions, the legs' medians per
+     * context, the cross-source receipt skews, the page's events around the finger taps.
+     */
+    private fun orderAnalysis(popupLog: JSONObject, csLog: JSONObject, workerLog: JSONObject, trace: List<String>, offset: Long): JSONObject {
+        val out = JSONObject()
+        fun arr(o: JSONObject, key: String): List<JSONObject> = o.optJSONArray(key)?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } } ?: emptyList()
+        fun norm(v: Any?): String? = when (v) { null, JSONObject.NULL -> null; is Number -> v.toDouble().toString(); else -> v.toString() }
+        val fields = listOf("scale", "p", "cs", "seq", "popAt", "csAt")
+        fun sameState(a: JSONObject?, b: JSONObject?): Boolean = fields.all { f -> norm(a?.opt(f)) == norm(b?.opt(f)) }
+        fun differing(a: JSONObject?, b: JSONObject?): List<String> = fields.filter { f -> norm(a?.opt(f)) != norm(b?.opt(f)) }
+        fun stats(values: List<Long>): JSONObject {
+            val s = values.sorted()
+            if (s.isEmpty()) return JSONObject().put("n", 0)
+            fun q(p: Double): Long = s[minOf(s.size - 1, maxOf(0, Math.ceil(p * s.size).toInt() - 1))]
+            return JSONObject().put("n", s.size).put("min", s.first()).put("median", q(0.5)).put("p90", q(0.9)).put("max", s.last())
+        }
+        // 1. The frames' calls.
+        val taps = arr(popupLog, "taps")
+        val order = arr(popupLog, "order")
+        val burst = arr(popupLog, "burst")
+        val rmw = arr(csLog, "rmw")
+        val reads = arr(csLog, "reads")
+        val calls = ArrayList<OrderCall>()
+        fun addRmw(context: String, list: List<JSONObject>, tagOf: (JSONObject) -> String) {
+            for (r in list) {
+                val tag = tagOf(r)
+                if (r.optLong("tGet") > 0) calls.add(OrderCall(context, "get", r.optLong("tGet"), r.optLong("tGetReply"), tag))
+                if (r.optLong("tSet") > 0) calls.add(OrderCall(context, "set", r.optLong("tSet"), r.optLong("tSetReply"), tag))
+            }
+        }
+        addRmw("popup", taps) { r -> "tap#${r.optInt("i")}${if (r.optBoolean("touched")) "t" else "s"}" }
+        addRmw("popup", order) { r -> "order#${r.optInt("seq")}" }
+        addRmw("popup", burst) { r -> "burst#${r.optInt("i")}" }
+        addRmw("content", rmw) { r -> "${r.optString("tag")}#${r.optInt("i")}" }
+        for (r in reads) if (r.optLong("t") > 0) calls.add(OrderCall("content", "get", r.optLong("t"), r.optLong("tReply"), "read#${r.opt("seq")}"))
+        // 2. The host's lines.
+        val callLine = Regex("""^(\d+) > \S+/(\w+) call storage\.(\w+) id=(\S+)""")
+        val replyLine = Regex("""^(\d+) < \S+/(\w+) reply (ok|error=\S*) id=(\S+)(?: hop=(-?\d+) run=(-?\d+) back=(-?\d+))?""")
+        val hostCalls = ArrayList<HostCall>()
+        var hostReplies = 0
+        var hostErrors = 0
+        for (line in trace) {
+            val call = callLine.find(line)
+            if (call != null) {
+                hostCalls.add(HostCall(call.groupValues[2], call.groupValues[3], call.groupValues[4], call.groupValues[1].toLong() + offset))
+                continue
+            }
+            val reply = replyLine.find(line) ?: continue
+            val context = reply.groupValues[2]
+            val id = reply.groupValues[4]
+            val target = hostCalls.lastOrNull { it.context == context && it.id == id && !it.replied } ?: continue
+            target.replied = true
+            hostReplies++
+            if (reply.groupValues[3] != "ok") hostErrors++
+            if (reply.groupValues[5].isNotEmpty()) {
+                target.hop = reply.groupValues[5].toLong()
+                target.run = reply.groupValues[6].toLong()
+                target.back = reply.groupValues[7].toLong()
+            }
+        }
+        // 3. Pairing per context and method: k-th to k-th when the counts agree (one FIFO a source), else by time.
+        var pairedCount = 0
+        for (context in listOf("popup", "content")) for (method in listOf("get", "set")) {
+            val mine = calls.filter { it.context == context && it.method == method }.sortedBy { it.issued }
+            val theirs = hostCalls.filter { it.context == context && it.method == method }.sortedBy { it.receipt }
+            if (mine.isEmpty() || theirs.isEmpty()) continue
+            if (mine.size == theirs.size) {
+                for (i in mine.indices) pairCall(mine[i], theirs[i])
+            } else {
+                for (h in theirs) {
+                    val f = mine.firstOrNull { !it.paired && it.issued <= h.receipt + 5 } ?: continue
+                    pairCall(f, h)
+                }
+            }
+            pairedCount += mine.count { it.paired }
+        }
+        out.put("frameCalls", calls.size).put("hostCalls", hostCalls.size).put("hostReplies", hostReplies).put("hostErrors", hostErrors).put("paired", pairedCount)
+        // 4. The legs per context.
+        val legs = JSONObject()
+        for (context in listOf("popup", "content")) {
+            val mine = calls.filter { it.context == context && it.paired }
+            val timed = mine.filter { it.hop >= 0 }
+            legs.put(
+                context,
+                JSONObject()
+                    .put("toHost", stats(mine.map { it.receipt - it.issued }))
+                    .put("hop", stats(timed.map { it.hop }))
+                    .put("run", stats(timed.map { it.run }))
+                    .put("back", stats(timed.map { it.back }))
+                    .put("toFrame", stats(timed.filter { it.replied > 0 }.map { it.replied - (it.receipt + it.hop + it.run + it.back) }))
+                    .put("roundTrip", stats(calls.filter { it.context == context && it.replied > 0 }.map { it.replied - it.issued }))
+            )
+        }
+        out.put("legs", legs)
+        out.put("tickRmwSpan", stats(rmw.filter { it.optString("tag") == "tick" && it.optLong("tSetReply") > 0 }.map { it.optLong("tSetReply") - it.optLong("tGet") }))
+        out.put("ticks", csLog.optInt("ticks")).put("tickRmws", rmw.count { it.optString("tag") == "tick" })
+        // 5. The store's commit history: the script's `onChanged` log, each commit's writer (the
+        // side whose `set` stamp appears in the history for the first time – a stamp written BACK
+        // by a stale writer appeared before) and that writer's read.
+        val changes = arr(csLog, "changes")
+        val seenCs = HashSet<String>()
+        val seenPop = HashSet<String>()
+        fun writerOf(c: JSONObject): Pair<String, JSONObject?> {
+            val nv = c.optJSONObject("nv") ?: return "none" to null
+            val csAt = norm(nv.opt("csAt"))
+            val popAt = norm(nv.opt("popAt"))
+            val csWrite = csAt != null && seenCs.add(csAt)
+            val popWrite = popAt != null && seenPop.add(popAt)
+            return when {
+                csWrite && !popWrite -> "content" to rmw.firstOrNull { norm(it.optInt("i")) == norm(nv.opt("cs")) }
+                popWrite && !csWrite -> "popup" to (taps + order + burst).firstOrNull { norm(it.optLong("tSet")) == popAt }
+                csWrite && popWrite -> "both" to null
+                else -> "unknown" to null
+            }
+        }
+        val writers = changes.map { writerOf(it) }
+        var staleWrites = 0
+        var postReceiptInversions = 0
+        var ackedBeforeIssueStale = 0
+        var races = 0
+        var racesGetBeforeSetIssued = 0
+        var racesInFlight = 0
+        var lostScale = 0
+        var lostTouched = 0
+        var lostEvaluated = 0
+        var unattributed = 0
+        var historyGaps = 0
+        val instances = JSONArray()
+        for (j in changes.indices) {
+            val c = changes[j]
+            val (who, rec) = writers[j]
+            val nv = c.optJSONObject("nv") ?: continue
+            val ov = c.optJSONObject("ov")
+            if (j > 0 && !sameState(changes[j - 1].optJSONObject("nv"), ov)) historyGaps++
+            if (rec == null) {
+                if (who != "none") unattributed++
+                continue
+            }
+            val read = rec.optJSONObject("read")
+            if (sameState(read, ov)) continue
+            staleWrites++
+            val lost = differing(read, ov).filter { it != "popAt" && it != "csAt" }
+            // The commit the writer's read reflects: the last one before j whose value it equals (−1 for the empty store).
+            var r = -1
+            for (k in j - 1 downTo 0) if (sameState(changes[k].optJSONObject("nv"), read)) { r = k; break }
+            val wGet = calls.firstOrNull { it.context == who && it.method == "get" && it.issued == rec.optLong("tGet") }
+            var kind = "race"
+            var detail = ""
+            val intervening = JSONArray()
+            for (k in (r + 1) until j) {
+                val (iWho, iRec) = writers[k]
+                if (iRec == null) continue
+                val iSet = calls.firstOrNull { it.context == iWho && it.method == "set" && it.issued == iRec.optLong("tSet") }
+                val iAck = iRec.optLong("tSetReply")
+                val tGet = rec.optLong("tGet")
+                val tGetReply = rec.optLong("tGetReply")
+                intervening.put(JSONObject().put("commit", k).put("writer", iWho).put("tag", iSet?.tag ?: iWho).put("tSet", iRec.optLong("tSet")).put("tSetReply", iAck).put("setReceipt", iSet?.takeIf { it.paired }?.receipt ?: JSONObject.NULL))
+                // The frames' own clocks first: a get answered before the set was even issued is a
+                // race whatever the trace pairing says (the guard against a mis-paired line).
+                val answeredBeforeSetIssued = tGetReply > 0 && tGetReply < iRec.optLong("tSet")
+                if (!answeredBeforeSetIssued && iSet != null && wGet != null && iSet.paired && wGet.paired && iSet.receipt < wGet.receipt) {
+                    kind = "postReceiptInversion"
+                    detail = "the host received ${iSet.tag}'s set at +${iSet.receipt - popupLog.optLong("t0")} ms and ${wGet.tag}'s get ${wGet.receipt - iSet.receipt} ms later, and the get read the value before it"
+                    break
+                }
+                if (iAck > 0 && iAck < tGet) {
+                    kind = "ackedBeforeIssue"
+                    detail = "${iSet?.tag ?: iWho}'s set was acknowledged ${tGet - iAck} ms before ${who}'s get was issued, and the get read the value before it"
+                    break
+                }
+                if (tGet < iRec.optLong("tSet")) racesGetBeforeSetIssued++ else racesInFlight++
+            }
+            when (kind) {
+                "postReceiptInversion" -> postReceiptInversions++
+                "ackedBeforeIssue" -> ackedBeforeIssueStale++
+                else -> races++
+            }
+            if ("scale" in lost && who == "content") {
+                lostScale++
+                val tap = taps.firstOrNull { norm(it.optJSONObject("wrote")?.opt("scale")) == norm(ov?.opt("scale")) && norm(it.optLong("tSet")) == norm(ov?.opt("popAt")) }
+                    ?: taps.firstOrNull { norm(it.optLong("tSet")) == norm(ov?.opt("popAt")) }
+                if (tap?.optBoolean("touched") == true) lostTouched++ else if (tap != null) lostEvaluated++
+            }
+            if (instances.length() < 12) {
+                instances.put(
+                    JSONObject().put("commit", j).put("writer", who).put("tag", rec.optString("tag", "")).put("i", rec.opt("i") ?: rec.opt("seq")).put("kind", kind).put("lost", JSONArray(lost))
+                        .put("read", read ?: JSONObject.NULL).put("replaced", ov ?: JSONObject.NULL).put("reflects", r).put("tGet", rec.optLong("tGet")).put("tGetReply", rec.optLong("tGetReply"))
+                        .put("getReceipt", wGet?.takeIf { it.paired }?.receipt ?: JSONObject.NULL).put("intervening", intervening).put("detail", detail)
+                )
+            }
+        }
+        out.put("commits", changes.size).put("historyGaps", historyGaps).put("unattributedCommits", unattributed)
+            .put("staleWrites", staleWrites).put("postReceiptInversions", postReceiptInversions).put("ackedBeforeIssueStale", ackedBeforeIssueStale)
+            .put("races", races).put("racesGetBeforeSetIssued", racesGetBeforeSetIssued).put("racesInFlight", racesInFlight)
+            .put("lostScale", lostScale).put("lostTouched", lostTouched).put("lostEvaluated", lostEvaluated).put("staleInstances", instances)
+        val finalScale = popupLog.opt("scale")
+        val expectedScale = 1.0 + 0.25 * taps.size
+        out.put("taps", taps.size).put("finalScale", finalScale ?: JSONObject.NULL).put("expectedScaleIfNoneLost", expectedScale)
+        // 6. The order leg.
+        val orderAnswered = order.count { it.optJSONObject("resp") != null }
+        val orderStale = order.count { it.optBoolean("stale", false) }
+        val orderErrors = order.count { !it.isNull("err") }
+        out.put("orderRuns", order.size).put("orderAnswered", orderAnswered).put("orderStale", orderStale).put("orderErrors", orderErrors)
+            .put("orderFirstError", order.firstOrNull { !it.isNull("err") }?.optString("err") ?: JSONObject.NULL)
+            .put("orderStaleInstances", JSONArray(order.filter { it.optBoolean("stale", false) }.take(6).map { it.toString().take(300) }))
+        // 7. Cross-source receipt skew: a later-issued call of the other frame received first (recorded, not graded: two frames' postMessages have no common clock but the wall's).
+        val paired = calls.filter { it.paired }.sortedBy { it.issued }
+        var hostInversions = 0
+        var maxSkew = 0L
+        val skews = JSONArray()
+        for (i in 1 until paired.size) {
+            val a = paired[i - 1]
+            val b = paired[i]
+            if (a.context == b.context || b.issued - a.issued < 2 || b.receipt >= a.receipt) continue
+            hostInversions++
+            val skew = a.receipt - b.receipt
+            if (skew > maxSkew) maxSkew = skew
+            if (skews.length() < 8) skews.put(JSONObject().put("first", a.tag).put("firstIssued", a.issued).put("firstReceipt", a.receipt).put("second", b.tag).put("secondIssued", b.issued).put("secondReceipt", b.receipt).put("skew", skew))
+        }
+        out.put("crossSourceInversions", hostInversions).put("crossSourceMaxSkew", maxSkew).put("crossSourceInstances", skews)
+        // 8. The page's events around the finger taps.
+        val events = arr(csLog, "events")
+        val near = JSONArray()
+        for (t in taps.filter { it.optBoolean("touched") }) {
+            val at = t.optLong("tCall")
+            for (e in events) if (Math.abs(e.optLong("t") - at) <= 300) near.put(JSONObject().put("tap", t.optInt("i")).put("e", e.optString("e")).put("dt", e.optLong("t") - at).put("vis", e.optString("vis")))
+        }
+        out.put("pageEvents", events.size).put("pageEventsNearTouchedTaps", near.length()).put("pageEventsNearTouchedTapsList", near)
+        out.put("workerChanges", workerLog.optJSONArray("changes")?.length() ?: -1)
+        // 9. The summary.
+        fun leg(context: String, name: String): String = legs.optJSONObject(context)?.optJSONObject(name)?.let { s -> if (s.optInt("n") == 0) "-" else "${s.opt("median")}/${s.opt("p90")}/${s.opt("max")}" } ?: "-"
+        out.put(
+            "summary",
+            "commits ${changes.size} (${taps.size} taps, ${order.size} order, ${burst.size} popup bursts; script ${rmw.count { it.optString("tag") == "tick" }} ticks + ${rmw.count { it.optString("tag") == "burst" }} bursts), " +
+                "stale writes $staleWrites: $postReceiptInversions inversion(s) after receipt, $ackedBeforeIssueStale stale after an acknowledged set, $races the extension's own race ($racesGetBeforeSetIssued with the get ahead of the set's issue, $racesInFlight with the set in flight); " +
+                "scale lost $lostScale time(s) (touched $lostTouched, evaluated $lostEvaluated), final scale $finalScale of $expectedScale; " +
+                "order leg $orderAnswered/${order.size} answered, $orderStale stale, $orderErrors error(s); " +
+                "cross-source receipt inversions $hostInversions (max skew $maxSkew ms); " +
+                "legs (median/p90/max ms) popup toHost ${leg("popup", "toHost")} hop ${leg("popup", "hop")} run ${leg("popup", "run")} back ${leg("popup", "back")} toFrame ${leg("popup", "toFrame")} roundTrip ${leg("popup", "roundTrip")}; " +
+                "content toHost ${leg("content", "toHost")} hop ${leg("content", "hop")} run ${leg("content", "run")} back ${leg("content", "back")} toFrame ${leg("content", "toFrame")} roundTrip ${leg("content", "roundTrip")}; " +
+                "tick RMW span ${out.optJSONObject("tickRmwSpan")?.let { s -> "${s.opt("median")}/${s.opt("p90")}/${s.opt("max")}" }}; " +
+                "paired $pairedCount of ${calls.size} frame calls with ${hostCalls.size} host lines ($hostErrors error replies); page events near the finger taps ${near.length()}; history gaps $historyGaps"
+        )
+        return out
+    }
+
+    private fun pairCall(frame: OrderCall, host: HostCall) {
+        frame.receipt = host.receipt
+        frame.hop = host.hop
+        frame.run = host.run
+        frame.back = host.back
+        frame.paired = true
+        host.claimed = true
     }
 
     // --- the core checks of compat round 20 (ranks 481-510 by installs) --------------------------
@@ -11617,6 +12022,78 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
         /** The privacy probe page's readiness: its counters armed and `chrome.privacy` there. */
         private const val PRIVACY_PAGE_READY = "String(!!(window.__zenEv&&typeof chrome!=='undefined'&&chrome.privacy&&chrome.privacy.websites))"
+
+        /**
+         * The storage order probe ([storageOrderProbe]; round 21's R21-12, Zoom Video's lost
+         * update): an extension with the `storage` and `tabs` permissions and Zoom Video's two
+         * producers on one `chrome.storage.local` key (`order_probe`). Its popup (`popup.html`)
+         * has a button whose press does `get` → `set({…read, scale: +0.25})`, as Zoom Video's
+         * ratio button does, and `window.__zenOrderRun(what, n)` for the driver's script-driven
+         * legs (`tap`, `order`, `burst`). Its content script on the fixture server's pages
+         * (`content.js`) read-modify-writes the same key once a second with `{cs: n}`, its
+         * interval armed again after every tick as Zoom Video's dims effect re-arms its own;
+         * answers a `read` message with what its `get` saw; logs every `onChanged` of the key
+         * and the window's resize / focus / visibility events with the frame's clock; takes the
+         * driver's commands off the `data-zen-order` attribute on a `zen-order` event and
+         * publishes its log into a `<script type=application/json id=zen-order-cs>` node – the
+         * DOM being the one channel a main-world evaluation shares with an isolated world. Its
+         * worker (`worker.js`) logs `onChanged` too. Every write carries its own `set` time
+         * (`popAt`, `csAt`), so the store's commit history names each commit's writer. Its id
+         * comes out as `hnelfnelkfmbnhdelmcbkdcfedmjccjp` (the trigger's lists name it).
+         */
+        private const val ORDER_PROBE_NAME = "Zenium compat proof: storage order probe"
+        private val ORDER_PROBE_ID = fixtureId(ORDER_PROBE_NAME)
+        private val ORDER_PROBE_FILES: Map<String, String> = mapOf(
+            "manifest.json" to """{"manifest_version":3,"name":"$ORDER_PROBE_NAME","version":"1.0","description":"A fixture of the Zenium compat sweep: a popup and a content script read-modify-writing one chrome.storage.local key, the order read back.","permissions":["storage","tabs"],"action":{"default_popup":"popup.html","default_title":"$ORDER_PROBE_NAME"},"background":{"service_worker":"worker.js"},"content_scripts":[{"matches":["$BASE/*"],"js":["content.js"],"run_at":"document_end"}]}""",
+            "worker.js" to
+                "var o=self.__zenOrder={t0:Date.now(),changes:[],msgs:0,err:null};\n" +
+                "try{chrome.storage.onChanged.addListener(function(ch,area){var k;for(k in ch){if(o.changes.length<600)o.changes.push({t:Date.now(),area:area,key:k,nv:ch[k].newValue===undefined?null:ch[k].newValue,ov:ch[k].oldValue===undefined?null:ch[k].oldValue})}});\n" +
+                "chrome.runtime.onMessage.addListener(function(m,s,reply){o.msgs++;if(m&&m.type==='ping'){reply({pong:Date.now()});return true}})}catch(e){o.err=String(e&&e.message||e)}\n",
+            "content.js" to
+                "(function(){var KEY='order_probe';var L={t0:Date.now(),mode:'zoom',ticks:0,n:0,events:[],rmw:[],reads:[],changes:[],err:null,armed:false,bursting:false};var node=null;\n" +
+                "function publish(){try{if(!node||!node.isConnected){node=document.createElement('script');node.type='application/json';node.id='zen-order-cs';(document.head||document.documentElement).appendChild(node)}node.textContent=JSON.stringify(L)}catch(e){L.err=String(e&&e.message||e)}}\n" +
+                "function ev(name){return function(){if(L.events.length<200)L.events.push({t:Date.now(),e:name,vis:document.visibilityState,w:window.innerWidth,h:window.innerHeight})}}\n" +
+                "['resize','focus','blur','pageshow','pagehide','freeze','resume'].forEach(function(name){window.addEventListener(name,ev(name),true)});document.addEventListener('visibilitychange',ev('visibilitychange'),true);\n" +
+                "function pick(cur){cur=cur||{};return {scale:cur.scale===undefined?null:cur.scale,p:cur.p===undefined?null:cur.p,cs:cur.cs===undefined?null:cur.cs,seq:cur.seq===undefined?null:cur.seq,popAt:cur.popAt===undefined?null:cur.popAt,csAt:cur.csAt===undefined?null:cur.csAt}}\n" +
+                "function rmw(tag,done){var rec={i:++L.n,tag:tag,tGet:Date.now(),tGetReply:0,read:null,tSet:0,tSetReply:0,err:null};L.rmw.push(rec);\n" +
+                "try{chrome.storage.local.get(KEY,function(r){rec.tGetReply=Date.now();if(chrome.runtime.lastError){rec.err=String(chrome.runtime.lastError.message);if(done)done();return}var cur=(r&&r[KEY])||{};rec.read=pick(cur);var next={};var k;for(k in cur)next[k]=cur[k];rec.tSet=Date.now();next.cs=rec.i;next.csAt=rec.tSet;var w={};w[KEY]=next;\n" +
+                "chrome.storage.local.set(w,function(){rec.tSetReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message);if(done)done()})})}catch(e){rec.err='threw: '+String(e&&e.message||e);if(done)done()}}\n" +
+                "var timer=null;function arm(){if(timer)clearInterval(timer);timer=setInterval(function(){if(L.mode!=='zoom')return;L.ticks++;rmw('tick');arm()},1000)}function disarm(){if(timer)clearInterval(timer);timer=null}arm();\n" +
+                "function burst(count){L.bursting=true;var i=0;(function step(){if(i>=count){L.bursting=false;publish();return}i++;rmw('burst',step)})()}\n" +
+                "try{chrome.storage.onChanged.addListener(function(ch,area){if(area!=='local'||!ch[KEY])return;var c=ch[KEY];if(L.changes.length<600)L.changes.push({t:Date.now(),nv:c.newValue===undefined?null:pick(c.newValue),ov:c.oldValue===undefined?null:pick(c.oldValue)})});\n" +
+                "chrome.runtime.onMessage.addListener(function(m,s,reply){if(!m||m.type!=='read')return;var rec={t:Date.now(),tReply:0,seq:m.seq,saw:null,err:null};L.reads.push(rec);chrome.storage.local.get(KEY,function(r){rec.tReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message);rec.saw=pick((r&&r[KEY])||{});reply(rec)});return true});L.armed=true}catch(e){L.err=String(e&&e.message||e)}\n" +
+                "document.addEventListener('zen-order',function(){var cmd={};try{cmd=JSON.parse(document.documentElement.getAttribute('data-zen-order')||'{}')}catch(e){cmd={}}\n" +
+                "if(cmd.cmd==='mode'){L.mode=cmd.mode||'off';if(L.mode==='zoom')arm();else disarm()}else if(cmd.cmd==='burst'){burst(cmd.n||40)}else if(cmd.cmd==='clear'){L.rmw=[];L.reads=[];L.changes=[];L.events=[]}publish()});\n" +
+                "publish()})();\n",
+            "popup.html" to
+                "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>$ORDER_PROBE_NAME</title>" +
+                "<style>body{font:16px system-ui,sans-serif;margin:0;padding:16px;min-width:260px}button{display:block;width:100%;height:56px;margin:0 0 12px;font-size:18px}</style><script src=\"popup.js\"></script></head>" +
+                "<body><h1 style=\"font-size:18px;margin:0 0 12px\">Storage order probe</h1><button id=\"tap\">Scale +0.25</button><button id=\"burst\">Burst 40</button><button id=\"order\">Order 20</button><p id=\"status\">loading</p></body></html>",
+            "popup.js" to
+                "(function(){var KEY='order_probe';var P=window.__zenOrderPopup={t0:Date.now(),tabId:null,tabErr:null,n:0,taps:[],order:[],burst:[],busy:false,scale:null};\n" +
+                "try{chrome.tabs.query({active:true,currentWindow:true},function(tabs){if(chrome.runtime.lastError){P.tabErr=String(chrome.runtime.lastError.message);return}var t=tabs&&tabs[0];P.tabId=t&&typeof t.id==='number'?t.id:null;if(P.tabId===null)P.tabErr='no active tab'})}catch(e){P.tabErr='threw: '+String(e&&e.message||e)}\n" +
+                "function status(s){var el=document.getElementById('status');if(el)el.textContent=s}\n" +
+                "function pick(cur){cur=cur||{};return {scale:cur.scale===undefined?null:cur.scale,p:cur.p===undefined?null:cur.p,cs:cur.cs===undefined?null:cur.cs,seq:cur.seq===undefined?null:cur.seq,popAt:cur.popAt===undefined?null:cur.popAt,csAt:cur.csAt===undefined?null:cur.csAt}}\n" +
+                "function rmw(list,patchOf,extra,done){var rec={i:++P.n,tCall:Date.now(),tGet:0,tGetReply:0,read:null,tSet:0,tSetReply:0,wrote:null,err:null};var k;for(k in extra)rec[k]=extra[k];list.push(rec);\n" +
+                "try{rec.tGet=Date.now();chrome.storage.local.get(KEY,function(r){rec.tGetReply=Date.now();if(chrome.runtime.lastError){rec.err=String(chrome.runtime.lastError.message);done(rec);return}var cur=(r&&r[KEY])||{};rec.read=pick(cur);var patch=patchOf(cur);rec.wrote=patch;var next={};for(k in cur)next[k]=cur[k];for(k in patch)next[k]=patch[k];rec.tSet=Date.now();next.popAt=rec.tSet;var w={};w[KEY]=next;\n" +
+                "chrome.storage.local.set(w,function(){rec.tSetReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message);done(rec)})})}catch(e){rec.err='threw: '+String(e&&e.message||e);done(rec)}}\n" +
+                "function tap(touched){if(P.busy)return 'busy';P.busy=true;rmw(P.taps,function(cur){return {scale:Math.round(((typeof cur.scale==='number'?cur.scale:1)+0.25)*100)/100}},{touched:!!touched},function(rec){P.busy=false;P.scale=rec.wrote?rec.wrote.scale:null;status('scale '+P.scale+(rec.err?' err '+rec.err:''))});return 'started'}\n" +
+                "function burst(count){if(P.busy)return 'busy';P.busy=true;var i=0;(function step(){if(i>=count){P.busy=false;status('burst done');return}i++;(function(k){rmw(P.burst,function(){return {p:k}},{},step)})(i)})();return 'started'}\n" +
+                "function order(count){if(P.busy)return 'busy';P.busy=true;var i=0;(function step(){if(i>=count){P.busy=false;status('order done');return}i++;var seq=i;var rec={seq:seq,tCall:Date.now(),tGet:0,tGetReply:0,tSet:0,tSetReply:0,tSend:0,tResp:0,resp:null,stale:null,err:null};P.order.push(rec);\n" +
+                "try{rec.tGet=Date.now();chrome.storage.local.get(KEY,function(r){rec.tGetReply=Date.now();var cur=(r&&r[KEY])||{};var next={};var k;for(k in cur)next[k]=cur[k];rec.tSet=Date.now();next.seq=seq;next.popAt=rec.tSet;var w={};w[KEY]=next;\n" +
+                "chrome.storage.local.set(w,function(){rec.tSetReply=Date.now();if(chrome.runtime.lastError)rec.err=String(chrome.runtime.lastError.message)});\n" +
+                "if(P.tabId===null){rec.err='no tabId';setTimeout(step,40);return}rec.tSend=Date.now();\n" +
+                "chrome.tabs.sendMessage(P.tabId,{type:'read',seq:seq},function(resp){rec.tResp=Date.now();if(chrome.runtime.lastError){rec.err=String(chrome.runtime.lastError.message)}else{rec.resp=resp||null;rec.stale=!!(resp&&resp.saw&&resp.saw.seq!==seq)}setTimeout(step,40)})})}catch(e){rec.err='threw: '+String(e&&e.message||e);setTimeout(step,40)}})();return 'started'}\n" +
+                "window.__zenOrderRun=function(what,n){if(what==='tap')return tap(false);if(what==='burst')return burst(n||40);if(what==='order')return order(n||20);return 'unknown'};\n" +
+                "document.addEventListener('DOMContentLoaded',function(){var b=document.getElementById('tap');if(b)b.addEventListener('click',function(){tap(true)});var c=document.getElementById('burst');if(c)c.addEventListener('click',function(){burst(40)});var d=document.getElementById('order');if(d)d.addEventListener('click',function(){order(20)});status('ready')})})();\n"
+        )
+
+        /** The order probe's content script mounted on the fixture: its log node in the DOM. */
+        private const val ORDER_CS_MOUNTED = "String(!!document.getElementById('zen-order-cs'))"
+        /** The order probe's content-script log as last published into its DOM node (`null` before the script mounted). */
+        private const val ORDER_CS_LOG = "(function(){var el=document.getElementById('zen-order-cs');return el?el.textContent:'null'})()"
+        /** The order probe's popup: how many taps its log holds. */
+        private const val ORDER_POPUP_TAPS = "String((window.__zenOrderPopup||{taps:[]}).taps.length)"
 
         /** iCloud Passwords' three `chrome.privacy` settings ([privacyHolder]): the setting's path → the key core publishes it under (the desktop's keys). */
         private val ICLOUD_PRIVACY_SETTINGS = listOf(
