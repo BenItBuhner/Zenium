@@ -252,17 +252,35 @@ describe('the table', () => {
       ).toBe(true)
   })
 
-  it("gives each engine its line, in its own words or Chrome's neutral one", () => {
+  it('gives every engine on a list one line of its own words, short enough for one line of the tile', () => {
+    // Every tile the same height (Chrome's screen keeps them equal): each line is the engine's
+    // own and stands on one line of the 470 px text column at 13 px – the drive measures the
+    // pixels; here the bound is the longest line that fits (Qwant's 62 characters), never
+    // Chrome's neutral fallback for an engine on a list, and never Zenium's words.
+    const longest = 'The search engine that values you as a user, not as a product.'.length
     for (const id of new Set(Object.values(EEA_SEARCH_CHOICE).flat())) {
       const engine = searchChoiceEngine(id)!
       const line = searchChoiceTagline(engine)
       expect(line.length, id).toBeGreaterThan(0)
+      expect(line.length, id).toBeLessThanOrEqual(longest)
       expect(line, id).not.toMatch(/Zen(ium)?/)
+      expect(line, id).not.toMatch(/^You can use /)
+      expect(line, id).not.toMatch(/\n/)
     }
-    for (const id of ['seznam', 'startpage', 'yep'])
-      expect(searchChoiceTagline(searchChoiceEngine(id)!)).toBe(
-        `You can use ${searchChoiceEngine(id)!.name} to search the web.`
-      )
+    expect(searchChoiceTagline(searchChoiceEngine('google')!)).toBe(
+      "Search the world's information."
+    )
+    expect(searchChoiceTagline(searchChoiceEngine('startpage')!)).toBe(
+      "The world's most private search engine."
+    )
+    expect(searchChoiceTagline(searchChoiceEngine('yep')!)).toBe(
+      'The private, revenue-sharing search engine.'
+    )
+    expect(searchChoiceTagline(searchChoiceEngine('seznam')!)).toBe('Najdu tam, co neznám.')
     expect(searchChoiceTagline(extra('yahoo_se'))).toBe(searchChoiceTagline(extra('yahoo_es')))
+    // Chrome's neutral line stands for an engine outside the lists (a user's own).
+    expect(searchChoiceTagline({ id: 'mine', name: 'Mine' })).toBe(
+      'You can use Mine to search the web.'
+    )
   })
 })

@@ -10238,18 +10238,22 @@
  * is (§9.29): a radio group of two-line rows (§9.2: 20 + 20 + 12 = 52 on `--v2-row-two-line`,
  * padding 6 12 at the card radius, the rows 4 apart so each reads as one tile), the engine's
  * icon at 24 in a 32 box, the name on the body line at the button weight, the engine's own line
- * at 13 in the deemphasised ink, and the plain radio's mark (§9.14, `.zen-v2-radio`'s geometry:
- * 16, a hairline at 45 %, checked an accent ring round a 6 px dot) at the trailing edge, centred
- * on the row since the row is one tile and not a list line. The picked row takes
- * `--v2-selected` (§9.6) and keeps it under the pointer; the others take the hover fill. No
- * border (§0): the fill says which row is picked, the mark says it twice. The list scrolls in
- * its own box past six rows, so the footer's verbs stay seated whatever the list's length.
+ * at 13 in the deemphasised ink – one line, so every tile is the same 52 – and the plain radio's
+ * mark (§9.14, `.zen-v2-radio`'s geometry: 16, a hairline at 45 %, checked an accent ring round
+ * a 6 px dot) at the trailing edge, centred on the row since the row is one tile and not a list
+ * line. The picked row takes the accent at .12 (the window family's selection tint; `--v2-selected`
+ * is the page family's and the two never mix, §9.29) and keeps it under the pointer; the others
+ * take the hover fill. No border (§0): the fill says which row is picked, the mark says it twice.
+ * Past five rows the list scrolls in its own box under the chassis's thin bar (§9.20), so the
+ * footer's verbs stay seated whatever the list's length; the fold cuts the sixth row through
+ * its middle – a row cut, not a clean edge, is the pull's affordance (§9.13) – and the random
+ * order means the fold favours no engine, which is why Chrome's own screen scrolls.
  */
 .zen-search-choice-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: calc(6 * var(--v2-row-two-line) + 5 * 4px);
+  max-height: calc(5 * var(--v2-row-two-line) + 5 * 4px + var(--v2-row-two-line) / 2);
   overflow-y: auto;
   /* Room for the focus ring on the first and last rows (§9.20). */
   padding: var(--v2-ring-room);
@@ -10259,9 +10263,8 @@
   display: flex;
   width: 100%;
   min-height: var(--v2-row-two-line);
-  /* A row keeps its natural height in the scrolling column: past the list's ceiling the column's
-     flex would otherwise shrink every row to its 52 minimum, and a two-line tagline's row (Google's
-     at 640) would spill its text 10 px into the neighbouring gaps instead of growing to 72. */
+  /* A row keeps its height in the scrolling column: past the list's ceiling the column's flex
+     would otherwise squeeze the rows below their content and a tagline would spill into the gaps. */
   flex-shrink: 0;
   align-items: center;
   gap: 12px;
@@ -10279,7 +10282,7 @@
 }
 .zen-search-choice-row[aria-checked='true'],
 :where(:root[data-hover='hover']) .zen-search-choice-row[aria-checked='true']:hover {
-  background: var(--v2-selected);
+  background: rgb(var(--zen-accent-rgb) / 0.12);
 }
 .zen-search-choice-icon {
   display: inline-flex;
@@ -10318,14 +10321,10 @@
   line-height: var(--v2-line-body);
 }
 .zen-search-choice-tagline {
-  /* The engine's own line, whole: a long one wraps to a second line and the row grows past its
-     52 (the two-line row's minimum), rather than being cut with an ellipsis – the description
-     is what the screen shows the engine by. Two lines is the ceiling. */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  overflow-wrap: anywhere;
+  /* The engine's own words, one line, whole: each line in `searchChoiceTagline` is chosen to fit
+     the text column at 13 px, so every tile is the same 52. No clamp and no ellipsis – a line
+     that did not fit would show, and the drive measures each one. */
+  white-space: nowrap;
   color: var(--zen-muted);
   font-size: var(--v2-font-small);
   font-weight: var(--v2-weight-body);

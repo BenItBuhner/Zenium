@@ -272,21 +272,28 @@ export function searchChoiceEngineIds(region: string | null | undefined): readon
 }
 
 /**
- * Each tile's second line, in the engine's own words where the engine states one line
- * (its OpenSearch description's `<Description>`, or its home page's title or description),
- * never Zenium's. Chrome shows each engine's marketing snippet the same way and, for an engine
+ * Each tile's second line: one line of the engine's own words – a line the engine itself uses
+ * (its home page's headline, title or description) – never Zenium's, and short enough to stand
+ * on one line in the tile's text column (470 px at 13 px, the list's 8 px scrollbar taken), so
+ * every tile is the same height: Chrome keeps its choice screen's tiles equal, and a taller
+ * tile is a distinction the DMA reads as favour. Google's is the head of its own description,
+ * whole; Seznam's is its slogan, in Seznam's Czech (its lists are the Czech and Slovak
+ * screens). Chrome shows each engine's marketing snippet the same way and, for an engine
  * without one, "You can use <name> to search the web." – its neutral fallback line
  * (`search_engine_choice_strings.grdp`); `searchChoiceTagline` says that for an engine not
  * named here. Yahoo's editions share Yahoo's line.
  */
 const SEARCH_CHOICE_TAGLINES: Readonly<Record<string, string>> = {
-  google: "Search the world's information, including webpages, images, videos and more.",
+  google: "Search the world's information.",
   duckduckgo: 'Protection. Privacy. Peace of mind.',
   ecosia: 'The search engine that plants trees.',
   bing: 'A smart search engine for the forever curious.',
   brave: 'Private, independent, open.',
   privacywall: 'The search engine that protects your privacy.',
   qwant: 'The search engine that values you as a user, not as a product.',
+  seznam: 'Najdu tam, co neznám.',
+  startpage: "The world's most private search engine.",
+  yep: 'The private, revenue-sharing search engine.',
   yahoo: 'Get the best of the web with Yahoo.'
 }
 

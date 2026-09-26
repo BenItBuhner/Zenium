@@ -13,7 +13,7 @@ import { Button } from '../ui/button'
  * The EEA's search-engine choice screen (W6-2; DMA Art. 6(3) – Chrome's
  * `chrome://search-engine-choice` is the reference): the eligible engines in the session's
  * random order, nothing picked in advance, "Set as default" live once a tile is picked, "Skip
- * for now" small and plain (Escape skips too). Drawn in the first-run tour's chassis: as the
+ * for now" plain at the same size (§6; Escape skips too). Drawn in the first-run tour's chassis: as the
  * tour's search step at the first run, and on its own – the same chassis with this one step –
  * over the profile window when a run finds the screen still owed (the tour skipped past it, an
  * existing profile in the EEA) or Settings › Search asks for it again.
@@ -42,8 +42,9 @@ function EngineIcon({ engine }: { engine: SearchEngine }): JSX.Element {
 }
 
 /**
- * The list: a radio group of two-line rows (§9.2, §9.14) – the whole row the target, the mark
- * at the trailing edge, the picked row in `--v2-selected`. Arrow keys move the pick as a radio
+ * The list: a radio group of two-line rows (§9.2, §9.14), every tile the same 52 since each
+ * engine's line is one line – the whole row the target, the mark at the trailing edge, the
+ * picked row in the accent at .12 (the window family's tint, §9.29). Arrow keys move the pick as a radio
  * group's do; Space picks the focused row; Tab leaves the group (one stop: the picked row, or
  * the first while nothing is picked).
  */
@@ -136,18 +137,22 @@ export function SearchChoiceList({
  * standalone screen alike. The list is the region's (`searchChoiceListRegionOf`: the host's
  * region's, a territory's through its alias, the record's after a move, else the fallback);
  * the order is the run's (`UIState.searchChoice.seed`): it holds while the app is open, and
- * holds between the tour's step and the screen after it.
+ * holds between the tour's step and the screen after it. The title carries `titleId` when the
+ * host passes one (the standalone dialog is labelled by it, §9.22); else its own.
  */
 export function SearchChoiceStep({
   state,
   picked,
-  onPick
+  onPick,
+  titleId: hostTitleId
 }: {
   state: Pick<UIState, 'settings' | 'searchChoice'>
   picked: string | null
   onPick(engineId: string): void
+  titleId?: string
 }): JSX.Element {
-  const titleId = useId()
+  const ownTitleId = useId()
+  const titleId = hostTitleId ?? ownTitleId
   const region = searchChoiceListRegionOf(state)
   const seed = state.searchChoice.seed
   const tiles = useMemo(() => shuffledSearchChoiceTiles(region, seed), [region, seed])
@@ -166,7 +171,7 @@ export function SearchChoiceStep({
   )
 }
 
-/** The footer's two verbs: "Skip for now" small and plain, "Set as default" the primary, live once a tile is picked. */
+/** The footer's two verbs at the one button size (§6): "Skip for now" plain, "Set as default" the primary, live once a tile is picked. */
 export function SearchChoiceActions({
   picked,
   onSkip,
@@ -178,7 +183,7 @@ export function SearchChoiceActions({
 }): JSX.Element {
   return (
     <div className="flex items-center gap-2">
-      <Button variant="ghost" size="sm" onClick={onSkip} data-testid="search-choice-skip">
+      <Button variant="ghost" onClick={onSkip} data-testid="search-choice-skip">
         Skip for now
       </Button>
       <Button disabled={picked === null} onClick={onChoose} data-testid="search-choice-set">
@@ -197,6 +202,8 @@ export function SearchChoiceActions({
 export function SearchChoiceScreen({ state }: { state: UIState }): JSX.Element {
   const [picked, setPicked] = useState<string | null>(null)
   const panel = useRef<HTMLDivElement>(null)
+  // The dialog is labelled by its visible title (§9.22), not a second copy of the words.
+  const titleId = useId()
   const scheme = state.settings.colorScheme
   const dark =
     scheme === 'dark' ||
@@ -235,11 +242,11 @@ export function SearchChoiceScreen({ state }: { state: UIState }): JSX.Element {
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label={SEARCH_CHOICE_TITLE}
+        aria-labelledby={titleId}
         className="zen-panel zen-animate-pop relative w-[640px] max-w-[calc(100%-32px)] p-8 outline-none"
         {...{ [KEEPS_KEYBOARD_ATTR]: '' }}
       >
-        <SearchChoiceStep state={state} picked={picked} onPick={setPicked} />
+        <SearchChoiceStep state={state} picked={picked} onPick={setPicked} titleId={titleId} />
         <div className="mt-8 flex items-center justify-end">
           <SearchChoiceActions picked={picked} onSkip={skip} onChoose={choose} />
         </div>

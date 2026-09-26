@@ -202,9 +202,15 @@ describe('the tour’s search step in the EEA', () => {
       expect(icon!.getAttribute('src')).not.toMatch(/^(https?:|data:)/)
       expect(r.querySelector('.zen-search-choice-letter')).toBeNull()
     })
-    // Nothing chosen for the user: the primary waits; the plain verb is the small one.
+    // Nothing chosen for the user: the primary waits; the plain verb stands at the same size
+    // as its peers (§6: one button height, 32 – never the small variant beside Back and Set).
     expect(setDefault().disabled).toBe(true)
-    expect(button('Skip for now')).not.toBeUndefined()
+    const skip = button('Skip for now')!
+    expect(skip).not.toBeUndefined()
+    expect(skip.className).toContain('h-8')
+    expect(skip.className).not.toMatch(/\bh-7\b|text-xs/)
+    expect(setDefault().className).toContain('h-8')
+    expect(button('Back')!.className).toContain('h-8')
     expect(button('Skip tour')).toBeUndefined()
     expect(button('Continue')).toBeUndefined()
     expect(commands().map(([n]) => n)).not.toContain('searchChoice.choose')
@@ -232,6 +238,38 @@ describe('the tour’s search step in the EEA', () => {
     // The tour goes on past the step.
     expect(q('[data-testid="search-choice"]')).toBeNull()
     expect(q('[data-testid="onboarding"]')).not.toBeNull()
+  })
+
+  it('Back after Set or Skip returns to the answered choice step with its pick – the step is settled when the tour mounts', async () => {
+    await mount(profile(false, EEA))
+    await toSearchStep()
+    await click(rows().find((r) => r.dataset.engine === 'ecosia'))
+    await click(setDefault())
+    // The core answers: the choice is no longer owed. The tour's step must not turn into the
+    // other form (the three tiles with the shipped default picked) under the user's feet.
+    await act(async () => browserStore.set({ state: profile(false, ANSWERED) }))
+    expect(tourAsksSearchChoice(profile(false, ANSWERED))).toBe(false)
+    await click(button('Back'))
+    expect(q('[data-testid="search-choice"]')).not.toBeNull()
+    expect(q('h2')?.textContent).toBe('Choose your search engine')
+    expect(button('Continue')).toBeUndefined()
+    const checked = rows().filter((r) => r.getAttribute('aria-checked') === 'true')
+    expect(checked.map((r) => r.dataset.engine)).toEqual(['ecosia'])
+    expect(setDefault().disabled).toBe(false)
+
+    // The same after a skip: the step, nothing picked.
+    act(() => root?.unmount())
+    host?.remove()
+    invoke.mockClear()
+    await mount(profile(false, EEA))
+    await toSearchStep()
+    await click(button('Skip for now'))
+    await act(async () => browserStore.set({ state: profile(false, ANSWERED) }))
+    await click(button('Back'))
+    expect(q('[data-testid="search-choice"]')).not.toBeNull()
+    expect(rows().every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true)
+    expect(button('Skip for now')).not.toBeUndefined()
+    expect(button('Skip tour')).toBeUndefined()
   })
 
   it('Skip for now and Escape record nothing – the core hears a skip – and the tour goes on', async () => {
@@ -312,7 +350,12 @@ describe('the screen on its own', () => {
     expect(q('[data-testid="onboarding"]')).toBeNull()
     const dialog = q<HTMLElement>('[role="dialog"]')!
     expect(dialog.getAttribute('aria-modal')).toBe('true')
-    expect(dialog.getAttribute('aria-label')).toBe('Choose your search engine')
+    // Labelled by its visible title (§9.22), not by a second copy of the words.
+    const title = q<HTMLHeadingElement>('h2')!
+    expect(title.textContent).toBe('Choose your search engine')
+    expect(dialog.getAttribute('aria-labelledby')).toBe(title.id)
+    expect(dialog.hasAttribute('aria-label')).toBe(false)
+    expect(q<HTMLElement>('[role="radiogroup"]')!.getAttribute('aria-labelledby')).toBe(title.id)
     expect(document.activeElement).toBe(dialog)
     // One step: no progress spans, no Back.
     expect(button('Back')).toBeUndefined()
@@ -391,7 +434,7 @@ describe('the form factor', () => {
   })
 })
 
-describe('the stylesheet: the list scrolls, a row keeps its natural height', () => {
+describe('the stylesheet: equal tiles, one-line taglines, the list scrolls with the sixth row cut', () => {
   const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8').replace(
     /\/\*[\s\S]*?\*\//g,
     ''
@@ -408,21 +451,35 @@ describe('the stylesheet: the list scrolls, a row keeps its natural height', () 
   const value = (selector: string, property: string): string | undefined =>
     declarations(selector).find(([p]) => p === property)?.[1]
 
-  it('the list is a column that scrolls past six two-line rows in its own box', () => {
+  it('the list is a column that scrolls in its own box past five two-line rows, the sixth cut through its middle as the pull’s affordance (C6)', () => {
     expect(value('.zen-search-choice-list', 'display')).toBe('flex')
     expect(value('.zen-search-choice-list', 'flex-direction')).toBe('column')
     expect(value('.zen-search-choice-list', 'overflow-y')).toBe('auto')
+    // 5 × 52 + 5 × 4 + 26 = 306: a row cut, never a clean edge on a whole row (at 6 × 52 + 5 × 4
+    // the fold would land on the sixth row's foot and the list would read as complete).
     expect(value('.zen-search-choice-list', 'max-height')).toBe(
-      'calc(6 * var(--v2-row-two-line) + 5 * 4px)'
+      'calc(5 * var(--v2-row-two-line) + 5 * 4px + var(--v2-row-two-line) / 2)'
     )
+    // The bar is the chassis's thin overlay (§9.20); the list sets none of its own.
+    expect(css).not.toMatch(/\.zen-search-choice-list::-webkit-scrollbar/)
+    expect(value('.zen-search-choice-list', 'scrollbar-width')).toBeUndefined()
   })
 
-  it('a row never shrinks below its content when the column is over its ceiling – a two-line tagline grows its row (72) instead of spilling into the gaps', () => {
-    // Eight rows are taller than the list's ceiling; without this a column flexbox squeezes every
-    // row to its 52 minimum and Google's two-line row overflows 10 px above and below.
+  it('every tile is the same 52: the tagline is one line of the engine’s own words, never a clamp or an ellipsis (C1)', () => {
     expect(value('.zen-search-choice-row', 'min-height')).toBe('var(--v2-row-two-line)')
     expect(value('.zen-search-choice-row', 'flex-shrink')).toBe('0')
     expect(value('.zen-search-choice-row', 'height')).toBeUndefined()
-    expect(value('.zen-search-choice-tagline', '-webkit-line-clamp')).toBe('2')
+    expect(value('.zen-search-choice-tagline', 'white-space')).toBe('nowrap')
+    expect(value('.zen-search-choice-tagline', '-webkit-line-clamp')).toBeUndefined()
+    expect(value('.zen-search-choice-tagline', 'text-overflow')).toBeUndefined()
+    expect(value('.zen-search-choice-tagline', 'overflow')).toBeUndefined()
+    expect(value('.zen-search-choice-tagline', 'line-height')).toBe('var(--v2-line-small)')
+  })
+
+  it('the picked row’s fill is the accent at .12 – the window family’s tint, never the page family’s `--v2-selected` (C2, §9.29)', () => {
+    const checked = /\.zen-search-choice-row\[aria-checked='true'\],\n[^{]*\{([^}]*)\}/.exec(css)
+    expect(checked).not.toBeNull()
+    expect(checked![1]).toContain('background: rgb(var(--zen-accent-rgb) / 0.12);')
+    expect(css).not.toMatch(/zen-search-choice[^{]*\{[^}]*--v2-selected/)
   })
 })

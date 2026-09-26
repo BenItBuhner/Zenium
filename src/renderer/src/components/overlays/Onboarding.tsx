@@ -102,8 +102,10 @@ function DesktopOnboarding({
   const [scheme, setScheme] = useState<ColorScheme>('system')
   // In the EEA the search step is the choice screen (W6-2): nothing picked in advance, the
   // step's own "Set as default" / "Skip for now" in the footer, and the core told at once.
-  // Elsewhere the step keeps its three tiles with the shipped default picked.
-  const choice = tourAsksSearchChoice(state)
+  // Elsewhere the step keeps its three tiles with the shipped default picked. Which step the
+  // tour has is settled when the tour mounts: Set and Skip answer the choice in the state, and
+  // Back after either returns to the answered choice step with its pick, not to the other form.
+  const [choice] = useState(() => tourAsksSearchChoice(state))
   const [engine, setEngine] = useState<string | null>(choice ? null : 'google')
   const [picked, setPicked] = useState<string[]>([])
   const [presetIndex, setPresetIndex] = useState(0)

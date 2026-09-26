@@ -206,15 +206,16 @@ describe('the eligible list', () => {
         expect(tile.engine.favicon).toMatch(/^https:\/\//)
         expect(tile.engine.favicon).not.toMatch(/^data:/)
       }
-    // Yahoo's editions share Yahoo's line; an engine without a line of its own has Chrome's
-    // neutral one ("You can use $1 to search the web.").
+    // Yahoo's editions share Yahoo's line; every engine on a list has a line of its own – Chrome's
+    // neutral one ("You can use $1 to search the web.") stands for an engine outside the lists.
     expect(searchChoiceTagline({ id: 'yahoo_de', name: 'Yahoo Search' })).toBe(
       searchChoiceTagline({ id: 'yahoo_fr', name: 'Yahoo Recherche' })
     )
-    expect(searchChoiceTagline({ id: 'seznam', name: 'Seznam.cz' })).toBe(
-      'You can use Seznam.cz to search the web.'
-    )
+    expect(searchChoiceTagline({ id: 'seznam', name: 'Seznam.cz' })).toBe('Najdu tam, co neznám.')
     expect(searchChoiceTagline({ id: 'qwant', name: 'Qwant' })).not.toMatch(/^You can use/)
+    expect(searchChoiceTagline({ id: 'mine', name: 'Mine' })).toBe(
+      'You can use Mine to search the web.'
+    )
   })
 })
 
