@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { WebPreferences } from 'electron'
-import type { Tab } from '../../../shared/types'
+import type { Rect, Tab } from '../../../shared/types'
 import type {
   AgentInputEvent,
   NavigationCommitDetails,
@@ -44,9 +44,17 @@ const constructed: Array<Record<string, unknown>> = []
  * Which page has the keyboard. `takeKeyboard` moves it the way Chromium does: the holder gets
  * `blur`, the taker `focus`.
  */
-const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
+const { keyboard, takeKeyboard, cursor, stagesMade } = vi.hoisted(() => {
   /** Where the OS pointer stands on the screen (`screen.getCursorScreenPoint`); a test moves it. */
   const cursor = { x: -100, y: -100 }
+  /** Every agent stage (`BaseWindow`) the views made, in order. */
+  const stagesMade: Array<{
+    options: Record<string, unknown>
+    children: unknown[]
+    excludedFromShownWindowsMenu: boolean
+    destroyed: boolean
+    positions: Array<[number, number]>
+  }> = []
   const keyboard = { current: null as { emit(event: string): unknown } | null }
   const takeKeyboard = (taker: { emit(event: string): unknown }): void => {
     const previous = keyboard.current
@@ -55,7 +63,7 @@ const { keyboard, takeKeyboard, cursor } = vi.hoisted(() => {
     previous?.emit('blur')
     taker.emit('focus')
   }
-  return { keyboard, takeKeyboard, cursor }
+  return { keyboard, takeKeyboard, cursor, stagesMade }
 })
 
 vi.mock('electron', async () => {
@@ -323,6 +331,43 @@ vi.mock('electron', async () => {
     setBounds(rect: { x: number; y: number; width: number; height: number }): void {
       this.bounds = rect
     }
+    getBounds(): { x: number; y: number; width: number; height: number } {
+      return this.bounds ?? { x: 0, y: 0, width: 0, height: 0 }
+    }
+  }
+  /**
+   * The never-shown window an agent's stage is (`stage.ts`): its construction options and the
+   * children of its `contentView` are what the tests look at; `stagesMade` has every one.
+   */
+  class FakeBaseWindow {
+    readonly children: unknown[] = []
+    readonly contentView = {
+      addChildView: (view: unknown): void => {
+        const at = this.children.indexOf(view)
+        if (at >= 0) this.children.splice(at, 1)
+        this.children.push(view)
+      },
+      removeChildView: (view: unknown): void => {
+        const at = this.children.indexOf(view)
+        if (at >= 0) this.children.splice(at, 1)
+      }
+    }
+    excludedFromShownWindowsMenu = false
+    destroyed = false
+    /** Every `setPosition`, in order. */
+    readonly positions: Array<[number, number]> = []
+    constructor(readonly options: Record<string, unknown>) {
+      stagesMade.push(this)
+    }
+    isDestroyed(): boolean {
+      return this.destroyed
+    }
+    destroy(): void {
+      this.destroyed = true
+    }
+    setPosition(x: number, y: number): void {
+      this.positions.push([x, y])
+    }
   }
   /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
   // Every view host in the tests listens for a flip (the app has one host; the tests many).
@@ -334,8 +379,17 @@ vi.mock('electron', async () => {
     getAllDisplays: () => [{ scaleFactor: 1 }],
     getCursorScreenPoint: () => ({ ...cursor })
   }
-  return { WebContentsView: FakeWebContentsView, nativeTheme, screen }
+  return { WebContentsView: FakeWebContentsView, BaseWindow: FakeBaseWindow, nativeTheme, screen }
 })
+
+/** An agent's stage as the electron mock made it (`FakeBaseWindow`). */
+interface StageWindow {
+  options: Record<string, unknown>
+  children: unknown[]
+  excludedFromShownWindowsMenu: boolean
+  destroyed: boolean
+  positions: Array<[number, number]>
+}
 
 /** A window's chrome page: the keyboard's home when no page on screen has it. */
 class FakeChrome extends EventEmitter {
@@ -376,8 +430,14 @@ class FakeBrowserWindow extends EventEmitter {
   constructor(readonly webContents: FakeChrome) {
     super()
   }
+  destroyed = false
   isDestroyed(): boolean {
-    return false
+    return this.destroyed
+  }
+  /** The window closes: destroyed, then its `closed` event, as Electron orders them. */
+  close(): void {
+    this.destroyed = true
+    this.emit('closed')
   }
   isFocused(): boolean {
     return this.focused
@@ -400,6 +460,10 @@ class FakeBrowserWindow extends EventEmitter {
   getContentBounds(): { x: number; y: number; width: number; height: number } {
     return { x: 100, y: 60, width: this.contentSize[0], height: this.contentSize[1] }
   }
+  /** The frame's place on the screen: the title bar's 36 rows above the content. */
+  getBounds(): { x: number; y: number; width: number; height: number } {
+    return { x: 100, y: 24, width: this.contentSize[0], height: this.contentSize[1] + 36 }
+  }
 }
 
 /**
@@ -410,7 +474,7 @@ class FakeBrowserWindow extends EventEmitter {
 function fakeWindow(): WindowHost & {
   win: FakeBrowserWindow
   chrome: FakeChrome
-  zen: { contentHidden: boolean }
+  zen: { contentHidden: boolean; pageArea: Rect | null }
   buttonHeld: boolean
 } {
   const chrome = new FakeChrome()
@@ -418,14 +482,27 @@ function fakeWindow(): WindowHost & {
   const host = {
     win,
     chrome,
-    zen: { contentHidden: false },
+    /**
+     * The core window's word on the chrome cover, and on the page area its layout last placed
+     * the shown page in (`ZenWindow.contentRect`, what an agent's stage sizes a hidden page
+     * to; null before the first layout).
+     */
+    zen: {
+      contentHidden: false,
+      pageArea: null as Rect | null,
+      contentRect: (): Rect | null => host.zen.pageArea
+    },
     buttonHeld: false,
-    pointerButtonHeld: (): boolean => host.buttonHeld
+    pointerButtonHeld: (): boolean => host.buttonHeld,
+    contentSize: (): { width: number; height: number } => ({
+      width: win.contentSize[0],
+      height: win.contentSize[1]
+    })
   }
   return host as unknown as WindowHost & {
     win: FakeBrowserWindow
     chrome: FakeChrome
-    zen: { contentHidden: boolean }
+    zen: { contentHidden: boolean; pageArea: Rect | null }
     buttonHeld: boolean
   }
 }
@@ -1924,6 +2001,489 @@ describe('a hidden tab page and the window', () => {
     // The window is shown: the page paints.
     view.applyWindowVisible(true)
     expect(engine(view)).toEqual({ visible: true, bounds: box })
+  })
+})
+
+/**
+ * An agent's hidden page and its stage (MCP B; `stage.ts`): while an agent drives a page the
+ * layout hides, the engine's view stands shown in a never-shown `BaseWindow` of the page's
+ * window, at the window's page area – laid out and painting where nobody sees it – and comes
+ * off the stage, hidden, when the agent lets it go, and for the window whenever the layout,
+ * the keyboard or a glance wants it there. Its captures come from the stage without the
+ * protocol.
+ */
+describe('an agent’s hidden page and the stage (MCP B)', () => {
+  const box = { x: 0, y: 40, width: 800, height: 560 }
+  const pageArea = { x: 0, y: 80, width: 1032, height: 772 }
+  const stageBox = (area: Rect): Rect => ({ x: 0, y: 0, width: area.width, height: area.height })
+  const setup = (): {
+    host: ElectronTabViewHost
+    window: ReturnType<typeof fakeWindow>
+    create: (window?: ReturnType<typeof fakeWindow>) => ElectronTabView
+    stage: (n?: number) => StageWindow
+    engine: (view: ElectronTabView) => { visible: boolean; bounds: unknown }
+  } => {
+    keyboard.current = null
+    cursor.x = -100
+    cursor.y = -100
+    stagesMade.length = 0
+    const host = new ElectronTabViewHost(sessions)
+    const window = fakeWindow()
+    window.zen.pageArea = pageArea
+    let n = 0
+    const create = (target = window): ElectronTabView =>
+      host.createView(
+        { id: `tab_stage${++n}`, containerId: 'default' } as Tab,
+        noEvents,
+        target
+      ) as ElectronTabView
+    const stage = (at = 0): StageWindow => {
+      const made = stagesMade[at]
+      if (!made) throw new Error(`no stage ${at} made`)
+      return made
+    }
+    const engine = (view: ElectronTabView): { visible: boolean; bounds: unknown } => {
+      const v = view.view as unknown as { getVisible(): boolean; bounds: unknown }
+      return { visible: v.getVisible(), bounds: v.bounds }
+    }
+    return { host, window, create, stage, engine }
+  }
+
+  it('stands a hidden page an agent drives on the window’s stage: shown there at the page area, in no window, the stage never shown', () => {
+    const { window, create, stage, engine } = setup()
+    const view = create()
+    expect(view.isStaged()).toBe(false)
+    view.setAgentDriven(true)
+    expect(view.isStaged()).toBe(true)
+    expect(window.win.children).toEqual([])
+    expect(stagesMade).toHaveLength(1)
+    expect(stage().children).toEqual([view.view])
+    expect(engine(view)).toEqual({ visible: true, bounds: stageBox(pageArea) })
+    // The core's flags are untouched: hidden to the layout, no visibility flip announced.
+    expect(view.isVisible()).toBe(false)
+    // A window nobody sees, focuses or finds, at the user window's place, of its content size.
+    expect(stage().options).toMatchObject({
+      show: false,
+      frame: false,
+      focusable: false,
+      skipTaskbar: true,
+      hiddenInMissionControl: true,
+      x: 100,
+      y: 24,
+      width: 1280,
+      height: 820
+    })
+    expect(stage().excludedFromShownWindowsMenu).toBe(true)
+    // Said again: nothing happens.
+    view.setAgentDriven(true)
+    expect(stage().children).toEqual([view.view])
+    expect(stagesMade).toHaveLength(1)
+  })
+
+  it('sizes the staged page to the window’s content before the first layout, and refreshes it with every uncovered layout', () => {
+    const { window, create, engine } = setup()
+    window.zen.pageArea = null
+    const view = create()
+    view.setAgentDriven(true)
+    expect(engine(view).bounds).toEqual({ x: 0, y: 0, width: 1280, height: 820 })
+    // The first layout places the shown tab's page: the host relays it to every view.
+    window.zen.pageArea = pageArea
+    view.coverLifted()
+    expect(engine(view).bounds).toEqual(stageBox(pageArea))
+    // The window is resized: the next layout's page area is the staged box.
+    const resized = { x: 0, y: 80, width: 900, height: 600 }
+    window.zen.pageArea = resized
+    view.coverLifted()
+    expect(engine(view).bounds).toEqual(stageBox(resized))
+  })
+
+  it('shares one stage between the window’s driven pages, and gives another window’s page that window’s', () => {
+    const { window, create, stage } = setup()
+    const a = create()
+    const b = create()
+    a.setAgentDriven(true)
+    b.setAgentDriven(true)
+    expect(stagesMade).toHaveLength(1)
+    expect(stage().children).toEqual([a.view, b.view])
+    const other = fakeWindow()
+    other.zen.pageArea = pageArea
+    const c = create(other)
+    c.setAgentDriven(true)
+    expect(stagesMade).toHaveLength(2)
+    expect(stage(1).children).toEqual([c.view])
+    expect(window.win.children).toEqual([])
+    expect(other.win.children).toEqual([])
+  })
+
+  it('takes the page off the stage when the agent lets it go: hidden, in no window, in the layout’s last box – or its own when there was none', () => {
+    const { window, create, stage, engine } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    view.setAgentDriven(false)
+    expect(view.isStaged()).toBe(false)
+    expect(stage().children).toEqual([])
+    expect(window.win.children).toEqual([])
+    // No layout ever gave it a box: the stage's stands (nothing to relay out for).
+    expect(engine(view)).toEqual({ visible: false, bounds: stageBox(pageArea) })
+    // With a box remembered from the layout, that one.
+    const laidOut = create()
+    laidOut.setBounds(box)
+    laidOut.setAgentDriven(true)
+    expect(engine(laidOut).bounds).toEqual(stageBox(pageArea))
+    laidOut.setAgentDriven(false)
+    expect(engine(laidOut)).toEqual({ visible: false, bounds: box })
+    // The stage stays for the window's next driven page.
+    expect(stage().destroyed).toBe(false)
+  })
+
+  it('leaves a shown page to the layout, stages it when a layout hides it, and hands it to the window when a layout shows it', () => {
+    const { window, create, engine } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    view.setAgentDriven(true)
+    // Shown: the window's, as before.
+    expect(view.isStaged()).toBe(false)
+    expect(window.win.children).toEqual([view.view])
+    expect(engine(view)).toEqual({ visible: true, bounds: box })
+    // A tab switch hides it: onto the stage, out of the window.
+    view.setVisible(false)
+    expect(view.isStaged()).toBe(true)
+    expect(window.win.children).toEqual([])
+    expect(engine(view)).toEqual({ visible: true, bounds: stageBox(pageArea) })
+    // Hidden once more (a tab manager path): still shown on the stage.
+    view.setVisible(false)
+    expect(engine(view)).toEqual({ visible: true, bounds: stageBox(pageArea) })
+    // The layout speaks of a new box meanwhile: remembered, the stage box kept.
+    const wider = { x: 0, y: 40, width: 1000, height: 700 }
+    view.setBounds(wider)
+    expect(engine(view).bounds).toEqual(stageBox(pageArea))
+    // The user switches to it: off the stage, into the window, shown at the layout's box.
+    view.setVisible(true)
+    expect(view.isStaged()).toBe(false)
+    expect(window.win.children).toEqual([view.view])
+    expect(engine(view)).toEqual({ visible: true, bounds: wider })
+  })
+
+  it('never stages a page parked under a chrome cover (W6-F5), and stages it once the cover lifts with it hidden', () => {
+    const { window, create, engine } = setup()
+    const view = create()
+    view.setBounds(box)
+    view.setVisible(true)
+    window.zen.contentHidden = true
+    view.setVisible(false)
+    expect(view.parkedCorner()).toBe(0)
+    view.setAgentDriven(true)
+    // Parked: shown at its size in the window's corner, painting already.
+    expect(view.isStaged()).toBe(false)
+    expect(view.parkedCorner()).toBe(0)
+    expect(window.win.children).toEqual([view.view])
+    // The cover lifts with the tab switched away: unparked, hidden – and onto the stage.
+    window.zen.contentHidden = false
+    view.coverLifted()
+    expect(view.parkedCorner()).toBeNull()
+    expect(view.isStaged()).toBe(true)
+    expect(window.win.children).toEqual([])
+    expect(engine(view)).toEqual({ visible: true, bounds: stageBox(pageArea) })
+  })
+
+  it('hands a staged page to the window for the keyboard and for a glance, hidden, as it does an unstaged one', () => {
+    const { window, create, stage, engine } = setup()
+    window.chrome.focus()
+    const focused = create()
+    focused.setBounds(box)
+    focused.setAgentDriven(true)
+    focused.focus()
+    expect(focused.isStaged()).toBe(false)
+    expect(window.win.children).toEqual([focused.view])
+    expect(engine(focused)).toEqual({ visible: false, bounds: box })
+    expect(keyboard.current).toBe(focused.webContents)
+    const glanced = create()
+    glanced.setAgentDriven(true)
+    glanced.bringToFront()
+    expect(glanced.isStaged()).toBe(false)
+    expect(window.win.children).toEqual([focused.view, glanced.view])
+    expect(stage().children).toEqual([])
+  })
+
+  it('keeps a staged page on the stage while its window is minimised or hidden (W6-F6): the window’s state is not the stage’s', () => {
+    const { create, engine } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    view.applyWindowVisible(false)
+    expect(view.isStaged()).toBe(true)
+    expect(engine(view).visible).toBe(true)
+    view.applyWindowVisible(true)
+    expect(view.isStaged()).toBe(true)
+    expect(engine(view).visible).toBe(true)
+  })
+
+  it('leaves the stage with `detach`, takes the new window’s stage on `attachTo`, and leaves it with the page’s destruction', () => {
+    const { window, create, stage } = setup()
+    const view = create()
+    view.setAgentDriven(true)
+    view.detach()
+    expect(view.isStaged()).toBe(false)
+    expect(stage().children).toEqual([])
+    // A tab moved to another window, still hidden and driven: that window's stage.
+    const other = fakeWindow()
+    other.zen.pageArea = pageArea
+    view.attachTo(other)
+    expect(view.isStaged()).toBe(true)
+    expect(stagesMade).toHaveLength(2)
+    expect(stage(1).children).toEqual([view.view])
+    expect(window.win.children).toEqual([])
+    expect(other.win.children).toEqual([])
+    // The page goes: off the stage, the dead view untouched.
+    ;(view.webContents as unknown as { close(): void }).close()
+    expect(stage(1).children).toEqual([])
+  })
+
+  it('destroys the stage with its window, every staged page taken off first, and follows the window as it moves', () => {
+    const { window, create, stage } = setup()
+    const a = create()
+    const b = create()
+    a.setAgentDriven(true)
+    b.setAgentDriven(true)
+    window.win.emit('move')
+    expect(stage().positions).toEqual([[100, 24]])
+    window.win.close()
+    expect(stage().destroyed).toBe(true)
+    expect(a.isStaged()).toBe(false)
+    expect(b.isStaged()).toBe(false)
+    // Nothing more for a closed window: no stage is made for it.
+    const late = create()
+    late.setAgentDriven(true)
+    expect(late.isStaged()).toBe(false)
+    expect(stagesMade).toHaveLength(1)
+  })
+
+  describe('captures on the stage', () => {
+    /** The page's geometry on the stage: a 1032 × 772 view (15 px gutter) over a 1032 × 2043 page, scrolled 500 down. */
+    const STAGED = {
+      sx: 0,
+      sy: 500,
+      vw: 1032,
+      vh: 772,
+      cw: 1017,
+      ch: 772,
+      dpr: 1,
+      dw: 1032,
+      dh: 2043
+    }
+    /** The same page with the view grown to the document: no overflow, no gutter, no scroll offset. */
+    const GROWN = {
+      sx: 0,
+      sy: 0,
+      vw: 1032,
+      vh: 2043,
+      cw: 1032,
+      ch: 2043,
+      dpr: 1,
+      dw: 1032,
+      dh: 2043
+    }
+
+    /** A `capturePage` bitmap that records its `crop`. */
+    const bitmap = (width: number, height: number): Electron.NativeImage & { crops: Rect[] } => {
+      const crops: Rect[] = []
+      const make = (w: number, h: number): Electron.NativeImage =>
+        ({
+          isEmpty: () => w === 0 || h === 0,
+          getSize: () => ({ width: w, height: h }),
+          crop: (r: Rect) => {
+            crops.push(r)
+            return make(r.width, r.height)
+          },
+          toPNG: () => Buffer.from(`png-${w}x${h}`),
+          toJPEG: (q: number) => Buffer.from(`jpeg-${w}x${h}-${q}`)
+        }) as unknown as Electron.NativeImage
+      return Object.assign(make(width, height), { crops })
+    }
+
+    /**
+     * A staged page whose `capturePage` answers from a queue – a thrown refusal, an empty
+     * bitmap, or a painted one (the last answer repeats) – and whose geometry read answers from
+     * another (a rejection for a page that cannot be read).
+     */
+    const staged = (
+      paints: Array<Electron.NativeImage | 'refused'>,
+      geometry: Array<Record<string, unknown> | 'unreadable'> = [STAGED]
+    ): {
+      view: ElectronTabView
+      captures: number
+      wc: {
+        isolatedScripts: Array<{ code: string }>
+        debugger: { commands: Array<{ method: string }> }
+      }
+      window: ReturnType<typeof fakeWindow>
+      engine: (view: ElectronTabView) => { visible: boolean; bounds: unknown }
+    } => {
+      const { window, create, engine } = setup()
+      const view = create()
+      view.setAgentDriven(true)
+      const wc = view.webContents as unknown as {
+        isolatedScripts: Array<{ code: string }>
+        debugger: { commands: Array<{ method: string }> }
+      }
+      const out = { view, captures: 0, wc, window, engine }
+      Object.assign(wc, {
+        capturePage: () => {
+          out.captures++
+          const next = paints.length > 1 ? paints.shift()! : paints[0]!
+          return next === 'refused' ? Promise.reject(new Error('no frame')) : Promise.resolve(next)
+        },
+        getZoomFactor: () => 1,
+        executeJavaScriptInIsolatedWorld: (_world: number, scripts: Array<{ code: string }>) => {
+          const script = scripts[0]!.code
+          if (script.includes('scrollTo')) {
+            wc.isolatedScripts.push({ code: script })
+            return Promise.resolve(undefined)
+          }
+          const next = geometry.length > 1 ? geometry.shift()! : geometry[0]!
+          return next === 'unreadable'
+            ? Promise.reject(new Error('Script failed to execute'))
+            : Promise.resolve(next)
+        }
+      })
+      return out
+    }
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('paints the viewport with `capturePage`, tried again while the first frame is on its way, never through the protocol', async () => {
+      vi.useFakeTimers()
+      const frame = bitmap(1032, 772)
+      const page = staged(['refused', bitmap(0, 0), frame])
+      const pending = page.view.capture({ mode: 'viewport', format: 'png' })
+      await vi.advanceTimersByTimeAsync(250)
+      const result = await pending
+      expect(page.captures).toBe(3)
+      // The visible area, the gutter cut off, as the shown path pictures it.
+      expect(frame.crops).toEqual([{ x: 0, y: 0, width: 1017, height: 772 }])
+      expect(result).toEqual({
+        data: Buffer.from('png-1017x772').toString('base64'),
+        mimeType: 'image/png',
+        width: 1017,
+        height: 772
+      })
+      expect(result?.fallback).toBeUndefined()
+      expect(page.wc.debugger.commands.map((c) => c.method)).not.toContain('Page.captureScreenshot')
+      // The view stands as it was.
+      expect(page.engine(page.view)).toEqual({ visible: true, bounds: stageBox(pageArea) })
+    })
+
+    it('gives up a frame that never comes at the deadline, well before a tool call counts as hung', async () => {
+      vi.useFakeTimers()
+      const page = staged([bitmap(0, 0)])
+      const pending = page.view.capture({ mode: 'viewport', format: 'png' })
+      await vi.advanceTimersByTimeAsync(3100)
+      expect(await pending).toBeNull()
+      // Thirty tries a tenth of a second apart, then the first; none after the deadline.
+      expect(page.captures).toBe(31)
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(page.captures).toBe(31)
+    })
+
+    it('paints a full page by growing the view to the document, waits for the grown frame, and puts the box and the scroll offset back', async () => {
+      vi.useFakeTimers()
+      const old = bitmap(1032, 772)
+      const grown = bitmap(1032, 2043)
+      const page = staged([old, grown], [STAGED, GROWN])
+      const pending = page.view.capture({ mode: 'fullPage', format: 'png' })
+      await vi.advanceTimersByTimeAsync(0)
+      // Grown to the document while the paint is awaited.
+      expect(page.engine(page.view).bounds).toEqual({ x: 0, y: 0, width: 1032, height: 2043 })
+      await vi.advanceTimersByTimeAsync(150)
+      const result = await pending
+      // The first frame after the grow was the old one: not the document, tried again.
+      expect(page.captures).toBe(2)
+      expect(grown.crops).toEqual([])
+      expect(result).toEqual({
+        data: Buffer.from('png-1032x2043').toString('base64'),
+        mimeType: 'image/png',
+        width: 1032,
+        height: 2043
+      })
+      expect(result?.fallback).toBeUndefined()
+      // Back in the stage box, the page told to scroll to where it was once it has relaid out.
+      expect(page.engine(page.view)).toEqual({ visible: true, bounds: stageBox(pageArea) })
+      expect(page.wc.isolatedScripts.map((s) => s.code)).toEqual([
+        expect.stringContaining('window.scrollTo(0, 500)')
+      ])
+      expect(page.wc.isolatedScripts[0]!.code).toContain('window.innerHeight === 772')
+      // A refreshed layout meanwhile would not have moved the grown box; it may now.
+      page.view.coverLifted()
+      expect(page.engine(page.view).bounds).toEqual(stageBox(pageArea))
+    })
+
+    it('cuts a region out of the grown paint – no scroll offset to take off there – as the shown path cuts one', async () => {
+      const grown = bitmap(1032, 2043)
+      const page = staged([grown], [STAGED, GROWN])
+      const result = await page.view.capture({
+        mode: 'region',
+        region: { x: 20, y: 1500, width: 112, height: 38 },
+        format: 'jpeg'
+      })
+      expect(grown.crops).toEqual([{ x: 20, y: 1500, width: 112, height: 38 }])
+      expect(result).toEqual({
+        data: Buffer.from('jpeg-112x38-75').toString('base64'),
+        mimeType: 'image/jpeg',
+        width: 112,
+        height: 38
+      })
+      expect(page.engine(page.view).bounds).toEqual(stageBox(pageArea))
+    })
+
+    it('does not grow for a document that fits the box, and reads a region past the paint as nothing', async () => {
+      const fits = { ...STAGED, sy: 0, dw: 1032, dh: 600, cw: 1032 }
+      const frame = bitmap(1032, 772)
+      const page = staged([frame], [fits])
+      const result = await page.view.capture({ mode: 'fullPage', format: 'png' })
+      expect(page.captures).toBe(1)
+      expect(frame.crops).toEqual([])
+      expect(result).toMatchObject({ width: 1032, height: 772 })
+      expect(page.wc.isolatedScripts).toEqual([])
+      const past = await page.view.capture({
+        mode: 'region',
+        region: { x: 0, y: 900, width: 100, height: 100 },
+        format: 'png'
+      })
+      expect(past).toBeNull()
+    })
+
+    it('falls back to the viewport, and says so, for a page whose geometry cannot be read', async () => {
+      const frame = bitmap(1032, 772)
+      const page = staged([frame], ['unreadable'])
+      const result = await page.view.capture({ mode: 'fullPage', format: 'png' })
+      expect(result).toMatchObject({ width: 1032, height: 772, fallback: 'viewport' })
+      expect(page.engine(page.view).bounds).toEqual(stageBox(pageArea))
+      expect(page.wc.isolatedScripts).toEqual([])
+    })
+
+    it('leaves the box to the layout when the page leaves the stage mid-paint (the user switched to it)', async () => {
+      vi.useFakeTimers()
+      const old = bitmap(1032, 772)
+      const grown = bitmap(1032, 2043)
+      const page = staged([old, grown], [STAGED, GROWN])
+      page.view.setBounds(box)
+      const pending = page.view.capture({ mode: 'fullPage', format: 'png' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(page.engine(page.view).bounds).toEqual({ x: 0, y: 0, width: 1032, height: 2043 })
+      // The user switches to the tab while the grown frame is awaited.
+      page.view.setVisible(true)
+      expect(page.view.isStaged()).toBe(false)
+      expect(page.window.win.children).toEqual([page.view.view])
+      expect(page.engine(page.view)).toEqual({ visible: true, bounds: box })
+      await vi.advanceTimersByTimeAsync(150)
+      const result = await pending
+      expect(result).toMatchObject({ width: 1032, height: 2043 })
+      // The layout's box stands; no scroll script for a view the layout has.
+      expect(page.engine(page.view)).toEqual({ visible: true, bounds: box })
+      expect(page.wc.isolatedScripts).toEqual([])
+    })
   })
 })
 

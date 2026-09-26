@@ -1,4 +1,5 @@
 import {
+  BaseWindow,
   ClipboardItem,
   WebContentsView,
   app,
@@ -11,6 +12,7 @@ import {
   type BrowserWindow,
   type BrowserWindowConstructorOptions,
   type LoadURLOptions,
+  type NativeImage,
   type Session,
   type WebContents,
   type WebFrameMain,
@@ -83,6 +85,17 @@ import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
 import { HangMonitor } from './hangMonitor'
 import { SiteCertificates } from './siteCertificates'
 import { awaitFirstPaint, hasPainted } from './firstPaint'
+import {
+  belongsOnStage,
+  frameFits,
+  grownBox,
+  regionCrop,
+  retryStagedCapture,
+  scrollRestoreScript,
+  stageBox,
+  stageWindowOptions,
+  STAGED_CAPTURE_RETRY_MS
+} from './stage'
 import {
   emulatedColorScheme,
   emulatedMediaParams,
@@ -469,6 +482,21 @@ export class ElectronTabView implements TabView {
    * the window returns (shown, re-parked under a cover still up, or hidden as the flag says).
    */
   private windowConcealed = false
+  /**
+   * An agent drives this page (`setAgentDriven`: `AgentService.prepare` on, `detach` off). While
+   * it does, a page the core's layout hides stands on its window's stage (`stagedIn`) instead
+   * of out of every window at no size – `stage.ts` says why and what was measured.
+   */
+  private agentDriven = false
+  /**
+   * The stage the engine's view is a shown child of (`ElectronTabViewHost.stageFor`), in the
+   * window's page-area box (`stageBox`); null when it is not staged. Never set while `visible`,
+   * `parked` or `inWindow` is: the view is the stage's or the window's, and a shown view is the
+   * window's. The core's flags (`visible`, `bounds`) are untouched by staging.
+   */
+  private stagedIn: BaseWindow | null = null
+  /** The staged view stands grown to the document for a paint (`captureOnStage`): its box is not to be refreshed meanwhile. */
+  private grown = false
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -724,6 +752,9 @@ export class ElectronTabView implements TabView {
     // the view's reference before emitting), which is why the captured `wc` is used throughout.
     wc.on('destroyed', () => {
       this.hangMonitor.dispose()
+      // A page gone on its own (`window.close()`) leaves the stage too, so the stage holds no
+      // dead view for the window's lifetime.
+      this.leaveStage()
       ev.onDestroyed()
       this.owner.forget(id)
     })
@@ -1266,9 +1297,13 @@ export class ElectronTabView implements TabView {
     this.keyboardAsked = true
     // A tab being activated is focused a frame before the layout shows it, and a view in no
     // window has no keyboard to be given (`WebContents.focus` is a no-op there): into the window
-    // first, hidden, and its own `focus` event is the asked-for one.
+    // first, hidden, and its own `focus` event is the asked-for one. A staged view (an agent's,
+    // being activated) leaves the stage for the window, as it would for its layout.
     const win = this.win
-    if (win) this.enterWindow(win)
+    if (win) {
+      this.leaveStage()
+      this.enterWindow(win)
+    }
     this.wc.focus()
   }
 
@@ -1344,13 +1379,17 @@ export class ElectronTabView implements TabView {
         ? win.isMinimized() || !win.isVisible()
         : false
     if (this.visible) this.enterWindow(win)
+    // An agent's hidden page takes the new window's stage (a tab moved between windows).
+    else if (this.agentDriven) this.enterStage()
     this.refreshHangWatch()
   }
 
   detach(): void {
     // A view parked under this window's cover leaves it hidden: the engine's view must not be
     // a shown one when another window takes it in (`enterWindow` from `focus`, `bringToFront`).
-    this.coverLifted()
+    // A staged view leaves this window's stage the same way, hidden and out of every window.
+    this.unparkHidden()
+    this.leaveStage()
     const win = this.win
     if (win && this.inWindow) win.contentView.removeChildView(this.view)
     this.inWindow = false
@@ -1369,6 +1408,9 @@ export class ElectronTabView implements TabView {
 
   setBounds(rect: Rect): void {
     this.bounds = rect
+    // A staged view keeps the stage's box (the layout's is remembered for when it leaves the
+    // stage: `leaveStage`, a step before the layout shows it).
+    if (this.stagedIn) return
     // A parked view takes its new box parked: the layout that shows it again sets the box first
     // and `setVisible(true)` puts the view in it.
     this.view.setBounds(this.parked === null ? rect : this.parkedBox(rect, this.parked))
@@ -1409,7 +1451,9 @@ export class ElectronTabView implements TabView {
     this.visible = visible
     if (visible) {
       // The first showing puts the view into the window, at the box the layout gave it just
-      // before (`setBounds`), as the popup surface is placed: added, then shown.
+      // before (`setBounds`), as the popup surface is placed: added, then shown. A staged view
+      // (an agent's page the user switches to) leaves the stage for the window first.
+      this.leaveStage()
       const win = this.win
       if (win) this.enterWindow(win)
       const parked = this.parked !== null
@@ -1422,9 +1466,15 @@ export class ElectronTabView implements TabView {
       }
     } else if (this.coverable(wasShown)) {
       this.park()
+    } else if (this.stagedIn) {
+      // Hidden again while on the stage (a tab manager path hides a hidden view once more): the
+      // staged view stays shown there, its box refreshed – never hidden on the stage.
+      this.enterStage()
     } else {
       if (this.parked !== null) this.unpark()
       this.view.setVisible(false)
+      // Hidden the way a tab switch hides a page: an agent's page takes the stage from here.
+      if (this.agentDriven) this.enterStage()
     }
     if (flipped) {
       this.refreshHangWatch()
@@ -1451,6 +1501,12 @@ export class ElectronTabView implements TabView {
     const concealed = !visible
     if (this.windowConcealed === concealed) return
     this.windowConcealed = concealed
+    // A staged view is the stage's, not the window's: it stays as it is (an agent keeps reading
+    // and picturing its page while the user's window is minimised), and reads `hidden` anyway.
+    if (this.stagedIn) {
+      this.refreshHangWatch()
+      return
+    }
     if (concealed) {
       // Down to Chromium, parked or not: a parked view's box goes back to its own so nothing of
       // it is left a pixel on screen behind the hidden window.
@@ -1587,9 +1643,100 @@ export class ElectronTabView implements TabView {
    * tab switch hides a page. Nothing for a view that is not parked.
    */
   coverLifted(): void {
+    this.unparkHidden()
+    // Every uncovered layout: an agent's hidden page takes the stage – from its parking, or in
+    // the page area this layout has (a resized window; `enterStage` refreshes a staged box).
+    if (this.agentDriven) this.enterStage()
+  }
+
+  /** The parking ends with the view hidden (its tab switched away from under the cover). Nothing for a view not parked. */
+  private unparkHidden(): void {
     if (this.parked === null) return
     this.unpark()
     this.view.setVisible(false)
+  }
+
+  // --- the agent's stage (MCP B; `stage.ts` for the design and the measurements) ------------
+
+  /**
+   * Whether an agent drives this page (`TabView.setAgentDriven`; `AgentService.prepare` says on,
+   * `detach` off). On, a page the layout hides stands on its window's stage – laid out and
+   * painting at the window's page area, so `browser_snapshot` has boxes and
+   * `browser_take_screenshot` a frame, nothing of it on screen, no keyboard taken. Off, it is
+   * plain hidden again: out of every window, in the box the layout last gave it (its size kept
+   * when there was none – no relayout for a page nobody is looking at). A shown page is left
+   * as the layout has it either way, and stages when a layout next hides it.
+   */
+  setAgentDriven(driven: boolean): void {
+    if (this.agentDriven === driven) return
+    this.agentDriven = driven
+    if (driven) this.enterStage()
+    else this.leaveStage()
+  }
+
+  /**
+   * Onto the window's stage when the view's state calls for it (`belongsOnStage`); a view there
+   * already has its box refreshed to the current page area (unless a paint has it grown).
+   * Out of the user's window first: a view has one parent.
+   */
+  private enterStage(): void {
+    if (this.stagedIn) {
+      if (!this.grown) this.view.setBounds(this.stageBox())
+      return
+    }
+    const win = this.win
+    const state = {
+      agentDriven: this.agentDriven,
+      visible: this.visible,
+      parked: this.parked !== null,
+      hosted: win !== null
+    }
+    if (!win || !belongsOnStage(state)) return
+    const stage = this.owner.stageFor(win)
+    if (!stage) return
+    if (this.inWindow) {
+      win.contentView.removeChildView(this.view)
+      this.inWindow = false
+    }
+    stage.contentView.addChildView(this.view)
+    this.view.setBounds(this.stageBox())
+    this.view.setVisible(true)
+    this.stagedIn = stage
+  }
+
+  /**
+   * Off the stage: hidden, out of every window, back in the layout's last box (`bounds`) where
+   * there is one. Nothing for a view not staged. Safe on a stage being destroyed and on a
+   * destroyed page (only the child is taken out then).
+   */
+  private leaveStage(): void {
+    const stage = this.stagedIn
+    if (!stage) return
+    this.stagedIn = null
+    this.grown = false
+    if (!stage.isDestroyed()) stage.contentView.removeChildView(this.view)
+    if (this.wc.isDestroyed()) return
+    this.view.setVisible(false)
+    if (this.bounds) this.view.setBounds(this.bounds)
+  }
+
+  /** The window's stage is going with the window (`ElectronTabViewHost.stageFor`). */
+  stageClosing(stage: BaseWindow): void {
+    if (this.stagedIn === stage) this.leaveStage()
+  }
+
+  /** The box a staged view stands in: the window's page area (`stageBox`). */
+  private stageBox(): Rect {
+    const host = this.host
+    const zen = host?.zen as { contentRect?: () => Rect | null } | undefined
+    const pageArea = typeof zen?.contentRect === 'function' ? zen.contentRect() : null
+    const contentSize = host && typeof host.contentSize === 'function' ? host.contentSize() : null
+    return stageBox(pageArea, contentSize)
+  }
+
+  /** Whether the engine's view stands on its window's stage (for the tests and the host). */
+  isStaged(): boolean {
+    return this.stagedIn !== null
   }
 
   isVisible(): boolean {
@@ -1601,9 +1748,11 @@ export class ElectronTabView implements TabView {
 
   bringToFront(): void {
     // Re-adding moves the view to the top of the z-order; a view not in the window yet (a tab
-    // glanced at or made fullscreen before it was ever shown) joins there.
+    // glanced at or made fullscreen before it was ever shown) joins there. A staged view (an
+    // agent's) leaves the stage for the window: a view has one parent.
     const win = this.win
     if (!win) return
+    this.leaveStage()
     win.contentView.addChildView(this.view)
     this.inWindow = true
   }
@@ -2386,6 +2535,8 @@ export class ElectronTabView implements TabView {
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
     const wc = this.wc
     if (wc.isDestroyed()) return null
+    // A staged view (an agent's hidden page, MCP B) has its own path: no protocol capture there.
+    if (this.stagedIn) return this.captureOnStage(options)
     const format = options.format
     const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
     let fallback: AgentCapture['fallback']
@@ -2436,6 +2587,123 @@ export class ElectronTabView implements TabView {
       return result
     } catch {
       return null
+    }
+  }
+
+  /**
+   * A staged page's picture (MCP B; `stage.ts` for the measurements). Never through the
+   * protocol – `Page.captureScreenshot` with `captureBeyondViewport` hung on the never-shown
+   * window and left its device-metrics override on the page – but `capturePage` of the staged
+   * view, tried again while the page's first frame is on its way (`stagedFrame`). A full page
+   * or a region has the view grown to the document first (`grownBox`: a child view may stand
+   * taller than its window and the `NativeViewHost` clips nothing, so the whole document
+   * paints), the geometry read again in that state (the scroll offset is 0 then, the gutter
+   * gone with the overflow), the region cut from the paint as the shown path cuts it
+   * (`regionCrop`), and the box put back with the scroll offset the page had (growing resets
+   * it: `scrollRestoreScript`). A page whose geometry is not to be had (not loaded within
+   * `VIEWPORT_TIMEOUT_MS`) has its viewport painted as it stands and the answer says so
+   * (`fallback: 'viewport'`), as the shown path does when the protocol fails it. A view that
+   * left the stage meanwhile (the user switched to the tab) is pictured where it is and its
+   * box left to the layout.
+   */
+  private async captureOnStage(options: AgentCaptureOptions): Promise<AgentCapture | null> {
+    const wc = this.wc
+    const format = options.format
+    const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
+    let fallback: AgentCapture['fallback']
+    const before = await this.viewport()
+    const box = this.view.getBounds()
+    let grownTo: Rect | null = null
+    if (options.mode !== 'viewport') {
+      if (before && this.stagedIn) {
+        const whole = grownBox(box, before, this.fullPageCut())
+        if (whole.width !== box.width || whole.height !== box.height) {
+          grownTo = whole
+          this.grown = true
+          this.view.setBounds(whole)
+        }
+      } else fallback = 'viewport'
+    }
+    try {
+      const displayScale = before ? before.devicePixelRatio / before.zoom : 1
+      const wanted = grownTo
+        ? {
+            width: Math.floor(grownTo.width * displayScale),
+            height: Math.floor(grownTo.height * displayScale)
+          }
+        : null
+      let image = await this.stagedFrame(wanted)
+      if (!image) return null
+      const geometry = (grownTo ? await this.viewport() : null) ?? before
+      const bitmap = image.getSize()
+      const visible = geometry
+        ? visibleAreaClip(geometry, bitmap)
+        : { x: 0, y: 0, width: bitmap.width, height: bitmap.height }
+      if (options.mode === 'region' && options.region) {
+        const crop = regionCrop(
+          options.region,
+          geometry ?? { scrollX: 0, scrollY: 0 },
+          geometry?.devicePixelRatio ?? zoomFactorOf(wc),
+          visible
+        )
+        if (!crop) return null
+        image = image.crop(crop)
+      } else if (visible.width < bitmap.width || visible.height < bitmap.height) {
+        image = image.crop(visible)
+      }
+      const size = image.getSize()
+      const buffer = format === 'png' ? image.toPNG() : image.toJPEG(75)
+      const result: AgentCapture = {
+        data: buffer.toString('base64'),
+        mimeType,
+        width: size.width,
+        height: size.height
+      }
+      if (fallback) result.fallback = fallback
+      return result
+    } catch {
+      return null
+    } finally {
+      if (grownTo && this.grown) {
+        this.grown = false
+        // Still staged: back in the stage box, and the page's scroll offset with it once the
+        // page has relaid out at that size. Off the stage meanwhile, `leaveStage` put the box
+        // back already.
+        if (this.stagedIn && !wc.isDestroyed()) {
+          this.view.setBounds(box)
+          if (before) {
+            wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [
+              { code: scrollRestoreScript(before) }
+            ]).catch(() => undefined)
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * The staged view's paint: `capturePage`, tried again every `STAGED_CAPTURE_RETRY_MS` while
+   * it is refused or comes back empty (the page's first frame after staging is a few hundred
+   * milliseconds away) or smaller than `wanted` (the frame from before a grow: the view's old
+   * surface is what a capture straight after `setBounds` copies), for `STAGED_CAPTURE_DEADLINE_MS`
+   * from the first attempt at most. Null when the deadline passes with no such frame, or the
+   * page is destroyed meanwhile.
+   */
+  private async stagedFrame(
+    wanted: { width: number; height: number } | null
+  ): Promise<NativeImage | null> {
+    const wc = this.wc
+    const started = Date.now()
+    for (;;) {
+      if (wc.isDestroyed()) return null
+      try {
+        const image = await wc.capturePage()
+        if (!image.isEmpty() && frameFits(image.getSize(), wanted)) return image
+      } catch {
+        /* no frame to copy yet */
+      }
+      if (!retryStagedCapture(Date.now() - started)) return null
+      await new Promise((r) => setTimeout(r, STAGED_CAPTURE_RETRY_MS))
     }
   }
 
@@ -2949,6 +3217,8 @@ export class ElectronTabViewHost implements TabViewHost {
   private readonly visibilityListeners = new Set<(view: ElectronTabView) => void>()
   /** The window corners the views parked under a chrome cover hold (`claimParkingCorner`). */
   private readonly parkingCorners = new Map<ElectronTabView, number>()
+  /** Each window's stage, once a view of the window's asked for one (`stageFor`); gone with the window. */
+  private readonly stages = new Map<BrowserWindow, BaseWindow>()
   /** Per window, the page or chrome that last lost the keyboard – a hidden page gives it back there. */
   private readonly lastKeyboard = new WeakMap<BrowserWindow, WebContents>()
   private readonly keyboardWatched = new WeakSet<BrowserWindow>()
@@ -3246,6 +3516,37 @@ export class ElectronTabViewHost implements TabViewHost {
   /** The view left its parking corner (`ElectronTabView.unpark`). */
   releaseParkingCorner(view: ElectronTabView): void {
     this.parkingCorners.delete(view)
+  }
+
+  /**
+   * The window's stage (MCP B; `stage.ts`): the never-shown `BaseWindow` an agent's hidden
+   * pages stand in, made on the first ask (`ElectronTabView.enterStage`) at the window's place
+   * and content size (`stageWindowOptions`), out of the Window menu too, kept at the window's
+   * place as the window moves (a stage on the window's display paints at that display's scale)
+   * and destroyed with the window – every view still on it taken off first (`stageClosing`).
+   * Null for a window already closed. A window with no agent's page never has one: nothing of
+   * this touches a window's start.
+   */
+  stageFor(win: BrowserWindow): BaseWindow | null {
+    if (win.isDestroyed()) return null
+    const standing = this.stages.get(win)
+    if (standing && !standing.isDestroyed()) return standing
+    const [width, height] = win.getContentSize()
+    const stage = new BaseWindow(stageWindowOptions(win.getBounds(), { width, height }))
+    stage.excludedFromShownWindowsMenu = true
+    this.stages.set(win, stage)
+    const follow = (): void => {
+      if (stage.isDestroyed() || win.isDestroyed()) return
+      const { x, y } = win.getBounds()
+      stage.setPosition(x, y)
+    }
+    win.on('move', follow)
+    win.once('closed', () => {
+      if (this.stages.get(win) === stage) this.stages.delete(win)
+      for (const view of this.byWebContentsId.values()) view.stageClosing(stage)
+      if (!stage.isDestroyed()) stage.destroy()
+    })
+    return stage
   }
 
   /**
