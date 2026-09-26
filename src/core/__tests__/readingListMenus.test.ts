@@ -360,17 +360,20 @@ describe('the link menu', () => {
     expect(labels(f.linkMenu(tab, 'mailto:a@b.test'))).not.toContain('Add Link to Reading List')
   })
 
-  it('closes the touch hosts’ transfer group with the same row since the phone has its panel (HB-20)', () => {
-    // One link menu on both touch hosts (the lead's ruling after #492): the row is the last of
-    // the transfer group on each, after Share Link…, saving the link under its text as the
-    // desktop's does; a mail link has no row, as on the desktop.
+  it('seats the same row before Share Link… on the touch hosts since the phone has its panel (HB-20), the share the group’s last', () => {
+    // One link menu on both touch hosts (the lead's ruling after #492): the row stands in the
+    // transfer group on each, right BEFORE Share Link… (the design gate on #551 – the hand-off
+    // out of the app keeps the group's last seat, #492's rule; Chrome for Android 152 keeps
+    // Read later before Share link too), saving the link under its text as the desktop's does;
+    // a mail link has no row, as on the desktop.
     for (const layout of ['tablet', 'phone'] as const) {
       const t = fixture(layout)
       const tab = t.open('https://page.test/')
       const top = labels(t.linkMenu(tab, URL, 'Read this later'))
       const at = top.indexOf('Add Link to Reading List')
-      expect(at).toBe(top.indexOf('Share Link…') + 1)
-      expect(top[at + 1]).toBe('-')
+      expect(at).toBe(top.indexOf('Save Link As…') + 1)
+      expect(top[at + 1]).toBe('Share Link…')
+      expect(top[at + 2]).toBe('-')
       item(t.linkMenu(tab, URL, 'Read this later'), 'Add Link to Reading List').click!()
       expect(t.browser.readingList.list()[0]).toMatchObject({ url: URL, title: 'Read this later' })
       expect(t.toasts()).toContain('Added to reading list')

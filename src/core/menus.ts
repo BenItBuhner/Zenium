@@ -787,18 +787,22 @@ export class Menus {
       })
     }
     if (save && touchLayout(win.formFactor)) transfer.push(save)
+    // The reading list's row (W6-1) joins the transfer group on every layout since HB-20
+    // (W6-D1): the phone reads the list from its panel, the tablet from its page; the touch
+    // hosts' link menus stay one menu (the lead's ruling after #492, `savedGroups.test.ts`).
+    // Its seat differs by host: the desktop's row closes the group after the share, where the
+    // link leaves the page for a list of the browser's; the touch hosts seat it BEFORE Share
+    // Link… (the design gate on #551 – the hand-off out of the app stays the group's last row,
+    // #492's rule, as Chrome for Android 152 keeps Read later before Share link).
+    const reading = navigable ? this.readingListLinkItem(url, linkText, win) : undefined
+    if (reading && touchLayout(win.formFactor)) transfer.push(reading)
     if (caps.share && navigable) {
       transfer.push({
         label: 'Share Link…',
         click: () => void this.browser.share({ url, tabId: tab.id }, win)
       })
     }
-    // The reading list's row (W6-1) closes the transfer group – after the copies and the share,
-    // where the link leaves the page for a list of the browser's. Every layout since HB-20
-    // (W6-D1): the phone reads the list from its panel, the tablet from its page; the touch
-    // hosts' link menus stay one menu (the lead's ruling after #492, `savedGroups.test.ts`),
-    // this row their last transfer row on both.
-    if (navigable) transfer.push(this.readingListLinkItem(url, linkText, win))
+    if (reading && !touchLayout(win.formFactor)) transfer.push(reading)
     return [open, transfer]
   }
 
