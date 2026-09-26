@@ -1108,8 +1108,10 @@ export interface SyncScope {
   /**
    * The reading list (Chrome's "Reading list" type; W6-1's model, one `reading-list-entry`
    * record per entry carrying every field but `favicon`), on by default as the bookmarks are.
-   * Off, a device neither publishes its entries nor takes the others' in, and deletes nothing
-   * anywhere (`frozenRecords`). Absent on a `sync.json` older than the key, where the engine
+   * While off, the device neither publishes the type nor takes it in, and its metadata for the
+   * type is FROZEN (`frozenRecords`): a removal made while off tombstones the peers' copies when
+   * the scope returns, and an edit made while off is stamped at the return, not at the edit –
+   * as with every scoped type. Absent on a `sync.json` older than the key, where the engine
    * completes it with the default; a scope object from an older build says nothing for it, so
    * `collectLocal` under one publishes no entry (`__tests__/compat.test.ts`).
    */
@@ -4257,7 +4259,9 @@ export interface UIState {
   /**
    * The reading list (W6-1, bookmarks-33), unread first and newest first within each half
    * (`sortReadingList`): the `zen://reading-list` page's rows and the bookmarks bar control's
-   * unread count (`unreadReadingCount`), at most `READING_LIST_CAP` entries.
+   * unread count (`unreadReadingCount`). At most `READING_LIST_CAP` of the entries are READ
+   * (`trimReadingList` drops the oldest by `readAt` past it); the unread half is unbounded – an
+   * unread entry is never trimmed.
    */
   readingList: ReadingListEntry[]
   /** The new tab page's shortcuts on this device, in grid order (Settings and the phone's page). */
