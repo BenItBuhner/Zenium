@@ -2879,6 +2879,17 @@ function takeStep(step: PreviewStep): void {
     case 'urlbar': {
       const tab = state ? activeTab(state) : null
       void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
+      return
+    }
+    case 'cards': {
+      // The new tab page's cards strip (NTP-16) at its nth card: the strip's scroll set to the
+      // card's snap position outright – the dots take no tap, and a still wants the snapped
+      // pose, not a swipe in flight. The pitch is read off the cards themselves.
+      const strip = document.querySelector<HTMLElement>('.zen-ntp .zen-mstack-strip')
+      const first = strip?.children[0]
+      const target = strip?.children[step.page - 1]
+      if (!strip || !first || !target) return
+      strip.scrollLeft = target.getBoundingClientRect().left - first.getBoundingClientRect().left
     }
   }
 }
