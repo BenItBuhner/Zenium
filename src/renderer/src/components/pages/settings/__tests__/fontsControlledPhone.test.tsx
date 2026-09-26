@@ -138,10 +138,16 @@ describe('the phone’s Fonts page under an extension’s control', () => {
       'fonts-reset'
     ])
 
-    // Font size: the slider disabled at 18 px – the extension's, over the user's 20.
+    // Font size: the slider disabled at 18 px – the extension's, over the user's 20. The thumb
+    // is the node TalkBack reads (`role="slider"`, the name and the value on it), so the disabled
+    // state is on it too: Radix alone leaves it there unfocusable but reading as one that moves.
     const size = row(el, 'fonts-size-phone')
     expect(size.classList.contains('zen-settings-row-disabled')).toBe(true)
     expect(size.querySelector('.zen-zoom-slider')?.hasAttribute('data-disabled')).toBe(true)
+    const thumb = size.querySelector<HTMLElement>('[role="slider"]')!
+    expect(thumb.getAttribute('aria-disabled')).toBe('true')
+    expect(thumb.getAttribute('aria-valuetext')).toBe('18 px')
+    expect(thumb.hasAttribute('tabindex')).toBe(false)
     expect(sliderValue(el, 'fonts-size-phone')).toBe('18 px')
     // Minimum font size: 12 px over the user's none.
     const minimum = row(el, 'fonts-minimum-size-phone')
@@ -204,6 +210,9 @@ describe('the phone’s Fonts page under an extension’s control', () => {
     const minimum = row(el, 'fonts-minimum-size-phone')
     expect(minimum.classList.contains('zen-settings-row-disabled')).toBe(false)
     expect(minimum.querySelector('.zen-zoom-slider')?.hasAttribute('data-disabled')).toBe(false)
+    const freeThumb = minimum.querySelector<HTMLElement>('[role="slider"]')!
+    expect(freeThumb.hasAttribute('aria-disabled')).toBe(false)
+    expect(freeThumb.getAttribute('tabindex')).toBe('0')
     const standard = row(el, 'fonts-standard-phone')
     expect(standard.hasAttribute('aria-disabled')).toBe(false)
     expect(standard.querySelector('.zen-settings-description')?.textContent).toBe('Serif')
