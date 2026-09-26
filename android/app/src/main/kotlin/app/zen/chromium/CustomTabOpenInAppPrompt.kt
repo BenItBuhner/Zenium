@@ -35,6 +35,32 @@ object CustomTabOpenInAppPrompt {
     fun isWeb(scheme: String): Boolean = scheme == "http" || scheme == "https"
 
     /**
+     * The site a scheme's sentence names: the tab's host as the core's `siteOf` reads it
+     * (`getHost` – `new URL(url).hostname`, the empty string where there is none), `www.` trimmed
+     * as the permission requester's is. A tab without a web host – `about:blank`, a `data:` or
+     * `file:` page, no tab at all – gives the empty string, which the sentence fills with
+     * [R.string.cct_this_page]. Unlike [CustomTabHost.hostOf], whose raw-URL fallback the
+     * permission title wants, this never reads the URL itself as the site: "about:blank wants to
+     * open a phone number" is not a sentence.
+     */
+    fun siteOf(url: String?): String {
+        if (url == null) return ""
+        val scheme = schemeOf(url)
+        if (scheme.isEmpty()) return ""
+        val rest = url.substring(scheme.length + 1)
+        if (!rest.startsWith("//")) return ""
+        val authority = rest.substring(2).takeWhile { it != '/' && it != '?' && it != '#' }.substringAfterLast('@')
+        val host = if (authority.startsWith("[")) {
+            val close = authority.indexOf(']')
+            if (close < 0) return ""
+            authority.substring(0, close + 1)
+        } else {
+            authority.substringBefore(':')
+        }
+        return host.removePrefix("www.")
+    }
+
+    /**
      * What the link is, with its article (`SCHEME_WORDS[scheme].object`): the browser sheet's
      * words for the schemes it names, one resource per object; null for a scheme it does not,
      * whose words are [R.string.cct_open_object_other] with the scheme filled in ("a foo: link").

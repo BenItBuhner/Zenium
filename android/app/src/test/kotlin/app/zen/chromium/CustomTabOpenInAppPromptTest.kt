@@ -90,6 +90,25 @@ class CustomTabOpenInAppPromptTest {
         assertFalse(CustomTabOpenInAppPrompt.isWeb("tel") || CustomTabOpenInAppPrompt.isWeb(""))
     }
 
+    /** The sentence's site is the tab's host as the core's `getHost` reads it, `www.` trimmed – and nothing (so "This page") for a tab without one, never the URL itself. */
+    @Test
+    fun theSentencesSiteIsTheTabsHostOrNothing() {
+        assertEquals("example.com", CustomTabOpenInAppPrompt.siteOf("https://www.example.com/news/2026?ref=tel#call"))
+        assertEquals("en.wikipedia.org", CustomTabOpenInAppPrompt.siteOf("https://en.wikipedia.org/wiki/Damping"))
+        assertEquals("the port is not the site", "127.0.0.1", CustomTabOpenInAppPrompt.siteOf("http://127.0.0.1:8137/story.html"))
+        assertEquals("nor the user", "auth.test", CustomTabOpenInAppPrompt.siteOf("http://user:pw@auth.test:8443/login#x"))
+        assertEquals("an IPv6 host keeps its brackets, as `hostname` does", "[::1]", CustomTabOpenInAppPrompt.siteOf("http://[::1]:8080/"))
+        assertEquals("a bare host with a query", "example.com", CustomTabOpenInAppPrompt.siteOf("https://example.com?x=1"))
+        assertEquals("an authority is a host whatever the scheme, as `hostname` reads it", "scan", CustomTabOpenInAppPrompt.siteOf("intent://scan/#Intent;scheme=zxing;end"))
+        val core = File(root, "src/shared/url.ts").readText()
+        assertTrue("the core's getHost is `new URL(url).hostname`, '' where there is none", Regex("""export function getHost\(url: string\): string \{\s*try \{\s*const u = new URL\(url\)\s*return u\.hostname\s*\} catch \{\s*return ''""").containsMatchIn(core))
+        for (hostless in listOf("about:blank", "data:text/html,hi", "file:///sdcard/Download/page.html", "tel:+15551234567", "mailto:someone@example.com", "not a url", "")) {
+            assertEquals("$hostless names no site: the sentence says This page", "", CustomTabOpenInAppPrompt.siteOf(hostless))
+        }
+        assertEquals("no tab at all", "", CustomTabOpenInAppPrompt.siteOf(null))
+        assertEquals("an unclosed IPv6 bracket is no host", "", CustomTabOpenInAppPrompt.siteOf("http://[::1/"))
+    }
+
     /** The address reads as the browser's `displayAddress` shows it: `decodeURIComponent`, the URL as it came when that would throw. */
     @Test
     fun theAddressReadsAsTheBrowserShowsIt() {
@@ -115,7 +134,8 @@ class CustomTabOpenInAppPromptTest {
         assertTrue("a web address: the browser sheet's sentence, the page loading regardless", ask.contains("CustomTabOpenInAppPrompt.isWeb(scheme)") && ask.contains("activity.getString(R.string.cct_open_link_also_in_app, appName) else activity.getString(R.string.cct_open_link_also_in_an_app)"))
         assertTrue("a scheme: the site (or This page) wants to open the scheme's object", ask.contains("activity.getString(R.string.cct_open_wants, site.ifEmpty { activity.getString(R.string.cct_this_page) }, obj)"))
         assertTrue("an unnamed scheme reads as a <scheme>: link", ask.contains("CustomTabOpenInAppPrompt.objectFor(scheme)?.let(activity::getString) ?: activity.getString(R.string.cct_open_object_other, scheme)"))
-        assertTrue("the site is the page's host", ask.contains("val site = hostOf(tabs.get(args.str(\"tabId\"))?.url ?: \"\")"))
+        assertTrue("the site is the tab's host or nothing – never the raw URL", ask.contains("val site = CustomTabOpenInAppPrompt.siteOf(tabs.get(args.str(\"tabId\"))?.url)"))
+        assertFalse("hostOf's raw-URL fallback stays with the permission title", ask.contains("hostOf("))
         assertTrue("the address line shows the decoded address with the full URL as its accessible name", ask.contains("detail = CustomTabOpenInAppPrompt.displayAddress(url)") && ask.contains("detailName = url"))
         assertTrue("the title stands on one line, truncated, as the browser's does", ask.contains("titleOneLine = true"))
         assertTrue("Not now the secondary", ask.contains("secondary = activity.getString(R.string.cct_not_now)"))

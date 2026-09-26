@@ -229,7 +229,7 @@ class CustomTabHost(
         val url = args.str("url")
         val appName = args.strOrNull("appName")
         val scheme = CustomTabOpenInAppPrompt.schemeOf(url)
-        val site = hostOf(tabs.get(args.str("tabId"))?.url ?: "")
+        val site = CustomTabOpenInAppPrompt.siteOf(tabs.get(args.str("tabId"))?.url)
         val title = if (appName != null) activity.getString(R.string.cct_open_in_app, appName) else activity.getString(R.string.cct_open_in_another_app)
         val description = if (CustomTabOpenInAppPrompt.isWeb(scheme)) {
             // A site's own app offering to open a page that loads regardless: the sentence says so.
