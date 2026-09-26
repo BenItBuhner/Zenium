@@ -15,15 +15,21 @@
  * Pure, so the rule is unit-tested without a DOM; the pill measures itself and asks.
  */
 
-export type ChipTier = 'site' | 'state' | 'star' | 'shield' | 'zoom' | 'info'
+export type ChipTier = 'site' | 'state' | 'star' | 'shield' | 'zoom' | 'install' | 'info'
 
-/** Highest priority first: what hides when the pill runs out of room hides from the end. */
+/**
+ * Highest priority first: what hides when the pill runs out of room hides from the end. The
+ * Install-app chip (Chrome's `kActionInstallPwa`, W8-6) sits above the informational chips – an
+ * offer the page cannot make any other way once the chip is gone but the app menu – and below
+ * the shield: translate and Reader View hide first, then Install, then the shield.
+ */
 export const CHIP_PRIORITY: readonly ChipTier[] = [
   'site',
   'state',
   'star',
   'zoom',
   'shield',
+  'install',
   'info'
 ]
 
