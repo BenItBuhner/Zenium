@@ -144,7 +144,8 @@ class CustomTabOpenInAppPromptTest {
         assertFalse("no Always open row: nothing to remember with", ask.contains("check =") || ask.contains("Always"))
         assertTrue("Open lets the request go; Not now, the scrim and the back refuse it", ask.contains("externalProtocols.respond(requestId, answer.accepted)"))
         assertTrue("one answer per sheet", ask.contains("if (answered) return@NativePromptSheet"))
-        assertTrue("with no app at all the request goes through unasked", Regex("""if \(args\.str\("handler"\) == "none"\) \{\s*externalProtocols\.respond\(requestId, true\)""").containsMatchIn(ask))
+        assertTrue("with no app at all the request is refused and the deliberate fallback runs, as the browser window's core does (W6-D2; ExternalProtocolsNoHandlerTest has the order)", Regex("""if \(args\.str\("handler"\) == "none"\) \{\s*externalProtocols\.refuseWithFallback\(requestId\)""").containsMatchIn(ask))
+        assertFalse("nothing is started for a link no app can open", Regex("""if \(args\.str\("handler"\) == "none"\) \{\s*externalProtocols\.respond\(requestId, true\)""").containsMatchIn(ask))
         assertTrue("a window on its way out asks nothing", ask.contains("if (activity.isFinishing || activity.isDestroyed) {\n            externalProtocols.respond(requestId, false)"))
         assertTrue("a newer request under a tap takes the sheet over, the one it replaces answered false; one without a tap is refused", ask.contains("if (!args.optBoolean(\"userGesture\", false)) {\n                externalProtocols.respond(requestId, false)") && ask.contains("externalProtocols.respond(standing, false)"))
         for (memory in listOf("SharedPreferences", "getSharedPreferences", "externalProtocols[", "remember(")) {

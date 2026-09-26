@@ -1,11 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
   Folder,
-  FormFactor,
-  HostCapabilities,
   MediaState,
   MenuGlyph,
-  Platform as PlatformOs,
   Settings,
   SharePayload,
   SyncDeviceKind,
@@ -18,26 +15,7 @@ import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
 import { Browser } from '../browser'
-import { closeBootTabs } from './bootTab'
-import type {
-  AppHost,
-  ClipboardHost,
-  DialogHost,
-  MenuHost,
-  MenuItemTemplate,
-  MenuPopupOptions,
-  Platform,
-  ShellHost,
-  ShortcutHost,
-  SpeechHost,
-  SpellcheckHost,
-  StoreIO,
-  TabView,
-  TabViewHost,
-  TranslateHost,
-  TranslateModelStore,
-  WindowHost
-} from '../platform'
+import type { MenuItemTemplate } from '../platform'
 import type { ZenWindow } from '../window'
 import type { ChromeContextParams, PageContextParams } from '../platform'
 import {
@@ -54,345 +32,27 @@ import {
 import { HELP_URL, ISSUES_URL } from '../menuBar'
 import { releaseNotesUrl } from '../../shared/links'
 import { serialiseMenu } from '../rendererMenus'
-
-/**
- * Electron's capabilities, a hand-kept copy of src/main/platform/index.ts: the real object imports
- * Electron, which a core test cannot load. When a capability is added or flipped there, update it
- * here too (the `HostCapabilities` type catches an added one, not a changed value).
- */
-const DESKTOP: HostCapabilities = {
-  windowControls: true,
-  windowControlsOverlay: false,
-  windowMaterial: false,
-  nativeMenus: true,
-  windowDrag: true,
-  devtools: true,
-  compactReveal: true,
-  pictureInPicture: true,
-  viewSource: true,
-  windows: true,
-  extensions: true,
-  resourceGovernor: true,
-  sync: true,
-  print: true,
-  printPreview: true,
-  savePageFormats: true,
-  pdfViewer: false,
-  agents: true,
-  agentSkills: true,
-  updates: true,
-  share: false,
-  sharePanel: false,
-  clipboardChip: false,
-  appLinkSettings: false,
-  pullToRefresh: false,
-  passwords: true,
-  defaultBrowser: false,
-  requestBlocking: true,
-  reducedExtensionIsolation: false,
-  pageControls: false,
-  darkenSites: false,
-  privateTabs: false,
-  inactiveTabs: false,
-  secureDns: false,
-  quitsThroughCore: false,
-  lookalikeHolds: true,
-  newTabPage: true,
-  pageTabs: false,
-  pinShortcuts: false,
-  translate: true,
-  voiceSearch: false,
-  screenCapture: false,
-  shareSheet: false,
-  selectionToolbar: false,
-  popupSurface: true,
-  qrScan: false,
-  readAloud: false,
-  pageLanguages: false,
-  genericFontFamilies: false,
-  caretBrowsing: false,
-  placementAnswered: false
-}
-
-/**
- * The Android host on API 34 without an extension install root (the preview host), a hand-kept
- * copy of `androidCapabilities({ sdkInt: 34, extensions: false, isolatedWorlds: false })` in src/android/platform.ts:
- * that module pulls in the WebView bridge and Vite `?raw` imports a core test cannot load. Keep
- * it in step by hand, as above. A device build turns `extensions` on.
- */
-const ANDROID: HostCapabilities = {
-  windowControls: false,
-  windowControlsOverlay: false,
-  windowMaterial: false,
-  nativeMenus: false,
-  windowDrag: false,
-  devtools: false,
-  compactReveal: false,
-  pictureInPicture: false,
-  viewSource: false,
-  windows: false,
-  extensions: false,
-  resourceGovernor: false,
-  sync: false,
-  print: true,
-  printPreview: false,
-  savePageFormats: false,
-  pdfViewer: true,
-  agents: true,
-  agentSkills: false,
-  updates: true,
-  share: true,
-  sharePanel: false,
-  clipboardChip: true,
-  appLinkSettings: true,
-  pullToRefresh: true,
-  passwords: true,
-  defaultBrowser: true,
-  requestBlocking: true,
-  reducedExtensionIsolation: false,
-  pageControls: true,
-  darkenSites: true,
-  privateTabs: true,
-  inactiveTabs: true,
-  secureDns: false,
-  quitsThroughCore: false,
-  lookalikeHolds: false,
-  newTabPage: false,
-  pageTabs: true,
-  // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
-  pinShortcuts: false,
-  translate: true,
-  voiceSearch: false,
-  screenCapture: false,
-  shareSheet: false,
-  selectionToolbar: true,
-  popupSurface: false,
-  qrScan: false,
-  readAloud: false,
-  pageLanguages: false,
-  genericFontFamilies: false,
-  caretBrowsing: false,
-  placementAnswered: false
-}
-
-function memoryIo(files: Record<string, string> = {}): StoreIO {
-  return {
-    readSync: (name) => files[name] ?? null,
-    write: async (name, text) => {
-      files[name] = text
-    },
-    writeSync: (name, text) => {
-      files[name] = text
-    }
-  }
-}
-
-/** Anything the browser touches on the host answers with a harmless no-op. */
-function stub<T extends object>(overrides: Partial<T> = {}): T {
-  return new Proxy(overrides as T, {
-    get: (target, key) =>
-      key in target ? Reflect.get(target, key) : key === 'then' ? undefined : () => undefined
-  })
-}
-
-interface Harness {
-  browser: Browser
-  win: ZenWindow
-  /** The last template handed to the host's menu popup. */
-  shown: () => MenuItemTemplate[]
-  /** How many popups the host was asked for. */
-  popups: () => number
-  /** The options of the last popup: where it opened and whether the keyboard asked for it. */
-  where: () => MenuPopupOptions | null
-  /** Every call a tab view received, as `method(args)`. */
-  viewCalls: string[]
-  /** What the host's clipboard says on `readText`. */
-  clipboardText: { value: string }
-  /** Every `tel:` / `mailto:` hand-off the shell was asked for, as `target url`. */
-  linkApps: string[]
-  /** The names of the events sent to the window's chrome, in order. */
-  sent: string[]
-  /** The ids of the windows whose host was asked to come forward (`WindowHost.focus`), in order. */
-  focused: string[]
-  /** Every `apply` the fake spellchecker host received (empty without `options.spellcheck`). */
-  spellcheckApplied: SpellcheckApplied[]
-}
-
-interface HarnessOptions {
-  formFactor?: FormFactor
-  /** The host has an OS emoji picker (Windows, macOS). */
-  emojiPanel?: boolean
-  /** The host's window is fullscreen. */
-  fullScreen?: boolean
-  /** The host runs the translation engine (`translate.available`), with no model on the device. */
-  translate?: boolean
-  /**
-   * The host has a spellchecker of the browser's own with these dictionaries (Electron's session
-   * spellchecker); `systemLanguages` makes it follow the OS's languages instead (macOS).
-   */
-  spellcheck?: { available: string[]; locales?: string[]; systemLanguages?: boolean }
-  /** The host writes launchers for installed web apps (`capabilities.pinShortcuts` set too). */
-  shortcuts?: boolean
-  /** What the host's confirmation dialog answers (absent: the stub's nothing, read as No). */
-  confirm?: boolean
-  /** Documents already in the store when the browser starts (`webapps.json`, …). */
-  files?: Record<string, string>
-  /** The host has a speech engine (`Platform.speech`; `capabilities.readAloud` set too): read aloud's entry points show. */
-  speech?: boolean
-  /**
-   * The host hands `tel:` and `mailto:` links to the device's apps (`ShellHost.openLinkIn`,
-   * Android); absent, the shell has no dialer or mail app to speak of (the desktop).
-   */
-  linkApps?: boolean
-}
-
-/** The languages the fake spellchecker was last told to check in. */
-interface SpellcheckApplied {
-  enabled: boolean
-  languages: string[]
-}
-
-/** A browser on a host with the given capabilities whose menu popup only records the template. */
-function harness(
-  capabilities: HostCapabilities,
-  options: HarnessOptions | FormFactor = {}
-): Harness {
-  const opts: HarnessOptions = typeof options === 'string' ? { formFactor: options } : options
-  let last: MenuItemTemplate[] = []
-  let lastOptions: MenuPopupOptions | null = null
-  let count = 0
-  const viewCalls: string[] = []
-  const clipboardText = { value: '' }
-  const sent: string[] = []
-  const focused: string[] = []
-  const linkApps: string[] = []
-  const spellcheckApplied: SpellcheckApplied[] = []
-  const spellcheckHost = (): SpellcheckHost => {
-    const words = new Set<string>()
-    const spec = opts.spellcheck!
-    return {
-      systemLanguages: Boolean(spec.systemLanguages),
-      locales: spec.locales ?? ['en-US'],
-      availableLanguages: () => [...spec.available],
-      apply: (enabled, languages) =>
-        void spellcheckApplied.push({ enabled, languages: [...languages] }),
-      onDictionaryStatus: () => undefined,
-      listWords: async () => [...words],
-      addWord: async (word) => {
-        if (words.has(word)) return false
-        words.add(word)
-        return true
-      },
-      removeWord: async (word) => words.delete(word)
-    }
-  }
-  const menus: MenuHost = {
-    popup: (items, options) => {
-      last = items
-      lastOptions = options
-      count += 1
-    }
-  }
-  /** A view that records what the menus ask of it. */
-  const recordingView = (): TabView =>
-    new Proxy(
-      {
-        isDestroyed: () => false,
-        isVisible: () => false,
-        getZoom: () => 1,
-        executeJavaScript: (code: string, frameId?: number) => {
-          viewCalls.push(`executeJavaScript(${frameId ?? 0}:${code.replace(/\s+/g, ' ').trim()})`)
-          return Promise.resolve(true)
-        }
-      } as unknown as TabView,
-      {
-        get: (target, key) => {
-          if (key in target) return Reflect.get(target, key)
-          if (key === 'then') return undefined
-          return (...args: unknown[]) => {
-            viewCalls.push(`${String(key)}(${args.map((a) => JSON.stringify(a)).join(',')})`)
-            return undefined
-          }
-        }
-      }
-    )
-  const platform: Platform = {
-    info: { os: capabilities.windows ? ('linux' as PlatformOs) : 'android', version: '1.2.3' },
-    capabilities,
-    io: memoryIo({ ...opts.files }),
-    windows: {
-      create: (win) =>
-        stub<WindowHost>({
-          alive: true,
-          contentSize: () => ({ width: 1280, height: 800 }),
-          normalBounds: () => null,
-          isFullScreen: () => Boolean(opts.fullScreen),
-          isMaximized: () => false,
-          isFocused: () => true,
-          isVisible: () => true,
-          send: (name) => void sent.push(name),
-          focus: () => void focused.push(win.id)
-        })
-    },
-    views: stub<TabViewHost>({ createView: () => recordingView() }),
-    menus,
-    dialogs: stub<DialogHost>(
-      opts.confirm === undefined ? {} : { confirm: () => Promise.resolve(opts.confirm!) }
-    ),
-    clipboard: stub<ClipboardHost>({ readText: () => Promise.resolve(clipboardText.value) }),
-    shell: stub<ShellHost>({
-      openLinkIn: opts.linkApps
-        ? (target, url) => void linkApps.push(`${target} ${url}`)
-        : undefined
-    }),
-    net: stub(),
-    downloads: stub(),
-    sessions: stub(),
-    // Optional members must read as absent, which the catch-all stub would not give.
-    app: stub<AppHost>({ showEmojiPanel: opts.emojiPanel ? () => undefined : undefined }),
-    readabilitySource: () => null,
-    ...(opts.translate
-      ? {
-          translate: stub<TranslateHost>({
-            models: stub<TranslateModelStore>({ list: () => Promise.resolve([]) }),
-            locales: ['en']
-          })
-        }
-      : {}),
-    ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {}),
-    ...(opts.shortcuts ? { shortcuts: stub<ShortcutHost>() } : {}),
-    ...(opts.speech
-      ? {
-          speech: stub<SpeechHost>({
-            voices: () => Promise.resolve([]),
-            onVoicesChanged: () => undefined,
-            onEvent: () => undefined,
-            speak: () => undefined,
-            stop: () => undefined
-          })
-        }
-      : {})
-  }
-  const browser = new Browser(platform)
-  browser.start()
-  closeBootTabs(browser)
-  const win = browser.allWindows()[0] as ZenWindow
-  if (opts.formFactor)
-    browser.handleCommand(win, 'window.formFactor', { formFactor: opts.formFactor })
-  return {
-    browser,
-    win,
-    shown: () => last,
-    popups: () => count,
-    where: () => lastOptions,
-    viewCalls,
-    clipboardText,
-    sent,
-    focused,
-    linkApps,
-    spellcheckApplied
-  }
-}
+import {
+  ALL_EDITS,
+  ANDROID,
+  DESKTOP,
+  NO_EDITS,
+  PAGE_URL,
+  VIDEO_FLAGS,
+  allItems,
+  chromeParams,
+  deepItem,
+  harness,
+  item,
+  labels,
+  pageHarness,
+  pageParams,
+  separators,
+  topLabels,
+  type Harness,
+  type HarnessOptions,
+  type PageHarness
+} from './menusFixture'
 
 /** Let a click that reads the host's clipboard finish. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -413,17 +73,6 @@ function answerTextFragment(
   const message = JSON.parse(call.slice('postToPage('.length, -1)) as { id: string }
   h.browser.handlePageMessage(h.tabId, { type: 'textFragment', id: message.id, directive })
   return message.id
-}
-
-/** Labels in order, separators as `-`, submenus flattened one level as `Parent > Child`. */
-function labels(items: MenuItemTemplate[]): string[] {
-  return items.flatMap((item) => {
-    if (item.type === 'separator') return ['-']
-    const label = item.label ?? ''
-    return item.submenu
-      ? [label, ...item.submenu.map((sub) => `${label} > ${sub.label ?? '-'}`)]
-      : [label]
-  })
 }
 
 function appMenu(h: Harness): string[] {
@@ -540,13 +189,6 @@ const DESKTOP_ONLY = [
   'Zoom > Fullscreen',
   'Quit'
 ]
-
-/** The item labelled `label` anywhere in `items`, submenus included. */
-function deepItem(items: MenuItemTemplate[], label: string): MenuItemTemplate {
-  const found = allItems(items).find((i) => i.label === label)
-  if (!found) throw new Error(`no "${label}" in ${topLabels(items).join(', ')}`)
-  return found
-}
 
 describe('the app menu', () => {
   it("on the desktop has Firefox's groups: the tabs and windows, the library, the page's actions, the app's (§6)", () => {
@@ -2319,11 +1961,6 @@ describe('the app menu', () => {
   })
 })
 
-/** Every item of a template, submenus included. */
-function allItems(items: MenuItemTemplate[]): MenuItemTemplate[] {
-  return items.flatMap((item) => [item, ...(item.submenu ? allItems(item.submenu) : [])])
-}
-
 describe("the phone menu's icon row", () => {
   /**
    * A phone with one loaded web page, its menu open; `row` is the menu's first group and
@@ -2594,113 +2231,6 @@ describe('URL bar command suggestions', () => {
 // ---------------------------------------------------------------------------
 // Page context menus
 // ---------------------------------------------------------------------------
-
-const PAGE_URL = 'https://example.com/article'
-
-const NO_EDITS: PageContextParams['editFlags'] = {
-  canUndo: false,
-  canRedo: false,
-  canCut: false,
-  canCopy: false,
-  canPaste: false,
-  canDelete: false,
-  canSelectAll: false
-}
-
-const ALL_EDITS: PageContextParams['editFlags'] = {
-  canUndo: true,
-  canRedo: true,
-  canCut: true,
-  canCopy: true,
-  canPaste: true,
-  canDelete: true,
-  canSelectAll: true
-}
-
-/** A `context-menu` event's parameters for a click on the plain page, overridable per target. */
-function pageParams(overrides: Partial<PageContextParams> = {}): PageContextParams {
-  return {
-    x: 120,
-    y: 240,
-    linkURL: '',
-    srcURL: '',
-    mediaType: 'none',
-    selectionText: '',
-    isEditable: false,
-    misspelledWord: '',
-    dictionarySuggestions: [],
-    pageURL: PAGE_URL,
-    frameURL: '',
-    frameId: 0,
-    editFlags: NO_EDITS,
-    ...overrides
-  }
-}
-
-const VIDEO_FLAGS: NonNullable<PageContextParams['mediaFlags']> = {
-  inError: false,
-  isPaused: true,
-  isMuted: false,
-  hasAudio: true,
-  isLooping: false,
-  isControlsVisible: true,
-  canToggleControls: true,
-  canSave: true,
-  canShowPictureInPicture: true,
-  isShowingPictureInPicture: false,
-  canLoop: true
-}
-
-interface PageHarness extends Harness {
-  tabId: string
-  /** Show the page menu for `params` and return its top-level labels (submenus collapsed). */
-  menu: (params: PageContextParams) => string[]
-  /** The last template's items, top level only. */
-  items: () => MenuItemTemplate[]
-  /** Click the item labelled `label` in the last template. */
-  click: (label: string) => void
-}
-
-/** A desktop browser with one loaded web page tab. */
-function pageHarness(
-  capabilities: HostCapabilities = DESKTOP,
-  options: HarnessOptions = {}
-): PageHarness {
-  const h = harness(capabilities, options)
-  const tab = h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
-  h.viewCalls.length = 0
-  const items = (): MenuItemTemplate[] => h.shown()
-  const click = (label: string): void => {
-    const item = items().find((i) => i.label === label)
-    if (!item?.click) throw new Error(`no clickable "${label}" in ${topLabels(items()).join(', ')}`)
-    item.click()
-  }
-  return {
-    ...h,
-    tabId: tab.id,
-    menu: (params) => {
-      h.browser.menus.showPageContextMenu(tab.id, params, h.win)
-      return topLabels(h.shown())
-    },
-    items,
-    click
-  }
-}
-
-/** Labels in order, separators as `-`, submenus as their label only. */
-function topLabels(items: MenuItemTemplate[]): string[] {
-  return items.map((item) => (item.type === 'separator' ? '-' : (item.label ?? '')))
-}
-
-function separators(items: MenuItemTemplate[]): number {
-  return items.filter((item) => item.type === 'separator').length
-}
-
-function item(items: MenuItemTemplate[], label: string): MenuItemTemplate {
-  const found = items.find((i) => i.label === label)
-  if (!found) throw new Error(`no "${label}" in ${topLabels(items).join(', ')}`)
-  return found
-}
 
 describe('the page context menu', () => {
   it('on the plain page has Chrome’s groups: navigation, page, developer', () => {
@@ -3905,19 +3435,6 @@ describe('the selection toolbar', () => {
 // Chrome context menus (URL bar, reload button, chrome text fields)
 // ---------------------------------------------------------------------------
 
-function chromeParams(overrides: Partial<ChromeContextParams> = {}): ChromeContextParams {
-  return {
-    x: 300,
-    y: 20,
-    target: null,
-    tabId: null,
-    isEditable: false,
-    selectionText: '',
-    editFlags: NO_EDITS,
-    ...overrides
-  }
-}
-
 describe("the phone's new tab tile menu (NTP-06)", () => {
   const tileMenu = (h: PageHarness, url: string, title: string): string[] => {
     h.browser.handleCommand(h.win, 'newtab.tileContextMenu', { url, title, tabId: h.tabId })
@@ -4025,6 +3542,61 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     expect(tileMenu(pageHarness(DESKTOP), 'https://often.example/', 'Often')).not.toContain(
       'Open in Private Tab'
     )
+  })
+})
+
+describe("the served new tab page's tile menu (GN-11's row per host shape)", () => {
+  const TILE = { id: 'site:often.example', url: 'https://often.example/', title: 'Often' }
+  const tileMenu = (h: PageHarness): string[] => {
+    h.browser.menus.showNewTabTileMenu(h.tabId, { ...TILE, x: 10, y: 20, keyboard: false }, h.win)
+    return topLabels(h.shown())
+  }
+
+  it("the desktop's menu is as it was – Open in New Tab, Open in New Window, Open in New Private Window, then Remove: its private window is the private open", () => {
+    expect(tileMenu(pageHarness(DESKTOP))).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Remove'
+    ])
+  })
+
+  it('a tablet – private browsing in tabs, no windows – gains Open in Private Tab second: the site opens in the window’s private container, in front; Open in New Tab stays the background open', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'tablet' })
+    expect(tileMenu(h)).toEqual(['Open in New Tab', 'Open in Private Tab', '-', 'Remove'])
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.click('Open in Private Tab')
+    const opened = Object.values(h.browser.state.model.tabs).find((t) => t.url === TILE.url)
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+    expect(opened?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    tileMenu(h)
+    h.click('Open in New Tab')
+    const plain = Object.values(h.browser.state.model.tabs).filter(
+      (t) => t.url === TILE.url && t.containerId !== PRIVATE_CONTAINER_ID
+    )
+    expect(plain).toHaveLength(1)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+  })
+
+  it('the phone, should the served page reach it, carries the same row; without private tabs, or with windows to open a private one in, the row stays out – not greyed', () => {
+    expect(tileMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).toEqual([
+      'Open in New Tab',
+      'Open in Private Tab',
+      '-',
+      'Remove'
+    ])
+    expect(
+      tileMenu(pageHarness({ ...ANDROID, privateTabs: false }, { formFactor: 'tablet' }))
+    ).toEqual(['Open in New Tab', '-', 'Remove'])
+    expect(tileMenu(pageHarness({ ...ANDROID, windows: true }, { formFactor: 'tablet' }))).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Remove'
+    ])
   })
 })
 
@@ -5052,6 +4624,91 @@ describe('a menu asked for from the keyboard', () => {
     expect(h.where()).toMatchObject({ source: 'tab' })
     expect(h.where()).not.toHaveProperty('x')
   })
+
+  it('the element\'s box rides along with the anchor (§9.23), for a host that hangs the menu from it – the rows, the strip, a page\'s "⋯"', () => {
+    const h = pageHarness()
+    const rect = { x: 12, y: 240, width: 200, height: 28 }
+    h.browser.handleCommand(h.win, 'tab.contextMenu', {
+      tabId: h.tabId,
+      x: 112,
+      y: 254,
+      keyboard: true,
+      rect
+    })
+    expect(h.where()).toMatchObject({ source: 'tab', x: 112, y: 254, keyboard: true, rect })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {
+      x: 90,
+      y: 500,
+      keyboard: true,
+      rect: { x: 0, y: 60, width: 240, height: 600 }
+    })
+    expect(h.where()).toMatchObject({
+      source: 'newtab',
+      rect: { x: 0, y: 60, width: 240, height: 600 }
+    })
+    h.browser.readingList.add('https://read.example/long', 'Long read')
+    const entry = h.browser.readingList.list()[0]!
+    h.browser.handleCommand(h.win, 'readingList.contextMenu', {
+      id: entry.id,
+      x: 900,
+      y: 300,
+      keyboard: true,
+      rect: { x: 880, y: 280, width: 20, height: 20 }
+    })
+    expect(h.where()).toMatchObject({
+      source: 'readingList',
+      keyboard: true,
+      rect: { x: 880, y: 280, width: 20, height: 20 }
+    })
+    // Without a box, the point alone – a pointer's menu, or a phone's command.
+    h.browser.handleCommand(h.win, 'readingList.contextMenu', { id: entry.id, x: 900, y: 300 })
+    expect(h.where()).toMatchObject({ x: 900, y: 300 })
+    expect(h.where()).not.toHaveProperty('rect')
+    expect(h.where()).not.toHaveProperty('keyboard')
+  })
+
+  it("a right-click the chrome did not handle reads the document once for its target; the keyboard's reads the focused element's box too, and the box goes to the menu", async () => {
+    const focused = { x: 300, y: 8, width: 600, height: 32 }
+    const h = pageHarness(DESKTOP, {
+      chromeDocument: { hit: { target: 'urlbar', tabId: null }, focused }
+    })
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+    // The pointer's: the element under it is looked up, the focus is nobody's business.
+    h.win.onContextMenu(chromeParams({ x: 420, y: 18, isEditable: true, editFlags: ALL_EDITS }))
+    await settle()
+    expect(h.documentReads).toEqual(['menuTargetAt(420,18)'])
+    expect(h.where()).toMatchObject({ source: 'urlbar' })
+    expect(h.where()).not.toHaveProperty('rect')
+    expect(h.where()).not.toHaveProperty('x')
+    // Shift+F10's: both reads, at once; the menu hangs from the field.
+    h.documentReads.length = 0
+    h.win.onContextMenu(
+      chromeParams({ x: 600, y: 24, keyboard: true, isEditable: true, editFlags: ALL_EDITS })
+    )
+    await settle()
+    expect(h.documentReads).toEqual(['menuTargetAt(600,24)', 'focusedRect()'])
+    expect(h.where()).toMatchObject({
+      source: 'urlbar',
+      x: 600,
+      y: 24,
+      keyboard: true,
+      rect: focused
+    })
+  })
+
+  it('a host that reads nothing from its document – the phone, a fake – still gets the menu, at the point', async () => {
+    const field = { isEditable: true, editFlags: ALL_EDITS }
+    const h = pageHarness(DESKTOP, { chromeDocument: { hit: null, focused: null } })
+    h.win.onContextMenu(chromeParams({ x: 600, y: 24, keyboard: true, ...field }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(h.where()).toMatchObject({ x: 600, y: 24, keyboard: true })
+    expect(h.where()).not.toHaveProperty('rect')
+    // No reader at all (the stub's nothing) is no error either.
+    const bare = pageHarness()
+    bare.win.onContextMenu(chromeParams({ x: 10, y: 10, keyboard: true, ...field }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(bare.where()).toMatchObject({ keyboard: true })
+  })
 })
 
 describe('Send to your devices (ID-27)', () => {
@@ -5368,7 +5025,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
     })
   })
 
-  it("the strip's menu is Chrome's rows first – Name Window… among them on the desktop (context-menus-108) – then Zenium's own", () => {
+  it("the strip's menu is Chrome's rows first – Name Window… among them on the desktop (context-menus-108) – then Zenium's own, then the window's: Task Manager and Close Window as Chrome's frame menu ends", () => {
     const h = pageHarness()
     h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
     expect(topLabels(h.shown())).toEqual([
@@ -5382,18 +5039,73 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'New Live Folder…',
       'New Space…',
       '-',
-      'Clear Unpinned Tabs'
+      'Clear Unpinned Tabs',
+      '-',
+      'Task Manager',
+      '-',
+      'Close Window'
     ])
     expect(item(h, 'Reopen Closed Tab').action).toBe('tab.reopenClosed')
     expect(item(h, 'Bookmark All Tabs…').action).toBe('bookmark.allTabs')
     expect(item(h, 'Name Window…').action).toBe('window.name')
+    expect(item(h, 'Task Manager').action).toBe('tasks.open')
+    expect(item(h, 'Close Window').action).toBe('window.close')
     h.sent.length = 0
     item(h, 'Name Window…').click!()
     expect(h.sent).toEqual(['windowName.open'])
+    // Task Manager is the desktop's task manager window (W5-18), one per profile.
+    const before = h.browser.allWindows().length
+    item(h, 'Task Manager').click!()
+    const tasks = h.browser.allWindows().find((w) => w !== h.win)
+    expect(h.browser.allWindows()).toHaveLength(before + 1)
+    expect(tasks?.chrome).toBe('page')
+    // Close Window closes this window, through the browser's close (the unsaved-work checks).
+    const closing = vi.spyOn(h.browser, 'requestWindowClose').mockResolvedValue(undefined as never)
+    item(h, 'Close Window').click!()
+    expect(closing).toHaveBeenCalledWith(h.win)
     // A tablet's one window has no title bar to name: the row is the desktop's.
     const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
     tablet.browser.handleCommand(tablet.win, 'newtab.contextMenu', {})
     expect(topLabels(tablet.shown())).not.toContain('Name Window…')
+    // The window rows are a windowed host's alone: the phone has one window, no task manager
+    // window and no Close for it – its sheet ends at Clear Unpinned Tabs.
+    const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+    phone.browser.handleCommand(phone.win, 'newtab.contextMenu', {})
+    expect(topLabels(phone.shown()).at(-1)).toBe('Clear Unpinned Tabs')
+    expect(topLabels(phone.shown())).not.toContain('Task Manager')
+    expect(topLabels(phone.shown())).not.toContain('Close Window')
+  })
+
+  it("on Windows the frameless window's system items lead in the OS's words – Restore, Minimize, Maximize – and the OS's Close ends it, as Chrome's strip shows the system menu with Chrome's rows inside (context-menus-108)", () => {
+    const h = pageHarness(DESKTOP, { os: 'win32' })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    const menu = topLabels(h.shown())
+    expect(menu.slice(0, 5)).toEqual(['Restore', 'Minimize', 'Maximize', '-', 'New Tab'])
+    expect(menu.slice(-5)).toEqual(['Clear Unpinned Tabs', '-', 'Task Manager', '-', 'Close'])
+    expect(menu).not.toContain('Close Window')
+    // Move and Size stay out: Electron has no way into the OS's keyboard move and size modes.
+    expect(menu).not.toContain('Move')
+    expect(menu).not.toContain('Size')
+    // The OS's greying: a normal window has nothing to restore; a maximized one nothing to maximize.
+    expect(enabled(h, 'Restore')).toBe(false)
+    expect(enabled(h, 'Maximize')).toBe(true)
+    item(h, 'Maximize').click!()
+    expect(h.windowCalls).toEqual(['maximize'])
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    expect(enabled(h, 'Restore')).toBe(true)
+    expect(enabled(h, 'Maximize')).toBe(false)
+    item(h, 'Restore').click!()
+    item(h, 'Minimize').click!()
+    expect(h.windowCalls).toEqual(['maximize', 'unmaximize', 'minimize'])
+    expect(item(h, 'Minimize').action).toBe('window.minimize')
+    expect(item(h, 'Close').action).toBe('window.close')
+    // The other desktops have no system menu to mirror: no system items, Close Window in words.
+    for (const os of ['linux', 'darwin'] as const) {
+      const other = pageHarness(DESKTOP, { os })
+      other.browser.handleCommand(other.win, 'newtab.contextMenu', {})
+      expect(topLabels(other.shown())[0]).toBe('New Tab')
+      expect(topLabels(other.shown()).at(-1)).toBe('Close Window')
+    }
   })
 
   it('greys Reopen Closed Tab while nothing was closed and brings the newest closed tab back', () => {

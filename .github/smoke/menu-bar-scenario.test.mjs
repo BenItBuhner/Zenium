@@ -4,6 +4,7 @@ import {
   MENU_ORDER,
   TAB_MENU_CHORDS,
   TAB_MENU_ROWS,
+  aboutPageProblems,
   aboutRowProblems,
   barProblems,
   expectedTabMenu,
@@ -165,6 +166,26 @@ describe('aboutRowProblems', () => {
     expect(aboutRowProblems(rows(['!About Zenium'], {}))).toEqual(['About Zenium is greyed'])
     expect(aboutRowProblems(rows(['Settings…'], {}))).toEqual(['the first row is Settings…'])
     expect(aboutRowProblems([])).toEqual(['the application menu has no rows'])
+  })
+})
+
+describe('aboutPageProblems', () => {
+  it('accepts the Settings page at about as the front page tab', () => {
+    expect(aboutPageProblems({ section: 'about', frontTabUrl: 'zen://settings/about' })).toEqual([])
+  })
+  it('names another section, and a front tab that is not the Settings › About page tab (the page opened somewhere else, or not as a tab)', () => {
+    expect(
+      aboutPageProblems({ section: 'general', frontTabUrl: 'zen://settings/general' })
+    ).toEqual([
+      'the Settings page opened at general, not about',
+      'the front tab is zen://settings/general, not the Settings › About page tab'
+    ])
+    expect(aboutPageProblems({ section: 'about', frontTabUrl: 'https://news.example/' })).toEqual([
+      'the front tab is https://news.example/, not the Settings › About page tab'
+    ])
+    expect(aboutPageProblems({ section: 'about', frontTabUrl: null })).toEqual([
+      'the front tab is none, not the Settings › About page tab'
+    ])
   })
 })
 

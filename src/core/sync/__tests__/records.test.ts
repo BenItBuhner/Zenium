@@ -15,7 +15,9 @@ import {
   readBookmarkData,
   readCredentialData,
   readFolderAgentMark,
+  readReadingListData,
   readSpaceAgentMark,
+  readingListEntryData,
   seedSettingsMeta,
   settingsKeyGroup,
   settingsKeyTime,
@@ -42,7 +44,14 @@ import {
   createBookmarkRoots
 } from '../../../shared/bookmarks'
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../../shared/defaults'
-import type { BookmarkNode, SearchEngine, Space, Tab } from '../../../shared/types'
+import type {
+  BookmarkNode,
+  ReadingListEntry,
+  SearchEngine,
+  Space,
+  SyncScope,
+  Tab
+} from '../../../shared/types'
 import { emptyLeakFields } from '../../../shared/types'
 
 type Fixture = Parameters<typeof collectLocal>[0] & {
@@ -1343,5 +1352,262 @@ describe('credential records (ID-09)', () => {
     const b = hashData({ password: 'p', origin: 'o', kind: 'login' })
     expect(a).toBe(b)
     expect(a).toMatch(/^[0-9a-f]{40}$/)
+  })
+})
+
+/**
+ * The reading list's record (services pass 11, ID-48; the interface doc §3 in the engine's
+ * terms): one `reading-list-entry` per entry under the entry's id, the six fields and never the
+ * favicon; the `readingList` scope; the engine's stamp the clock and its tombstones the
+ * deletions; the apply side's sanitiser idempotent.
+ */
+describe('reading-list records (services pass 11, ID-48)', () => {
+  const unread: ReadingListEntry = {
+    id: 'rl_a',
+    url: 'https://a.example/article',
+    title: 'Article A',
+    addedAt: 1000,
+    updatedAt: 1000,
+    favicon: 'data:image/png;base64,AAAA'
+  }
+  const read: ReadingListEntry = {
+    id: 'rl_b',
+    url: 'https://b.example/',
+    title: 'B',
+    addedAt: 500,
+    updatedAt: 800,
+    readAt: 800
+  }
+
+  it('collectLocal emits one record per entry under its id: the six fields in the normal form’s order, `readAt` only while read, never the favicon', () => {
+    const src = { ...sources(), readingList: [unread, read] }
+    const out = collectLocal(src, defaultScope())
+    expect(out.get('rl_a')).toEqual({
+      type: 'reading-list-entry',
+      data: {
+        id: 'rl_a',
+        url: 'https://a.example/article',
+        title: 'Article A',
+        addedAt: 1000,
+        updatedAt: 1000
+      }
+    })
+    expect(Object.keys(out.get('rl_a')!.data as object)).toEqual([
+      'id',
+      'url',
+      'title',
+      'addedAt',
+      'updatedAt'
+    ])
+    expect(out.get('rl_a')!.data).not.toHaveProperty('favicon')
+    expect(out.get('rl_b')).toEqual({
+      type: 'reading-list-entry',
+      data: {
+        id: 'rl_b',
+        url: 'https://b.example/',
+        title: 'B',
+        addedAt: 500,
+        updatedAt: 800,
+        readAt: 800
+      }
+    })
+    // `readingListEntryData` is the payload, and `readAt` absent serialises as absence – the
+    // hash tells an unread entry from a read one and nothing else.
+    expect(readingListEntryData(unread)).toEqual(out.get('rl_a')!.data)
+    expect(JSON.stringify(readingListEntryData(unread))).not.toContain('readAt')
+    expect(hashData(readingListEntryData(unread))).not.toBe(
+      hashData(readingListEntryData({ ...unread, readAt: 1000 }))
+    )
+    // The favicon is the device's own: two devices holding different icons hash the same record.
+    expect(hashData(readingListEntryData({ ...unread, favicon: 'data:,other' }))).toBe(
+      hashData(readingListEntryData(unread))
+    )
+  })
+
+  it('the readingList toggle (default on, as the bookmarks’) gates the type both ways, and a source or a scope from before the type publishes none', () => {
+    expect(defaultScope().readingList).toBe(true)
+    const src = { ...sources(), readingList: [unread, read] }
+    const off = { ...defaultScope(), readingList: false }
+    expect([...collectLocal(src, off).values()].some((r) => r.type === 'reading-list-entry')).toBe(
+      false
+    )
+    // A source without the field (a record set from before the type) has nothing to publish.
+    const before = collectLocal(sources(), defaultScope())
+    expect([...before.values()].some((r) => r.type === 'reading-list-entry')).toBe(false)
+    // A scope object persisted by an older build names no `readingList`: it says nothing for
+    // the type, and the entries stay home (the golden pins of `compat.test.ts` rest on this).
+    const { readingList: _absent, ...olderScope } = defaultScope()
+    void _absent
+    expect(
+      [...collectLocal(src, olderScope as SyncScope).values()].some(
+        (r) => r.type === 'reading-list-entry'
+      )
+    ).toBe(false)
+    const record: SyncRecord = {
+      id: 'rl_a',
+      type: 'reading-list-entry',
+      modified: 1,
+      deleted: false,
+      data: readingListEntryData(unread)
+    }
+    expect(inScope(record, defaultScope())).toBe(true)
+    expect(inScope(record, off)).toBe(false)
+    expect(inScope({ ...record, deleted: true, data: null }, off)).toBe(false)
+    expect(inScope({ ...record, deleted: true, data: null }, defaultScope())).toBe(true)
+  })
+
+  it('diffLocal: first seen at 0; a flip stamps that one record at the commit’s now and no other; a removal is a tombstone at now; a change the round alone notices (stamp null) keeps its modified', () => {
+    const src = { ...sources(), readingList: [unread, read] }
+    const first = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    expect(first.meta.rl_a).toMatchObject({ type: 'reading-list-entry', modified: 0 })
+    expect(first.meta.rl_b).toMatchObject({ type: 'reading-list-entry', modified: 0 })
+
+    // The user marks A read on this device: the subscriber's diff stamps A's record `now`.
+    const flipped: ReadingListEntry = { ...unread, updatedAt: 2000, readAt: 2000 }
+    src.readingList = [flipped, read]
+    const edited = diffLocal(first.meta, collectLocal(src, defaultScope()), 2000)
+    expect(edited.changed).toBe(true)
+    expect(edited.meta.rl_a.modified).toBe(2000)
+    expect(edited.meta.rl_b.modified).toBe(0)
+    expect(edited.records.find((r) => r.id === 'rl_a')).toMatchObject({
+      type: 'reading-list-entry',
+      modified: 2000,
+      deleted: false,
+      data: { id: 'rl_a', readAt: 2000, updatedAt: 2000 }
+    })
+    // A favicon fetched later changes no record: the bytes the engine sees are the same.
+    src.readingList = [
+      { ...flipped, favicon: 'data:,fresh' },
+      { ...read, favicon: 'data:,b' }
+    ]
+    const iconed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 2500)
+    expect(iconed.changed).toBe(false)
+    expect(iconed.meta.rl_a.modified).toBe(2000)
+
+    // The round (`run()`) never stamps: a hash it alone finds changed keeps the record's time.
+    src.readingList = [{ ...flipped, title: 'Renamed by a build' }, read]
+    const noticed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 3000, {
+      stamp: null
+    })
+    expect(noticed.changed).toBe(true)
+    expect(noticed.meta.rl_a.modified).toBe(2000)
+    expect(noticed.records.find((r) => r.id === 'rl_a')!.modified).toBe(2000)
+
+    // `remove(id)` drops the entry; the engine writes the tombstone itself, at `now`.
+    src.readingList = [flipped]
+    const removed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 4000)
+    expect(removed.changed).toBe(true)
+    expect(removed.meta.rl_b).toEqual({
+      type: 'reading-list-entry',
+      hash: '',
+      modified: 4000,
+      deleted: true
+    })
+    expect(removed.records.find((r) => r.id === 'rl_b')).toEqual({
+      id: 'rl_b',
+      type: 'reading-list-entry',
+      modified: 4000,
+      deleted: true,
+      data: null
+    })
+    // The tombstone is kept for the bookmarks' TTL (30 days) and then forgotten.
+    const day = 24 * 60 * 60 * 1000
+    expect(
+      diffLocal(removed.meta, collectLocal(src, defaultScope()), 4000 + 29 * day).records.some(
+        (r) => r.id === 'rl_b'
+      )
+    ).toBe(true)
+    expect(
+      diffLocal(removed.meta, collectLocal(src, defaultScope()), 4000 + 31 * day).records.some(
+        (r) => r.id === 'rl_b'
+      )
+    ).toBe(false)
+    // A tombstone beats a live copy by `modified` alone; a live record beats it the same way.
+    const live: SyncRecord = {
+      id: 'rl_b',
+      type: 'reading-list-entry',
+      modified: 3999,
+      deleted: false,
+      data: readingListEntryData(read)
+    }
+    expect(winningRemote(removed.meta, new Map([['rl_b', live]]))).toEqual([])
+    expect(
+      winningRemote(removed.meta, new Map([['rl_b', { ...live, modified: 4001 }]]))
+    ).toHaveLength(1)
+    const mine = metaFromRemote([{ ...live, modified: 4001 }])
+    expect(mine.rl_b).toEqual({
+      type: 'reading-list-entry',
+      hash: hashData(live.data),
+      modified: 4001,
+      deleted: false
+    })
+  })
+
+  it('readReadingListData – the apply side’s sanitiser – keeps a web address in the model’s normal form under the record’s id, drops the favicon and what it does not know, refuses garbage, and is idempotent', () => {
+    const sent = {
+      readAt: 800,
+      updatedAt: 800,
+      favicon: 'data:image/png;base64,PEER',
+      title: 'B',
+      url: 'https://b.example/',
+      id: 'rl_b',
+      addedAt: 500,
+      device: 'not a field'
+    }
+    const once = readReadingListData('rl_b', sent)!
+    expect(once).toEqual({
+      id: 'rl_b',
+      url: 'https://b.example/',
+      title: 'B',
+      addedAt: 500,
+      updatedAt: 800,
+      readAt: 800
+    })
+    expect(Object.keys(once)).toEqual(['id', 'url', 'title', 'addedAt', 'updatedAt', 'readAt'])
+    expect(once).not.toHaveProperty('favicon')
+    expect(once).not.toHaveProperty('device')
+    // Idempotent: sanitise(sanitise(x)) = sanitise(x), byte for byte – so a record this device
+    // re-publishes after applying it hashes as the entry it holds.
+    const twice = readReadingListData('rl_b', once)!
+    expect(JSON.stringify(twice)).toBe(JSON.stringify(once))
+    expect(hashData(readingListEntryData(twice))).toBe(hashData(readingListEntryData(once)))
+    // The record's id is the key; a payload naming another lands under the record's.
+    expect(readReadingListData('rl_other', sent)!.id).toBe('rl_other')
+    // An unread entry: no `readAt`; a missing title takes the URL; a missing `updatedAt` the
+    // latest time the entry has.
+    expect(readReadingListData('rl_u', { url: 'https://u.example/', addedAt: 3 })).toEqual({
+      id: 'rl_u',
+      url: 'https://u.example/',
+      title: 'https://u.example/',
+      addedAt: 3,
+      updatedAt: 3
+    })
+    // Only a web address: the list never holds the browser's pages, a blank tab or a file.
+    for (const url of ['zen://settings', 'about:blank', 'file:///etc/hosts', 'javascript:void 0'])
+      expect(readReadingListData('rl_x', { ...sent, url })).toBeNull()
+    // Garbage: no URL, no finite time, a negative time, not an object.
+    expect(readReadingListData('rl_x', { ...sent, url: undefined })).toBeNull()
+    expect(readReadingListData('rl_x', { ...sent, addedAt: 'yesterday' })).toBeNull()
+    expect(readReadingListData('rl_x', { ...sent, addedAt: -1 })).toBeNull()
+    expect(readReadingListData('rl_x', null)).toBeNull()
+    expect(readReadingListData('rl_x', 'nonsense')).toBeNull()
+    expect(readReadingListData('rl_x', [sent])).toBeNull()
+  })
+
+  it('frozenRecords: turning the reading list off holds its records instead of tombstoning them', () => {
+    const src = { ...sources(), readingList: [unread, read] }
+    const on = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const off = { ...defaultScope(), readingList: false }
+    const held = diffLocal(on.meta, collectLocal(src, off), 2000, {
+      stamp: 2000,
+      frozen: frozenRecords(src, off, on.meta)
+    })
+    expect(held.changed).toBe(false)
+    expect(held.meta.rl_a).toEqual(on.meta.rl_a)
+    expect(held.meta.rl_b).toEqual(on.meta.rl_b)
+    expect(held.records.some((r) => r.type === 'reading-list-entry')).toBe(false)
+    // Without the freeze the same absence would be a deletion – the guard is what keeps it out.
+    const naive = diffLocal(on.meta, collectLocal(src, off), 2000)
+    expect(naive.records.find((r) => r.id === 'rl_a')?.deleted).toBe(true)
   })
 })

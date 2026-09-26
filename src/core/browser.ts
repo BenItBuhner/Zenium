@@ -3719,14 +3719,8 @@ export class Browser {
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
       'bookmark.createFromTabs': ({ tabIds, title, parentId, quiet }, win) =>
         this.createBookmarksFromTabs(tabIds, title, parentId, win, quiet ?? false),
-      'bookmark.contextMenu': ({ ids, folderId, x, y, keyboard, surface }, win) =>
-        this.menus.showBookmarkContextMenu(
-          ids,
-          folderId,
-          { x, y, keyboard },
-          win,
-          surface ?? 'manager'
-        ),
+      'bookmark.contextMenu': ({ ids, folderId, surface, ...anchor }, win) =>
+        this.menus.showBookmarkContextMenu(ids, folderId, anchor, win, surface ?? 'manager'),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
       'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
       'bookmark.cut': ({ ids }) => this.clipBookmarks(ids, 'cut'),
@@ -3745,8 +3739,8 @@ export class Browser {
       'readingList.markAllRead': () => this.readingList.markAllRead(),
       'readingList.open': ({ id, tabId, newTab, background }, win) =>
         this.openReadingEntry(id, tabId, win, { newTab, background }),
-      'readingList.contextMenu': ({ id, x, y, keyboard }, win) =>
-        this.menus.showReadingListContextMenu(id, { x, y, keyboard }, win),
+      'readingList.contextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showReadingListContextMenu(id, anchor, win),
 
       'import.sources': () => this.imports.sources(),
       'import.run': ({ source, kinds }, win) => this.imports.run(source, kinds, win),
@@ -3779,8 +3773,8 @@ export class Browser {
           platform.downloads.startFileDrag?.(item, win)
       },
       'download.openFolder': () => platform.downloads.openDownloadsFolder?.(),
-      'download.contextMenu': ({ id, x, y, keyboard }, win) =>
-        this.menus.showDownloadContextMenu(id, { x, y, keyboard }, win),
+      'download.contextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showDownloadContextMenu(id, anchor, win),
 
       'find.start': ({ tabId, text, forward, newSession }, win) => {
         const view = tabs.view(tabId)
@@ -4120,6 +4114,13 @@ export class Browser {
         state.settings.colorScheme = colorScheme
         this.setThemeSource(colorScheme)
         state.settings.onboardingDone = true
+        // The pages the tour held back come in now. Under the tour a window loads nothing on
+        // its own (`onChromeReady`, `onWindowFocused`: the claim waits on this flag), and the
+        // tour's end below opens a tab only where the new tab page is served – on a host
+        // without it (the phone) a restored page tab stayed unloaded, no view to place, until
+        // the next focus. The desktop's boot tab was loaded and claimed at its activation, so
+        // this finds it owned and moves nothing; the crash offer's hold is kept as at boot.
+        if (!this.session.holdsPages()) tabs.claimVisible(win)
         for (const url of essentials) {
           const known = ONBOARDING_ESSENTIALS.find((e) => e.url === url)
           if (!known) continue

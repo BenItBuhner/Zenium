@@ -50,11 +50,13 @@ import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.SafeBrowsingHit
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.NavigationReports
+import app.zen.chromium.privacy.PreloadRules
 import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
 import org.json.JSONObject
@@ -445,7 +447,9 @@ class TabWebView(
      * WebView's own default is disabled, so `standard` is what first lets a page's speculation
      * rules prerender on the phone at all (Chrome Android's Standard does): the view answers each
      * prerender's navigation in `Client.shouldOverrideUrlLoading`, and refuses the ones it could
-     * not run.
+     * not run. The prerenders are this setting's whole reach: under `none` the prefetches – Blink
+     * resource fetches outside `IsPrerender2Allowed` – are refused at the request engine instead
+     * ([Client.refusePreload]).
      */
     @OptIn(WebSettingsCompat.ExperimentalSpeculativeLoading::class)
     private fun applySpeculativeLoading(flags: PrivacyFlags) {
@@ -2708,13 +2712,46 @@ class TabWebView(
 
         /**
          * Network thread. The extension layer answers first: it serves the extension origins and
-         * the CORS proxy of extension pages; anything it leaves alone goes to the request engine,
-         * whose rule sets include the extensions' declarativeNetRequest rules.
+         * the CORS proxy of extension pages; then Preload pages `none` refuses a prefetch
+         * ([refusePreload]); anything left goes to the request engine, whose rule sets include
+         * the extensions' declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
             PdfViewer.intercept(context, request, pdfPage)
                 ?: host.extensions?.intercept(request, this@TabWebView, null)
+                ?: refusePreload(request)
                 ?: host.blocking.intercept(this@TabWebView, request)
+
+        /**
+         * Preload pages "No preloading" (PS-43) at the request engine, as the desktop's
+         * `PreloadHandler` enforces it: under `none` every request that arrives here marked
+         * speculative (`Sec-Purpose` / `Purpose: prefetch`; [PreloadRules]) is answered empty,
+         * so nothing leaves the device for it. [applySpeculativeLoading]'s DISABLED stops the
+         * prerenders alone (`IsPrerender2Allowed`); a speculation-rules prefetch is a request the
+         * browser process builds with both marks on it, and arrives here so marked (refused on
+         * WebView 113, run 36244937529). A `<link rel=prefetch>` does NOT on WebView 113 or 124:
+         * WebView shows it here as the plain fetch it looks like (`Accept`, `Referer`,
+         * `User-Agent` and nothing else) – Blink marks it `Purpose: prefetch` but carries the
+         * header in `cors_exempt_headers`, which `AwWebResourceRequest` omits and the network
+         * service merges into the URLRequest, where the desktop's `onBeforeSendHeaders` reads it
+         * and this hook cannot. That one prefetch is the phone's remaining limit under `none`
+         * there; from Chromium 138 it carries `Sec-Purpose: prefetch` as a real header and is
+         * refused here unchanged. The level is [Privacy.flags]' as last pushed, read per request.
+         * Ahead of the engine on purpose: the refusal is the user's setting, not a rule set's
+         * block – no decision observed, no listener told, nothing added to the tab's blocked
+         * count, as on the desktop (`HANDLER_ORDER.preload` before `ruleEngine`). An empty 403,
+         * the engine's answer for a subresource it stops: the page sees a failed fetch (the
+         * desktop's cancel is `ERR_BLOCKED_BY_CLIENT`, the same to the page), and a non-2xx that
+         * no prefetch cache will serve for the tap that follows – a 204 would, and a navigation
+         * onto a 204 commits nothing (the engine's answer for a blocked DOCUMENT), which is not
+         * what a refused prefetch may do to the link the user then taps.
+         */
+        private fun refusePreload(request: WebResourceRequest): WebResourceResponse? =
+            if (PreloadRules.refuses(host.privacy.flags, request.url.toString(), request.requestHeaders)) {
+                Blocking.emptyResponse(403, "Forbidden", "text/plain")
+            } else {
+                null
+            }
 
         override fun onPageStarted(view: WebView, rawUrl: String, favicon: Bitmap?) {
             val url = pageUrlFor(rawUrl)

@@ -1,6 +1,8 @@
 import { Menu, nativeImage, net, type MenuItemConstructorOptions } from 'electron'
 import type { MenuHost, MenuItemTemplate, MenuPopupOptions } from '../../core/platform'
 import { RendererMenuHost } from '../../core/rendererMenus'
+import { withMnemonics } from './menuMnemonics'
+import { popupPoint } from './menuPlacement'
 import type { ElectronWindow } from './window'
 
 /** Longest a menu waits for uncached remote favicons before it opens without them. */
@@ -49,8 +51,7 @@ export class ElectronMenus implements MenuHost {
    */
   private applyApplicationMenu(menus: MenuItemTemplate[]): void {
     const generation = ++this.applicationMenuGeneration
-    const set = (): void =>
-      Menu.setApplicationMenu(Menu.buildFromTemplate(menus.map((item) => this.toElectron(item))))
+    const set = (): void => Menu.setApplicationMenu(Menu.buildFromTemplate(this.template(menus)))
     set()
     const pending = [...remoteIcons(menus)].filter((url) => !this.icons.has(url))
     if (pending.length === 0) return
@@ -63,9 +64,15 @@ export class ElectronMenus implements MenuHost {
   /**
    * The app menu goes to the renderer, which hangs it from the "⋯" button it finds on screen
    * (end-aligned under its bar, §9.20) and starts on its first row when the keyboard asked. A
-   * native menu opens at the pointer unless the core anchors it to a control; opened by the
+   * native menu opens at the pointer unless the core anchors it – to a point, or to the element
+   * it belongs to, whose bottom-left corner it hangs from (`popupPoint`, §9.23); opened by the
    * keyboard it says so: Chromium then starts with its first item selected, and the arrow keys
-   * and Escape work from there (Escape leaves the keyboard where it was, on the button).
+   * and Escape work from there. A native popup runs in its own widget and takes the keyboard off
+   * the chrome document while it stands (measured on Electron 44.4.5/Linux: the focused element
+   * blurs, the document's `activeElement` falls to the body), and the chrome does not get it
+   * back on its own when the menu closes – so a keyboard-opened menu tells the chrome to return
+   * the keyboard to the element it hung from on close (`menu.keyboardReturn`, §9.23), which the
+   * renderer honours unless a pick moved the focus itself.
    */
   popup(items: MenuItemTemplate[], options: MenuPopupOptions): void {
     if (options.source === 'app') {
@@ -77,12 +84,19 @@ export class ElectronMenus implements MenuHost {
     const show = (): void => {
       if (!host.alive) return
       const popup: Electron.PopupOptions = { window: host.win }
-      if (options.x !== undefined && options.y !== undefined) {
-        popup.x = Math.round(options.x)
-        popup.y = Math.round(options.y)
+      const point = popupPoint(options, host.contentSize())
+      if (point) {
+        popup.x = point.x
+        popup.y = point.y
       }
-      if (options.keyboard) popup.sourceType = 'keyboard'
-      Menu.buildFromTemplate(items.map((item) => this.toElectron(item))).popup(popup)
+      if (options.keyboard) {
+        popup.sourceType = 'keyboard'
+        // §9.23: return the keyboard to the element the menu hung from once it closes. The
+        // element does not get it back on its own (a native popup takes the chrome document's
+        // focus), so the renderer refocuses it on this signal unless a pick moved the focus.
+        popup.callback = () => options.win.send('menu.keyboardReturn', undefined)
+      }
+      Menu.buildFromTemplate(this.template(items)).popup(popup)
     }
     const pending = [...remoteIcons(items)].filter((url) => !this.icons.has(url))
     if (pending.length === 0) {
@@ -101,6 +115,14 @@ export class ElectronMenus implements MenuHost {
   /** The renderer closed its menu without a pick. */
   dismiss(menuId: string): void {
     this.inChrome.dismiss(menuId)
+  }
+
+  /**
+   * Electron's template for the core's: the labels marked with their Alt mnemonics on Windows
+   * and Linux (`&` escaped everywhere, see `menuMnemonics.ts`), then each item converted.
+   */
+  private template(items: MenuItemTemplate[]): MenuItemConstructorOptions[] {
+    return withMnemonics(items, process.platform).map((item) => this.toElectron(item))
   }
 
   private toElectron(item: MenuItemTemplate): MenuItemConstructorOptions {
