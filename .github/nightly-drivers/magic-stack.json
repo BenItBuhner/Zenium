@@ -1,0 +1,9 @@
+{
+  "id": "magic-stack",
+  "class": "MagicStackDemo",
+  "shard": "phone-f",
+  "mirrors": "android-magic-stack-demo.yml",
+  "dir": "magic-stack-demo",
+  "estimate": 4,
+  "note": "The new tab page's Magic Stack (NTP-16, W6-4): a seeded recently closed tab, a completed download whose file the driver writes on the device and two bookmarks give the three cards (the Default browser reminder a fourth where the host says the browser is not the default; the driver reads the host and expects what it implies), the cards named for TalkBack and the strip a carousel; a real swipe pages the strip (magic-stack-swipe, a gesture scene) and a dot pages back; a card's ⋮, Hide This (magic-stack-hide, a spring scene, a probe on the strip for the 120 ms fade and the FLIP glide), Customise's switch rows, every switch off for the empty state, the gear sheet's Magic Stack row as the way back, one card alone at full width, Reopen restoring the closed tab. The estimate is the author's, not yet a nightly's measure. On phone-f, the shard with the room."
+}
