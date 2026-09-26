@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import type { PageViewport } from '@shared/capture'
 import { isDockedInFrame } from '@shared/devtoolsDock'
+import type { QrCodeRequest } from '@shared/qrScan'
 import {
   INTERNAL_PAGES,
   pageForOverlayKind,
@@ -492,6 +493,8 @@ export interface UiState {
   voice: VoicePrompt | null
   /** QR scanning: the scan sheet is up, for the payload it will load (`lib/qrScan.ts`). */
   qrScan: QrPrompt | null
+  /** The QR code sheet is up with a link's code (SH-06; `lib/qrCode.ts`). */
+  qrCode: QrCodePrompt | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
   /** Phone layout: the app menu's Extensions sheet (one row per extension action) is up. */
@@ -684,6 +687,7 @@ export const uiStore = createStore<UiState>(
     shareSeam: null,
     voice: null,
     qrScan: null,
+    qrCode: null,
     barEditorOpen: false,
     extensionsSheetOpen: false,
     sendTabSheet: null,
@@ -1217,6 +1221,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.externalProtocol &&
     !ui.voice &&
     !ui.qrScan &&
+    !ui.qrCode &&
     !ui.longScreenshot &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
@@ -1288,6 +1293,7 @@ export function invalidateSnapshot(): void {
     !ui.externalProtocol &&
     !ui.voice &&
     !ui.qrScan &&
+    !ui.qrCode &&
     !ui.longScreenshot &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
@@ -1996,6 +2002,34 @@ export function closeQrSheet(id: number): void {
 }
 
 // ---------------------------------------------------------------------------
+// The QR code sheet (SH-06; `lib/qrCode.ts` runs the request)
+// ---------------------------------------------------------------------------
+
+/** The code sheet's request: the host's `qr.code` with the sheet's own id (each share is a new sheet). */
+export interface QrCodePrompt extends QrCodeRequest {
+  id: number
+}
+
+/**
+ * Put the code sheet up over a capture of the page, as the scan sheet goes up: the share sheet
+ * or panel it came from has left; the omnibox closes if it is open, the sheet taking the frame.
+ */
+export async function openQrCodeSheet(prompt: QrCodePrompt): Promise<void> {
+  await captureActiveTab(prompt.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ qrCode: prompt, drawerOpen: false })
+  if (uiStore.get().urlbar.open) closeUrlbar()
+}
+
+/** The code sheet's request is over (Download, Close, the back gesture): take it down. */
+export function closeQrCodeSheet(id: number): void {
+  if (uiStore.get().qrCode?.id !== id) return
+  uiStore.set({ qrCode: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
 // External protocols (a page wants to open another app)
 // ---------------------------------------------------------------------------
 
@@ -2216,6 +2250,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.externalProtocol !== null ||
     ui.voice !== null ||
     ui.qrScan !== null ||
+    ui.qrCode !== null ||
     ui.longScreenshot !== null ||
     ui.extensionPrompts.length > 0 ||
     ui.extensionPopup !== null ||
