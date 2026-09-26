@@ -106,7 +106,8 @@ class RuleMemoryTest {
         return last
     }
 
-    private fun mb(bytes: Long): String = String.format("%.1f MB", bytes / 1048576.0)
+    /** Megabytes to one decimal; a delta within the collector's noise (50 KB either way) prints as zero, not "-0.0". */
+    private fun mb(bytes: Long): String = String.format("%.1f MB", (if (Math.abs(bytes) < 52_429) 0L else bytes) / 1048576.0)
 
     private fun perRule(bytes: Long, rules: Int): String = String.format("%d B/rule", bytes / rules.coerceAtLeast(1))
 
