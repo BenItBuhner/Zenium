@@ -2543,21 +2543,27 @@ class TabWebView(
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            val url = request.url
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
             // A speculation-rules prerender the page declared: WebView asks here for it as for a
             // navigation (`Sec-Purpose: prefetch;prerender`, no gesture, the outermost main
             // frame), and this answer is the embedder's only veto – the activation later runs no
-            // throttles. It is not the user's navigation, so none of a primary load's steps below
-            // happen for it: no engine interstitial or redirect load, no App Link probe, no
-            // desktop-mode re-issue, no back preview, no `redirected` event, no document record,
-            // no settings flip. Refused where it could not go as it stands or could not run under
-            // this view's settings ([vetoPrerender]); the real tap comes through here as itself
-            // and is decided then. The prerender's requests still meet the engine in
-            // `shouldInterceptRequest`, as Chrome's do.
-            if (PageRules.isPrerender(request.requestHeaders) && request.isForMainFrame && !request.hasGesture()) {
-                return vetoPrerender(url.toString())
-            }
+            // throttles. It is not the user's navigation, so none of a primary load's steps
+            // ([navigationTaken]) happen for it: no engine interstitial or redirect load, no App
+            // Link probe, no hold (the page's word on the next navigation's referrer policy is
+            // neither spent nor expired by it), no desktop-mode re-issue, no back preview, no
+            // `redirected` event, no document record, no settings flip. Refused where it could
+            // not go as it stands or could not run under this view's settings ([vetoPrerender]);
+            // the real tap comes through here as itself and is decided then. The prerender's
+            // requests still meet the engine in `shouldInterceptRequest`, as Chrome's do.
+            prerenderPassOrNavigation(
+                prerender = PageRules.isPrerender(request.requestHeaders) && request.isForMainFrame && !request.hasGesture(),
+                veto = { vetoPrerender(request.url.toString()) },
+                navigation = { navigationTaken(view, request) }
+            )
+
+        /** A primary load's navigation through the hook, decided by its scheme (see [webNavigationTaken] for http(s)). */
+        private fun navigationTaken(view: WebView, request: WebResourceRequest): Boolean {
+            val url = request.url
             return when (url.scheme?.lowercase()) {
                 "http", "https" -> webNavigationTaken(
                     engine = { interceptNavigation(request) },
@@ -3185,6 +3191,18 @@ class TabWebView(
          */
         fun webNavigationTaken(engine: () -> Boolean, appLink: () -> Boolean, hold: () -> Boolean, desktopSwitch: () -> Boolean): Boolean =
             engine() || appLink() || hold() || desktopSwitch()
+
+        /**
+         * The front of `shouldOverrideUrlLoading`: a speculation-rules prerender's pass through
+         * the hook ([PageRules.isPrerender], the outermost main frame, no gesture) is answered by
+         * the veto alone – none of a primary load's steps run for it, so none of their side
+         * effects do; in particular the hold, the one spender of the page's word on the next
+         * navigation's referrer policy ([ReferrerPolicyWord]), is not reached, and the real tap
+         * that follows finds the word within its window. Pure, so the order is pinned on the JVM
+         * (`TabWebViewNavigationOrderTest`).
+         */
+        fun prerenderPassOrNavigation(prerender: Boolean, veto: () -> Boolean, navigation: () -> Boolean): Boolean =
+            if (prerender) veto() else navigation()
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
         private const val EVAL_TIMEOUT_MS = 45_000L

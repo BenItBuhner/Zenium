@@ -10,7 +10,10 @@ import org.junit.Test
  * the pure half of its http/https branch): the engine, then the App Link probe, then the hold for
  * the core's content-settings answer, then the desktop-site switch. Pinned because the hold drops
  * the navigation and re-issues it as a load of the view's own, which never re-enters the hook: a
- * probe behind the hold would never see a tap into an unanswered site.
+ * probe behind the hold would never see a tap into an unanswered site. Ahead of all of it, the
+ * hook's front (`TabWebView.prerenderPassOrNavigation`): a speculation-rules prerender's pass is
+ * the veto's alone, so no step of a navigation's – the hold and its spending of the page's word on
+ * the next navigation's referrer policy among them – happens for it.
  */
 class TabWebViewNavigationOrderTest {
     private val page = "https://news.example.com/story"
@@ -20,6 +23,9 @@ class TabWebViewNavigationOrderTest {
         steps.add(name)
         answer
     }
+
+    /** `WebResourceRequest.hasGesture()` as the hook reads it, spelled out. */
+    private fun hasGesture(gesture: Boolean): Boolean = gesture
 
     private fun decide(engine: Boolean, appLink: Boolean, hold: Boolean, desktopSwitch: Boolean): Boolean =
         TabWebView.webNavigationTaken(
@@ -70,5 +76,55 @@ class TabWebViewNavigationOrderTest {
         // link a second time.
         assertTrue(decide(engine = false, appLink = false, hold = true, desktopSwitch = true))
         assertEquals(listOf("engine", "appLink", "hold"), steps)
+    }
+
+    @Test
+    fun aPrerendersPassThroughTheHookIsTheVetosAloneAndSpendsNoStep() {
+        // A speculation-rules prerender the page declared: `Sec-Purpose: prefetch;prerender`, the
+        // outermost main frame, no gesture (`TabWebView.prerenderPassOrNavigation`'s condition as
+        // the hook spells it). The veto answers; the primary load's steps – the engine, the App
+        // Link probe, the hold, the switch – run for none of it.
+        val mainFrame = true
+        val prerender = PageRules.isPrerender(mapOf("Sec-Purpose" to "prefetch;prerender")) && mainFrame && !hasGesture(false)
+        assertTrue(prerender)
+        assertTrue(TabWebView.prerenderPassOrNavigation(prerender, veto = step("veto", true), navigation = step("navigation", true)))
+        assertEquals(listOf("veto"), steps)
+        steps.clear()
+        // Allowed to go on prerendering: still no step of a navigation's.
+        assertFalse(TabWebView.prerenderPassOrNavigation(prerender, veto = step("veto", false), navigation = step("navigation", true)))
+        assertEquals(listOf("veto"), steps)
+        steps.clear()
+        // The real tap (a gesture, no `Sec-Purpose`) is the navigation's alone.
+        val tap = PageRules.isPrerender(emptyMap()) && mainFrame && !hasGesture(true)
+        assertFalse(tap)
+        assertTrue(TabWebView.prerenderPassOrNavigation(tap, veto = step("veto", true), navigation = step("navigation", true)))
+        assertEquals(listOf("navigation"), steps)
+    }
+
+    @Test
+    fun aPrerendersPassNeitherSpendsNorExpiresThePagesReferrerWord() {
+        // The one spender of the page's word on the next navigation's referrer policy is the hold
+        // (`holdOrApplyContentRules` → `ReferrerPolicyWord.forNavigation`), a step of the
+        // navigation's; the one expiry short of the window is the document starting
+        // (`onPageStarted` → `documentStarted`), which a prerendering page – not the primary main
+        // frame – never fires. So a prerender the page's pointerdown eagerness kicked off between
+        // the tap's word and the tap's own navigation leaves the word for that navigation.
+        val word = ReferrerPolicyWord()
+        val site = "https://news.example.com"
+        word.nextNavigation("no-referrer", now = 10_000L)
+        val prerender = PageRules.isPrerender(mapOf("sec-purpose" to "prefetch;prerender"))
+        val spent = mutableListOf<String>()
+        assertTrue(
+            TabWebView.prerenderPassOrNavigation(
+                prerender,
+                veto = { true },
+                navigation = { spent.add(word.forNavigation(site, now = 10_100L)); true }
+            )
+        )
+        assertEquals(emptyList<String>(), spent)
+        // The tap's navigation, within the window: the word is there for its hold.
+        assertEquals("no-referrer", word.forNavigation(site, now = 10_800L))
+        // And spent by it: a navigation after it is not the tap's.
+        assertEquals("", word.forNavigation(site, now = 10_900L))
     }
 }
