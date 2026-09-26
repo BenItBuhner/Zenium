@@ -37,18 +37,20 @@ import kotlin.math.abs
  *     spring – a probe on the strip records the fade's start and end, the card's removal and the
  *     siblings' transform frames while the finger's act runs.
  *  4. Customise from the ⋮ opens the "Cards" sheet of switch rows, the hidden card's switch off;
- *     a finger on it re-enables the card, which is back in its seat behind the sheet.
+ *     a finger on it re-enables the card, which arrives in view behind the sheet: the strip
+ *     pages to it on the spring (§9.29's arrival) and the first dot is current.
  *  5. Every switch off: the stack is gone from the page altogether (the page keeps its field and
  *     tiles); the sheet closed, the empty state.
- *  6. The way back with no ⋮ left: the page's gear sheet carries a Cards row; a finger on it
+ *  6. The way back with no ⋮ left: the page's gear sheet seats a Cards row first, above Layout
+ *     with a hairline after it and in view at the sheet's rest height (§9.13); a finger on it
  *     swaps the sheets (one sheet over the page, §9.24) and the stack's sheet comes up; a switch
  *     on brings one card back, alone at the strip's full width and without dots; another brings
- *     the dots back.
+ *     the dots back, the strip paged to the card brought back ahead of the one in view.
  *  7. The Continue card's row restores the closed tab (`session.restoreClosed`; the row is the
- *     card's whole act, there is no Reopen button): the tab comes back on its loopback page. A
- *     card brought back ahead of the one in view leaves that one in view (Chrome keeps the
- *     snapped card through a layout change), so the strip is swiped back to the first card first
- *     when it is not there.
+ *     card's whole act, there is no Reopen button): the tab comes back on its loopback page. The
+ *     strip stands on the Continue card step 6 brought back (the arrival paged to it; Chrome
+ *     alone would have kept the snapped Bookmarks card through the layout change and left
+ *     Continue a page to the left) – a claim, and a swipe back the recovery if it does not.
  *
  * The sites are loopback pages served from this process ([DemoServer]); the seeded state names
  * them at this driver's port. Every claim is a line in `magic-stack-findings.txt` next to the
@@ -405,7 +407,7 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
     // --- 4. Customise -----------------------------------------------------------------------------
 
     private fun customiseBringsItBack() {
-        step("4. Customise from the ⋮ opens the stack's sheet of switch rows, the hidden card's off; a finger on it brings the card back behind the sheet") {
+        step("4. Customise from the ⋮ opens the stack's sheet of switch rows, the hidden card's off; a finger on it brings the card back behind the sheet, the strip paged to it") {
             val first = cardIds().firstOrNull() ?: error("no card left on the page")
             val title = moduleTitle(first)
             if (!touchControl("More options for $title", moreJs(first))) error("no ⋮ on the $title card")
@@ -430,6 +432,14 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
                 !hiddenModules().contains("\"continue\"") && cardIds().firstOrNull() == "continue"
             }
             expect("the switch on re-enables the card at once, back in its seat behind the sheet (cards ${cardIds()}, hidden ${hiddenModules()})", on, "customise-reenable")
+            // The arrival (§9.29): Chrome alone keeps the snapped Downloads card through the layout
+            // change, a pitch to the right; the strip pages to the card brought back on the spring,
+            // so the card the sheet re-enabled is the card in view – the first dot current, the
+            // offset at its snap position.
+            val arrived = awaitChrome(ARRIVED_AT_FIRST_JS, 4_000)
+            val stood = geometry()
+            finding("  after the switch: $stood")
+            expect("the strip pages to the card brought back: in view behind the sheet, the first dot current and the offset at the card's snap position (selected ${stood.optInt("selected")}, scrollLeft ${stood.optInt("scrollLeft")}, status '${stood.optString("status")}')", arrived && stood.optInt("selected") == 0 && stood.optInt("scrollLeft") <= 4, "customise-arrival")
             SystemClock.sleep(600)
             still("customise-reenabled")
         }
@@ -463,15 +473,22 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
     // --- 6. the way back through the gear ---------------------------------------------------------
 
     private fun theWayBack() {
-        step("6. With no ⋮ left, the page's gear sheet carries a Cards row; it swaps the sheets, a switch brings one card back alone at full width, another brings the dots back") {
+        step("6. With no ⋮ left, the page's gear sheet seats a Cards row first, above Layout and in view at rest; it swaps the sheets, a switch brings one card back alone at full width, another brings the dots back and the strip pages to it") {
             if (!touchControl(GEAR_LABEL, GEAR_JS)) error("no gear on the page")
             val gear = awaitSheet(GEAR_TITLE, 8_000)
             awaitSheetAtRest(6_000)
             val row = chromeValue("((${GEAR_ROW_JS})||{}).textContent||''")
             finding("  the gear sheet ${verdict(gear)}; its Cards row: '$row'")
             expect("the gear opens the page's sheet '$GEAR_TITLE' with a 'Cards' row", gear && row.startsWith("Cards") && row.contains("Choose which cards show under the shortcuts") && !row.contains("Magic Stack"), "gear-row")
-            // The still is the sheet at its rest height: the Layout section fills it and the Cards
-            // row lies below the fold (the tap below reveals it). The row's act is the next still.
+            // The seat (§9.13 seats a control panel's action rows first): the row is the sheet's
+            // first row, a hairline after it and the Layout section – the first heading – after
+            // that, so at the sheet's rest height the row is in view and the fold cuts Layout's
+            // grid. The still is that rest height; the row's act is the next still.
+            val seat = runCatching { JSONObject(chromeValue(GEAR_SEAT_JS)) }.getOrElse { JSONObject() }
+            val inView = chromeValue(visibleInSheetJs(GEAR_ROW_JS)) == "true"
+            finding("  the gear sheet's seat: $seat; the Cards row in view at rest: $inView")
+            expect("the Cards row is the gear sheet's first row, a hairline after it, Layout the first heading (first '${seat.optString("first")}', then '${seat.optString("second")}', heading '${seat.optString("heading")}')", seat.optString("first") == "magic-stack" && seat.optString("second").contains("zen-sheet-sep") && seat.optString("heading") == "Layout", "gear-row-seat")
+            expect("the Cards row is in view at the sheet's rest height, above the fold", inView, "gear-row-in-view")
             still("gear-sheet")
             val swapped = touchDomExpecting("the gear sheet's Cards row", GEAR_ROW_JS, "the gear sheet has left and the stack's is up", 8_000, reveal = true) {
                 sheetPresented(SHEET_TITLE) && !sheetPresented(GEAR_TITLE)
@@ -493,6 +510,13 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
                 cardIds() == listOf("continue", "bookmarks") && geometry().optInt("dots") == 2
             }
             expect("a second card brings the dots back (cards ${cardIds()})", two, "two-cards")
+            // Continue came back ahead of the Bookmarks card in view: Chrome alone would keep
+            // Bookmarks snapped through the layout change and leave Continue a page to the left;
+            // the arrival pages the strip to the card brought back (§9.29).
+            val arrived = awaitChrome(ARRIVED_AT_FIRST_JS, 4_000)
+            val stood = geometry()
+            finding("  after the second switch: $stood")
+            expect("the strip pages to the card brought back ahead of the one in view: the first dot current, the offset at its snap position (selected ${stood.optInt("selected")}, scrollLeft ${stood.optInt("scrollLeft")}, status '${stood.optString("status")}')", arrived && stood.optInt("selected") == 0 && stood.optInt("scrollLeft") <= 4, "two-cards-arrival")
             back()
             val closed = awaitSheetGone(SHEET_TITLE, 6_000)
             expect("the system back closes the sheet", closed, "gear-sheet-closed")
@@ -505,16 +529,18 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
 
     private fun reopenFromContinue() {
         step("7. The Continue card's row restores the closed tab on its page (the row is the card's whole act; there is no Reopen button)") {
-            // Step 6 brought Bookmarks back first and Continue after it, ahead of it in the order:
-            // Chrome keeps the snapped card through the layout change, so the strip can stand on
-            // Bookmarks with the Continue card a page to the left. The dots take no tap; a swipe
-            // back brings it into view.
-            if (geometry().optInt("selected") != 0) {
-                val was = geometry()
+            // Step 6 brought Bookmarks back first and Continue after it, ahead of it in the order.
+            // Chrome alone keeps the snapped card through the layout change and would leave the
+            // Continue card a page to the left; the arrival paged the strip to it (§9.29), and it
+            // stands there with the sheet gone. The dots take no tap; were the card a page to the
+            // left after all, a swipe back is the recovery that brings it into view for the row.
+            val stood = geometry()
+            expect("the strip stands on the Continue card the switch brought back, the sheet gone (selected ${stood.optInt("selected")}, scrollLeft ${stood.optInt("scrollLeft")})", stood.optInt("selected") == 0 && stood.optInt("scrollLeft") <= 4, "arrival-stands")
+            if (stood.optInt("selected") != 0) {
                 swipeStrip(forward = false)
                 SystemClock.sleep(900)
                 val home = awaitChrome(dotCurrentJs(0), 4_000)
-                finding("  the Continue card stood a page to the left ($was): swiped back ${verdict(home)}, now ${geometry()}")
+                finding("  the Continue card stood a page to the left ($stood): swiped back ${verdict(home)}, now ${geometry()}")
             }
             val before = tabCount()
             val reopened = touchDomExpecting("the Continue card's row", CONTINUE_ROW_JS, "the closed tab is back as the active tab", 10_000) {
@@ -786,6 +812,19 @@ class MagicStackDemo : DemoHarness("magic-stack-demo-state.json", "android-ntp-m
         private const val SWITCHES_JS = "(function(){var o={};var s=document.querySelectorAll('.zen-sheet [role=\"switch\"]');for(var i=0;i<s.length;i++){var l=s[i].querySelector('.zen-settings-label');o[l?l.textContent.trim():s[i].textContent.trim()]=s[i].getAttribute('aria-checked')==='true'}return JSON.stringify(o)})()"
         /** The gear sheet's Magic Stack action row (`CustomizeSheet`, `data-row="magic-stack"`; the `role="dialog"` is the `.zen-sheet` element's own). */
         private const val GEAR_ROW_JS = "document.querySelector('.zen-sheet [data-row=\"magic-stack\"]')"
+        /**
+         * The gear sheet's seat (§9.13): its body's first child by `data-row` (the Cards row), its
+         * second's classes (the hairline) and the first heading's text (Layout).
+         */
+        private const val GEAR_SEAT_JS = "(function(){var b=document.querySelector('.zen-sheet .zen-ntp-customize');if(!b)return JSON.stringify({});var c=b.children;var h=b.querySelector('.zen-v2-heading');" +
+            "return JSON.stringify({first:c[0]?(c[0].getAttribute('data-row')||c[0].className):'',second:c[1]?c[1].className:'',heading:h?h.textContent.trim():''})})()"
+        /**
+         * The arrival's rest (§9.29): the strip's snapping back on – the pager takes it off for the
+         * motion and restores it a frame after the rest – with the offset at the first card's snap
+         * position and the first dot current.
+         */
+        private const val ARRIVED_AT_FIRST_JS = "(function(){var s=document.querySelector('.zen-ntp .zen-mstack-strip');if(!s)return false;var d=document.querySelectorAll('.zen-ntp .zen-mstack-dot')[0];" +
+            "return s.style.getPropertyValue('scroll-snap-type')===''&&Math.abs(s.scrollLeft)<=4&&!!d&&d.hasAttribute('data-current')})()"
         /** The swipe's settling-in: a nudge past the 8 dp touch slop, then the hold that lets the strip latch the finger. */
         private const val SWIPE_NUDGE_DP = 12f
         private const val SWIPE_SETTLE_MS = 240L
