@@ -1,3 +1,4 @@
+import type { QrCodeRequest } from '@shared/qrScan'
 import type { SharePanelRequest, SharePanelTarget, Tab } from '@shared/types'
 import type { PreviewShareKind } from './previewSpec'
 
@@ -185,4 +186,56 @@ export function awaitedPanelAnswer(kind: string, started = true): PreviewShareOu
     default:
       return 'aborted'
   }
+}
+
+/**
+ * The QR code sheet's stand-in (SH-06): the code `Share.showQrCode` would hand over (`qr.code`)
+ * for [PREVIEW_QR_LINK] – ZXing's matrix at error correction M with the two-module quiet zone,
+ * 33 modules on a side, written down here because the preview host has no encoder. A share of
+ * another link shows this code with that link under it; a link past Chrome's 2331 characters
+ * gets the too-long error, as the host's `QrCodeLogic.codeFor` gives it.
+ */
+export const PREVIEW_QR_LINK = 'https://sample.example/how-the-tides-work'
+export const PREVIEW_QR_ROWS: readonly string[] = [
+  '000000000000000000000000000000000',
+  '000000000000000000000000000000000',
+  '001111111001111100011100111111100',
+  '001000001000111011110010100000100',
+  '001011101010010010000010101110100',
+  '001011101011110111110000101110100',
+  '001011101011101010111110101110100',
+  '001000001011000111101000100000100',
+  '001111111010101010101010111111100',
+  '000000000010010011101010000000000',
+  '001011111001011111010100111110000',
+  '001111110111100100111111111000100',
+  '001000001100101111010000101000000',
+  '001010000001001011100001001101000',
+  '001011111001100111010010010110000',
+  '000011000000011010100111111000100',
+  '000000111100000101110010011110000',
+  '001101000001000001000010010001000',
+  '000110101110001110011101000110000',
+  '001001100001110100111111111010100',
+  '001000111011110101000010111010000',
+  '001011110101110011100001101001000',
+  '001011001111101001110011111011100',
+  '000000000011111100100010001111100',
+  '001111111000000111100110101110000',
+  '001000001010111101101110001000000',
+  '001011101011000010010011111011100',
+  '001011101011011000011000000111100',
+  '001011101011000101101011111111000',
+  '001000001000000001101110010101000',
+  '001111111011011001010100001110000',
+  '000000000000000000000000000000000',
+  '000000000000000000000000000000000'
+]
+
+/** Chrome's `QrCodeShareMediator.MAX_URL_LENGTH`, as `QrCodeLogic.MAX_URL_LENGTH` has it. */
+const QR_MAX_URL_LENGTH = 2331
+
+export function previewQrCode(url: string, tabId: string | null): QrCodeRequest {
+  if (url.length > QR_MAX_URL_LENGTH) return { url, tabId, rows: [], error: 'too-long' }
+  return { url, tabId, rows: [...PREVIEW_QR_ROWS], error: null }
 }
