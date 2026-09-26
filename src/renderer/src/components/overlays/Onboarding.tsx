@@ -122,7 +122,11 @@ function DesktopOnboarding({
 
   const choiceStep = choice && step === 'search'
   const next = (): void => setStep(steps[Math.min(steps.length - 1, index + 1)])
+  // Skip never installs a pick (§9.39): a tile picked and then skipped is let go, so `finish()`
+  // sends the profile's own engine and Back shows the step with nothing picked. After Set the
+  // core holds the record and `engine` equals it, so `finish()` repeats what was recorded.
   const skipChoice = (): void => {
+    setEngine(null)
     run('searchChoice.skip', undefined)
     next()
   }
