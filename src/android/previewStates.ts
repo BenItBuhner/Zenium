@@ -44,6 +44,7 @@ import { installBannerShown, presentInstallBanner } from '@renderer/lib/installB
 import { isInternalPageUrl } from '@shared/internalPages'
 import { isEmptyTabUrl } from '@shared/url'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
+import { closeMagicStackCustomize } from '@renderer/components/newtab/magicStackCustomize'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/lib/groups'
@@ -304,6 +305,8 @@ function apply(browser: Browser, spec: string): void {
     dismissOverview()
     closeReaderPreferences({ keepFocus: true })
     closeCustomize()
+    // The Magic Stack's Customise sheet a card menu's step opened (NTP-16) goes with the page.
+    closeMagicStackCustomize()
     uiStore.set({
       findOpen: false,
       findTabId: null,
@@ -2847,6 +2850,17 @@ function takeStep(step: PreviewStep): void {
     case 'urlbar': {
       const tab = state ? activeTab(state) : null
       void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
+      return
+    }
+    case 'cards': {
+      // The new tab page's cards strip (NTP-16) at its nth card: the strip's scroll set to the
+      // card's snap position outright – the dots take no tap, and a still wants the snapped
+      // pose, not a swipe in flight. The pitch is read off the cards themselves.
+      const strip = document.querySelector<HTMLElement>('.zen-ntp .zen-mstack-strip')
+      const first = strip?.children[0]
+      const target = strip?.children[step.page - 1]
+      if (!strip || !first || !target) return
+      strip.scrollLeft = target.getBoundingClientRect().left - first.getBoundingClientRect().left
     }
   }
 }

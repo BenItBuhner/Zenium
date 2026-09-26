@@ -2649,7 +2649,21 @@ export interface NewTabDeviceState {
   shortcuts: NewTabShortcut[]
   /** Hosts removed from the most-visited tiles (lower-case, no `www.`). */
   hiddenHosts: string[]
+  /**
+   * The Magic Stack's modules the user hid on this device (NTP-16; the phone's page): a card's
+   * "Hide this" or the Customise sheet's switch, per device as Chrome's `home_modules_*` prefs
+   * are. Ids from `MAGIC_STACK_MODULE_IDS` (`shared/newTab.ts`).
+   */
+  hiddenModules: MagicStackModuleId[]
 }
+
+/**
+ * The Magic Stack's modules (NTP-16): the contextual cards the phone's new tab page pages
+ * through under its tiles. `continue` is the recently closed tab (Chrome's local tab
+ * resumption), `downloads` the last completed download, `bookmarks` the newest bookmark,
+ * `default-browser` the "Set Zenium as your default browser" promo (DEF-04).
+ */
+export type MagicStackModuleId = 'continue' | 'downloads' | 'bookmarks' | 'default-browser'
 
 /** A custom shortcut as the page shows it: with the favicon history knows for its site, if any. */
 export interface NewTabPageShortcut extends NewTabShortcut {
@@ -3231,8 +3245,12 @@ export interface DefaultBrowserStatus {
 /** `allowed`: the system hands web links to this app; `disallowed`: it is set not to; `unknown`: it could not say. */
 export type AppLinkState = 'allowed' | 'disallowed' | 'unknown'
 
-/** Where a request to become the default browser was made from. */
-export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings'
+/**
+ * Where a request to become the default browser was made from; `newtab` is the phone's new tab
+ * page card (NTP-16), its own name so the card's explicit tap is never read under the banner's
+ * memory rules.
+ */
+export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings' | 'newtab'
 
 // ---------------------------------------------------------------------------
 // Page controls (desktop site, dark theme for sites, page zoom)
@@ -4237,6 +4255,8 @@ export interface UIState {
   newTabShortcuts: NewTabShortcut[]
   /** Hosts removed from the new tab page's most-visited tiles on this device (the phone filters). */
   newTabHiddenHosts: string[]
+  /** The Magic Stack's modules hidden on this device (NTP-16; the phone's page and its Customise sheet). */
+  newTabHiddenModules: MagicStackModuleId[]
   /**
    * Settings › Privacy and Security › Lock private tabs when you leave Zenium, this device's
    * (`BrowserState.privateDevice`; the phone host's row). The lock itself is the host's, in
@@ -5456,6 +5476,8 @@ export interface Commands {
   'newtab.updateShortcut': { args: { id: string; title: string; url: string }; result: void }
   'newtab.removeShortcut': { args: { id: string }; result: void }
   'newtab.reorderShortcuts': { args: { ids: string[] }; result: void }
+  /** Hide or show one of the Magic Stack's modules on this device (NTP-16). */
+  'newtab.setModuleHidden': { args: { id: MagicStackModuleId; hidden: boolean }; result: void }
   /** Pick a background image from disk (`capabilities` gate it; resolves false when cancelled). */
   'newtab.pickBackgroundImage': { args: void; result: boolean }
   'newtab.clearBackgroundImage': { args: void; result: void }

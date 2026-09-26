@@ -107,7 +107,8 @@ describe('applyRemote: the settings record and the new tab page', () => {
     // Pins and removed hosts are the peer device's own: this device's sets do not change.
     expect(b.state.newTabDevice).toEqual({
       shortcuts: [{ id: expect.any(String), title: 'Mine', url: 'https://mine.example/' }],
-      hiddenHosts: []
+      hiddenHosts: [],
+      hiddenModules: []
     })
   })
 
