@@ -353,6 +353,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     : groupsOf(state, space.id).filter((f) => !isPrivateGroup(f, liveOf(f.id)))
   const count = essentialsAll.length + pinnedAll.length + regularAll.length
   const found = essentials.length + pinned.length + regular.length
+  // The Tabs pane with nothing on it (TAB-34): §9.17's sentence in place of the grid
+  // (`TabsEmpty`), as the Private pane at none is; not while a query stands, whose "No tabs
+  // found" and reach are the grid's own.
+  const tabsEmpty = pane === 'tabs' && count === 0 && !searching
   // Past the cards, on the Tabs pane: the recently closed tabs and the other devices' tabs the
   // query finds, as rows under the grid; nothing on the Private pane (a private tab is never
   // filed, and the other devices' pages are not private ones).
@@ -1278,7 +1282,36 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       const rect = closesForReal(tab) ? rectOf(flip.element(tab.id)) : null
       if (rect) exits.push({ key: tab.id, kind: 'tab', tab, rect })
     }
+    const plus = newTabExit(tabs)
+    if (plus) exits.push(plus)
     depart(exits)
+  }
+  /**
+   * A close that takes the Tabs pane's every card takes the New Tab card with it (TAB-34):
+   * §9.17's sentence stands in the grid's place once the tabs are gone (`TabsEmpty`), and the
+   * card leaves on that same commit as the cards do, in place – never a cut (§11.4); the
+   * `Departures` layer releases it once the browser shows every tab of `with` gone. The Private
+   * pane's last close hands the overview to the Tabs pane on the panes' cross-fade, its still
+   * leaving whole, so its card needs no exit of its own.
+   */
+  const newTabExit = (tabs: Tab[]): Departure | null => {
+    if (privatePane || !emptiesPane(tabs)) return null
+    const rect = rectOf(flip.element(NEW_TAB_CELL))
+    if (!rect) return null
+    return {
+      key: NEW_TAB_CELL,
+      kind: 'new-tab',
+      isPrivate: false,
+      rect,
+      with: tabs.map((t) => t.id)
+    }
+  }
+  /** Whether closing `tabs` leaves the pane with no card: every tab of it closes for real. */
+  const emptiesPane = (tabs: Tab[]): boolean => {
+    const closing = new Set(tabs.map((t) => t.id))
+    return [...essentialsAll, ...pinnedAll, ...regularAll].every(
+      (t) => closing.has(t.id) && closesForReal(t)
+    )
   }
   /**
    * Close `tabs` as the user asks for them, with the one undo. The tabs that make up a whole
@@ -1484,6 +1517,9 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
       const exit = groupExit(folder)
       if (exit) exits.push({ ...exit, flown: true })
     }
+    // The last card flung off leaves the New Tab card to fade where it stands (TAB-34).
+    const plus = newTabExit([tab])
+    if (plus) exits.push(plus)
     depart(exits)
     undoable([tab], () => run('tab.close', { tabId: tab.id }))
   }
@@ -1527,6 +1563,10 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
     shownCards.current = { query, ids, groups: groupKeys }
     const released: string[] = []
     for (const item of departStore.get().items) {
+      // The New Tab card leaving with a close (TAB-34) is the close's exit, not the query's: it
+      // stands while the card is drawn and the close is in flight, and `Departures` releases it
+      // when the tabs are gone – the commit that takes the grid off (the card's element with it).
+      if (item.kind === 'new-tab' && item.with) continue
       const dropped = item.kind === 'new-tab' || item.filtered === true
       const el = flip.element(item.key)
       if (dropped) {
@@ -2092,108 +2132,112 @@ export function TabOverview({ state, overview, area, edge, tablet = false }: Pro
                 onEnter={enterSpace}
                 className="zen-overview-space relative flex min-h-0 flex-1 flex-col"
               >
-                <div
-                  ref={gridRef}
-                  className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
-                  data-pane={pane}
-                  // The Private pane under the lock cover (INC-05): its grid is out of reach – no
-                  // focus, no touch, nothing for a screen reader – until the cover lifts; the
-                  // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
-                  inert={(privatePane && locked) || undefined}
-                  aria-hidden={(privatePane && locked) || undefined}
-                  // The card the page morphs into is scrolled into view: keep it clear of the fades.
-                  style={{
-                    touchAction: 'pan-y',
-                    overscrollBehavior: 'contain',
-                    scrollPaddingBlock: 16
-                  }}
-                  onScroll={(e) => {
-                    noteOverviewScroll(pane, e.currentTarget.scrollTop)
-                    measure()
-                    rewindow(true)
-                  }}
-                >
-                  {searching && found === 0 && (
-                    // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
-                    // lists beneath it when they have rows – then the sentence names what is
-                    // missing, since the rows under it are tabs too.
-                    <p className="zen-overview-search-empty" data-testid="overview-search-empty">
-                      {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
-                    </p>
-                  )}
-                  {essentials.length > 0 && (
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      {essentials.map((tab) => (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          className="zen-essential h-12 w-12"
-                          data-active={tab.id === active?.id}
-                          data-discarded={tab.discarded}
-                          aria-label={tabCardLabel(
-                            tabTitle(tab),
-                            placeOf(tab),
-                            ordered.length,
-                            tab.id === active?.id
-                          )}
-                          // An essential is no card: while tabs are being selected it takes no
-                          // pick and no tap (§9.30, laid out as it was).
-                          disabled={selecting}
-                          onClick={() => pick(tab)}
-                        >
-                          <Favicon tab={tab} size={22} />
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                {tabsEmpty ? (
+                  <TabsEmpty />
+                ) : (
                   <div
-                    // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
-                    // takes the shell out of the flow at its `offsetTop`, which is read against
-                    // the nearest positioned ancestor and ignores the scroller's scroll – against
-                    // this grid, which scrolls with the cells, the shell stands where the card
-                    // stood; against the pane outside the scroller it landed `scrollTop` px too
-                    // low, and the tracker held only the cells drawn under that lower box (#355's
-                    // finding, seed 49).
-                    className="relative grid gap-3"
-                    style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                    ref={gridRef}
+                    className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
+                    data-pane={pane}
+                    // The Private pane under the lock cover (INC-05): its grid is out of reach – no
+                    // focus, no touch, nothing for a screen reader – until the cover lifts; the
+                    // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
+                    inert={(privatePane && locked) || undefined}
+                    aria-hidden={(privatePane && locked) || undefined}
+                    // The card the page morphs into is scrolled into view: keep it clear of the fades.
+                    style={{
+                      touchAction: 'pan-y',
+                      overscrollBehavior: 'contain',
+                      scrollPaddingBlock: 16
+                    }}
+                    onScroll={(e) => {
+                      noteOverviewScroll(pane, e.currentTarget.scrollTop)
+                      measure()
+                      rewindow(true)
+                    }}
                   >
-                    {/*
+                    {searching && found === 0 && (
+                      // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
+                      // lists beneath it when they have rows – then the sentence names what is
+                      // missing, since the rows under it are tabs too.
+                      <p className="zen-overview-search-empty" data-testid="overview-search-empty">
+                        {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
+                      </p>
+                    )}
+                    {essentials.length > 0 && (
+                      <div className="mb-3 flex flex-wrap gap-2">
+                        {essentials.map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            className="zen-essential h-12 w-12"
+                            data-active={tab.id === active?.id}
+                            data-discarded={tab.discarded}
+                            aria-label={tabCardLabel(
+                              tabTitle(tab),
+                              placeOf(tab),
+                              ordered.length,
+                              tab.id === active?.id
+                            )}
+                            // An essential is no card: while tabs are being selected it takes no
+                            // pick and no tap (§9.30, laid out as it was).
+                            disabled={selecting}
+                            onClick={() => pick(tab)}
+                          >
+                            <Favicon tab={tab} size={22} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div
+                      // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
+                      // takes the shell out of the flow at its `offsetTop`, which is read against
+                      // the nearest positioned ancestor and ignores the scroller's scroll – against
+                      // this grid, which scrolls with the cells, the shell stands where the card
+                      // stood; against the pane outside the scroller it landed `scrollTop` px too
+                      // low, and the tracker held only the cells drawn under that lower box (#355's
+                      // finding, seed 49).
+                      className="relative grid gap-3"
+                      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                    >
+                      {/*
                     The cards under here are WINDOWED (`lib/overviewWindow.ts`, W6-0): a cell
                     is a card when this grid's window – the token's – holds it, a sized
                     placeholder until then. The group cards' members are the same cells, through
                     `card`.
                   */}
-                    <OverviewWindowContext.Provider value={token}>
-                      {pinned.map(card)}
-                      {groupCards.map(({ folder, tabs, gone }) => (
-                        <GroupCard
-                          key={folder.id}
-                          folder={folder}
-                          tabs={tabs}
-                          card={card}
-                          columns={columns}
-                          onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                          onCloseGroup={closeGroup}
-                          onDelete={deleteGroupOf}
-                          forming={tabs.length > 0 && forming(folder, tabs)}
-                          dissolving={tabs.length === 0}
-                          held={gone?.count}
-                          onDissolved={dissolvedGroup}
-                          onRelease={subscribeRelease}
-                        />
-                      ))}
-                      {loose.map(card)}
-                    </OverviewWindowContext.Provider>
-                    {!searching && <NewTabCard pane={pane} disabled={selecting} />}
+                      <OverviewWindowContext.Provider value={token}>
+                        {pinned.map(card)}
+                        {groupCards.map(({ folder, tabs, gone }) => (
+                          <GroupCard
+                            key={folder.id}
+                            folder={folder}
+                            tabs={tabs}
+                            card={card}
+                            columns={columns}
+                            onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                            onCloseGroup={closeGroup}
+                            onDelete={deleteGroupOf}
+                            forming={tabs.length > 0 && forming(folder, tabs)}
+                            dissolving={tabs.length === 0}
+                            held={gone?.count}
+                            onDissolved={dissolvedGroup}
+                            onRelease={subscribeRelease}
+                          />
+                        ))}
+                        {loose.map(card)}
+                      </OverviewWindowContext.Provider>
+                      {!searching && <NewTabCard pane={pane} disabled={selecting} />}
+                    </div>
+                    {searching && !privatePane && (
+                      <OverviewSearchReach
+                        reach={reach}
+                        onRestore={restoreClosed}
+                        onOpenTab={openRemote}
+                      />
+                    )}
                   </div>
-                  {searching && !privatePane && (
-                    <OverviewSearchReach
-                      reach={reach}
-                      onRestore={restoreClosed}
-                      onOpenTab={openRemote}
-                    />
-                  )}
-                </div>
+                )}
               </PaneSlot>
             )}
             {privatePane && count > 0 && <PrivateLockCover shown={locked} />}
@@ -2837,6 +2881,32 @@ function PrivateEmpty(): JSX.Element {
     >
       <PhoneEmptyNote action={{ label: 'New private tab', onSelect: () => newTabOn('private') }}>
         No private tabs
+      </PhoneEmptyNote>
+    </div>
+  )
+}
+
+/**
+ * The Tabs pane with nothing in it (TAB-34): the Private pane's chassis with this pane's words.
+ * §9.17's one sentence, "No open tabs", on the same note in the window ink, its first line 48
+ * under the segment (or under the space strip, which stands above the Space's slot as it does
+ * above the grid), with New tab as its one follow-up – the note's secondary button – in place of
+ * the grid and its lone New Tab card, as the Private pane at none has no card; no title, no
+ * glyph, no message card. Chrome's grid at none says the same. It stands inside the Space's slot,
+ * so a Space with no tabs slides in as a grid would (MOT-05) and the strip above it stays. It is
+ * the pane's state, not the search's: while a query stands the grid keeps the room with its "No
+ * tabs found" and the reach's rows (`.zen-overview-tabs-empty` in main.css: the two rules the
+ * Private pane's note has, and the 120 ms fade a state change comes up on, §11.4).
+ */
+function TabsEmpty(): JSX.Element {
+  return (
+    <div
+      className="zen-overview-tabs-empty relative min-h-0 flex-1"
+      data-pane="tabs"
+      data-testid="overview-tabs-empty"
+    >
+      <PhoneEmptyNote action={{ label: 'New tab', onSelect: () => newTabOn('tabs') }}>
+        No open tabs
       </PhoneEmptyNote>
     </div>
   )
