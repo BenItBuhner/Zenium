@@ -15,6 +15,7 @@ import type {
   FolderColor,
   KeyBinding,
   MediaState,
+  ReadingListEntry,
   Rect,
   SearchEngine,
   Settings,
@@ -37,6 +38,7 @@ import { SessionService } from './session'
 import { InactiveTabsService, sanitizeArchiveDays } from './inactiveTabs'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
+import { ReadingListService } from './readingList'
 import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
@@ -244,6 +246,8 @@ export class Browser {
   readonly bookmarks: BookmarkService
   /** The user's bookmark edits that can be taken back (bookmarks-31). */
   readonly bookmarkUndo: BookmarkUndoStack
+  /** Pages saved for later (W6-1, Chrome's reading list; `core/readingList.ts`). */
+  readonly readingList: ReadingListService
   readonly downloads: DownloadService
   private readonly downloadListeners = new Set<DownloadChangeListener>()
   readonly permissions: PermissionService
@@ -427,6 +431,7 @@ export class Browser {
     })
     this.bookmarks = new BookmarkService(this.state)
     this.bookmarkUndo = new BookmarkUndoStack(this.bookmarks)
+    this.readingList = new ReadingListService(this.state)
     this.downloads = new DownloadService(
       platform.io,
       platform.downloads,
@@ -1889,6 +1894,71 @@ export class Browser {
     this.bookmarks.touch(id)
     // Same path as a typed URL so space routing applies; `background` is the new tab behind.
     this.submitUrlbar(node.url, newTab || background, tabId, background, win)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reading list (W6-1)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Save the tab's page for later (the star's menu, the tab's menu, the app menu's row, the
+   * command bar's Add to Reading List): the page's title and favicon as the tab has them (no
+   * favicon from a private tab, as a bookmark takes none), with a toast as Bookmark This Page
+   * gives one. A page already in the list is marked unread again and comes to the top. Null
+   * for a tab without a page the list holds (`zen://`, a blank tab).
+   */
+  addTabToReadingList(
+    tabId: string,
+    win: ZenWindow = this.tabs.windowFor(tabId)
+  ): ReadingListEntry | null {
+    const tab = this.tabs.tab(tabId)
+    if (!tab || !this.readingList.canAdd(tab.url)) return null
+    const entry = this.readingList.add(
+      tab.url,
+      tab.customTitle ?? tab.title,
+      bookmarkFaviconOf(tab, this.tabs.isPrivate(tab))
+    )
+    if (entry) this.toast('Added to reading list', 'info', win)
+    return entry
+  }
+
+  /** The tab's page out of the list (the star menu's Remove from Reading List). */
+  removeTabFromReadingList(tabId: string): boolean {
+    const tab = this.tabs.tab(tabId)
+    return tab ? this.readingList.removeUrl(tab.url) : false
+  }
+
+  /**
+   * Open an entry's page and mark it read. A tab of this window that already shows the page is
+   * brought forward instead of a second copy (Firefox's `switchToTabHavingURI`); otherwise the
+   * page loads in `tabId` – the window's active tab when null, as a bookmark opens – or, with
+   * `newTab`, in a new tab, behind this one with `background` (§10.1's middle click). The entry
+   * is read the moment it is opened, whether the page shows now or loads behind: Chrome marks
+   * it on the open too.
+   */
+  openReadingEntry(
+    id: string,
+    tabId: string | null,
+    win: ZenWindow,
+    opts: { newTab?: boolean; background?: boolean } = {}
+  ): void {
+    const entry = this.readingList.get(id)
+    if (!entry) return
+    this.readingList.setRead(id, true)
+    const shown = Object.values(this.state.model.tabs).find(
+      (t) => t.url === entry.url && tabVisibleIn(t, win.id) && !this.tabs.isPrivate(t)
+    )
+    if (shown && !opts.background) {
+      this.tabs.activateTab(shown.id, win, { userSwitch: true })
+      return
+    }
+    this.submitUrlbar(
+      entry.url,
+      Boolean(opts.newTab || opts.background),
+      tabId,
+      Boolean(opts.background),
+      win
+    )
   }
 
   /**
@@ -3527,6 +3597,19 @@ export class Browser {
       'bookmark.paste': ({ folderId, index }) => this.bookmarks.paste(folderId, index),
       'bookmark.import': (_a, win) => this.importBookmarks(win),
       'bookmark.export': (_a, win) => this.exportBookmarks(win),
+
+      'readingList.add': ({ tabId }, win) => {
+        const id = tabId ?? tabs.activeTabFor(win)?.id
+        return id ? this.addTabToReadingList(id, win) : null
+      },
+      'readingList.removeTab': ({ tabId }) => this.removeTabFromReadingList(tabId),
+      'readingList.remove': ({ id }) => this.readingList.remove(id),
+      'readingList.setRead': ({ id, read }) => this.readingList.setRead(id, read),
+      'readingList.markAllRead': () => this.readingList.markAllRead(),
+      'readingList.open': ({ id, tabId, newTab, background }, win) =>
+        this.openReadingEntry(id, tabId, win, { newTab, background }),
+      'readingList.contextMenu': ({ id, x, y, keyboard }, win) =>
+        this.menus.showReadingListContextMenu(id, { x, y, keyboard }, win),
 
       'import.sources': () => this.imports.sources(),
       'import.run': ({ source, kinds }, win) => this.imports.run(source, kinds, win),

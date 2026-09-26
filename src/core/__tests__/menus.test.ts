@@ -452,6 +452,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > -',
   'Bookmarks > Show Bookmarks',
   'Bookmarks > Show Bookmarks Bar',
+  'Bookmarks > Reading List',
   'Bookmarks > -',
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
@@ -2818,6 +2819,7 @@ describe('the page context menu', () => {
       'Save Link As…',
       'Copy Link Address',
       'Copy Link Text',
+      'Add Link to Reading List',
       '-',
       'Boosts',
       'Inspect Element'
@@ -4990,7 +4992,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
 
   describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
-    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows. */
+    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows – and Chrome's reading list row (W6-1). */
     const REGULAR_TAB_MENU = [
       'New Tab Below',
       '-',
@@ -5007,6 +5009,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       '-',
       'Bookmark Tab',
       'Bookmark All Tabs…',
+      'Add Tab to Reading List',
       'Move Tab',
       'Split with Current Tab',
       'Open in New Container Tab',
@@ -5018,12 +5021,13 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Reopen Closed Tab'
     ]
 
-    it('a regular row: twenty rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
+    it('a regular row: twenty-one rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
       const h = pageHarness()
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const shown = h.shown()
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
-      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(20)
+      // Firefox's twenty and Chrome's Add tab to reading list (W6-1) under the bookmark rows.
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(21)
       expect(separators(shown)).toBe(4)
       // The state group in Firefox's order – Reload, Mute, Unload, Freeze, Duplicate, Pin: the
       // unload and the freeze are the tab's state, as its mute is, not its place.
@@ -5040,6 +5044,7 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
         'Bookmark Tab',
         'Bookmark All Tabs…',
+        'Add Tab to Reading List',
         'Move Tab'
       ])
       expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([

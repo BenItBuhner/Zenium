@@ -84,7 +84,7 @@ describe('ReadingListService: add, dedupe, read state', () => {
 
   it('keeps the favicon it had when a re-add brings none, and falls back to the host for an empty title', () => {
     const { service } = setup()
-    const a = service.add('https://news.example/story', 'Story', 'data:,icon')!
+    service.add('https://news.example/story', 'Story', 'data:,icon')
     const again = service.add('https://news.example/story', '   ')!
     expect(again.favicon).toBe('data:,icon')
     expect(again.title).toBe('news.example')

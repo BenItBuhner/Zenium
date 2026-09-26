@@ -4289,6 +4289,8 @@ export interface CommandDescriptor {
     | 'space.new'
     | 'history.open'
     | 'bookmarks.open'
+    | 'readingList.add'
+    | 'readingList.open'
     | 'downloads.open'
     | 'tab.freezeOthers'
     | 'tab.wakeAll'
@@ -4452,6 +4454,7 @@ export interface MenuDescriptor {
     | 'bookmark'
     | 'history'
     | 'download'
+    | 'readingList'
     | 'urlbar'
     | 'translate'
   /** What the phone sheet calls the menu (a bookmark's name, "3 selected"); the source's generic name when absent. */
@@ -5434,6 +5437,34 @@ export interface Commands {
   'bookmark.import': { args: void; result: BookmarkImportResult | null }
   /** Netscape bookmark HTML export through the host's save dialog. */
   'bookmark.export': { args: void; result: boolean }
+
+  // --- reading list (W6-1; `core/readingList.ts`) ---------------------------------------------
+  /**
+   * Save the tab's page for later (the star's menu, the tab's menu, the app menu's row); a page
+   * already listed is marked unread and brought to the top. Null when the tab has no page the
+   * list holds (`zen://`, blank).
+   */
+  'readingList.add': { args: { tabId: string | null }; result: ReadingListEntry | null }
+  /** The tab's page out of the list (the star menu's Remove row); false when it was not in it. */
+  'readingList.removeTab': { args: { tabId: string }; result: boolean }
+  'readingList.remove': { args: { id: string }; result: boolean }
+  'readingList.setRead': { args: { id: string; read: boolean }; result: boolean }
+  /** Every unread entry read; how many changed. */
+  'readingList.markAllRead': { args: void; result: number }
+  /**
+   * Open an entry's page and mark it read: a tab of this window already showing the page is
+   * brought forward; otherwise the page loads in `tabId` (the window's active tab when null) or,
+   * with `newTab`, in a new tab – behind this one with `background` (§10.1's middle click).
+   */
+  'readingList.open': {
+    args: { id: string; tabId: string | null; newTab?: boolean; background?: boolean }
+    result: void
+  }
+  /** The row's menu (Mark as read / unread, Open in New Tab, Copy Link, Remove) at a point. */
+  'readingList.contextMenu': {
+    args: { id: string; x?: number; y?: number; keyboard?: boolean }
+    result: void
+  }
 
   /** The browsers and files an import can come from, freshly probed (profiles, locks). */
   'import.sources': { args: void; result: ImportSource[] }

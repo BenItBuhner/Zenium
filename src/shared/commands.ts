@@ -214,6 +214,19 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     keywords: ['bookmarks', 'bar', 'toolbar', 'favorites'],
     action: 'bookmark.toggleBar'
   },
+  // Chrome's reading list (bookmarks-33): "read later" and "save for later" name both rows.
+  {
+    id: 'reading-list-add',
+    label: 'Add to Reading List',
+    keywords: ['reading list', 'read later', 'save for later', 'unread'],
+    action: 'readingList.add'
+  },
+  {
+    id: 'reading-list',
+    label: 'Show Reading List',
+    keywords: ['reading list', 'read later', 'saved pages', 'unread'],
+    action: 'readingList.open'
+  },
   { id: 'history', label: 'Show History', keywords: ['history', 'recent'], action: 'history.open' },
   // Chrome's "Delete browsing data" action (its Ctrl+Shift+Delete dialog; omnibox-39): "clear
   // browsing data", "delete browsing data" and "clear history" all name this row.
