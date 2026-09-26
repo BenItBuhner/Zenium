@@ -648,16 +648,40 @@ describe('a Space switch in the overview', () => {
     expect(slide.finishes).toBe(1)
   })
 
-  it('a second Space picked mid-slide finishes the first slide and starts its own', () => {
+  it('a second Space picked mid-slide finishes the first slide, starts its own, and its still carries the entrance opacity', () => {
     render(stateOf(WORK))
     render(stateOf(HOME))
     const [first] = slides()
+    // Home's grid stands mid-entrance, faint: the slide's opacity as the compositor computes it
+    // – an animation's, which no copy of the DOM carries (an inline style would be cloned with
+    // the node; the slot's says nothing) – so the still written from it would jump to solid
+    // before its fade unless `takeStill` writes the computed opacity onto the copy.
+    const faint = slot()
+    expect(faint.style.opacity).toBe('')
+    const view = document.defaultView!
+    const computed = view.getComputedStyle.bind(view)
+    vi.spyOn(view, 'getComputedStyle').mockImplementation((el, pseudo) => {
+      const style = computed(el, pseudo)
+      return el === faint
+        ? new Proxy(style, { get: (t, p) => (p === 'opacity' ? '0.4' : Reflect.get(t, p, t)) })
+        : style
+    })
     render(stateOf(WORK))
     expect(first.finishes).toBe(1)
     expect(slides()).toHaveLength(2)
     expect(slides()[1].frames[0]).toMatchObject({
       transform: `translate3d(-${SPACE_SLIDE_PX}px, 0, 0)`
     })
+    // Two stills up: Work's grid from the first switch (taken solid – no opacity written) and
+    // Home's from the second, as faint as it stood.
+    const [workStill, homeStill] = stills()
+    expect(stills()).toHaveLength(2)
+    expect((workStill.firstElementChild as HTMLElement).style.opacity).toBe('')
+    expect((homeStill.firstElementChild as HTMLElement).style.opacity).toBe('0.4')
+    // The still's own fade runs 1 → 0 over the wrapper as ever: the copy's opacity multiplies
+    // it, so the fade starts from 0.4 and not from a jump to solid.
+    expect(stillFades()).toHaveLength(2)
+    expect(stillFades()[1].frames).toEqual([{ opacity: 1 }, { opacity: 0 }])
   })
 })
 
