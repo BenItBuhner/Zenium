@@ -27,7 +27,13 @@ import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { readerCrossingHolds, readerCrossingStore } from '@renderer/lib/readerTransition'
 import { activeTab, isEmptySplitPane, visibleTabIds } from '@renderer/lib/selectors'
-import { contentAreaStore, coverBandStore, pageHidden, type UiState } from '@renderer/lib/ui'
+import {
+  contentAreaStore,
+  coverBandStore,
+  firstRunCovers,
+  pageHidden,
+  type UiState
+} from '@renderer/lib/ui'
 
 export interface LayoutInfo {
   /** Viewport rect in window coordinates (null before first measure). */
@@ -165,7 +171,9 @@ export function useLayoutReporter(
   // phone's, where the chrome lies under the pages): from the crossing's start until it asks
   // the destination's view back (`landing`), the page stays off the screen.
   const crossingHolds = readerCrossingStore.use((s) => readerCrossingHolds(s, activeTab(state)?.id))
-  const contentHidden = pageHidden(ui) || lockCover || crossingHolds
+  // Or under the first-run tour, opaque over the whole window (`firstRunCovers`): the views
+  // composite above the chrome, and the New Tab's view left showing stood over the tour's panel.
+  const contentHidden = pageHidden(ui) || lockCover || crossingHolds || firstRunCovers(state)
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
   // The live page is swapped for its cover, so the hide follows the cover's paint on every host
