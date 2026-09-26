@@ -72,7 +72,7 @@ export function MediaHubLayer(): JSX.Element | null {
  * controls send (`media.action`, `media.toggle`). The popover leaves with the last player;
  * Escape returns the keyboard to the button, a press anywhere else, a resize and another
  * popover opening put it away (§9.22). Where the toolbar button has folded into the app menu's
- * "Now Playing…" row (§9.29) the row's pick opens the same popover from the "⋯" menu button,
+ * "Media Controls…" row (§9.29) the row's pick opens the same popover from the "⋯" menu button,
  * which is then its anchor for placement, light dismiss and the keyboard's return alike.
  */
 function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
@@ -103,7 +103,7 @@ function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
   // – a state push's or the row's width's – moves the hold with it in the commit that moves
   // the button: no frame with both anchors expanded, none with neither; the shared count lets
   // the "⋯" carry the app menu's own hold beside this one – the hub opens from that menu's
-  // "Now Playing…" row as the menu leaves – and gives the anchor back its rest state only when
+  // "Media Controls…" row as the menu leaves – and gives the anchor back its rest state only when
   // the last of the two goes.
   useLayoutEffect(() => {
     const anchor = mediaHubAnchor()

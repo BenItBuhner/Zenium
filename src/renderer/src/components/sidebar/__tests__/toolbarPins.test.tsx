@@ -21,7 +21,7 @@ import { NavRow } from '../SidebarTop'
  * The desktop toolbar under Settings › Look and Feel › Customise toolbar (settings-36): a
  * control unpinned in `Settings.toolbarPins` is not drawn – Forward leaves the row, a chip
  * leaves the pill, the media hub's button folds as the width tier folds it (the ⋯ dot and the
- * menu's "Now Playing…" row stand in) – and the pins speak for the desktop layout alone. The
+ * menu's "Media Controls…" row stand in) – and the pins speak for the desktop layout alone. The
  * row publishes what the width tier hid of the pinned controls (`toolbarTiering`) for the
  * dialog's "Hidden at this width."
  */

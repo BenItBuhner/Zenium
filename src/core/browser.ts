@@ -2681,6 +2681,7 @@ export class Browser {
     this.inactiveTabs.stop()
     this.background.stop()
     this.translate.stop()
+    this.mediaSession.dispose()
     this.passwords.shutdown()
     // The pages on screen have scrolled since their stacks were last read.
     this.tabs.rememberAllNavigation()
