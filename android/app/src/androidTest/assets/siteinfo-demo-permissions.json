@@ -2,6 +2,7 @@
   "version": 1,
   "decisions": {
     "https://www.google.com|geolocation": "allow",
-    "https://www.google.com|notifications": "deny"
+    "https://www.google.com|notifications": "deny",
+    "https://www.google.com|background-video": "deny"
   }
 }
