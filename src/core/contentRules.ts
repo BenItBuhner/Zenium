@@ -12,6 +12,7 @@
  */
 import type { Browser } from './browser'
 import type { PermissionRequestDetails } from './permissions'
+import type { ContentGuardId } from '../shared/contentGuards'
 import {
   CONTENT_RULE_IDS,
   EMPTY_CONTENT_RULES,
@@ -79,7 +80,7 @@ export class ContentRulesService {
   }
 
   /** The guarded rows a document of the page at `url` is refused (the page-world guards). */
-  blockedGuards(url: string, details?: PermissionRequestDetails): ContentRuleId[] {
+  blockedGuards(url: string, details?: PermissionRequestDetails): ContentGuardId[] {
     return blockedGuardsFor(this.rulesFor(url, details), url)
   }
 

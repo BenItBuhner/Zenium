@@ -1,0 +1,11 @@
+{
+  "id": "search-choice",
+  "class": "SearchChoiceDemo",
+  "shard": "phone-f",
+  "mirrors": "android-search-choice-demo.yml",
+  "dir": "search-choice-demo",
+  "script": ".github/scripts/android-search-choice-demo.sh",
+  "out": "artifacts/android-search-choice-demo",
+  "estimate": 5,
+  "note": "The EEA search-engine choice screen on the phone (OMN-26) from a cleared profile with the device placed in Germany through the tester's override (debug.zenium.region DE): the first run's search step as the choice screen left with Skip for now, the screen returning at the next launch, back consumed, a real touch picking a tile that is not the shipped default and Set as default writing the default and the record (live and in zen/state.json), no screen at the launch after, searchChoice.askAgain raising it again. Three launches, two of them waiting the harness's 30 s for a pill the screen hides. The wrapper puts the override back to no region after the driver, whatever happened to it."
+}

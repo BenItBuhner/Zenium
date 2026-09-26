@@ -13,6 +13,7 @@ import {
   type LoadURLOptions,
   type Session,
   type WebContents,
+  type WebFrameMain,
   type WebPreferences
 } from 'electron'
 import { join } from 'node:path'
@@ -97,6 +98,7 @@ import type {
   InputModifier,
   InsertedCssOrigin,
   KeyEventInput,
+  NavigationCommitDetails,
   NavigationIntent,
   PageFlags,
   PageHostMessage,
@@ -410,6 +412,13 @@ export class ElectronTabView implements TabView {
    */
   private navigatingUrl: string | null = null
   /**
+   * The tab's history as the main-frame navigation under way found it, and whether the page's
+   * own document started the navigation (`did-start-navigation`'s `initiator` a frame of this
+   * view): read at the commit to tell the core whether the document replaced the one before it
+   * (`NavigationCommitDetails`, history-23). Null between navigations.
+   */
+  private commitBaseline: { length: number; index: number; byPage: boolean } | null = null
+  /**
    * When the task manager's End process told this view its renderer is about to be crashed on
    * the user's word (`ElectronTaskHost.end` → `noteEndedByUser`): the `render-process-gone` that
    * follows is reported as `ended`, not as the engine's `crashed`. A mark older than
@@ -450,6 +459,16 @@ export class ElectronTabView implements TabView {
    * Never set while `visible` is.
    */
   private parked: number | null = null
+  /**
+   * The view's window is minimised or hidden (W6-F6): the engine's view is hidden to Chromium
+   * whatever the core's layout says, so the page reads `document.visibilityState` `hidden` as a
+   * Chrome tab does. A view PARKED under a chrome cover (W6-F5) is hidden for real too – parking
+   * keeps a page visible under Zenium's OWN cover, not under a minimised or hidden window. The
+   * core's flag (`visible`, `isVisible`, the `hid`/`shown` accounting) is untouched throughout;
+   * `applyWindowVisible(true)` puts the engine's view back where the core's layout left it when
+   * the window returns (shown, re-parked under a cover still up, or hidden as the flag says).
+   */
+  private windowConcealed = false
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -578,7 +597,7 @@ export class ElectronTabView implements TabView {
     wc.on('did-stop-loading', () => ev.onStopLoading())
     wc.on('did-navigate', (_e, url) => {
       this.navigatingUrl = null
-      ev.onNavigated(url, false)
+      ev.onNavigated(url, false, this.commitDetails(wc))
       this.fontsAfterNavigation()
     })
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
@@ -589,6 +608,7 @@ export class ElectronTabView implements TabView {
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       if (!isMainFrame || wc.isDestroyed()) return
       this.navigatingUrl = null
+      this.commitBaseline = null
       const refused = this.refusedCertificate
       this.refusedCertificate = null
       // The certificate the failure is about: refused for this site in this navigation.
@@ -677,6 +697,11 @@ export class ElectronTabView implements TabView {
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
       if (details.isSameDocument) return
       this.navigatingUrl = details.url
+      this.commitBaseline = {
+        length: wc.navigationHistory.length(),
+        index: wc.navigationHistory.getActiveIndex(),
+        byPage: this.startedByThisPage(wc, details.initiator ?? null)
+      }
       this.leaveApproved = false
       this.hostNavigation = null
       this.pageIntent = null
@@ -745,6 +770,35 @@ export class ElectronTabView implements TabView {
           })
       }
     })
+  }
+
+  /**
+   * Whether `initiator` (`did-start-navigation`'s) is a frame of this view's own page: the
+   * page navigated itself. Null is the browser's navigation (a typed address, back / forward, a
+   * reload); a frame of another view is an opener's (`window.open`'s first load).
+   */
+  private startedByThisPage(wc: WebContents, initiator: WebFrameMain | null): boolean {
+    if (!initiator || wc.isDestroyed()) return false
+    return wc.mainFrame.framesInSubtree.some(
+      (f) => f.processId === initiator.processId && f.routingId === initiator.routingId
+    )
+  }
+
+  /**
+   * How the document that just committed stands to the one before it, measured against the
+   * baseline `did-start-navigation` took: the entry list neither longer nor moved along is
+   * Chromium's `did_replace_entry` (a new document adds an entry after the current one; back /
+   * forward move along it). Nothing when no start was seen.
+   */
+  private commitDetails(wc: WebContents): NavigationCommitDetails | undefined {
+    const base = this.commitBaseline
+    this.commitBaseline = null
+    if (!base || wc.isDestroyed()) return undefined
+    const history = wc.navigationHistory
+    return {
+      replacedEntry: history.length() === base.length && history.getActiveIndex() === base.index,
+      initiatedByPage: base.byPage
+    }
   }
 
   /** A message from the page script (routed here by the platform's IPC handler). */
@@ -1283,6 +1337,12 @@ export class ElectronTabView implements TabView {
     if (!win) return
     this.owner.watchKeyboard(win)
     this.owner.watchFocus(win)
+    // Adopt the new window's own concealed state (W6-F6): a view taken into a window that is
+    // itself minimised or hidden must not paint. The window's later frame events keep it current.
+    this.windowConcealed =
+      typeof win.isMinimized === 'function' && typeof win.isVisible === 'function'
+        ? win.isMinimized() || !win.isVisible()
+        : false
     if (this.visible) this.enterWindow(win)
     this.refreshHangWatch()
   }
@@ -1295,6 +1355,8 @@ export class ElectronTabView implements TabView {
     if (win && this.inWindow) win.contentView.removeChildView(this.view)
     this.inWindow = false
     this.host = null
+    // Off a window, the view is concealed by none; the window it next joins sets this afresh.
+    this.windowConcealed = false
     this.refreshHangWatch()
   }
 
@@ -1343,6 +1405,7 @@ export class ElectronTabView implements TabView {
    */
   setVisible(visible: boolean): void {
     const flipped = this.visible !== visible
+    const wasShown = this.visible
     this.visible = visible
     if (visible) {
       // The first showing puts the view into the window, at the box the layout gave it just
@@ -1351,9 +1414,13 @@ export class ElectronTabView implements TabView {
       if (win) this.enterWindow(win)
       const parked = this.parked !== null
       if (parked) this.unpark()
-      this.view.setVisible(true)
-      if (parked) this.pointerBack()
-    } else if (this.coverable()) {
+      // A window minimised or hidden keeps its pages hidden to Chromium whatever the layout says
+      // (W6-F6): the engine's view stays down until the window returns (`applyWindowVisible`).
+      if (!this.windowConcealed) {
+        this.view.setVisible(true)
+        if (parked) this.pointerBack()
+      }
+    } else if (this.coverable(wasShown)) {
       this.park()
     } else {
       if (this.parked !== null) this.unpark()
@@ -1366,18 +1433,59 @@ export class ElectronTabView implements TabView {
   }
 
   /**
+   * The view's window was minimised or hidden (`false`) or restored / shown (`true`), told by
+   * the window host on the frame's own events (W6-F6). A concealed window's pages read `hidden`
+   * as a Chrome tab's do: the engine's view goes down for real, a view parked under a chrome
+   * cover (W6-F5) included – parking keeps a page visible under Zenium's own popup, not under a
+   * minimised or hidden window. The window back, the engine's view returns to where the core's
+   * layout left it: parked at its corner under a cover still up, shown, or hidden as the core's
+   * flag says. The core's flag (`visible`, `isVisible`, the `hid`/`shown` accounting the governor
+   * and snapshot logic read) is not touched, and no visibility flip is announced – the core's
+   * view of which page is in front does not change when its window is put away and brought back.
+   *
+   * Occlusion by another application's window is Chromium's own to track (Windows and macOS
+   * natively; none on X11, where Chrome itself does not); nothing is synthesised here for it, and
+   * a window merely blurred while on screen is not concealed.
+   */
+  applyWindowVisible(visible: boolean): void {
+    const concealed = !visible
+    if (this.windowConcealed === concealed) return
+    this.windowConcealed = concealed
+    if (concealed) {
+      // Down to Chromium, parked or not: a parked view's box goes back to its own so nothing of
+      // it is left a pixel on screen behind the hidden window.
+      if (this.parked !== null && this.bounds) this.view.setBounds(this.bounds)
+      this.view.setVisible(false)
+    } else if (this.parked !== null && this.bounds) {
+      // The window is back with a chrome cover still up: the view is parked again, a pixel in
+      // its corner, so Chromium keeps it visible and its prefetches run (W6-F5).
+      this.view.setBounds(this.parkedBox(this.bounds, this.parked))
+      this.view.setVisible(true)
+    } else {
+      this.view.setVisible(this.visible)
+    }
+    this.refreshHangWatch()
+  }
+
+  /**
    * Whether a hide asked for now is a chrome cover's: the window's chrome covers the content and
    * the engine's view is on screen in it (a page never shown, or shown in no window, has nothing
-   * to keep visible).
+   * to keep visible). In a window minimised or hidden the engine's view is down whatever the
+   * layout says (W6-F6), so "on screen" is what the core's flag held before this call (`wasShown`)
+   * or the parking already on: a layout re-applied under the cover while the window is away keeps
+   * the parking for the window's return rather than dropping it for a plain hide.
    */
-  private coverable(): boolean {
+  private coverable(wasShown: boolean): boolean {
     const host = this.host
+    const onScreen = this.windowConcealed
+      ? wasShown || this.parked !== null
+      : this.view.getVisible()
     return (
       host !== null &&
       this.win !== null &&
       this.inWindow &&
       this.bounds !== null &&
-      this.view.getVisible() &&
+      onScreen &&
       host.zen.contentHidden
     )
   }
@@ -1485,7 +1593,10 @@ export class ElectronTabView implements TabView {
   }
 
   isVisible(): boolean {
-    return this.visible && this.view.getVisible()
+    // The core's flag, as W6-F5 left it: a window minimised or hidden takes the engine's view
+    // down (`applyWindowVisible`) without changing which page the core has in front, so the
+    // engine's own visibility is not consulted while the window is concealed (W6-F6).
+    return this.visible && (this.windowConcealed || this.view.getVisible())
   }
 
   bringToFront(): void {

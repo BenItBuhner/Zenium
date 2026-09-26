@@ -215,6 +215,54 @@ class V2TokensPinTest {
     }
 
     /**
+     * The detail line ([NativePromptSheet.Content.detail], W6-S11): the address the browser
+     * window's Open in <App>? sheet shows under its description – `ExternalProtocolSheet.tsx`'s
+     * phone address line, `truncate px-4 pb-2 text-[13px] leading-[var(--v2-line-small)]
+     * text-[var(--v2-text-deemphasized)]` with the full URL as its `title` – read from the TSX
+     * and held to the spec: the block's 16 at its sides (`px-4`), its own 8 beneath (`pb-2`), the
+     * small type on the small line at 69 %, one line truncated from the end, the full URL its
+     * accessible name. The chassis draws it from those numbers – the caption's type
+     * ([PromptSheetSpec.SMALL_SP] on [PromptSheetSpec.SMALL_LINE_SP] in the deemphasised ink) on
+     * one line, [PromptSheetSpec.BODY_GAP_DP] under the description, [PromptSheetSpec.DETAIL_BOTTOM_DP]
+     * over the footer – and the numbers are the tokens' (theSpecNumbersAreTheTokens).
+     */
+    @Test
+    fun theDetailLineIsTheBrowserSheetsAddressLine() {
+        val tsx = File(root, "src/renderer/src/components/protocol/ExternalProtocolSheet.tsx").readText()
+        val line = Regex("""\? '([^']*)'\s*\n\s*: '[^']*'\s*\n\s*\}\s*\n\s*title=\{request\.url\}""").find(tsx)?.groupValues?.get(1)
+            ?: error("ExternalProtocolSheet.tsx no longer draws the phone address line with request.url as its title: read the line from where it moved to")
+        val classes = line.split(' ')
+        // Tailwind's spacing scale: n is 4n px.
+        fun spacing(prefix: String): Int = classes.firstOrNull { it.startsWith(prefix) }?.removePrefix(prefix)?.toInt()?.times(4) ?: error("no $prefix in $line")
+        assertEquals("px-4: the block's gutter at the line's sides", PromptSheetSpec.BLOCK_PADDING_DP, spacing("px-"))
+        assertEquals("pb-2: the line's own 8 over the footer's 16", PromptSheetSpec.DETAIL_BOTTOM_DP, spacing("pb-"))
+        assertTrue("one line, truncated from the end", "truncate" in classes)
+        assertEquals("the small type", PromptSheetSpec.SMALL_SP, Regex("""text-\[(\d+)px\]""").find(line)!!.groupValues[1].toInt())
+        assertEquals("on the small line", "leading-[var(--v2-line-small)]", classes.first { it.startsWith("leading-") })
+        assertEquals(css.px("--v2-line-small"), PromptSheetSpec.SMALL_LINE_SP)
+        assertEquals("in the deemphasised ink", "text-[var(--v2-text-deemphasized)]", classes.first { it.startsWith("text-[var") })
+        assertEquals(PromptSheetSpec.DEEMPHASIZED_ALPHA, css.alpha("--v2-text-deemphasized"), 0f)
+        // The chassis: the caption's type on one line, end-truncated, the full text – or the name given – its accessible name.
+        val chassis = File(root, "android/app/src/main/kotlin/app/zen/chromium/NativePromptSheet.kt").readText()
+        val caption = Regex("""private fun caption\(text: CharSequence\): TextView = TextView\(context\)\.apply \{([\s\S]*?)\n    \}""").find(chassis)?.groupValues?.get(1)
+            ?: error("NativePromptSheet.kt has no caption builder")
+        for (read in listOf("setTextColor(ink.textDeemphasized)", "PromptSheetSpec.SMALL_SP.toFloat()", "sp(PromptSheetSpec.SMALL_LINE_SP)"))
+            assertTrue("the caption's type: $read", caption.contains(read))
+        val detail = Regex("""private fun detail\(text: CharSequence\): TextView = caption\(text\)\.apply \{([\s\S]*?)\n    \}""").find(chassis)?.groupValues?.get(1)
+            ?: error("NativePromptSheet.kt has no detail builder on the caption's type")
+        assertTrue("one line", detail.contains("maxLines = 1"))
+        assertTrue("truncated from the end", detail.contains("ellipsize = TextUtils.TruncateAt.END"))
+        assertTrue("the full URL – or the name given – its accessible name", detail.contains("contentDescription = content.detailName ?: text"))
+        // In the pinned block: 16 under the description, its 8 beneath where no body follows.
+        assertTrue(
+            "the detail line stands the body gap under the description",
+            Regex("""if \(detail != null\) block\.addView\(detail\(detail\), [^\n]*\n\s*topMargin = dp\(PromptSheetSpec\.BODY_GAP_DP\)""").containsMatchIn(chassis)
+        )
+        assertTrue("the block keeps the line's 8 over the footer", chassis.contains("if (toBody) pad else if (detail != null) dp(PromptSheetSpec.DETAIL_BOTTOM_DP) else 0"))
+        assertEquals("the web line's 8 over the footer's 16 (`.zen-sheet-footer`'s top)", 8, PromptSheetSpec.DETAIL_BOTTOM_DP)
+    }
+
+    /**
      * The native sheets read their inks from the token block and nowhere else: the prompt sheet
      * ([NativePromptSheet]) and the extension surfaces' sheet (`ext/ExtensionSheet.kt`, the WebView
      * host of a popup, an options page, a side panel, the auth flow) build a [V2Ink] and take

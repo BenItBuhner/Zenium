@@ -106,11 +106,12 @@ jobs:
         # software compositor it ends up as: the same rendering path, a 47 MB GPU process instead
         # of 261 MB, and the first paint 31 ms after the DOM instead of 3.5 s on a disk throttled
         # to 6 MB/s locally. No effect on what the smokes check (chrome, tabs, restore, quit,
-        # cookies); the sign-in smoke below runs without it, as before.
+        # cookies); the sign-in smoke below runs without it, as before. menu-bar (W7-4): Zenium
+        # draws no menu bar off macOS – its one step here reads that no application menu is set.
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split,menu-bar
           --extra-args="--no-sandbox --disable-gpu"
       - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
         # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches
@@ -158,6 +159,27 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label recaptcha
           --out "$SMOKE_OUT" --scenarios recaptcha --extra-args="--no-sandbox --disable-gpu"
+      - name: A page's visibilityState follows its window under Xvfb (W6-F6)
+        # The visibility scenario (W6-F6) on its own run of the harness: a profile past onboarding
+        # with the fixture's first page in a tab, its visibilitychange events counted in the page.
+        # The main window is minimised, restored, hidden and shown from the main process and the
+        # page has to read `hidden` / `visible` with exactly one event each way, its view hidden
+        # to Chromium meanwhile; a window of the harness's own over a quarter of the main window
+        # takes the focus and the page stays `visible` with no event (a blur is not hidden); one
+        # over the whole of it is recorded on this leg (no occlusion tracking on X11 beyond the X
+        # server's word – Xvfb reports the window fully obscured; Windows and macOS judge it in
+        # desktop-smoke.yml); the Web capture overlay parks the page's view (W6-F5) and the window
+        # hidden takes it down for real, shown parks it again. Under Xvfb there is no window
+        # manager, so minimize() does nothing and the minimize / restore steps record `skipped`
+        # with that reason – hide / show stand in. The same moves on a throwaway window made in
+        # the app's process record what Electron forwards natively (the `native-forwarding`
+        # step, the slice's "before" column). Its own log, result.json and screenshots under
+        # smoke-out/visibility; runs after a red step above as well.
+        if: ${{ !cancelled() }}
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label visibility
+          --out "$SMOKE_OUT" --scenarios visibility --extra-args="--no-sandbox --disable-gpu"
       - name: Make the unpacked build's sandbox helper setuid root (for the sandboxed leg)
         # Electron evaluates service-worker preload scripts in its sandboxed renderer client
         # only; Zenium's chrome.* layer for MV3 background workers (src/preload/extension.ts,

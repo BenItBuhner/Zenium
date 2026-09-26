@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,default-browser]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,features,recaptcha,downloads,notifications,restart-registration,private-taskbar,quit-hold,visibility,default-browser,menu-bar]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -199,6 +199,23 @@
 //                mid-hold as <scenario>-quit-hold.png; the harness holds on Linux too when
 //                --extra-args carries the app's --test-quit-hold, the stand-in's chord being
 //                Ctrl+Shift+Q)
+//   visibility   a tab page's document.visibilityState follows its window as a Chrome tab's does
+//                (W6-F6; visibility-scenario.mjs): a profile past onboarding with the fixture's
+//                first page in a tab, its visibilitychange events counted in the page; the main
+//                window minimised from the main process reads `hidden` in the page and its view
+//                hidden to Chromium, restored `visible` again, one event each way (under Xvfb
+//                minimize() is a no-op – no window manager – and the pair records `skipped` with
+//                the reason); hidden and shown the same; a window of the harness's own over a
+//                quarter of the main window takes the focus and the page stays `visible` with no
+//                event (a blur is not hidden); one over the whole of it reads `hidden` where the
+//                OS tracks occlusion natively (Windows, macOS; judged) and is recorded on Linux
+//                (the X server's word), the events exactly the flips either way; the Web
+//                capture overlay parks the page's view (W6-F5, the page `visible`), the window
+//                hidden takes the parked view down for real (`hidden`) and shown parks it again
+//                (`visible`), Escape puts the view back in its box. Before the app's window is
+//                moved, the same moves on a throwaway BrowserWindow + WebContentsView made in
+//                the app's process record what Electron forwards natively on the OS (the
+//                `native-forwarding` step; not judged) (Linux, Windows and macOS jobs)
 //   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
@@ -209,11 +226,23 @@
 //                otherwise) and resolve the request true once LaunchServices reports http
 //                held; LaunchServices' LSHandlers are read before and after for the record
 //                (macOS jobs)
+//   menu-bar     the macOS menu bar as the main process holds it (shortcuts-menus-160, -162,
+//                -123; menu-bar-scenario.mjs): Menu.getApplicationMenu() read through the
+//                harness – Chrome's menus in Chrome's order with the Tab menu between Bookmarks
+//                and Window; the Tab menu's rows, order, the Chrome preset's chords and the
+//                enabled states with a new tab page in front and then a site page with a tab
+//                below it; Pin Tab / Unpin Tab and Mute Site / Unmute Site picked through the
+//                items' own click and read back; the Help menu's rows under the help role; About
+//                Zenium an enabled row of the application menu opening Settings › About. Off
+//                macOS the one step reads that no application menu is set (macOS jobs judge
+//                the bar; the Windows unpacked leg and the Linux job the absence)
 //
-// Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore), Windows notifications, restart-registration and private-taskbar too and macOS
-// quit-hold and default-browser too; the walkthrough, the crash pair, clear-on-exit, the two
-// mv3-worker legs, pip, the split pair, features and recaptcha run on Linux under Xvfb only.
+// Windows and macOS run boot, restore, scale, dark and visibility (the installed Windows build
+// boot and restore), Windows notifications, restart-registration and private-taskbar too and
+// macOS quit-hold, default-browser and menu-bar too (menu-bar's no-bar step runs on the Windows
+// unpacked leg as well); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs,
+// pip, the split pair, features and recaptcha run on Linux under Xvfb only (visibility runs
+// there too, on its own step, and menu-bar's no-bar step with the boot set).
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -247,6 +276,7 @@ import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fix
 import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-browser-scenario.mjs'
 import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
+import { MENU_BAR_SCENARIO, scenarioMenuBar } from './menu-bar-scenario.mjs'
 import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
 import { RESTART_SCENARIO, scenarioRestartRegistration } from './restart-scenario.mjs'
 import { PRIVATE_TASKBAR_SCENARIO, scenarioPrivateTaskbar } from './private-taskbar-scenario.mjs'
@@ -256,6 +286,14 @@ import {
   buttonScreenPoint,
   startPopupFixture
 } from './popup-fixture.mjs'
+import {
+  STATE_FILE,
+  fromRenameWindow,
+  readProfileState,
+  requireStateFile,
+  stateAfterKill,
+  stateSource
+} from './profile-state.mjs'
 import {
   URLBAR_FIELD_OWNER,
   caretVerdict,
@@ -277,6 +315,7 @@ import {
 } from './site-data.mjs'
 import { startVideoFixture } from './video-fixture.mjs'
 import { viewInBox } from './views.mjs'
+import { VISIBILITY_SCENARIO, scenarioVisibility } from './visibility-scenario.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -900,9 +939,13 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session, ipcM
 
   // Native popup menus (page context menu, the toolbar "Menu" button) would wait for a real user:
   // record their items, close them after a delay, or pick one item by label for the harness.
+  // A label on Windows and Linux carries its Alt mnemonic's marker (`&Delete`, `Cu&t`; W7-2) and
+  // a literal `&` doubled: the harness reads it as the menu draws it – the marker gone, `&&` an
+  // `&` – and matches a pick on that reading.
+  const readLabel = (label) => (typeof label === 'string' ? label.replace(/&(&?)/g, '$1') : label)
   const describe = (items) =>
     (items || []).map((i) => ({
-      label: i.label,
+      label: readLabel(i.label),
       type: i.type,
       role: i.role,
       enabled: i.enabled,
@@ -910,7 +953,7 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session, ipcM
     }))
   const findItem = (items, label) => {
     for (const i of items || []) {
-      if (i.label === label) return i
+      if (readLabel(i.label) === label) return i
       const sub = i.submenu ? findItem(i.submenu.items, label) : null
       if (sub) return sub
     }
@@ -1252,6 +1295,51 @@ class Session {
   }
 
   /**
+   * Playwright turns `Emulation.setFocusEmulationEnabled` on for every page it attaches (its
+   * default page overrides), which makes the renderer report itself focused and so pins
+   * `document.visibilityState` to `visible` however the window behaves – a page read through the
+   * harness would never see `hidden`. This turns it off again, through the page's own Playwright
+   * CDP session (the same session that enabled it), so the page's visibility follows its window as
+   * it does for a user. Only the `visibility` scenario needs an honest reading and calls it; every
+   * other scenario leaves Playwright's default in place. Playwright applies the override once, at
+   * page init, so a page just attached is given a moment first (`settleMs`) and this disable is the
+   * last word. Matches every attached page whose URL contains `marker`; returns what it did.
+   */
+  async honestVisibility(marker, { timeoutMs = 8000, settleMs = 600 } = {}) {
+    const found = await waitFor(
+      () => {
+        const pages = this.app.windows().filter((p) => p.url().includes(marker))
+        return pages.length ? pages : null
+      },
+      timeoutMs,
+      `a page whose URL contains ${JSON.stringify(marker)} to read its visibility honestly`
+    )
+    await delay(settleMs)
+    const results = []
+    for (const page of found) results.push(await this.unpinFocusEmulation(page))
+    return { marker, pages: results.length, results }
+  }
+
+  /**
+   * `Emulation.setFocusEmulationEnabled` off for one Playwright `page`, reached through its own CDP
+   * session (`_mainFrameSession._client`, Playwright internals – the harness already uses `toImpl`
+   * for `app.process()`). A shape the internals no longer have, or a page gone, is reported rather
+   * than thrown so the caller's own reading is what judges the outcome.
+   */
+  async unpinFocusEmulation(page) {
+    try {
+      const impl = page._connection?.toImpl?.(page)
+      const client = impl?.delegate?._mainFrameSession?._client
+      if (!client)
+        return { unpinned: false, why: 'no CDP session on the page (Playwright internals moved)' }
+      await client.send('Emulation.setFocusEmulationEnabled', { enabled: false })
+      return { unpinned: true, url: page.url().slice(0, 80) }
+    } catch (e) {
+      return { unpinned: false, why: String(e && (e.message || e)).slice(0, 200) }
+    }
+  }
+
+  /**
    * Runs one fenced step; a failure is recorded, with the screen as it was at that moment
    * (`screen`, the file's name), and the scenario carries on.
    */
@@ -1511,6 +1599,16 @@ class Session {
 
   shot(name) {
     return shot(`${this.scenario}-${name}`, this)
+  }
+
+  /**
+   * The screen as it stands, nothing done to the app first: no bring-to-front – which shows a
+   * hidden window, restores a minimised one (`show()` un-minimises on Windows and macOS) and puts
+   * the app's window over a cover a step put up, the very states such a step is photographing –
+   * and no settle.
+   */
+  shotAsIs(name) {
+    return grabScreen(`${this.scenario}-${name}`).file
   }
 
   /** The main window's chrome webContents id (the page the sidebar, URL bar and dialogs live in). */
@@ -2265,28 +2363,24 @@ function freshProfile(name, { onboardingDone = false, settings: extra = {} } = {
 }
 
 /**
- * The profile's state file as the smoke reads it. `cleanExit` is #129's marker: false from the
- * first write of a run, true from the write a graceful quit ends with, absent from a profile no
- * run has written yet.
+ * The profile's state file as the smoke reads it (profile-state.mjs `readProfileState`), under
+ * the store's own rule: `state.json`, else `state.json.bak` – the version the last write
+ * replaced, which is what the app reads when a kill landed between the store's two renames and
+ * left no `state.json` – else `{ error }` naming both. `file` says which answered. `cleanExit`
+ * is #129's marker: false from the first write of a run, true from the write a graceful quit
+ * ends with, absent from a profile no run has written yet.
  */
 function readState(userData) {
-  try {
-    const s = JSON.parse(fs.readFileSync(path.join(userData, 'zen', 'state.json'), 'utf8'))
-    return {
-      version: s.version,
-      windows: (s.windows || []).length,
-      tabs: (s.tabs || []).map((t) => ({ url: t.url, title: t.title })),
-      onboardingDone: s.settings && s.settings.onboardingDone,
-      cleanExit: s.cleanExit
-    }
-  } catch (e) {
-    return { error: String(e.message) }
-  }
+  return readProfileState(path.join(userData, 'zen'))
 }
 
-/** The state after a graceful quit: the marker set, and (when asked) a tab on `url`. */
+/**
+ * The state after a graceful quit: `state.json` itself (the quit's last write has landed before
+ * the process exits; the backup is never the answer here – `requireStateFile`), the marker set,
+ * and (when asked) a tab on `url`.
+ */
 function assertCleanState(userData, url) {
-  const state = readState(userData)
+  const state = requireStateFile(readState(userData), 'after the quit')
   if (state.cleanExit !== true) {
     throw new Error(`state.json lacks cleanExit: true after the quit: ${JSON.stringify(state)}`)
   }
@@ -3274,11 +3368,14 @@ async function scenarioRestore() {
   const userData = path.join(profileRoot, 'profile')
   const page = bootSite.first
   // Read before the launch: the app's first (debounced) write of the new run flips the marker
-  // back to false, and how soon it lands after the chrome renders differs per platform.
+  // back to false, and how soon it lands after the chrome renders differs per platform. The
+  // profile is one a graceful quit left, so `state.json` itself must answer (the backup would
+  // be the write before the quit's last).
   const stateBefore = readState(userData)
   return runScenario('restore', userData, {}, async (s, out) => {
     out.stateBefore = stateBefore
     await s.step('restored-tab', async () => {
+      requireStateFile(stateBefore, 'before the launch, after the graceful quit')
       if (stateBefore.cleanExit !== true) {
         throw new Error(`profile not marked cleanly exited: ${JSON.stringify(stateBefore)}`)
       }
@@ -4953,6 +5050,15 @@ async function scenarioWalkthrough() {
  * leaves the state file with `cleanExit: false`. The next launch lists the tabs but loads no
  * page, offers "Restore pages?", Restore brings the fixture's page back, and a graceful quit
  * marks the profile clean again.
+ *
+ * The state is read under the store's rule (profile-state.mjs): the store lands every write in
+ * two renames (`state.json` → `state.json.bak`, then the temp file → `state.json`), so the
+ * SIGKILL can leave a profile with no `state.json` and the version before the last in the
+ * backup – the document the app's own reader takes at the next launch. The steps log which
+ * file answered. A backup from that window is the write before the kill's, and every write of
+ * the run from the first (the one `running-marker` waits for) carries `cleanExit: false`, so
+ * the marker's assertions read the same on it; and the restore bar counts the tabs of the very
+ * document the smoke read, whichever file it was.
  */
 async function scenarioCrash() {
   const userData = path.join(profileRoot, 'profile')
@@ -4963,23 +5069,40 @@ async function scenarioCrash() {
     await s.step('running-marker', async () => {
       await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       await s.waitForTab(page.url, 30000)
-      // The first write of the run carries the marker (the startup commit is debounced).
+      // The first write of the run carries the marker (the startup commit is debounced). A
+      // poll that lands between a write's two renames reads the backup: the version that was
+      // `state.json` a moment before, so its marker says the same about the run.
       const state = await waitFor(
         () => {
           const st = readState(userData)
+          if (st.file !== STATE_FILE && !fromRenameWindow(st)) return null
           return st.cleanExit === false ? st : null
         },
         15000,
         'state.json with cleanExit: false while the app runs',
         250
       )
-      return { before: out.stateBefore.cleanExit, running: state.cleanExit, tabs: state.tabs }
+      log(`step running-marker: the marker read from ${stateSource(state)}`)
+      return {
+        before: out.stateBefore.cleanExit,
+        running: state.cleanExit,
+        tabs: state.tabs,
+        file: state.file
+      }
     })
     await s.step('kill', async () => {
       const exit = await s.kill()
-      out.stateAfterKill = readState(userData)
+      // The process is gone: what is on disk now is what the next launch reads. No
+      // `state.json` means the kill landed between the store's two renames; the backup then
+      // holds the write before it, a write of this run.
+      out.stateAfterKill = stateAfterKill(readState(userData))
+      log(
+        `step kill: the state after the kill read from ${stateSource(out.stateAfterKill)}${fromRenameWindow(out.stateAfterKill) ? " – the kill landed between the store's two renames" : ''}, cleanExit ${JSON.stringify(out.stateAfterKill.cleanExit)}`
+      )
       if (out.stateAfterKill.cleanExit !== false) {
-        throw new Error(`killed run left cleanExit ${JSON.stringify(out.stateAfterKill.cleanExit)}`)
+        throw new Error(
+          `killed run left cleanExit ${JSON.stringify(out.stateAfterKill.cleanExit)} in ${stateSource(out.stateAfterKill)}`
+        )
       }
       return { exit, state: out.stateAfterKill }
     })
@@ -4990,8 +5113,16 @@ async function scenarioCrash() {
   return runScenario('crash-restore', userData, {}, async (s, out) => {
     out.stateBefore = stateAfterCrash
     await s.step('restore-offer', async () => {
-      if (stateAfterCrash.cleanExit !== false) {
-        throw new Error(`profile not marked as crashed: ${JSON.stringify(stateAfterCrash)}`)
+      // Read before this launch, as the app read it: `state.json`, or the backup a kill between
+      // the renames left in its place (`stateAfterKill` refuses any other backup answer).
+      const before = stateAfterKill(stateAfterCrash, 'before the launch after the kill')
+      log(
+        `step restore-offer: the profile's state before the launch read from ${stateSource(before)}, cleanExit ${JSON.stringify(before.cleanExit)}, ${before.tabs.length} tab(s)`
+      )
+      if (before.cleanExit !== false) {
+        throw new Error(
+          `profile not marked as crashed in ${stateSource(before)}: ${JSON.stringify(before)}`
+        )
       }
       const bar = s.chrome.locator('[data-crash-restore]').first()
       await bar.waitFor({ state: 'visible', timeout: 15000 })
@@ -5001,10 +5132,10 @@ async function scenarioCrash() {
       const m = /Restore (\d+) pages?/.exec(text)
       if (!m) throw new Error(`restore bar reads "${text}"`)
       const offered = Number(m[1])
-      const persisted = out.stateBefore.tabs?.length ?? 0
+      const persisted = before.tabs.length
       if (offered !== persisted) {
         throw new Error(
-          `bar offers ${offered} pages, state.json lists ${persisted} tabs: "${text}"`
+          `bar offers ${offered} pages, ${stateSource(before)} lists ${persisted} tabs: "${text}"`
         )
       }
       // Held back: the tabs are listed, no page of theirs is loaded yet.
@@ -5013,7 +5144,7 @@ async function scenarioCrash() {
         throw new Error(`pages loaded before the answer: ${loaded.map((t) => t.url).join(', ')}`)
       }
       await s.shot('01-restore-offer')
-      return { text, offered, persisted }
+      return { text, offered, persisted, file: before.file }
     })
     await s.step('restore', async () => {
       const bar = s.chrome.locator('[data-crash-restore]').first()
@@ -5220,11 +5351,14 @@ async function scenarioClearOnExit() {
     })
     if (quitRun.fatal) return quitRun
 
+    // Read before the relaunch, after the quit run's graceful exit: `state.json` itself answers
+    // (a backup would be the write before the quit's last).
     const stateBefore = readState(userData)
     const relaunchFrom = fixture.requests.length
     const relaunch = await runScenario('clear-on-exit-relaunch', userData, {}, async (s, out) => {
       out.stateBefore = stateBefore
       await s.step('cookie-gone', async () => {
+        requireStateFile(stateBefore, 'before the relaunch, after the graceful quit')
         if (stateBefore.cleanExit !== true) {
           throw new Error(`profile not marked cleanly exited: ${JSON.stringify(stateBefore)}`)
         }
@@ -7295,7 +7429,11 @@ async function scenarioQuitHold() {
           `state.json holds warnBeforeQuitting ${JSON.stringify(raw.settings?.warnBeforeQuitting)} after the toggle`
         )
       }
-      return { ...r, persisted: raw.settings.warnBeforeQuitting, state: readState(userData) }
+      return {
+        ...r,
+        persisted: raw.settings.warnBeforeQuitting,
+        state: requireStateFile(readState(userData), 'after the quit')
+      }
     })
   })
 }
@@ -7468,6 +7606,26 @@ async function main() {
           // executable's directory).
           exe: opts.exe,
           isWin: IS_WIN
+        }),
+      [VISIBILITY_SCENARIO]: () =>
+        scenarioVisibility({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          fixture: bootSite,
+          platform: process.platform
+        }),
+      [MENU_BAR_SCENARIO]: () =>
+        scenarioMenuBar({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          fixture: bootSite,
+          isMac: IS_MAC
         }),
       [DEFAULT_BROWSER_SCENARIO]: () =>
         scenarioDefaultBrowser({

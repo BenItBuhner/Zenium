@@ -50,6 +50,7 @@ import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
+import { searchChoiceCovers } from '@renderer/lib/searchChoice'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
   closeBarEditor,
@@ -68,6 +69,7 @@ import { ContentArea } from '../content/ContentArea'
 import { MessageLayer } from '../messages/MessageLayer'
 import { FakeboxMorphLayer } from '../newtab/FakeboxMorphLayer'
 import { Onboarding } from '../overlays/Onboarding'
+import { PhoneSearchChoiceScreen } from '../overlays/PhoneSearchChoice'
 import { BlockedPopupsChip } from '../security/BlockedPopupsPanel'
 import { Favicon } from '../sidebar/Favicon'
 import { TabDialogs } from '../TabDialogs'
@@ -110,7 +112,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   const tab = activeTab(state)
   const edge = state.settings.phoneBarPosition
   // The first run over the window: the same term hides the page views under it (`useLayoutReporter`).
-  const onboarding = phoneOnboardingCovers(state)
+  const tour = phoneOnboardingCovers(state)
+  // The EEA's search-engine choice screen on its own after the tour (W6-2 / OMN-26,
+  // `searchChoiceCovers`): the shell waits under it as it waits under the tour.
+  const searchChoice = !tour && searchChoiceCovers(state)
+  const onboarding = tour || searchChoice
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
   const activeTabId = tab?.id ?? null
   const dock = dockStore.use()
@@ -417,7 +423,8 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       )}
       {/* The frame's dialog host (the shell's box on a phone): the bookmark editor is one of its sheets. */}
       <TabDialogs state={state} />
-      {onboarding && <Onboarding state={state} />}
+      {tour && <Onboarding state={state} />}
+      {searchChoice && <PhoneSearchChoiceScreen state={state} />}
     </div>
   )
 }

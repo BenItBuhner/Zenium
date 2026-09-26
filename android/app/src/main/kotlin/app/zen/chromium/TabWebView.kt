@@ -50,11 +50,13 @@ import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.SafeBrowsingHit
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.NavigationReports
+import app.zen.chromium.privacy.PreloadRules
 import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
 import org.json.JSONObject
@@ -175,6 +177,8 @@ class TabWebView(
     private class HeldNavigation(val token: Int, val url: String, val referer: String?, val letGo: Boolean)
     /** The user's Leave at a `beforeunload` objection, carried to the held navigation's re-issued load. */
     private val leaveCarry = LeaveCarry()
+    /** The page's own referrer policy, told by its script ahead of the navigation the view holds (`referrerPolicy.ts`). */
+    private val referrerPolicyWord = ReferrerPolicyWord()
     /** The privacy signals' document-start script (`navigator.globalPrivacyControl`, `doNotTrack`) and its registration. */
     private var signalScript: String? = null
     private var signalScriptHandler: ScriptHandler? = null
@@ -443,7 +447,9 @@ class TabWebView(
      * WebView's own default is disabled, so `standard` is what first lets a page's speculation
      * rules prerender on the phone at all (Chrome Android's Standard does): the view answers each
      * prerender's navigation in `Client.shouldOverrideUrlLoading`, and refuses the ones it could
-     * not run.
+     * not run. The prerenders are this setting's whole reach: under `none` the prefetches – Blink
+     * resource fetches outside `IsPrerender2Allowed` – are refused at the request engine instead
+     * ([Client.refusePreload]).
      */
     @OptIn(WebSettingsCompat.ExperimentalSpeculativeLoading::class)
     private fun applySpeculativeLoading(flags: PrivacyFlags) {
@@ -587,14 +593,24 @@ class TabWebView(
      * core's word arrives a round trip too late for the request about to leave). Nothing is held
      * when the core cannot be asked (a host without one, or its rules service not started: the
      * pushed document decides) or the site is already answered for. Returns whether it held. The
-     * re-issued load carries the page's referrer under Chrome's default policy; a redirect hop's
-     * is the original request's, which the view does not know, so it is resumed without one. A
-     * Leave the user gave the page's `beforeunload` objection for this navigation goes with it
+     * re-issued load carries the page's referrer under `policy`, the page's own referrer policy
+     * as its script read it for this navigation ([ReferrerPolicyWord]: the tapped anchor's
+     * `rel=noreferrer` / `referrerpolicy`, else the document's `<meta name=referrer>`; the empty
+     * word is Chrome's default) – a policy set by the `Referrer-Policy` response header alone
+     * is not readable from the page and is not followed here. The WebView lifts the load's
+     * `Referer` into the navigation's referrer under its default policy (`AwContents.loadUrl`),
+     * so a page policy stricter than the default is followed to the wire and a looser one
+     * (`unsafe-url`, `no-referrer-when-downgrade`, the downgrade cases of `origin` /
+     * `origin-when-cross-origin`) is clamped there to the default's: the re-issued hop never
+     * carries more than the default would, nor more than the page asked. A redirect hop's
+     * referrer is the original request's, which the view does not know, so it is resumed
+     * without one. A Leave
+     * the user gave the page's `beforeunload` objection for this navigation goes with it
      * ([LeaveCarry]: the re-issued load has the browser ask the page once more).
      */
-    private fun holdForContentRules(target: String, redirect: Boolean): Boolean {
+    private fun holdForContentRules(target: String, redirect: Boolean, policy: String): Boolean {
         if (!host.contentRulesResolvable || !governedByContentRules(target) || resolvedFor(target) != null) return false
-        val referer = if (redirect) null else ContentRules.resumeReferer(currentDocument, target)
+        val referer = if (redirect) null else ContentRules.resumeReferer(currentDocument, target, policy)
         val held = HeldNavigation(++rulesTokenSeq, target, referer, leaveCarry.holds(SystemClock.uptimeMillis()))
         heldNavigation = held
         askRules(target, held.token)
@@ -611,8 +627,8 @@ class TabWebView(
     }
 
     /**
-     * The held navigation goes on as this view's own load, its referrer restored (Chrome's
-     * default policy). The load is browser-initiated, so the browser has the page run its
+     * The held navigation goes on as this view's own load, its referrer restored (under the
+     * page's own policy, see [holdForContentRules]). The load is browser-initiated, so the browser has the page run its
      * `beforeunload` again; when the user already chose to leave for this navigation, its second
      * objection is answered with that word rather than a second sheet (`onJsBeforeUnload`).
      */
@@ -968,6 +984,12 @@ class TabWebView(
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
             is PageMessageRoute.Fullscreen ->
                 host.fullscreenVideo(this, route.active, route.video, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
+            // The page's own referrer policy, for the navigation the view may hold next.
+            is PageMessageRoute.ReferrerPolicy -> {
+                route.next?.let { referrerPolicyWord.nextNavigation(it, SystemClock.uptimeMillis()) }
+                val origin = route.origin
+                if (route.document != null && origin != null) referrerPolicyWord.document(route.document, origin)
+            }
             is PageMessageRoute.Forward ->
                 if (route.message.optString("type") == "share") host.preparePageMessage(route.message) { host.viewEvent(tabId, "pageMessage", it) }
                 else host.viewEvent(tabId, "pageMessage", route.message)
@@ -2525,21 +2547,27 @@ class TabWebView(
     // --- WebViewClient ------------------------------------------------------------------------
 
     private inner class Client : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            val url = request.url
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
             // A speculation-rules prerender the page declared: WebView asks here for it as for a
             // navigation (`Sec-Purpose: prefetch;prerender`, no gesture, the outermost main
             // frame), and this answer is the embedder's only veto – the activation later runs no
-            // throttles. It is not the user's navigation, so none of a primary load's steps below
-            // happen for it: no engine interstitial or redirect load, no App Link probe, no
-            // desktop-mode re-issue, no back preview, no `redirected` event, no document record,
-            // no settings flip. Refused where it could not go as it stands or could not run under
-            // this view's settings ([vetoPrerender]); the real tap comes through here as itself
-            // and is decided then. The prerender's requests still meet the engine in
-            // `shouldInterceptRequest`, as Chrome's do.
-            if (PageRules.isPrerender(request.requestHeaders) && request.isForMainFrame && !request.hasGesture()) {
-                return vetoPrerender(url.toString())
-            }
+            // throttles. It is not the user's navigation, so none of a primary load's steps
+            // ([navigationTaken]) happen for it: no engine interstitial or redirect load, no App
+            // Link probe, no hold (the page's word on the next navigation's referrer policy is
+            // neither spent nor expired by it), no desktop-mode re-issue, no back preview, no
+            // `redirected` event, no document record, no settings flip. Refused where it could
+            // not go as it stands or could not run under this view's settings ([vetoPrerender]);
+            // the real tap comes through here as itself and is decided then. The prerender's
+            // requests still meet the engine in `shouldInterceptRequest`, as Chrome's do.
+            prerenderPassOrNavigation(
+                prerender = PageRules.isPrerender(request.requestHeaders) && request.isForMainFrame && !request.hasGesture(),
+                veto = { vetoPrerender(request.url.toString()) },
+                navigation = { navigationTaken(view, request) }
+            )
+
+        /** A primary load's navigation through the hook, decided by its scheme (see [webNavigationTaken] for http(s)). */
+        private fun navigationTaken(view: WebView, request: WebResourceRequest): Boolean {
+            val url = request.url
             return when (url.scheme?.lowercase()) {
                 "http", "https" -> webNavigationTaken(
                     engine = { interceptNavigation(request) },
@@ -2672,7 +2700,10 @@ class TabWebView(
         private fun holdOrApplyContentRules(request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
             val target = request.url.toString()
-            if (holdForContentRules(target, request.isRedirect)) return true
+            // Every main-frame navigation through the hook spends the page's word for the one
+            // that follows the click, held or not: a later navigation is not the click's.
+            val policy = referrerPolicyWord.forNavigation(currentDocument?.let(ContentRules::siteOf), SystemClock.uptimeMillis())
+            if (holdForContentRules(target, request.isRedirect, policy)) return true
             applyCookiePolicy(host.privacy.flags, target)
             applyContentRules(target)
             currentDocument = target
@@ -2681,13 +2712,46 @@ class TabWebView(
 
         /**
          * Network thread. The extension layer answers first: it serves the extension origins and
-         * the CORS proxy of extension pages; anything it leaves alone goes to the request engine,
-         * whose rule sets include the extensions' declarativeNetRequest rules.
+         * the CORS proxy of extension pages; then Preload pages `none` refuses a prefetch
+         * ([refusePreload]); anything left goes to the request engine, whose rule sets include
+         * the extensions' declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
             PdfViewer.intercept(context, request, pdfPage)
                 ?: host.extensions?.intercept(request, this@TabWebView, null)
+                ?: refusePreload(request)
                 ?: host.blocking.intercept(this@TabWebView, request)
+
+        /**
+         * Preload pages "No preloading" (PS-43) at the request engine, as the desktop's
+         * `PreloadHandler` enforces it: under `none` every request that arrives here marked
+         * speculative (`Sec-Purpose` / `Purpose: prefetch`; [PreloadRules]) is answered empty,
+         * so nothing leaves the device for it. [applySpeculativeLoading]'s DISABLED stops the
+         * prerenders alone (`IsPrerender2Allowed`); a speculation-rules prefetch is a request the
+         * browser process builds with both marks on it, and arrives here so marked (refused on
+         * WebView 113, run 36244937529). A `<link rel=prefetch>` does NOT on WebView 113 or 124:
+         * WebView shows it here as the plain fetch it looks like (`Accept`, `Referer`,
+         * `User-Agent` and nothing else) – Blink marks it `Purpose: prefetch` but carries the
+         * header in `cors_exempt_headers`, which `AwWebResourceRequest` omits and the network
+         * service merges into the URLRequest, where the desktop's `onBeforeSendHeaders` reads it
+         * and this hook cannot. That one prefetch is the phone's remaining limit under `none`
+         * there; from Chromium 138 it carries `Sec-Purpose: prefetch` as a real header and is
+         * refused here unchanged. The level is [Privacy.flags]' as last pushed, read per request.
+         * Ahead of the engine on purpose: the refusal is the user's setting, not a rule set's
+         * block – no decision observed, no listener told, nothing added to the tab's blocked
+         * count, as on the desktop (`HANDLER_ORDER.preload` before `ruleEngine`). An empty 403,
+         * the engine's answer for a subresource it stops: the page sees a failed fetch (the
+         * desktop's cancel is `ERR_BLOCKED_BY_CLIENT`, the same to the page), and a non-2xx that
+         * no prefetch cache will serve for the tap that follows – a 204 would, and a navigation
+         * onto a 204 commits nothing (the engine's answer for a blocked DOCUMENT), which is not
+         * what a refused prefetch may do to the link the user then taps.
+         */
+        private fun refusePreload(request: WebResourceRequest): WebResourceResponse? =
+            if (PreloadRules.refuses(host.privacy.flags, request.url.toString(), request.requestHeaders)) {
+                Blocking.emptyResponse(403, "Forbidden", "text/plain")
+            } else {
+                null
+            }
 
         override fun onPageStarted(view: WebView, rawUrl: String, favicon: Bitmap?) {
             val url = pageUrlFor(rawUrl)
@@ -2714,9 +2778,11 @@ class TabWebView(
             currentDocument = url
             startedDocument = url
             // A navigation held for the core's answer is superseded by the document starting,
-            // and the page that objected to it is on its way out: its Leave is spent.
+            // and the page that objected to it is on its way out: its Leave is spent, and so is
+            // its script's word on the next navigation's referrer policy.
             heldNavigation = null
             leaveCarry.reset()
+            referrerPolicyWord.documentStarted(ContentRules.siteOf(url))
             applyMixedContentPolicy(host.privacy.flags, url)
             applyCookiePolicy(host.privacy.flags, url)
             applyContentRules(url)
@@ -2971,7 +3037,15 @@ class TabWebView(
                 if (check != null) check.settle(leave = leave, destroyView = leave)
                 else if (!leave) stayedOnPage()
                 // A reload never passes shouldOverrideUrlLoading, so nothing of it is held or re-issued.
-                else if (!reload) leaveCarry.leaveChosen(SystemClock.uptimeMillis())
+                else if (!reload) {
+                    val chosenAt = SystemClock.uptimeMillis()
+                    leaveCarry.leaveChosen(chosenAt)
+                    // The sheet stood open from the question (`now`) to this Leave, between the
+                    // tap and its navigation reaching the hook: that time is not the hop's, and
+                    // the page's word on this navigation's referrer policy, live when the page
+                    // objected, is live for the hold past the Leave.
+                    referrerPolicyWord.leaveChosen(askedAt = now, now = chosenAt)
+                }
             }
             return true
         }
@@ -3162,6 +3236,18 @@ class TabWebView(
          */
         fun webNavigationTaken(engine: () -> Boolean, appLink: () -> Boolean, hold: () -> Boolean, desktopSwitch: () -> Boolean): Boolean =
             engine() || appLink() || hold() || desktopSwitch()
+
+        /**
+         * The front of `shouldOverrideUrlLoading`: a speculation-rules prerender's pass through
+         * the hook ([PageRules.isPrerender], the outermost main frame, no gesture) is answered by
+         * the veto alone – none of a primary load's steps run for it, so none of their side
+         * effects do; in particular the hold, the one spender of the page's word on the next
+         * navigation's referrer policy ([ReferrerPolicyWord]), is not reached, and the real tap
+         * that follows finds the word within its window. Pure, so the order is pinned on the JVM
+         * (`TabWebViewNavigationOrderTest`).
+         */
+        fun prerenderPassOrNavigation(prerender: Boolean, veto: () -> Boolean, navigation: () -> Boolean): Boolean =
+            if (prerender) veto() else navigation()
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
         private const val EVAL_TIMEOUT_MS = 45_000L

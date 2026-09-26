@@ -374,6 +374,26 @@ export interface LoadDetails {
   certificate?: CertificateDetails | null
 }
 
+/**
+ * How a committed main-frame document stands to the one before it in the tab (`TabViewEvents.
+ * onNavigated`). Both facts together are Chrome's client redirect (`PAGE_TRANSITION_CLIENT_
+ * REDIRECT` with `did_replace_entry`), which history folds into the landing's redirect chain.
+ */
+export interface NavigationCommitDetails {
+  /**
+   * The document took the previous document's place in the tab's history instead of adding an
+   * entry (Chromium's `did_replace_entry`: `location.replace()`, a meta refresh or `Refresh:`
+   * header of a second or less, a script's navigation before the page's load event finished).
+   */
+  replacedEntry: boolean
+  /**
+   * The page's own document started the navigation (a script, a meta refresh: a frame of this
+   * tab's page), not the browser (a typed address, a bookmark, back / forward, a reload from the
+   * toolbar) and not another page (an opener's `window.open`).
+   */
+  initiatedByPage: boolean
+}
+
 export interface PageContextParams {
   /**
    * Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it;
@@ -467,8 +487,13 @@ export interface ChromeContextParams {
   /** Click position in chrome CSS pixels (the caret or the focused element's middle for the keyboard). */
   x: number
   y: number
-  /** Raised by Shift+F10 or the Menu key: the menu opens at `x`,`y` with its first item selected. */
+  /** Raised by Shift+F10 or the Menu key: the menu opens with its first item selected. */
   keyboard?: boolean
+  /**
+   * The focused element's box (chrome CSS pixels, window coordinates) when the keyboard asked,
+   * for a host that hangs the menu from the element rather than at the caret (§9.23).
+   */
+  rect?: Rect
   /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
   target: ChromeMenuTarget | null
   /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
@@ -614,8 +639,13 @@ export interface TabViewEvents {
    * then the landing alone.
    */
   onRedirected?(fromUrl: string, toUrl: string): void
-  /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
-  onNavigated(url: string, inPage: boolean): void
+  /**
+   * Main-frame navigation committed (`inPage` for pushState / hash changes). `details` says how
+   * the document stands to the one before it (history-23: a client redirect that replaced its
+   * page folds the page into the landing's chain); hosts that cannot tell leave it out, and the
+   * landing is then a visit of its own.
+   */
+  onNavigated(url: string, inPage: boolean, details?: NavigationCommitDetails): void
   /**
    * The page is about to navigate its main frame to `url` on its own – a link, a script, a form
    * submission (not a load the browser asked for, and not a server redirect, which hosts report
@@ -1123,6 +1153,12 @@ export interface WindowHost {
    */
   menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
   /**
+   * The box of the chrome document's focused element (chrome CSS pixels, window coordinates),
+   * where a menu the keyboard asked for hangs (§9.23); null when nothing but the document has
+   * the focus. Hosts whose chrome draws its menus itself leave it out.
+   */
+  focusedRect?(): Promise<Rect | null>
+  /**
    * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
    * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
    * takes the keyboard when shown; the page the picker hangs from keeps it. Hosts without a
@@ -1320,6 +1356,13 @@ export interface MenuPopupOptions {
   y?: number
   /** Opened by the keyboard: the first item starts selected so the arrow keys take over at once. */
   keyboard?: boolean
+  /**
+   * The box of the element the menu belongs to (chrome CSS pixels, window coordinates): the
+   * focused element for Shift+F10 and the Menu key, a "⋯" button for its press. A native host
+   * hangs the menu from its bottom-left (§9.23) in preference to `x`,`y`; the phone's sheets
+   * have no position to read.
+   */
+  rect?: Rect
   /**
    * The link's or image's header (PUI-18) for the phone's sheet: the renderer-drawn host carries
    * it to the sheet; hosts with native menus have no header to draw and leave it be.

@@ -284,6 +284,15 @@ export class ElectronWindow implements WindowHost {
     win.on('unmaximize', () => zen.onWindowStateChanged())
     win.on('enter-full-screen', () => zen.onWindowStateChanged())
     win.on('leave-full-screen', () => zen.onWindowStateChanged())
+    // A page's `document.visibilityState` follows its window's state as a Chrome tab's does
+    // (W6-F6): minimised or hidden the window's tab views go down to Chromium so their pages read
+    // `hidden`, shown or restored they come back to where the core's layout left them. Blur alone
+    // (the window on screen but not key) is not concealment; occlusion by another app's window is
+    // Chromium's own to track (Windows / macOS; none on X11) and is not touched here.
+    win.on('minimize', () => this.refreshTabViewConcealment())
+    win.on('restore', () => this.refreshTabViewConcealment())
+    win.on('hide', () => this.refreshTabViewConcealment())
+    win.on('show', () => this.refreshTabViewConcealment())
     win.on('focus', () => zen.onFocused())
     // `blur` is the window resigning key status, which on macOS covers the app deactivating too
     // (⌘Tab, Spotlight, a notification clicked: `windowDidResignKey` fires for the key window) –
@@ -439,6 +448,21 @@ export class ElectronWindow implements WindowHost {
     )
   }
 
+  /**
+   * The window was minimised, restored, hidden or shown: every tab view of it is told to go down
+   * to Chromium or come back (W6-F6, `ElectronTabView.applyWindowVisible`) so its page's
+   * `document.visibilityState` follows the window as a Chrome tab's does. Concealed is the window
+   * minimised or not visible; a window merely blurred while on screen is not. Idempotent – the
+   * view ignores a state it already holds.
+   */
+  private refreshTabViewConcealment(): void {
+    if (!this.alive) return
+    const visible = !this.win.isMinimized() && this.win.isVisible()
+    for (const view of this.browser.tabs.viewsOwnedBy(this.zen).values()) {
+      if (hasWindowVisibility(view)) view.applyWindowVisible(visible)
+    }
+  }
+
   /** Whether a mouse button is down on the chrome page (`ElectronTabView.park`'s pointer moves wait). */
   pointerButtonHeld(): boolean {
     return this.buttonHeld
@@ -482,6 +506,32 @@ export class ElectronWindow implements WindowHost {
     const hit = result as { target?: unknown; tabId?: unknown }
     if (typeof hit.target !== 'string') return null
     return { target: hit.target, tabId: typeof hit.tabId === 'string' ? hit.tabId : null }
+  }
+
+  /**
+   * The chrome document's focused element's box, read from the document itself – where a menu
+   * Shift+F10 or the Menu key asked for hangs (§9.23). Null when the focus is on the document
+   * (body) or the element has no box to speak of.
+   */
+  async focusedRect(): Promise<Rect | null> {
+    if (!this.alive) return null
+    const result: unknown = await this.win.webContents
+      .executeJavaScript(
+        `(() => {
+          const el = document.activeElement;
+          if (!el || el === document.body || el === document.documentElement) return null;
+          const r = el.getBoundingClientRect();
+          if (!(r.width > 0) || !(r.height > 0)) return null;
+          return { x: r.left, y: r.top, width: r.width, height: r.height };
+        })()`,
+        true
+      )
+      .catch(() => null)
+    if (!result || typeof result !== 'object') return null
+    const box = result as Record<keyof Rect, unknown>
+    const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+    if (!finite(box.x) || !finite(box.y) || !finite(box.width) || !finite(box.height)) return null
+    return { x: box.x, y: box.y, width: box.width, height: box.height }
   }
 
   contentSize(): { width: number; height: number } {
@@ -790,6 +840,16 @@ export class ElectronWindowFactory implements WindowHostFactory {
  */
 function hasCoverLifted(view: TabView): view is TabView & { coverLifted(): void } {
   return typeof (view as { coverLifted?: unknown }).coverLifted === 'function'
+}
+
+/**
+ * A tab view that follows its window's minimise / hide state (`ElectronTabView.applyWindowVisible`,
+ * W6-F6); a host of another kind (tests) has no engine view to conceal.
+ */
+function hasWindowVisibility(
+  view: TabView
+): view is TabView & { applyWindowVisible(visible: boolean): void } {
+  return typeof (view as { applyWindowVisible?: unknown }).applyWindowVisible === 'function'
 }
 
 /**

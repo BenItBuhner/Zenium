@@ -266,9 +266,11 @@ export interface Persisted {
   pageWindowsDevice?: PageWindowsDeviceState
   /**
    * The reading list (W6-1): every page saved for later, one entry per URL, at most
-   * `READING_LIST_CAP`. The profile's, independent of the session (a restart keeps it, a window
-   * closing leaves it alone); additive – a profile without it has none. Not in the sync record
-   * yet: the services slice replicates it as `reading-list-entry` records.
+   * `READING_LIST_CAP` of them READ (`trimReadingList`: the oldest by `readAt` go past the cap;
+   * an unread entry is never trimmed – the unread half is unbounded, as Chrome's list is). The
+   * profile's, independent of the session (a restart keeps it, a window closing leaves it
+   * alone); additive – a profile without it has none. Synced one `reading-list-entry` record per
+   * entry, every field but `favicon` (`sync/records.ts`).
    */
   readingList?: ReadingListEntry[]
 }
@@ -421,8 +423,10 @@ export class BrowserState {
   pageWindowsDevice: PageWindowsDeviceState = emptyPageWindows()
   /**
    * The reading list (W6-1), one entry per URL in no particular order (`sortReadingList` puts
-   * the unread first for the chrome). Written by the `ReadingListService` alone, replaced whole
-   * and committed; persisted with the profile, not synced yet.
+   * the unread first for the chrome). Written by the `ReadingListService` alone (the other
+   * devices' entries through its `applySynced` / `removeSynced`), replaced whole and committed;
+   * persisted with the profile and synced as `reading-list-entry` records under the
+   * `readingList` scope.
    */
   readingList: ReadingListEntry[] = emptyReadingList()
   media: MediaState[] = []
@@ -1172,6 +1176,7 @@ export class BrowserState {
       readingList: this.readingListFor(),
       newTabShortcuts: this.newTabDevice.shortcuts,
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
+      newTabHiddenModules: this.newTabDevice.hiddenModules,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
       newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,

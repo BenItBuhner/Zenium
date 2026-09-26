@@ -34,8 +34,10 @@ import kotlin.math.max
  * can record it on an emulator: seeds a profile with two real sites (Google active, Bing next)
  * and a few remembered permission decisions, launches the app, lets the page settle, then
  * opens the sheet from the site icon in the address pill, turns the site's Background video row on
- * and off again (W6-S8: the answer written and forgotten, read back through the core), pushes
- * each level – the connection, the
+ * and off again (W6-S8: the answer written and forgotten, read back through the core), turns the
+ * row's default to Allow through the core and reads the row on with nothing stored, a touch
+ * writing the site's deny and a second forgetting it (W6-S12: the row reads the state in force,
+ * §10.4), pushes each level – the connection, the
  * cookies (expanded and scrolled, then cleared through the "Clear cookies?" confirmation, a level
  * of the sheet one in from the row: §10.4, the design lead's ruling on W5-17) and the
  * permissions, where the Location grant is reset – pops back with the system back gesture, drags
@@ -195,6 +197,12 @@ class SiteInfoDemo {
         //     read back through the core – and a second turns it off – the answer forgotten, the
         //     row staying for the sheet's life.
         backgroundVideo(f)
+
+        // 1e. The row under an allowing default (W6-S12, §10.4): the site's answer forgotten by 1b,
+        //     Settings' command turns the default to Allow and the row reads on with nothing stored
+        //     for the site; a real touch writes the site's deny (the rule that gives the other
+        //     state), a second forgets it – the default gives what that press asks.
+        backgroundVideoUnderAllow(f)
 
         // 2. The connection level pushes in; the header's back control pops it.
         if (tapUntil(f, "Connection", BACK_LABEL)) {
@@ -365,6 +373,114 @@ class SiteInfoDemo {
         }
         SystemClock.sleep(800)
         shot("01d-background-video-forgotten")
+    }
+
+    /**
+     * The Background video row reads the state in force for the site, not its stored answer alone
+     * (W6-S12: the lead's ruling on #531, §10.4). After 1b the site has no answer and the row,
+     * held for its origin, reads off under the catalogue's Block. The core's settings command
+     * (`permissions.setDefault`, Settings' own) turns the default to Allow: nothing is written
+     * for the site and the row reads on. A real touch writes `deny` for the site – the rule that
+     * gives the other state under an allowing default, not a forget – and the switch reads off;
+     * a second touch forgets that deny – the default already gives what the press asks – and the
+     * switch reads on again with nothing stored. The default is put back to the catalogue's at
+     * the end (the built-in choice clears the stored one), so the rest of the sequence and the
+     * nightly's later scenes run under the profile as seeded. The row's line stays throughout.
+     */
+    private fun backgroundVideoUnderAllow(f: Finger) {
+        awaitRest()
+        val before = backgroundVideoDecision()
+        if (before != null) {
+            touchFault("scene 1e needs no stored background-video answer for $SITE_ORIGIN, but it reads $before (1b's forget did not take)")
+            return
+        }
+        var row = findByLabel(BACKGROUND_VIDEO_LABEL) ?: run {
+            touchFault("no '$BACKGROUND_VIDEO_LABEL' row on the sheet for scene 1e (the hold for the origin should keep it)")
+            return
+        }
+        if (row.bottom > height - bottomInset) {
+            expandSheet(f)
+            awaitRest()
+            row = findByLabel(BACKGROUND_VIDEO_LABEL) ?: run {
+                touchFault("the '$BACKGROUND_VIDEO_LABEL' row left the tree once the sheet was pulled up (scene 1e)")
+                return
+            }
+        }
+        if (switchOn(BACKGROUND_VIDEO_LABEL) != false) {
+            touchFault("under the catalogue's Block with no stored answer the switch should read off before the default turns (checked ${switchOn(BACKGROUND_VIDEO_LABEL)})")
+        }
+
+        coreInvoke("permissions.setDefault", "{\"permission\":\"background-video\",\"decision\":\"allow\"}")
+        val defaults = coreInvoke("permissions.defaults")
+        Log.i(TAG, "background-video default turned to allow through permissions.setDefault; defaults now $defaults; stored for $SITE_ORIGIN: ${backgroundVideoDecision()}")
+        if (!awaitSwitch(BACKGROUND_VIDEO_LABEL, true, 8_000)) {
+            touchFault("the default turned to Allow but the switch does not read on for a site with no answer (checked ${switchOn(BACKGROUND_VIDEO_LABEL)}); names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else if (backgroundVideoDecision() != null) {
+            touchFault("the default's turn wrote an answer for $SITE_ORIGIN (reads ${backgroundVideoDecision()}); the row must read on from the default alone")
+        } else if (findByLabel(BACKGROUND_VIDEO_NAME) == null) {
+            touchFault("the switch reads on from the default but the row's line changed; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else {
+            Log.i(TAG, "background-video for $SITE_ORIGIN under the Allow default: no answer stored; the switch reads on from the default")
+        }
+        SystemClock.sleep(800)
+        shot("01e-background-video-default-allow-on")
+
+        awaitRest()
+        val first = findByLabel(BACKGROUND_VIDEO_LABEL) ?: run {
+            touchFault("the '$BACKGROUND_VIDEO_LABEL' row left the sheet once the default turned to Allow")
+            restoreBackgroundVideoDefault()
+            return
+        }
+        f.tap(first.exactCenterX(), first.exactCenterY())
+        if (!awaitDecision("deny", 8_000)) {
+            touchFault("the touch on '$BACKGROUND_VIDEO_LABEL' under the Allow default did not write deny for $SITE_ORIGIN (reads ${backgroundVideoDecision()})")
+        } else if (!awaitSwitch(BACKGROUND_VIDEO_LABEL, false, 6_000)) {
+            touchFault("deny was written but the switch does not read off (checked ${switchOn(BACKGROUND_VIDEO_LABEL)}); names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else if (findByLabel(BACKGROUND_VIDEO_NAME) == null) {
+            touchFault("the switch reads off but the row's line changed; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else {
+            Log.i(TAG, "background-video for $SITE_ORIGIN after the touch under the Allow default: deny stored; the switch reads off under the same line")
+        }
+        SystemClock.sleep(800)
+        shot("01f-background-video-default-allow-denied")
+
+        awaitRest()
+        val second = findByLabel(BACKGROUND_VIDEO_LABEL) ?: run {
+            touchFault("the '$BACKGROUND_VIDEO_LABEL' row left the sheet after the deny was written")
+            restoreBackgroundVideoDefault()
+            return
+        }
+        f.tap(second.exactCenterX(), second.exactCenterY())
+        if (!awaitDecision(null, 8_000)) {
+            touchFault("the second touch on '$BACKGROUND_VIDEO_LABEL' under the Allow default did not forget the site's deny (reads ${backgroundVideoDecision()})")
+        } else if (!awaitSwitch(BACKGROUND_VIDEO_LABEL, true, 6_000)) {
+            touchFault("the deny was forgotten but the switch does not read on from the default (checked ${switchOn(BACKGROUND_VIDEO_LABEL)}); names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else if (findByLabel(BACKGROUND_VIDEO_NAME) == null) {
+            touchFault("the deny was forgotten but the row does not stay under its one line; names ${namesFor(BACKGROUND_VIDEO_LABEL)}")
+        } else {
+            Log.i(TAG, "background-video for $SITE_ORIGIN after the second touch under the Allow default: none; the switch reads on from the default under the same line")
+        }
+        SystemClock.sleep(800)
+        shot("01g-background-video-default-allow-forgotten")
+
+        restoreBackgroundVideoDefault()
+    }
+
+    /**
+     * The Background video default back to the catalogue's Block: `permissions.setDefault` with
+     * the built-in choice clears the stored default (the core's `chooseDefault`), and the row –
+     * with no answer for the site – reads off again.
+     */
+    private fun restoreBackgroundVideoDefault() {
+        coreInvoke("permissions.setDefault", "{\"permission\":\"background-video\",\"decision\":\"deny\"}")
+        if (findByLabel(BACKGROUND_VIDEO_LABEL) == null) {
+            Log.i(TAG, "background-video default back to the catalogue's Block (the row not on the sheet to read)")
+        } else if (!awaitSwitch(BACKGROUND_VIDEO_LABEL, false, 8_000)) {
+            touchFault("the default put back to Block but the switch does not read off again (checked ${switchOn(BACKGROUND_VIDEO_LABEL)}); stored for $SITE_ORIGIN: ${backgroundVideoDecision()}")
+        } else {
+            Log.i(TAG, "background-video default back to the catalogue's Block; the switch reads off with nothing stored for $SITE_ORIGIN")
+        }
+        SystemClock.sleep(600)
     }
 
     /** The site's stored `background-video` answer as the core lists it: allow, deny, or null for none. */

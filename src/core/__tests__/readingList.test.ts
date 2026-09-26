@@ -191,61 +191,102 @@ describe('ReadingListService: add, dedupe, read state', () => {
   })
 })
 
+/**
+ * The cap (services pass 11, item 4; the root's ruling, the mechanism agreed with desktop):
+ * `READING_LIST_CAP` bounds the READ half alone – the oldest by `readAt` go first, a tie by the
+ * id – and an unread entry is never trimmed, on any path (`trimReadingList`, the one trim the
+ * write, the load and the apply take).
+ */
 describe('ReadingListService: the cap', () => {
-  it('holds a thousand entries and drops the oldest read one first past it', () => {
-    const { service, state } = setup()
-    const entries: ReadingListEntry[] = []
-    for (let i = 0; i < READING_LIST_CAP; i++) {
-      entries.push(entry({ id: `e${i}`, addedAt: 10 + i, readAt: i % 2 === 0 ? 5000 : undefined }))
+  /** `n` read entries with rising `readAt`s and `n` unread ones, ids padded so they sort as numbers. */
+  function readAndUnread(readN: number, unreadN: number): ReadingListEntry[] {
+    const list: ReadingListEntry[] = []
+    for (let i = 0; i < readN; i++) {
+      list.push(normal({ id: `r${String(i).padStart(4, '0')}`, addedAt: 10 + i, readAt: 5000 + i }))
     }
-    state.readingList = entries
+    for (let i = 0; i < unreadN; i++) {
+      list.push(normal({ id: `u${String(i).padStart(4, '0')}`, addedAt: 10 + i }))
+    }
+    return list
+  }
+
+  it('the 1 001st unread save keeps every entry: an unread entry never counts against the cap', () => {
+    const { service, state } = setup()
+    state.readingList = readAndUnread(0, READING_LIST_CAP)
     const added = service.add('https://new.example/', 'New')!
-    expect(state.readingList).toHaveLength(READING_LIST_CAP)
+    expect(state.readingList).toHaveLength(READING_LIST_CAP + 1)
     expect(service.get(added.id)).not.toBeNull()
-    // e0 is the oldest read entry: it went. e1, the oldest unread, stays.
-    expect(service.get('e0')).toBeNull()
-    expect(service.get('e1')).not.toBeNull()
-    expect(service.get('e2')).not.toBeNull()
+    expect(service.get('u0000')).not.toBeNull()
+    expect(service.unreadCount).toBe(READING_LIST_CAP + 1)
+    // Nor with the read half full: 1 000 read + 1 000 unread, another unread save keeps all.
+    state.readingList = readAndUnread(READING_LIST_CAP, READING_LIST_CAP)
+    service.add('https://another.example/', 'Another')
+    expect(state.readingList).toHaveLength(2 * READING_LIST_CAP + 1)
+    expect(service.get('r0000')).not.toBeNull()
   })
 
-  it('drops the oldest unread entry only when every entry is unread', () => {
+  it('with 1 000 read + 1 unread, marking one more read drops the oldest-readAt read entry and never the unread', () => {
+    const { service, state } = setup()
+    state.readingList = readAndUnread(READING_LIST_CAP, 1)
+    const extra = service.add('https://extra.example/', 'Extra')!
+    expect(state.readingList).toHaveLength(READING_LIST_CAP + 2)
+    // The unread page is read: the read half runs to 1 001 and its oldest by `readAt` goes.
+    expect(service.setRead('u0000', true)).toBe(true)
+    expect(state.readingList).toHaveLength(READING_LIST_CAP + 1)
+    expect(service.get('r0000')).toBeNull()
+    expect(service.get('r0001')).not.toBeNull()
+    expect(service.get('u0000')?.readAt).toBeDefined()
+    expect(service.get(extra.id)).not.toBeNull()
+    expect(service.unreadCount).toBe(1)
+    // Read again over the cap: the next oldest goes – r0001 – the unread one still never.
+    expect(service.setRead(extra.id, true)).toBe(true)
+    expect(service.get('r0001')).toBeNull()
+    expect(service.get('r0002')).not.toBeNull()
+    expect(state.readingList).toHaveLength(READING_LIST_CAP)
+  })
+
+  it('trims read entries only, oldest readAt first, and hands the same array back when nothing had to go', () => {
+    // Five unread over a cap of four: nothing goes, the same array.
     const all = Array.from({ length: 5 }, (_, i) => entry({ id: `e${i}`, addedAt: i }))
-    expect(trimReadingList(all, 4).map((e) => e.id)).toEqual(['e1', 'e2', 'e3', 'e4'])
+    expect(trimReadingList(all, 4)).toBe(all)
     const mixed = [
       entry({ id: 'u0', addedAt: 0 }),
       entry({ id: 'r9', addedAt: 9, readAt: 10 }),
-      entry({ id: 'r1', addedAt: 1, readAt: 10 }),
+      entry({ id: 'r1', addedAt: 1, readAt: 12 }),
       entry({ id: 'u2', addedAt: 2 })
     ]
-    // The oldest READ (r1) goes before the oldest unread (u0); the input order is kept.
-    expect(trimReadingList(mixed, 3).map((e) => e.id)).toEqual(['u0', 'r9', 'u2'])
-    expect(trimReadingList(mixed, 2).map((e) => e.id)).toEqual(['u0', 'u2'])
-    // Within the cap the same array comes back: a caller can tell a no-op.
-    expect(trimReadingList(mixed, 4)).toBe(mixed)
+    // Two read under a cap of two: the same array back. One: the oldest READ by `readAt` (r9,
+    // read at 10, though added later than r1) goes; the input order is kept.
+    expect(trimReadingList(mixed, 2)).toBe(mixed)
+    expect(trimReadingList(mixed, 1).map((e) => e.id)).toEqual(['u0', 'r1', 'u2'])
+    // A cap of none: every read entry goes, every unread stays.
+    expect(trimReadingList(mixed, 0).map((e) => e.id)).toEqual(['u0', 'u2'])
   })
 
   it('never rewrites an entry it keeps: the trim hands back the very objects, the cap in the sanitiser the same bytes', () => {
     const list = [
       normal({ id: 'u0', addedAt: 0 }),
       normal({ id: 'r1', addedAt: 1, readAt: 10, favicon: 'data:,r1' }),
+      normal({ id: 'r3', addedAt: 3, readAt: 4 }),
       normal({ id: 'u2', addedAt: 2 })
     ]
-    const kept = trimReadingList(list, 2)
-    expect(kept.map((e) => e.id)).toEqual(['u0', 'u2'])
+    const kept = trimReadingList(list, 1)
+    expect(kept.map((e) => e.id)).toEqual(['u0', 'r1', 'u2'])
     // The survivors are the input's own objects, not copies: no `updatedAt` bump, no field moved.
     for (const e of kept) expect(list.includes(e)).toBe(true)
     const many = Array.from({ length: READING_LIST_CAP + 5 }, (_, i) =>
       normal({
-        id: `e${i}`,
+        id: `e${String(i).padStart(4, '0')}`,
         url: `https://e.example/${i}`,
         addedAt: i,
         updatedAt: i + 1,
         favicon: 'data:,x',
-        readAt: i % 3 === 0 ? i + 1 : undefined
+        readAt: i + 1
       })
     )
     const loaded = sanitizeReadingList(many)
     expect(loaded).toHaveLength(READING_LIST_CAP)
+    expect(loaded.map((e) => e.id).slice(0, 2)).toEqual(['e0005', 'e0006'])
     const byId = new Map(many.map((e) => [e.id, e]))
     for (const e of loaded) expect(bytes(e)).toBe(bytes(byId.get(e.id)))
   })
@@ -302,10 +343,18 @@ describe('ReadingListService: persistence', () => {
     })
     expect(sanitizeReadingList(undefined)).toEqual([])
     expect(sanitizeReadingList({ not: 'a list' })).toEqual([])
-    const many = Array.from({ length: READING_LIST_CAP + 5 }, (_, i) =>
+    // The cap at load is the shared trim's: read entries past it go (oldest `readAt` first), an
+    // unread entry never – a profile with 1 005 unread pages loads all 1 005.
+    const manyUnread = Array.from({ length: READING_LIST_CAP + 5 }, (_, i) =>
       entry({ id: `e${i}`, url: `https://e.example/${i}`, addedAt: i })
     )
-    expect(sanitizeReadingList(many)).toHaveLength(READING_LIST_CAP)
+    expect(sanitizeReadingList(manyUnread)).toHaveLength(READING_LIST_CAP + 5)
+    const manyRead = Array.from({ length: READING_LIST_CAP + 5 }, (_, i) =>
+      entry({ id: `e${i}`, url: `https://e.example/${i}`, addedAt: i, readAt: 10_000 + i })
+    )
+    const loadedRead = sanitizeReadingList(manyRead)
+    expect(loadedRead).toHaveLength(READING_LIST_CAP)
+    for (let i = 0; i < 5; i++) expect(loadedRead.some((e) => e.id === `e${i}`)).toBe(false)
   })
 
   it('is idempotent on a clean profile: a load rewrites no byte of the service’s own writes', async () => {
@@ -400,5 +449,141 @@ describe('the page search (filterReadingList)', () => {
 
   it('hands back a copy, never the list itself', () => {
     expect(filterReadingList(list, '')).not.toBe(list)
+  })
+})
+
+/**
+ * The sync seam (services pass 11, ID-48): `applySynced` / `removeSynced` land the other
+ * devices' records (`sync/apply.ts`), commit nothing themselves and keep one entry per URL by
+ * the pure rule `readingListSurvivor` – the later `addedAt`, a tie the greater id – so every
+ * device picks the same survivor.
+ */
+describe('ReadingListService: sync (applySynced / removeSynced)', () => {
+  it('lands an entry under its id – new, or over the local copy keeping this device’s favicon – and commits nothing', () => {
+    const { service, state, io } = setup()
+    const local = service.add('https://a.example/', 'A here', 'data:,mine')!
+    const writes = io.writes.length
+    const listeners = vi.fn()
+    service.subscribe(listeners)
+    // The peer marked A read (its record carries no favicon) and saved a page of its own.
+    service.applySynced([
+      normal({ id: local.id, url: local.url, title: 'A there', addedAt: 50, readAt: 60 }),
+      normal({ id: 'rl_peer', url: 'https://p.example/', title: 'P', addedAt: 70 })
+    ])
+    expect(service.get(local.id)).toEqual(
+      normal({
+        id: local.id,
+        url: local.url,
+        title: 'A there',
+        addedAt: 50,
+        readAt: 60,
+        favicon: 'data:,mine'
+      })
+    )
+    expect(bytes(service.get(local.id))).toBe(
+      bytes(
+        normal({
+          id: local.id,
+          url: local.url,
+          title: 'A there',
+          addedAt: 50,
+          readAt: 60,
+          favicon: 'data:,mine'
+        })
+      )
+    )
+    expect(service.get('rl_peer')).toEqual(
+      normal({ id: 'rl_peer', url: 'https://p.example/', title: 'P', addedAt: 70 })
+    )
+    expect(service.get('rl_peer')).not.toHaveProperty('favicon')
+    // A batch is the engine's to commit and the chrome reads the state: no write, no listener.
+    expect(io.writes.length).toBe(writes)
+    expect(listeners).not.toHaveBeenCalled()
+    expect(state.readingList).toHaveLength(2)
+  })
+
+  it('one URL, one entry: the later addedAt survives whichever side it is on, a tie the lexically greater id, and the loser leaves the list', () => {
+    const { service, state } = setup()
+    // The same page saved on both devices while apart, the peer's later: the peer's stays.
+    state.readingList = [normal({ id: 'rl_here1', url: 'https://same.example/', addedAt: 100 })]
+    service.applySynced([normal({ id: 'rl_there1', url: 'https://same.example/', addedAt: 200 })])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_there1'])
+    // This device's later: the peer's entry never joins.
+    state.readingList = [normal({ id: 'rl_here2', url: 'https://other.example/', addedAt: 300 })]
+    service.applySynced([normal({ id: 'rl_there2', url: 'https://other.example/', addedAt: 250 })])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_here2'])
+    // A tie: the lexically greater id, from either side.
+    state.readingList = [normal({ id: 'rl_aaa', url: 'https://tie.example/', addedAt: 400 })]
+    service.applySynced([normal({ id: 'rl_zzz', url: 'https://tie.example/', addedAt: 400 })])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_zzz'])
+    state.readingList = [normal({ id: 'rl_zzz', url: 'https://tie.example/', addedAt: 400 })]
+    service.applySynced([normal({ id: 'rl_aaa', url: 'https://tie.example/', addedAt: 400 })])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_zzz'])
+    // A record for an id this device holds under the same URL is that entry's newer state, not
+    // a rival: it replaces the copy.
+    state.readingList = [normal({ id: 'rl_x', url: 'https://x.example/', addedAt: 10 })]
+    service.applySynced([
+      normal({ id: 'rl_x', url: 'https://x.example/', addedAt: 20, readAt: 30 })
+    ])
+    expect(state.readingList).toEqual([
+      normal({ id: 'rl_x', url: 'https://x.example/', addedAt: 20, readAt: 30 })
+    ])
+    // Two peers' entries for one URL in one batch: the rule holds across the batch.
+    state.readingList = []
+    service.applySynced([
+      normal({ id: 'rl_p1', url: 'https://batch.example/', addedAt: 5 }),
+      normal({ id: 'rl_p2', url: 'https://batch.example/', addedAt: 9 }),
+      normal({ id: 'rl_p3', url: 'https://batch.example/', addedAt: 7 })
+    ])
+    expect(state.readingList.map((e) => e.id)).toEqual(['rl_p2'])
+  })
+
+  it('removeSynced takes the tombstoned ids out and ignores the rest; the cap trims after a batch by the same rule – read entries only', () => {
+    const { service, state } = setup()
+    const a = service.add('https://a.example/', 'A')!
+    const b = service.add('https://b.example/', 'B')!
+    const before = state.readingList
+    service.removeSynced(['rl_unknown'])
+    expect(state.readingList).toBe(before)
+    service.removeSynced([a.id, 'rl_unknown'])
+    expect(state.readingList.map((e) => e.id)).toEqual([b.id])
+    // 1 000 read at the cap, one of them read earliest (rl_0003): landed READ entries run the
+    // read half over, and the oldest by `readAt` go – a deletion made here, on purpose, which the
+    // engine's re-snapshot tombstones for the fleet. The unread entry among them never counts.
+    const atCap = (): ReadingListEntry[] => [
+      ...Array.from({ length: READING_LIST_CAP }, (_, i) =>
+        normal({
+          id: `rl_${String(i).padStart(4, '0')}`,
+          url: `https://cap.example/${i}`,
+          addedAt: 1000 + i,
+          readAt: i === 3 ? 1500 : 2000 + i
+        })
+      ),
+      normal({ id: 'rl_unread', url: 'https://cap.example/unread', addedAt: 1 })
+    ]
+    state.readingList = atCap()
+    service.applySynced([
+      normal({ id: 'rl_new1', url: 'https://cap.example/new1', addedAt: 5000, readAt: 9000 }),
+      normal({ id: 'rl_new2', url: 'https://cap.example/new2', addedAt: 5001, readAt: 9001 })
+    ])
+    expect(state.readingList).toHaveLength(READING_LIST_CAP + 1)
+    expect(state.readingList.filter((e) => e.readAt === undefined).map((e) => e.id)).toEqual([
+      'rl_unread'
+    ])
+    expect(state.readingList.some((e) => e.id === 'rl_new1')).toBe(true)
+    expect(state.readingList.some((e) => e.id === 'rl_new2')).toBe(true)
+    expect(state.readingList.some((e) => e.id === 'rl_0003')).toBe(false)
+    expect(state.readingList.some((e) => e.id === 'rl_0000')).toBe(false)
+    expect(state.readingList.some((e) => e.id === 'rl_0001')).toBe(true)
+    // Landed UNREAD entries over the cap: nothing goes, however many – the unread half is unbounded.
+    state.readingList = atCap()
+    service.applySynced(
+      Array.from({ length: 300 }, (_, i) =>
+        normal({ id: `rl_peer_${i}`, url: `https://peer.example/${i}`, addedAt: 7000 + i })
+      )
+    )
+    expect(state.readingList).toHaveLength(READING_LIST_CAP + 1 + 300)
+    expect(state.readingList.some((e) => e.id === 'rl_0003')).toBe(true)
+    expect(unreadReadingCount(state.readingList)).toBe(301)
   })
 })

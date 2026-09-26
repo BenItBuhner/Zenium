@@ -2,12 +2,12 @@
   "id": "siteinfo",
   "order": 61,
   "class": "SiteInfoDemo",
-  "shard": "phone-d",
+  "shard": "phone-f",
   "mirrors": "android-siteinfo-demo.yml",
   "dir": "siteinfo-demo",
   "env": {
     "DEMO_THEME": "light"
   },
-  "estimate": 2,
-  "note": "The workflow runs light and dark; the nightly runs light."
+  "estimate": 3,
+  "note": "The workflow runs light and dark; the nightly runs light. 143 s measured on phone-d before the Background video scenes (W6-S8's 1b, W6-S12's 1e under an allowing default); with them about three minutes, which phone-d - at 68 of its 68 - had no room for, so the driver runs on phone-f, the shard kept for what wave 6 adds."
 }

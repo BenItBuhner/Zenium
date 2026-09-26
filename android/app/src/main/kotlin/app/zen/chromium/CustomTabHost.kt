@@ -13,16 +13,16 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.privacy.Privacy
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.json.JSONObject
 
 /**
  * What a custom tab's page reports into. The browser window's [Host] forwards everything to the
  * core in the chrome; a custom tab has no chrome, so the few things a page needs answered –
- * a permission prompt, a link that leaves the web, a download starting – are answered here with
- * native UI, and navigation and title changes go to the activity's toolbar. Popups navigate the
- * one page (`popupsAsTabs` is false), and the page script is not installed: there is no core to
- * talk to about Glance or third-party links.
+ * a permission prompt and the Open in <App>? confirmation of a link that leaves the web (both on
+ * §9.23's native sheet, the forms the browser window asks them in), a download starting – are
+ * answered here with native UI, and navigation and title changes go to the activity's toolbar.
+ * Popups navigate the one page (`popupsAsTabs` is false), and the page script is not installed:
+ * there is no core to talk to about Glance or third-party links.
  *
  * An installed web app's window ([WebAppActivity], PWA-07) is the same kind of host – one page,
  * no chrome, the browser's rules – so it is this class with the activity as its [Listener]; only
@@ -134,59 +134,139 @@ class CustomTabHost(
 
     // --- prompts ------------------------------------------------------------------------------------
 
+    /** The permission asks of this window: the one on the sheet and the ones waiting behind it. */
+    private val permissionAsks = CustomTabPermissionPrompt.Queue()
+    /** The sheet while it is up, so the window's end takes it down without an answer. */
+    private var permissionPrompt: PermissionPromptSheet? = null
+
     /**
      * A site asked for the camera, microphone or location. The browser window remembers the
-     * answer per site through the core; a custom tab asks each time, like Chrome's does.
+     * answer per site through the core; a custom tab asks each time, like Chrome's does – on
+     * §9.23's native prompt sheet ([PermissionPromptSheet], the one chassis the installed app's
+     * window asks with too), in this tab's scheme ([themeDark]: the caller's colour scheme, else
+     * the system's), the family's question naming the site ("Allow <host> to know your
+     * location?") and §9.11's pair Block | Allow with Allow the accent primary (§9.29).
+     *
+     * Allow grants THIS request, Block refuses it; a dismissal (the scrim, the system back, the
+     * grabber) refuses it too, exactly as the dialog's cancel did – there is no core here, so no
+     * site decision is written and nothing is remembered either way: the page's next request asks
+     * again. One sheet per window at a time: a request arriving while one is up waits behind it,
+     * or shares its answer when it asks the same question of the same site
+     * ([CustomTabPermissionPrompt.Queue]). A window on its way out asks nothing.
      */
     private fun askPermission(args: JSONObject) {
         val requestId = args.str("requestId")
-        val what = when (args.str("permission")) {
-            "camera" -> R.string.cct_permission_camera
-            "microphone" -> R.string.cct_permission_microphone
-            "media" -> R.string.cct_permission_media
-            "geolocation" -> R.string.cct_permission_location
-            "mediaKeySystem" -> R.string.cct_permission_protected_media
-            else -> {
-                permissions.respond(requestId, false)
-                return
-            }
+        val question = CustomTabPermissionPrompt.questionFor(args.str("permission"))
+        if (question == null || activity.isFinishing || activity.isDestroyed) {
+            permissions.respond(requestId, false)
+            return
         }
-        val site = hostOf(args.str("url"))
-        var answered = false
-        val answer = { allow: Boolean -> if (!answered) { answered = true; permissions.respond(requestId, allow) } }
-        MaterialAlertDialogBuilder(activity)
-            .setTitle(activity.getString(R.string.cct_permission_message, site))
-            .setMessage(activity.getString(what))
-            .setPositiveButton(R.string.cct_allow) { _, _ -> answer(true) }
-            .setNegativeButton(R.string.cct_block) { _, _ -> answer(false) }
-            .setOnCancelListener { answer(false) }
-            .show()
+        if (permissionAsks.add(requestId, question, hostOf(args.str("url")))) showPermissionPrompt()
     }
+
+    /** The sheet for the current ask; its answer settles the ask and brings up the next one waiting. */
+    private fun showPermissionPrompt() {
+        val ask = permissionAsks.current ?: return
+        var answered = false
+        val sheet = PermissionPromptSheet(
+            activity,
+            themeDark,
+            requester = ask.site,
+            question = ask.question,
+            block = activity.getString(R.string.cct_block),
+            allow = NativePromptSheet.Peer(activity.getString(R.string.cct_allow), NativePromptSheet.Tone.ACCENT)
+        ) { answer ->
+            if (answered) return@PermissionPromptSheet
+            answered = true
+            permissionPrompt = null
+            // ALLOWED grants; BLOCKED and DISMISSED both refuse this request and remember nothing.
+            val allow = answer == PermissionPromptSheet.Answer.ALLOWED
+            permissionAsks.settle()
+            for (id in ask.requestIds) permissions.respond(id, allow)
+            if (!activity.isFinishing && !activity.isDestroyed) showPermissionPrompt()
+        }
+        permissionPrompt = sheet
+        sheet.show()
+    }
+
+    /** The Open in <App>? sheet while it is up, and the request it asks about; the window's end takes it down without an answer. */
+    private var externalPrompt: NativePromptSheet? = null
+    private var externalRequestId: String? = null
 
     /**
      * A `mailto:`, `tel:`, `intent://` or a site's own app. Confirmed before it opens, as the
-     * browser window's sheet does; with no app at all the request goes through so the link's
-     * fallback (an `intent://`'s web address, a store listing, a toast) runs.
+     * browser window's sheet does – in ITS form, on §9.23's native chassis ([NativePromptSheet];
+     * [CustomTabOpenInAppPrompt] has the browser sheet's words): "Open in <App>?" over its
+     * sentence and the decoded address on a line of its own, Not now | Open with Open the accent
+     * primary, in this tab's scheme. Open lets the request go; Not now, the scrim's tap and the
+     * system back refuse it, and nothing is remembered – no core here to remember a scheme with,
+     * so no Always open row: every ask is answered for itself. With no app at all there is
+     * nothing to ask: the request is refused, nothing started, and the deliberate fallback runs
+     * as the browser window's core runs it (`noHandler`) – the `intent://`'s web address loaded
+     * in this tab, else the store listing of the app it wants, else the toast
+     * ([ExternalProtocols.refuseWithFallback]). One question per window, the core's rule: a newer
+     * request under a tap takes the sheet over (the one it replaces answered `false`), one
+     * without a tap is refused – a script firing on its own does not get to replace the question
+     * the user is reading. A window on its way out asks nothing and runs no fallback.
      */
     private fun askExternal(args: JSONObject) {
         val requestId = args.str("requestId")
-        if (args.str("handler") == "none") {
-            externalProtocols.respond(requestId, true)
+        if (activity.isFinishing || activity.isDestroyed) {
+            externalProtocols.respond(requestId, false)
             return
         }
+        if (args.str("handler") == "none") {
+            externalProtocols.refuseWithFallback(requestId)
+            return
+        }
+        externalRequestId?.let { standing ->
+            if (!args.optBoolean("userGesture", false)) {
+                externalProtocols.respond(requestId, false)
+                return
+            }
+            externalPrompt?.dismiss()
+            externalPrompt = null
+            externalRequestId = null
+            externalProtocols.respond(standing, false)
+        }
+        val url = args.str("url")
         val appName = args.strOrNull("appName")
+        val scheme = CustomTabOpenInAppPrompt.schemeOf(url)
+        val site = CustomTabOpenInAppPrompt.siteOf(tabs.get(args.str("tabId"))?.url)
+        val title = if (appName != null) activity.getString(R.string.cct_open_in_app, appName) else activity.getString(R.string.cct_open_in_another_app)
+        val description = if (CustomTabOpenInAppPrompt.isWeb(scheme)) {
+            // A site's own app offering to open a page that loads regardless: the sentence says so.
+            if (appName != null) activity.getString(R.string.cct_open_link_also_in_app, appName) else activity.getString(R.string.cct_open_link_also_in_an_app)
+        } else {
+            val obj = CustomTabOpenInAppPrompt.objectFor(scheme)?.let(activity::getString) ?: activity.getString(R.string.cct_open_object_other, scheme)
+            activity.getString(R.string.cct_open_wants, site.ifEmpty { activity.getString(R.string.cct_this_page) }, obj)
+        }
         var answered = false
-        val answer = { allow: Boolean -> if (!answered) { answered = true; externalProtocols.respond(requestId, allow) } }
-        MaterialAlertDialogBuilder(activity)
-            .setTitle(
-                if (appName != null) activity.getString(R.string.cct_open_in_app, appName)
-                else activity.getString(R.string.cct_open_in_another_app)
+        val sheet = NativePromptSheet(
+            activity,
+            V2Ink(activity, themeDark),
+            NativePromptSheet.Content(
+                title = title,
+                description = description,
+                detail = CustomTabOpenInAppPrompt.displayAddress(url),
+                detailName = url,
+                titleOneLine = true,
+                secondary = activity.getString(R.string.cct_not_now),
+                primary = NativePromptSheet.Peer(activity.getString(R.string.cct_open), NativePromptSheet.Tone.ACCENT)
             )
-            .setMessage(args.str("url"))
-            .setPositiveButton(R.string.cct_open) { _, _ -> answer(true) }
-            .setNegativeButton(R.string.cct_not_now) { _, _ -> answer(false) }
-            .setOnCancelListener { answer(false) }
-            .show()
+        ) { answer ->
+            if (answered) return@NativePromptSheet
+            answered = true
+            if (externalRequestId == requestId) {
+                externalPrompt = null
+                externalRequestId = null
+            }
+            // Open lets the request go; Not now, the scrim and the system back refuse it, and nothing is remembered.
+            externalProtocols.respond(requestId, answer.accepted)
+        }
+        externalPrompt = sheet
+        externalRequestId = requestId
+        sheet.show()
     }
 
     // --- downloads ----------------------------------------------------------------------------------
@@ -307,6 +387,13 @@ class CustomTabHost(
     }
 
     fun destroy() {
+        // The sheets go with the window, without an answer; the page they asked for is going too.
+        permissionPrompt?.dismiss()
+        permissionPrompt = null
+        permissionAsks.clear()
+        externalPrompt?.dismiss()
+        externalPrompt = null
+        externalRequestId = null
         security.shutdown()
         tabs.destroyAll()
         downloads.destroy()

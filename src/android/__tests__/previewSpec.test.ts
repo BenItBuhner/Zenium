@@ -345,6 +345,21 @@ describe('parsePreviewSpec', () => {
     ])
   })
 
+  it('puts the new tab page’s cards strip on its nth card (`cards:<n>`, 1-based); a page that is no count is no step', () => {
+    expect(parsePreviewSpec('ntp=rest&then=cards:2;tap:More options for Downloads')).toEqual({
+      kind: 'ntp',
+      pose: { kind: 'rest' },
+      private: false,
+      then: [
+        { kind: 'cards', page: 2 },
+        { kind: 'tap', text: 'More options for Downloads' }
+      ]
+    })
+    expect(parsePreviewSteps('cards:0;cards:1.5;cards:;cards:two;cards:3')).toEqual([
+      { kind: 'cards', page: 3 }
+    ])
+  })
+
   it('opens an extension’s page as a tab by id and path, behind an internal page but ahead of a group', () => {
     const id = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
     expect(parsePreviewSpec(`extension-page=${id}/ui/options/index.html`)).toEqual({

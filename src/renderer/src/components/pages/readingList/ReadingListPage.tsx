@@ -8,7 +8,7 @@ import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useFaviconSrc } from '@renderer/lib/favicons'
-import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { contextMenuAnchor, controlMenuAnchor } from '@renderer/lib/menuKeys'
 import { relativeTime } from '@renderer/lib/utils'
 import { IconAction } from '../../downloads/DownloadParts'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
@@ -254,17 +254,9 @@ function EntryRow({ entry, tabId }: { entry: ReadingListEntry; tabId: string }):
           action="menu"
           menu
           className="zen-page-row-reveal"
-          onClick={(ev) => {
-            // The menu hangs from the button; a keyboard press (Enter and Space report a
-            // `detail` of 0) starts the menu with its first item selected.
-            const box = ev.currentTarget.getBoundingClientRect()
-            run('readingList.contextMenu', {
-              id,
-              x: Math.round(box.right),
-              y: Math.round(box.bottom),
-              keyboard: ev.detail === 0
-            })
-          }}
+          // The menu hangs from the button; a keyboard press (Enter and Space report a
+          // `detail` of 0) starts the menu with its first item selected.
+          onClick={(ev) => run('readingList.contextMenu', { id, ...controlMenuAnchor(ev) })}
         />
       </div>
     </li>
