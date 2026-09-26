@@ -1,27 +1,24 @@
 name: Android Magic Stack demo
 
-# Runs the new tab page's Magic Stack on a device, every act a finger's (NTP-16, W6-4): a seeded
-# profile with a recently closed tab, a completed download whose file is on the device and two
-# bookmarks gives the stack its three cards in the stack's fixed order (Continue where you left
-# off, Downloads, Bookmarks), the Default browser reminder a fourth where the host says the browser
-# is not the default; the cards named for TalkBack, the strip a carousel with its dots, above the
-# tiles at the bottom dock, each card the strip's width less the 24 the next one peeks by; a real
-# swipe pages the strip (a measured scene, magic-stack-swipe) and a finger on a dot pages back; a
-# card's ⋮ opens the shared local menu titled by the module, Hide This (a measured scene,
-# magic-stack-hide, a probe on the strip recording the 120 ms fade and the siblings' glide into
-# the gap) writes the device's hidden set; Customise opens the stack's sheet of switch rows and a
-# switch brings the card back; every switch off leaves the page without the stack; the gear
-# sheet's Magic Stack row is the way back when no ⋮ is left, swapping the sheets; one card back
-# stands alone at full width without dots; Reopen restores the closed tab. The driver
+# Runs the new tab page's cards (Chrome's Magic Stack; "Cards" to the user) on a device, every act
+# a finger's (NTP-16, W6-4): a seeded profile with a recently closed tab, a completed download
+# whose file is on the device and two bookmarks gives the stack its three cards in the stack's
+# fixed order (Continue where you left off, Downloads, Bookmarks), the Default browser reminder a
+# fourth where the host says the browser is not the default; the cards named for TalkBack, the
+# strip a carousel with a page indicator (dots that are no controls, a status line reading the
+# page), above the tiles at the bottom dock, each card the strip's width less the 24 the next one
+# peeks by; a real swipe pages the strip (a measured scene, magic-stack-swipe) and a swipe back
+# pages back; a card's ⋮ opens the shared local menu titled by the module, Hide This (a measured
+# scene, magic-stack-hide, a probe on the strip recording the 120 ms fade and the siblings' glide
+# into the gap) writes the device's hidden set; Customise opens the "Cards" sheet of switch rows
+# and a switch brings the card back; every switch off leaves the page without the stack; the gear
+# sheet's Cards row is the way back when no ⋮ is left, swapping the sheets; one card back stands
+# alone at full width without dots; the Continue card's row restores the closed tab. The driver
 # (MagicStackDemo) writes its findings next to the recording; a claim that does not hold fails the
 # run. Dispatch-only, like the other demos: it takes about eight minutes. The build, the emulator
 # and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY (W6-4): runs on the builder's branch while the driver is proved; removed before the
-  # PR is marked ready.
-  push:
-    branches: [cursor/android-ntp-magic-stack-9271]
 
 permissions:
   contents: read
