@@ -1,6 +1,7 @@
 import { Menu, nativeImage, net, type MenuItemConstructorOptions } from 'electron'
 import type { MenuHost, MenuItemTemplate, MenuPopupOptions } from '../../core/platform'
 import { RendererMenuHost } from '../../core/rendererMenus'
+import { withMnemonics } from './menuMnemonics'
 import type { ElectronWindow } from './window'
 
 /** Longest a menu waits for uncached remote favicons before it opens without them. */
@@ -49,8 +50,7 @@ export class ElectronMenus implements MenuHost {
    */
   private applyApplicationMenu(menus: MenuItemTemplate[]): void {
     const generation = ++this.applicationMenuGeneration
-    const set = (): void =>
-      Menu.setApplicationMenu(Menu.buildFromTemplate(menus.map((item) => this.toElectron(item))))
+    const set = (): void => Menu.setApplicationMenu(Menu.buildFromTemplate(this.template(menus)))
     set()
     const pending = [...remoteIcons(menus)].filter((url) => !this.icons.has(url))
     if (pending.length === 0) return
@@ -82,7 +82,7 @@ export class ElectronMenus implements MenuHost {
         popup.y = Math.round(options.y)
       }
       if (options.keyboard) popup.sourceType = 'keyboard'
-      Menu.buildFromTemplate(items.map((item) => this.toElectron(item))).popup(popup)
+      Menu.buildFromTemplate(this.template(items)).popup(popup)
     }
     const pending = [...remoteIcons(items)].filter((url) => !this.icons.has(url))
     if (pending.length === 0) {
@@ -101,6 +101,14 @@ export class ElectronMenus implements MenuHost {
   /** The renderer closed its menu without a pick. */
   dismiss(menuId: string): void {
     this.inChrome.dismiss(menuId)
+  }
+
+  /**
+   * Electron's template for the core's: the labels marked with their Alt mnemonics on Windows
+   * and Linux (`&` escaped everywhere, see `menuMnemonics.ts`), then each item converted.
+   */
+  private template(items: MenuItemTemplate[]): MenuItemConstructorOptions[] {
+    return withMnemonics(items, process.platform).map((item) => this.toElectron(item))
   }
 
   private toElectron(item: MenuItemTemplate): MenuItemConstructorOptions {
