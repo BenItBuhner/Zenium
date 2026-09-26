@@ -27,6 +27,17 @@ const loaded = new Set<string>()
  * (§11.4); an address that loaded once this session shows at once. The favicon keeps its own
  * colours: it is content drawn in chrome (§9.29). The desktop pill's empty tab takes it at 16
  * (`size`), the site-information slot's glyph size, with the magnifier at the row stroke.
+ *
+ * A mark, not a control (OMN-38, partial-by-design on the root's ruling of 2026-09-26): in
+ * Chrome for Android 152 a tap on the default search engine's logo does nothing. Chromium tag
+ * 152.0.7977.89, `chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/
+ * status/StatusMediator.java`, `maybeUpdateStatusIconForSearchEngineIcon()`: the model takes the
+ * engine's icon as `STATUS_ICON_RESOURCE` and `null` as its `STATUS_CLICK_LISTENER`. Chrome's
+ * engine for one query is site search – the keyword, the engine's row – which the bar has
+ * (`@keyword`, tab-to-search, Ctrl+K). So the phone field's slot stays a `role="img"` named for
+ * the engine, inside no button and with no handler (`urlbarEngineGlyphInert.test.tsx` pins it);
+ * a tap on it – a picker of the engines was built as #567's Form A and is kept on
+ * `cursor/android-omnibox-engine-glyph-form-a-9271` – takes a ruling first.
  */
 export function EngineFieldGlyph({
   engine,
