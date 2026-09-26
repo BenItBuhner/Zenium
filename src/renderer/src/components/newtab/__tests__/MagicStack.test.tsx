@@ -718,7 +718,16 @@ describe('the Magic Stack on the page (NTP-16)', () => {
         const index = card ? Array.prototype.indexOf.call(this.parentElement!.children, this) : 0
         const x = index * 100
         const width = card ? 100 : 0
-        return { x, y: 0, top: 0, left: x, right: x + width, bottom: 0, width, height: 0 } as DOMRect
+        return {
+          x,
+          y: 0,
+          top: 0,
+          left: x,
+          right: x + width,
+          bottom: 0,
+          width,
+          height: 0
+        } as DOMRect
       }
     })
     try {
@@ -769,7 +778,8 @@ describe('the Magic Stack on the page (NTP-16)', () => {
       expect(scroll.writes).toEqual([])
     } finally {
       if (rectOf) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', rectOf)
-      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).getBoundingClientRect
+      else
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>).getBoundingClientRect
     }
   })
 
