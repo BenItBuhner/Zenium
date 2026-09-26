@@ -621,6 +621,77 @@ describe('a Space switch in the overview', () => {
     expect(placeholderIds()).toEqual(ids('w', 8, 29))
   })
 
+  it('a Space with no tab slides in with §9.17’s note in its slot, and the note carries no fade of its own (TAB-34)', () => {
+    // Home emptied: its slot comes up with the note where the grid would stand.
+    const emptyHome = (active: string): UIState => {
+      const state = stateOf(active)
+      const tabs = Object.fromEntries(
+        Object.entries(state.tabs).filter(([id]) => !id.startsWith('h'))
+      )
+      const spaces = state.spaces.map((s) =>
+        s.id === HOME ? { ...s, tabIds: [], activeTabId: null } : s
+      )
+      return { ...state, tabs, spaces }
+    }
+    render(emptyHome(WORK))
+    expect(cardIds()).toEqual(ids('w', 0, 7))
+    animations = []
+    render(emptyHome(HOME))
+    const note = host!.querySelector<HTMLElement>('[data-testid="overview-tabs-empty"]')!
+    expect(note).not.toBeNull()
+    expect(host!.querySelector('.zen-overview-grid')).toBeNull()
+    expect(note.parentElement).toBe(slot())
+    // The slot's slide is the motion (MOT-05) – the note is marked for no fade of its own (§11.1).
+    const [slide] = slides()
+    expect(slides()).toHaveLength(1)
+    expect(slide.el).toBe(slot())
+    expect(note.hasAttribute('data-in-place')).toBe(false)
+    // A still of Work's grid fades over it, as over any next grid.
+    expect(stills()).toHaveLength(1)
+    // Back to Work: the grid again, sliding from the leading side.
+    animations = []
+    render(emptyHome(WORK))
+    expect(host!.querySelector('[data-testid="overview-tabs-empty"]')).toBeNull()
+    expect(cardIds()).toEqual(ids('w', 0, 7))
+    expect(slides()[0]!.frames[0]).toMatchObject({
+      transform: `translate3d(-${SPACE_SLIDE_PX}px, 0, 0)`
+    })
+  })
+
+  it('a Space left on its note – its last card closed there – is kept in view as a still that sheds the mark, so the still’s fade out is the note’s one move (TAB-34)', () => {
+    // Home down to one tab, then to none: the note takes the grid's place in Home's own slot
+    // and carries the mark (the 120 ms fade in, §11.1's one move).
+    const homeWith = (active: string, keep: string[]): UIState => {
+      const state = stateOf(active)
+      const tabs = Object.fromEntries(
+        Object.entries(state.tabs).filter(([id]) => !id.startsWith('h') || keep.includes(id))
+      )
+      const spaces = state.spaces.map((s) =>
+        s.id === HOME ? { ...s, tabIds: keep, activeTabId: keep[0] ?? null } : s
+      )
+      return { ...state, tabs, spaces }
+    }
+    render(homeWith(HOME, ['h0']))
+    expect(cardIds()).toEqual(['h0'])
+    render(homeWith(HOME, []))
+    const note = host!.querySelector<HTMLElement>('[data-testid="overview-tabs-empty"]')!
+    expect(note.hasAttribute('data-in-place')).toBe(true)
+    // Work picked: Home's slot leaves as a still while Work's grid slides in. The still's copy
+    // of the note carries no mark – put back in the document it would run the fade in afresh
+    // under the still's fade out, a blink where §11.4 asks one move.
+    animations = []
+    render(homeWith(WORK, []))
+    expect(cardIds()).toEqual(ids('w', 0, 7))
+    expect(slides()).toHaveLength(1)
+    expect(stills()).toHaveLength(1)
+    const copy = stills()[0]!.querySelector<HTMLElement>('.zen-overview-tabs-empty')!
+    expect(copy).not.toBeNull()
+    expect(copy.textContent).toContain('No open tabs')
+    expect(copy.hasAttribute('data-in-place')).toBe(false)
+    expect(stills()[0]!.querySelector('[data-in-place]')).toBeNull()
+    expect(host!.querySelector('[data-testid="overview-tabs-empty"]')).toBeNull()
+  })
+
   it('the FLIP tracker measures the new grid with the slot held at rest, and glides nothing from the grid that left', () => {
     render(stateOf(WORK))
     // Work's New Tab card is the thirty-first cell, row 15; Home's the thirteenth, row 6: the
