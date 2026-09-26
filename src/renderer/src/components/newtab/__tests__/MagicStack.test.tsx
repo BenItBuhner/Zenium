@@ -614,6 +614,58 @@ describe('the Magic Stack on the page (NTP-16)', () => {
     expect(frames.scheduled).toBe(false)
   })
 
+  it('the pager’s pitch is the arriving card’s layout width, not its client rect – the entrance scales that from .96 for 120 ms – and the last card’s snap position is the strip’s extent, the tail of the card before it still showing', () => {
+    reduced = true
+    // A laid-out strip: cards 100 wide (a pitch of 108), their rects 96 as the entrance scales
+    // them, the strip's extent 300 – short of the fourth card's 324 by the third's tail.
+    const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+    const rectOf = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getBoundingClientRect')
+    const isCard = (el: HTMLElement): boolean => el.classList.contains('zen-mstack-card')
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return isCard(this) ? 100 : 0
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value(this: HTMLElement): DOMRect {
+        const width = isCard(this) ? 96 : 0
+        return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+      }
+    })
+    const restore = (name: string, original: PropertyDescriptor | undefined): void => {
+      if (original) Object.defineProperty(HTMLElement.prototype, name, original)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+    try {
+      render(stack(state({ newTabHiddenModules: ['downloads'] })))
+      const strip = q<HTMLUListElement>('.zen-mstack-strip')!
+      const scroll = scroller(strip)
+      Object.defineProperty(strip, 'scrollWidth', { configurable: true, get: () => 700 })
+      Object.defineProperty(strip, 'clientWidth', { configurable: true, get: () => 400 })
+      // Downloads comes back second: one pitch of the layout width, 108 – not 104 off the rect.
+      render(stack(state({ newTabHiddenModules: [] })))
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks', 'default-browser'])
+      expect(scroll.offset).toBe(108)
+      act(() => frames.run(1))
+      expect(snapOf(strip)).toBe('')
+      // The fourth card, gone and back: three pitches would be 324, but the strip stops at 300.
+      render(stack(state({ newTabHiddenModules: ['default-browser'] })))
+      expect(cardIds()).toEqual(['continue', 'downloads', 'bookmarks'])
+      render(stack(state({ newTabHiddenModules: [] })))
+      expect(q('.zen-mstack-card[data-cell="default-browser"]')!.dataset.arriving).toBe('true')
+      expect(scroll.offset).toBe(300)
+      expect(scroll.writes.every((w) => w === 108 || w === 300)).toBe(true)
+      act(() => frames.run(1))
+      expect(snapOf(strip)).toBe('')
+      expect(frames.scheduled).toBe(false)
+    } finally {
+      restore('offsetWidth', offsetWidth)
+      restore('getBoundingClientRect', rectOf)
+    }
+  })
+
   it('a card a switch turns off leaves as Hide This’s does – the fade, the strip closing the gap, the dots following – and nothing pages; Hide This pages nothing either', async () => {
     render(stack(state()))
     const strip = q<HTMLUListElement>('.zen-mstack-strip')!

@@ -397,8 +397,15 @@ function useStripPager(
       if (!el || !spring || !card) return
       // The snap position is the card's start less the strip's scroll padding: `index` pitches,
       // the pitch read off the card itself – a lone card grown to the strip's width shrinks over
-      // 120 ms as a second arrives, while the arriving card, new, has its width at once.
-      const target = index * (card.getBoundingClientRect().width + CARD_GAP)
+      // 120 ms as a second arrives, while the arriving card, new, has its width at once. Its
+      // layout width, not its client rect: the entrance scales the card from .96 for 120 ms, and
+      // a rect read in that window puts the pitch 4 % short (the spring then settles short and
+      // the snap's return cuts the rest). The last card's snap position is where the strip
+      // stops, the tail of the card before it still showing – its extent bounds the target
+      // (a strip not laid out reports no extent and bounds nothing).
+      const pitch = (parseFloat(getComputedStyle(card).width) || card.offsetWidth) + CARD_GAP
+      const extent = el.scrollWidth - el.clientWidth
+      const target = extent > 0 ? Math.min(index * pitch, extent) : index * pitch
       const from = el.scrollLeft
       if (Math.abs(target - from) < 1) return
       el.style.setProperty('scroll-snap-type', 'none')
