@@ -47,6 +47,7 @@ import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
 import { PermissionPromptService } from './permissionPrompts'
 import { PrivacyService } from './privacy'
+import { resetSettings } from './settingsReset'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
@@ -3593,6 +3594,9 @@ export class Browser {
       'tasks.end': ({ pid }) => this.tasks.end(pid),
 
       'settings.update': (patch, win) => this.updateSettings(patch, win),
+      'settings.reset': async (_, win) => {
+        await resetSettings(this, win)
+      },
       'shortcuts.update': ({ id, binding }) => {
         state.setShortcutOverride(id, binding)
         this.syncShortcuts()

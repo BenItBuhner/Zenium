@@ -438,6 +438,15 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     requires: 'updates'
   },
   {
+    // Chrome's "Reset settings" at the foot of its list (settings-70): the one row that restores
+    // the settings to their defaults. The desktop and tablet shells' – the phone's Settings has
+    // no tail of Advanced categories to end with it (W7-6).
+    id: 'reset',
+    label: 'Reset Settings',
+    keywords: ['reset', 'restore', 'defaults', 'original', 'factory'],
+    layouts: ['desktop', 'tablet']
+  },
+  {
     id: 'about',
     label: 'About',
     keywords: [
