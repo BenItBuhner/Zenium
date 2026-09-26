@@ -3540,9 +3540,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `window.open` with one that answers a stub window (the fixture logs `fake`) and its content
      * script shows its toast (`#pb-toast-main`) for the refused pop-up: either is the pass. The
      * fixture's `null` alone is the WebView's own refusal, not the extension's (PARTIAL when the
-     * extension's script is in the page but showed nothing); a window opened is F.
+     * extension's script is in the page but showed nothing); a window opened is F. Popup Blocker
+     * Pro (compat round 20) is read the same way: its MAIN-world script answers a dummy window
+     * and its content script toasts `#popup-blocker-pro-jq-toast`.
      */
-    private fun popupBlocker(row: Row, entry: JSONObject): Grade {
+    private fun popupBlocker(label: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (tab, view) = fixture("popups.html?blocker", factor, 3_000)
@@ -3560,11 +3562,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-blocked")
         val fake = result.optString("result") == "fake"
         val toast = result.optBoolean("toast")
-        return when {
-            opened.isNotEmpty() && !fake && !toast -> Grade("F", "Poper Blocker: the tap opened ${opened.first().value.take(60)} in a new tab; nothing of the extension's refused it: ${result.toString().take(160)}", extra)
-            fake || toast -> Grade("P", "Poper Blocker: the pop-up was refused by the extension (window.open answered ${result.optString("result")}, toast ${toast}): ${result.toString().take(160)}", extra)
-            result.optBoolean("scriptInPage") -> Grade("PARTIAL", "Poper Blocker: its page script is in the page but the refusal was the WebView's own (window.open answered ${result.optString("result")}, no toast): ${result.toString().take(160)}", extra)
-            else -> Grade("F", "Poper Blocker: nothing of the extension's reached the page (window.open answered ${result.optString("result")}): ${result.toString().take(160)}", extra)
+        when {
+            opened.isNotEmpty() && !fake && !toast -> Grade("F", "$label: the tap opened ${opened.first().value.take(60)} in a new tab; nothing of the extension's refused it: ${result.toString().take(160)}", extra)
+            fake || toast -> Grade("P", "$label: the pop-up was refused by the extension (window.open answered ${result.optString("result")}, toast ${toast}): ${result.toString().take(160)}", extra)
+            result.optBoolean("scriptInPage") -> Grade("PARTIAL", "$label: its page script is in the page but the refusal was the WebView's own (window.open answered ${result.optString("result")}, no toast): ${result.toString().take(160)}", extra)
+            else -> Grade("F", "$label: nothing of the extension's reached the page (window.open answered ${result.optString("result")}): ${result.toString().take(160)}", extra)
         }
     }
 
@@ -3958,9 +3960,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Chrome); that button is tapped (a gesture) and the chrome's prompt accepted, then the
      * popup lists the two cookies, then one cookie's own delete control is pressed and the
      * fixture's `document.cookie` drops to one: the pass, as the desktop's round 6 graded it.
-     * Listed but not deleted is `PARTIAL`.
+     * Listed but not deleted is `PARTIAL`. EditThisCookie (compat round 20) takes the same
+     * reading with its host access granted at install (no permission ask; its jQuery-UI
+     * accordion lists the cookies with a trash control per row).
      */
-    private fun cookieEditor(row: Row, entry: JSONObject): Grade {
+    private fun cookieEditor(label: String): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         val (_, view) = fixture("cookies.html?editor", factor, 2_000)
@@ -4006,13 +4010,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runCatching { coreCall("extension.closePopup", "null") }
         val wanted = (before.optJSONArray("names")?.length() ?: 0) - 1
         val gone = wanted >= 1 && (after.optJSONArray("names")?.length() ?: 9) == wanted
-        return Grade(
+        Grade(
             when {
                 gone -> "P"
                 listed.optBoolean("pass") -> "PARTIAL"
                 else -> "F"
             },
-            "Cookie-Editor: fixture cookies ${before.optJSONArray("names")} -> ${after.optJSONArray("names") ?: "unread"}; popup ${if (popup == null) "did not render" else "lists ${listed.optInt("fixtureCookies")} of the fixture's cookies (${listed.optString("text").take(100)})"}; permission ${extra.optJSONObject("prompt")?.optString("how")?.ifEmpty { null } ?: extra.optJSONObject("prompt")?.optString("prompt") ?: "not asked"}",
+            "$label: fixture cookies ${before.optJSONArray("names")} -> ${after.optJSONArray("names") ?: "unread"}; popup ${if (popup == null) "did not render" else "lists ${listed.optInt("fixtureCookies")} of the fixture's cookies (${listed.optString("text").take(100)})"}; permission ${extra.optJSONObject("prompt")?.optString("how")?.ifEmpty { null } ?: extra.optJSONObject("prompt")?.optString("prompt") ?: "not asked"}",
             extra
         )
     }
@@ -6537,7 +6541,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("nikfmfgobenbhmocjaaboihbeocackld", "Enable local file links", "local-file-links", core = ::localFileLinks),
         Row("glghokcicpikglmflbbelbgeafpijkkf", "Signer.Digital Digital Signature, PKI", "signer-digital", core = serviceBacked("Signer.Digital", "signing needs its Signer.Digital host (a desktop companion) over native messaging; its installer dialog opens on Chrome's missing-host disconnect", native = true)),
         Row("pioclpoplcdbaefihamjohnefbikjilc", "Evernote Web Clipper", "evernote-web-clipper", core = accountGate("Evernote Web Clipper", Regex("evernote", RegexOption.IGNORE_CASE), gate = "an Evernote account (its sign-in at accounts.evernote.com)")),
-        Row("bkkbcggnhapdmkeljlodobbkopceiche", "Pop up blocker for Chrome - Poper Blocker", "poper-blocker", core = ::popupBlocker),
+        Row("bkkbcggnhapdmkeljlodobbkopceiche", "Pop up blocker for Chrome - Poper Blocker", "poper-blocker", core = popupBlocker("Poper Blocker")),
         Row("ohahllgiabjaoigichmmfljhkcfikeof", "AdBlocker Ultimate", "adblocker-ultimate", core = ::adBlocker),
         Row("akcocjjpkmlniicdeemdceeajlmoabhg", "Free VPN Proxy - 1VPN", "1vpn", core = vpn("1VPN", pac = true, connectSelector = "#proxyToggle")),
         Row("adbacgifemdbhdkfppmeilbgppmhaobf", "RoPro - Enhance Your Roblox Experience", "ropro", core = ::ropro),
@@ -6577,7 +6581,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Google Scholar PDF Reader, RoPro) are the rows above, graded again on this round's
         // reading and fixes.
         Row("oijdcdmnjjgnnhgljmhkjlablaejfeeb", "The QR Code Generator", "qr-code-generator", core = popupMarker("The QR Code Generator", "(function(){var best=null,bw=0;var all=document.querySelectorAll('svg, canvas, img');for(var i=0;i<all.length;i++){var b=all[i].getBoundingClientRect();if(b.width*b.height>bw){bw=b.width*b.height;best=all[i]}}var r=best?best.getBoundingClientRect():{width:0,height:0};var paths=best&&best.tagName.toLowerCase()==='svg'?best.querySelectorAll('path, rect').length:-1;return JSON.stringify({pass:r.width>60&&r.height>60&&(paths<0||paths>4),via:best?best.tagName.toLowerCase():'none',w:Math.round(r.width),h:Math.round(r.height),paths:paths,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)})})()")),
-        Row("hlkenndednhfkekhgcdicdfddnkalmdm", "Cookie-Editor", "cookie-editor", core = ::cookieEditor),
+        Row("hlkenndednhfkekhgcdicdfddnkalmdm", "Cookie-Editor", "cookie-editor", core = cookieEditor("Cookie-Editor")),
         Row("imdndkajeppdomiimjkcbhkafeeooghd", "Browsing Protection by WithSecure", "withsecure-browsing-protection", core = serviceBacked("Browsing Protection by WithSecure", "its site verdicts come from the WithSecure security application (app.withsecure_chrome_https, a desktop companion) over native messaging; without it the action opens its \"Security application not found\" page, as Chrome shows it", native = true)),
         Row("gojbdfnpnhogfdgjbigejoaolejmgdhk", "OneNote Web Clipper", "onenote-web-clipper", core = ::oneNoteWebClipper),
         Row("hfapbcheiepjppjbnkphkmegjlipojba", "Klarna", "klarna", core = accountGate("Klarna", Regex("klarna", RegexOption.IGNORE_CASE), injects = "iframe[src*='hfapbcheiepjppjbnkphkmegjlipojba'], iframe[src*='klapp'], [id*='klarna'], [class*='klarna']", gate = "a Klarna account (its drawer opens at \"Sign in\")", site = "https://www.hm.com/")),
@@ -7200,6 +7204,56 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("kaibcgikagnkfgjnibflebpldakfhfih", "CS2 Trader - Steam Trading Enhancer", "cs2-trader", core = liveMarker("CS2 Trader", "https://steamcommunity.com/market/listings/730/AK-47%20%7C%20Redline%20%28Field-Tested%29", injectedAny("realMoneySite|copy_profile_perma_link|copy_trade_link|show_offer_history"), settleMs = 45_000, desktop = true, mirrors = listOf("https://steamcommunity.com/id/gaben"))),
         Row("blgcbajigpdfohpgcmbbfnphcgifjopc", "ExpressKeys: Password Manager", "expresskeys", core = accountGate("ExpressKeys", Regex("expressvpn\\.com|expresskeys", RegexOption.IGNORE_CASE), gate = "an ExpressVPN Keys account (its popup, a Flutter app, signs in; its vault syncs through ExpressVPN's service and its desktop app is reached over native messaging)")),
         Row("didegimhafipceonhjepacocaffmoppf", "Passbolt - Open source password manager", "passbolt", core = accountGate("Passbolt", Regex("passbolt\\.com", RegexOption.IGNORE_CASE), gate = "a Passbolt server and the account's key (its quick access signs in with the user's passphrase against a self-hosted or cloud Passbolt instance; a fresh install offers its setup)")),
+        // --- compat round 20 (ranks 481-510 by installs; `.github/scripts/ext-compat/next30-round17.json`) ---
+        // Each core rule read off the unpacked bundle: My Doodle's content script swaps google.com's
+        // logo for its text (`doodleText: "MyDoodle"`, `powerSwitchStatus: "ON"` written at its first
+        // run); Diccionario RAE's one `contexts: ["all"]` item opens `dle.rae.es/srv/search` from
+        // `onClicked` (`windows.create`, a tab here) – read in the image long-press menu as Save
+        // Image As PNG's is; EditThisCookie's popup lists the tab's cookies with a trash control per
+        // cookie (host access `<all_urls>`, no permission ask); Yahoo Homepage is a new-tab override
+        // (`ui/homepage.html`) framing yahoo.com in a sandboxed iframe; SAML-tracer's action opens
+        // its `TraceWindow.html` as a window (a tab here), and that page's own `webRequest`
+        // listeners list what the browser loads next; J2TEAM Security's `anti-fb-phishing`
+        // content script has the worker send a page with a Facebook-shaped login form off
+        // facebook.com to its `blocked.html` (`realtime: true` by default); Popup Blocker Pro's
+        // MAIN-world script (`scripting.registerContentScripts`) answers a dummy window for a
+        // refused `window.open` and its content script toasts `#popup-blocker-pro-jq-toast`;
+        // anonymoX sets a `pac_script` from its `.toggle-button-area`; High Contrast's `#toggle`
+        // writes `enabled` to storage.local and its content script puts `hc="a3"` (invert) on
+        // `<html>` (disabled by default); Ready X (the Starknet wallet, Argent X's successor)
+        // injects `window.starknet_argentX`; Youtube Playback Speed Control draws its
+        // `.PlayBackRatePanelYPSC` over any site's video (`enableAllVideosButton: true`).
+        Row("acnonhmkejidodnppipkffhfjbfiogha", "My Doodle", "my-doodle", core = liveMarker("My Doodle", "https://www.google.com/", MY_DOODLE, settleMs = 30_000, desktop = true)),
+        Row("jcocgejjjlnfddlhpbecfapicaajdibb", "Bark for Chrome", "bark", core = serviceBacked("Bark for Chrome", "its content scripts on Gemini and Canva report the child's AI chats to the parent's Bark account (`identity.getProfileUserInfo`, urls.bark.us); no popup, no options – the worker is its whole reachable surface")),
+        Row("cimiefiiaegbelhefglklhhakcgmhkai", "Plasma Integration", "plasma-integration", core = serviceBacked("Plasma Integration", "its every feature (media controls, KDE Connect, downloads in the Plasma shell, tabs in KRunner) is the KDE Plasma desktop's host over native messaging (`org.kde.plasma.browser_integration`); the phone has no Plasma", native = true)),
+        Row("dlnejlppicbjfcfcedcflplfjajinajd", "Bonjourr · Minimalist New Tab Page", "bonjourr", core = newTabOverride("Bonjourr")),
+        Row("gejdeepcjkfbepfkcfdgiodgoglakiii", "Diccionario RAE en un clic 2022", "diccionario-rae", core = menuItemOpens("Diccionario RAE", "gallery.html?rae", ".grid img", Regex("Diccionario RAE", RegexOption.IGNORE_CASE), Regex("dle\\.rae\\.es/srv/search", RegexOption.IGNORE_CASE))),
+        Row("kogfdlbehkaeoafmgaecphlnhohpabig", "Google Meet Breakout by Robert Hudek", "meet-breakout", core = actionPage("Google Meet Breakout", Regex("popup\\.html", RegexOption.IGNORE_CASE), MEET_BREAKOUT_PANEL, fixtures = listOf("page-a.html?breakout"))),
+        Row("ojfebgpkimhlhcblbalbfjblapadhbol", "EditThisCookie (V3)", "editthiscookie", core = cookieEditor("EditThisCookie")),
+        Row("lijhjhlnfifgoabbihoobnfapogkcjgk", "Scrible Extension", "scrible", account = true, core = popupLogin("Scrible")),
+        Row("jdanfkhnfpagoijgfmklhgakdicpnfil", "Yahoo Homepage", "yahoo-homepage", core = newTabOverride("Yahoo Homepage")),
+        Row("injdgfhiepghpnihhgmkejcjnoohaibm", "Shopify Scraper & Parser - Shopify Spy", "shopify-spy", account = true, core = popupLogin("Shopify Spy")),
+        Row("oilholdcmnjkebdhokhaamalceecjbip", "Maps Scraper by Presto", "maps-scraper-presto", account = true, core = popupLogin("Maps Scraper by Presto")),
+        Row("mpdajninpobndbfcldcmbpnnbhibjmch", "SAML-tracer", "saml-tracer", core = ::samlTracer),
+        Row("dlaajbpfmppphhflganljdalclmcockl", "TickerIQ Crypto Price Ticker", "tickeriq", core = popupMarker("TickerIQ", TICKERIQ_PRICES, settleMs = 30_000, notMeasurable = Regex("network error|failed to fetch|offline|try again", RegexOption.IGNORE_CASE), gate = "Binance's public ticker API")),
+        Row("khhnfdoljialnlomkdkphhdhngfppabl", "Speed Test for Chrome - WiFi speedtest", "speed-test", core = popupMarker("Speed Test for Chrome", SPEEDTEST_APP, settleMs = 25_000)),
+        Row("nbllaikcjebbpdemmekhnciekkjodlla", "SkrivaText", "skrivatext", account = true, core = popupLogin("SkrivaText")),
+        Row("hmlcjjclebjnfohgmgikjfnbmfkigocc", "J2TEAM Security", "j2team-security", core = warningPage("J2TEAM Security", "$BASE/fb-phish.html", Regex("blocked\\.html", RegexOption.IGNORE_CASE))),
+        Row("gngocbkfmikdgphklgmmehbjjlfgdemm", "SwagButton", "swagbutton", account = true, core = popupLogin("SwagButton")),
+        Row("njcickgebhnpgmoodjdgohkclfplejli", "RoValra - Roblox Improved", "rovalra", core = liveMarker("RoValra", "https://www.roblox.com/games/920587237", injectedAny("rovalra"))),
+        Row("kiodaajmphnkcajieajajinghpejdjai", "Popup Blocker Pro", "popup-blocker-pro", core = popupBlocker("Popup Blocker Pro")),
+        Row("jpfpebmajhhopeonhlcgidhclcccjcik", "Speed Dial 2 New tab", "speed-dial-2", core = newTabOverride("Speed Dial 2")),
+        Row("icpklikeghomkemdellmmkoifgfbakio", "anonymoX", "anonymox", core = vpn("anonymoX", pac = true, connectSelector = ".toggle-button-area")),
+        Row("bmhcbmnbenmcecpmpepghooflbehcack", "Liner: ChatGPT AI Copilot for Web&YouTube&PDF", "liner", core = accountGate("Liner", Regex("liner\\.com", RegexOption.IGNORE_CASE), injects = "[class*=\"liner\"], [id*=\"liner\"], [class*=\"LINER\"]", gate = "a Liner account (its highlights and Copilot sync through app.liner.com)")),
+        Row("djcfdncoelnlbldjfhinnjlhdjlikmph", "High Contrast", "high-contrast", core = popupSwitch("High Contrast", "page-a.html?hc", "#toggle", HIGH_CONTRAST_APPLIED, settleMs = 20_000)),
+        Row("fefnkplkicihcoenmljhbihhaaagjhpp", "Mino: Automatic Coupons & Cash Back", "mino", core = contentAttached("Mino", "its coupon dialog runs at a merchant's checkout (codes from api.gomino.com over the shop's cart; the action click asks the page's script for that dialog); no merchant checkout is reachable to the runner", verdict = "n/m")),
+        Row("hdannnflhlmdablckfkjpleikpphncik", "Youtube Playback Speed Control", "youtube-playback-speed-control", core = domMarker("Youtube Playback Speed Control's panel on the clip", "video.html?ypsc", YPSC_PANEL, settleMs = 25_000)),
+        // The five largest bundles last (PocketTube 11.0 MB, Read AI 7.9, Ready X 7.7, Infinity New Tab Pro 5.1, Save All Resources 5.0), as round 19 ordered its own.
+        Row("kdmnjgijlmjgmimahnillepgcgeemffb", "PocketTube: Youtube Subscription Manager", "pockettube", core = attachedGate("PocketTube", "https://www.youtube.com/feed/subscriptions", "a YouTube account (its groups hang off the signed-in subscriptions feed)")),
+        Row("aiamjjeggglngiggkmmbnpnpeejjejaf", "Read AI", "read-ai", account = true, core = popupLogin("Read AI")),
+        Row("dlcobpjiigpikoobohmabehhmhfoodbb", "Ready X", "ready-x", core = domMarker("Ready X's Starknet provider injected into the page world", "wallet.html?readyx", READY_PROVIDER, settleMs = 30_000)),
+        Row("nnnkddnnlpamobajfibfdgfnbcnkgngh", "Infinity New Tab (Pro)", "infinity-new-tab-pro", core = newTabOverride("Infinity New Tab (Pro)")),
+        Row("abpdnfjocnmdomablahdcfnoggeeiedb", "Save All Resources", "save-all-resources", feasible = false, core = notOnThePhone("Save All Resources: its saver is a DevTools panel (`devtools_page`) reading the inspected page's resources through `chrome.devtools`; the phone has no DevTools panel to host it (WebView limit); its popup is the panel's instruction sheet")),
         // Round 15's proof row (5.11), the #448 exemption read on both WebViews: not a store
         // extension but two fixtures of the sweep's own, sideloaded as a file manager hands
         // Zenium a package. Run alone by id (the trigger's `[proof]` lanes); a full sweep reads it
@@ -7207,6 +7261,134 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // row's cleanup disables the blocker as it does any row's extension).
         Row(PROOF_BLOCKER_ID, PROOF_BLOCKER_NAME, "proof-own-pages-exempt", fixture = PROOF_BLOCKER_FILES, core = ::ownPagesExempt)
     )
+
+    // --- the core checks of compat round 20 (ranks 481-510 by installs) --------------------------
+
+    /**
+     * A `contextMenus` item whose `onClicked` opens a page (Diccionario RAE's one `contexts:
+     * ["all"]` item, `windows.create` on `dle.rae.es/srv/search?w=<the selection>`, a tab here):
+     * Save Image As PNG's steps ([saveImageAsPng]) for any row – a real long press on the
+     * fixture's element at `selector` brings the phone's menu sheet up, the extension's item
+     * (`item`, over the sheet's labels) is waited for where it has settled and tapped, and a new
+     * tab whose address matches `opens` within the wait is the pass. No sheet after the press is
+     * the driver's (`F`, named); the sheet without the item is `F` (the registration or the menu
+     * surface, ours); the item tapped with nothing following is `F` with the worker's console.
+     * The image menu is the surface (an `all` item is offered on every context), so the
+     * selection is empty and the title's `%s` reads as nothing – as Chrome's image menu shows it.
+     */
+    private fun menuItemOpens(label: String, page: String, selector: String, item: Regex, opens: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture(page, factor, 2_500)
+        val since = StepEvidence(row)
+        val before = tabUrls().keys
+        val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", selector)))
+        val point = screenPoint(view, centre)
+        extra.put("element", centre)
+        var sheet: List<String> = emptyList()
+        var found: android.graphics.Rect? = null
+        if (point != null && onScreen("$label: the long press")) {
+            Finger().apply {
+                down(point.first, point.second)
+                hold(900)
+                up()
+            }
+            poll(scaled(8_000, factor), 400) {
+                sheet = sheetsPresented()
+                found = findByLabel { item.containsMatchIn(it) }
+                if (found != null) true else null
+            }
+            if (found != null) {
+                val screenHeight = app.resources.displayMetrics.heightPixels
+                var last: android.graphics.Rect? = null
+                val settled = poll(scaled(5_000, factor), 250) {
+                    val now = findByLabel { item.containsMatchIn(it) } ?: return@poll null
+                    val steady = now.height() > 8 && now.bottom <= screenHeight && now == last
+                    last = now
+                    if (steady) now else null
+                }
+                extra.put("itemSettled", settled != null).put("itemFirstRead", found?.toShortString())
+                if (settled != null) found = settled
+            }
+        }
+        val menuItem = found
+        extra.put("sheets", JSONArray(sheet)).put("item", menuItem?.toShortString() ?: JSONObject.NULL)
+        SystemClock.sleep(400)
+        snap("${entry.optString("slug")}-menu")
+        var opened: Map.Entry<String, String>? = null
+        if (menuItem != null) {
+            tap(menuItem.exactCenterX(), menuItem.exactCenterY())
+            opened = poll(scaled(30_000, factor), 500) {
+                tabUrls().entries.firstOrNull { it.key !in before && opens.containsMatchIn(it.value) }
+            }
+        } else if (sheet.isNotEmpty() || sheetsPresented().isNotEmpty()) {
+            key(KeyEvent.KEYCODE_BACK)
+            SystemClock.sleep(600)
+        }
+        extra.put("opened", opened?.value?.take(120) ?: JSONObject.NULL).put("tabsAfter", JSONArray(tabUrls().values.map { it.take(80) }))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        when {
+            opened != null -> Grade("P", "$label: its item in the long-press menu, tapped, opened ${opened.value.take(80)} as a tab", extra)
+            menuItem != null -> Grade("F", "$label: its item was in the menu and tapped, no ${opens.pattern} tab followed within ${scaled(30_000, factor) / 1000} s (tabs ${tabUrls().values.joinToString().take(100)})", extra)
+            point == null -> Grade("F", "$label: the fixture's `$selector` has no on-screen centre (driver): ${centre.toString().take(80)}", extra)
+            sheet.isEmpty() -> Grade("F", "$label: the long press opened no menu sheet (driver: the press was not read as a long press)", extra)
+            else -> Grade("F", "$label: the menu is up without its item (sheets ${sheet.joinToString().take(80)})", extra)
+        }
+    }
+
+    /**
+     * SAML-tracer: its action click opens `src/TraceWindow.html` as a window (`windows.create`,
+     * `type: "popup"` – a tab here) whose own script registers `webRequest.onBeforeRequest` /
+     * `onBeforeSendHeaders` / `onHeadersReceived` listeners and lists every request the browser
+     * makes in `#request-list`. The fixture settles, the action is clicked, the trace page is
+     * waited for and its toolbar (Clear, Pause, Autoscroll, …) read; then a second fixture is
+     * opened and the list polled for its address: listed is `P` (the page-registered
+     * `webRequest` listeners heard the navigation), the toolbar drawn with nothing listed within
+     * the wait is `PARTIAL` (the window is there, the events from an extension page are not),
+     * no trace page within the wait is `F`.
+     */
+    private fun samlTracer(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?saml", factor, 1_000)
+        SystemClock.sleep(scaled(1_500, factor))
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val page = Regex("TraceWindow\\.html", RegexOption.IGNORE_CASE)
+        val opened = poll(scaled(30_000, factor), 700) { openedPage(before, row, page) }
+        var toolbar = JSONObject()
+        var listed = JSONObject()
+        if (opened != null) {
+            val view = waitForView(opened.key)
+            showTab(opened.key)
+            toolbar = pollExpr(view, SAML_TRACER_TOOLBAR, scaled(20_000, factor))
+            val second = fixture("page-b.html?saml-trace", factor, 1_500)
+            showTab(opened.key)
+            listed = pollExpr(view, SAML_TRACER_LISTED, scaled(25_000, factor))
+            listed.put("console", JSONArray(consoleOf(view).takeLast(10)))
+            extra.put("secondTab", tabUrls()[second.first] ?: "")
+            if (!toolbar.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        } else {
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+            extra.put("tabs", JSONArray(tabUrls().values.toList()))
+        }
+        extra.put("toolbar", toolbar).put("listed", listed)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-trace-window")
+        runCatching { coreCall("extension.closePopup", "null") }
+        return when {
+            opened == null -> Grade("F", "SAML-tracer: the action click opened no TraceWindow.html within ${scaled(30_000, factor) / 1000} s", extra)
+            listed.optBoolean("pass") -> Grade("P", "SAML-tracer: its trace window opened as a tab and listed the next page's request through its page-registered webRequest listeners: ${listed.toString().take(200)}", extra)
+            toolbar.optBoolean("pass") -> Grade("PARTIAL", "SAML-tracer: its trace window opened as a tab with its toolbar (${toolbar.optString("buttons").take(80)}) but listed nothing of the next page's load within ${scaled(25_000, factor) / 1000} s: ${listed.toString().take(160)}", extra)
+            else -> Grade("F", "SAML-tracer: ${extensionPath(opened.value).take(50)} opened but drew no toolbar: ${toolbar.toString().take(200)}", extra)
+        }
+    }
 
     // --- the core checks of compat round 19 (ranks 451-480 by installs) --------------------------
 
@@ -10918,9 +11100,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * tag, id or class matches `__PATTERN__` (a regex source, case-insensitive), the ones drawn
          * counted apart; `pass` when there is at least one.
          */
-        /** The pop-up fixture after the tap: what `window.open` answered (`window`, `fake`, `null`), Poper Blocker's toast, its page script's `window.open` replacement. */
+        /** The pop-up fixture after the tap: what `window.open` answered (`window`, `fake`, `null`), the blocker's toast (Poper Blocker's `#pb-toast-main`, Popup Blocker Pro's `#popup-blocker-pro-jq-toast`), its page script's `window.open` replacement. */
         private const val POPUP_BLOCK_REPORT =
-            "(function(){var r=window.__popupResult||'';var toast=document.getElementById('pb-toast-main')||document.querySelector('[id^=\"pb-toast\"], [class*=\"pb-toast\"], iframe[src*=\"bkkbcggnhapdmkeljlodobbkopceiche\"]');" +
+            "(function(){var r=window.__popupResult||'';var toast=document.getElementById('pb-toast-main')||document.getElementById('popup-blocker-pro-jq-toast')||document.querySelector('[id^=\"pb-toast\"], [class*=\"pb-toast\"], iframe[src*=\"bkkbcggnhapdmkeljlodobbkopceiche\"]');" +
                 "var src=String(window.open);var native=/\\[native code\\]/.test(src);var orig=typeof window.originalOpenFunction;" +
                 "return JSON.stringify({pass:r==='fake'||!!toast,result:r,toast:!!toast,toastTag:toast?(toast.tagName+' '+(toast.id||'')).trim():'',scriptInPage:!native||orig==='function',openIsNative:native,log:(window.__popupLog||[]).slice(-3)})})()"
         /**
@@ -11673,14 +11855,96 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * and the mounted selectors in each, and adds each root's rendered text – its shown element
          * children's `innerText`, `style`/`script`/`template`/`link` and `display:none` children
          * left out, as a stylesheet's text is not the page's. `shadowRoots` is the count found.
+         * A remote frame laid out over 100x100 CSS px (`frames`: Yahoo Homepage's new tab is a
+         * sandboxed iframe of yahoo.com and nothing else, compat round 20) is the page's content
+         * too – its document is another origin's and cannot be read from here.
          */
         private const val NEW_TAB_RENDERED =
             "(function(){var b=document.body;var IMG='img, canvas, .background, [class*=\"background\"]';var MOUNT='.site-items .items-card, .items-card, .site-items a, .search-box input, .search-box form, #app > *, #root > *, main > *';" +
                 "var roots=[document],hosts=0;for(var i=0;i<roots.length&&hosts<100;i++){var all=roots[i].querySelectorAll('*');for(var j=0;j<all.length;j++){if(all[j].shadowRoot){roots.push(all[j].shadowRoot);hosts++}}}" +
-                "var text=b?b.innerText:'',imagery=0,mounted=0;for(var k=0;k<roots.length;k++){var r=roots[k];imagery+=r.querySelectorAll(IMG).length;mounted+=r.querySelectorAll(MOUNT).length;" +
+                "var text=b?b.innerText:'',imagery=0,mounted=0,frames=0;for(var k=0;k<roots.length;k++){var r=roots[k];imagery+=r.querySelectorAll(IMG).length;mounted+=r.querySelectorAll(MOUNT).length;frames+=Array.prototype.filter.call(r.querySelectorAll('iframe[src]'),function(f){var fr=f.getBoundingClientRect();return /^https?:/.test(f.src)&&fr.width>100&&fr.height>100}).length;" +
                 "if(k>0){var cs=r.children;for(var c=0;c<cs.length;c++){var e=cs[c],t=e.tagName;if(t==='STYLE'||t==='SCRIPT'||t==='TEMPLATE'||t==='LINK'||getComputedStyle(e).display==='none')continue;text+=' '+(e.innerText||'')}}}" +
                 "text=text.replace(/\\s+/g,' ').trim();var shown=!!b&&!b.classList.contains('hide-opacity');" +
-                "return JSON.stringify({pass:text.length>20||imagery>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,mounted:mounted,shadowRoots:hosts,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
+                "return JSON.stringify({pass:text.length>20||imagery>0||frames>0||(mounted>0&&shown),textLength:text.length,imagery:imagery,frames:frames,mounted:mounted,shadowRoots:hosts,shown:shown,bodyClass:b?b.className.slice(0,60):null,text:text.slice(0,120),url:location.href})})()"
+
+        // --- compat round 20 (ranks 481-510) ---
+
+        /**
+         * My Doodle on google.com: its content script swaps the logo (`#hplogo` / `#lga` /
+         * `#logo`) for its doodle – the text "MyDoodle" its first run writes to storage, or its
+         * clock (`#myDoodleClock`); the logo image gone from the page is read with it.
+         */
+        private const val MY_DOODLE =
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ');var clock=document.getElementById('myDoodleClock');var doodle=/MyDoodle/.test(t);var logo=document.querySelector('#hplogo, img[alt=\"Google\"]');" +
+                "var visible=logo?(function(r){return r.width>0&&r.height>0})(logo.getBoundingClientRect()):false;" +
+                "return JSON.stringify({pass:doodle||!!clock,doodleText:doodle,clock:!!clock,logo:!!logo,logoVisible:visible,title:document.title.slice(0,40),text:t.slice(0,120)})})()"
+
+        /**
+         * Google Meet Breakout's control panel (`popup.html`, opened by `windows.create` from the
+         * action click): its toolbar controls (`#popup-help`, `#popup-refresh`, `#popup-resize`,
+         * `#popup-retile`) drawn with text in the page.
+         */
+        private const val MEET_BREAKOUT_PANEL =
+            "(function(){var ids=['popup-help','popup-refresh','popup-resize','popup-retile','popup-minimize','gmbr-help'];var found=ids.filter(function(i){return !!document.getElementById(i)});var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:found.length>=2&&t.length>10,controls:found,text:t.slice(0,160)})})()"
+
+        /**
+         * TickerIQ's popup: coins listed with prices – at least two ticker symbols (BTC, ETH, …)
+         * and a number with a decimal point in the text (its React root `#root` mounted).
+         */
+        private const val TICKERIQ_PRICES =
+            "(function(){var root=document.getElementById('root');var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var symbols=(t.match(/\\b(BTC|ETH|SOL|BNB|XRP|DOGE|ADA|USDT|LTC|DOT|AVAX|LINK)\\b/g)||[]).filter(function(s,i,a){return a.indexOf(s)===i});var prices=(t.match(/\\$?\\d[\\d,]*\\.\\d+/g)||[]).length;" +
+                "return JSON.stringify({pass:symbols.length>=2&&prices>=2,symbols:symbols.slice(0,8),prices:prices,mounted:!!root&&root.children.length>0,text:t.slice(0,160)})})()"
+
+        /**
+         * Speed Test for Chrome's popup (an OpenSpeedtest build): its `#OpenSpeedtest` SVG app
+         * laid out with a size and its start control (`#startButtonDesk` / `.startButton`)
+         * present; `#loading_app` no longer covering it.
+         */
+        private const val SPEEDTEST_APP =
+            "(function(){var app=document.getElementById('OpenSpeedtest');var r=app?app.getBoundingClientRect():{width:0,height:0};var start=document.querySelector('#startButtonDesk, #startButton, .startButton');var loading=document.getElementById('loading_app');var ls=loading?getComputedStyle(loading):null;var covering=!!ls&&ls.display!=='none'&&ls.visibility!=='hidden'&&parseFloat(ls.opacity||'1')>0.5;" +
+                "return JSON.stringify({pass:!!app&&r.width>200&&r.height>150&&!!start,app:!!app,size:Math.round(r.width)+'x'+Math.round(r.height),start:!!start,loadingShown:covering,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+
+        /**
+         * Ready X's Starknet provider in the page world: `window.starknet_argentX` (its id stays
+         * Argent X's; its `name` "Ready…") or `window.starknet_ready`, with `request` / `enable`
+         * functions; the Wallet Standard announcement (`__wallet.announced`) read alongside.
+         */
+        private const val READY_PROVIDER =
+            "JSON.stringify((function(){var p=window.starknet_argentX||window.starknet_ready||window.starknet||null;var announced=window.__wallet?window.__wallet.announced:null;var keys=Object.keys(window).filter(function(k){return /^starknet/i.test(k)});" +
+                "return {pass:!!p&&(typeof p.request==='function'||typeof p.enable==='function'),provider:p?String(p.id||''):null,name:p?String(p.name||''):null,version:p?String(p.version||''):null,request:typeof (p&&p.request),enable:typeof (p&&p.enable),keys:keys.slice(0,6),announced:announced}})())"
+
+        /**
+         * High Contrast applied to the fixture: `<html hc="a3">` (mode `a`ll, scheme 3 = invert)
+         * set by its content script on the storage change, and the SVG filter its stylesheet
+         * puts on the root (`filter: url(#hc_extension_invert)`) computed; `hcx` alongside.
+         */
+        private const val HIGH_CONTRAST_APPLIED =
+            "(function(){var h=document.documentElement;var hc=h.getAttribute('hc');var filter=getComputedStyle(h).filter;var sheet=!!document.getElementById('hc_style')||!!document.querySelector('style[id*=\"hc_\"], #hc_extension_svg_filters');" +
+                "return JSON.stringify({pass:!!hc&&hc!=='a0'&&/url\\(/.test(filter),hc:hc,hcx:h.getAttribute('hcx'),filter:String(filter).slice(0,60),sheet:sheet})})()"
+
+        /**
+         * Youtube Playback Speed Control's panel over the fixture's clip
+         * (`.PlayBackRatePanelYPSC` with its `.btnYPSC` buttons); its faster button clicked once
+         * while the rate is 1, the video's `playbackRate` above 1 the pass.
+         */
+        private const val YPSC_PANEL =
+            "(function(){var p=document.querySelector('.PlayBackRatePanelYPSC, .PlayBackRatePanelYPSCFullScreen');var v=document.querySelector('video');var buttons=document.querySelectorAll('.btnYPSC');var faster=document.querySelector('.btnYPSC-right, .btnYPSC[class*=\"right\"], .btnYPSC[class*=\"faster\"], .btnYPSC[class*=\"plus\"]');" +
+                "if(p&&v&&faster&&v.playbackRate===1){try{faster.click()}catch(e){}}var rate=v?v.playbackRate:null;" +
+                "return JSON.stringify({pass:!!p&&!!v&&rate!==null&&rate>1,panel:!!p,video:!!v,buttons:buttons.length,faster:!!faster,rate:rate,panelText:p?(p.innerText||'').replace(/\\s+/g,' ').trim().slice(0,40):null})})()"
+
+        /**
+         * SAML-tracer's trace window: its toolbar buttons (`#button-clear`, `#button-pause`,
+         * `#button-autoscroll`, `#button-export-list`, …) and its `#request-list` laid out.
+         */
+        private const val SAML_TRACER_TOOLBAR =
+            "(function(){var ids=['button-clear','button-pause','button-autoscroll','button-hide-resources','button-export-list','button-import-list'];var found=ids.filter(function(i){return !!document.getElementById(i)});var list=document.getElementById('request-list');" +
+                "return JSON.stringify({pass:found.length>=3&&!!list,buttons:found.join(' '),list:!!list,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,120)})})()"
+
+        /** SAML-tracer's `#request-list` after the second fixture's load: a row naming `page-b.html` (its rows' text and title attributes). */
+        private const val SAML_TRACER_LISTED =
+            "(function(){var list=document.getElementById('request-list');var rows=list?list.querySelectorAll('tr, li, div, .request'):[];var texts=[];for(var i=0;i<rows.length;i++){var e=rows[i];var t=((e.innerText||'')+' '+(e.getAttribute('title')||'')).replace(/\\s+/g,' ').trim();if(t)texts.push(t)}var all=texts.join(' | ');" +
+                "return JSON.stringify({pass:/page-b\\.html/.test(all),rows:rows.length,requests:(all.match(/https?:\\/\\/[^\\s|]+/g)||[]).slice(0,4),text:all.slice(0,160)})})()"
 
         // --- compat round 19 (ranks 451-480) ---
 
