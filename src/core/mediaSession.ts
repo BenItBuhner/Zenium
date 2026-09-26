@@ -10,6 +10,7 @@ import {
   type MediaSessionSourceHandle
 } from '../shared/mediaSession'
 import type { Browser } from './browser'
+import { permissionSite } from './permissions'
 import type { ZenWindow } from './window'
 
 /**
@@ -309,8 +310,24 @@ export class MediaSessionService {
       actions: report.actions,
       fullscreen: report.fullscreen,
       private: isPrivate,
+      backgroundVideo: this.backgroundVideoAllowed(tab?.url),
       source: 'page'
     }
+  }
+
+  /**
+   * Whether the page's site may keep its video playing in the background: its `background-video`
+   * content setting resolves to allow (block by default; Android-only, read by the host at its
+   * background transition). Pages without a site (`zen://`, `about:blank`) never do.
+   */
+  private backgroundVideoAllowed(url: string | undefined): boolean {
+    if (!url || permissionSite(url) === null) return false
+    return this.browser.permissions.resolve('background-video', url) === 'allow'
+  }
+
+  /** A `background-video` decision changed: the session carries the site's new answer to the host. */
+  followBackgroundVideoSetting(): void {
+    this.push()
   }
 
   /** A chrome player's session as the host's controls see it: no video, no PiP; blank on a private tab. */
@@ -335,6 +352,7 @@ export class MediaSessionService {
       actions: [...source.actions],
       fullscreen: false,
       private: isPrivate,
+      backgroundVideo: false,
       source: 'chrome',
       sourceId: source.id
     }
@@ -456,6 +474,7 @@ export class MediaSessionService {
       actions: report.actions,
       fullscreen: report.fullscreen,
       private: isPrivate,
+      backgroundVideo: this.backgroundVideoAllowed(tab?.url),
       source: 'page'
     })
   }

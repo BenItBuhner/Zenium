@@ -26,6 +26,8 @@ interface Harness {
   pipRequests: MediaSessionInfo[]
   now: { value: number }
   privateTabs: Set<string>
+  /** Origins whose `background-video` setting is allow (block is the default). */
+  backgroundVideoSites: Set<string>
   addTab(tabId: string, url: string, title: string): FakeView
   closeTab(tabId: string): void
   updateMedia: ReturnType<typeof vi.fn>
@@ -38,6 +40,7 @@ function harness(options: { host?: boolean; pip?: boolean } = {}): Harness {
   const pipRequests: MediaSessionInfo[] = []
   const now = { value: 1_700_000_000_000 }
   const privateTabs = new Set<string>()
+  const backgroundVideoSites = new Set<string>()
   const updateMedia = vi.fn()
   const host =
     options.host === false
@@ -63,6 +66,12 @@ function harness(options: { host?: boolean; pip?: boolean } = {}): Harness {
       tab: (id: string) => tabs.get(id),
       isPrivate: (tab: { id: string }) => privateTabs.has(tab.id)
     },
+    permissions: {
+      resolve: (permission: string, url: string) =>
+        permission === 'background-video' && backgroundVideoSites.has(new URL(url).origin)
+          ? 'allow'
+          : 'deny'
+    },
     updateMedia
   }
   const service = new MediaSessionService(browser as unknown as Browser, () => now.value)
@@ -74,6 +83,7 @@ function harness(options: { host?: boolean; pip?: boolean } = {}): Harness {
     pipRequests,
     now,
     privateTabs,
+    backgroundVideoSites,
     updateMedia,
     addTab: (tabId, url, title) => {
       const view: FakeView = {
@@ -421,6 +431,52 @@ describe('MediaSessionService', () => {
     expect(h.updates.at(-1)).not.toHaveProperty('sourceId')
   })
 
+  describe("the site's background-video setting (Android keeps an allowed site's video playing)", () => {
+    it('is carried on the session: block by default, allow once the site is allowed', () => {
+      play(h, 't2', report({ video: true, width: 1280, height: 720 }))
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't2', video: true, backgroundVideo: false })
+      h.backgroundVideoSites.add('https://video.example')
+      h.service.followBackgroundVideoSetting()
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't2', video: true, backgroundVideo: true })
+      expect(h.updates).toHaveLength(2)
+    })
+
+    it('reaches the host at once when the setting changes, and not when it resolves the same', () => {
+      h.backgroundVideoSites.add('https://video.example')
+      play(h, 't2', report({ video: true }))
+      expect(h.updates.at(-1)).toMatchObject({ backgroundVideo: true })
+      h.service.followBackgroundVideoSetting()
+      expect(h.updates).toHaveLength(1)
+      h.backgroundVideoSites.delete('https://video.example')
+      h.service.followBackgroundVideoSetting()
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't2', backgroundVideo: false })
+      expect(h.updates).toHaveLength(2)
+    })
+
+    it("is the session tab's site, not another allowed site's", () => {
+      h.backgroundVideoSites.add('https://music.example')
+      play(h, 't2', report({ video: true }))
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't2', backgroundVideo: false })
+      h.now.value += 1000
+      play(h, 't1')
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't1', backgroundVideo: true })
+    })
+
+    it('is never set for a page without a site, whatever the setting says', () => {
+      h.addTab('t3', 'about:blank', 'Blank')
+      h.backgroundVideoSites.add('null')
+      play(h, 't3', report({ video: true }))
+      expect(h.updates.at(-1)).toMatchObject({ tabId: 't3', backgroundVideo: false })
+    })
+
+    it('goes with the picture-in-picture request as it does with the session', async () => {
+      h.backgroundVideoSites.add('https://video.example')
+      play(h, 't2', report({ video: true, width: 1280, height: 720 }))
+      await h.service.enterPictureInPicture('t2')
+      expect(h.pipRequests.at(-1)).toMatchObject({ tabId: 't2', backgroundVideo: true })
+    })
+  })
+
   describe('a chrome source (registerSource: the read-aloud player)', () => {
     it('registers as the session with its own metadata, no video and no PiP, and the host hears source: chrome', () => {
       const source = readAloud('t1')
@@ -443,6 +499,7 @@ describe('MediaSessionService', () => {
         actions: ['play', 'pause', 'stop', 'nexttrack', 'previoustrack'],
         fullscreen: false,
         private: false,
+        backgroundVideo: false,
         source: 'chrome',
         sourceId: 'read-aloud'
       })

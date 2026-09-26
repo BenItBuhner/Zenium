@@ -142,6 +142,55 @@ describe('Sound (Content)', () => {
   })
 })
 
+describe('Background video (Content; MED-08 / EDGE-32)', () => {
+  it('is the phone’s row after Sound with Allow / Block – Block the built-in – reading one line on the row and the same line on its sheet', () => {
+    const all = groups({}, 'android')
+    const content = all.find((g) => g.id === 'sites-content')!
+    const ids = content.rows.map((r) => r.id)
+    expect(ids.indexOf('sites:background-video')).toBe(ids.indexOf('sites:sound') + 1)
+    const video = row(all, 'sites:background-video')
+    expect(video).toMatchObject({
+      kind: 'item',
+      label: 'Background video',
+      description: 'Sites cannot play video in the background'
+    })
+    if (video.kind !== 'item') throw new Error('not an item')
+    // The sheet's title block reads the row's own description: one sentence, twice.
+    expect(video.sheet.title).toBe('Background video')
+    expect(video.sheet.description).toBe('Sites cannot play video in the background')
+    const value = row(all, 'sites:background-video:default')
+    if (value.kind !== 'value') throw new Error('not a value row')
+    expect(value.value).toBe('deny')
+    expect(value.options.map((o) => [o.label, o.description])).toEqual([
+      ['Allow', undefined],
+      ['Block', 'Default']
+    ])
+    value.onChange('allow')
+    expect(run).toHaveBeenCalledWith('permissions.setDefault', {
+      permission: 'background-video',
+      decision: 'allow'
+    })
+  })
+
+  it('reads its own Allow line – not the template’s "without asking" – on the row and the sheet once the default is Allow', () => {
+    const all = groups(
+      { permissionDefaults: { 'background-video': 'allow' } } as Partial<UIState>,
+      'android'
+    )
+    const video = row(all, 'sites:background-video')
+    expect(video.description).toBe('Sites can keep playing video in the background')
+    if (video.kind !== 'item') throw new Error('not an item')
+    expect(video.sheet.description).toBe('Sites can keep playing video in the background')
+    const value = row(all, 'sites:background-video:default')
+    if (value.kind !== 'value') throw new Error('not a value row')
+    expect(value.value).toBe('allow')
+  })
+
+  it('is not a desktop row (the hold is the phone’s)', () => {
+    expect(findRow(groups(), 'sites:background-video')).toBeNull()
+  })
+})
+
 describe('the device kinds (Permissions)', () => {
   it('are four item rows in Chrome’s words with Ask / Block as their default', () => {
     const all = groups()
