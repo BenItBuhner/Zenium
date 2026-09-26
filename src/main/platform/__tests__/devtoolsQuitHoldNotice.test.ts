@@ -146,6 +146,62 @@ describe('the held-key notice over a detached toolbox', () => {
     expect(second.frontend.scripts).toEqual(['shown:11000'])
   })
 
+  it('routes the window’s state: the hold drawn in the toolbox is withheld from the chrome, so no twin stands behind the toolbox; any other state passes as it came', () => {
+    const n = notice()
+    const win = {}
+    const box = toolbox(win)
+    const hold = { startedAt: 10_000, durationMs: QUIT_HOLD_MS, chord: '⌘Q' }
+    const panelFor = (h: typeof hold): QuitHoldPanel => ({ ...h, dark: false, accent: '#3366cc' })
+    const state = { tabs: ['a'], window: { title: 'Zenium', quitHold: hold } }
+    // No chord down in a toolbox: the chrome reads the hold and draws its twin where no page is.
+    expect(n.route(win, state, panelFor)).toBe(state)
+    expect(n.drawing(win)).toBe(false)
+    expect(box.frontend.scripts).toEqual([])
+    // The chord down in the detached toolbox: the toolbox draws, the chrome reads no hold – the
+    // rest of the state untouched.
+    n.heard(box, KEY_DOWN)
+    const routed = n.route(win, state, panelFor)
+    expect(routed).not.toBe(state)
+    expect(routed.window.quitHold).toBeNull()
+    expect(routed.window.title).toBe('Zenium')
+    expect(routed.tabs).toBe(state.tabs)
+    expect(n.drawing(win)).toBe(true)
+    expect(box.frontend.scripts).toEqual(['shown:10000'])
+    // The state stream runs on with the same hold: withheld again, not drawn twice.
+    expect(
+      n.route(win, { ...state, window: { ...state.window, title: 'Two' } }, panelFor).window
+        .quitHold
+    ).toBeNull()
+    expect(box.frontend.scripts).toEqual(['shown:10000'])
+    // Another window's state is not this toolbox's: its hold reaches its own chrome.
+    const other = {}
+    const elsewhere = {
+      tabs: [],
+      window: { title: 'Other', quitHold: { ...hold, startedAt: 10_500 } }
+    }
+    expect(n.route(other, elsewhere, panelFor)).toBe(elsewhere)
+    expect(n.drawing(other)).toBe(false)
+    // The hold's end: the state with none passes as it came, the toolbox's panel comes down.
+    const ended = { tabs: ['a'], window: { title: 'Zenium', quitHold: null } }
+    expect(n.route(win, ended, panelFor)).toBe(ended)
+    expect(n.drawing(win)).toBe(false)
+    expect(box.frontend.scripts).toEqual(['shown:10000', 'down'])
+    n.heard(box, KEY_UP)
+    // Docked, the toolbox draws nothing and the chrome reads the hold as before.
+    const docked = toolbox(win, false)
+    n.heard(docked, KEY_DOWN)
+    expect(n.route(win, state, panelFor)).toBe(state)
+    expect(docked.frontend.scripts).toEqual([])
+    n.heard(docked, KEY_UP)
+    // A toolbox closed with the panel standing is no longer drawing: the chrome reads the hold again.
+    const closing = toolbox(win)
+    n.heard(closing, KEY_DOWN)
+    expect(n.route(win, state, panelFor).window.quitHold).toBeNull()
+    closing.frontend.destroy()
+    expect(n.drawing(win)).toBe(false)
+    expect(n.route(win, state, panelFor)).toBe(state)
+  })
+
   it('the relay reports each key to the notice ahead of the key table, so the hold the table arms knows where the keyboard is', () => {
     const n = notice()
     const frontend = fakeFrontend()

@@ -1,6 +1,7 @@
 import devtoolsQuitHoldPanelSource from 'virtual:zenium-devtools-quit-hold-panel'
 import type { KeyEventInput } from '../../core/platform'
 import type { QuitHoldPanel } from '../../shared/quitHoldPanel'
+import type { QuitHoldState } from '../../shared/types'
 import type { DevtoolsToolbox } from './devtoolsKeys'
 
 /**
@@ -11,11 +12,13 @@ import type { DevtoolsToolbox } from './devtoolsKeys'
  * (`devtoolsKeys.ts`) marks the toolbox the chord went down in (`heard`, before the key table
  * hears the key; the key up line clears it); while that toolbox is detached, the page's own
  * panel yields (`inToolbox`, `ElectronTabView.showQuitHold`) and the window's state stream,
- * which carries the hold as the chrome reads it, is mirrored into the toolbox's document
- * (`mirror`, `ElectronWindow.send`): the panel drawn by the frontend itself at its centre from
- * the page's source (`shared/quitHoldPanel.ts`, `devtoolsQuitHoldPanel.ts`), taken down with
- * its fade when the hold ends either way. The toolbox alone draws it. A docked toolbox changes
- * nothing: the mark is set, the toolbox is not detached, the page draws as before.
+ * which carries the hold as the chrome reads it, is routed (`route`, `ElectronWindow.send`):
+ * the hold mirrored into the toolbox's document – the panel drawn by the frontend itself at its
+ * centre from the page's source (`shared/quitHoldPanel.ts`, `devtoolsQuitHoldPanel.ts`), taken
+ * down with its fade when the hold ends either way – and withheld from the chrome meanwhile,
+ * whose twin would otherwise stand over a chrome page (the Browser Console over Settings). The
+ * toolbox alone draws it. A docked toolbox changes nothing: the mark is set, the toolbox is not
+ * detached, the state goes to the chrome as it came and the page draws as before.
  *
  * This module, not `devtoolsKeys.ts`, carries the bundled panel: the page preload reaches the
  * relay's helpers (`quitHoldKeys.ts` → `quitChordOf`) and must not carry the toolbox's script.
@@ -47,6 +50,34 @@ export class DevtoolsQuitHoldNotice {
   inToolbox(): boolean {
     const toolbox = this.keyboard
     return toolbox !== null && !toolbox.frontend.isDestroyed() && toolbox.detached()
+  }
+
+  /**
+   * True while a panel stands in a toolbox for `window`'s hold: the toolbox alone draws it, and
+   * the window's chrome is to read no hold meanwhile.
+   */
+  drawing(window: object): boolean {
+    const standing = this.standing
+    return (
+      standing !== null && standing.window === window && !standing.toolbox.frontend.isDestroyed()
+    )
+  }
+
+  /**
+   * `window`'s state as its chrome is to read it: the hold it carries mirrored into the
+   * keyboard's detached toolbox (`mirror`), and – while the toolbox draws it – taken out of the
+   * state the chrome receives, so its twin does not stand in the blurred window behind the
+   * toolbox. Any other state is returned as it came.
+   */
+  route<S extends { window: { quitHold: QuitHoldState | null } }>(
+    window: object,
+    state: S,
+    panelFor: (hold: QuitHoldState) => QuitHoldPanel
+  ): S {
+    const hold = state.window.quitHold
+    this.mirror(window, hold ? panelFor(hold) : null)
+    if (!hold || !this.drawing(window)) return state
+    return { ...state, window: { ...state.window, quitHold: null } }
   }
 
   /**

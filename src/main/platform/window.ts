@@ -394,19 +394,19 @@ export class ElectronWindow implements WindowHost {
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
     if (!this.alive) return
+    // The hold the state carries goes where the keyboard is (§9.23): a detached toolbox the quit
+    // chord is down in draws it in its own document, and the chrome reads no hold meanwhile
+    // (`DevtoolsQuitHoldNotice`); it is taken down there with the hold.
+    if (name === 'state') payload = this.quitHoldRouted(payload as UIState) as Events[K]
     this.win.webContents.send('zen:event', name, payload)
     // The popup surface mirrors the window's state like the chrome does (the picker lives in it).
     const popup = this.popup?.webContents
     if (popup && !popup.isDestroyed()) popup.send('zen:event', name, payload)
-    // So does a detached toolbox the quit chord is down in: the hold the state carries is drawn
-    // there, where the keyboard is (`DevtoolsQuitHoldNotice`, §9.23), and taken down with it.
-    if (name === 'state') this.mirrorQuitHold((payload as UIState).window.quitHold)
   }
 
-  private mirrorQuitHold(hold: QuitHoldState | null): void {
-    devtoolsQuitHoldNotice.mirror(
-      this.win,
-      hold ? this.browser.quitHold.panelFor(this.zen, hold) : null
+  private quitHoldRouted(state: UIState): UIState {
+    return devtoolsQuitHoldNotice.route(this.win, state, (hold: QuitHoldState) =>
+      this.browser.quitHold.panelFor(this.zen, hold)
     )
   }
 
