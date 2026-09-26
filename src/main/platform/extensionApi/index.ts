@@ -88,6 +88,7 @@ import { electronOffscreenDocumentHost } from './offscreenBridge'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { FontSettingsApi } from './fontSettings'
+import { HomepageApi } from './homepage'
 import { PrivacyApi } from './privacy'
 import { ExtensionControls } from './controls'
 import { ProxyApi } from './proxy'
@@ -233,6 +234,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly tabCapture: TabCaptureApi
   readonly debugger: DebuggerApi
   readonly identity: IdentityApi
+  /** `chrome_settings_overrides.homepage`: manifest-driven, no namespace of its own. */
+  readonly homepage: HomepageApi
   readonly omnibox: OmniboxApi
   /** `chrome_settings_overrides.search_provider`: manifest-driven, no namespace of its own. */
   readonly searchProvider: SearchProviderApi
@@ -340,6 +343,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.systemInfo = new SystemInfoApi(this)
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
+    this.homepage = new HomepageApi(this)
     this.omnibox = new OmniboxApi(this)
     this.searchProvider = new SearchProviderApi(this)
     this.startupPages = new StartupPagesApi(this)
@@ -709,6 +713,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.load(loaded)
     this.contextMenus.load(loaded)
     this.sidePanel.load(loaded)
+    this.homepage.load(loaded)
     this.omnibox.load(loaded)
     this.searchProvider.load(loaded)
     this.startupPages.refresh()
@@ -755,6 +760,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.systemDisplay.unload()
     this.power.unload(ext.id)
     this.identity.unload(ext.id)
+    this.homepage.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.searchProvider.unload(ext.id)
     this.startupPages.refresh()

@@ -85,7 +85,7 @@ import {
 } from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
-import { homepageAddress, homepageDisplay } from '@shared/homepage'
+import { extensionHomepage, homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
 import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
@@ -179,6 +179,7 @@ import {
 import { importGroups } from '../../import/importRows'
 import { AboutVersionBlock } from './AboutVersionBlock'
 import { CustomizeToolbarForm } from './CustomizeToolbarForm'
+import { extensionControlled } from './controlled'
 import { extensionsGroups } from './extensions'
 import { LayoutCards } from './LayoutCards'
 import {
@@ -903,10 +904,20 @@ function lookSection({
  * address as a §9.12 field row (the one-field sheet, a web address required) and Use current
  * page, which takes the address of the page Settings was opened from (the tab's opener). The
  * rows are the phone shell's: the desktop shells have no Home control that reads the setting
- * yet (their Alt+Home keeps its own destination).
+ * yet (their Alt+Home keeps its own destination). While an extension holds the homepage
+ * (`chrome_settings_overrides.homepage`, `UIState.extensionControls.homepage` with its page as
+ * the value) the rows are held (`RowBase.controlled`, §10.5's controlled-setting primitive):
+ * the picker at Specific page, the Address row showing the extension's page – what Home opens
+ * (`extensionHomepage`, the core's `effectiveHomepage`) – and Use current page with them, one
+ * run under one indicator. Off stays the user's, Home button and rows alike: Chrome's "Show
+ * home button" is no extension's to set, so an extension's page waits until the button is on.
  */
 function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): RowGroup {
-  const homepage = state.settings.homepage
+  const own = state.settings.homepage
+  const control = extensionControlled(state, 'homepage')
+  const held = extensionHomepage(own, control)
+  const homepage = held ? { mode: 'url' as const, url: held } : own
+  const controlled = held ? control : undefined
   const address = homepageDisplay(homepage)
   const opener = tab.openerTabId ? state.tabs[tab.openerTabId] : undefined
   const current =
@@ -917,6 +928,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
       label: 'Homepage',
       keywords: ['home', 'home button', 'start page', 'new tab page'],
       layouts: ['phone'],
+      controlled,
       value: homepage.mode,
       sheetDescription: 'Where the Home button goes.',
       options: [
@@ -928,7 +940,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
           description: address || 'Enter an address below, or use the current page.'
         }
       ],
-      onChange: (mode) => set({ homepage: { ...homepage, mode } })
+      onChange: (mode) => set({ homepage: { ...own, mode } })
     })
   ]
   if (homepage.mode === 'url') {
@@ -939,6 +951,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
         label: 'Address',
         keywords: ['homepage', 'url', 'web address'],
         layouts: ['phone'],
+        controlled,
         value: address,
         display: address || 'Not set',
         input: 'url',
@@ -959,6 +972,7 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
           : 'Open a page, then come back to Settings from it.',
         keywords: ['homepage'],
         layouts: ['phone'],
+        controlled,
         disabled: current === null,
         onPress: () => {
           const url = current ? homepageAddress(current.url) : null

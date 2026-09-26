@@ -424,6 +424,67 @@ describe('ElectronPrivacy', () => {
     expect(privacy.signals()).toEqual({ gpc: true, dnt: false })
   })
 
+  it("turns navigator's Do Not Track on for an extension's value too, per kind of window (the preload's IPC asking for the sender's), the user's setting still winning when on", async () => {
+    let handler: ((event: { sender: unknown; returnValue?: unknown }) => void) | undefined
+    const electron = await import('electron')
+    const on = vi.spyOn(electron.ipcMain, 'on').mockImplementation(((
+      channel: string,
+      listener: typeof handler
+    ) => {
+      if (channel === 'zen:privacy-signals') handler = listener
+      return electron.ipcMain
+    }) as typeof electron.ipcMain.on)
+    const { privacy } = host()
+    privacy.apply(FLAGS)
+    // Before the extension layer is attached: the user's setting alone, whatever the window.
+    expect(privacy.signals(true)).toEqual({ gpc: false, dnt: false })
+
+    // An extension holding `privacy` turned Do Not Track on for normal windows only (it is not
+    // allowed in private ones): the page of a normal tab says so, a private tab's does not.
+    const values = new Map<boolean, boolean>([
+      [false, true],
+      [true, false]
+    ])
+    privacy.attachExtensionSignals(
+      { doNotTrack: (privateWindow) => values.get(privateWindow) === true },
+      (sender) => {
+        const s = sender as unknown as { private?: boolean }
+        if (s.private === undefined) throw new Error('gone')
+        return s.private
+      }
+    )
+    expect(privacy.signals(false)).toEqual({ gpc: false, dnt: true })
+    expect(privacy.signals(true)).toEqual({ gpc: false, dnt: false })
+    expect(privacy.signals()).toEqual({ gpc: false, dnt: true })
+
+    // The preload's IPC answers for the sender's kind of window; a sender the lookup cannot
+    // place (a page window's, a destroyed one) reads as a normal window's.
+    privacy.attach({
+      multiplexer: { register: () => undefined },
+      onDecision: () => undefined
+    } as unknown as Parameters<PrivacyHostImpl['attach']>[0])
+    expect(handler).toBeDefined()
+    const ask = (sender: unknown): unknown => {
+      const event = { sender, returnValue: undefined as unknown }
+      handler?.(event)
+      return event.returnValue
+    }
+    expect(ask({ private: false })).toEqual({ gpc: false, dnt: true })
+    expect(ask({ private: true })).toEqual({ gpc: false, dnt: false })
+    expect(ask({})).toEqual({ gpc: false, dnt: true })
+
+    // The user's own setting keeps the signal on where the extension's value is off.
+    privacy.apply({ ...FLAGS, dnt: true })
+    expect(ask({ private: true })).toEqual({ gpc: false, dnt: true })
+    expect(privacy.signals(false)).toEqual({ gpc: false, dnt: true })
+
+    // The extension's value gone (cleared, or the extension unloaded) leaves the user's alone.
+    values.set(false, false)
+    privacy.apply(FLAGS)
+    expect(ask({ private: false })).toEqual({ gpc: false, dnt: false })
+    on.mockRestore()
+  })
+
   it('reads a bundled feed document by id and refuses ids that are not plain feed names', async () => {
     const { privacy, dir } = host()
     writeFileSync(join(dir, 'urlhaus.json'), '{"id":"urlhaus"}')

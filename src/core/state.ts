@@ -25,6 +25,7 @@ import type {
   ExtensionInfo,
   ExtensionUpdateCheck,
   Folder,
+  HomepageSettings,
   HostCapabilities,
   KeyBinding,
   LiveFolderConfig,
@@ -88,7 +89,7 @@ import {
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeMenuOrder } from '../shared/menuOrder'
-import { sanitizeHomepage } from '../shared/homepage'
+import { defaultHomepageOf, sanitizeHomepage } from '../shared/homepage'
 import { sanitizeToolbarLayout } from '../shared/toolbarLayout'
 import { sanitizeToolbarPins } from '../shared/toolbarPins'
 import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
@@ -546,6 +547,15 @@ export class BrowserState {
   setExtensionControls(controls: Record<string, ExtensionControl>): void {
     this.extensionControls = controls
     this.commit()
+  }
+
+  /**
+   * The homepage a Home control follows: an extension's page while one holds the setting
+   * (`chrome_settings_overrides.homepage`, the `homepage` key of the controls map), else the
+   * user's own – read the way the engine is (`defaultHomepageOf`).
+   */
+  effectiveHomepage(): HomepageSettings {
+    return defaultHomepageOf(this.settings.homepage, this.extensionControls.homepage)
   }
 
   /**

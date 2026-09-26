@@ -37,7 +37,6 @@ import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib
 import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
-import { openSettings } from '@renderer/lib/pages'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
 import { holdChromeInert } from '@renderer/lib/portals'
 import {
@@ -57,10 +56,7 @@ import {
   closeTabsMenu,
   contentAreaStore,
   dismissBanner,
-  openBarEditor,
-  openHistoryMenu,
   openMediaSheet,
-  openTabsMenu,
   overlayCoversContent,
   showBanner,
   uiStore,
@@ -84,6 +80,7 @@ import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
 import { BackHistoryMenu } from './BackHistoryMenu'
+import { barHold } from './barHold'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
 import { useFullscreenReturn } from './useFullscreenReturn'
@@ -174,20 +171,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   const privateLocked = usePrivateTabLocked(state)
   useReaderEntryMessage(tab, !onboarding && !htmlFullscreen && !privateLocked)
 
-  // A hold on the Tabs button: its quick menu, anchored to the button; on Home, the homepage
-  // setting (TB-15: Chrome's long-press on its Home button); on Back or Forward with history that
-  // way, the tab's history popup (GN-08: Chrome's long-press on its toolbar's Back); any other
-  // hold – a Back with nothing behind it included – the editor, as before.
-  const hold = useBarHold({
-    onHold: (item, rect) => {
-      if (item === 'tabs') void openTabsMenu(rect, activeTabId)
-      else if (item === 'home') openSettings('look')
-      else if (item === 'back' && tab?.canGoBack) void openHistoryMenu(rect, 'back', activeTabId)
-      else if (item === 'forward' && tab?.canGoForward)
-        void openHistoryMenu(rect, 'forward', activeTabId)
-      else void openBarEditor(activeTabId)
-    }
-  })
+  // A hold on the bar: what it opens is `barHold`'s (the Tabs menu, the homepage setting, the
+  // history popups, else the editor).
+  const hold = useBarHold({ onHold: (item, rect) => barHold(item, rect, tab, activeTabId) })
 
   /**
    * The address surface from the pill: what a tap on the pill's body opens, and what a hold let

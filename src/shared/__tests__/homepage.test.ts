@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_HOMEPAGE,
+  defaultHomepageOf,
+  extensionHomepage,
   homepageAddress,
   homepageDisplay,
   homepageHasPage,
@@ -89,5 +91,40 @@ describe('what the row shows', () => {
     )
     expect(homepageDisplay({ mode: 'url', url: '' })).toBe('')
     expect(homepageDisplay({ mode: 'newtab', url: 'https://example.com/' })).toBe('')
+  })
+})
+
+describe('an extension’s homepage over the user’s (chrome_settings_overrides.homepage)', () => {
+  const control = {
+    extensionId: 'a'.repeat(32),
+    name: 'Bing Homepage',
+    value: 'https://www.bing.com/'
+  }
+
+  it('is the page a Home control opens while the Home button is on, as a Specific page homepage; the user’s own otherwise', () => {
+    const newtab = { mode: 'newtab' as const, url: '' }
+    expect(extensionHomepage(newtab, control)).toBe('https://www.bing.com/')
+    expect(defaultHomepageOf(newtab, control)).toEqual({
+      mode: 'url',
+      url: 'https://www.bing.com/'
+    })
+    const own = { mode: 'url' as const, url: 'https://news.example/' }
+    expect(defaultHomepageOf(own, control)).toEqual({ mode: 'url', url: 'https://www.bing.com/' })
+    // No extension: the user's own, the same object, so a caller can tell nothing changed.
+    expect(defaultHomepageOf(own, undefined)).toBe(own)
+    expect(defaultHomepageOf(own, null)).toBe(own)
+    expect(extensionHomepage(own, undefined)).toBeNull()
+  })
+
+  it('leaves Off alone – Chrome’s "Show home button" is the user’s, no extension draws a Home button – and ignores a value that is not a web page', () => {
+    const off = { mode: 'off' as const, url: '' }
+    expect(extensionHomepage(off, control)).toBeNull()
+    expect(defaultHomepageOf(off, control)).toBe(off)
+    const newtab = { mode: 'newtab' as const, url: '' }
+    expect(defaultHomepageOf(newtab, { ...control, value: 'zen://settings' })).toBe(newtab)
+    expect(defaultHomepageOf(newtab, { ...control, value: 20 })).toBe(newtab)
+    const valueless: { extensionId: string; name: string; value?: unknown } = { ...control }
+    delete valueless.value
+    expect(defaultHomepageOf(newtab, valueless)).toBe(newtab)
   })
 })
