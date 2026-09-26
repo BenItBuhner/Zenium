@@ -7,6 +7,7 @@ import {
   ANDROID,
   DESKTOP,
   NO_EDITS,
+  PAGE_URL,
   VIDEO_FLAGS,
   chromeParams,
   pageHarness,
@@ -118,6 +119,47 @@ describe('the mnemonic letters', () => {
     expect(tableEntry('Open in New Tab')).toEqual({ letter: 'T', source: 'zenium' })
     expect(tableEntry('Open All (3) in New Window')).toEqual({ letter: 'W', source: 'zenium' })
     expect(tableEntry('Whatever')).toBeUndefined()
+  })
+
+  it("carry W8-1's rows: Chrome's letters for Passwords and Autofill ▸ and Find and Edit ▸, the rule's for the pinned toolbar button's menu", () => {
+    // IDS_PASSWORDS_AND_AUTOFILL_MENU "Passwords and &autofill", IDS_VIEW_PASSWORDS "P&assword
+    // Manager", IDS_YOUR_SAVED_INFO_PAYMENTS_SUBMENU_OPTION "&Payments"; Addresses is Chrome's
+    // "&Contact info", whose C the label has not – the a being P&asswords', the rule's consonant.
+    expect(marked(['Passwords', 'Payment Methods', 'Addresses'])).toEqual([
+      'P&asswords',
+      '&Payment Methods',
+      'A&ddresses'
+    ])
+    // IDS_FIND_AND_EDIT_MENU "&Find and edit": IDS_FIND "&Find...", Cu&t, &Copy, &Paste.
+    expect(marked(['Find in Page…', 'Cut', 'Copy', 'Paste'])).toEqual([
+      '&Find in Page…',
+      'Cu&t',
+      '&Copy',
+      '&Paste'
+    ])
+    expect(tableEntry('Passwords and Autofill')).toEqual({ letter: 'A', source: 'chrome' })
+    expect(tableEntry('Find and Edit')).toEqual({ letter: 'F', source: 'chrome' })
+    // The pinned toolbar button's menu: Chrome's three strings carry no `&`; the rule's first
+    // letters, and the star's own rows ahead of them keep theirs (B, A, S).
+    expect(marked(['Unpin', 'Customise Toolbar…'])).toEqual(['&Unpin', '&Customise Toolbar…'])
+    expect(marked(['Pin', 'Customise Toolbar…'])).toEqual(['&Pin', '&Customise Toolbar…'])
+    expect(
+      marked([
+        'Bookmark This Page',
+        'Add to Reading List',
+        'Show Reading List',
+        'Unpin',
+        'Customise Toolbar…'
+      ])
+    ).toEqual([
+      '&Bookmark This Page',
+      '&Add to Reading List',
+      '&Show Reading List',
+      '&Unpin',
+      '&Customise Toolbar…'
+    ])
+    for (const label of ['Pin', 'Unpin', 'Customise Toolbar…', 'Addresses'])
+      expect(tableEntry(label)?.source).toBe('zenium')
   })
 
   it('are unique within a level, case-insensitively, and a row whose every letter is taken goes without', () => {
@@ -399,6 +441,43 @@ const OPENINGS: Opening[] = [
     name: 'omnibox: the star',
     open: (h) =>
       h.browser.menus.showChromeContextMenu(chromeParams({ target: 'star', tabId: h.tabId }), h.win)
+  },
+  {
+    name: 'omnibox: the star as a pinnable control, its own rows over the pin rows (W8-1)',
+    open: (h) =>
+      h.browser.menus.showChromeContextMenu(
+        chromeParams({ target: 'star', tabId: h.tabId, control: 'star' }),
+        h.win
+      )
+  },
+  {
+    name: 'omnibox: the star as a pinnable control, bookmarked and in the reading list',
+    open: (h) => {
+      h.browser.readingList.add(PAGE_URL, 'Article')
+      h.browser.handleCommand(h.win, 'bookmark.toggle', { tabId: h.tabId })
+      return h.browser.menus.showChromeContextMenu(
+        chromeParams({ target: 'star', tabId: h.tabId, control: 'star' }),
+        h.win
+      )
+    }
+  },
+  {
+    name: 'toolbar: a pinned control’s button (Unpin, Customise Toolbar…; W8-1)',
+    open: (h) =>
+      h.browser.menus.showChromeContextMenu(
+        chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'translate' }),
+        h.win
+      )
+  },
+  {
+    name: 'toolbar: a control folded away, asked from the keyboard (Pin, Customise Toolbar…)',
+    open: (h) => {
+      h.browser.handleCommand(h.win, 'settings.update', { toolbarPins: { media: false } })
+      return h.browser.menus.showChromeContextMenu(
+        chromeParams({ target: 'toolbar', tabId: h.tabId, control: 'media', keyboard: true }),
+        h.win
+      )
+    }
   },
   {
     name: "chrome: a text field of the chrome's own",

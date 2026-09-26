@@ -91,8 +91,13 @@ export const CHROME_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Zoom Out', 'O'],
   ['Find in Page…', 'F'],
   // The submenu headers (IDS_PASSWORDS_AND_AUTOFILL_MENU "Passwords and &autofill" – the A of
-  // Autofill in Title Case – and IDS_FIND_AND_EDIT_MENU "&Find and edit").
+  // Autofill in Title Case – and IDS_FIND_AND_EDIT_MENU "&Find and edit"), and the first's rows:
+  // IDS_VIEW_PASSWORDS "P&assword Manager", IDS_YOUR_SAVED_INFO_PAYMENTS_SUBMENU_OPTION
+  // "&Payments" (Zenium's Payment Methods). Its Addresses is Chrome's "&Contact info", whose C
+  // the label has not: Zenium's table gives it the rule's letter.
   ['Passwords and Autofill', 'A'],
+  ['Passwords', 'a'],
+  ['Payment Methods', 'P'],
   ['Find and Edit', 'F'],
   ['Save and Share', 'S'],
   ['Copy Link', 'L'],
@@ -190,7 +195,16 @@ export const ZENIUM_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Paste as Plain Text', 'l'],
   ['Quit', 'Q'],
   ['Exit Full Screen', 'x'],
-  ['Developer Tools', 'D']
+  ['Developer Tools', 'D'],
+  // Passwords and Autofill ▸'s Addresses: Chrome's "&Contact info" has a letter the label has
+  // not, and P&asswords holds the a – the rule's distinctive consonant (W8-1).
+  ['Addresses', 'd'],
+  // The pinned toolbar button's menu (context-menus-112; Chrome's
+  // IDS_SIDE_PANEL_TOOLBAR_BUTTON_CXMENU_PIN / _UNPIN and IDS_SHOW_CUSTOMIZE_CHROME_TOOLBAR carry
+  // no `&`): the rule's first letters, stated so the star's menu – its own rows first – keeps them.
+  ['Pin', 'P'],
+  ['Unpin', 'U'],
+  ['Customise Toolbar…', 'C']
 ])
 
 /** Every `&` doubled: Chromium's menus read a lone `&` as the mnemonic marker. */
