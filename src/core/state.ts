@@ -1110,6 +1110,7 @@ export class BrowserState {
       readingList: this.readingListFor(),
       newTabShortcuts: this.newTabDevice.shortcuts,
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
+      newTabHiddenModules: this.newTabDevice.hiddenModules,
       privateLockOnLeave: this.privateDevice.lockOnLeave,
       newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,

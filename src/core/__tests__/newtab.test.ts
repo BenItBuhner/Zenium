@@ -837,7 +837,7 @@ describe('NewTabService: my shortcuts and most visited', () => {
     // Removing a pinned site drops the tile and blocks the host.
     svc.pin('https://docs.example/', 'Docs')
     svc.remove('https://docs.example/')
-    expect(device()).toEqual({ shortcuts: [], hiddenHosts: ['docs.example'] })
+    expect(device()).toEqual({ shortcuts: [], hiddenHosts: ['docs.example'], hiddenModules: [] })
     svc.pin('javascript:alert(1)', 'nope')
     expect(device().shortcuts).toEqual([])
   })
@@ -1123,7 +1123,11 @@ describe('NewTabService: my shortcuts and most visited', () => {
       })
       const before = f.browser.state.newTabDevice
       svc.restoreDefaultShortcutsFromPage(tab.id)
-      expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+      expect(f.browser.state.newTabDevice).toEqual({
+        shortcuts: [],
+        hiddenHosts: [],
+        hiddenModules: []
+      })
       expect(f.browser.state.settings.newTab.mode).toBe('most-visited')
       expect(svc.stateFor(tab.id)!.topSites.map((s) => s.url)).toEqual(['https://news.example/a'])
       // The page's toast ("Default shortcuts restored", Undo alone) is the command's.
@@ -1184,7 +1188,11 @@ describe('NewTabService: my shortcuts and most visited', () => {
         ...DEFAULT_NEW_TAB_SETTINGS,
         enabled: false
       })
-      expect(f.browser.state.newTabDevice).toEqual({ shortcuts: [], hiddenHosts: [] })
+      expect(f.browser.state.newTabDevice).toEqual({
+        shortcuts: [],
+        hiddenHosts: [],
+        hiddenModules: []
+      })
       expect(f.background.current).toBeNull()
       // No restore snapshot survives a reset.
       expect(svc.undoRestoreDefaultShortcuts()).toBe(false)

@@ -13,6 +13,7 @@ import type {
 } from './platform'
 import type {
   DevtoolsDock,
+  MagicStackModuleId,
   NewTabDeviceState,
   NewTabHideableSection,
   NewTabPageAction,
@@ -45,6 +46,7 @@ import {
   removeSite,
   sanitizeNewTabDevice,
   sanitizeNewTabSettings,
+  setModuleHidden,
   setNewTabSection,
   siteHost,
   toggleNewTabModule,
@@ -741,6 +743,16 @@ export class NewTabService {
     for (const shortcut of list) if (!next.includes(shortcut)) next.push(shortcut)
     if (next.every((s, i) => s === list[i])) return
     this.updateDevice((d) => ({ ...d, shortcuts: next }))
+  }
+
+  /**
+   * The Magic Stack's "Hide this" and its Customise sheet's switches (NTP-16): one module on or
+   * off in this device's hidden set, never synced (Chrome's `home_modules_*` prefs are per device
+   * too). Nothing is written when the module already stands as asked.
+   */
+  setModuleHidden(id: MagicStackModuleId, hidden: boolean): void {
+    if (this.device.hiddenModules.includes(id) === hidden) return
+    this.updateDevice((d) => setModuleHidden(d, id, hidden))
   }
 
   /**
