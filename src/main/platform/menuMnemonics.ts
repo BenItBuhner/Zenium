@@ -90,6 +90,10 @@ export const CHROME_MNEMONICS: ReadonlyMap<string, string> = new Map<string, str
   ['Zoom In', 'I'],
   ['Zoom Out', 'O'],
   ['Find in Page…', 'F'],
+  // The submenu headers (IDS_PASSWORDS_AND_AUTOFILL_MENU "Passwords and &autofill" – the A of
+  // Autofill in Title Case – and IDS_FIND_AND_EDIT_MENU "&Find and edit").
+  ['Passwords and Autofill', 'A'],
+  ['Find and Edit', 'F'],
   ['Save and Share', 'S'],
   ['Copy Link', 'L'],
   ['Copy URL', 'U'],
