@@ -56,23 +56,28 @@ const AUTOFILL_CARDS = settingKey('services', 'autofillCreditCardEnabled')
 const THIRD_PARTY_COOKIES = settingKey('websites', 'thirdPartyCookiesAllowed')
 
 /**
- * The settings a Zenium Settings row shows, by the key the row reads (`UIState.
- * extensionControls`, the §10.5 controlled-setting primitive; `extensionControlled(state,
- * key)` in the renderer): the `chrome.privacy` settings Chrome's own Settings marks with its
- * extension-controlled indicator and Zenium has a setting and a row for. Each is published
- * while an extension controls it for normal windows – the Settings rows are the regular
- * profile's, as Chrome's are – with the extension's value, the one the row's disabled control
- * shows. The other settings are remembered and reported to extensions but stand for no row:
- * Chrome marks nothing for them either (the WebRTC policy, hyperlink auditing, referrers), or
- * Zenium has no setting behind them (network prediction, Google's services, the Privacy Sandbox).
+ * The settings a Zenium Settings row says "Controlled by <extension>" for, by the key the row
+ * reads (`UIState.extensionControls`, the §10.5 controlled-setting primitive;
+ * `extensionControlled(state, key)` in the renderer). A row may say so only when the
+ * extension's value is IN EFFECT – Chrome's indicator means the pref reads the extension's
+ * value in the service itself – so the table carries the `chrome.privacy` settings whose
+ * effect is real in Zenium today: Do Not Track (the `DNT` header in the request pipeline).
+ * Published while an extension controls it for normal windows – the Settings rows are the
+ * regular profile's, as Chrome's are – with the extension's value, the one the row's disabled
+ * control shows.
+ *
+ * The settings Zenium has a row for but whose service still keeps the user's value (Safe
+ * Browsing, third-party cookies, search suggestions, offering to save passwords, the two
+ * autofill switches) are remembered and reported to extensions and NOT published: their rows
+ * stay wired to the keys `autofill.addresses`, `autofill.cards`, `passwords.offerToSave`,
+ * `privacy.safeBrowsingEnabled`, `search.suggestions`, `privacy.thirdPartyCookies`, so each
+ * joins this table the day its service applies the extension layer through a host hook (as
+ * `Platform.pageFonts.apply` did for fonts) – one line here, nothing in the renderer. The rest
+ * stand for no row: Chrome marks nothing for them either (the WebRTC policy, hyperlink
+ * auditing, referrers), or Zenium has no setting behind them (network prediction, Google's
+ * services, the Privacy Sandbox).
  */
 export const PRIVACY_CONTROL_KEYS: Readonly<Record<string, string>> = {
-  [AUTOFILL_ADDRESSES]: 'autofill.addresses',
-  [AUTOFILL_CARDS]: 'autofill.cards',
-  [PASSWORD_SAVING]: 'passwords.offerToSave',
-  [SAFE_BROWSING]: 'privacy.safeBrowsingEnabled',
-  [SEARCH_SUGGEST]: 'search.suggestions',
-  [THIRD_PARTY_COOKIES]: 'privacy.thirdPartyCookies',
   [DO_NOT_TRACK]: 'privacy.dnt'
 }
 
@@ -92,9 +97,10 @@ export const PRIVACY_CONTROL_KEYS: Readonly<Record<string, string>> = {
  * to. The settings Zenium has as its own (Safe Browsing, third-party cookies, search
  * suggestions, offering to save passwords, autofill) answer the user's setting while no
  * extension holds them and follow it as it changes; an extension's value over them is
- * remembered, reported back and published to the Settings page's controlled rows
- * (`PRIVACY_CONTROL_KEYS`) – the services themselves keep the user's value until each has a
- * hook for the layer. The rest stand for Chromium features Electron exposes no switch for
+ * remembered and reported back – the services themselves keep the user's value until each has
+ * a hook for the layer, and until then the Settings page does not say "controlled" for them
+ * (`PRIVACY_CONTROL_KEYS` carries only the settings in effect; Do Not Track today). The rest
+ * stand for Chromium features Electron exposes no switch for
  * (network prediction) or Zenium does not have (the Privacy Sandbox, Google's services): their
  * values are remembered and reported back, so extensions that toggle them at start-up run and
  * see their own value.
