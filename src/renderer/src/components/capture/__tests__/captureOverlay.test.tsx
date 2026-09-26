@@ -464,8 +464,11 @@ describe('the result card (capture-21)', () => {
     const share = card.querySelector<HTMLButtonElement>('[data-capture-share]')!
     expect(share.hasAttribute('data-share-anchor')).toBe(true)
     expect(share.getAttribute('aria-haspopup')).toBe('dialog')
-    // Four verbs hug at 80 in the 400 form's column (§9.11), not the primitive's 96.
+    // Four verbs hug at 80 in the 400 form's column (§9.11), not the primitive's 96: each wears
+    // the unlayered modifier beside the primitive (main.css's `.zen-v2-button.zen-capture-verb`).
     expect(card.querySelector('.zen-capture-card-footer')?.contains(share)).toBe(true)
+    for (const verb of card.querySelectorAll<HTMLButtonElement>('.zen-capture-card-footer button'))
+      expect(verb.className.split(' '), verb.textContent ?? '').toContain('zen-capture-verb')
     expect(document.activeElement).toBe(card)
     // No fallback: nothing said of the visible area.
     expect(card.textContent).not.toContain('Visible area captured')

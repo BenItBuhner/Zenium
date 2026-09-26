@@ -55,6 +55,11 @@ const TOOLBAR_INSET = 12
  * fill inside the hairline (§2, §9.20).
  */
 const PICTURE_COLUMN = POPOVER_WIDTH.form - 2 - 2 * 16 - 2
+/**
+ * The result card's four verbs hug at 80 rather than the primitive's 96 (main.css's
+ * `.zen-capture-verb`): four one-word labels at 96 would stand 408 across the 366 column.
+ */
+const VERB = 'zen-capture-verb'
 const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 }
 
 /**
@@ -619,13 +624,14 @@ function ResultCard({
         </V2Row>
       )}
       <div className="zen-capture-card-footer flex justify-end gap-2 px-4 pb-4 pt-4">
-        <V2Button onClick={onClose} data-capture-close>
+        <V2Button className={VERB} onClick={onClose} data-capture-close>
           Close
         </V2Button>
-        <V2Button busy={busy === 'copy'} onClick={onCopy} data-capture-copy>
+        <V2Button className={VERB} busy={busy === 'copy'} onClick={onCopy} data-capture-copy>
           Copy
         </V2Button>
         <V2Button
+          className={VERB}
           busy={busy === 'share'}
           onClick={onShare}
           data-capture-share
@@ -634,7 +640,13 @@ function ResultCard({
         >
           Share
         </V2Button>
-        <V2Button variant="primary" busy={busy === 'save'} onClick={onSave} data-capture-save>
+        <V2Button
+          className={VERB}
+          variant="primary"
+          busy={busy === 'save'}
+          onClick={onSave}
+          data-capture-save
+        >
           Save
         </V2Button>
       </div>
