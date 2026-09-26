@@ -274,10 +274,12 @@ describe('the relay on a toolbox', () => {
     scripts: string[]
     say(message: string, frame?: unknown): void
     sayFrameless(message: string): void
+    destroy(): void
   } {
     const listeners: ((event: { message: string; frame?: unknown }) => void)[] = []
     const scripts: string[] = []
     const mainFrame = { name: 'devtools://devtools/bundled/devtools_app.html' }
+    let destroyed = false
     return {
       listeners,
       scripts,
@@ -286,6 +288,10 @@ describe('the relay on a toolbox', () => {
       executeJavaScript: (code) => {
         scripts.push(code)
         return Promise.resolve('hooked')
+      },
+      isDestroyed: () => destroyed,
+      destroy: () => {
+        destroyed = true
       },
       say: (message, frame = mainFrame) =>
         listeners.forEach((listener) => listener({ message, frame })),
