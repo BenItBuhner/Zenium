@@ -38,6 +38,12 @@ class PreloadRulesTest {
     }
 
     @Test
+    fun `the token under another header name is not the mark`() {
+        // The desktop table's negative: the right value under the wrong name marks nothing.
+        assertFalse(PreloadRules.isPreloadRequest(mapOf("X-Purpose" to "prefetch", "Accept" to "prefetch")))
+    }
+
+    @Test
     fun `another purpose is not a prefetch`() {
         assertFalse(PreloadRules.isPreloadRequest(mapOf("Sec-Purpose" to "other")))
         // A prerender's token alone is not the prefetch mark (Chromium always pairs them).

@@ -2729,12 +2729,14 @@ class TabWebView(
          * so nothing leaves the device for it. [applySpeculativeLoading]'s DISABLED stops the
          * prerenders alone (`IsPrerender2Allowed`); a speculation-rules prefetch is a request the
          * browser process builds with both marks on it, and arrives here so marked (refused on
-         * WebView 113, run 36244937529). A `<link rel=prefetch>` does NOT: WebView shows it here
-         * as the plain fetch it looks like (`Accept`, `Referer`, `User-Agent` and nothing else)
-         * and the `Purpose: prefetch` it carries on the wire is added downstream, in the network
-         * service – where the desktop's `onBeforeSendHeaders` reads it and this hook cannot. That
-         * one prefetch is the phone's remaining limit under `none`; the rest of what the setting
-         * names is refused. The level is [Privacy.flags]' as last pushed, read per request.
+         * WebView 113, run 36244937529). A `<link rel=prefetch>` does NOT on WebView 113 or 124:
+         * WebView shows it here as the plain fetch it looks like (`Accept`, `Referer`,
+         * `User-Agent` and nothing else) – Blink marks it `Purpose: prefetch` but carries the
+         * header in `cors_exempt_headers`, which `AwWebResourceRequest` omits and the network
+         * service merges into the URLRequest, where the desktop's `onBeforeSendHeaders` reads it
+         * and this hook cannot. That one prefetch is the phone's remaining limit under `none`
+         * there; from Chromium 138 it carries `Sec-Purpose: prefetch` as a real header and is
+         * refused here unchanged. The level is [Privacy.flags]' as last pushed, read per request.
          * Ahead of the engine on purpose: the refusal is the user's setting, not a rule set's
          * block – no decision observed, no listener told, nothing added to the tab's blocked
          * count, as on the desktop (`HANDLER_ORDER.preload` before `ruleEngine`). An empty 403,

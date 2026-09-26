@@ -14,10 +14,15 @@ import app.zen.chromium.PageRules
  *
  * What reaches `shouldInterceptRequest` marked is refused; what reaches it unmarked cannot be.
  * Measured on WebView 113 (run 36244937529): a speculation-rules prefetch arrives with
- * `Sec-Purpose: prefetch` and `Purpose: prefetch` and is refused; a `<link rel=prefetch>` arrives
- * as a plain fetch (`Accept`, `Referer`, `User-Agent`) – its wire `Purpose: prefetch` is added
- * downstream in the network service, where the desktop's `onBeforeSendHeaders` reads it and this
- * hook cannot – and is the phone's remaining limit under `none`.
+ * `Sec-Purpose: prefetch` and `Purpose: prefetch` – the browser process puts both into the
+ * request's headers – and is refused; a `<link rel=prefetch>` arrives as a plain fetch (`Accept`,
+ * `Referer`, `User-Agent`). Blink does mark it `Purpose: prefetch`, but carries that header in
+ * the request's `cors_exempt_headers`, which WebView's `AwWebResourceRequest` omits; the network
+ * service merges it into the URLRequest, where the desktop's `onBeforeSendHeaders` reads it and
+ * this hook cannot. WebView 124 carries it the same way – the phone's remaining limit under
+ * `none` on both. From Chromium 138 (`SecPurposePrefetchHeaderRelPrefetch` on by default) the
+ * link prefetch carries `Sec-Purpose: prefetch` as a real header, and this rule refuses it
+ * unchanged.
  *
  * Pure, so the JVM tests pin it; read per request on WebView's network threads, at the level the
  * core last pushed ([PrivacyFlags.preloadPages], live on every `privacy.apply`).

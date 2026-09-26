@@ -34,8 +34,8 @@ import java.util.concurrent.TimeUnit
  * row and blocked again from its item's sheet, and the master switch off and on. Last, Preload
  * pages at the request engine (PS-43): a fixture page's speculation-rules prefetch refused under
  * `none` and let go under `standard`, read on the loopback server, and its `<link rel=prefetch>`
- * – shown to the engine without its mark on WebView 113 – written as the finding it is
- * ([preloadScene]).
+ * – shown to the engine without its mark on WebView 113 and 124, marked from Chromium 138 –
+ * written as the finding it is ([preloadScene]).
  *
  * Every row is found through the chrome's accessibility tree the way a screen reader would (a
  * row is one button whose text runs its label and description together) and pressed with a real
@@ -380,9 +380,13 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
      * cannot refuse what it does not see. Measured on WebView 113 (runs 36242992489 and
      * 36244937529): the speculation-rules prefetch is shown to the engine with `Sec-Purpose:
      * prefetch` and `Purpose: prefetch` and refused under `none`; the link prefetch is shown as a
-     * plain fetch (`Accept`, `Referer`, `User-Agent`) – its wire `Purpose: prefetch` is added
-     * downstream, in the network service – and reaches the server under `none` (the FINDING).
-     * Every reading is in the notes before a failed assertion fails the run.
+     * plain fetch (`Accept`, `Referer`, `User-Agent`) – Blink carries its `Purpose: prefetch` in
+     * `cors_exempt_headers`, which WebView's `AwWebResourceRequest` omits (113 and 124 alike) –
+     * and reaches the server under `none` (the FINDING). From Chromium 138 the link prefetch
+     * carries `Sec-Purpose: prefetch` as a real header, so on such a WebView (the nightly's
+     * `webview` shard, the Chromium snapshot swapped into the AOSP image) the same scene reads it
+     * refused and stays green. Every reading is in the notes before a failed assertion fails the
+     * run.
      */
     private fun preloadScene() {
         val failures = mutableListOf<String>()
@@ -409,7 +413,7 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
             val prefetchedUnderNone = server.hits("/prefetched.txt?n=$none")
             val speculatedUnderNone = server.hits("/speculated.html?n=$none")
             note("  5 s after the page's own resources: /prefetched.txt ${describeHits(prefetchedUnderNone)}; /speculated.html ${describeHits(speculatedUnderNone)}")
-            note("  the engine under none: link prefetch ${describeEngineView(engineSaw["$DEMO_ORIGIN/prefetched.txt?n=$none"])}; speculation-rules prefetch ${describeEngineView(engineSaw["$DEMO_ORIGIN/speculated.html?n=$none"])}")
+            note("  the engine under none: link prefetch ${describeEngineView(engineSaw["$DEMO_ORIGIN/prefetched.txt?n=$none"], underNone = true)}; speculation-rules prefetch ${describeEngineView(engineSaw["$DEMO_ORIGIN/speculated.html?n=$none"], underNone = true)}")
             if (!ownUnderNone) failures += "under none the page's own resources did not load (${describePreloadPage(none, false)})"
             shot("18-preload-none-no-prefetch")
             beat()
@@ -430,7 +434,7 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
             if (prefetchedUnderStandard == null) failures += "under standard no <link rel=prefetch> request reached the server within 15 s (the control)"
             val linkSeen = engineSaw["$DEMO_ORIGIN/prefetched.txt?n=$standard"]
             val speculatedSeen = engineSaw["$DEMO_ORIGIN/speculated.html?n=$standard"]
-            note("  the engine under standard: link prefetch ${describeEngineView(linkSeen)}; speculation-rules prefetch ${describeEngineView(speculatedSeen)}")
+            note("  the engine under standard: link prefetch ${describeEngineView(linkSeen, underNone = false)}; speculation-rules prefetch ${describeEngineView(speculatedSeen, underNone = false)}")
 
             // The rule: what shouldInterceptRequest was shown with the mark, it must have refused.
             fun judge(kind: String, live: Seen?, seen: Map<String, String>?, underNone: List<Seen>) {
@@ -438,7 +442,7 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
                 when {
                     live == null -> note("  $kind: not live on this WebView (nothing reached the server under standard) – nothing to refuse")
                     seen == null -> note("  FINDING ($kind): shouldInterceptRequest never saw the request (on the wire: ${live.mark()}) – WebView loads it outside the proxied loader factory the engine sits on, so the engine cannot refuse it; under none $reached")
-                    !PreloadRules.isPreloadRequest(seen) -> note("  FINDING ($kind): shouldInterceptRequest saw the request WITHOUT the prefetch mark (its headers: ${seen.keys.sorted()}; on the wire: ${live.mark()}) – the mark is added downstream of the engine, and nothing the engine is shown tells this prefetch from a fetch; under none $reached")
+                    !PreloadRules.isPreloadRequest(seen) -> note("  FINDING ($kind): shouldInterceptRequest saw the request WITHOUT the prefetch mark (its headers: ${seen.keys.sorted()}; on the wire: ${live.mark()}) – WebView omits the mark from what it shows the engine (Blink carries it in cors_exempt_headers, merged in downstream), and nothing the engine is shown tells this prefetch from a fetch; under none $reached")
                     underNone.isNotEmpty() -> failures += "$kind: shouldInterceptRequest saw it with the mark (${markOf(seen)}) under standard, yet under none ${underNone.first()} reached the server"
                     else -> note("  $kind: refused under none – the engine is shown it with ${markOf(seen)}, and $reached")
                 }
@@ -453,9 +457,20 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         if (failures.isNotEmpty()) error("Preload pages: ${failures.joinToString("; ")}")
     }
 
-    /** What `shouldInterceptRequest` was shown for a request, as the engine's listener recorded it. */
-    private fun describeEngineView(headers: Map<String, String>?): String =
-        if (headers == null) "NOT shown to shouldInterceptRequest" else "shown to shouldInterceptRequest with ${markOf(headers)} (headers ${headers.keys.sorted()})"
+    /**
+     * What the engine's `onSendHeaders` listener recorded for a request: the headers
+     * `shouldInterceptRequest` was shown, for every request the engine let pass. Nothing recorded
+     * is read by the level: under `none` a marked prefetch is refused AHEAD of the engine
+     * (`refusePreload` runs before `Blocking.intercept`), so `shouldInterceptRequest` saw it and
+     * the engine's listener did not; under `standard` nothing is refused ahead of the engine, so
+     * nothing recorded means the request never went through `shouldInterceptRequest` at all.
+     */
+    private fun describeEngineView(headers: Map<String, String>?, underNone: Boolean): String =
+        when {
+            headers != null -> "shown to shouldInterceptRequest with ${markOf(headers)} (headers ${headers.keys.sorted()})"
+            underNone -> "not shown to the engine's listener – refused ahead of the engine, or never through shouldInterceptRequest (the standard reading tells which)"
+            else -> "not shown to the engine's listener – never through shouldInterceptRequest on this WebView"
+        }
 
     /** The core's `Settings.preloadPages` as `app.getState` carries it. */
     private fun corePreloadLevel(): String = coreState().getJSONObject("settings").optString("preloadPages")
