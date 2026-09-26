@@ -42,6 +42,7 @@ import {
   type LocalMenuItem
 } from '@renderer/lib/ui'
 import { OverlayShell } from '../overlays/OverlayShell'
+import { BookmarkMoveSheet } from './BookmarkMoveSheet'
 import {
   PhoneEmptyNote,
   PhoneHeader,
@@ -65,11 +66,16 @@ const SEARCH_LIMIT = 200
 /**
  * Bookmarks on a phone (design-language v2 draft, sections 5, 6 and 9): one folder at a time under a 56
  * header – folders as rows that push in, bookmarks as rows with favicon, title and address and
- * a trailing menu (edit, open in a new tab, copy the link, delete) – with a search field over
- * the whole tree. A long press starts selection mode, whose header replaces the panel's; the
- * back gesture leaves it, then climbs out of folders, then closes the panel. Deletes are
- * undoable from their toast. The editor is the `BookmarkEditSheet` that `TabDialogs` mounts in
- * the frame's dialog host on a phone; the row menus are the shared menu sheet.
+ * a trailing menu (Chrome 152's row menu as far as the model reaches, HB-12: select, edit, move
+ * to a folder, open in a new or a private tab, copy the link, delete) – with a search field over
+ * the whole tree. A long press, or the menu's Select, starts selection mode, whose header
+ * replaces the panel's (Chrome's selection toolbar, HB-15: Delete and More – Edit for exactly
+ * one row, Move to…, the open rows, Copy link); the back gesture leaves it, then climbs out of
+ * folders, then closes the panel. Deletes are undoable from their toast. The editor is the
+ * `BookmarkEditSheet` that `TabDialogs` mounts in the frame's dialog host on a phone; Move to…
+ * is the panel's own `BookmarkMoveSheet` in the same host; the row menus are the shared menu
+ * sheet. Chrome's manager has no "Add to reading list" row (its reading list is a bookmark
+ * folder reached by Move to…), so none is built here.
  */
 export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element {
   const tree = useBookmarkTree(state)
@@ -80,6 +86,8 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   )
   const [query, setQuery] = useState('')
   const [rawSelection, setSelection] = useState<Selection>(NO_SELECTION)
+  /** The rows Move to… is picking a folder for, while its sheet stands. */
+  const [moving, setMoving] = useState<readonly string[] | null>(null)
   const pending = usePendingDeletes()
   const [attachList, listScrolled] = useScrolled<HTMLDivElement>()
 
@@ -144,7 +152,8 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
     setSelection(NO_SELECTION)
   }
   const step = selection.active ? exitSelection : stack.length > 1 && !searching ? goUp : null
-  usePanelStep(step !== null, () => step?.())
+  // The Move to… sheet above the panel takes the back gesture and Escape while it stands.
+  usePanelStep(step !== null && moving === null, () => step?.())
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -197,6 +206,14 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
 
   const edit = (node: BookmarkNode): void => editBookmark(node.id)
 
+  // Chrome's Select (`BookmarkManagerMediator`: `toggleSelectionForItem`): selection mode with
+  // this row picked, as a long press on it starts.
+  const select = (node: BookmarkNode): void => setSelection(startSelection(node.id))
+
+  // Chrome's Move to… (`startFolderPickerActivity`): the folder picker for these rows; a
+  // selection stays picked while the sheet stands and ends as the move runs (the rows leave).
+  const moveTo = (ids: readonly string[]): void => setMoving([...ids])
+
   // Menu items are Title Case (v2 draft 9.1) and read as the core's bookmark menus do (#119:
   // "Edit…" and "Rename…" open a sheet, "Open All (N)" counts what a folder opens).
   /** The addresses under `ids`, for the private rows (INC-08; a private tab is opened by URL). */
@@ -205,10 +222,16 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
   const rowMenu = (node: BookmarkNode): void => {
     noteSheetOpener()
     const urlCount = tree.urlsUnder(node.id).length
+    // Chrome 152's rows (HB-12) as far as the model reaches – Select, Edit, Copy link, Move to…,
+    // Delete, Open in new tab, Open in Incognito – in this list's own order: the edits first,
+    // the open rows, the link rows, the gap, Delete (§9.1; Chrome's Show in folder, Move up /
+    // Move down and Open in new window have no counterpart here yet).
     const items: Array<LocalMenuItem | typeof MENU_GAP> =
       node.type === 'folder'
         ? [
+            { label: 'Select', onSelect: () => select(node) },
             { label: 'Rename…', onSelect: () => edit(node) },
+            { label: 'Move to…', onSelect: () => moveTo([node.id]) },
             {
               label: `Open All (${urlCount})`,
               enabled: urlCount > 0,
@@ -219,7 +242,9 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
             { label: 'Delete', danger: true, onSelect: () => remove([node.id]) }
           ]
         : [
+            { label: 'Select', onSelect: () => select(node) },
             { label: 'Edit…', onSelect: () => edit(node) },
+            { label: 'Move to…', onSelect: () => moveTo([node.id]) },
             { label: 'Open in New Tab', onSelect: () => openInNewTabs([node.id]) },
             ...openInPrivateItems(state.capabilities, urlsUnder([node.id]), exitSelection),
             { label: 'Copy Link', onSelect: () => copyLinks([node.id]) },
@@ -240,12 +265,21 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
     })
   }
 
+  // Chrome's selection toolbar (HB-15) behind the header's More: Edit for exactly one picked
+  // row (`selection_mode_edit_menu_id`: `numSelected == 1`, a lone folder included – it reads
+  // Rename…, as the row's own does), Move to… for any, then the open rows, Copy link, Delete.
   const selectionMenu = (): void => {
+    noteSheetOpener()
     const ids = orderedSelection(selection, order)
+    const only = ids.length === 1 ? tree.get(ids[0]) : null
     const urlCount = ids.reduce((n, id) => n + tree.urlsUnder(id).length, 0)
     void showLocalMenu(
       'selection',
       [
+        ...(only
+          ? [{ label: only.type === 'folder' ? 'Rename…' : 'Edit…', onSelect: () => edit(only) }]
+          : []),
+        { label: 'Move to…', onSelect: () => moveTo(ids) },
         {
           label: urlCount === 1 ? 'Open in New Tab' : `Open All (${urlCount})`,
           enabled: urlCount > 0,
@@ -374,6 +408,15 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
           ))
         )}
       </div>
+      {moving !== null && (
+        <BookmarkMoveSheet
+          tree={tree}
+          platform={platform}
+          ids={moving}
+          onClose={() => setMoving(null)}
+          onMoved={exitSelection}
+        />
+      )}
     </OverlayShell>
   )
 }

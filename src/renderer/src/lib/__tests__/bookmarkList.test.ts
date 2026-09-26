@@ -13,7 +13,10 @@ import {
   folderRows,
   folderTitle,
   initialFolderStack,
+  movableIds,
+  moveTargets,
   pruneFolderStack,
+  sharedParentId,
   topLevelRoots
 } from '../bookmarkList'
 
@@ -135,6 +138,70 @@ describe('deletableIds', () => {
     expect(deletableIds(sampleTree(), [MOBILE_BOOKMARKS_ID, 'news', 'nope', 'work'])).toEqual([
       'news',
       'work'
+    ])
+  })
+})
+
+// HB-12 / HB-15: what Move to… moves and where its picker lets it land.
+describe('movableIds', () => {
+  it('drops roots and a node whose picked ancestor carries it', () => {
+    expect(movableIds(sampleTree(), [MOBILE_BOOKMARKS_ID, 'work', 'jira', 'news'])).toEqual([
+      'work',
+      'news'
+    ])
+  })
+})
+
+describe('sharedParentId', () => {
+  it('is the one folder every picked node stands in', () => {
+    expect(sharedParentId(sampleTree(), ['news', 'mail'])).toBe(MOBILE_BOOKMARKS_ID)
+    expect(sharedParentId(sampleTree(), ['jira'])).toBe('work')
+  })
+
+  it('is null across folders, for a root, for an unknown id and for nothing', () => {
+    expect(sharedParentId(sampleTree(), ['news', 'docs'])).toBeNull()
+    expect(sharedParentId(sampleTree(), [MOBILE_BOOKMARKS_ID])).toBeNull()
+    expect(sharedParentId(sampleTree(), ['nope'])).toBeNull()
+    expect(sharedParentId(sampleTree(), [])).toBeNull()
+  })
+})
+
+describe('moveTargets', () => {
+  it('lists every folder in reading order with its depth, the default root first', () => {
+    expect(moveTargets(sampleTree(), ['news'], 'android').map((t) => [t.node.id, t.depth])).toEqual(
+      [
+        [MOBILE_BOOKMARKS_ID, 0],
+        ['work', 1],
+        [OTHER_BOOKMARKS_ID, 0]
+      ]
+    )
+  })
+
+  it('leaves out an empty other root, as the list does', () => {
+    const ids = moveTargets(sampleTree(), ['news'], 'android').map((t) => t.node.id)
+    expect(ids).not.toContain(BOOKMARKS_BAR_ID)
+    const tree = new BookmarkTree([...createBookmarkRoots(NOW), url('news', BOOKMARKS_BAR_ID, 0)])
+    expect(moveTargets(tree, ['news'], 'linux').map((t) => t.node.id)).toEqual([
+      OTHER_BOOKMARKS_ID,
+      BOOKMARKS_BAR_ID
+    ])
+  })
+
+  it('leaves out a moved folder and everything under it', () => {
+    const tree = new BookmarkTree([
+      ...createBookmarkRoots(NOW),
+      folder('work', MOBILE_BOOKMARKS_ID, 0),
+      folder('sprint', 'work', 0),
+      folder('home', MOBILE_BOOKMARKS_ID, 1)
+    ])
+    expect(moveTargets(tree, ['work'], 'android').map((t) => t.node.id)).toEqual([
+      MOBILE_BOOKMARKS_ID,
+      'home'
+    ])
+    // A folder picked with its parent goes where the parent goes: only the parent is left out.
+    expect(moveTargets(tree, ['sprint', 'work'], 'android').map((t) => t.node.id)).toEqual([
+      MOBILE_BOOKMARKS_ID,
+      'home'
     ])
   })
 })
