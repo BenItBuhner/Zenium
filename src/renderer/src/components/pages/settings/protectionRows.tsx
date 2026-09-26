@@ -20,7 +20,8 @@ import {
   updateRowText
 } from '@renderer/lib/protectionUi'
 import { relativeTime } from '@renderer/lib/utils'
-import { choice, type RowGroup, type SettingsRow } from './model'
+import { extensionControlled } from './controlled'
+import { choice, type RowControl, type RowGroup, type SettingsRow } from './model'
 import { AddSiteForm } from './protectionBlocks'
 
 /**
@@ -38,6 +39,16 @@ import { AddSiteForm } from './protectionBlocks'
  */
 
 type Set = (patch: Partial<Settings>) => void
+
+/**
+ * A switch's state while an extension holds its setting (`RowBase.controlled`, §10.5): the
+ * extension's value, the one in effect, over the user's own – the held switch shows it, as
+ * Chrome's disabled toggle shows the preference's effective value. No extension, the user's.
+ * Shared by the rows over the `chrome.privacy` booleans (`sections.tsx`, `siteDataRows.tsx`).
+ */
+export function heldSwitch(control: RowControl | undefined, own: boolean): boolean {
+  return typeof control?.value === 'boolean' ? control.value : own
+}
 
 /** A patch of `settings.privacy` on top of what is there. */
 function patcher(state: UIState, set: Set): (patch: Partial<PrivacySettings>) => void {
@@ -79,7 +90,10 @@ export function safeBrowsingGroups(state: UIState, set: Set): RowGroup[] {
   const p = state.settings.privacy
   const setP = patcher(state, set)
   const status = state.privacy.safeBrowsing
-  const on = p.safeBrowsingEnabled
+  // An extension holding `chrome.privacy.services.safeBrowsingEnabled` holds the level row
+  // (Chrome marks its Safe Browsing radios); the key row and its gate follow the value in effect.
+  const control = extensionControlled(state, 'privacy.safeBrowsingEnabled')
+  const on = heldSwitch(control, p.safeBrowsingEnabled)
   const text = PROTECTION_TEXT.safeBrowsing
   return [
     {
@@ -91,6 +105,7 @@ export function safeBrowsingGroups(state: UIState, set: Set): RowGroup[] {
           id: 'safe-browsing-level',
           label: text.level,
           keywords: ['safe browsing', 'malware', 'phishing', 'dangerous sites', 'protection'],
+          controlled: control,
           value: on ? 'standard' : 'off',
           options: [
             {
@@ -400,6 +415,9 @@ export function signalsGroups(state: UIState, set: Set): RowGroup[] {
   const p = state.settings.privacy
   const setP = patcher(state, set)
   const text = PROTECTION_TEXT.signals
+  // `chrome.privacy.websites.doNotTrackEnabled` holds the Do Not Track switch (Chrome marks its
+  // "Send a Do Not Track request" toggle); GPC is Zenium's own, no API reaches it.
+  const dntControl = extensionControlled(state, 'privacy.dnt')
   return [
     {
       id: 'signals',
@@ -421,7 +439,8 @@ export function signalsGroups(state: UIState, set: Set): RowGroup[] {
           label: text.dnt.label,
           description: text.dnt.description,
           keywords: ['dnt', 'do not track'],
-          checked: p.dnt,
+          controlled: dntControl,
+          checked: heldSwitch(dntControl, p.dnt),
           onChange: (dnt) => setP({ dnt })
         }
       ]

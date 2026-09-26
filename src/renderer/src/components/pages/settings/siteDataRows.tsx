@@ -1,4 +1,4 @@
-import type { SiteDataList, SiteDataStatus } from '@shared/siteData'
+import type { SiteDataDefault, SiteDataList, SiteDataStatus } from '@shared/siteData'
 import { run } from '@renderer/lib/api'
 import {
   SITE_DATA_LIST_ORDER,
@@ -15,7 +15,8 @@ import {
   toggleClearOnExitType
 } from '@renderer/lib/siteDataUi'
 import { AddPatternForm } from './AddPatternForm'
-import { choice, type ActionRow, type RowGroup, type SettingsRow } from './model'
+import { extensionControlled } from './controlled'
+import { choice, type ActionRow, type RowControl, type RowGroup, type SettingsRow } from './model'
 import { relatedSitesGroups } from './protectionRows'
 import type { SectionContext } from './sections'
 import { SiteDataViewer } from './SiteDataViewer'
@@ -52,10 +53,17 @@ export function siteDataGroups(ctx: SectionContext): RowGroup[] {
   const status = state.siteData
   const windows = state.capabilities.windows
   const privacy = state.settings.privacy
+  // An extension holding `chrome.privacy.websites.thirdPartyCookiesAllowed` holds the default
+  // radio and the private-only switch – Chrome's one radio group, with its one indicator –
+  // as one run; the related sites qualify against the value in effect.
+  const control = extensionControlled(state, 'privacy.thirdPartyCookies')
+  const effectiveDefault = heldSiteDataDefault(control, status.default)
   // The middle radio is on: the private-only switch and the related sites have a block to
   // qualify; under "Allow all" or "Block all" they are dependent rows at .4 (§10.4).
-  const thirdParty = status.default === 'block-third-party'
-  const privateOnly = siteDataPrivateOnly(privacy.thirdPartyCookies)
+  const thirdParty = effectiveDefault === 'block-third-party'
+  // The extension's block is browser-wide (Chrome's `thirdPartyCookiesAllowed` off is its
+  // "Block third-party cookies", never the incognito-only mode): the switch reads off under it.
+  const privateOnly = control ? false : siteDataPrivateOnly(privacy.thirdPartyCookies)
   const groups: RowGroup[] = [
     {
       id: 'site-data',
@@ -72,7 +80,8 @@ export function siteDataGroups(ctx: SectionContext): RowGroup[] {
             'third-party cookies',
             'site data'
           ],
-          value: status.default,
+          controlled: control,
+          value: effectiveDefault,
           options: siteDataDefaultOptions(),
           sheetDescription: SITE_DATA_TEXT.default.sheetDescription,
           onChange: (value) => run('siteData.setDefault', { default: value })
@@ -83,6 +92,7 @@ export function siteDataGroups(ctx: SectionContext): RowGroup[] {
           label: SITE_DATA_TEXT.privateOnly.label(windows),
           description: siteDataPrivateOnlyDescription(privateOnly, windows),
           keywords: ['third-party cookies', 'private', 'tracking', 'block'],
+          controlled: control,
           disabled: !thirdParty,
           checked: privateOnly,
           onChange: (on) =>
@@ -138,6 +148,20 @@ export function siteDataGroups(ctx: SectionContext): RowGroup[] {
     }
   )
   return groups
+}
+
+/**
+ * The default radio while an extension holds third-party cookies (§10.5): the extension's
+ * boolean as the radio it is in Chrome – off is "Block third-party cookies", on is "Allow all
+ * cookies" (Chrome's `CookieControlsMode` transform) – over the user's own; no extension, the
+ * engine's default as it stands.
+ */
+function heldSiteDataDefault(
+  control: RowControl | undefined,
+  own: SiteDataDefault
+): SiteDataDefault {
+  if (typeof control?.value !== 'boolean') return own
+  return control.value ? 'allow' : 'block-third-party'
 }
 
 /** One list: its patterns as item rows under Chrome's heading, then the Add row of its own. */

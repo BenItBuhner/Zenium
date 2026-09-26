@@ -16,6 +16,7 @@ import type {
   ImportSource,
   Platform,
   SafetyCheckResult,
+  SearchEngine,
   Settings,
   SyncStatus,
   Tab,
@@ -3232,6 +3233,213 @@ describe('what a row does', () => {
     if (r.kind !== 'action') throw new Error('not an action')
     r.onPress?.()
     expect(invoke).toHaveBeenCalledWith('defaultBrowser.request', { source: 'settings' })
+  })
+
+  describe('the §10.5 controlled-setting rows beyond fonts: chrome.privacy, the search override (PR #508)', () => {
+    const extension = { extensionId: 'b'.repeat(32), name: 'Privacy Guard' }
+    const held = (
+      controls: UIState['extensionControls'],
+      settings: Partial<Settings> = {}
+    ): UIState => state({ privacy: PRIVACY_STATUS, extensionControls: controls }, settings)
+
+    it('Safe Browsing: an extension holding services.safeBrowsingEnabled holds the level row at its value, and the key and feeds follow the value in effect', () => {
+      // The user has Safe Browsing on; the extension holds it off.
+      const model = section(
+        'privacy',
+        held({ 'privacy.safeBrowsingEnabled': { ...extension, value: false } })
+      )
+      const level = row(model, 'safe-browsing-level')
+      if (level.kind !== 'value') throw new Error('not a value row')
+      expect(level.controlled).toMatchObject({ ...extension, value: false })
+      expect(level.value).toBe('off')
+      expect(row(model, 'safe-browsing-api-key').disabled).toBe(true)
+      expect(row(model, 'safe-browsing-api-key').controlled).toBeUndefined()
+      // Held at the user's own value, the row is marked all the same (Chrome marks the pref
+      // whenever an extension holds it, whatever the value).
+      const same = section(
+        'privacy',
+        held({ 'privacy.safeBrowsingEnabled': { ...extension, value: true } })
+      )
+      expect(row(same, 'safe-browsing-level')).toMatchObject({
+        value: 'standard',
+        controlled: expect.objectContaining(extension)
+      })
+      // Disable takes the Extensions page's path.
+      level.controlled!.onDisable()
+      expect(invoke).toHaveBeenCalledWith('extension.setEnabled', {
+        id: extension.extensionId,
+        enabled: false
+      })
+    })
+
+    it('Do Not Track: websites.doNotTrackEnabled holds the DNT switch at its value; GPC beside it stays the user’s', () => {
+      const model = section('privacy', held({ 'privacy.dnt': { ...extension, value: true } }))
+      expect(row(model, 'signals-dnt')).toMatchObject({
+        kind: 'switch',
+        checked: true,
+        controlled: expect.objectContaining({ ...extension, value: true })
+      })
+      expect(row(model, 'signals-gpc').controlled).toBeUndefined()
+      const rows = model.groups.find((g) => g.id === 'signals')!.rows
+      expect(controlledRuns(rows)).toEqual([0, 1])
+    })
+
+    it('third-party cookies: websites.thirdPartyCookiesAllowed holds the default radio and the private-only switch as one run – off is "Block third-party cookies" browser-wide, on is "Allow all cookies" – and the related sites qualify against the value in effect', () => {
+      // The user allows all; the extension blocks third-party cookies.
+      const blocked = section(
+        'privacy',
+        held(
+          { 'privacy.thirdPartyCookies': { ...extension, value: false } },
+          { privacy: { ...DEFAULT_SETTINGS.privacy, thirdPartyCookies: 'allow' } }
+        )
+      )
+      const radio = row(blocked, 'site-data-default')
+      if (radio.kind !== 'value') throw new Error('not a value row')
+      expect(radio.controlled).toMatchObject({ ...extension, value: false })
+      expect(radio.value).toBe('block-third-party')
+      expect(row(blocked, 'site-data-private-only')).toMatchObject({
+        kind: 'switch',
+        checked: false,
+        disabled: false,
+        controlled: expect.objectContaining(extension)
+      })
+      const rows = blocked.groups.find((g) => g.id === 'site-data')!.rows
+      expect(rows.map((r) => r.id)).toEqual(['site-data-default', 'site-data-private-only'])
+      // One indicator after the run of two: "An extension sets these."
+      expect(controlledRuns(rows)).toEqual([0, 2])
+      expect(row(blocked, 'cookies-add-site').disabled).toBe(false)
+      // The user blocks in private windows; the extension allows everywhere.
+      const allowed = section(
+        'privacy',
+        held({ 'privacy.thirdPartyCookies': { ...extension, value: true } })
+      )
+      expect(row(allowed, 'site-data-default')).toMatchObject({ value: 'allow' })
+      expect(row(allowed, 'site-data-private-only')).toMatchObject({
+        checked: false,
+        disabled: true,
+        controlled: expect.objectContaining(extension)
+      })
+      expect(row(allowed, 'cookies-add-site').disabled).toBe(true)
+    })
+
+    it('search: the extension holding the default engine (chrome_settings_overrides) holds the picker at its engine, listed for the held row to show, the user’s pick waiting; services.searchSuggestEnabled holds the suggestions switch', () => {
+      const engine: SearchEngine = {
+        id: `extension:${extension.extensionId}`,
+        name: 'Guarded Search',
+        searchUrl: 'https://search.guard.example/?q=%s',
+        suggestUrl: null,
+        keyword: '@guard',
+        glyph: 'G',
+        source: 'extension',
+        favicon: null
+      }
+      const model = section(
+        'search',
+        state(
+          {
+            searchEngines: [...DEFAULT_SEARCH_ENGINES, engine],
+            extensionControls: {
+              'search.defaultEngine': { ...extension, value: engine.id },
+              'search.suggestions': { ...extension, value: false }
+            }
+          },
+          { searchEngineId: DEFAULT_SEARCH_ENGINES[1].id, searchSuggestions: true }
+        )
+      )
+      const picker = row(model, 'search-engine')
+      if (picker.kind !== 'value') throw new Error('not a value row')
+      expect(picker.controlled).toMatchObject({ ...extension, value: engine.id })
+      expect(picker.value).toBe(engine.id)
+      expect(picker.options[0]).toMatchObject({ value: engine.id, label: 'Guarded Search' })
+      expect(picker.options.filter((o) => o.value === engine.id)).toHaveLength(1)
+      expect(row(model, 'search-suggestions')).toMatchObject({
+        kind: 'switch',
+        checked: false,
+        controlled: expect.objectContaining({ ...extension, value: false })
+      })
+      // The two held rows are consecutive: one indicator after them.
+      const rows = model.groups.find((g) => g.id === 'search')!.rows
+      expect(controlledRuns(rows).filter((n) => n > 0)).toEqual([2])
+      // No extension holding the default: the picker is the user's and lists no extension engine.
+      const free = section('search', state({ searchEngines: [...DEFAULT_SEARCH_ENGINES, engine] }))
+      const own = row(free, 'search-engine')
+      if (own.kind !== 'value') throw new Error('not a value row')
+      expect(own.controlled).toBeUndefined()
+      expect(own.value).toBe(DEFAULT_SETTINGS.searchEngineId)
+      expect(own.options.some((o) => o.value === engine.id)).toBe(false)
+    })
+
+    it('passwords and autofill: services.passwordSavingEnabled holds both offer-to-save rows, autofillAddressEnabled and autofillCreditCardEnabled their switches, each at the extension’s value', () => {
+      const controls = {
+        'passwords.offerToSave': { ...extension, value: false },
+        'autofill.addresses': { ...extension, value: false },
+        'autofill.cards': { ...extension, value: true }
+      }
+      // The vault unlocked: the address and payment groups are drawn.
+      const s = state(
+        {
+          platform: 'linux',
+          capabilities: { ...ANDROID, windows: true },
+          passwords: { ...emptyPasswordsStatus(), locked: false },
+          extensionControls: controls
+        },
+        { autofill: { ...DEFAULT_SETTINGS.autofill, addresses: true, cards: false } }
+      )
+      const passwords = section('passwords', s)
+      expect(row(passwords, 'passwords-offer-to-save')).toMatchObject({
+        kind: 'switch',
+        checked: false,
+        controlled: expect.objectContaining({ ...extension, value: false })
+      })
+      expect(row(passwords, 'passwords-leak-detection').controlled).toBeUndefined()
+      const autofill = buildSection(
+        PAGE.sections.find((x) => x.id === 'autofill')!,
+        context(s, false, { addresses: [], cards: [] }).ctx
+      )
+      expect(row(autofill, 'autofill-offer-to-save')).toMatchObject({
+        checked: false,
+        controlled: expect.objectContaining(extension)
+      })
+      expect(row(autofill, 'autofill-save-addresses')).toMatchObject({
+        checked: false,
+        controlled: expect.objectContaining({ ...extension, value: false })
+      })
+      expect(row(autofill, 'autofill-save-cards')).toMatchObject({
+        checked: true,
+        controlled: expect.objectContaining({ ...extension, value: true })
+      })
+      expect(row(autofill, 'autofill-auto-sign-in').controlled).toBeUndefined()
+    })
+
+    it('nothing held: none of the rows carries a control, and each shows the user’s own value', () => {
+      const s = state({
+        privacy: PRIVACY_STATUS,
+        platform: 'linux',
+        passwords: { ...emptyPasswordsStatus(), locked: false }
+      })
+      const privacy = section('privacy', s)
+      for (const id of [
+        'safe-browsing-level',
+        'signals-dnt',
+        'site-data-default',
+        'site-data-private-only'
+      ])
+        expect(row(privacy, id).controlled, id).toBeUndefined()
+      expect(row(privacy, 'safe-browsing-level')).toMatchObject({ value: 'standard' })
+      expect(row(privacy, 'site-data-default')).toMatchObject({ value: 'block-third-party' })
+      expect(row(privacy, 'site-data-private-only')).toMatchObject({ checked: true })
+      const search = section('search', s)
+      for (const id of ['search-engine', 'search-suggestions'])
+        expect(row(search, id).controlled, id).toBeUndefined()
+      const passwords = section('passwords', s)
+      expect(row(passwords, 'passwords-offer-to-save').controlled).toBeUndefined()
+      const autofill = buildSection(
+        PAGE.sections.find((x) => x.id === 'autofill')!,
+        context(s, false, { addresses: [], cards: [] }).ctx
+      )
+      for (const id of ['autofill-offer-to-save', 'autofill-save-addresses', 'autofill-save-cards'])
+        expect(row(autofill, id).controlled, id).toBeUndefined()
+    })
   })
 
   describe('About (settings-73, shortcuts-menus-164)', () => {

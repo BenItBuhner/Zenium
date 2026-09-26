@@ -190,7 +190,9 @@ import {
   type SettingsRow
 } from './model'
 import { syncGroups } from './sync'
+import { extensionControlled } from './controlled'
 import {
+  heldSwitch,
   httpsOnlyGroups,
   safeBrowsingGroups,
   secureDnsGroups,
@@ -2717,6 +2719,18 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
   // An extension's engine (`chrome_settings_overrides`) is not the user's to pick or remove; it
   // is the default only through the extension, which the URL bar follows (`defaultSearchEngineOf`).
   const engines = state.searchEngines.filter((e) => e.source !== 'extension')
+  // While an extension holds the default (`search_provider.is_default`, the host's
+  // `search.defaultEngine` control), the picker is held at its engine – listed for the held row
+  // to show, as Chrome's disabled menu shows the extension's engine – and the user's pick waits
+  // under it (§10.5: the row reads "Controlled by <name>", Disable hands the pick back).
+  const engineControl = extensionControlled(state, 'search.defaultEngine')
+  const heldEngine =
+    typeof engineControl?.value === 'string'
+      ? state.searchEngines.find((e) => e.id === engineControl.value)
+      : undefined
+  // `chrome.privacy.services.searchSuggestEnabled` holds the suggestions switch (Chrome marks
+  // its "Autocomplete searches and URLs" toggle).
+  const suggestControl = extensionControlled(state, 'search.suggestions')
   const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
   // A deactivated engine (settings-43) is offered nowhere – not as the default, not by shortcut
   // – and the desktop lists it under Inactive; the default engine reads active whatever a peer's
@@ -2742,8 +2756,9 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
         choice({
           id: 'search-engine',
           label: 'Default search engine',
-          value: s.searchEngineId,
-          options: active.map((e) => ({
+          controlled: engineControl,
+          value: heldEngine?.id ?? s.searchEngineId,
+          options: [...(heldEngine ? [heldEngine] : []), ...active].map((e) => ({
             value: e.id,
             label: e.name,
             description: pickerGroup(e) ? (engineHost(e) ?? undefined) : undefined,
@@ -2757,7 +2772,8 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           id: 'search-suggestions',
           label: 'Show search suggestions',
           description: 'Sends what you type to the search engine as you type.',
-          checked: s.searchSuggestions,
+          controlled: suggestControl,
+          checked: heldSwitch(suggestControl, s.searchSuggestions),
           onChange: (v) => set({ searchSuggestions: v })
         },
         // Suggestion privacy (omnibox-45): the local sources each behind their own switch, as
@@ -2988,6 +3004,9 @@ function autofillSection({ state, set, autofill }: SectionContext): RowGroup[] {
   const android = state.platform === 'android'
   const system = state.autofill.systemAutofill
   const zenium = s.androidProvider === 'zenium'
+  // `chrome.privacy.services.passwordSavingEnabled` holds the offer-to-save switch here and in
+  // the Passwords category alike (Chrome marks its "Offer to save passwords" toggle).
+  const offerControl = extensionControlled(state, 'passwords.offerToSave')
   const groups: RowGroup[] = [
     {
       id: 'autofill-passwords',
@@ -2999,7 +3018,8 @@ function autofillSection({ state, set, autofill }: SectionContext): RowGroup[] {
           label: 'Offer to save passwords',
           description: 'Ask to save or update a login after you sign in on a site.',
           keywords: ['save passwords', 'login', 'update'],
-          checked: s.offerToSave,
+          controlled: offerControl,
+          checked: heldSwitch(offerControl, s.offerToSave),
           onChange: (v) => set({ passwords: { ...s, offerToSave: v } })
         },
         {
@@ -3119,6 +3139,8 @@ function addressGroups(
   { addresses }: AutofillSettingsData
 ): RowGroup[] {
   const a = state.settings.autofill
+  // `chrome.privacy.services.autofillAddressEnabled` (Chrome marks its "Save and fill addresses").
+  const control = extensionControlled(state, 'autofill.addresses')
   return vaultListGroups(
     'autofill-addresses',
     {
@@ -3130,7 +3152,8 @@ function addressGroups(
           label: 'Save and fill addresses',
           description:
             'Offer to save addresses typed into forms, and fill them back into checkouts and sign-ups.',
-          checked: a.addresses,
+          controlled: control,
+          checked: heldSwitch(control, a.addresses),
           onChange: (v) => set({ autofill: { ...a, addresses: v } })
         }
       ]
@@ -3184,6 +3207,9 @@ function cardGroups(
   { cards, copying, copyCard }: AutofillSettingsData
 ): RowGroup[] {
   const a = state.settings.autofill
+  // `chrome.privacy.services.autofillCreditCardEnabled` (Chrome marks its "Save and fill
+  // payment methods").
+  const control = extensionControlled(state, 'autofill.cards')
   return vaultListGroups(
     'autofill-cards',
     {
@@ -3197,7 +3223,8 @@ function cardGroups(
           description:
             'Offer to save cards typed into checkouts, and fill them back after you verify it is you.',
           keywords: ['credit card', 'debit card'],
-          checked: a.cards,
+          controlled: control,
+          checked: heldSwitch(control, a.cards),
           onChange: (v) => set({ autofill: { ...a, cards: v } })
         }
       ]
@@ -4530,6 +4557,8 @@ function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
   const open = (view: 'logins' | 'checkup' | 'settings'): void =>
     void openOverlay('passwords', tab.id, null, null, view)
   const unlocked = !status.locked && !status.error
+  // `chrome.privacy.services.passwordSavingEnabled`: the same hold as Autofill's twin row.
+  const offerControl = extensionControlled(state, 'passwords.offerToSave')
   return [
     {
       id: 'passwords-manager',
@@ -4564,7 +4593,8 @@ function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
           id: 'passwords-offer-to-save',
           label: PASSWORDS_COPY.offerToSave.label,
           description: PASSWORDS_COPY.offerToSave.description,
-          checked: s.offerToSave,
+          controlled: offerControl,
+          checked: heldSwitch(offerControl, s.offerToSave),
           onChange: (v) => patch({ offerToSave: v })
         }
       ]

@@ -45,13 +45,17 @@ function status(over: Partial<SiteDataStatus> = {}): SiteDataStatus {
   return { ...emptySiteDataStatus(), ...over }
 }
 
-/** The slice of the state the builder reads: the policy, the host's windows, the privacy settings. */
+/**
+ * The slice of the state the builder reads: the policy, the host's windows, the privacy settings,
+ * and the extensions' holds over them (none here; `sections.test.ts` covers the held rows).
+ */
 function state(siteData: SiteDataStatus, windows = false): UIState {
   return {
     platform: windows ? 'linux' : 'android',
     capabilities: { windows },
     settings: DEFAULT_SETTINGS,
-    siteData
+    siteData,
+    extensionControls: {}
   } as unknown as UIState
 }
 
