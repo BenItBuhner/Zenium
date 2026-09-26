@@ -1942,6 +1942,7 @@ export class AgentService implements SessionStore, McpHandlers {
     const view = this.browser.tabs.view(tabId)
     if (!view) return
     view.setBackgroundThrottling?.(true)
+    view.setAgentDriven?.(false)
     void this.evalPage(view, pageDispose(s.id)).catch(() => undefined)
     for (const node of frames?.nodes ?? []) {
       if (node.id === 0) continue
@@ -1973,6 +1974,10 @@ export class AgentService implements SessionStore, McpHandlers {
     }
     if (tab.frozen) await this.browser.governor.thaw(tabId, true)
     view.setBackgroundThrottling?.(false)
+    // Off screen, the page is the agent's to drive hidden: a host whose hidden pages have no
+    // layout viewport and paint nothing lays it out and paints it where the user cannot see it
+    // (`TabView.setAgentDriven`). A tab in front of the user is the layout's as before.
+    view.setAgentDriven?.(!this.isShown(tab, win))
     return view
   }
 
