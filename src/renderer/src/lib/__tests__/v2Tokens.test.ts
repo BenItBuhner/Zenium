@@ -1567,7 +1567,8 @@ describe('the focus ring (§1, §4)', () => {
 })
 
 /** The menu container's exemption from the ring rule (§9.22; pr-552 F1), both pointer forms. */
-const MENU_EXEMPTION = ".zen-v2-menu:focus-visible,\n:root[data-pointer='coarse'] .zen-v2-menu:focus-visible"
+const MENU_EXEMPTION =
+  ".zen-v2-menu:focus-visible,\n:root[data-pointer='coarse'] .zen-v2-menu:focus-visible"
 
 describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 slice)', () => {
   /** A renderer source or stylesheet by its path under `src/renderer/src`. */
@@ -1579,8 +1580,8 @@ describe('the chassis corner and the holders of focus (§2, §9.22; the W7-F4 sl
     const at = source.indexOf(`${selector} {`)
     expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
     const open = at + selector.length + 2
-    return (source.slice(open, source.indexOf('}', open)).match(/[a-z-]+:[^;]+;/g) ?? []).map(
-      (d) => d.trim()
+    return (source.slice(open, source.indexOf('}', open)).match(/[a-z-]+:[^;]+;/g) ?? []).map((d) =>
+      d.trim()
     )
   }
 
