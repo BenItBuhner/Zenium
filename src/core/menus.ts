@@ -9,7 +9,7 @@ import {
   type PageContextParams,
   type TabView
 } from './platform'
-import { buildSearchUrl } from '../shared/search'
+import { buildSearchUrl, imageSearchFor } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
@@ -831,6 +831,7 @@ export class Menus {
   private imageGroup(tab: Tab, view: TabView, params: PageContextParams, win: ZenWindow): Template {
     const { tabs, state } = this.browser
     const src = params.srcURL
+    const search = imageSearchFor(state.defaultSearchEngine(), src)
     return [
       {
         label: 'Open Image in New Tab',
@@ -860,6 +861,27 @@ export class Menus {
         label: 'Copy Image Address',
         click: () => this.browser.copyText(src, 'Link copied', win)
       },
+      // Chrome's "Search image with …" (CT-32): the default engine's reverse image search, in a
+      // tab beside this one and in front, as the menu's text search opens. An address only an
+      // engine can fetch – a `data:` or `blob:` image gets no row (`imageSearchFor`).
+      ...(search
+        ? [
+            {
+              label: `Search Image with ${search.engine}`,
+              click: () =>
+                tabs.createTab(
+                  {
+                    url: search.url,
+                    active: true,
+                    afterTabId: tab.id,
+                    containerId: tab.containerId,
+                    openerTabId: tab.id
+                  },
+                  win
+                )
+            }
+          ]
+        : []),
       ...(state.capabilities.share
         ? [
             {

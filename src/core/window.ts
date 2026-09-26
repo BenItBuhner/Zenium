@@ -127,6 +127,8 @@ export class ZenWindow {
    */
   stripFocusTabId: string | null = null
   lastFocusedAt = 0
+  /** The host window's focus as of the last state change it reported, for telling a change. */
+  private focused = false
   /** The window-modal question the chrome is showing ("Close N tabs?"), owned by `WindowPrompts`. */
   prompt: WindowPrompt | null = null
   /** The quit chord held in this window ("Hold ⌘Q to Quit"), owned by `QuitHoldService`. */
@@ -334,6 +336,12 @@ export class ZenWindow {
   /** Maximised / fullscreen / focus flags changed. */
   onWindowStateChanged(): void {
     if (!this.alive) return
+    const focused = this.host.isFocused()
+    if (focused !== this.focused) {
+      this.focused = focused
+      // The desktop's `focus` / `blur`: automatic picture-in-picture hears the app being left.
+      this.browser.mediaSession.onWindowFocusChanged(this, focused)
+    }
     this.browser.fullscreen.onWindowStateChanged(this)
     this.browser.state.commitVolatile()
   }

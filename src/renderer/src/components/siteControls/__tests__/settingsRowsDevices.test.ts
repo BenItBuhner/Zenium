@@ -327,3 +327,22 @@ describe('the device kinds (Permissions)', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 })
+
+describe('Automatic picture-in-picture (Additional permissions, MW-28)', () => {
+  it('is the desktop’s row after Fullscreen, and not on the phone until Android’s hook reads it', () => {
+    const desktop = groups()
+      .find((g) => g.id === 'sites-additional')!
+      .rows.map((r) => r.id)
+    expect(desktop.indexOf('sites:auto-picture-in-picture')).toBe(
+      desktop.indexOf('sites:fullscreen') + 1
+    )
+    expect(row(groups(), 'sites:auto-picture-in-picture')).toMatchObject({
+      kind: 'item',
+      label: 'Automatic picture-in-picture',
+      description: 'A playing video moves to a small window when you leave its tab'
+    })
+    const phone = groups({}, 'android')
+    expect(findRow(phone, 'sites:auto-picture-in-picture')).toBeNull()
+    expect(findRow(phone, 'sites:fullscreen')).not.toBeNull()
+  })
+})

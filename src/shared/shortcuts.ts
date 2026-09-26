@@ -985,6 +985,14 @@ const DEFS: Def[] = [
     label: 'Toggle Picture-in-Picture',
     ...both({ key: ']', mods: ACCEL_SHIFT })
   },
+  // Chrome's and Edge's F7 (CT-34): the one key in both presets, so a switcher's habit holds.
+  {
+    id: 'key_caretBrowsing',
+    action: 'page.caretBrowsing',
+    group: 'pageOperations',
+    label: 'Toggle Caret Browsing',
+    ...both({ key: 'F7' })
+  },
   // Ctrl+Shift+S is Firefox's Take Screenshot and Edge's Web capture; Chrome has no chord for
   // either. The Zen preset keeps Firefox's; the Chrome preset gives the chord to Web capture
   // (Edge's, with its overlay) and leaves the one-key screenshot to the menus.

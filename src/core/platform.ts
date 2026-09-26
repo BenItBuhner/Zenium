@@ -813,6 +813,12 @@ export interface TabView {
   setPopupsAllowed?(allowed: boolean): void
   /** Boost "zap element" picker on/off. */
   setZapMode(on: boolean): void
+  /**
+   * Chromium's caret browsing for this page (CT-34): a text cursor the arrow keys move and Shift
+   * selects with. Electron's `webContents.setCaretBrowsingEnabled`; hosts without the call
+   * (`HostCapabilities.caretBrowsing` off) leave it out and the core never asks.
+   */
+  setCaretBrowsingEnabled?(enabled: boolean): void
   /** Autofill: fill values into the page's form, or reconfigure the forms script. */
   sendFormsCommand?(command: FormsCommand): void
 

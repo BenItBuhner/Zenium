@@ -221,6 +221,8 @@ export function androidCapabilities({
     // Blink's Android font selection ignores the generic-family settings: the standard family
     // and the sizes take effect, `serif` / `sansSerif` / `fixed` do not (CT-25's recorded limit).
     genericFontFamilies: false,
+    // The WebView has no caret-browsing switch (CT-34's recorded limit): F7 does nothing here.
+    caretBrowsing: false,
     // The chrome lies under the page views: `Host.kt` answers `view.shown` from the view's own
     // drawn frame (Q1, `views.ts` `askShown`), and the chrome's stand-ins leave on that answer.
     placementAnswered: true
