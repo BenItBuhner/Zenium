@@ -11635,6 +11635,16 @@
 .zen-settings-row-disabled .zen-settings-summary {
   color: var(--v2-text);
 }
+/*
+ * The desktop's check row (`CheckRow`) is disabled by the check-row primitive instead – its
+ * `:has(.zen-v2-checkbox:disabled) > *` puts the .4 on the row's content – and a held one (an
+ * extension's homepage under Appearance › Show home button; the lead's rider on #508 at #572)
+ * let its description's 69 % ink compound under that .4 to .276 of the text. The same amendment,
+ * keyed as the primitive keys the .4: one number on the row, nothing compounded under it.
+ */
+.zen-settings-check-row:has(.zen-v2-checkbox:disabled) .zen-settings-description {
+  color: var(--v2-text);
+}
 .zen-settings-row-disabled .zen-v2-button:disabled,
 .zen-settings-row-disabled .zen-v2-icon-button:disabled,
 .zen-settings-row-disabled .zen-v2-menulist:disabled,
