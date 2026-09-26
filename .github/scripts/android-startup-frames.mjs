@@ -384,7 +384,12 @@ function classify(left, right, centre, mark, bar) {
   return 'other'
 }
 
-/** Decode `input` (a video or a still) to rgb24 frames at the reduced size; null when ffmpeg fails. */
+/**
+ * Decode `input` (a video or a still) to rgb24 frames at the reduced size; null when ffmpeg fails.
+ * `-fps_mode passthrough` on every dump: rawvideo carries no timestamps, so ffmpeg's default sync
+ * pads a VFR screenrecord to its nominal rate (1457 frames for 616); the cadence is the caller's
+ * `fps` filter alone.
+ */
 function decode(input, filters = []) {
   const vf = [...filters, `scale=${width}:${height}`].join(',')
   const ffmpeg = spawnSync(
@@ -397,6 +402,8 @@ function decode(input, filters = []) {
       input,
       '-vf',
       vf,
+      '-fps_mode',
+      'passthrough',
       '-f',
       'rawvideo',
       '-pix_fmt',
@@ -813,6 +820,8 @@ if (frames.length) {
       video,
       '-vf',
       `fps=${fps.toFixed(4)},scale=${width}:-1,tile=6x3:padding=4:color=black`,
+      '-fps_mode',
+      'passthrough',
       '-frames:v',
       '1',
       tile

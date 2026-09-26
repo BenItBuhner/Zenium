@@ -221,7 +221,11 @@ describe('the attention dot on a pinned row', () => {
     expect(seat().querySelector('.zen-attention-dot')).not.toBeNull()
     // The sound gone (the page stopped): the dot stays for the same reason.
     render(
-      <Essentials essentials={[{ ...playing, audible: false }]} activeTabId={null} compact={false} />
+      <Essentials
+        essentials={[{ ...playing, audible: false }]}
+        activeTabId={null}
+        compact={false}
+      />
     )
     expect(tile().querySelector('[data-essential-audio]')).toBeNull()
     expect(seat().querySelector('.zen-attention-dot')).not.toBeNull()
@@ -236,14 +240,17 @@ describe('the attention dot on a pinned row', () => {
     const r = row('radio')
     expect(r.querySelector('.zen-favicon-seat[data-attention] > .zen-attention-dot')).not.toBeNull()
     expect(describedBy(r)).toEqual(['playing, updated in the background, pinned'])
-    expect(tabRowStates(tab('radio', { attention: true, audible: true, muted: true }), null)).toEqual([
-      'muted',
-      'updated in the background'
-    ])
+    expect(
+      tabRowStates(tab('radio', { attention: true, audible: true, muted: true }), null)
+    ).toEqual(['muted', 'updated in the background'])
   })
 
   it('yields to the compact rail’s audio disc – one disc per icon on every favicon-only seat (§9.29, the lead’s #436 ruling 3 widened): the compact pinned row that plays draws its audio disc and no attention dot, and the words still carry both states', () => {
-    panel([tab('front'), tab('radio', { pinned: true, attention: true, audible: true })], 'front', true)
+    panel(
+      [tab('front'), tab('radio', { pinned: true, attention: true, audible: true })],
+      'front',
+      true
+    )
     const r = row('radio')
     expect(r.querySelector('.zen-tab-audio-dot')).not.toBeNull()
     expect(r.querySelector('.zen-favicon-seat')).not.toBeNull()

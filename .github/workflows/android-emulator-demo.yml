@@ -73,6 +73,20 @@ on:
         required: false
         type: string
         default: ''
+      setup-cache-path:
+        description: >-
+          A path setup-script fills by a pin (a fetched APK), restored before it and saved after
+          it under setup-cache-key through actions/cache, so a run after the first finds it in
+          place (android-webview-google.sh's 200 MB APK out of a 2.2 GB image zip); nothing is
+          cached when either is empty
+        required: false
+        type: string
+        default: ''
+      setup-cache-key:
+        description: The cache key for setup-cache-path, naming the pin (a version); an exact match alone restores
+        required: false
+        type: string
+        default: ''
       post-script:
         description: >-
           Bash run from the repository root once the driver is done, whether it passed or not, and
@@ -243,9 +257,24 @@ jobs:
             case "$line" in ''|'#'*) continue ;; esac
             printf '%s\n' "$line" >> "$GITHUB_ENV"
           done <<< "$SCRIPT_ENV"
+      - name: Restore what an earlier run's setup fetched
+        # The pinned download a setup step would fetch again (the key is the pin); restore and save
+        # are separate steps so the save follows the setup itself, whatever the driver does later.
+        id: setup-cache
+        if: inputs.setup-script != '' && inputs.setup-cache-path != '' && inputs.setup-cache-key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ inputs.setup-cache-path }}
+          key: ${{ inputs.setup-cache-key }}
       - name: Prepare what the demo needs beyond the build
         if: inputs.setup-script != ''
         run: ${{ inputs.setup-script }}
+      - name: Keep what the setup fetched for the next run
+        if: inputs.setup-script != '' && inputs.setup-cache-path != '' && inputs.setup-cache-key != '' && steps.setup-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ inputs.setup-cache-path }}
+          key: ${{ inputs.setup-cache-key }}
       - name: Enable KVM for the emulator
         # https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
         run: |

@@ -47,16 +47,21 @@ describe('sidePanel argument checks', () => {
     const id = 'abcdefghijklmnopabcdefghijklmnop'
     // Adobe Photoshop: `path: chrome.runtime.getURL('/sidepanel.html')` on every setOptions.
     expect(
-      normalizePanelOptions({ enabled: true, path: `https://${id}.ext.zenium.invalid/sidepanel.html` }, id)
+      normalizePanelOptions(
+        { enabled: true, path: `https://${id}.ext.zenium.invalid/sidepanel.html` },
+        id
+      )
     ).toEqual({ enabled: true, path: 'sidepanel.html' })
-    expect(normalizePanelOptions({ path: `chrome-extension://${id}/panel.html?tab=1#top` }, id)).toEqual({
+    expect(
+      normalizePanelOptions({ path: `chrome-extension://${id}/panel.html?tab=1#top` }, id)
+    ).toEqual({
       path: 'panel.html?tab=1#top'
     })
     // Another extension's page, any other origin, or the bare origin: refused as before.
     const other = 'ponmlkjihgfedcbaponmlkjihgfedcba'
-    expect(() => normalizePanelOptions({ path: `chrome-extension://${other}/panel.html` }, id)).toThrow(
-      ERROR_INVALID_OPTIONS
-    )
+    expect(() =>
+      normalizePanelOptions({ path: `chrome-extension://${other}/panel.html` }, id)
+    ).toThrow(ERROR_INVALID_OPTIONS)
     expect(() => normalizePanelOptions({ path: 'https://x.test/panel.html' }, id)).toThrow(
       ERROR_INVALID_OPTIONS
     )

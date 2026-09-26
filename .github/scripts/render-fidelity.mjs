@@ -863,7 +863,9 @@ async function main() {
   tryShell('wm dismiss-keyguard')
   // Exclusive within the navbar category: a plain enable is additive and leaves the gestural
   // overlay's insets in force under the buttons (android-gesture-demo.sh says how that looked).
-  tryShell('cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton')
+  tryShell(
+    'cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton'
+  )
   // Chrome without its first-run flow (the emulator image is userdebug, so the command line file
   // is honoured; set-debug-app makes sure of it) and with notifications already granted.
   tryShell(

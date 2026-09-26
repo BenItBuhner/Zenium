@@ -92,7 +92,10 @@ describe('foldPillChips: a quiet state sits under a live one and above the glyph
       'notifications-blocked'
     ])
     // The media stops: the bell is back in the slot, the lock still yielded.
-    const after = foldPillChips([...page, chip('notifications-blocked')], liveArrival(['media'], []))
+    const after = foldPillChips(
+      [...page, chip('notifications-blocked')],
+      liveArrival(['media'], [])
+    )
     expect(ids(after.shown)).toEqual(['notifications-blocked'])
     expect(ids(after.yielded)).toEqual(['lock'])
   })
